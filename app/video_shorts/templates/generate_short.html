@@ -2092,10 +2092,12 @@
   }
   .generate-v2-selected-mount .clip-card-media video {
     width: 100%;
+    height: auto;
     aspect-ratio: 9 / 16;
-    object-fit: contain;
+    object-fit: cover;
     background: #050812;
     border-radius: 18px;
+    overflow: hidden;
   }
   .generate-v2-selected-mount .clip-card-main {
     margin-top: 16px;
@@ -3207,10 +3209,12 @@
   .generate-v2-media-column > .clip-card-placeholder {
     min-width: 0;
     width: 100%;
+    height: auto;
     aspect-ratio: 9 / 16;
     object-fit: cover;
     background: #050812;
     border-radius: 18px;
+    overflow: hidden;
   }
   #clip-workbench-shell[data-generate-v2="1"] .clip-rail-state-chip {
     display: inline-flex;
