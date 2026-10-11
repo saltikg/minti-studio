@@ -1,3 +1,5 @@
+from __future__ import annotations
+
 import json
 import os
 import re
@@ -9,6 +11,7 @@ import time
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple
 
+import numpy as np
 from PIL import Image, ImageDraw, ImageFilter, ImageFont
 from flask import current_app
 
@@ -109,6 +112,163 @@ def _normalize_keep_ranges_for_trim(keep_ranges: Optional[list[Dict[str, Any]]])
     return ranges
 
 
+def _log_multi_range_boundary_warning(message: str, *args: Any) -> None:
+    try:
+        current_app.logger.warning(message, *args)
+    except Exception:
+        pass
+
+
+def _extract_mono_pcm_window(
+    src_path: Path,
+    *,
+    window_start: float,
+    duration: float,
+    sample_rate: int = 16000,
+) -> np.ndarray:
+    """Read one mono PCM audio window for all multi-range boundary analysis."""
+    if duration <= 0:
+        return np.array([], dtype=np.float32)
+    resolved_ffmpeg = _resolve_ffmpeg()
+    cmd = [
+        resolved_ffmpeg,
+        "-hide_banner",
+        "-loglevel",
+        "error",
+        "-ss",
+        f"{max(0.0, window_start):.6f}",
+        "-t",
+        f"{duration:.6f}",
+        "-i",
+        str(src_path),
+        "-vn",
+        "-ac",
+        "1",
+        "-ar",
+        str(sample_rate),
+        "-f",
+        "s16le",
+        "pipe:1",
+    ]
+    result = run_media_subprocess(
+        cmd,
+        operation="multi_range_boundary_audio",
+        context=f"src={src_path.name} start={window_start:.3f} duration={duration:.3f}",
+        check=True,
+        timeout=scale_media_timeout(FFMPEG_SHORT_TIMEOUT, duration_seconds=duration, multiplier=1.0, extra_seconds=30),
+        capture_output=True,
+        text=False,
+    )
+    return np.frombuffer(result.stdout or b"", dtype=np.int16).astype(np.float32) / 32768.0
+
+
+def _lowest_energy_time_in_pcm_window(
+    pcm: np.ndarray,
+    *,
+    window_start: float,
+    search_start: float,
+    search_end: float,
+    sample_rate: int = 16000,
+    frame_seconds: float = 0.01,
+) -> Optional[float]:
+    """Return the center time of the quietest 10ms frame inside a source-time window."""
+    if pcm.size == 0 or search_end <= search_start:
+        return None
+    frame_size = max(1, int(round(sample_rate * frame_seconds)))
+    first_sample = max(0, int(round((search_start - window_start) * sample_rate)))
+    last_sample = min(int(pcm.size), int(round((search_end - window_start) * sample_rate)))
+    if last_sample <= first_sample:
+        return None
+    best_rms: Optional[float] = None
+    best_offset = first_sample
+    for offset in range(first_sample, max(first_sample + 1, last_sample - frame_size + 1), frame_size):
+        frame = pcm[offset : min(offset + frame_size, last_sample)]
+        if frame.size == 0:
+            continue
+        rms = float(np.sqrt(np.mean(np.square(frame))))
+        if best_rms is None or rms < best_rms:
+            best_rms = rms
+            best_offset = offset
+    center_sample = best_offset + (frame_size / 2.0)
+    return window_start + (center_sample / float(sample_rate))
+
+
+def _snap_keep_range_boundaries_to_audio(
+    src_path: Path,
+    ranges: list[dict[str, float]],
+    *,
+    sample_rate: int = 16000,
+) -> list[dict[str, float]]:
+    """Move internal multi-range cut points to nearby low-energy audio frames.
+
+    Whisper word end times can be early. For internal joins, this gives the last
+    kept word a little breathing room by choosing the quietest 10ms audio frame
+    within the allowed 200ms adjustment window. Failures return the original ranges.
+    """
+    if len(ranges) <= 1:
+        return ranges
+    windows: list[Tuple[str, int, float, float]] = []
+    for index in range(len(ranges)):
+        if index > 0:
+            boundary = float(ranges[index]["start"])
+            windows.append(("start", index, max(0.0, boundary - 0.20), boundary + 0.05))
+        if index < len(ranges) - 1:
+            boundary = float(ranges[index]["end"])
+            windows.append(("end", index, max(0.0, boundary - 0.05), boundary + 0.20))
+    if not windows:
+        return ranges
+    window_start = min(item[2] for item in windows)
+    window_end = max(item[3] for item in windows)
+    try:
+        pcm = _extract_mono_pcm_window(
+            src_path,
+            window_start=window_start,
+            duration=max(0.001, window_end - window_start),
+            sample_rate=sample_rate,
+        )
+    except Exception as exc:
+        _log_multi_range_boundary_warning(
+            "Multi-range audio boundary analysis failed src=%s ranges=%s error=%s",
+            src_path.name,
+            len(ranges),
+            exc,
+        )
+        return ranges
+    adjusted = [dict(item) for item in ranges]
+    adjustments: list[dict[str, Any]] = []
+    for kind, index, search_start, search_end in windows:
+        original = float(ranges[index][kind])
+        if kind == "end":
+            lower = max(float(ranges[index]["start"]) + 0.001, original - 0.20, search_start)
+            upper = min(float(ranges[index + 1]["start"]) - 0.001, original + 0.20, search_end)
+        else:
+            lower = max(float(adjusted[index - 1]["end"]) + 0.001, original - 0.20, search_start)
+            upper = min(float(ranges[index]["end"]) - 0.001, original + 0.20, search_end)
+        candidate = _lowest_energy_time_in_pcm_window(
+            pcm,
+            window_start=window_start,
+            search_start=lower,
+            search_end=upper,
+            sample_rate=sample_rate,
+        )
+        if candidate is None:
+            continue
+        snapped = round(min(max(candidate, lower), upper), 6)
+        if abs(snapped - original) > 0.0005:
+            adjusted[index][kind] = snapped
+            adjustments.append({"range": index, "boundary": kind, "from": round(original, 6), "to": snapped})
+    if adjustments:
+        try:
+            current_app.logger.info(
+                "Multi-range audio boundary snap src=%s adjustments=%s",
+                src_path.name,
+                json.dumps(adjustments, ensure_ascii=False),
+            )
+        except Exception:
+            pass
+    return adjusted
+
+
 def _trim_source_to_keep_ranges(
     src_path: Path,
     keep_ranges: list[Dict[str, Any]],
@@ -126,6 +286,8 @@ def _trim_source_to_keep_ranges(
         raise FileNotFoundError(f"Source video not found: {src_path}")
     resolved_ffmpeg = _resolve_ffmpeg()
     has_audio = _has_audio_stream(src_path)
+    if has_audio:
+        ranges = _snap_keep_range_boundaries_to_audio(src_path, ranges)
     cmd = [resolved_ffmpeg, "-y", "-stats_period", "1"]
     filter_parts: list[str] = []
     concat_inputs: list[str] = []
