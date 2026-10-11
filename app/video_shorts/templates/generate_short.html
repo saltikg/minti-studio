@@ -1858,12 +1858,13 @@
   }
   #clip-workbench-shell[data-generate-v2="1"] .clip-score-batch-controls {
     align-items: center;
+    justify-content: space-between;
     border-color: rgba(45, 212, 191, 0.16);
     background: rgba(45, 212, 191, 0.08);
     min-height: 0;
     max-height: 36px;
     padding: 5px 8px;
-    gap: 6px;
+    gap: 10px;
     flex-wrap: nowrap;
     overflow: visible;
   }
@@ -1884,22 +1885,24 @@
     background-color: rgba(15, 23, 42, 0.88);
   }
   #clip-workbench-shell[data-generate-v2="1"] #clip-score-batch-create-btn {
-    flex: 0 0 48px;
-    min-width: 48px;
-    max-width: 48px;
+    flex: 0 0 auto;
+    min-width: max-content;
+    max-width: none;
     min-height: 28px;
     height: 28px;
-    padding: 2px 6px;
+    padding: 2px 10px;
     font-size: 0.72rem;
+    white-space: nowrap;
   }
   .generate-v2-suggestion-copy {
     color: rgba(255, 255, 255, 0.82);
     font-size: 0.72rem;
     font-weight: 750;
     white-space: nowrap;
-    flex: 0 0 auto;
-    overflow: visible;
-    text-overflow: clip;
+    flex: 1 1 auto;
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
   }
   .generate-v2-design-dialog {
     position: absolute;
@@ -2685,20 +2688,51 @@
   .generate-v2-clip-editor-mount .clip-rail-edit-field label {
     display: none;
   }
+  .generate-v2-clip-editor-mount .clip-rail-edit-title-wrap {
+    position: relative;
+    display: flex;
+    align-items: center;
+    min-width: 0;
+    border-bottom: 1px dashed rgba(226, 232, 240, 0.22);
+    cursor: text;
+  }
   .generate-v2-clip-editor-mount .clip-rail-edit-field input {
     min-height: 36px;
     border-color: transparent;
     background: transparent;
-    padding: 4px 2px;
+    padding: 4px 28px 4px 2px;
     font-size: 1rem;
     font-weight: 800;
     line-height: 1.2;
+    cursor: text;
   }
   .generate-v2-clip-editor-mount .clip-rail-edit-field input:hover,
   .generate-v2-clip-editor-mount .clip-rail-edit-field input:focus {
     border-color: rgba(45, 212, 191, 0.28);
     background: rgba(15, 23, 42, 0.58);
     box-shadow: none;
+  }
+  .generate-v2-clip-editor-mount .clip-rail-edit-title-pencil {
+    position: absolute;
+    right: 4px;
+    top: 50%;
+    transform: translateY(-50%);
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    width: 20px;
+    height: 20px;
+    border-radius: 999px;
+    color: rgba(226, 232, 240, 0.58);
+    cursor: text;
+  }
+  .generate-v2-clip-editor-mount .clip-rail-edit-title-pencil .material-symbols-outlined {
+    font-size: 16px;
+    line-height: 1;
+  }
+  .generate-v2-clip-editor-mount .clip-rail-edit-title-wrap:hover .clip-rail-edit-title-pencil,
+  .generate-v2-clip-editor-mount .clip-rail-edit-title-wrap:focus-within .clip-rail-edit-title-pencil {
+    color: rgba(204, 251, 241, 0.92);
   }
   .generate-v2-clip-editor-mount [data-trim-show-more='before'] {
     order: 3;
@@ -3221,6 +3255,12 @@
     line-height: 1;
     white-space: nowrap;
   }
+  #clip-workbench-shell[data-generate-v2="1"] .clip-rail-kind-badge.is-ai:not(.is-rendered) {
+    border-color: rgba(45, 212, 191, 0.38);
+    background: transparent;
+    color: #5eead4;
+    box-shadow: none;
+  }
   #clip-workbench-shell[data-generate-v2="1"] .clip-rail-kind-badge .bi {
     font-size: 1.28rem;
   }
@@ -3392,6 +3432,22 @@
       width: 100%;
       height: 100%;
       object-fit: cover;
+    }
+    #clip-workbench-shell[data-generate-v2="1"] .clip-rail-thumb.is-placeholder {
+      border: 1px dashed rgba(148, 163, 184, 0.46);
+      background: transparent;
+      box-shadow: none;
+    }
+    #clip-workbench-shell[data-generate-v2="1"] .clip-rail-placeholder-icon {
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      width: 24px;
+      height: 24px;
+      border-radius: 999px;
+      color: rgba(45, 212, 191, 0.78);
+      font-size: 1rem;
+      line-height: 1;
     }
     #clip-workbench-shell[data-generate-v2="1"] .clip-rail-item[data-status="pending"] .clip-rail-thumb {
       border: 1px dashed rgba(125, 211, 252, 0.42);
@@ -5923,12 +5979,7 @@
                 {% endfor %}
                 {% if generate_v2 %}
                 <span class="generate-v2-suggestion-copy" id="clip-score-batch-banner-copy">✦ 0 more suggestions</span>
-                <label class="visually-hidden" for="clip-score-threshold">Minimum score</label>
-                <select class="form-select form-select-sm clip-score-threshold-input clip-score-threshold-select" id="clip-score-threshold">
-                  {% for threshold_option in [50, 60, 70, 80, 90] %}
-                    <option value="{{ threshold_option }}"{% if threshold_option == 70 %} selected{% endif %}>≥{{ threshold_option }}</option>
-                  {% endfor %}
-                </select>
+                <input type="hidden" id="clip-score-threshold" value="50" data-score-threshold-restored="1">
                 {% else %}
                 <label class="clip-score-threshold-label mb-0" for="clip-score-threshold">
                   Auto-create clips scoring ≥ <span class="clip-score-threshold-value" id="clip-score-threshold-value">70</span>
@@ -5982,13 +6033,15 @@
                   {% set rail_publish_status = (row.publish_status or '')|lower %}
                   {% set rail_db_publish_status = (row.db_publish_status or '')|lower %}
                   {% set rail_delete_locked = row.yt_video_id or row.publish_at or row.publish_at_iso or rail_publish_status in ['scheduled', 'uploaded', 'published'] or rail_db_publish_status in ['scheduled', 'uploaded', 'published'] %}
+                  {% set rail_has_rendered_media = row.status == "created" and row.video_url %}
+                  {% set rail_is_rendering = generate_v2 and row.render_job_status in ['queued', 'processing', 'running'] %}
                   <div class="clip-rail-row" data-plan-index="{{ row.plan_index }}">
-                  <button type="button" class="clip-rail-item{% if row.is_ai_suggestion %} is-ai-suggestion{% endif %}" title="{{ row.title or ('Manual clip #' ~ row.plan_index) }}" data-plan-index="{{ row.plan_index }}" data-origin="{{ row.origin }}" data-ai-suggestion="{{ '1' if row.is_ai_suggestion else '0' }}" data-score="{{ rail_score if rail_score is not none else '' }}" data-status="{{ row.status }}" data-render-job-status="{{ row.render_job_status or '' }}" data-filename="{{ row.video_filename or '' }}" data-media-version="{{ row.media_version or '' }}" data-outdated="{{ '1' if row.render_settings_outdated else '0' }}" data-regenerate-locked="{{ '1' if row.regenerate_locked else '0' }}" data-regenerate-lock-reason="{{ row.regenerate_lock_reason or '' }}" data-title="{{ (row.yt_title or row.title or video.title) | e }}" data-description="{{ (row.yt_description or '') | replace('\\', '\\\\') | replace('\n', '\\n') | replace('\r', '\\r') | e }}" data-yt-video-id="{{ row.yt_video_id or '' }}" data-publish-status="{{ row.publish_status or '' }}" data-db-publish-status="{{ row.db_publish_status or '' }}" data-publish-at="{{ row.publish_at or row.publish_at_iso or '' }}" data-start="{{ row.start or 0 }}" data-end="{{ row.end or 0 }}" data-edit-url="{{ editor_url('edit_clip_title_time', video_pk=video.id, plan_index=row.plan_index) }}">
+                  <button type="button" class="clip-rail-item{% if row.is_ai_suggestion %} is-ai-suggestion{% endif %}{% if generate_v2 and not rail_has_rendered_media %} is-unrendered{% endif %}" title="{{ row.title or ('Manual clip #' ~ row.plan_index) }}" data-plan-index="{{ row.plan_index }}" data-origin="{{ row.origin }}" data-ai-suggestion="{{ '1' if row.is_ai_suggestion else '0' }}" data-score="{{ rail_score if rail_score is not none else '' }}" data-status="{{ row.status }}" data-render-job-status="{{ row.render_job_status or '' }}" data-filename="{{ row.video_filename or '' }}" data-media-version="{{ row.media_version or '' }}" data-outdated="{{ '1' if row.render_settings_outdated else '0' }}" data-regenerate-locked="{{ '1' if row.regenerate_locked else '0' }}" data-regenerate-lock-reason="{{ row.regenerate_lock_reason or '' }}" data-title="{{ (row.yt_title or row.title or video.title) | e }}" data-description="{{ (row.yt_description or '') | replace('\\', '\\\\') | replace('\n', '\\n') | replace('\r', '\\r') | e }}" data-yt-video-id="{{ row.yt_video_id or '' }}" data-publish-status="{{ row.publish_status or '' }}" data-db-publish-status="{{ row.db_publish_status or '' }}" data-publish-at="{{ row.publish_at or row.publish_at_iso or '' }}" data-start="{{ row.start or 0 }}" data-end="{{ row.end or 0 }}" data-edit-url="{{ editor_url('edit_clip_title_time', video_pk=video.id, plan_index=row.plan_index) }}">
                     {% if generate_v2 %}
                     <span class="clip-rail-number">{{ loop.index }}</span>
                     {% endif %}
-                    <span class="clip-rail-thumb">
-                      {% if row.status == "created" and row.video_url %}
+                    <span class="clip-rail-thumb{% if generate_v2 and not rail_has_rendered_media %} is-placeholder{% endif %}{% if rail_is_rendering %} is-rendering{% endif %}">
+                      {% if rail_has_rendered_media %}
                         {% if generate_v2 and row.poster_url %}
                           <img src="{{ row.poster_url }}" alt="" loading="lazy">
                         {% elif generate_v2 %}
@@ -5999,8 +6052,12 @@
                           </video>
                         {% endif %}
                       {% else %}
-                        {% if generate_v2 and video.thumbnail_url %}
-                          <img src="{{ video.thumbnail_url }}" alt="" loading="lazy">
+                        {% if generate_v2 %}
+                          {% if rail_is_rendering %}
+                            <span class="spinner-border spinner-border-sm text-info" role="status" aria-label="Rendering"></span>
+                          {% else %}
+                            <span class="clip-rail-placeholder-icon" aria-hidden="true">✦</span>
+                          {% endif %}
                         {% elif row.is_ai_suggestion %}
                           <span class="clip-rail-ai-badge">✨ AI</span>
                           <span class="material-symbols-outlined" aria-hidden="true">movie</span>
@@ -6171,7 +6228,12 @@
                     <div class="clip-rail-edit-grid">
                       <div class="clip-rail-edit-field">
                         <label for="clip-edit-title-{{ row.plan_index }}">Title</label>
-                        <input id="clip-edit-title-{{ row.plan_index }}" name="title" type="text" value="{{ row.title or ('Manual clip #' ~ row.plan_index) }}" autocomplete="off"{% if row.regenerate_locked %} readonly{% endif %}>
+                        <div class="clip-rail-edit-title-wrap" title="Edit title">
+                          <input id="clip-edit-title-{{ row.plan_index }}" name="title" type="text" value="{{ row.title or ('Manual clip #' ~ row.plan_index) }}" autocomplete="off" title="Edit title" aria-label="Edit title"{% if row.regenerate_locked %} readonly{% endif %}>
+                          <label class="clip-rail-edit-title-pencil" for="clip-edit-title-{{ row.plan_index }}" title="Edit title" aria-label="Edit title">
+                            <span class="material-symbols-outlined" aria-hidden="true">edit</span>
+                          </label>
+                        </div>
                       </div>
                     </div>
                     <input type="hidden" name="start" value="{{ row.start or 0 }}" data-edit-start-input>
@@ -13277,10 +13339,10 @@ const updateScoreBatchControls = () => {
     wrapper.classList.toggle("d-none", count === 0);
   }
   if (bannerCopy) {
-    bannerCopy.textContent = `✦ ${count} more ${count === 1 ? "suggestion" : "suggestions"}`;
+    bannerCopy.textContent = `✦ ${count} more AI ${count === 1 ? "suggestion" : "suggestions"}`;
   }
   label.textContent = isV2
-    ? "Create"
+    ? `Create ${count} ${count === 1 ? "clip" : "clips"}`
     : `Create ${count} ${count === 1 ? "clip" : "clips"} (score ≥ ${threshold})`;
   button.disabled = !hasClips || scoreBatchState.running || count === 0;
   spinner?.classList.toggle("d-none", !scoreBatchState.running);
