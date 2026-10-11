@@ -2721,28 +2721,104 @@
   .generate-v2-clip-editor-mount .clip-rail-edit-form[data-readonly="1"] [data-edit-title-time-regenerate] {
     display: none;
   }
-  .generate-v2-schedule-lock-box {
+  .generate-v2-editor-meta-line {
     order: 2;
     display: flex;
     align-items: center;
-    justify-content: space-between;
-    gap: 12px;
-    padding: 10px 12px;
-    border: 1px solid rgba(96, 165, 250, 0.28);
-    border-radius: 12px;
-    background: rgba(59, 130, 246, 0.1);
-    color: rgba(226, 232, 240, 0.9);
-    font-size: 0.82rem;
-    line-height: 1.35;
-  }
-  .generate-v2-schedule-lock-copy {
+    gap: 7px;
     min-width: 0;
-  }
-  .generate-v2-schedule-lock-button {
-    flex: 0 0 auto;
-    border-color: rgba(148, 163, 184, 0.28);
-    color: rgba(248, 250, 252, 0.92);
+    color: rgba(226, 232, 240, 0.58);
+    font-size: 0.78rem;
+    font-weight: 650;
     white-space: nowrap;
+  }
+  .generate-v2-editor-time {
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
+  .generate-v2-platform-icon,
+  .generate-v2-platform-icon-button {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+  }
+  .generate-v2-platform-icon {
+    width: 18px;
+    height: 18px;
+    border-radius: 999px;
+    font-size: 14px;
+  }
+  .generate-v2-platform-icon.is-scheduled,
+  .generate-v2-platform-icon-button.is-scheduled {
+    border-color: rgba(251, 191, 36, 0.68);
+    color: #fbbf24;
+    background: transparent;
+  }
+  .generate-v2-platform-icon.is-published,
+  .generate-v2-platform-icon-button.is-published {
+    border-color: rgba(74, 222, 128, 0.62);
+    color: #86efac;
+    background: rgba(20, 83, 45, 0.28);
+  }
+  .generate-v2-platform-icon.is-failed,
+  .generate-v2-platform-icon-button.is-failed {
+    border-color: rgba(248, 113, 113, 0.62);
+    color: #fca5a5;
+    background: rgba(127, 29, 29, 0.24);
+  }
+  .generate-v2-platform-icon-button {
+    width: 24px;
+    height: 24px;
+    border: 1px solid rgba(148, 163, 184, 0.24);
+    border-radius: 999px;
+    padding: 0;
+    font-size: 14px;
+    cursor: pointer;
+  }
+  .generate-v2-platform-icon-button:hover,
+  .generate-v2-platform-icon-button:focus-visible,
+  .generate-v2-unschedule-all-link:hover,
+  .generate-v2-unschedule-all-link:focus-visible {
+    border-color: rgba(45, 212, 191, 0.72);
+    color: #ccfbf1;
+    outline: none;
+  }
+  .generate-v2-unschedule-all-link {
+    border: 0;
+    background: transparent;
+    color: rgba(204, 251, 241, 0.86);
+    font: inherit;
+    font-size: 0.76rem;
+    font-weight: 750;
+    padding: 0 2px;
+    cursor: pointer;
+  }
+  .generate-v2-platform-popover {
+    position: fixed;
+    z-index: 1085;
+    min-width: 210px;
+    max-width: min(280px, calc(100vw - 24px));
+    padding: 10px;
+    border: 1px solid rgba(148, 163, 184, 0.24);
+    border-radius: 12px;
+    background: #0b1220;
+    box-shadow: 0 18px 42px rgba(0, 0, 0, 0.36);
+    color: rgba(226, 232, 240, 0.92);
+    font-size: 0.8rem;
+  }
+  .generate-v2-platform-popover-title {
+    font-weight: 800;
+    margin-bottom: 4px;
+  }
+  .generate-v2-platform-popover-copy {
+    color: rgba(226, 232, 240, 0.64);
+    margin-bottom: 8px;
+  }
+  .generate-v2-platform-popover-actions {
+    display: flex;
+    justify-content: flex-end;
+    gap: 8px;
   }
   .generate-v2-clip-editor-mount .clip-rail-edit-title-pencil {
     position: absolute;
@@ -6112,52 +6188,11 @@
                         <span>{{ clip_start_label }} – {{ clip_end_label }} · {{ rail_duration_label }}</span>
                         {% if generate_v2 %}
                         <span class="clip-rail-platforms">
-                          {% if row.db_publish_display %}
-                            {% if row.db_publish_status == "published" %}
-                            {% set rail_yt_icon_class = "text-success" %}
-                            {% elif row.db_publish_status == "scheduled" %}
-                              {% set rail_yt_icon_class = "text-warning" %}
-                            {% else %}
-                              {% set rail_yt_icon_class = "text-danger" %}
-                            {% endif %}
-                            {% set rail_yt_tooltip_label = "Published date" if row.db_publish_status == "published" else "Schedule date" %}
-                            <span class="d-inline-flex align-items-center gap-1" data-bs-toggle="tooltip" title="{{ rail_yt_tooltip_label }}: {{ row.db_publish_display }}">
-                              <i class="bi bi-youtube {{ rail_yt_icon_class }} gs-schedule-icon" aria-hidden="true"></i>
-                            </span>
-                          {% endif %}
-                          {% if row.instagram_display %}
-                            {% set rail_ig_label_lower = (row.instagram_label or "")|lower %}
-                            {% if "published" in rail_ig_label_lower %}
-                              {% set rail_ig_icon_class = "text-success" %}
-                            {% elif "scheduled" in rail_ig_label_lower or "queued" in rail_ig_label_lower %}
-                              {% set rail_ig_icon_class = "text-warning" %}
-                            {% elif "failed" in rail_ig_label_lower %}
-                              {% set rail_ig_icon_class = "text-danger" %}
-                            {% else %}
-                              {% set rail_ig_icon_class = "text-warning" %}
-                            {% endif %}
-                            {% set rail_ig_tooltip_label = "Published date" if "published" in rail_ig_label_lower else "Schedule date" %}
-                            <span class="d-inline-flex align-items-center gap-1" data-bs-toggle="tooltip" title="{{ rail_ig_tooltip_label }}: {{ row.instagram_display }}">
-                              <i class="bi bi-instagram {{ rail_ig_icon_class }} gs-schedule-icon" aria-hidden="true"></i>
-                            </span>
-                          {% endif %}
-                          {% if row.facebook_label or row.facebook_display %}
-                            {% set rail_fb_tooltip = row.facebook_display or (row.facebook_mode == 'sync' and row.publish_display) or row.facebook_label %}
-                            {% set rail_fb_label_lower = (row.facebook_label or "")|lower %}
-                            {% if "published" in rail_fb_label_lower %}
-                              {% set rail_fb_icon_class = "text-success" %}
-                            {% elif "scheduled" in rail_fb_label_lower or "queued" in rail_fb_label_lower %}
-                              {% set rail_fb_icon_class = "text-warning" %}
-                            {% elif "failed" in rail_fb_label_lower %}
-                              {% set rail_fb_icon_class = "text-danger" %}
-                            {% else %}
-                              {% set rail_fb_icon_class = "text-primary" %}
-                            {% endif %}
-                            {% set rail_fb_tooltip_label = "Published date" if "published" in rail_fb_label_lower else "Schedule date" %}
-                            <span class="d-inline-flex align-items-center gap-1" data-bs-toggle="tooltip" title="{{ rail_fb_tooltip_label }}: {{ rail_fb_tooltip }}">
-                              <i class="bi bi-facebook {{ rail_fb_icon_class }} gs-schedule-icon" aria-hidden="true"></i>
-                            </span>
-                          {% endif %}
+                          {% for post in row.schedule_posts or [] %}
+                          <span class="d-inline-flex align-items-center gap-1" data-platform-icon="{{ post.platform }}" title="{{ post.tooltip }}">
+                            <i class="bi {{ post.icon }} gs-schedule-icon generate-v2-platform-icon is-{{ post.status }}" aria-hidden="true"></i>
+                          </span>
+                          {% endfor %}
                         </span>
                         {% endif %}
                       </span>
@@ -6262,24 +6297,6 @@
                   {% endif %}
                   {% if generate_v2 %}
                   <form class="clip-rail-edit-form" data-edit-title-time-form data-plan-index="{{ row.plan_index }}" data-edit-url="{{ editor_url('edit_clip_title_time', video_pk=video.id, plan_index=row.plan_index) }}" data-unschedule-url="{{ editor_url('unschedule_clip_posts', video_pk=video.id, plan_index=row.plan_index) }}" data-readonly="{{ '1' if row.edit_locked else '0' }}" data-initial-start="{{ row.start or 0 }}" data-initial-end="{{ row.end or 0 }}" data-initial-keep-ranges='{{ (row.edit_keep_ranges or [])|tojson }}'>
-                    {% if row.edit_has_pending_posts or row.edit_locked %}
-                    <div class="generate-v2-schedule-lock-box" data-edit-schedule-lock-box>
-                      <div class="generate-v2-schedule-lock-copy">
-                        {% if row.edit_locked_soon %}
-                          📅 Publishing soon — editing is locked.
-                        {% elif row.edit_locked %}
-                          📅 Already published.
-                        {% else %}
-                          📅 Scheduled · {{ (row.edit_lock_platforms or [])|join(', ') }}{% if row.edit_lock_display %} · {{ row.edit_lock_display }}{% endif %}. Saving &amp; regenerating will update the scheduled posts.
-                        {% endif %}
-                      </div>
-                      {% if row.edit_locked and row.edit_has_pending_posts %}
-                      <button type="button" class="btn btn-sm btn-outline-light generate-v2-schedule-lock-button" data-unschedule-clip-btn>
-                        Unschedule
-                      </button>
-                      {% endif %}
-                    </div>
-                    {% endif %}
                     <div class="clip-rail-edit-grid">
                       <div class="clip-rail-edit-field">
                         <label for="clip-edit-title-{{ row.plan_index }}">Title</label>
@@ -6291,12 +6308,30 @@
                         </div>
                       </div>
                     </div>
+                    <div class="generate-v2-editor-meta-line" data-edit-schedule-platforms>
+                      <span class="generate-v2-editor-time">{{ clip_start_label }} – {{ clip_end_label }} · {{ rail_duration_label }}</span>
+                      {% for post in row.schedule_posts or [] %}
+                      <button
+                        type="button"
+                        class="generate-v2-platform-icon-button is-{{ post.status }}"
+                        data-edit-platform-icon="{{ post.platform }}"
+                        data-platform-label="{{ post.label }}"
+                        data-platform-status="{{ post.status }}"
+                        data-platform-display="{{ post.display }}"
+                        data-platform-url="{{ post.permalink }}"
+                        data-platform-reason="{{ post.reason }}"
+                        title="{{ post.tooltip }}"
+                        aria-label="{{ post.tooltip }}">
+                        <i class="bi {{ post.icon }}" aria-hidden="true"></i>
+                      </button>
+                      {% endfor %}
+                      {% if row.scheduled_post_count and row.scheduled_post_count >= 2 %}
+                      <button type="button" class="generate-v2-unschedule-all-link" data-unschedule-all-platforms>Unschedule all</button>
+                      {% endif %}
+                    </div>
                     <input type="hidden" name="start" value="{{ row.start or 0 }}" data-edit-start-input>
                     <input type="hidden" name="end" value="{{ row.end or 0 }}" data-edit-end-input>
                     <input type="hidden" name="keep_ranges" value="" data-edit-keep-ranges-input>
-                    <div class="clip-text-trim-readonly{% if not row.edit_locked %} d-none{% endif %}">
-                      Publishing soon — editing is locked.
-                    </div>
                     <button type="button" class="clip-text-trim-more d-none" data-trim-show-more="before">Show more above</button>
                     <div class="clip-text-trim-editor" data-clip-text-trim-editor aria-label="Clip transcript editor"></div>
                     <button type="button" class="clip-text-trim-more d-none" data-trim-show-more="after">Show more below</button>
@@ -6341,6 +6376,7 @@
                   <button type="button" class="btn btn-sm btn-primary" id="generate-v2-design-dialog-update">Update clips</button>
                 </div>
               </div>
+              <div class="generate-v2-platform-popover d-none" id="generate-v2-platform-popover" role="dialog" aria-live="polite"></div>
               {% endif %}
             </div>
             <div id="clip-card-repository" class="clip-card-repository">
@@ -10540,6 +10576,16 @@ document.addEventListener("DOMContentLoaded", () => {
       window.setTimeout(clampGenerateV2ColorPopovers, 0);
     }
   });
+  document.addEventListener("click", (event) => {
+    const target = event.target;
+    if (!(target instanceof Element)) {
+      return;
+    }
+    if (target.closest("#generate-v2-platform-popover") || target.closest("[data-edit-platform-icon]")) {
+      return;
+    }
+    hideGenerateV2PlatformPopover();
+  });
   window.addEventListener("resize", () => {
     if (generateV2EditState.active) {
       syncGenerateV2InlinePreviewScale();
@@ -10630,47 +10676,139 @@ const unlockGenerateV2ClipEditorForm = (form) => {
   renderClipTextTrimEditor(form);
 };
 
-const bindGenerateV2UnscheduleButton = (form, planIndex = "") => {
-  const button = form?.querySelector("[data-unschedule-clip-btn]");
-  if (!button || button.dataset.unscheduleBound === "1") {
-    return;
+const hideGenerateV2PlatformPopover = () => {
+  document.getElementById("generate-v2-platform-popover")?.classList.add("d-none");
+};
+
+const removeGenerateV2ScheduleIcons = (planIndex = "", platform = "") => {
+  const selectorPlatform = String(platform || "").trim();
+  const platforms = selectorPlatform ? [selectorPlatform] : ["youtube", "instagram", "facebook"];
+  platforms.forEach((item) => {
+    document.querySelectorAll(`[data-platform-icon='${item}'], [data-edit-platform-icon='${item}']`).forEach((node) => {
+      const row = node.closest(".clip-rail-row");
+      const form = node.closest("[data-edit-title-time-form]");
+      const rowPlan = row?.dataset.planIndex || form?.dataset.planIndex || "";
+      if (!planIndex || String(rowPlan) === String(planIndex)) {
+        node.remove();
+      }
+    });
+  });
+  const form = document.querySelector(`[data-edit-title-time-form][data-plan-index='${String(planIndex).replace(/'/g, "\\'")}']`);
+  if (form && !form.querySelector("[data-edit-platform-icon][data-platform-status='scheduled']")) {
+    form.querySelector("[data-unschedule-all-platforms]")?.remove();
+    if (form.dataset.readonly === "1") {
+      unlockGenerateV2ClipEditorForm(form);
+    }
   }
-  button.dataset.unscheduleBound = "1";
-  button.addEventListener("click", async () => {
-    if (button.disabled || !window.confirm("Cancel scheduled posts for this clip? The unpublished YouTube upload will be deleted.")) {
-      return;
-    }
-    const url = String(form.dataset.unscheduleUrl || "").trim();
-    if (!url) {
-      setClipEditError(form, "Unschedule endpoint is not available.");
-      return;
-    }
-    const originalText = button.textContent;
+};
+
+const postGenerateV2Unschedule = async (form, planIndex = "", platform = "", button = null) => {
+  const url = String(form?.dataset.unscheduleUrl || "").trim();
+  if (!url) {
+    setClipEditError(form, "Unschedule endpoint is not available.");
+    return false;
+  }
+  const platformLabel = platform ? `${platform.charAt(0).toUpperCase()}${platform.slice(1)}` : "scheduled posts";
+  const confirmText = platform
+    ? `Cancel the ${platformLabel} scheduled post for this clip?${platform === "youtube" ? " The unpublished YouTube upload will be deleted." : ""}`
+    : "Cancel scheduled posts for this clip? The unpublished YouTube upload will be deleted.";
+  if (!window.confirm(confirmText)) {
+    return false;
+  }
+  const originalText = button?.textContent;
+  if (button) {
     button.disabled = true;
     button.textContent = "Unscheduling...";
-    setClipEditError(form, "");
-    try {
-      const response = await fetch(url, {
-        method: "POST",
-        credentials: "same-origin",
-        headers: {
-          "X-Requested-With": "XMLHttpRequest",
-        },
-      });
-      const payload = await response.json().catch(() => ({}));
-      if (!response.ok || payload.success === false) {
-        throw new Error(payload.message || "Could not unschedule this clip.");
-      }
-      unlockGenerateV2ClipEditorForm(form);
-      const refreshed = await refreshClipList(planIndex || form.dataset.planIndex || "", "list");
-      if (!refreshed) {
-        selectGenerateV2Clip(planIndex || form.dataset.planIndex || "");
-      }
-    } catch (error) {
-      setClipEditError(form, error?.message || "Could not unschedule this clip.");
+  }
+  setClipEditError(form, "");
+  try {
+    const body = new FormData();
+    if (platform) {
+      body.set("platform", platform);
+    }
+    const response = await fetch(url, {
+      method: "POST",
+      credentials: "same-origin",
+      headers: {
+        "X-Requested-With": "XMLHttpRequest",
+      },
+      body,
+    });
+    const payload = await response.json().catch(() => ({}));
+    if (!response.ok || payload.success === false) {
+      throw new Error(payload.message || "Could not unschedule this clip.");
+    }
+    hideGenerateV2PlatformPopover();
+    removeGenerateV2ScheduleIcons(planIndex || form.dataset.planIndex || "", platform);
+    const refreshed = await refreshClipList(planIndex || form.dataset.planIndex || "", "list");
+    if (!refreshed) {
+      selectGenerateV2Clip(planIndex || form.dataset.planIndex || "");
+    }
+    return true;
+  } catch (error) {
+    setClipEditError(form, error?.message || "Could not unschedule this clip.");
+    if (button) {
       button.disabled = false;
       button.textContent = originalText;
     }
+    return false;
+  }
+};
+
+const showGenerateV2PlatformPopover = (button, form, planIndex = "") => {
+  const popover = document.getElementById("generate-v2-platform-popover");
+  if (!popover || !button || !form) {
+    return;
+  }
+  const platform = String(button.dataset.editPlatformIcon || "").trim();
+  const label = String(button.dataset.platformLabel || platform || "Platform").trim();
+  const status = String(button.dataset.platformStatus || "").trim();
+  const display = String(button.dataset.platformDisplay || "").trim();
+  const openUrl = String(button.dataset.platformUrl || "").trim();
+  const reason = String(button.dataset.platformReason || "").trim();
+  const title = `${label}${display ? ` · ${display}` : ""}`;
+  let actions = "";
+  let copy = display || "";
+  if (status === "scheduled") {
+    actions = `<button type="button" class="btn btn-sm btn-outline-light" data-popover-unschedule="${escapeHtml(platform)}">Unschedule</button>`;
+  } else if (status === "published") {
+    copy = display ? `${display} · Published` : "Published";
+    if (openUrl) {
+      actions = `<a class="btn btn-sm btn-outline-light" href="${escapeHtml(openUrl)}" target="_blank" rel="noopener">Open on ${escapeHtml(label)}</a>`;
+    }
+  } else if (status === "failed") {
+    copy = reason ? `Failed: ${reason}` : "Failed";
+  }
+  popover.innerHTML = `
+    <div class="generate-v2-platform-popover-title">${escapeHtml(title)}</div>
+    <div class="generate-v2-platform-popover-copy">${escapeHtml(copy)}</div>
+    <div class="generate-v2-platform-popover-actions">${actions}</div>
+  `;
+  popover.classList.remove("d-none");
+  const rect = button.getBoundingClientRect();
+  const popoverRect = popover.getBoundingClientRect();
+  const left = Math.max(12, Math.min(window.innerWidth - popoverRect.width - 12, rect.left));
+  const top = Math.max(12, Math.min(window.innerHeight - popoverRect.height - 12, rect.bottom + 8));
+  popover.style.left = `${left}px`;
+  popover.style.top = `${top}px`;
+  popover.querySelector("[data-popover-unschedule]")?.addEventListener("click", () => {
+    postGenerateV2Unschedule(form, planIndex, platform, popover.querySelector("[data-popover-unschedule]"));
+  });
+};
+
+const bindGenerateV2UnscheduleButton = (form, planIndex = "") => {
+  if (!form || form.dataset.unscheduleBound === "1") {
+    return;
+  }
+  form.dataset.unscheduleBound = "1";
+  form.querySelectorAll("[data-edit-platform-icon]").forEach((button) => {
+    button.addEventListener("click", (event) => {
+      event.stopPropagation();
+      showGenerateV2PlatformPopover(button, form, planIndex || form.dataset.planIndex || "");
+    });
+  });
+  form.querySelector("[data-unschedule-all-platforms]")?.addEventListener("click", () => {
+    postGenerateV2Unschedule(form, planIndex || form.dataset.planIndex || "", "", form.querySelector("[data-unschedule-all-platforms]"));
   });
 };
 
@@ -10698,17 +10836,7 @@ const mountGenerateV2ClipEditor = (planIndex = "") => {
   form.dataset.contextBefore = form.dataset.contextBefore || "3";
   form.dataset.contextAfter = form.dataset.contextAfter || "3";
 
-  let header = form.querySelector("[data-generate-v2-clip-editor-header]");
-  if (!header) {
-    header = document.createElement("div");
-    header.className = "generate-v2-clip-editor-header";
-    header.setAttribute("data-generate-v2-clip-editor-header", "1");
-    form.prepend(header);
-  }
-  const meta = railItem.querySelector(".clip-rail-meta")?.textContent?.replace(/\s+/g, " ").trim() || "";
-  header.innerHTML = `
-    <div class="generate-v2-clip-editor-meta">${escapeHtml(meta)}</div>
-  `;
+  form.querySelector("[data-generate-v2-clip-editor-header]")?.remove();
   const editGrid = form.querySelector(".clip-rail-edit-grid");
   editGrid?.querySelector(".generate-v2-clip-editor-status")?.remove();
   editGrid?.insertAdjacentHTML("beforeend", `<span class="generate-v2-clip-editor-status">${escapeHtml(getGenerateV2ClipStatusLabel(railItem))}</span>`);

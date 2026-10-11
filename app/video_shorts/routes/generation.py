@@ -11070,6 +11070,100 @@ def generate_short(video_pk):
             else:
                 fb_label = "Facebook queued"
 
+        def _clip_platform_status(raw_status: Optional[str]) -> str:
+            status_value = str(raw_status or "").strip().lower()
+            if status_value in PUBLISHED_PUBLISH_STATUSES:
+                return "published"
+            if status_value in PENDING_PUBLISH_STATUSES or status_value == "uploaded":
+                return "scheduled"
+            if status_value in {"failed", "error"}:
+                return "failed"
+            return "scheduled" if status_value else ""
+
+        def _short_status_reason(value: Any) -> str:
+            text = str(value or "").strip().replace("\n", " ")
+            return text[:120]
+
+        schedule_posts: List[Dict[str, str]] = []
+
+        def _append_schedule_post(
+            *,
+            platform: str,
+            label: str,
+            icon: str,
+            status_value: Optional[str],
+            display: Optional[str],
+            permalink: Optional[str] = None,
+            reason: Optional[str] = None,
+        ) -> None:
+            normalized_status = _clip_platform_status(status_value)
+            if not normalized_status:
+                return
+            display_text = str(display or "").strip()
+            reason_text = _short_status_reason(reason)
+            tooltip_parts = [label]
+            if display_text:
+                tooltip_parts.append(display_text)
+            if normalized_status == "published":
+                tooltip_parts.append("Published")
+            elif normalized_status == "failed" and reason_text:
+                tooltip_parts.append(f"Failed: {reason_text}")
+            schedule_posts.append({
+                "platform": platform,
+                "label": label,
+                "icon": icon,
+                "status": normalized_status,
+                "display": display_text,
+                "permalink": str(permalink or "").strip(),
+                "reason": reason_text,
+                "tooltip": " · ".join(tooltip_parts),
+            })
+
+        yt_schedule_status = ""
+        for candidate_status in (
+            str(entry.get("publish_status") or "").strip().lower(),
+            str(db_publish_status or "").strip().lower(),
+        ):
+            if candidate_status in PENDING_PUBLISH_STATUSES.union(PUBLISHED_PUBLISH_STATUSES).union({"uploaded", "failed", "error"}):
+                yt_schedule_status = candidate_status
+                break
+        yt_schedule_display = db_publish_display or publish_display
+        if yt_schedule_status:
+            _append_schedule_post(
+                platform="youtube",
+                label="YouTube",
+                icon="bi-youtube",
+                status_value=yt_schedule_status,
+                display=yt_schedule_display,
+                permalink=f"https://www.youtube.com/watch?v={yt_id}" if yt_id else "",
+                reason=entry.get("publish_error") or generated_record.get("publish_error"),
+            )
+        if ig_entries:
+            latest_ig = ig_entries[-1] if ig_entries else {}
+            published_ig = next((item for item in reversed(ig_entries) if str(item.get("status") or "").lower() == "published"), None)
+            _append_schedule_post(
+                platform="instagram",
+                label="Instagram",
+                icon="bi-instagram",
+                status_value=ig_status,
+                display=ig_display,
+                permalink=(published_ig or latest_ig).get("permalink"),
+                reason=(published_ig or latest_ig).get("status_detail"),
+            )
+        if fb_entries:
+            latest_fb = fb_entries[-1] if fb_entries else {}
+            published_fb = next((item for item in reversed(fb_entries) if str(item.get("status") or "").lower() == "published"), None)
+            _append_schedule_post(
+                platform="facebook",
+                label="Facebook",
+                icon="bi-facebook",
+                status_value=fb_status,
+                display=fb_display,
+                permalink=(published_fb or latest_fb).get("permalink"),
+                reason=(published_fb or latest_fb).get("status_detail"),
+            )
+        scheduled_post_count = sum(1 for item in schedule_posts if item.get("status") == "scheduled")
+
         yt_published = str(entry.get("publish_status") or "").lower() == "published"
         ig_published = ig_status == "published"
         tt_published = tt_status == "published"
@@ -11179,6 +11273,8 @@ def generate_short(video_pk):
             "edit_has_pending_posts": any_platform_pending,
             "edit_lock_platforms": [item["platform"] for item in pending_publish_items],
             "edit_lock_display": next((item["display"] for item in pending_publish_items if item.get("display")), ""),
+            "schedule_posts": schedule_posts,
+            "scheduled_post_count": scheduled_post_count,
             "publish_status": entry.get("publish_status") or ("ready" if yt_description else "not_ready"),
             "publish_at": entry.get("publish_at"),
             "publish_at_iso": entry.get("publish_at_iso"),
@@ -23827,6 +23923,15 @@ def unschedule_clip_posts(video_pk: int, plan_index: int):
     current_user = getattr(g, "vs_current_user", None)
     if not current_user:
         return jsonify(success=False, message="Authentication required."), 401
+    requested_platform = (
+        request.form.get("platform")
+        or ((request.get_json(silent=True) or {}).get("platform") if request.is_json else "")
+        or ""
+    )
+    requested_platform = str(requested_platform).strip().lower()
+    if requested_platform and requested_platform not in {"youtube", "instagram", "facebook"}:
+        return jsonify(success=False, message="Unsupported platform."), 400
+    cancel_all_platforms = not requested_platform
     editor_context = _active_editor_context()
     brand_id = editor_context["brand_id"]
     conn_ro = get_db_readonly()
@@ -23863,16 +23968,21 @@ def unschedule_clip_posts(video_pk: int, plan_index: int):
         )
     entry_publish_status = str(target_entry.get("publish_status") or "").strip().lower()
     generated_publish_status = str((generated_guard_row or {}).get("publish_status") or "").strip().lower()
-    youtube_pending = entry_publish_status in PENDING_PUBLISH_STATUSES or generated_publish_status in PENDING_PUBLISH_STATUSES
+    youtube_pending = (
+        entry_publish_status in PENDING_PUBLISH_STATUSES
+        or generated_publish_status in PENDING_PUBLISH_STATUSES
+        or entry_publish_status == "uploaded"
+        or generated_publish_status == "uploaded"
+    )
     youtube_published = entry_publish_status in PUBLISHED_PUBLISH_STATUSES or generated_publish_status in PUBLISHED_PUBLISH_STATUSES
     youtube_id = str(target_entry.get("yt_video_id") or (generated_guard_row or {}).get("youtube_video_id") or "").strip()
-    if youtube_published:
+    if (cancel_all_platforms or requested_platform == "youtube") and youtube_published:
         return jsonify(success=False, message="Already published."), 409
 
     canceled_counts = {"youtube": 0, "instagram": 0, "tiktok": 0, "facebook": 0}
     youtube_deleted = False
     youtube_delete_result: Dict[str, Any] = {}
-    if youtube_pending:
+    if (cancel_all_platforms or requested_platform == "youtube") and youtube_pending:
         if youtube_id:
             youtube_delete_result = delete_youtube_video_if_safe(
                 video_id=youtube_id,
@@ -23925,25 +24035,28 @@ def unschedule_clip_posts(video_pk: int, plan_index: int):
         ensure_instagram_queue_schema(conn)
         ensure_tiktok_queue_schema(conn)
         ensure_facebook_queue_schema(conn)
-        canceled_counts["instagram"] = _cancel_pending_social_queue_rows(
-            conn,
-            table_name="shorts_instagram_queue",
-            video_id=source_video_id,
-            plan_index=plan_index,
-        )
-        canceled_counts["tiktok"] = _cancel_pending_social_queue_rows(
-            conn,
-            table_name="shorts_tiktok_queue",
-            video_id=source_video_id,
-            plan_index=plan_index,
-        )
-        canceled_counts["facebook"] = _cancel_pending_social_queue_rows(
-            conn,
-            table_name="shorts_facebook_queue",
-            video_id=source_video_id,
-            plan_index=plan_index,
-        )
-        if clip_filename:
+        if cancel_all_platforms or requested_platform == "instagram":
+            canceled_counts["instagram"] = _cancel_pending_social_queue_rows(
+                conn,
+                table_name="shorts_instagram_queue",
+                video_id=source_video_id,
+                plan_index=plan_index,
+            )
+        if cancel_all_platforms:
+            canceled_counts["tiktok"] = _cancel_pending_social_queue_rows(
+                conn,
+                table_name="shorts_tiktok_queue",
+                video_id=source_video_id,
+                plan_index=plan_index,
+            )
+        if cancel_all_platforms or requested_platform == "facebook":
+            canceled_counts["facebook"] = _cancel_pending_social_queue_rows(
+                conn,
+                table_name="shorts_facebook_queue",
+                video_id=source_video_id,
+                plan_index=plan_index,
+            )
+        if clip_filename and (cancel_all_platforms or requested_platform == "youtube"):
             generated_columns = table_columns(conn, "shorts_generated_videos")
             if generated_columns:
                 assignments = []
@@ -23973,7 +24086,13 @@ def unschedule_clip_posts(video_pk: int, plan_index: int):
     finally:
         conn.close()
 
-    return jsonify(success=True, canceled=canceled_counts, youtube_deleted=youtube_deleted, youtube_delete_result=youtube_delete_result)
+    return jsonify(
+        success=True,
+        platform=requested_platform or "all",
+        canceled=canceled_counts,
+        youtube_deleted=youtube_deleted,
+        youtube_delete_result=youtube_delete_result,
+    )
 
 
 @video_shorts_bp.route("/youtube/upload_clip", methods=["POST"])
