@@ -274,6 +274,7 @@ from app.video_shorts.services.storage import (
     is_storage_reference,
     public_url_for_stored_media,
     resolve_stored_media,
+    storage_reference_key,
 )
 from app.video_shorts.services.transcript_service import (
     _build_ass_karaoke_for_clip,
@@ -350,12 +351,14 @@ from app.video_shorts.services.render_jobs import (
     JOB_TYPE_AUTO_SUGGEST_RENDER,
     JOB_TYPE_ENRICH_AUTOPILOT_DISCOVERY_EMAILS,
     JOB_TYPE_INGEST_YOUTUBE,
+    JOB_TYPE_PREVIEW_FRAME,
     JOB_TYPE_RENDER_SHORT,
     JOB_TYPE_TRANSCRIBE_UPLOAD,
     build_input_hash,
     cancel_job,
     clear_done_job_cache_for_plan,
     enqueue_admin_proxy_transcript_job,
+    enqueue_preview_frame_job,
     enqueue_worker_job,
     enqueue_job,
     enqueue_render_job,
@@ -2767,6 +2770,17 @@ def _preview_frame_metadata_path(video_id: str) -> Path:
     return preview_dir / f"{video_id}_{_PREVIEW_FRAME_CACHE_VERSION}.json"
 
 
+def _preview_frame_static_url(video_id: str) -> str:
+    try:
+        preview_path = _preview_frame_cache_path(str(video_id or "").strip())
+        if not preview_path.exists():
+            return ""
+        rel_preview = preview_path.resolve().relative_to(SHORTS_DIR.parent.resolve())
+        return url_for("video_shorts_bp.static", filename=str(rel_preview))
+    except Exception:
+        return ""
+
+
 def _preview_face_track_time_key(start_seconds: Optional[float], end_seconds: Optional[float]) -> str:
     def _part(value: Optional[float]) -> str:
         try:
@@ -5076,6 +5090,171 @@ def auto_suggest_render_status(video_pk: int):
         active_render_count=active_render_count,
         should_refresh=bool(active or state.get("no_strong") or clip_count or active_render_count),
     )
+
+
+def _preview_source_key_for_video(video_id: str, video_url: str) -> str:
+    clean_video_id = str(video_id or "").strip()
+    clean_url = str(video_url or "").strip()
+    if not clean_video_id:
+        return ""
+    if is_storage_reference(clean_url):
+        key = storage_reference_key(clean_url)
+        expected_prefix = f"videos/{clean_video_id}."
+        if key.startswith(expected_prefix) and "/" not in key[len("videos/") :]:
+            return key
+        return ""
+    storage = get_media_storage()
+    for suffix in (".mp4", ".mov", ".mkv", ".webm"):
+        key = f"videos/{clean_video_id}{suffix}"
+        try:
+            if storage.exists(key):
+                return key
+        except Exception:
+            current_app.logger.warning(
+                "preview_frame_source_key_check_failed video_id=%s key=%s",
+                clean_video_id,
+                key,
+                exc_info=True,
+            )
+    return ""
+
+
+@video_shorts_bp.route("/generate/<int:video_pk>/preview-frame/start", methods=["POST"])
+def generate_preview_frame_start(video_pk: int):
+    current_user = getattr(g, "vs_current_user", None)
+    if not current_user:
+        return jsonify(success=False, message="Authentication required."), 401
+    conn = get_db()
+    try:
+        row = _fetch_scoped_video_row(
+            conn,
+            video_pk,
+            "id, video_id, video_url, duration_seconds, download_status, owner_user_id, brand_id",
+        )
+        if not row:
+            return jsonify(success=False, message="Video not found."), 404
+        _id, video_id, video_url, duration_seconds, download_status, owner_user_id, brand_id = row
+        ready_url = _preview_frame_static_url(str(video_id or ""))
+        if ready_url:
+            conn.commit()
+            return jsonify(success=True, ready=True, preview_url=ready_url)
+
+        source_key = _preview_source_key_for_video(str(video_id or ""), str(video_url or ""))
+        if not source_key:
+            source_path = _find_source_video(str(video_id or ""))
+            if source_path and source_path.exists():
+                try:
+                    preview_path = _ensure_preview_frame(str(video_id or ""), source_path, duration_seconds)
+                    if preview_path:
+                        conn.commit()
+                        return jsonify(success=True, ready=True, preview_url=_preview_frame_static_url(str(video_id or "")))
+                except Exception:
+                    current_app.logger.warning(
+                        "preview_frame_inline_generation_failed video_pk=%s video_id=%s",
+                        video_pk,
+                        video_id,
+                        exc_info=True,
+                    )
+            current_status = str(download_status or "").strip().lower()
+            source_is_downloadable = str(video_url or "").strip().startswith(("http://", "https://"))
+            if source_is_downloadable and current_status not in {"pending", "downloading"}:
+                conn.execute(
+                    """
+                    UPDATE youtube_videos
+                    SET download_status = 'pending',
+                        last_checked_at = CURRENT_TIMESTAMP
+                    WHERE id = ? AND owner_user_id = ? AND brand_id = ?
+                    """,
+                    [int(video_pk), str(owner_user_id or ""), str(brand_id or "")],
+                )
+            conn.commit()
+            return jsonify(
+                success=True,
+                ready=False,
+                status="preparing_source" if source_is_downloadable else "source_unavailable",
+                message=(
+                    "Preparing source video…"
+                    if source_is_downloadable
+                    else "Source video unavailable. Layout preview can't be shown."
+                ),
+            )
+
+        result = enqueue_preview_frame_job(
+            owner_user_id=str(owner_user_id or ""),
+            brand_id=str(brand_id or ""),
+            video_pk=int(video_pk),
+            source_key=source_key,
+            duration_seconds=duration_seconds,
+        )
+        conn.commit()
+    except Exception as exc:
+        try:
+            conn.rollback()
+        except Exception:
+            pass
+        current_app.logger.warning("preview_frame_start_failed video_pk=%s error=%s", video_pk, exc, exc_info=True)
+        return jsonify(success=False, message="Preview frame could not be prepared."), 500
+    finally:
+        conn.close()
+
+    kind = str(result.get("kind") or "")
+    job = result.get("job") or {}
+    if kind in {"invalid_scope", "not_found", "source_mismatch"}:
+        return jsonify(
+            success=False,
+            ready=False,
+            status="source_unavailable",
+            message="Source video unavailable. Layout preview can't be shown.",
+        ), 409
+    return jsonify(
+        success=True,
+        ready=False,
+        status=job.get("status") or kind or "queued",
+        job_id=job.get("id") or "",
+    )
+
+
+@video_shorts_bp.route("/generate/<int:video_pk>/preview-frame/status", methods=["GET"])
+def generate_preview_frame_status(video_pk: int):
+    current_user = getattr(g, "vs_current_user", None)
+    if not current_user:
+        return jsonify(success=False, message="Authentication required."), 401
+    conn = get_db_readonly()
+    try:
+        row = _fetch_scoped_video_row(
+            conn,
+            video_pk,
+            "id, video_id, video_url, download_status, owner_user_id, brand_id",
+        )
+        if not row:
+            return jsonify(success=False, message="Video not found."), 404
+        _id, video_id, video_url, download_status, owner_user_id, _brand_id = row
+        ready_url = _preview_frame_static_url(str(video_id or ""))
+        if ready_url:
+            return jsonify(success=True, ready=True, preview_url=ready_url)
+        job_id = str(request.args.get("job_id") or "").strip()
+        job = get_job(job_id, user_id=str(owner_user_id or "")) if job_id else None
+        if job_id and (
+            not job
+            or str(job.get("type") or "") != JOB_TYPE_PREVIEW_FRAME
+            or str(((job.get("payload") or {}).get("video_pk")) or "") != str(video_pk)
+        ):
+            return jsonify(success=False, message="Preview job not found."), 404
+        status = str((job or {}).get("status") or "").strip().lower()
+        error = str((job or {}).get("error") or "").strip()
+        download_state = str(download_status or "").strip().lower()
+        if status in {"failed", "error", "cancelled", "canceled"}:
+            return jsonify(
+                success=True,
+                ready=False,
+                status=status,
+                message=error or "Source video unavailable. Layout preview can't be shown.",
+            )
+        if download_state in {"pending", "downloading"}:
+            return jsonify(success=True, ready=False, status="preparing_source", message="Preparing source video…")
+        return jsonify(success=True, ready=False, status=status or "queued", job_id=job_id)
+    finally:
+        conn.close()
 
 
 def _utc_now_iso() -> str:
@@ -10171,11 +10350,7 @@ def generate_short(video_pk):
                 }
             )
     if preview_path.exists():
-        try:
-            rel_preview = preview_path.resolve().relative_to(SHORTS_DIR.parent.resolve())
-            preview_url = url_for("video_shorts_bp.static", filename=str(rel_preview))
-        except Exception:
-            preview_url = None
+        preview_url = _preview_frame_static_url(str(video["video_id"])) or None
     title_font_options = [
         {"key": key, "label": cfg["label"], "css_family": cfg["css_family"]}
         for key, cfg in TITLE_FONTS.items()

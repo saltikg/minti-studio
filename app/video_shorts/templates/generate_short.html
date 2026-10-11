@@ -2478,7 +2478,7 @@
   @media (min-width: 1200px) {
     #clip-workbench-shell[data-generate-v2="1"] .generate-v2-workbench {
       display: grid;
-      grid-template-columns: minmax(340px, 360px) minmax(0, 1fr) minmax(320px, 360px);
+      grid-template-columns: minmax(340px, 360px) minmax(0, 1fr) clamp(320px, 28vw, 560px);
       grid-template-rows: auto minmax(0, 1fr);
       height: var(--generate-v2-workbench-height);
       min-height: 0;
@@ -2507,7 +2507,36 @@
       grid-row: 2;
     }
     #clip-workbench-shell[data-generate-v2="1"] .generate-v2-panel[data-generate-v2-panel="transcript"].is-active {
-      display: block;
+      display: flex;
+      min-height: 0;
+      overflow: hidden;
+    }
+    #clip-workbench-shell[data-generate-v2="1"] [data-generate-v2-transcript-card] {
+      display: flex;
+      flex-direction: column;
+      min-height: 0;
+      max-height: var(--generate-v2-transcript-card-max-height, 100%);
+      overflow: hidden;
+    }
+    #clip-workbench-shell[data-generate-v2="1"] [data-generate-v2-transcript-card] .trs-shell {
+      min-height: 0;
+      flex: 1 1 auto;
+      display: flex;
+      flex-direction: column;
+      overflow: hidden;
+    }
+    #clip-workbench-shell[data-generate-v2="1"] [data-generate-v2-source-player-card] {
+      width: 100%;
+      min-height: 0;
+      max-height: var(--generate-v2-transcript-card-max-height, 100%);
+      overflow: hidden;
+    }
+    #clip-workbench-shell[data-generate-v2="1"] [data-generate-v2-source-player-card] .trs-player-shell {
+      padding: 0;
+    }
+    #clip-workbench-shell[data-generate-v2="1"] [data-generate-v2-source-player-card] .trs-player-frame {
+      width: 100%;
+      aspect-ratio: 16 / 9;
     }
     #clip-workbench-shell[data-generate-v2="1"] .generate-v2-right-panel.is-active {
       grid-column: 3;
@@ -5389,18 +5418,25 @@
   .shorts-preview-subtitle-band.is-word-highlight {
     gap: 6px;
     flex-wrap: wrap;
+    align-content: center;
+    align-items: center;
+    line-height: 1.18;
   }
   .short-font-preview.is-word-highlight {
     display: flex;
     justify-content: center;
     gap: 6px;
     flex-wrap: wrap;
+    align-content: center;
+    line-height: 1.18;
   }
   .word-highlight-preview-word {
-    display: inline-block;
+    display: inline-flex;
+    align-items: center;
     color: #ffffff;
     font-family: var(--word-highlight-font-family, inherit);
     font-weight: var(--word-highlight-font-weight, 700);
+    line-height: 1.18;
     text-shadow: var(
       --word-highlight-text-shadow,
       -2px -2px 0 rgba(0, 0, 0, 0.98),
@@ -7324,7 +7360,7 @@
     </div>
   </div>
 </div>
-<div class="modal fade" id="crop-area-modal" tabindex="-1" aria-labelledby="cropAreaModalLabel" aria-hidden="true">
+<div class="modal fade" id="crop-area-modal" tabindex="-1" aria-labelledby="cropAreaModalLabel" aria-hidden="true" data-preview-frame-start-url="{{ editor_url('generate_preview_frame_start', video_pk=video.id) }}" data-preview-frame-status-url="{{ editor_url('generate_preview_frame_status', video_pk=video.id) }}">
   <div class="modal-dialog modal-dialog-centered modal-xl">
     <div class="modal-content">
       <div class="modal-header border-0">
@@ -11053,6 +11089,14 @@ const syncGenerateV2WorkbenchHeight = () => {
   const bottomGap = 14;
   const height = Math.max(520, Math.floor(window.innerHeight - top - bottomGap));
   root.style.setProperty("--generate-v2-workbench-height", `${height}px`);
+  const transcriptCard = root.querySelector("[data-generate-v2-transcript-card]");
+  const sourcePlayerCard = root.querySelector("[data-generate-v2-source-player-card]");
+  const scrollTargets = [transcriptCard, sourcePlayerCard].filter(Boolean);
+  scrollTargets.forEach((target) => {
+    const targetTop = target.getBoundingClientRect().top;
+    const targetHeight = Math.max(360, Math.floor(window.innerHeight - targetTop - bottomGap));
+    root.style.setProperty("--generate-v2-transcript-card-max-height", `${targetHeight}px`);
+  });
 };
 
 const initGenerateV2LazyThumbnails = (scope = document) => {
@@ -15823,6 +15867,9 @@ document.addEventListener("DOMContentLoaded", () => {
   const previewConfig = JSON.parse('{{ PREVIEW_CONFIG | tojson | safe }}');
   const statusText = document.getElementById("crop-status-text");
   let cropStatusTimer = null;
+  let previewFramePollTimer = null;
+  let previewFrameTimeoutTimer = null;
+  let previewFrameJobId = "";
   const chooseBtn = document.getElementById("choose-crop-btn");
   const saveStatusEl = modalEl.querySelector("#crop-save-status");
   const staticSelector = modalEl.querySelector(".static-visual-selector");
@@ -15898,9 +15945,46 @@ document.addEventListener("DOMContentLoaded", () => {
   const clampRatio = (value) => Math.max(0, Math.min(1, Number(value) || 0));
   const showLoader = () => previewLoader?.classList.remove("d-none");
   const hideLoader = () => previewLoader?.classList.add("d-none");
+  const setLoaderText = (text) => {
+    const label = previewLoader?.querySelector("span");
+    if (label) {
+      label.textContent = text || "Loading frame…";
+    }
+  };
   const updateInfo = (text) => {
     if (infoEl) {
       infoEl.textContent = text;
+    }
+  };
+  const clearPreviewFrameTimers = () => {
+    if (previewFramePollTimer) {
+      window.clearTimeout(previewFramePollTimer);
+      previewFramePollTimer = null;
+    }
+    if (previewFrameTimeoutTimer) {
+      window.clearTimeout(previewFrameTimeoutTimer);
+      previewFrameTimeoutTimer = null;
+    }
+  };
+  const setPreviewFrameRetryState = (message) => {
+    hideLoader();
+    clearPreviewFrameTimers();
+    if (!infoEl) {
+      return;
+    }
+    infoEl.textContent = "";
+    const messageEl = document.createElement("span");
+    messageEl.textContent = message || "Source video unavailable. Layout preview can't be shown.";
+    infoEl.appendChild(messageEl);
+    if (previewFrameStartUrl) {
+      const retryBtn = document.createElement("button");
+      retryBtn.type = "button";
+      retryBtn.className = "btn btn-link btn-sm p-0 ms-2 align-baseline";
+      retryBtn.textContent = "Retry";
+      retryBtn.addEventListener("click", () => {
+        requestPreviewFrame();
+      });
+      infoEl.appendChild(retryBtn);
     }
   };
   const setSaveStatus = (message, variant) => {
@@ -15927,6 +16011,8 @@ document.addEventListener("DOMContentLoaded", () => {
   const previewToolbarSubtitle = modalEl.querySelector("#crop-preview-toolbar-subtitle");
   const settingsSaveUrl = settingsContainer?.dataset.saveUrl;
   const settingsDefaultSaveUrl = settingsContainer?.dataset.defaultSaveUrl || "";
+  const previewFrameStartUrl = modalEl.dataset.previewFrameStartUrl || "";
+  const previewFrameStatusUrl = modalEl.dataset.previewFrameStatusUrl || "";
   const getEditorRoots = () => {
     const roots = [
       document.getElementById("generate-v2-editor"),
@@ -16848,7 +16934,9 @@ document.addEventListener("DOMContentLoaded", () => {
       updateInfo("Preview not available.");
       return;
     }
+    clearPreviewFrameTimers();
     prepareForSourceLoad();
+    setLoaderText("Loading frame…");
     showLoader();
     const boxesToLoad = getActiveCropperBoxes();
     const resolvedUrl = cacheBustUrl(url);
@@ -16857,14 +16945,24 @@ document.addEventListener("DOMContentLoaded", () => {
         reject(new Error("Preview image target not found."));
         return;
       }
-      img.onload = () => {
+      let timeoutId = null;
+      const cleanup = () => {
+        if (timeoutId) {
+          window.clearTimeout(timeoutId);
+        }
         img.onload = null;
         img.onerror = null;
+      };
+      timeoutId = window.setTimeout(() => {
+        cleanup();
+        reject(new Error("Preview frame timed out."));
+      }, 20000);
+      img.onload = () => {
+        cleanup();
         resolve(img);
       };
       img.onerror = () => {
-        img.onload = null;
-        img.onerror = null;
+        cleanup();
         reject(new Error("Preview image could not be loaded."));
       };
       img.src = resolvedUrl;
@@ -16882,17 +16980,86 @@ document.addEventListener("DOMContentLoaded", () => {
       naturalSize.height = previewImgTop.naturalHeight || 0;
       maybePrimeSplitDefaults();
       hideLoader();
-      initCroppers();
+        initCroppers();
     })
       .catch((error) => {
-        hideLoader();
-        updateInfo(error.message || "Preview image could not be loaded.");
+        setPreviewFrameRetryState(error.message || "Preview image could not be loaded.");
         if (saveBtn) {
           saveBtn.disabled = true;
         }
       });
     if (!boxesToLoad.includes("bottom")) {
       previewImgBottom?.removeAttribute("src");
+    }
+  };
+
+  const pollPreviewFrameStatus = async () => {
+    if (!previewFrameStatusUrl) {
+      setPreviewFrameRetryState("Source video unavailable. Layout preview can't be shown.");
+      return;
+    }
+    const params = new URLSearchParams();
+    if (previewFrameJobId) {
+      params.set("job_id", previewFrameJobId);
+    }
+    try {
+      const response = await fetch(`${previewFrameStatusUrl}?${params.toString()}`, {
+        credentials: "same-origin",
+      });
+      const result = await response.json().catch(() => ({}));
+      if (!response.ok || result.success === false) {
+        throw new Error(result.message || "Layout preview status could not be checked.");
+      }
+      if (result.ready && result.preview_url) {
+        modalEl.dataset.videoPreviewUrl = result.preview_url;
+        loadPreviewImage(result.preview_url);
+        return;
+      }
+      const status = String(result.status || "").toLowerCase();
+      if (status === "failed" || status === "error" || status === "source_unavailable") {
+        setPreviewFrameRetryState(result.message || "Source video unavailable. Layout preview can't be shown.");
+        return;
+      }
+      setLoaderText(status === "preparing_source" ? "Preparing source video…" : "Preparing preview frame…");
+      previewFramePollTimer = window.setTimeout(pollPreviewFrameStatus, 3000);
+    } catch (error) {
+      setPreviewFrameRetryState(error.message || "Layout preview status could not be checked.");
+    }
+  };
+
+  const requestPreviewFrame = async () => {
+    if (!previewFrameStartUrl) {
+      setPreviewFrameRetryState("Source video unavailable. Layout preview can't be shown.");
+      return;
+    }
+    prepareForSourceLoad();
+    clearPreviewFrameTimers();
+    setLoaderText("Preparing source video…");
+    showLoader();
+    updateInfo("Preparing source video…");
+    previewFrameTimeoutTimer = window.setTimeout(() => {
+      setPreviewFrameRetryState("Preview frame is still preparing.");
+    }, 20000);
+    try {
+      const response = await fetch(previewFrameStartUrl, {
+        method: "POST",
+        credentials: "same-origin",
+        headers: { "X-Requested-With": "XMLHttpRequest" },
+      });
+      const result = await response.json().catch(() => ({}));
+      if (!response.ok || result.success === false) {
+        throw new Error(result.message || "Layout preview could not be prepared.");
+      }
+      if (result.ready && result.preview_url) {
+        modalEl.dataset.videoPreviewUrl = result.preview_url;
+        loadPreviewImage(result.preview_url);
+        return;
+      }
+      previewFrameJobId = result.job_id || "";
+      setLoaderText(String(result.status || "") === "preparing_source" ? "Preparing source video…" : "Preparing preview frame…");
+      previewFramePollTimer = window.setTimeout(pollPreviewFrameStatus, 2500);
+    } catch (error) {
+      setPreviewFrameRetryState(error.message || "Layout preview could not be prepared.");
     }
   };
 
@@ -16919,6 +17086,10 @@ document.addEventListener("DOMContentLoaded", () => {
         } catch (error) {
           updateInfo(error.message || "Created video preview could not be loaded.");
         }
+      }
+      if (activeVisualMode === "video") {
+        requestPreviewFrame();
+        return;
       }
       updateInfo("Preview not available.");
       if (saveBtn) {
@@ -17482,6 +17653,7 @@ document.addEventListener("DOMContentLoaded", () => {
     modalEl.dataset.saveUrl = trigger.dataset.saveUrl || modalEl.dataset.saveUrl;
     const previewUrl = trigger.dataset.previewUrl || "";
     modalEl.dataset.videoPreviewUrl = previewUrl;
+    previewFrameJobId = "";
     const presetRatios = {
       x: clampRatio(trigger.dataset.cropX),
       y: clampRatio(trigger.dataset.cropY),
@@ -17551,6 +17723,7 @@ document.addEventListener("DOMContentLoaded", () => {
   };
 
   const teardownCropEditor = () => {
+    clearPreviewFrameTimers();
     resetState();
     setSaveStatus("", "");
   };
