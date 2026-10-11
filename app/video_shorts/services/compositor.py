@@ -1174,6 +1174,7 @@ def _face_aware_caption_top_for_block(
     target_width: int,
     target_height: int,
     subtitle_margin: Optional[int],
+    subtitle_margin_custom: bool = False,
 ) -> float:
     mode = str(segment.get("mode") or "fill").strip().lower()
     safe_block_height = max(1.0, float(block_height or _face_aware_caption_block_height(None)))
@@ -1186,8 +1187,8 @@ def _face_aware_caption_top_for_block(
             subtitle_font_size=int(max(1, round(safe_block_height / 2.0))),
         )
         return max(0.0, min(float(target_height) - safe_block_height, float(metrics["frame_bottom"]) + 24.0))
-    if not _is_face_aware_default_subtitle_margin(subtitle_margin):
-        margin = _face_aware_fill_subtitle_margin(subtitle_margin)
+    if not _is_face_aware_default_subtitle_margin(subtitle_margin, subtitle_margin_custom=subtitle_margin_custom):
+        margin = _face_aware_fill_subtitle_margin(subtitle_margin, subtitle_margin_custom=subtitle_margin_custom)
         return max(0.0, float(target_height) - float(margin) - safe_block_height)
     try:
         face_bottom = segment.get("caption_face_bottom")
@@ -1201,7 +1202,13 @@ def _face_aware_caption_top_for_block(
     return max(0.0, float(target_height) - float(margin) - safe_block_height)
 
 
-def _is_face_aware_default_subtitle_margin(subtitle_margin: Optional[int]) -> bool:
+def _is_face_aware_default_subtitle_margin(
+    subtitle_margin: Optional[int],
+    *,
+    subtitle_margin_custom: bool = False,
+) -> bool:
+    if subtitle_margin_custom:
+        return False
     try:
         margin = int(round(float(subtitle_margin)))
     except Exception:
@@ -1209,8 +1216,12 @@ def _is_face_aware_default_subtitle_margin(subtitle_margin: Optional[int]) -> bo
     return margin in FACE_AWARE_LEGACY_DEFAULT_SUBTITLE_MARGINS
 
 
-def _face_aware_fill_subtitle_margin(subtitle_margin: Optional[int]) -> int:
-    if _is_face_aware_default_subtitle_margin(subtitle_margin):
+def _face_aware_fill_subtitle_margin(
+    subtitle_margin: Optional[int],
+    *,
+    subtitle_margin_custom: bool = False,
+) -> int:
+    if _is_face_aware_default_subtitle_margin(subtitle_margin, subtitle_margin_custom=subtitle_margin_custom):
         return FACE_AWARE_FILL_FALLBACK_SUBTITLE_MARGIN
     try:
         return int(round(float(subtitle_margin)))
@@ -1226,10 +1237,11 @@ def _face_aware_fill_caption_metrics_for_segment(
     target_height: int,
     subtitle_font_size: int,
     subtitle_margin: Optional[int],
+    subtitle_margin_custom: bool = False,
 ) -> Dict[str, Optional[float]]:
     caption_block_height = _face_aware_caption_block_height(subtitle_font_size)
-    if not _is_face_aware_default_subtitle_margin(subtitle_margin):
-        margin = _face_aware_fill_subtitle_margin(subtitle_margin)
+    if not _is_face_aware_default_subtitle_margin(subtitle_margin, subtitle_margin_custom=subtitle_margin_custom):
+        margin = _face_aware_fill_subtitle_margin(subtitle_margin, subtitle_margin_custom=subtitle_margin_custom)
         caption_top = max(0.0, float(target_height) - float(margin) - caption_block_height)
         return {
             "median_face_bottom": None,
@@ -1930,6 +1942,7 @@ def _compose_with_background(
     title_text_color: Optional[str] = None,
     subtitle_font_size: int = DEFAULT_SUB_FONT_SIZE,
     subtitle_margin: int = SUB_MARGIN_DEFAULT,
+    subtitle_margin_custom: bool = False,
     subtitle_text_color: Optional[str] = None,
     subtitle_bg_color: Optional[str] = None,
     subtitle_bg_alpha: Optional[int] = DEFAULT_SUBTITLE_BG_ALPHA,
@@ -2110,6 +2123,7 @@ def _compose_trimmed_with_background(
     title_outline_width: int = 0,
     subtitle_font_size: int = DEFAULT_SUB_FONT_SIZE,
     subtitle_margin: int = SUB_MARGIN_DEFAULT,
+    subtitle_margin_custom: bool = False,
     subtitle_text_color: Optional[str] = None,
     subtitle_bg_color: Optional[str] = None,
     subtitle_bg_alpha: Optional[int] = DEFAULT_SUBTITLE_BG_ALPHA,
@@ -3065,6 +3079,7 @@ def _compose_trimmed_with_background(
                     target_height=target_height,
                     subtitle_font_size=subtitle_font_size,
                     subtitle_margin=subtitle_margin,
+                    subtitle_margin_custom=subtitle_margin_custom,
                 )
                 segment["caption_style_suffix"] = f"Fill{idx}"
                 segment["caption_margin_v"] = float(metrics["caption_margin_v"] or FACE_AWARE_FILL_FALLBACK_SUBTITLE_MARGIN)
@@ -3563,7 +3578,7 @@ def _compose_trimmed_with_background(
             caption_overlay_y_expr = "0"
             if effective_subtitle_overlay_events:
                 fallback_height = _face_aware_caption_block_height(subtitle_font_size)
-                fallback_top = float(target_height) - float(_face_aware_fill_subtitle_margin(subtitle_margin)) - fallback_height
+                fallback_top = float(target_height) - float(_face_aware_fill_subtitle_margin(subtitle_margin, subtitle_margin_custom=subtitle_margin_custom)) - fallback_height
                 caption_y_intervals: list[tuple[float, float, float]] = []
                 for event in effective_subtitle_overlay_events:
                     event_start = float(event["start"])
@@ -3582,13 +3597,14 @@ def _compose_trimmed_with_background(
                         target_width=target_width,
                         target_height=target_height,
                         subtitle_margin=subtitle_margin,
+                        subtitle_margin_custom=subtitle_margin_custom,
                     )
                     segment_caption_y = desired_top - block["top"]
                     caption_y_intervals.append((event_start, event_end, segment_caption_y))
                 caption_overlay_y_expr = _piecewise_constant_overlay_y_expr(caption_y_intervals, duration=duration)
             else:
                 try:
-                    fill_margin = float(_face_aware_fill_subtitle_margin(subtitle_margin))
+                    fill_margin = float(_face_aware_fill_subtitle_margin(subtitle_margin, subtitle_margin_custom=subtitle_margin_custom))
                     fit_margin = float(face_aware_fit_metrics["caption_margin_v"])
                     caption_block_height = _face_aware_caption_block_height(subtitle_font_size)
                     split_caption_top = float(face_aware_split_metrics["caption_top"])
@@ -3600,7 +3616,7 @@ def _compose_trimmed_with_background(
                     fit_caption_y = fill_margin - fit_margin
                     split_caption_y = split_caption_top - split_base_top
                 except Exception:
-                    fill_margin = float(_face_aware_fill_subtitle_margin(subtitle_margin))
+                    fill_margin = float(_face_aware_fill_subtitle_margin(subtitle_margin, subtitle_margin_custom=subtitle_margin_custom))
                     fit_caption_y = 0.0
                     split_caption_y = 0.0
                 caption_y_intervals: list[tuple[float, float, float]] = []

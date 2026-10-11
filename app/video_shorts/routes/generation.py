@@ -8277,6 +8277,7 @@ def _build_render_job_options(
     podcast_overlay_short_ids: List[str],
     video_overlay_offset: Optional[int],
     subtitle_text: Optional[str],
+    subtitle_margin_custom: bool = False,
 ) -> Dict[str, Any]:
     return {
         "plan_index": int(plan_index),
@@ -8289,6 +8290,7 @@ def _build_render_job_options(
         "subtitle_font_key": subtitle_font_key,
         "subtitle_font_size": subtitle_font_size,
         "subtitle_margin": subtitle_margin,
+        "subtitle_margin_custom": bool(subtitle_margin_custom),
         "subtitle_style": (subtitle_style or "plain").strip().lower(),
         "subtitle_preset": str(subtitle_preset or DEFAULT_SUBTITLE_PRESET).strip() or DEFAULT_SUBTITLE_PRESET,
         "title_margin": title_margin,
@@ -8355,6 +8357,8 @@ def canonical_render_settings(options: Dict[str, Any]) -> Dict[str, Any]:
         payload["title_line_spacing"] = int(payload.get("title_line_spacing") if payload.get("title_line_spacing") is not None else -4)
     except Exception:
         payload["title_line_spacing"] = -4
+    if not bool(payload.get("subtitle_margin_custom")):
+        payload.pop("subtitle_margin_custom", None)
     return payload
 
 
@@ -8440,6 +8444,7 @@ def _compute_render_settings_hash_for_plan_entry(
         subtitle_font_key=video.get("subtitle_font_key"),
         subtitle_font_size=video.get("subtitle_font_size"),
         subtitle_margin=video.get("subtitle_margin"),
+        subtitle_margin_custom=_normalize_optional_bool(video.get("subtitle_margin_custom"), default=False),
         subtitle_style=subtitle_style,
         subtitle_preset=subtitle_preset,
         title_margin=video.get("title_margin"),
@@ -10096,6 +10101,8 @@ def generate_short(video_pk):
         video_sql += ", creator_name"
     if "creator_email" in video_columns:
         video_sql += ", creator_email"
+    if "subtitle_margin_custom" in video_columns:
+        video_sql += ", subtitle_margin_custom"
     row = _fetch_scoped_video_row(conn, video_pk, video_sql)
     if not row:
         conn.close()
@@ -10125,6 +10132,8 @@ def generate_short(video_pk):
         cols.append("creator_name")
     if "creator_email" in video_columns:
         cols.append("creator_email")
+    if "subtitle_margin_custom" in video_columns:
+        cols.append("subtitle_margin_custom")
     video = dict(zip(cols, row))
     def _youtube_channel_url_from_parts(channel_url: Any, youtube_channel_id: Any) -> str:
         clean_url = str(channel_url or "").strip()
@@ -10431,6 +10440,7 @@ def generate_short(video_pk):
     video_sub_font_key = resolved_style_values.get("sub_font") or DEFAULT_SUB_FONT_KEY
     video_sub_font_size = resolved_style_values.get("sub_font_size") or DEFAULT_SUB_FONT_SIZE
     video_sub_margin = resolved_style_values.get("sub_margin") or SUB_MARGIN_DEFAULT
+    video_sub_margin_custom = _normalize_optional_bool(video.get("subtitle_margin_custom"), default=False)
     video_subtitle_style = str(resolved_style_values.get("subtitle_style") or "plain").strip().lower()
     if video_subtitle_style not in {"plain", "karaoke"}:
         video_subtitle_style = "plain"
@@ -10728,6 +10738,7 @@ def generate_short(video_pk):
     selected_title_font_size = video_title_font_size
     selected_sub_font_size = video_sub_font_size
     selected_sub_margin = video_sub_margin
+    selected_sub_margin_custom = video_sub_margin_custom
     selected_subtitle_style = video_subtitle_style
     selected_subtitle_preset = video_subtitle_preset
     selected_title_margin = video_title_margin
@@ -11777,6 +11788,7 @@ def generate_short(video_pk):
         sub_font_sizes=SUB_FONT_SIZES,
         selected_sub_font_size=selected_sub_font_size,
         selected_sub_margin=selected_sub_margin,
+        selected_sub_margin_custom=selected_sub_margin_custom,
         selected_subtitle_style=selected_subtitle_style,
         selected_subtitle_preset=selected_subtitle_preset,
         selected_title_margin=selected_title_margin,
@@ -26508,6 +26520,10 @@ def save_short_settings(video_pk):
         subtitle_margin = int(request.form.get("sub_margin") or SUB_MARGIN_DEFAULT)
     except Exception:
         subtitle_margin = SUB_MARGIN_DEFAULT
+    if "subtitle_margin_custom" in form_fields:
+        subtitle_margin_custom = _normalize_optional_bool(request.form.get("subtitle_margin_custom"), default=False)
+    else:
+        subtitle_margin_custom = "sub_margin" in form_fields
     try:
         title_margin = int(request.form.get("title_margin") or DEFAULT_TITLE_MARGIN)
     except Exception:
@@ -26613,6 +26629,7 @@ def save_short_settings(video_pk):
             "subtitle_font_key": sub_font_key,
             "subtitle_font_size": subtitle_font_size,
             "subtitle_margin": subtitle_margin,
+            "subtitle_margin_custom": subtitle_margin_custom,
             "subtitle_style": subtitle_style,
             "subtitle_preset": subtitle_preset,
             "title_margin": title_margin,
@@ -26641,6 +26658,7 @@ def save_short_settings(video_pk):
             "subtitle_font_key": "sub_font",
             "subtitle_font_size": "sub_font_size",
             "subtitle_margin": "sub_margin",
+            "subtitle_margin_custom": "subtitle_margin_custom",
             "subtitle_style": "subtitle_style",
             "subtitle_preset": "subtitle_preset",
             "title_margin": "title_margin",
@@ -26877,6 +26895,7 @@ def autoclip_video(video_pk):
     video_sub_font_key = None
     video_sub_font_size = None
     video_sub_margin = None
+    video_sub_margin_custom = False
     video_title_margin = None
     video_title_line_spacing = -4
     video_title_bg_color = None
@@ -26917,6 +26936,8 @@ def autoclip_video(video_pk):
             crop_sql += ", subtitle_preset"
         if "crop_locked" in crop_columns:
             crop_sql += ", crop_locked"
+        if "subtitle_margin_custom" in crop_columns:
+            crop_sql += ", subtitle_margin_custom"
         crop_sql += " FROM youtube_videos WHERE video_id = ?"
         crop_params: List[Any] = [vid]
         crop_sql += " AND owner_user_id = ? AND brand_id = ?"
@@ -27304,6 +27325,11 @@ def autoclip_video(video_pk):
                     "subtitle_style": None,
                 }
                 crop_locked_index = (len(crop_row) - 1) if "crop_locked" in crop_columns else None
+            subtitle_margin_custom_index = None
+            if "subtitle_margin_custom" in crop_columns:
+                subtitle_margin_custom_index = len(crop_row) - 1
+            if "crop_locked" in crop_columns:
+                crop_locked_index = len(crop_row) - 1 - (1 if subtitle_margin_custom_index is not None else 0)
             has_split_columns = len(crop_row) >= 35
             video_crop_ratios = {
                 "split_enabled": bool(crop_row[query_indexes["split_enabled"]]) if query_indexes["split_enabled"] is not None else False,
@@ -27323,6 +27349,8 @@ def autoclip_video(video_pk):
             video_sub_font_key = crop_row[query_indexes["subtitle_font_key"]]
             video_sub_font_size = crop_row[query_indexes["subtitle_font_size"]]
             video_sub_margin = crop_row[query_indexes["subtitle_margin"]]
+            if subtitle_margin_custom_index is not None:
+                video_sub_margin_custom = _normalize_optional_bool(crop_row[subtitle_margin_custom_index], default=False)
             video_title_margin = crop_row[query_indexes["title_margin"]]
             if query_indexes["title_line_spacing"] is not None:
                 video_title_line_spacing = crop_row[query_indexes["title_line_spacing"]]
@@ -27519,6 +27547,7 @@ def autoclip_video(video_pk):
                 subtitle_font_key=video_sub_font_key,
                 subtitle_font_size=video_sub_font_size,
                 subtitle_margin=video_sub_margin,
+                subtitle_margin_custom=video_sub_margin_custom,
                 subtitle_style=video_subtitle_style,
                 subtitle_preset=video_subtitle_preset,
                 title_margin=video_title_margin,
@@ -28265,6 +28294,25 @@ def autoclip_video(video_pk):
                     plan_index,
                     exc,
                 )
+            current_app.logger.info(
+                "resolved_render_settings video_pk=%s plan_index=%s queued=%s regenerate=%s edit_keep_ranges=%s "
+                "subtitle_margin=%s subtitle_margin_custom=%s subtitle_style=%s subtitle_preset=%s "
+                "title_margin=%s title_line_spacing=%s crop_aspect=%s subscribe=%s face_aware=%s",
+                video_pk,
+                plan_index,
+                bool(queued_job),
+                bool(regenerate_job),
+                bool(_normalize_edit_keep_ranges(plan_entry.get("edit_keep_ranges"))),
+                sub_margin,
+                video_sub_margin_custom,
+                video_subtitle_style,
+                video_subtitle_preset,
+                title_margin,
+                video_title_line_spacing,
+                compose_crop_aspect,
+                video_subscribe_overlay,
+                bool(face_aware_layout_result.get("enabled") if isinstance(face_aware_layout_result, dict) else False),
+            )
             _compose_trimmed_with_background(
                 bg_path,
                 src_path,
@@ -28293,6 +28341,7 @@ def autoclip_video(video_pk):
                 title_outline_width=title_template_behavior["title_outline_width"],
                 subtitle_font_size=sub_font_size,
                 subtitle_margin=sub_margin,
+                subtitle_margin_custom=video_sub_margin_custom,
                 subtitle_text_color=subtitle_text_color,
                 subtitle_bg_color=subtitle_bg_color,
                 subtitle_bg_alpha=subtitle_bg_alpha,
@@ -28781,6 +28830,8 @@ def regenerate_clip_video(video_pk: int, plan_index: int):
             video_sql += ", subtitle_preset"
         if "crop_locked" in video_columns:
             video_sql += ", crop_locked"
+        if "subtitle_margin_custom" in video_columns:
+            video_sql += ", subtitle_margin_custom"
         video_row = _fetch_scoped_video_row(conn, video_pk, video_sql)
     finally:
         conn.close()
@@ -28801,6 +28852,8 @@ def regenerate_clip_video(video_pk: int, plan_index: int):
         video_cols.append("subtitle_preset")
     if "crop_locked" in video_columns:
         video_cols.append("crop_locked")
+    if "subtitle_margin_custom" in video_columns:
+        video_cols.append("subtitle_margin_custom")
     video = dict(zip(video_cols, video_row))
     plan_entries = _load_plan_entries(source_video_id)
     plan_entry = None

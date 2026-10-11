@@ -7463,6 +7463,7 @@
                data-static-audios-url="{{ url_for('video_shorts_bp.list_podcast_audios') }}"
                data-selected-podcast-audio="{{ selected_podcast_audio_filename or '' }}"
                data-selected-visual-mode="{{ selected_visual_mode or 'video' }}"
+               data-subtitle-margin-custom="{{ '1' if selected_sub_margin_custom else '0' }}"
                data-podcast-short-clips-url="{{ url_for('video_shorts_bp.list_podcast_short_clips') }}"
                data-selected-podcast-short-ids='{{ (selected_podcast_overlay_short_ids or [])|tojson|safe }}'>
                 <div class="crop-modal-tab-panels">
@@ -16011,6 +16012,7 @@ document.addEventListener("DOMContentLoaded", () => {
   const previewToolbarSubtitle = modalEl.querySelector("#crop-preview-toolbar-subtitle");
   const settingsSaveUrl = settingsContainer?.dataset.saveUrl;
   const settingsDefaultSaveUrl = settingsContainer?.dataset.defaultSaveUrl || "";
+  const initialSubtitleMarginCustom = settingsContainer?.dataset.subtitleMarginCustom === "1";
   const previewFrameStartUrl = modalEl.dataset.previewFrameStartUrl || "";
   const previewFrameStatusUrl = modalEl.dataset.previewFrameStatusUrl || "";
   const getEditorRoots = () => {
@@ -17797,6 +17799,7 @@ document.addEventListener("DOMContentLoaded", () => {
         params.set(name, getPersistedFieldValue(field));
       }
     });
+    params.set("subtitle_margin_custom", (initialSubtitleMarginCustom || dirtyOverlayFields.has("sub_margin")) ? "1" : "0");
   };
 
   const collectShortEditorDefaultParams = () => {

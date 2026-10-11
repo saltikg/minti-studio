@@ -110,10 +110,46 @@ def _case_ok(probe: dict[str, Any], expected_duration: float = DURATION) -> tupl
     return True, f"720x1280 duration={duration:.6f} audio=yes"
 
 
+def _append_custom_caption_position_checks(rows: list[tuple[str, str, str]]) -> None:
+    segment = {"start": 0.0, "end": 4.0, "mode": "fill", "zoom": 1.25}
+    face_points = [
+        {"t": 0.5, "cx": 0.52, "cy": 0.32, "h": 0.18},
+        {"t": 1.5, "cx": 0.53, "cy": 0.34, "h": 0.19},
+        {"t": 2.5, "cx": 0.51, "cy": 0.33, "h": 0.18},
+    ]
+    custom = compositor._face_aware_fill_caption_metrics_for_segment(
+        segment,
+        face_track_points=face_points,
+        crop_h=1.0,
+        target_height=1280,
+        subtitle_font_size=52,
+        subtitle_margin=520,
+        subtitle_margin_custom=True,
+    )
+    auto = compositor._face_aware_fill_caption_metrics_for_segment(
+        segment,
+        face_track_points=face_points,
+        crop_h=1.0,
+        target_height=1280,
+        subtitle_font_size=52,
+        subtitle_margin=520,
+        subtitle_margin_custom=False,
+    )
+    if round(float(custom["caption_margin_v"] or 0)) == 520 and custom["median_face_bottom"] is None:
+        rows.append(("custom_caption_margin_wins", "PASS", "custom subtitle_margin=520 preserved"))
+    else:
+        rows.append(("custom_caption_margin_wins", "FAIL", f"custom metrics={custom}"))
+    if auto["median_face_bottom"] is not None and round(float(auto["caption_margin_v"] or 0)) != 520:
+        rows.append(("default_caption_margin_auto_places", "PASS", f"auto margin={auto['caption_margin_v']:.2f}"))
+    else:
+        rows.append(("default_caption_margin_auto_places", "FAIL", f"auto metrics={auto}"))
+
+
 def main() -> int:
     app = create_app()
     rows: list[tuple[str, str, str]] = []
     with app.app_context(), tempfile.TemporaryDirectory(prefix="fa_layout_modes_") as temp_dir:
+        _append_custom_caption_position_checks(rows)
         temp = Path(temp_dir)
         ffmpeg = _resolve_ffmpeg()
         ffprobe = str(Path(ffmpeg).with_name("ffprobe"))
