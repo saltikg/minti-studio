@@ -2278,6 +2278,10 @@
     white-space: nowrap;
   }
   .generate-v2-editor-action {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    gap: 6px;
     min-height: 38px;
     border: 1px solid #2A3954;
     border-radius: 12px;
@@ -2298,6 +2302,12 @@
   .generate-v2-tab:disabled {
     opacity: 0.48;
     cursor: not-allowed;
+  }
+  .generate-v2-editor-action svg {
+    width: 15px;
+    height: 15px;
+    flex: 0 0 auto;
+    stroke: currentColor;
   }
   .generate-v2-editor-action .spinner-border {
     width: 0.9rem;
@@ -2402,7 +2412,7 @@
     grid-template-columns: 1fr;
   }
   .generate-v2-editor-section .style-template-grid {
-    grid-template-columns: repeat(2, minmax(0, 1fr));
+    grid-template-columns: repeat(3, minmax(0, 1fr));
     gap: 10px;
     padding: 0;
   }
@@ -4701,7 +4711,7 @@
     grid-template-columns: 1fr;
   }
   #clip-workbench-shell[data-generate-v2="1"].is-v2-editing .generate-v2-editor-section .style-template-grid {
-    grid-template-columns: repeat(2, minmax(0, 1fr));
+    grid-template-columns: repeat(3, minmax(0, 1fr));
     gap: 10px;
     padding: 0;
   }
@@ -6323,9 +6333,18 @@
                 </div>
                 <div class="generate-v2-editor-actions">
                   <span class="generate-v2-editor-status" id="generate-v2-editor-status" aria-live="polite"></span>
-                  <button type="button" class="btn generate-v2-editor-action" id="generate-v2-editor-cancel">Cancel</button>
-                  <button type="button" class="btn generate-v2-editor-action" id="generate-v2-editor-save-default">Save as default</button>
-                  <button type="button" class="btn generate-v2-editor-action" id="generate-v2-editor-save">Save design</button>
+                  <button type="button" class="btn generate-v2-editor-action" id="generate-v2-editor-cancel">
+                    <svg viewBox="0 0 24 24" aria-hidden="true" fill="none" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M18 6 6 18"/><path d="m6 6 12 12"/></svg>
+                    <span>Cancel</span>
+                  </button>
+                  <button type="button" class="btn generate-v2-editor-action" id="generate-v2-editor-save-default">
+                    <svg viewBox="0 0 24 24" aria-hidden="true" fill="none" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M19 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11l5 5v11a2 2 0 0 1-2 2Z"/><path d="M17 21v-8H7v8"/><path d="M7 3v5h8"/></svg>
+                    <span>Save as default</span>
+                  </button>
+                  <button type="button" class="btn generate-v2-editor-action" id="generate-v2-editor-save">
+                    <svg viewBox="0 0 24 24" aria-hidden="true" fill="none" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M20 6 9 17l-5-5"/></svg>
+                    <span>Save design</span>
+                  </button>
                 </div>
               </div>
               <div class="generate-v2-editor-body">
