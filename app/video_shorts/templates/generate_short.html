@@ -4361,6 +4361,48 @@
   .crop-modal-reframe-section.is-original-layout .crop-original-layout-note {
     display: block;
   }
+  .crop-original-preview-frame {
+    display: none;
+    position: relative;
+    width: 100%;
+    aspect-ratio: 16 / 9;
+    overflow: hidden;
+    border-radius: 16px;
+    background: #020617;
+    box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.08);
+    outline: none;
+  }
+  .crop-modal-reframe-section.is-original-layout .crop-original-preview-frame {
+    display: block;
+  }
+  .crop-original-preview-frame:focus-visible {
+    box-shadow: inset 0 0 0 2px rgba(45, 212, 191, 0.52);
+  }
+  .crop-original-preview-frame.is-dragging {
+    user-select: none;
+  }
+  .crop-original-preview-image {
+    position: absolute;
+    inset: 0;
+    width: 100% !important;
+    height: 100% !important;
+    max-width: none !important;
+    max-height: none !important;
+    object-fit: contain;
+    background: #020617;
+    display: block;
+  }
+  .crop-original-preview-title,
+  .crop-original-preview-caption {
+    position: absolute;
+    left: 6%;
+    right: 6%;
+    z-index: 2;
+  }
+  .crop-original-preview-title.is-hidden,
+  .crop-original-preview-caption.is-hidden {
+    display: none;
+  }
   .cropper-surface {
     position: relative;
     min-height: 220px;
@@ -5371,6 +5413,7 @@
   }
   .cropper-preview-card.is-original-layout {
     width: min(420px, 100%);
+    display: none;
   }
   .caption-tab-font-field .form-select,
   .caption-tab-size-field .form-control {
@@ -7841,6 +7884,11 @@
                     </div>
                     <div class="crop-modal-reframe-section">
                       <div class="crop-original-layout-note">No cropping — the full video frame is used.</div>
+                      <div class="crop-original-preview-frame" id="crop-original-preview-frame" tabindex="0" aria-label="Original layout preview">
+                        <img class="crop-original-preview-image" id="crop-original-preview-image" src="" alt="Original video frame preview">
+                        <div class="crop-original-preview-title crop-preview-selectable" id="crop-original-preview-title" data-preview-element="title">Life is full of fun</div>
+                        <div class="crop-original-preview-caption crop-preview-selectable" id="crop-original-preview-caption" data-preview-element="subtitle">Sample subtitle line</div>
+                      </div>
                       <div class="cropper-loader" id="cropper-loader">
                         <div class="spinner-border spinner-border-sm text-light" role="status" aria-hidden="true"></div>
                         <span>Loading frame…</span>
@@ -16874,6 +16922,10 @@ document.addEventListener("DOMContentLoaded", () => {
   const previewVideo = modalEl.querySelector("#shorts-preview-video");
   const previewSubtitle = modalEl.querySelector("#shorts-preview-subtitle-band");
   const previewDate = modalEl.querySelector("#shorts-preview-date");
+  const originalPreviewFrame = modalEl.querySelector("#crop-original-preview-frame");
+  const originalPreviewImage = modalEl.querySelector("#crop-original-preview-image");
+  const originalPreviewTitle = modalEl.querySelector("#crop-original-preview-title");
+  const originalPreviewSubtitle = modalEl.querySelector("#crop-original-preview-caption");
   const settingsContainer = modalEl.querySelector(".short-video-body");
   const previewToolbar = modalEl.querySelector("#crop-preview-toolbar");
   const previewToolbarLabel = modalEl.querySelector("#crop-preview-toolbar-label");
@@ -17356,7 +17408,12 @@ document.addEventListener("DOMContentLoaded", () => {
     if (!isOriginalCropAspect()) {
       return previewConfig.frameWidth;
     }
-    return Math.max(1, previewFrame?.getBoundingClientRect?.().width || previewConfig.frameWidth);
+    return Math.max(
+      1,
+      originalPreviewFrame?.getBoundingClientRect?.().width ||
+        previewFrame?.getBoundingClientRect?.().width ||
+        previewConfig.frameWidth,
+    );
   };
   const getActivePreviewFrameHeight = () => (
     isOriginalCropAspect()
@@ -17530,6 +17587,8 @@ document.addEventListener("DOMContentLoaded", () => {
     const showVideoPositionControl = activeCropAspect === "landscape" && !getEffectiveSplitEnabled();
     previewTitle?.classList.toggle("is-hidden", !titleVisible);
     previewSubtitle?.classList.toggle("is-hidden", !subtitleVisible);
+    originalPreviewTitle?.classList.toggle("is-hidden", !titleVisible);
+    originalPreviewSubtitle?.classList.toggle("is-hidden", !subtitleVisible);
     previewToolbarTitle?.classList.toggle("is-hidden", !titleVisible);
     previewToolbarSubtitle?.classList.toggle("is-hidden", !subtitleVisible);
     titleAdvancedControls.forEach((el) => el.classList.toggle("is-hidden", !titleVisible));
@@ -17579,13 +17638,13 @@ document.addEventListener("DOMContentLoaded", () => {
         ? "Title selected"
         : "Selected element";
     }
-    [previewTitle, previewVideo, previewSubtitle, previewDate].forEach((element) => {
+    [previewTitle, previewVideo, previewSubtitle, previewDate, originalPreviewTitle, originalPreviewSubtitle].forEach((element) => {
       if (!element) return;
       const matches = (element.dataset.previewElement || "") === selectedPreviewElement;
       element.classList.toggle("is-selected", matches);
     });
-    if (selectedPreviewElement && previewFrame) {
-      previewFrame.focus({ preventScroll: true });
+    if (selectedPreviewElement) {
+      (isOriginalCropAspect() ? originalPreviewFrame : previewFrame)?.focus({ preventScroll: true });
     }
   };
   const applyElementDelta = (kind, deltaRenderY) => {
@@ -17650,6 +17709,8 @@ document.addEventListener("DOMContentLoaded", () => {
   const applyPreviewLayout = () => {
     const dims = getOverlayDims();
     const originalPreview = isOriginalCropAspect();
+    reframeSection?.classList.toggle("is-original-layout", originalPreview);
+    originalPreviewFrame?.classList.toggle("is-active", originalPreview);
     if (previewFrame) {
       previewFrame.classList.toggle("is-original-layout", originalPreview);
       previewCard?.classList.toggle("is-original-layout", originalPreview);
@@ -17735,6 +17796,9 @@ document.addEventListener("DOMContentLoaded", () => {
       previewVideo.style.width = dims.width * scaleX + "px";
       previewVideo.style.height = dims.height * scaleY + "px";
     }
+    if (originalPreviewImage) {
+      originalPreviewImage.src = previewImgTop?.getAttribute("src") || "";
+    }
     if (previewDate) {
       previewDate.textContent = dateText || "Date";
       previewDate.style.top = dateTop * scaleY + "px";
@@ -17746,6 +17810,72 @@ document.addEventListener("DOMContentLoaded", () => {
       previewSubtitle.style.top = subtitleTop * scaleY + "px";
       previewSubtitle.style.height = subtitleHeight * scaleY + "px";
       previewSubtitle.style.fontSize = subtitleFontSize * elementScale + "px";
+    }
+    if (originalPreviewTitle) {
+      originalPreviewTitle.classList.toggle("is-hidden", !isTitleVisible());
+      originalPreviewTitle.textContent = previewTitle?.textContent || "Life is full of fun";
+      originalPreviewTitle.style.top = titleTop * scaleY + "px";
+      originalPreviewTitle.style.height = baseTitleHeight * scaleY + "px";
+      originalPreviewTitle.style.fontSize = titleFontSize * elementScale + "px";
+      originalPreviewTitle.style.lineHeight = previewTitle?.style.lineHeight || "1.1";
+      originalPreviewTitle.style.fontFamily = previewTitle?.style.fontFamily || "";
+      originalPreviewTitle.style.fontWeight = previewTitle?.style.fontWeight || "";
+      originalPreviewTitle.style.color = previewTitle?.style.color || "";
+      originalPreviewTitle.style.backgroundColor = previewTitle?.style.backgroundColor || "";
+      originalPreviewTitle.style.textShadow = previewTitle?.style.textShadow || "";
+      originalPreviewTitle.style.textTransform = previewTitle?.style.textTransform || "";
+      originalPreviewTitle.style.display = isTitleVisible() ? "flex" : "none";
+      originalPreviewTitle.style.alignItems = "center";
+      originalPreviewTitle.style.justifyContent = "center";
+      originalPreviewTitle.style.textAlign = "center";
+      originalPreviewTitle.style.borderRadius = "12px";
+      originalPreviewTitle.style.padding = titleUsesPillowLayout ? "0" : "0 12px";
+    }
+    if (originalPreviewSubtitle) {
+      originalPreviewSubtitle.className = previewSubtitle
+        ? `${previewSubtitle.className} crop-original-preview-caption`
+        : "crop-original-preview-caption crop-preview-selectable";
+      originalPreviewSubtitle.id = "crop-original-preview-caption";
+      originalPreviewSubtitle.dataset.previewElement = "subtitle";
+      originalPreviewSubtitle.innerHTML = previewSubtitle?.innerHTML || "Sample subtitle line";
+      originalPreviewSubtitle.classList.toggle("is-hidden", !isSubtitleVisible());
+      originalPreviewSubtitle.style.top = subtitleTop * scaleY + "px";
+      originalPreviewSubtitle.style.height = subtitleHeight * scaleY + "px";
+      originalPreviewSubtitle.style.fontSize = subtitleFontSize * elementScale + "px";
+      originalPreviewSubtitle.style.lineHeight = previewSubtitle?.style.lineHeight || "1.1";
+      originalPreviewSubtitle.style.fontFamily = previewSubtitle?.style.fontFamily || "";
+      originalPreviewSubtitle.style.fontWeight = previewSubtitle?.style.fontWeight || "";
+      originalPreviewSubtitle.style.color = previewSubtitle?.style.color || "";
+      originalPreviewSubtitle.style.backgroundColor = previewSubtitle?.style.backgroundColor || "";
+      originalPreviewSubtitle.style.textShadow = previewSubtitle?.style.textShadow || "";
+      originalPreviewSubtitle.style.textTransform = previewSubtitle?.style.textTransform || "";
+      originalPreviewSubtitle.style.display = isSubtitleVisible() ? "flex" : "none";
+      originalPreviewSubtitle.style.alignItems = "center";
+      originalPreviewSubtitle.style.justifyContent = "center";
+      originalPreviewSubtitle.style.textAlign = "center";
+      originalPreviewSubtitle.style.borderRadius = "12px";
+      originalPreviewSubtitle.style.padding = "0 12px";
+      [
+        "--word-highlight-pill-color",
+        "--word-highlight-active-color",
+        "--word-highlight-text-shadow",
+        "--word-highlight-active-text-shadow",
+        "--word-highlight-active-padding",
+        "--word-highlight-active-radius",
+        "--word-highlight-font-family",
+        "--word-highlight-font-weight",
+        "--word-highlight-inactive-color",
+        "--word-highlight-text-background",
+        "--word-highlight-active-background",
+        "--word-highlight-active-scale",
+      ].forEach((name) => {
+        const value = previewSubtitle?.style.getPropertyValue(name) || "";
+        if (value) {
+          originalPreviewSubtitle.style.setProperty(name, value);
+        } else {
+          originalPreviewSubtitle.style.removeProperty(name);
+        }
+      });
     }
     syncOverlayVisibilityUi();
     if (selectedPreviewElement === "video" && !isPreviewElementDraggable("video")) {
@@ -17768,6 +17898,7 @@ document.addEventListener("DOMContentLoaded", () => {
     naturalSize = { width: 0, height: 0 };
     previewImgTop?.removeAttribute("src");
     previewImgBottom?.removeAttribute("src");
+    originalPreviewImage?.removeAttribute("src");
     clearPreviewCanvas();
     if (saveBtn) {
       saveBtn.disabled = true;
@@ -18082,6 +18213,9 @@ document.addEventListener("DOMContentLoaded", () => {
     previewCtx.clearRect(0, 0, dims.width, dims.height);
     previewCtx.fillStyle = "#050812";
     previewCtx.fillRect(0, 0, dims.width, dims.height);
+    if (originalPreviewImage) {
+      originalPreviewImage.src = img.getAttribute("src") || "";
+    }
     const scale = Math.min(dims.width / img.naturalWidth, dims.height / img.naturalHeight);
     const drawWidth = img.naturalWidth * scale;
     const drawHeight = img.naturalHeight * scale;
@@ -18361,7 +18495,7 @@ document.addEventListener("DOMContentLoaded", () => {
     });
   });
 
-  [previewTitle, previewVideo, previewSubtitle, previewDate].forEach((element) => {
+  [previewTitle, previewVideo, previewSubtitle, previewDate, originalPreviewTitle, originalPreviewSubtitle].forEach((element) => {
     element?.addEventListener("pointerdown", (event) => {
       const kind = element.dataset.previewElement || "";
       if (!kind || !isPreviewElementDraggable(kind)) {
@@ -18377,12 +18511,12 @@ document.addEventListener("DOMContentLoaded", () => {
         moved: false,
       };
       element.classList.add("is-dragging");
-      previewFrame?.classList.add("is-dragging");
+      (isOriginalCropAspect() ? originalPreviewFrame : previewFrame)?.classList.add("is-dragging");
       element.setPointerCapture?.(event.pointerId);
     });
   });
 
-  previewFrame?.addEventListener("pointermove", (event) => {
+  const handlePreviewPointerMove = (event) => {
     if (!dragState || !overlayScale) {
       return;
     }
@@ -18394,17 +18528,20 @@ document.addEventListener("DOMContentLoaded", () => {
     }
     const deltaRenderY = deltaPreviewY / Math.max(0.001, getActivePreviewScaleY() || overlayScale);
     applyElementDelta(dragState.kind, deltaRenderY);
-  });
+  };
+  previewFrame?.addEventListener("pointermove", handlePreviewPointerMove);
+  originalPreviewFrame?.addEventListener("pointermove", handlePreviewPointerMove);
 
   const endPreviewDrag = (event) => {
     const completedDragState = dragState;
     if (event?.target && event.target.classList?.remove) {
       event.target.classList.remove("is-dragging");
     }
-    [previewTitle, previewVideo, previewSubtitle, previewDate].forEach((element) => {
+    [previewTitle, previewVideo, previewSubtitle, previewDate, originalPreviewTitle, originalPreviewSubtitle].forEach((element) => {
       element?.classList.remove("is-dragging");
     });
     previewFrame?.classList.remove("is-dragging");
+    originalPreviewFrame?.classList.remove("is-dragging");
     dragState = null;
     if (completedDragState && !completedDragState.moved) {
       focusCropModalTabForPreviewKind(completedDragState.kind);
@@ -18413,7 +18550,14 @@ document.addEventListener("DOMContentLoaded", () => {
 
   previewFrame?.addEventListener("pointerup", endPreviewDrag);
   previewFrame?.addEventListener("pointercancel", endPreviewDrag);
+  originalPreviewFrame?.addEventListener("pointerup", endPreviewDrag);
+  originalPreviewFrame?.addEventListener("pointercancel", endPreviewDrag);
   previewFrame?.addEventListener("pointerleave", (event) => {
+    if (dragState && !(event.buttons & 1)) {
+      endPreviewDrag(event);
+    }
+  });
+  originalPreviewFrame?.addEventListener("pointerleave", (event) => {
     if (dragState && !(event.buttons & 1)) {
       endPreviewDrag(event);
     }
@@ -18423,7 +18567,12 @@ document.addEventListener("DOMContentLoaded", () => {
       setSelectedPreviewElement("");
     }
   });
-  previewFrame?.addEventListener("keydown", (event) => {
+  originalPreviewFrame?.addEventListener("pointerdown", (event) => {
+    if (event.target === originalPreviewFrame) {
+      setSelectedPreviewElement("");
+    }
+  });
+  const handlePreviewKeydown = (event) => {
     if (event.key === "Escape") {
       setSelectedPreviewElement("");
       return;
@@ -18437,7 +18586,9 @@ document.addEventListener("DOMContentLoaded", () => {
     event.preventDefault();
     const step = event.shiftKey ? 10 : 1;
     applyElementDelta(selectedPreviewElement, event.key === "ArrowDown" ? step : -step);
-  });
+  };
+  previewFrame?.addEventListener("keydown", handlePreviewKeydown);
+  originalPreviewFrame?.addEventListener("keydown", handlePreviewKeydown);
 
   staticVisualButtons.forEach((button) => {
     button.addEventListener("click", () => {
