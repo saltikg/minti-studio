@@ -6268,7 +6268,13 @@
                         {% if generate_v2 %}
                         <span class="clip-rail-platforms">
                           {% for post in row.schedule_posts or [] %}
-                          <span class="d-inline-flex align-items-center gap-1" data-platform-icon="{{ post.platform }}" title="{{ post.tooltip }}">
+                          <span class="d-inline-flex align-items-center gap-1"
+                                data-platform-icon="{{ post.platform }}"
+                                data-schedule-time-iso="{{ post.publish_at_iso }}"
+                                data-schedule-time-label="{{ post.label }}"
+                                data-schedule-time-status="{{ post.status }}"
+                                data-schedule-time-reason="{{ post.reason }}"
+                                title="{{ post.tooltip }}">
                             <i class="bi {{ post.icon }} gs-schedule-icon generate-v2-platform-icon is-{{ post.status }}" aria-hidden="true"></i>
                           </span>
                           {% endfor %}
@@ -6295,7 +6301,7 @@
                             {% set rail_yt_icon_class = "text-danger" %}
                           {% endif %}
                           {% set rail_yt_tooltip_label = "Published date" if row.db_publish_status == "published" else "Schedule date" %}
-                          <span class="d-inline-flex align-items-center gap-1" data-bs-toggle="tooltip" title="{{ rail_yt_tooltip_label }}: {{ row.db_publish_display }}">
+                          <span class="d-inline-flex align-items-center gap-1" data-bs-toggle="tooltip" data-schedule-time-iso="{{ row.db_publish_client_iso }}" data-schedule-time-prefix="{{ rail_yt_tooltip_label }}" title="{{ rail_yt_tooltip_label }}: {{ row.db_publish_display }}">
                             <i class="bi bi-youtube {{ rail_yt_icon_class }} gs-schedule-icon" aria-hidden="true"></i>
                           </span>
                         {% endif %}
@@ -6311,7 +6317,7 @@
                             {% set rail_ig_icon_class = "text-warning" %}
                           {% endif %}
                           {% set rail_ig_tooltip_label = "Published date" if "published" in rail_ig_label_lower else "Schedule date" %}
-                          <span class="d-inline-flex align-items-center gap-1" data-bs-toggle="tooltip" title="{{ rail_ig_tooltip_label }}: {{ row.instagram_display }}">
+                          <span class="d-inline-flex align-items-center gap-1" data-bs-toggle="tooltip" data-schedule-time-iso="{{ row.instagram_client_iso }}" data-schedule-time-prefix="{{ rail_ig_tooltip_label }}" title="{{ rail_ig_tooltip_label }}: {{ row.instagram_display }}">
                             <i class="bi bi-instagram {{ rail_ig_icon_class }} gs-schedule-icon" aria-hidden="true"></i>
                           </span>
                         {% endif %}
@@ -6328,7 +6334,7 @@
                             {% set rail_fb_icon_class = "text-primary" %}
                           {% endif %}
                           {% set rail_fb_tooltip_label = "Published date" if "published" in rail_fb_label_lower else "Schedule date" %}
-                          <span class="d-inline-flex align-items-center gap-1" data-bs-toggle="tooltip" title="{{ rail_fb_tooltip_label }}: {{ rail_fb_tooltip }}">
+                          <span class="d-inline-flex align-items-center gap-1" data-bs-toggle="tooltip" data-schedule-time-iso="{{ row.facebook_client_iso or row.publish_client_iso }}" data-schedule-time-prefix="{{ rail_fb_tooltip_label }}" title="{{ rail_fb_tooltip_label }}: {{ rail_fb_tooltip }}">
                             <i class="bi bi-facebook {{ rail_fb_icon_class }} gs-schedule-icon" aria-hidden="true"></i>
                           </span>
                         {% endif %}
@@ -6397,8 +6403,13 @@
                         data-platform-label="{{ post.label }}"
                         data-platform-status="{{ post.status }}"
                         data-platform-display="{{ post.display }}"
+                        data-platform-publish-at="{{ post.publish_at_iso }}"
                         data-platform-url="{{ post.permalink }}"
                         data-platform-reason="{{ post.reason }}"
+                        data-schedule-time-iso="{{ post.publish_at_iso }}"
+                        data-schedule-time-label="{{ post.label }}"
+                        data-schedule-time-status="{{ post.status }}"
+                        data-schedule-time-reason="{{ post.reason }}"
                         title="{{ post.tooltip }}"
                         aria-label="{{ post.tooltip }}">
                         <i class="bi {{ post.icon }}" aria-hidden="true"></i>
@@ -6540,10 +6551,13 @@
                  data-start="{{ row.start or 0 }}"
                  data-duration="{{ row.duration or 0 }}"
                  data-modal-yt-tooltip="{{ modal_yt_tooltip|e }}"
+                 data-modal-yt-iso="{{ row.db_publish_client_iso }}"
                  data-modal-yt-icon-class="{{ modal_yt_icon_class }}"
                  data-modal-ig-tooltip="{{ modal_ig_tooltip|e }}"
+                 data-modal-ig-iso="{{ row.instagram_client_iso }}"
                  data-modal-ig-icon-class="{{ modal_ig_icon_class }}"
                  data-modal-fb-tooltip="{{ modal_fb_tooltip|e }}"
+                 data-modal-fb-iso="{{ row.facebook_client_iso or row.publish_client_iso }}"
                  data-modal-fb-icon-class="{{ modal_fb_icon_class }}">
               <div class="clip-card-strip {{ row.status }}"></div>
               <div class="{{ meta_row_classes }} d-flex align-items-center justify-content-between">
@@ -6574,7 +6588,7 @@
                         {% set yt_icon_class = "text-danger" %}
                       {% endif %}
                       {% set yt_tooltip_label = "Published date" if row.db_publish_status == "published" else "Schedule date" %}
-                      <span class="d-inline-flex align-items-center gap-1" data-bs-toggle="tooltip" title="{{ yt_tooltip_label }}: {{ row.db_publish_display }}">
+                      <span class="d-inline-flex align-items-center gap-1" data-bs-toggle="tooltip" data-schedule-time-iso="{{ row.db_publish_client_iso }}" data-schedule-time-prefix="{{ yt_tooltip_label }}" title="{{ yt_tooltip_label }}: {{ row.db_publish_display }}">
                         <i class="bi bi-youtube {{ yt_icon_class }} gs-schedule-icon" aria-hidden="true"></i>
                       </span>
                     {% endif %}
@@ -6590,7 +6604,7 @@
                         {% set ig_icon_class = "text-warning" %}
                       {% endif %}
                       {% set ig_tooltip_label = "Published date" if "published" in ig_label_lower else "Schedule date" %}
-                      <span class="d-inline-flex align-items-center gap-1" data-bs-toggle="tooltip" title="{{ ig_tooltip_label }}: {{ row.instagram_display }}">
+                      <span class="d-inline-flex align-items-center gap-1" data-bs-toggle="tooltip" data-schedule-time-iso="{{ row.instagram_client_iso }}" data-schedule-time-prefix="{{ ig_tooltip_label }}" title="{{ ig_tooltip_label }}: {{ row.instagram_display }}">
                         <i class="bi bi-instagram {{ ig_icon_class }} gs-schedule-icon" aria-hidden="true"></i>
                       </span>
                     {% endif %}
@@ -6606,7 +6620,7 @@
                         {% set tt_icon_class = "text-warning" %}
                       {% endif %}
                       {% set tt_tooltip_label = "Published date" if "published" in tt_label_lower else "Schedule date" %}
-                      <span class="d-inline-flex align-items-center gap-1" data-bs-toggle="tooltip" title="{{ tt_tooltip_label }}: {{ row.tiktok_display }}">
+                      <span class="d-inline-flex align-items-center gap-1" data-bs-toggle="tooltip" data-schedule-time-iso="{{ row.tiktok_client_iso }}" data-schedule-time-prefix="{{ tt_tooltip_label }}" title="{{ tt_tooltip_label }}: {{ row.tiktok_display }}">
                         <i class="bi bi-tiktok {{ tt_icon_class }} gs-schedule-icon" aria-hidden="true"></i>
                       </span>
                     {% endif %}
@@ -6623,7 +6637,7 @@
                         {% set fb_icon_class = "text-primary" %}
                       {% endif %}
                       {% set fb_tooltip_label = "Published date" if "published" in fb_label_lower else "Schedule date" %}
-                      <span class="d-inline-flex align-items-center gap-1" data-bs-toggle="tooltip" title="{{ fb_tooltip_label }}: {{ fb_tooltip }}">
+                      <span class="d-inline-flex align-items-center gap-1" data-bs-toggle="tooltip" data-schedule-time-iso="{{ row.facebook_client_iso or row.publish_client_iso }}" data-schedule-time-prefix="{{ fb_tooltip_label }}" title="{{ fb_tooltip_label }}: {{ fb_tooltip }}">
                         <i class="bi bi-facebook {{ fb_icon_class }} gs-schedule-icon" aria-hidden="true"></i>
                       </span>
                     {% endif %}
@@ -6852,6 +6866,7 @@
                                 data-video-pk="{{ video.id }}"
                                 data-publish-at="{{ row.publish_at or row.publish_at_iso or '' }}"
                                 data-latest-scheduled="{{ (channel_latest_scheduled_display or '') | e }}"
+                                data-latest-scheduled-iso="{{ (channel_latest_scheduled_client_iso or '') | e }}"
                                 data-yt-video-id="{{ row.yt_video_id or '' }}"
                                 data-instagram-reel="{{ '1' if row.instagram_reel else '' }}"
                                 data-instagram-feed="{{ '1' if row.instagram_feed else '' }}"
@@ -7109,9 +7124,9 @@
                     </div>
                   </div>
                   <input type="datetime-local" name="publish_at" class="form-control mb-2">
-                  <div class="form-text text-white-50" id="youtube-latest-scheduled">
+                  <div class="form-text text-white-50" id="youtube-latest-scheduled" data-latest-scheduled-iso="{{ channel_latest_scheduled_client_iso or '' }}">
                     {% if channel_latest_scheduled_display %}
-                      Last scheduled publish: {{ channel_latest_scheduled_display }}
+                      Last scheduled publish: <span data-schedule-time-iso="{{ channel_latest_scheduled_client_iso }}" data-schedule-time-prefix="Last scheduled publish" data-schedule-time-replace="1">{{ channel_latest_scheduled_display }}</span>
                     {% else %}
                       No scheduled videos yet.
                     {% endif %}
@@ -10099,6 +10114,76 @@ const escapeHtml = window.escapeHtml || ((value) => String(value || "")
 
 const getGenerateV2Root = () => document.querySelector("#clip-workbench-shell[data-generate-v2='1']");
 
+const formatScheduleTimeForViewer = (value) => {
+  const raw = String(value || "").trim();
+  if (!raw) {
+    return "";
+  }
+  const date = new Date(raw);
+  if (Number.isNaN(date.getTime())) {
+    return "";
+  }
+  try {
+    return new Intl.DateTimeFormat(undefined, {
+      month: "short",
+      day: "numeric",
+      hour: "numeric",
+      minute: "2-digit",
+      timeZoneName: "short",
+    }).format(date);
+  } catch (_) {
+    return "";
+  }
+};
+
+const buildScheduleTimeTitle = (node, formatted) => {
+  const label = String(node?.dataset.scheduleTimeLabel || "").trim();
+  const prefix = String(node?.dataset.scheduleTimePrefix || "").trim();
+  const status = String(node?.dataset.scheduleTimeStatus || "").trim();
+  const reason = String(node?.dataset.scheduleTimeReason || "").trim();
+  if (label) {
+    const parts = [label];
+    if (formatted) {
+      parts.push(formatted);
+    }
+    if (status === "published") {
+      parts.push("Published");
+    } else if (status === "failed" && reason) {
+      parts.push(`Failed: ${reason}`);
+    }
+    return parts.join(" · ");
+  }
+  return prefix && formatted ? `${prefix}: ${formatted}` : formatted;
+};
+
+const applyViewerScheduleTimeFormatting = (scope = document) => {
+  const root = scope || document;
+  root.querySelectorAll?.("[data-schedule-time-iso]").forEach((node) => {
+    const formatted = formatScheduleTimeForViewer(node.dataset.scheduleTimeIso || "");
+    if (!formatted) {
+      return;
+    }
+    const title = buildScheduleTimeTitle(node, formatted);
+    if (title) {
+      node.setAttribute("title", title);
+      node.setAttribute("aria-label", title);
+      node.setAttribute("data-bs-original-title", title);
+    }
+    if (node.dataset.scheduleTimeReplace === "1") {
+      node.textContent = formatted;
+    }
+    if (node.matches?.("[data-edit-platform-icon]")) {
+      node.dataset.platformDisplay = formatted;
+    }
+  });
+};
+
+if (document.readyState === "loading") {
+  document.addEventListener("DOMContentLoaded", () => applyViewerScheduleTimeFormatting(document), { once: true });
+} else {
+  applyViewerScheduleTimeFormatting(document);
+}
+
 const pauseGenerateV2WorkbenchVideos = ({ except = null, pauseSourcePlayer = false } = {}) => {
   const root = getGenerateV2Root();
   if (!root) {
@@ -11527,6 +11612,7 @@ const initGenerateV2Workbench = (preferredPlanIndex = "") => {
       });
     });
   });
+  applyViewerScheduleTimeFormatting(root);
   initGenerateV2LazyThumbnails(root);
   initGenerateV2AutoSuggestRefresh();
   initGenerateV2ClipTitleTimeEditors();
@@ -12694,11 +12780,15 @@ const initClipDetailModal = (preferredPlanIndex = null, preferredViewMode = null
     if (!modalPlatforms) {
       return;
     }
-    const ytTooltip = String(activeCard?.dataset.modalYtTooltip || "").trim();
+    const modalTooltip = (fallback, iso, prefix) => {
+      const formatted = formatScheduleTimeForViewer(iso || "");
+      return formatted ? `${prefix}: ${formatted}` : String(fallback || "").trim();
+    };
+    const ytTooltip = modalTooltip(activeCard?.dataset.modalYtTooltip, activeCard?.dataset.modalYtIso, "Schedule date");
     const ytIconClass = String(activeCard?.dataset.modalYtIconClass || "").trim();
-    const igTooltip = String(activeCard?.dataset.modalIgTooltip || "").trim();
+    const igTooltip = modalTooltip(activeCard?.dataset.modalIgTooltip, activeCard?.dataset.modalIgIso, "Schedule date");
     const igIconClass = String(activeCard?.dataset.modalIgIconClass || "").trim();
-    const fbTooltip = String(activeCard?.dataset.modalFbTooltip || "").trim();
+    const fbTooltip = modalTooltip(activeCard?.dataset.modalFbTooltip, activeCard?.dataset.modalFbIso, "Schedule date");
     const fbIconClass = String(activeCard?.dataset.modalFbIconClass || "").trim();
     const parts = [];
     if (ytTooltip && ytIconClass) {
@@ -12886,6 +12976,7 @@ const refreshClipList = async (preferredPlanIndex = null, preferredViewMode = nu
       }
       loadGenerateUsageSummary();
       initClipDetailModal(activePlanIndex, activeViewMode);
+      applyViewerScheduleTimeFormatting(newClipPanel);
       if (typeof bootstrap !== "undefined") {
         document.querySelectorAll("#clip-management-panel [data-bs-toggle='tooltip']").forEach((el) => {
           new bootstrap.Tooltip(el);
@@ -15964,7 +16055,7 @@ const initSendToYoutubeButtons = () => {
         ctx.publishInput.value = `${tomorrow.getFullYear()}-${pad(tomorrow.getMonth() + 1)}-${pad(tomorrow.getDate())}T${pad(tomorrow.getHours())}:${pad(tomorrow.getMinutes())}`;
       }
       if (ctx.latestScheduledInfo) {
-        const latestValue = btn.dataset.latestScheduled || "";
+        const latestValue = formatScheduleTimeForViewer(btn.dataset.latestScheduledIso || "") || btn.dataset.latestScheduled || "";
         ctx.latestScheduledInfo.textContent = latestValue
           ? `Last Planned Content: ${latestValue}`
           : "not planned yet";

@@ -765,6 +765,15 @@ def _format_publish_display(value, tz_name: Optional[str] = None):
     return local_dt.strftime("%Y-%m-%d %I:%M %p %Z")
 
 
+def _publish_time_iso_for_client(value: Any, *, naive_is_local: bool = False) -> str:
+    if not value:
+        return ""
+    dt = _parse_to_utc(value) if naive_is_local else _as_utc_datetime(value)
+    if not dt:
+        return ""
+    return dt.astimezone(timezone.utc).replace(microsecond=0).isoformat().replace("+00:00", "Z")
+
+
 def _format_schedule_date(value: Optional[str]) -> Optional[str]:
     dt = _parse_to_utc(value)
     if not dt:
@@ -11100,6 +11109,10 @@ def generate_short(video_pk):
 
         publish_value = entry.get("publish_at_iso") or entry.get("publish_at")
         publish_display = _format_publish_display(publish_value, user_tz)
+        publish_client_iso = _publish_time_iso_for_client(
+            publish_value,
+            naive_is_local=not bool(entry.get("publish_at_iso")),
+        )
         youtube_schedule_date = _format_schedule_date(publish_value) if publish_value else None
         db_publish_status = (
             str(generated_record.get("publish_status") or "").strip().lower()
@@ -11108,6 +11121,7 @@ def generate_short(video_pk):
         )
         db_publish_value = generated_record.get("planned_publish_at") or publish_value
         db_publish_display = _format_publish_display(db_publish_value, user_tz) if db_publish_value else publish_display
+        db_publish_client_iso = _publish_time_iso_for_client(db_publish_value) if db_publish_value else publish_client_iso
 
         ig_entries = instagram_queue_map.get((video.get("video_id") or "", str(pi))) or []
         ig_entries = [
@@ -11155,6 +11169,7 @@ def generate_short(video_pk):
             else:
                 ig_mode = "now"
         ig_display = _format_publish_display(ig_publish_at, user_tz) if ig_publish_at else None
+        ig_client_iso = _publish_time_iso_for_client(ig_publish_at) if ig_publish_at else ""
         ig_schedule_date = _format_schedule_date(ig_publish_at) if ig_publish_at else None
         ig_label = None
         if ig_entries:
@@ -11211,6 +11226,7 @@ def generate_short(video_pk):
             else:
                 tt_mode = "now"
         tt_display = _format_publish_display(tt_publish_at, user_tz) if tt_publish_at else None
+        tt_client_iso = _publish_time_iso_for_client(tt_publish_at) if tt_publish_at else ""
         tt_schedule_date = _format_schedule_date(tt_publish_at) if tt_publish_at else None
         tt_label = None
         if tt_entries:
@@ -11269,6 +11285,7 @@ def generate_short(video_pk):
             else:
                 fb_mode = "now"
         fb_display = _format_publish_display(fb_publish_at, user_tz) if fb_publish_at else None
+        fb_client_iso = _publish_time_iso_for_client(fb_publish_at) if fb_publish_at else ""
         fb_schedule_date = _format_schedule_date(fb_publish_at) if fb_publish_at else None
         fb_label = None
         if fb_entries:
@@ -11304,6 +11321,7 @@ def generate_short(video_pk):
             icon: str,
             status_value: Optional[str],
             display: Optional[str],
+            publish_at_iso: Optional[str] = None,
             permalink: Optional[str] = None,
             reason: Optional[str] = None,
         ) -> None:
@@ -11325,6 +11343,7 @@ def generate_short(video_pk):
                 "icon": icon,
                 "status": normalized_status,
                 "display": display_text,
+                "publish_at_iso": str(publish_at_iso or "").strip(),
                 "permalink": str(permalink or "").strip(),
                 "reason": reason_text,
                 "tooltip": " · ".join(tooltip_parts),
@@ -11346,6 +11365,7 @@ def generate_short(video_pk):
                 icon="bi-youtube",
                 status_value=yt_schedule_status,
                 display=yt_schedule_display,
+                publish_at_iso=db_publish_client_iso or publish_client_iso,
                 permalink=f"https://www.youtube.com/watch?v={yt_id}" if yt_id else "",
                 reason=entry.get("publish_error") or generated_record.get("publish_error"),
             )
@@ -11358,6 +11378,7 @@ def generate_short(video_pk):
                 icon="bi-instagram",
                 status_value=ig_status,
                 display=ig_display,
+                publish_at_iso=ig_client_iso,
                 permalink=(published_ig or latest_ig).get("permalink"),
                 reason=(published_ig or latest_ig).get("status_detail"),
             )
@@ -11370,6 +11391,7 @@ def generate_short(video_pk):
                 icon="bi-facebook",
                 status_value=fb_status,
                 display=fb_display,
+                publish_at_iso=fb_client_iso,
                 permalink=(published_fb or latest_fb).get("permalink"),
                 reason=(published_fb or latest_fb).get("status_detail"),
             )
@@ -11489,8 +11511,10 @@ def generate_short(video_pk):
             "publish_status": entry.get("publish_status") or ("ready" if yt_description else "not_ready"),
             "publish_at": entry.get("publish_at"),
             "publish_at_iso": entry.get("publish_at_iso"),
+            "publish_client_iso": publish_client_iso,
             "publish_display": publish_display,
             "db_publish_status": db_publish_status,
+            "db_publish_client_iso": db_publish_client_iso,
             "db_publish_display": db_publish_display,
             "youtube_schedule_date": youtube_schedule_date,
             "yt_description": yt_description,
@@ -11505,12 +11529,14 @@ def generate_short(video_pk):
             "instagram_feed": ig_has_feed,
             "instagram_mode": ig_mode,
             "instagram_publish_at": ig_publish_at,
+            "instagram_client_iso": ig_client_iso,
             "instagram_label": ig_label,
             "instagram_display": ig_display,
             "instagram_schedule_date": ig_schedule_date,
             "tiktok_enabled": bool(tt_entries),
             "tiktok_mode": tt_mode,
             "tiktok_publish_at": tt_publish_at,
+            "tiktok_client_iso": tt_client_iso,
             "tiktok_label": tt_label,
             "tiktok_display": tt_display,
             "tiktok_schedule_date": tt_schedule_date,
@@ -11518,6 +11544,7 @@ def generate_short(video_pk):
             "facebook_feed": fb_has_feed,
             "facebook_mode": fb_mode,
             "facebook_publish_at": fb_publish_at,
+            "facebook_client_iso": fb_client_iso,
             "facebook_label": fb_label,
             "facebook_display": fb_display,
             "facebook_schedule_date": fb_schedule_date,
@@ -11527,6 +11554,7 @@ def generate_short(video_pk):
     latest_scheduled_display = (
         _format_publish_display(latest_schedule_iso, user_tz) if latest_schedule_iso else None
     )
+    latest_scheduled_client_iso = _publish_time_iso_for_client(latest_schedule_iso) if latest_schedule_iso else ""
     allowed_source_ids: Optional[set[str]] = None
     if editor_owner_user_id:
         conn_sources = get_db_readonly()
@@ -11566,6 +11594,11 @@ def generate_short(video_pk):
         _format_publish_display(channel_latest_schedule_iso, user_tz)
         if channel_latest_schedule_iso
         else None
+    )
+    channel_latest_scheduled_client_iso = (
+        _publish_time_iso_for_client(channel_latest_schedule_iso)
+        if channel_latest_schedule_iso
+        else ""
     )
     transcript_override = None
     for entry in generated_clip_entries:
@@ -11845,7 +11878,9 @@ def generate_short(video_pk):
         editor_is_customer_operation=bool(getattr(g, "vs_admin_operation_workspace_kind", "") == "customer"),
         generate_v2=generate_v2,
         latest_scheduled_display=latest_scheduled_display,
+        latest_scheduled_client_iso=latest_scheduled_client_iso,
         channel_latest_scheduled_display=channel_latest_scheduled_display,
+        channel_latest_scheduled_client_iso=channel_latest_scheduled_client_iso,
         static_visual_options=static_visual_options,
         created_visual_options=created_visual_options,
         video_static_visual_key=video_static_visual_key,
