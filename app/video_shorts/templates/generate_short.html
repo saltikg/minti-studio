@@ -2455,6 +2455,10 @@
     width: min(calc((var(--generate-v2-preview-video-height, 420px) * 9) / 16), 100%);
     align-items: center;
   }
+  .generate-v2-preview-mount .generate-v2-media-column.is-original-layout {
+    width: min(100%, 520px);
+    max-width: 520px;
+  }
   .generate-v2-preview-slot {
     width: 100%;
     aspect-ratio: 9 / 16;
@@ -2473,7 +2477,8 @@
     display: none;
   }
   .generate-v2-preview-slot.is-original-layout {
-    aspect-ratio: 16 / 9;
+    width: 100%;
+    aspect-ratio: var(--original-preview-aspect, 16 / 9);
     height: auto !important;
   }
   .generate-v2-preview-slot .cropper-preview-card.is-original-layout {
@@ -5478,6 +5483,7 @@
     max-width: min(520px, 100%);
     box-sizing: border-box;
     display: block;
+    margin-inline: auto;
   }
   .orig-preview {
     display: none;
@@ -5485,7 +5491,7 @@
     width: 100%;
     max-width: min(520px, 100%);
     box-sizing: border-box;
-    aspect-ratio: 16 / 9;
+    aspect-ratio: var(--original-preview-aspect, 16 / 9);
     overflow: hidden;
     border-radius: 18px;
     background: #020617;
@@ -11333,12 +11339,14 @@ const syncGenerateV2InlinePreviewScale = () => {
   }
   if (card.classList.contains("is-original-layout")) {
     slot.classList.add("is-original-layout");
+    slot.closest(".generate-v2-media-column")?.classList.add("is-original-layout");
     slot.style.removeProperty("--generate-v2-preview-frame-source-width");
     slot.style.removeProperty("--generate-v2-preview-frame-scale");
     slot.style.height = "";
     return;
   }
   slot.classList.remove("is-original-layout");
+  slot.closest(".generate-v2-media-column")?.classList.remove("is-original-layout");
   const frameRect = frame.getBoundingClientRect();
   const sourceWidth = frameRect.width || Number.parseFloat(frame.style.width || frame.getAttribute("data-frame-width") || card.dataset.frameWidth || "248") || frame.offsetWidth || 248;
   const sourceHeight = frameRect.height || Number.parseFloat(frame.style.height || "") || frame.offsetHeight || Math.round(sourceWidth * 16 / 9);
@@ -18159,13 +18167,17 @@ document.addEventListener("DOMContentLoaded", () => {
     }
     return Math.max(
       1,
-      previewFrame?.getBoundingClientRect?.().width ||
+      origPreviewFrame?.getBoundingClientRect?.().width ||
+        previewFrame?.getBoundingClientRect?.().width ||
         previewConfig.frameWidth,
     );
   };
   const getActivePreviewFrameHeight = () => (
     isOriginalCropAspect()
-      ? (getActivePreviewFrameWidth() * 9 / 16)
+      ? (
+          origPreviewFrame?.getBoundingClientRect?.().height ||
+          (getActivePreviewFrameWidth() * 9 / 16)
+        )
       : previewConfig.frameHeight
   );
   const getActivePreviewScaleX = () => getActivePreviewFrameWidth() / Math.max(1, getActiveRenderFrameWidth());
@@ -18405,6 +18417,9 @@ document.addEventListener("DOMContentLoaded", () => {
       const sourceAspect = naturalSize.width / Math.max(1, naturalSize.height);
       cropperSurfaces.style.setProperty("--original-source-aspect", `${naturalSize.width} / ${naturalSize.height}`);
       cropperSurfaces.style.setProperty("--original-source-aspect-number", String(sourceAspect));
+      modalEl.style.setProperty("--original-preview-aspect", `${naturalSize.width} / ${naturalSize.height}`);
+      origPreviewFrame?.style.setProperty("--original-preview-aspect", `${naturalSize.width} / ${naturalSize.height}`);
+      document.getElementById("generate-v2-preview-slot")?.style.setProperty("--original-preview-aspect", `${naturalSize.width} / ${naturalSize.height}`);
     }
     reframeSection?.classList.toggle("is-original-layout", originalLayout);
     cropperSurfaces?.classList.toggle("is-original-layout", originalLayout);
@@ -18554,7 +18569,9 @@ document.addEventListener("DOMContentLoaded", () => {
     if (previewFrame) {
       previewFrame.classList.toggle("is-original-layout", originalPreview);
       previewCard?.classList.toggle("is-original-layout", originalPreview);
-      document.getElementById("generate-v2-preview-slot")?.classList.toggle("is-original-layout", originalPreview);
+      const originalSlot = document.getElementById("generate-v2-preview-slot");
+      originalSlot?.classList.toggle("is-original-layout", originalPreview);
+      originalSlot?.closest(".generate-v2-media-column")?.classList.toggle("is-original-layout", originalPreview);
       if (previewCard) {
         previewCard.style.width = originalPreview ? "" : `${previewConfig.frameWidth}px`;
       }
