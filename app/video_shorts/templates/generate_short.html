@@ -3089,12 +3089,16 @@
   .generate-v2-text-paragraph {
     margin: 0 0 14px;
   }
+  .generate-v2-text-paragraph.is-karaoke-active .generate-v2-text-time {
+    color: #5eead4;
+  }
   .generate-v2-text-paragraph:last-child {
     margin-bottom: 0;
   }
   .generate-v2-text-time {
     display: inline-flex;
     align-items: center;
+    gap: 4px;
     margin-right: 8px;
     border: 0;
     background: transparent;
@@ -3106,14 +3110,36 @@
     vertical-align: baseline;
   }
   .generate-v2-text-time:hover,
+  .generate-v2-text-paragraph:hover .generate-v2-text-time,
   .generate-v2-text-time:focus-visible {
     color: #5eead4;
     text-decoration: underline;
+  }
+  .generate-v2-text-time-icon {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    width: 14px;
+    color: rgba(148, 163, 184, 0.58);
+    font-size: 0.72rem;
+    line-height: 1;
+    text-decoration: none;
+  }
+  .generate-v2-text-paragraph:hover .generate-v2-text-time-icon,
+  .generate-v2-text-paragraph.is-karaoke-active .generate-v2-text-time-icon,
+  .generate-v2-text-time:focus-visible .generate-v2-text-time-icon {
+    color: #ccfbf1;
   }
   .generate-v2-text-word {
     cursor: text;
     border-radius: 4px;
     padding: 1px 0;
+  }
+  .generate-v2-text-word.is-karaoke-current:not(.is-search-match):not(.is-search-current),
+  .clip-text-trim-word.is-karaoke-current:not(.is-search-match):not(.is-search-current) {
+    background: rgba(45, 212, 191, 0.18);
+    color: #e6fffb;
+    border-radius: 5px;
   }
   .generate-v2-text-word.is-search-match {
     background: rgba(250, 204, 21, 0.24);
@@ -9985,14 +10011,17 @@ document.addEventListener("DOMContentLoaded", () => {
         const end = Math.max(start, Number(endSeconds) || start);
         const ok = player.seekAndPlay?.(start);
         if (ok && end > start) {
+          window.startGenerateV2KaraokePolling?.();
           window.setTimeout(() => {
             try {
               player.pause?.();
+              window.stopGenerateV2KaraokePolling?.({ clear: true });
             } catch (_) {}
           }, Math.max(250, Math.min(90000, (end - start) * 1000)));
         }
         return ok;
       },
+      seekAndPlay: (seconds) => player.seekAndPlay?.(seconds),
       pausePlayer: () => player.pause?.(),
       capturePlayerState: () => player.captureState?.() || null,
       restorePlayerState: (snapshot) => player.restoreState?.(snapshot) || false,
@@ -10217,6 +10246,7 @@ const pauseGenerateV2WorkbenchVideos = ({ except = null, pauseSourcePlayer = fal
   if (pauseSourcePlayer) {
     try {
       window.__trsClipSelectorController?.pausePlayer?.();
+      window.stopGenerateV2KaraokePolling?.({ clear: true });
     } catch (_) {}
   }
 };
@@ -12048,6 +12078,148 @@ const updateGenerateV2WordCacheScript = (words = getGenerateV2WordTimestamps()) 
   }
 };
 
+const generateV2KaraokeState = {
+  timer: null,
+  activeWordIndex: null,
+  activeParagraph: null,
+  lastUserInteractionAt: 0,
+};
+
+const noteGenerateV2KaraokeUserInteraction = () => {
+  generateV2KaraokeState.lastUserInteractionAt = Date.now();
+};
+
+const isGenerateV2SelectionActive = () => {
+  const selection = window.getSelection?.();
+  return !!selection && !selection.isCollapsed && String(selection.toString() || "").trim().length > 0;
+};
+
+const canGenerateV2KaraokeAutoFollow = () => {
+  const toolbarVisible = document.getElementById("generate-v2-text-toolbar")?.classList.contains("is-visible")
+    || document.getElementById("clip-text-trim-toolbar")?.classList.contains("is-visible");
+  return !toolbarVisible
+    && !isGenerateV2SelectionActive()
+    && (Date.now() - generateV2KaraokeState.lastUserInteractionAt) > 5000;
+};
+
+const bindGenerateV2KaraokeInteractionTracking = (container) => {
+  if (!container || container.dataset.karaokeInteractionBound === "1") return;
+  container.dataset.karaokeInteractionBound = "1";
+  container.addEventListener("scroll", noteGenerateV2KaraokeUserInteraction, { passive: true });
+  container.addEventListener("wheel", noteGenerateV2KaraokeUserInteraction, { passive: true });
+  container.addEventListener("touchstart", noteGenerateV2KaraokeUserInteraction, { passive: true });
+  container.addEventListener("pointerdown", noteGenerateV2KaraokeUserInteraction);
+  container.addEventListener("keydown", noteGenerateV2KaraokeUserInteraction);
+};
+
+const findGenerateV2ActiveWordIndex = (seconds) => {
+  const words = getGenerateV2WordTimestamps();
+  const time = Number(seconds);
+  if (!Number.isFinite(time) || !words.length) return null;
+  let left = 0;
+  let right = words.length - 1;
+  let candidate = null;
+  while (left <= right) {
+    const mid = Math.floor((left + right) / 2);
+    const start = Number(words[mid]?.start || 0);
+    if (start <= time) {
+      candidate = mid;
+      left = mid + 1;
+    } else {
+      right = mid - 1;
+    }
+  }
+  if (candidate === null) return null;
+  const word = words[candidate];
+  const end = Number(word?.end || word?.start || 0);
+  return time <= end + 0.12 ? Number(word.index ?? candidate) : null;
+};
+
+const clearGenerateV2KaraokeDom = () => {
+  document.querySelectorAll(".is-karaoke-current").forEach((el) => el.classList.remove("is-karaoke-current"));
+  document.querySelectorAll(".generate-v2-text-paragraph.is-karaoke-active").forEach((el) => {
+    el.classList.remove("is-karaoke-active");
+    const icon = el.querySelector("[data-generate-v2-paragraph-play-icon]");
+    if (icon) icon.textContent = "▶";
+  });
+  generateV2KaraokeState.activeWordIndex = null;
+  generateV2KaraokeState.activeParagraph = null;
+};
+
+const syncGenerateV2KaraokeHighlight = (seconds) => {
+  const activeIndex = findGenerateV2ActiveWordIndex(seconds);
+  if (activeIndex === generateV2KaraokeState.activeWordIndex) {
+    return;
+  }
+  document.querySelectorAll(".is-karaoke-current").forEach((el) => el.classList.remove("is-karaoke-current"));
+  document.querySelectorAll(".generate-v2-text-paragraph.is-karaoke-active").forEach((el) => {
+    el.classList.remove("is-karaoke-active");
+    const icon = el.querySelector("[data-generate-v2-paragraph-play-icon]");
+    if (icon) icon.textContent = "▶";
+  });
+  generateV2KaraokeState.activeWordIndex = activeIndex;
+  if (activeIndex === null) {
+    generateV2KaraokeState.activeParagraph = null;
+    return;
+  }
+  const activeEls = Array.from(document.querySelectorAll(`[data-word-index="${cssEscapeValue(activeIndex)}"]`));
+  activeEls.forEach((el) => el.classList.add("is-karaoke-current"));
+  const activeParagraph = activeEls.find((el) => el.closest(".generate-v2-text-paragraph"))?.closest(".generate-v2-text-paragraph") || null;
+  if (activeParagraph) {
+    activeParagraph.classList.add("is-karaoke-active");
+    const icon = activeParagraph.querySelector("[data-generate-v2-paragraph-play-icon]");
+    if (icon) icon.textContent = "❚❚";
+  }
+  generateV2KaraokeState.activeParagraph = activeParagraph;
+  if (canGenerateV2KaraokeAutoFollow()) {
+    const visibleWord = activeEls.find((el) => {
+      const container = el.closest("[data-generate-v2-text-document], [data-clip-text-trim-editor]");
+      return container && container.offsetParent !== null;
+    });
+    visibleWord?.scrollIntoView({ behavior: "smooth", block: "center", inline: "nearest" });
+  }
+};
+
+const stopGenerateV2KaraokePolling = ({ clear = false } = {}) => {
+  if (generateV2KaraokeState.timer) {
+    window.clearInterval(generateV2KaraokeState.timer);
+    generateV2KaraokeState.timer = null;
+  }
+  if (clear) {
+    clearGenerateV2KaraokeDom();
+  }
+};
+
+const startGenerateV2KaraokePolling = () => {
+  stopGenerateV2KaraokePolling();
+  const startedAt = Date.now();
+  let sawPlaying = false;
+  const tick = () => {
+    const snapshot = window.__trsClipSelectorController?.capturePlayerState?.();
+    if (!snapshot?.playing) {
+      if (sawPlaying || (Date.now() - startedAt) > 1800) {
+        stopGenerateV2KaraokePolling({ clear: true });
+      }
+      return;
+    }
+    sawPlaying = true;
+    syncGenerateV2KaraokeHighlight(Number(snapshot.currentTime || 0));
+  };
+  tick();
+  generateV2KaraokeState.timer = window.setInterval(tick, 200);
+};
+
+const playGenerateV2TranscriptFrom = (seconds) => {
+  const ok = window.__trsClipSelectorController?.seekAndPlay?.(seconds);
+  if (ok !== false) {
+    startGenerateV2KaraokePolling();
+  }
+  return ok;
+};
+
+window.startGenerateV2KaraokePolling = startGenerateV2KaraokePolling;
+window.stopGenerateV2KaraokePolling = stopGenerateV2KaraokePolling;
+
 const resetGenerateV2EditableWordSpan = (span, word) => {
   if (!span) return;
   span.classList.remove("is-editing");
@@ -12316,17 +12488,29 @@ window.initGenerateV2TextTranscript = () => {
     toolbar.classList.add("is-visible");
   };
   const render = () => {
+    bindGenerateV2KaraokeInteractionTracking(documentEl);
     const fragment = document.createDocumentFragment();
     groupGenerateV2TranscriptParagraphs(words).forEach((paragraph) => {
       if (!paragraph.length) return;
       const p = document.createElement("p");
       p.className = "generate-v2-text-paragraph";
+      const paragraphStart = Number(paragraph[0].start || 0);
+      const paragraphEnd = Number(paragraph[paragraph.length - 1]?.end || paragraph[paragraph.length - 1]?.start || paragraphStart);
+      p.dataset.paragraphStart = String(paragraphStart);
+      p.dataset.paragraphEnd = String(paragraphEnd);
       const time = document.createElement("button");
       time.type = "button";
       time.className = "generate-v2-text-time";
-      time.textContent = formatClipDurationLabel(Number(paragraph[0].start || 0));
+      time.setAttribute("aria-label", `Play from ${formatClipDurationLabel(paragraphStart)}`);
+      time.innerHTML = `<span class="generate-v2-text-time-icon" data-generate-v2-paragraph-play-icon aria-hidden="true">▶</span><span>${escapeHtml(formatClipDurationLabel(paragraphStart))}</span>`;
       time.addEventListener("click", () => {
-        window.__trsClipSelectorController?.previewRange?.(Number(paragraph[0].start || 0), Number(paragraph[0].start || 0) + 0.5);
+        const snapshot = window.__trsClipSelectorController?.capturePlayerState?.();
+        if (p.classList.contains("is-karaoke-active") && snapshot?.playing) {
+          window.__trsClipSelectorController?.pausePlayer?.();
+          stopGenerateV2KaraokePolling({ clear: true });
+          return;
+        }
+        playGenerateV2TranscriptFrom(paragraphStart);
       });
       p.appendChild(time);
       paragraph.forEach((word) => {
@@ -12594,6 +12778,7 @@ const renderClipTextTrimEditor = (form, options = {}) => {
   });
   const maxSentenceIndex = words.reduce((max, word) => Math.max(max, Number(word.sentence || 0)), 0);
   editor.replaceChildren(fragment);
+  bindGenerateV2KaraokeInteractionTracking(editor);
   const hasMoreBefore = visibleMinSentence > 0;
   const hasMoreAfter = visibleMaxSentence < maxSentenceIndex;
   form.dataset.hasMoreBefore = hasMoreBefore ? "1" : "0";
