@@ -23,7 +23,7 @@
         'update_clips': 'Create a free account to create more Shorts.'
       } %}
       {% if auth_action and free_tool_action_copy.get(auth_action) %}
-        <div class="alert alert-info py-2 small mb-3">{{ free_tool_action_copy.get(auth_action) }}</div>
+        <div class="vs-auth-action-note py-2 small mb-3">{{ free_tool_action_copy.get(auth_action) }}</div>
       {% endif %}
       <form method="post">
         {% if auth_intent %}

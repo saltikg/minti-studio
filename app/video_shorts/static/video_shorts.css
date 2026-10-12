@@ -210,6 +210,13 @@ body.vs-app {
   color: rgba(248, 250, 252, 0.96) !important;
 }
 
+.vs-auth-action-note {
+  border: 1px solid rgba(45, 179, 163, 0.32);
+  border-radius: 12px;
+  background: rgba(45, 179, 163, 0.12);
+  color: rgba(230, 235, 242, 0.96);
+}
+
 .vs-auth .small,
 .vs-auth .text-muted {
   color: rgba(226, 232, 240, 0.88) !important;
