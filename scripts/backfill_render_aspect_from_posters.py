@@ -23,6 +23,22 @@ from app.video_shorts.routes import generation
 from app.video_shorts.services.storage import get_media_storage
 
 
+def _list_existing_keys(prefix: str) -> set[str]:
+    storage = get_media_storage()
+    client = getattr(storage, "client", None)
+    bucket_name = getattr(storage, "bucket_name", "")
+    if client is not None and bucket_name:
+        keys: set[str] = set()
+        paginator = client.get_paginator("list_objects_v2")
+        for page in paginator.paginate(Bucket=bucket_name, Prefix=prefix):
+            for item in page.get("Contents", []):
+                key = str(item.get("Key") or "")
+                if key and not key.endswith("/"):
+                    keys.add(key)
+        return keys
+    return {entry.key for entry in storage.list_prefix(prefix)}
+
+
 def _iter_plan_paths(video_id: str = "") -> list[Path]:
     shorts_dir = generation.SHORTS_DIR
     if video_id:
@@ -107,6 +123,7 @@ def main() -> int:
     sample: list[str] = []
 
     with app.app_context():
+        poster_keys = _list_existing_keys("shorts/posters/")
         for path in _iter_plan_paths(args.video_id.strip()):
             payload, entries = _load_plan(path)
             if not payload or not entries:
@@ -129,6 +146,9 @@ def main() -> int:
                     continue
                 poster_key = _poster_key_for_entry(entry)
                 if not poster_key:
+                    no_poster += 1
+                    continue
+                if poster_key not in poster_keys:
                     no_poster += 1
                     continue
                 size = _image_size_from_storage(poster_key)
