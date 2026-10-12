@@ -6122,6 +6122,8 @@
            data-auto-suggest-active="{{ '1' if auto_suggest_render_state and auto_suggest_render_state.active else '0' }}"
            data-auto-suggest-no-strong="{{ '1' if auto_suggest_render_state and auto_suggest_render_state.no_strong else '0' }}"
            data-auto-suggest-status-url="{{ editor_url('auto_suggest_render_status', video_pk=video.id) }}"
+           data-guest-mode="{{ '1' if guest_mode else '0' }}"
+           data-guest-renders-left="{{ guest_renders_left if guest_renders_left is not none else '' }}"
            {% endif %}>
       {% if generate_v2 %}
       <div class="row g-3 generate-v2-workbench mb-3" data-generate-v2-layout>

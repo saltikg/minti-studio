@@ -31,7 +31,9 @@ JOB_TYPE_ENRICH_DISCOVERY_EMAILS = "enrich_discovery_emails"
 JOB_TYPE_ENRICH_AUTOPILOT_DISCOVERY_EMAILS = "enrich_autopilot_discovery_emails"
 DISCOVERY_JOB_ORIGIN = "discovery_demo"
 AUTO_RENDER_JOB_ORIGIN = "auto"
+GUEST_JOB_ORIGIN = "guest"
 AUTO_RENDER_JOB_PRIORITY = -10
+GUEST_JOB_PRIORITY = -50
 DISCOVERY_JOB_PRIORITY = -100
 JOB_STATUS_QUEUED = "queued"
 JOB_STATUS_PROCESSING = "processing"
@@ -73,6 +75,87 @@ def _parse_json(value: Any) -> Any:
         return json.loads(value)
     except Exception:
         return None
+
+
+def _json_origin_expr(conn) -> str:
+    if getattr(conn, "backend_name", "") == "postgres":
+        return "payload_json->>'job_origin'"
+    return "json_extract_string(payload_json, '$.job_origin')"
+
+
+def _guest_job_clause(conn) -> str:
+    return f"COALESCE({_json_origin_expr(conn)}, '') = '{GUEST_JOB_ORIGIN}'"
+
+
+def _auto_job_clause(conn) -> str:
+    return f"COALESCE({_json_origin_expr(conn)}, '') = '{AUTO_RENDER_JOB_ORIGIN}'"
+
+
+def _is_guest_user(conn, user_id: Any) -> bool:
+    clean_user_id = str(user_id or "").strip()
+    if not clean_user_id:
+        return False
+    try:
+        cols = table_columns(conn, "shorts_users")
+        if "is_guest" not in cols:
+            return False
+        row = conn.execute(
+            "SELECT COALESCE(is_guest, FALSE) FROM shorts_users WHERE CAST(id AS VARCHAR) = CAST(? AS VARCHAR) LIMIT 1",
+            [clean_user_id],
+        ).fetchone()
+        return bool(row and row[0])
+    except Exception:
+        return False
+
+
+def _prepare_guest_job_payload(conn, user_id: Any, payload: Dict[str, Any], priority: Optional[int]) -> tuple[Dict[str, Any], Optional[int]]:
+    next_payload = dict(payload or {})
+    if _is_guest_user(conn, user_id):
+        next_payload["job_origin"] = GUEST_JOB_ORIGIN
+        if priority is None:
+            priority = GUEST_JOB_PRIORITY
+    elif str(next_payload.get("job_origin") or "").strip() == GUEST_JOB_ORIGIN and priority is None:
+        priority = GUEST_JOB_PRIORITY
+    return next_payload, priority
+
+
+def _refund_guest_render_if_reserved(conn, job_id: str) -> bool:
+    row = conn.execute(
+        f"SELECT user_id, payload_json FROM {JOBS_TABLE} WHERE id = ?",
+        [job_id],
+    ).fetchone()
+    if not row:
+        return False
+    user_id = str(row[0] or "").strip()
+    payload = _parse_json(row[1]) or {}
+    if not bool(payload.get("guest_render_reserved")):
+        return False
+    if bool(payload.get("guest_render_refunded")):
+        return False
+    cols = table_columns(conn, "shorts_users")
+    if "guest_render_count" not in cols or "is_guest" not in cols:
+        return False
+    next_payload = dict(payload)
+    next_payload["guest_render_refunded"] = True
+    conn.execute(
+        """
+        UPDATE shorts_users
+        SET guest_render_count = GREATEST(COALESCE(guest_render_count, 0) - 1, 0)
+        WHERE CAST(id AS VARCHAR) = CAST(? AS VARCHAR)
+          AND COALESCE(is_guest, FALSE) = TRUE
+        """,
+        [user_id],
+    )
+    conn.execute(
+        f"""
+        UPDATE {JOBS_TABLE}
+        SET payload_json = {_json_value_sql(conn)},
+            updated_at = CURRENT_TIMESTAMP
+        WHERE id = ?
+        """,
+        [_serialize_json(next_payload) or "{}", job_id],
+    )
+    return True
 
 
 def _iso(value: Any) -> Optional[str]:
@@ -470,6 +553,7 @@ def enqueue_job(
     conn = get_db()
     try:
         ensure_render_jobs_schema(conn)
+        payload, priority = _prepare_guest_job_payload(conn, user_id, payload, priority)
         existing_done = _find_job_by_hash(conn, user_id=user_id, input_hash=input_hash, statuses=(JOB_STATUS_DONE,))
         if existing_done and job_type == JOB_TYPE_RENDER_SHORT and not is_render_job_cache_valid(existing_done):
             _invalidate_done_job_cache_entry(conn, existing_done["id"])
@@ -542,11 +626,12 @@ def enqueue_worker_job(
     payload: Dict[str, Any],
     input_hash: str,
     max_attempts: int = DEFAULT_MAX_ATTEMPTS,
-    priority: int = 0,
+    priority: Optional[int] = None,
 ) -> Dict[str, Any]:
     conn = get_db()
     try:
         ensure_render_jobs_schema(conn)
+        payload, priority = _prepare_guest_job_payload(conn, user_id, payload, priority)
         existing_done = _find_job_by_hash(conn, user_id=user_id, input_hash=input_hash, statuses=(JOB_STATUS_DONE,))
         if existing_done:
             existing_done["cached"] = True
@@ -842,6 +927,8 @@ def claim_next_job(
             params.append(job_type)
         if backend_name == "postgres":
             discovery_clause = _discovery_job_clause(conn)
+            auto_clause = _auto_job_clause(conn)
+            guest_clause = _guest_job_clause(conn)
             customer_active_exists = _customer_active_exists_sql(conn)
             origin_clause = ""
             if customer_only:
@@ -860,7 +947,12 @@ def claim_next_job(
                     AND {customer_active_exists}
                   )
                 ORDER BY
-                  CASE WHEN {discovery_clause} THEN 1 ELSE 0 END ASC,
+                  CASE
+                    WHEN {discovery_clause} THEN 3
+                    WHEN {guest_clause} THEN 2
+                    WHEN {auto_clause} THEN 1
+                    ELSE 0
+                  END ASC,
                   priority DESC,
                   created_at ASC
                 FOR UPDATE SKIP LOCKED
@@ -911,6 +1003,8 @@ def claim_next_job(
 
         with _duckdb_claim_lock:
             discovery_clause = _discovery_job_clause(conn)
+            auto_clause = _auto_job_clause(conn)
+            guest_clause = _guest_job_clause(conn)
             customer_active_exists = _customer_active_exists_sql(conn)
             origin_clause = ""
             if customer_only:
@@ -929,7 +1023,12 @@ def claim_next_job(
                     AND {customer_active_exists}
                   )
                 ORDER BY
-                  CASE WHEN {discovery_clause} THEN 1 ELSE 0 END ASC,
+                  CASE
+                    WHEN {discovery_clause} THEN 3
+                    WHEN {guest_clause} THEN 2
+                    WHEN {auto_clause} THEN 1
+                    ELSE 0
+                  END ASC,
                   priority DESC,
                   created_at ASC
                 LIMIT 1
@@ -1017,6 +1116,7 @@ def mark_job_failed(job_id: str, error: str, *, release_reservation: bool = True
             [job_id],
         ).fetchone()
         user_id = str(row[0]) if row and row[0] else None
+        _refund_guest_render_if_reserved(conn, job_id)
         conn.execute(
             f"""
             UPDATE {JOBS_TABLE}
@@ -1040,6 +1140,7 @@ def cancel_job(job_id: str, error: Optional[str] = None) -> Dict[str, Any]:
     conn = get_db()
     try:
         ensure_render_jobs_schema(conn)
+        _refund_guest_render_if_reserved(conn, job_id)
         conn.execute(
             f"""
             UPDATE {JOBS_TABLE}

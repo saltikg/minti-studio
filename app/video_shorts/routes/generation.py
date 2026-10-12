@@ -71,6 +71,8 @@ from app.video_shorts.config import (
     FFMPEG_RENDER_TIMEOUT,
     FFMPEG_SHORT_TIMEOUT,
     FFPROBE_TIMEOUT,
+    FREE_TOOL_DAILY_RENDER_CAP,
+    FREE_TOOL_GUEST_RENDER_LIMIT,
     FB_API_BASE,
     FB_APP_ID,
     FB_APP_SECRET,
@@ -349,6 +351,8 @@ from app.video_shorts.services.render_jobs import (
     AUTO_RENDER_JOB_PRIORITY,
     DISCOVERY_JOB_ORIGIN,
     DISCOVERY_JOB_PRIORITY,
+    GUEST_JOB_ORIGIN,
+    GUEST_JOB_PRIORITY,
     JOB_TYPE_AUTO_SUGGEST_RENDER,
     JOB_TYPE_ENRICH_AUTOPILOT_DISCOVERY_EMAILS,
     JOB_TYPE_INGEST_YOUTUBE,
@@ -366,6 +370,7 @@ from app.video_shorts.services.render_jobs import (
     get_job,
     invalidate_done_job_cache,
     is_render_job_cache_valid,
+    update_job_payload,
 )
 from app.video_shorts.services.usage_metering import (
     add_transcription_minutes,
@@ -4959,6 +4964,24 @@ def _auto_suggest_render_gate_matches(owner_user_id: Any) -> bool:
     return bool(AUTO_SUGGEST_RENDER_ENABLED and clean_owner and clean_owner in AUTO_SUGGEST_RENDER_USER_IDS)
 
 
+def _owner_is_guest_user(owner_user_id: Any) -> bool:
+    clean_owner = str(owner_user_id or "").strip()
+    if not clean_owner:
+        return False
+    conn = get_db_readonly()
+    try:
+        cols = table_columns(conn, "shorts_users")
+        if "is_guest" not in cols:
+            return False
+        row = conn.execute(
+            "SELECT COALESCE(is_guest, FALSE) FROM shorts_users WHERE CAST(id AS VARCHAR) = CAST(? AS VARCHAR) LIMIT 1",
+            [clean_owner],
+        ).fetchone()
+        return bool(row and row[0])
+    finally:
+        conn.close()
+
+
 def _auto_suggest_render_input_hash(owner_user_id: Any, brand_id: Any, video_pk: Any, video_id: Any) -> str:
     raw = f"auto-suggest-render:{owner_user_id}:{brand_id}:{video_pk}:{video_id}"
     return sha256(raw.encode("utf-8")).hexdigest()
@@ -4981,7 +5004,8 @@ def enqueue_auto_suggest_render_job_after_transcript(
         clean_video_pk = 0
     if not clean_owner or not clean_brand or not clean_video_pk or not clean_video_id:
         return None
-    if not _auto_suggest_render_gate_matches(clean_owner):
+    owner_is_guest = _owner_is_guest_user(clean_owner)
+    if not owner_is_guest and not _auto_suggest_render_gate_matches(clean_owner):
         return None
     if str(job_origin or "").strip() == DISCOVERY_JOB_ORIGIN:
         return None
@@ -4995,11 +5019,11 @@ def enqueue_auto_suggest_render_job_after_transcript(
             "brand_id": clean_brand,
             "video_pk": clean_video_pk,
             "video_id": clean_video_id,
-            "job_origin": AUTO_RENDER_JOB_ORIGIN,
+            "job_origin": GUEST_JOB_ORIGIN if owner_is_guest else AUTO_RENDER_JOB_ORIGIN,
         },
         input_hash=_auto_suggest_render_input_hash(clean_owner, clean_brand, clean_video_pk, clean_video_id),
         max_attempts=1,
-        priority=AUTO_RENDER_JOB_PRIORITY,
+        priority=GUEST_JOB_PRIORITY if owner_is_guest else AUTO_RENDER_JOB_PRIORITY,
     )
 
 
@@ -5108,7 +5132,7 @@ def auto_suggest_render_status(video_pk: int):
         "audio_transcribing",
         "processing",
     }
-    gated = _auto_suggest_render_gate_matches(owner_user_id)
+    gated = _owner_is_guest_user(owner_user_id) or _auto_suggest_render_gate_matches(owner_user_id)
     pending = bool(gated and (transcript_pending or ingest_pending) and not clip_count and not state.get("no_strong"))
     active = bool(state.get("active") or pending)
     return jsonify(
@@ -5121,6 +5145,7 @@ def auto_suggest_render_status(video_pk: int):
         job_id=state.get("job_id") or "",
         clip_count=clip_count,
         active_render_count=active_render_count,
+        guest_renders_left=_guest_renders_left_for_user(owner_user_id),
         should_refresh=bool(active or state.get("no_strong") or clip_count or active_render_count),
     )
 
@@ -7487,7 +7512,8 @@ def execute_auto_suggest_render_job(payload: Dict[str, Any]) -> Dict[str, Any]:
 
     if not owner_user_id or not brand_id or not video_pk or not video_id:
         return finish("missing_scope")
-    if not _auto_suggest_render_gate_matches(owner_user_id):
+    owner_is_guest = _owner_is_guest_user(owner_user_id) or str((payload or {}).get("job_origin") or "").strip() == GUEST_JOB_ORIGIN
+    if not owner_is_guest and not _auto_suggest_render_gate_matches(owner_user_id):
         return finish("gate_disabled")
     if _is_discovery_demo_scope(owner_user_id, brand_id, video_pk):
         return finish("discovery_or_lead_video")
@@ -7556,7 +7582,7 @@ def execute_auto_suggest_render_job(payload: Dict[str, Any]) -> Dict[str, Any]:
     selected_entries = _select_auto_render_entries(
         entries,
         min_score=AUTO_RENDER_MIN_SCORE,
-        limit=AUTO_RENDER_TOP_N,
+        limit=1 if owner_is_guest else AUTO_RENDER_TOP_N,
     )
     if not selected_entries:
         result["selected"] = []
@@ -9241,6 +9267,143 @@ def _admin_workspace_preview_ready(video_id: str) -> bool:
 
 def _wants_json_response() -> bool:
     return request.accept_mimetypes.best == "application/json" or request.headers.get("X-Requested-With") == "XMLHttpRequest"
+
+
+def _is_guest_account(user: Optional[Dict[str, Any]]) -> bool:
+    return bool((user or {}).get("is_guest"))
+
+
+def _guest_renders_left_for_user(user_id: Any) -> Optional[int]:
+    clean_user_id = str(user_id or "").strip()
+    if not clean_user_id:
+        return None
+    conn = get_db_readonly()
+    try:
+        cols = table_columns(conn, "shorts_users")
+        if "is_guest" not in cols or "guest_render_count" not in cols:
+            return None
+        row = conn.execute(
+            """
+            SELECT COALESCE(is_guest, FALSE), COALESCE(guest_render_count, 0)
+            FROM shorts_users
+            WHERE CAST(id AS VARCHAR) = CAST(? AS VARCHAR)
+            LIMIT 1
+            """,
+            [clean_user_id],
+        ).fetchone()
+    finally:
+        conn.close()
+    if not row or not bool(row[0]):
+        return None
+    return max(0, int(FREE_TOOL_GUEST_RENDER_LIMIT) - int(row[1] or 0))
+
+
+def _guest_daily_render_count(conn) -> int:
+    origin_expr = "payload_json->>'job_origin'" if getattr(conn, "backend_name", "") == "postgres" else "json_extract_string(payload_json, '$.job_origin')"
+    row = conn.execute(
+        f"""
+        SELECT COUNT(*)
+        FROM shorts_render_jobs
+        WHERE type = ?
+          AND COALESCE({origin_expr}, '') = ?
+          AND created_at >= (now() - INTERVAL '24 hours')
+        """,
+        [JOB_TYPE_RENDER_SHORT, GUEST_JOB_ORIGIN],
+    ).fetchone()
+    return int((row or [0])[0] or 0)
+
+
+def _reserve_guest_render(user_id: Any) -> Dict[str, Any]:
+    clean_user_id = str(user_id or "").strip()
+    if not clean_user_id:
+        return {"allowed": True, "guest": False, "renders_left": None}
+    conn = get_db()
+    try:
+        cols = table_columns(conn, "shorts_users")
+        if "is_guest" not in cols or "guest_render_count" not in cols:
+            conn.commit()
+            return {"allowed": True, "guest": False, "renders_left": None}
+        guest_row = conn.execute(
+            """
+            SELECT COALESCE(is_guest, FALSE), COALESCE(guest_render_count, 0)
+            FROM shorts_users
+            WHERE CAST(id AS VARCHAR) = CAST(? AS VARCHAR)
+            LIMIT 1
+            """,
+            [clean_user_id],
+        ).fetchone()
+        if not guest_row or not bool(guest_row[0]):
+            conn.commit()
+            return {"allowed": True, "guest": False, "renders_left": None}
+        if FREE_TOOL_DAILY_RENDER_CAP and _guest_daily_render_count(conn) > int(FREE_TOOL_DAILY_RENDER_CAP):
+            conn.commit()
+            return {
+                "allowed": False,
+                "guest": True,
+                "reason": "daily_cap",
+                "renders_left": max(0, int(FREE_TOOL_GUEST_RENDER_LIMIT) - int(guest_row[1] or 0)),
+            }
+        row = conn.execute(
+            """
+            UPDATE shorts_users
+            SET guest_render_count = COALESCE(guest_render_count, 0) + 1,
+                updated_at = now()
+            WHERE CAST(id AS VARCHAR) = CAST(? AS VARCHAR)
+              AND COALESCE(is_guest, FALSE) = TRUE
+              AND COALESCE(guest_render_count, 0) < ?
+            RETURNING COALESCE(guest_render_count, 0)
+            """,
+            [clean_user_id, int(FREE_TOOL_GUEST_RENDER_LIMIT)],
+        ).fetchone()
+        conn.commit()
+        if not row:
+            return {"allowed": False, "guest": True, "reason": "render_limit", "renders_left": 0}
+        return {
+            "allowed": True,
+            "guest": True,
+            "reserved": True,
+            "renders_left": max(0, int(FREE_TOOL_GUEST_RENDER_LIMIT) - int(row[0] or 0)),
+        }
+    except Exception:
+        conn.rollback()
+        raise
+    finally:
+        conn.close()
+
+
+def _guest_gate_response(
+    action: str,
+    *,
+    video_pk: Optional[int] = None,
+    clip: Any = None,
+    reason: str = "guest_action",
+    json_only: bool = False,
+):
+    current_user = getattr(g, "vs_current_user", None)
+    if not _is_guest_account(current_user):
+        return None
+    next_url = request.path
+    if video_pk:
+        next_url = url_for("video_shorts_bp.generate_short", video_pk=int(video_pk))
+    params = {"next": next_url, "action": action}
+    if clip is not None:
+        params["clip"] = str(clip)
+    register_url = url_for("video_shorts_bp.register", **params)
+    login_url = url_for("video_shorts_bp.login", **params)
+    payload = {
+        "ok": False,
+        "success": False,
+        "gate": "signup",
+        "action": action,
+        "reason": reason,
+        "renders_left": _guest_renders_left_for_user((current_user or {}).get("id")) or 0,
+        "clip": clip,
+        "register_url": register_url,
+        "login_url": login_url,
+    }
+    if json_only or request.method != "GET" or _wants_json_response() or request.is_json:
+        return jsonify(payload), 403
+    return redirect(register_url, code=302)
 
 
 def _require_admin_operation_scope(
@@ -11963,6 +12126,7 @@ def generate_short(video_pk):
         editor_is_customer_operation=bool(getattr(g, "vs_admin_operation_workspace_kind", "") == "customer"),
         generate_v2=generate_v2,
         guest_mode=guest_mode,
+        guest_renders_left=_guest_renders_left_for_user(current_user_id) if guest_mode else None,
         latest_scheduled_display=latest_scheduled_display,
         latest_scheduled_client_iso=latest_scheduled_client_iso,
         channel_latest_scheduled_display=channel_latest_scheduled_display,
@@ -13886,6 +14050,9 @@ def download_generated_clip(video_pk: int, plan_index: int):
     current_user = getattr(g, "vs_current_user", None)
     if not current_user:
         abort(401)
+    gated = _guest_gate_response("download", video_pk=video_pk, clip=plan_index, reason="guest_action")
+    if gated:
+        return gated
     editor_context = _active_editor_context()
     if not str(editor_context.get("owner_user_id") or "").strip():
         abort(401)
@@ -24438,6 +24605,9 @@ def unschedule_clip_posts(video_pk: int, plan_index: int):
 @video_shorts_bp.route("/youtube/upload_clip", methods=["POST"])
 def upload_clip_to_youtube():
     is_ajax = request.headers.get("X-Requested-With") == "XMLHttpRequest"
+    gated = _guest_gate_response("schedule", video_pk=request.form.get("video_pk"), clip=request.form.get("plan_index"), reason="guest_action", json_only=is_ajax)
+    if gated:
+        return gated
 
     def _ajax_fail(message: str, status: int = 400):
         return jsonify(success=False, message=message), status
@@ -26043,6 +26213,9 @@ def _run_plan_job(video_pk: int, form_data: Dict[str, Any], app_obj) -> None:
 
 @video_shorts_bp.route("/generate/<int:video_pk>/create_plan", methods=["POST"])
 def create_clip_plan(video_pk):
+    gated = _guest_gate_response("ai_suggest", video_pk=video_pk, reason="guest_action", json_only=True)
+    if gated:
+        return gated
     cleanup_video_shorts_temp_dir()
     try:
         result = _generate_clip_plan_for_video(
@@ -26063,6 +26236,9 @@ def create_clip_plan(video_pk):
 
 @video_shorts_bp.route("/generate/<int:video_pk>/create_plan/start", methods=["POST"])
 def create_clip_plan_start(video_pk):
+    gated = _guest_gate_response("ai_suggest", video_pk=video_pk, reason="guest_action", json_only=True)
+    if gated:
+        return gated
     try:
         video_info = _fetch_video_with_transcript(video_pk)
         if not video_info:
@@ -26146,6 +26322,9 @@ def _abort_deprecated_clip_plan_route(version: str):
 
 @video_shorts_bp.route("/generate/<int:video_pk>/create_plan_v2", methods=["POST"])
 def create_clip_plan_v2(video_pk):
+    gated = _guest_gate_response("ai_suggest", video_pk=video_pk, reason="guest_action", json_only=True)
+    if gated:
+        return gated
     disabled = _abort_deprecated_clip_plan_route("v2")
     if disabled:
         return disabled
@@ -26351,6 +26530,9 @@ def create_clip_plan_v2(video_pk):
 
 @video_shorts_bp.route("/generate/<int:video_pk>/create_plan_v3", methods=["POST"])
 def create_clip_plan_v3(video_pk):
+    gated = _guest_gate_response("ai_suggest", video_pk=video_pk, reason="guest_action", json_only=True)
+    if gated:
+        return gated
     disabled = _abort_deprecated_clip_plan_route("v3")
     if disabled:
         return disabled
@@ -26465,6 +26647,9 @@ def create_clip_plan_v3(video_pk):
 
 @video_shorts_bp.route("/generate/<int:video_pk>/create_plan_v4", methods=["POST"])
 def create_clip_plan_v4(video_pk):
+    gated = _guest_gate_response("ai_suggest", video_pk=video_pk, reason="guest_action", json_only=True)
+    if gated:
+        return gated
     disabled = _abort_deprecated_clip_plan_route("v4")
     if disabled:
         return disabled
@@ -27814,6 +27999,29 @@ def autoclip_video(video_pk):
                         "inflight": enqueue_result.get("inflight"),
                     },
                 )
+            guest_reserve_result = _reserve_guest_render(target_owner_user_id)
+            if not guest_reserve_result.get("allowed", True):
+                if job.get("id"):
+                    try:
+                        cancel_job(job["id"], "Guest render limit reached before queue admission.")
+                    except Exception:
+                        current_app.logger.exception(
+                            "Failed to cancel queued guest render job after reserve rejection job_id=%s",
+                            job.get("id"),
+                        )
+                return _guest_gate_response(
+                    "create_clip",
+                    video_pk=video_pk,
+                    clip=plan_index,
+                    reason=str(guest_reserve_result.get("reason") or "render_limit"),
+                    json_only=True,
+                )
+            if guest_reserve_result.get("reserved") and job.get("id"):
+                payload["guest_render_reserved"] = True
+                try:
+                    update_job_payload(str(job["id"]), payload)
+                except Exception:
+                    current_app.logger.exception("Failed to tag guest render reservation job_id=%s", job.get("id"))
             _update_plan_entry_job_state(
                 vid,
                 plan_entries,
@@ -29203,6 +29411,30 @@ def regenerate_clip_video(video_pk: int, plan_index: int):
     job = enqueue_result.get("job") or {}
     if kind == "concurrency_limit":
         return jsonify(success=False, code="concurrency_limit", message="You already have too many render jobs in progress."), 429
+    if kind not in {"cached", "existing"}:
+        guest_reserve_result = _reserve_guest_render(target_owner_user_id)
+        if not guest_reserve_result.get("allowed", True):
+            if job.get("id"):
+                try:
+                    cancel_job(job["id"], "Guest render limit reached before queue admission.")
+                except Exception:
+                    current_app.logger.exception(
+                        "Failed to cancel queued guest regenerate job after reserve rejection job_id=%s",
+                        job.get("id"),
+                    )
+            return _guest_gate_response(
+                "regenerate",
+                video_pk=video_pk,
+                clip=plan_index,
+                reason=str(guest_reserve_result.get("reason") or "render_limit"),
+                json_only=True,
+            )
+        if guest_reserve_result.get("reserved") and job.get("id"):
+            payload["guest_render_reserved"] = True
+            try:
+                update_job_payload(str(job["id"]), payload)
+            except Exception:
+                current_app.logger.exception("Failed to tag guest regenerate reservation job_id=%s", job.get("id"))
     if job.get("id"):
         plan_entry["render_job_id"] = job.get("id")
         plan_entry["regenerate_started_at"] = datetime.utcnow().replace(microsecond=0).isoformat()

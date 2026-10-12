@@ -16,6 +16,7 @@ from app.video_shorts.routes.quick_short import (
     _ensure_quick_schema,
     _upsert_video,
 )
+from app.video_shorts.config import FREE_TOOL_DAILY_VIDEO_CAP
 from app.video_shorts.services.brands import current_brand_id, ensure_brand_for_user, ensure_brand_schema
 from app.video_shorts.services.db import ensure_auth_user_schema, ensure_storage_user_schema, get_db
 from app.video_shorts.services.quick_short_flow import STATUS_INGESTING, create_session, update_session
@@ -63,6 +64,18 @@ def _count_recent_guest_creations(conn, guest_ip_hash: str) -> int:
           AND guest_created_at >= (now() - INTERVAL '24 hours')
         """,
         [guest_ip_hash],
+    ).fetchone()
+    return int((row or [0])[0] or 0)
+
+
+def _count_recent_guest_videos(conn) -> int:
+    row = conn.execute(
+        """
+        SELECT COALESCE(SUM(COALESCE(guest_video_count, 0)), 0)
+        FROM shorts_users
+        WHERE COALESCE(is_guest, FALSE) = TRUE
+          AND guest_created_at >= (now() - INTERVAL '24 hours')
+        """
     ).fetchone()
     return int((row or [0])[0] or 0)
 
@@ -231,6 +244,20 @@ def render_free_tool_landing(locale: str = "en"):
                     try:
                         ensure_storage_user_schema(conn)
                         ensure_auth_user_schema(conn)
+                        if FREE_TOOL_DAILY_VIDEO_CAP and _count_recent_guest_videos(conn) >= int(FREE_TOOL_DAILY_VIDEO_CAP):
+                            error = (
+                                "Free tool is busy today — sign up free to continue"
+                                if locale == "en"
+                                else "Ücretsiz araç bugün yoğun — devam etmek için ücretsiz hesap oluşturun"
+                            )
+                            conn.close()
+                            return render_template(
+                                "free_tool_youtube_to_shorts.html",
+                                locale=locale,
+                                error=error,
+                                register_url=url_for("video_shorts_bp.register", next=request.path),
+                                video_url=video_url,
+                            )
                         if current_user and current_user.get("is_guest"):
                             guest_user_id = str(current_user["id"])
                             guest_brand_id = str(session.get("vs_brand_id") or current_brand_id() or "")
