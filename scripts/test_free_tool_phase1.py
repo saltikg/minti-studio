@@ -6,6 +6,7 @@ from __future__ import annotations
 import os
 import sys
 import tempfile
+import json
 from pathlib import Path
 from uuid import uuid4
 
@@ -28,7 +29,8 @@ from werkzeug.security import generate_password_hash
 from app import create_app
 from app.video_shorts.routes import auth as auth_routes
 from app.video_shorts.routes import free_tool
-from app.video_shorts.services.db import get_db
+from app.video_shorts.services.db import get_db, table_columns
+from app.video_shorts.services.render_jobs import GUEST_JOB_ORIGIN, JOBS_TABLE
 
 
 def _ensure_minimal_video_tables() -> None:
@@ -45,6 +47,16 @@ def _ensure_minimal_video_tables() -> None:
                 youtube_channel_id VARCHAR,
                 is_active BOOLEAN,
                 brand_id VARCHAR
+            )
+            """
+        )
+        conn.execute(
+            """
+            CREATE TABLE IF NOT EXISTS shorts_storage_plans (
+                plan_id VARCHAR PRIMARY KEY,
+                label VARCHAR NOT NULL,
+                quota_bytes BIGINT NOT NULL,
+                sort_order INTEGER DEFAULT 0
             )
             """
         )
@@ -76,13 +88,14 @@ def _ensure_minimal_video_tables() -> None:
             )
             """
         )
+        conn.execute("ALTER TABLE shorts_storage_plans ADD COLUMN IF NOT EXISTS render_priority INTEGER DEFAULT 0")
+        conn.execute("ALTER TABLE shorts_storage_plans ADD COLUMN IF NOT EXISTS max_concurrent_jobs INTEGER DEFAULT 1")
         conn.commit()
     finally:
         conn.close()
 
 
-def _patch_free_tool() -> list[dict]:
-    enqueued: list[dict] = []
+def _patch_free_tool() -> None:
     free_tool._verify_turnstile_or_fail = lambda: True
     auth_routes._verify_turnstile_or_fail = lambda: True
     free_tool.fetch_video_metadata = lambda video_id: {
@@ -93,13 +106,6 @@ def _patch_free_tool() -> list[dict]:
         "channel_title": "Test Channel",
         "channel_id": "channel-1",
     }
-
-    def _fake_enqueue_job(**kwargs):
-        enqueued.append(kwargs)
-        return {"kind": "created", "job": {"id": f"job-{len(enqueued)}", "status": "queued"}}
-
-    free_tool.enqueue_job = _fake_enqueue_job
-    return enqueued
 
 
 def _post_video(client, url: str = "https://www.youtube.com/watch?v=dQw4w9WgXcQ"):
@@ -114,7 +120,7 @@ def main() -> None:
     app = create_app()
     app.config["TESTING"] = True
     app.secret_key = "test-secret"
-    enqueued = _patch_free_tool()
+    _patch_free_tool()
     _ensure_minimal_video_tables()
     client = app.test_client()
 
@@ -134,7 +140,14 @@ def main() -> None:
     too_long = _post_video(client)
     assert too_long.status_code == 200
     assert b"30 min" in too_long.data
-    assert not enqueued, enqueued
+    conn = get_db()
+    try:
+        job_count = 0
+        if table_columns(conn, JOBS_TABLE):
+            job_count = conn.execute(f"SELECT COUNT(*) FROM {JOBS_TABLE}").fetchone()[0]
+        assert int(job_count or 0) == 0, job_count
+    finally:
+        conn.close()
 
     free_tool.fetch_video_metadata = lambda video_id: {
         "video_id": video_id,
@@ -146,7 +159,30 @@ def main() -> None:
     first = _post_video(client)
     assert first.status_code in {302, 303}, first.status_code
     assert "/video_shorts/generate/" in first.headers["Location"]
-    assert len(enqueued) == 1
+    conn = get_db()
+    try:
+        guests = conn.execute(
+            "SELECT id, COALESCE(guest_video_count, 0) FROM shorts_users WHERE COALESCE(is_guest, FALSE) = TRUE"
+        ).fetchall()
+        assert len(guests) == 1, guests
+        guest_id = str(guests[0][0])
+        assert int(guests[0][1] or 0) == 1, guests
+        brands = conn.execute(
+            "SELECT id FROM shorts_brands WHERE owner_user_id = ?",
+            [guest_id],
+        ).fetchall()
+        assert len(brands) == 1, brands
+        jobs = conn.execute(
+            f"SELECT type, status, user_id, payload_json FROM {JOBS_TABLE} WHERE user_id = ?",
+            [guest_id],
+        ).fetchall()
+        assert len(jobs) == 1, jobs
+        payload = json.loads(jobs[0][3] or "{}")
+        assert jobs[0][0] == "ingest_youtube", jobs
+        assert jobs[0][1] == "queued", jobs
+        assert payload.get("job_origin") == GUEST_JOB_ORIGIN, payload
+    finally:
+        conn.close()
 
     second = _post_video(client, "https://www.youtube.com/watch?v=ScMzIvxBSi4")
     assert second.status_code in {302, 303}, second.status_code
@@ -187,6 +223,7 @@ def main() -> None:
 
     print("free_tool_phase1: PASS")
     print("landing_disabled=404 preview=200 long_video_rejected_before_enqueue=ok")
+    print("public_alias_post_guest_brand_ingest_origin=ok")
     print("second_video_redirect=ok guest_allowlist=ok guest_login_blocked=ok")
 
 

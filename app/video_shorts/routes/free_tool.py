@@ -17,6 +17,7 @@ from app.video_shorts.routes.auth import (
 )
 from app.video_shorts.routes.quick_short import (
     _ensure_quick_schema,
+    _get_or_create_channel,
     _upsert_video,
 )
 from app.video_shorts.config import FREE_TOOL_DAILY_VIDEO_CAP
@@ -90,16 +91,31 @@ def _count_recent_guest_videos(conn) -> int:
 
 
 def _latest_guest_generate_url(conn, user_id: str, brand_id: Optional[str]) -> str:
+    if brand_id:
+        row = conn.execute(
+            """
+            SELECT id
+            FROM youtube_videos
+            WHERE owner_user_id = ?
+              AND brand_id = ?
+            ORDER BY id DESC
+            LIMIT 1
+            """,
+            [user_id, brand_id],
+        ).fetchone()
+        if row:
+            return url_for("video_shorts_bp.generate_short", video_pk=int(row[0]))
+        return "/tools/youtube-to-shorts"
     row = conn.execute(
         """
         SELECT id
         FROM youtube_videos
         WHERE owner_user_id = ?
-          AND ((? IS NULL AND brand_id IS NULL) OR brand_id = ?)
+          AND brand_id IS NULL
         ORDER BY id DESC
         LIMIT 1
         """,
-        [user_id, brand_id, brand_id],
+        [user_id],
     ).fetchone()
     if row:
         return url_for("video_shorts_bp.generate_short", video_pk=int(row[0]))
@@ -148,7 +164,8 @@ def _ingest_youtube_for_user(*, user_id: str, brand_id: Optional[str], video_url
     conn = get_db()
     try:
         ensure_brand_schema(conn)
-        video_pk = _upsert_video(conn, meta, None, user_id, brand_id)
+        channel_id = _get_or_create_channel(conn, meta, user_id, brand_id)
+        video_pk = _upsert_video(conn, meta, channel_id, user_id, brand_id)
         conn.commit()
     finally:
         conn.close()
