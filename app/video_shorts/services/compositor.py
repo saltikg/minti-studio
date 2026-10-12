@@ -288,7 +288,6 @@ def _trim_source_to_keep_ranges(
     resolved_ffmpeg = _resolve_ffmpeg()
     has_audio = _has_audio_stream(src_path)
     source_fps = _probe_video_frame_rate(src_path) or 30.0
-    frame_step = 1.0 / max(1.0, float(source_fps))
     if has_audio:
         ranges = _snap_keep_range_boundaries_to_audio(src_path, ranges)
         for index, item in enumerate(ranges):
@@ -296,36 +295,44 @@ def _trim_source_to_keep_ranges(
                 continue
             keep_ranges[index]["start"] = item["start"]
             keep_ranges[index]["end"] = item["end"]
-    seek_offset = max(0.0, float(ranges[0].get("start") or 0.0) - 2.0)
+    first_start = float(ranges[0].get("start") or 0.0)
+    seek_offset = max(0.0, first_start - 2.0)
+    preroll_start = max(0.0, first_start - seek_offset)
     cmd = [resolved_ffmpeg, "-y", "-stats_period", "1"]
     if seek_offset > 0:
         cmd.extend(["-ss", f"{seek_offset:.6f}"])
     cmd.extend(["-i", str(src_path)])
     select_terms: list[str] = []
+    gap_terms: list[str] = []
     total_duration = 0.0
+    previous_end = 0.0
     for item in ranges:
         start = float(item["start"])
         end = float(item["end"])
-        local_start = max(0.0, start - seek_offset)
-        local_end = max(local_start + 0.001, end - seek_offset)
-        local_start = math.ceil((local_start * source_fps) - 1e-6) / source_fps
-        local_end = math.ceil((local_end * source_fps) - 1e-6) / source_fps
-        local_end = max(local_start + frame_step, local_end)
+        local_start = max(0.0, start - first_start)
+        local_end = max(local_start + 0.001, end - first_start)
+        if select_terms:
+            gap = max(0.0, local_start - previous_end)
+            if gap > 0:
+                gap_terms.append(f"gte(T\\,{local_start:.6f})*{gap:.6f}")
         duration = max(0.001, local_end - local_start)
         total_duration += duration
         select_terms.append(f"(gte(t\\,{local_start:.6f})*lt(t\\,{local_end:.6f}))")
+        previous_end = local_end
     select_expr = "+".join(select_terms)
+    gap_expr = "+".join(gap_terms) if gap_terms else "0"
     filter_parts = [
-        f"[0:v]setpts=PTS-STARTPTS,select='{select_expr}',setpts=N/FRAME_RATE/TB[v]",
+        f"[0:v]trim=start={preroll_start:.6f},setpts=PTS-STARTPTS,settb=AVTB,select='{select_expr}',setpts='PTS-STARTPTS-({gap_expr})/TB',fps=fps={source_fps:.6f}:start_time=0,settb=AVTB[v]",
     ]
     if has_audio:
         filter_parts.append(
-            f"[0:a]asetpts=PTS-STARTPTS,aselect='{select_expr}',asetpts=N/SR/TB,aresample=async=1:first_pts=0[a]"
+            f"[0:a]atrim=start={preroll_start:.6f},asetpts=PTS-STARTPTS,asettb=AVTB,asetnsamples=n=480,aselect='{select_expr}',asetpts='PTS-STARTPTS-({gap_expr})/TB',asettb=AVTB,aresample=async=1:first_pts=0[a]"
         )
     cmd.extend(["-filter_complex", ";".join(filter_parts), "-map", "[v]"])
     if has_audio:
         cmd.extend(["-map", "[a]"])
     cmd.extend(["-t", f"{total_duration:.6f}"])
+    cmd.extend(["-r", f"{source_fps:.6f}", "-vsync", "cfr"])
     cmd.extend(["-c:v", "libx264", "-preset", "ultrafast", "-crf", "16"])
     if has_audio:
         cmd.extend(["-c:a", "aac"])
