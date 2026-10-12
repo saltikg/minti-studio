@@ -23,6 +23,7 @@ _IMAGE_RE = re.compile(r"<p>\s*(<img\b[^>]*>)\s*</p>", re.I)
 _TABLE_RE = re.compile(r"(<table\b[^>]*>.*?</table>)", re.I | re.S)
 _SPECIMEN_TAGS = {"short": "Short", "long": "Long-form"}
 _PLACEHOLDER_ALT_VALUES = {"alt text", "image", "placeholder"}
+_INTERNAL_LINK_HOSTS = {"mintistudio.com", "www.mintistudio.com"}
 
 _ALLOWED_TAGS = [
     "a",
@@ -56,6 +57,23 @@ _ALLOWED_ATTRIBUTES = {
     "a": ["href", "title", "rel", "target"],
     "img": ["src", "alt", "title", "loading"],
 }
+
+
+def _external_link_attrs(attrs: dict, new: bool = False) -> dict:
+    href_key = (None, "href") if (None, "href") in attrs else "href"
+    href = attrs.get(href_key) or ""
+    parsed = urlparse(str(href))
+    is_external = parsed.scheme in {"http", "https"} and parsed.hostname not in _INTERNAL_LINK_HOSTS
+    if not is_external:
+        return attrs
+
+    target_key = (None, "target") if href_key == (None, "href") else "target"
+    rel_key = (None, "rel") if href_key == (None, "href") else "rel"
+    attrs[target_key] = "_blank"
+    existing_rel = str(attrs.get(rel_key) or "").split()
+    rel_values = dict.fromkeys([*existing_rel, "noopener", "noreferrer"])
+    attrs[rel_key] = " ".join(rel_values)
+    return attrs
 
 
 def _svg_icon(name: str) -> str:
@@ -427,7 +445,7 @@ def _render_markdown(markdown_text: str, *, expand_components: bool = True) -> s
         protocols=["http", "https", "mailto"],
         strip=True,
     )
-    restored_html = _restore_youtube_embeds(bleach.linkify(clean_html))
+    restored_html = _restore_youtube_embeds(bleach.linkify(clean_html, callbacks=[_external_link_attrs]))
     if expand_components:
         restored_html = _restore_component_blocks(restored_html, component_html)
     restored_html = _wrap_tables(restored_html)
