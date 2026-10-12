@@ -1508,14 +1508,62 @@
     overflow: auto;
   }
   .clip-schedule-all-preview-row {
-    display: flex;
-    justify-content: space-between;
+    display: grid;
+    grid-template-columns: auto minmax(0, 1fr) auto auto;
+    align-items: center;
     gap: 12px;
     padding: 6px 0;
     border-bottom: 1px solid rgba(255, 255, 255, 0.08);
   }
   .clip-schedule-all-preview-row:last-child {
     border-bottom: 0;
+  }
+  .clip-schedule-all-preview-row.is-dragging {
+    opacity: 0.55;
+  }
+  .clip-schedule-all-preview-row.is-drop-before {
+    box-shadow: inset 0 2px 0 rgba(45, 212, 191, 0.78);
+  }
+  .clip-schedule-all-grip,
+  .clip-schedule-all-remove {
+    width: 28px;
+    height: 28px;
+    border: 1px solid rgba(148, 163, 184, 0.24);
+    border-radius: 8px;
+    background: rgba(15, 23, 42, 0.72);
+    color: rgba(226, 232, 240, 0.72);
+    display: inline-grid;
+    place-items: center;
+    line-height: 1;
+  }
+  .clip-schedule-all-grip {
+    cursor: grab;
+    touch-action: none;
+  }
+  .clip-schedule-all-grip:active {
+    cursor: grabbing;
+  }
+  .clip-schedule-all-remove:hover,
+  .clip-schedule-all-remove:focus-visible,
+  .clip-schedule-all-grip:hover,
+  .clip-schedule-all-grip:focus-visible {
+    border-color: rgba(45, 212, 191, 0.56);
+    color: #e6ebf2;
+  }
+  .clip-schedule-all-title {
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+  .clip-schedule-all-undo {
+    border: 0;
+    background: transparent;
+    color: #5eead4;
+    padding: 0;
+    font: inherit;
+    text-decoration: underline;
+    text-underline-offset: 2px;
   }
   .clip-schedule-all-success-icon {
     width: 44px;
@@ -3627,7 +3675,7 @@
       text-align: left;
     }
     #clip-workbench-shell[data-generate-v2="1"] .clip-rail-item.is-landscape {
-      grid-template-columns: 72px minmax(0, 1fr) auto;
+      grid-template-columns: 96px minmax(0, 1fr) auto;
     }
     #clip-workbench-shell[data-generate-v2="1"] .clip-rail-item.is-ai-suggestion {
       border: 0;
@@ -3668,8 +3716,8 @@
       align-self: center;
     }
     #clip-workbench-shell[data-generate-v2="1"] .clip-rail-thumb.is-landscape {
-      width: 72px;
-      height: 40px;
+      width: 96px;
+      height: 54px;
     }
     #clip-workbench-shell[data-generate-v2="1"] .clip-rail-thumb img,
     #clip-workbench-shell[data-generate-v2="1"] .clip-rail-thumb video {
@@ -5373,6 +5421,68 @@
     width: min(420px, 100%);
     display: block;
   }
+  .orig-preview {
+    display: none;
+    position: relative;
+    width: 100%;
+    max-width: 520px;
+    aspect-ratio: 16 / 9;
+    overflow: hidden;
+    border-radius: 18px;
+    background: #020617;
+    box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.08);
+    outline: none;
+  }
+  .cropper-preview-card.is-original-layout .orig-preview {
+    display: block;
+  }
+  .cropper-preview-card.is-original-layout .shorts-preview-frame {
+    display: none;
+  }
+  .orig-preview:focus-visible {
+    box-shadow: inset 0 0 0 2px rgba(45, 212, 191, 0.52);
+  }
+  .orig-preview.is-dragging {
+    user-select: none;
+  }
+  .orig-preview__canvas {
+    position: absolute;
+    inset: 0;
+    width: 100%;
+    height: 100%;
+    display: block;
+  }
+  .orig-preview__title,
+  .orig-preview__caption {
+    position: absolute;
+    left: 6%;
+    right: 6%;
+    z-index: 2;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    text-align: center;
+    padding: 0 12px;
+    border-radius: 12px;
+    cursor: grab;
+    touch-action: none;
+    line-height: 1.1;
+    white-space: normal;
+    overflow-wrap: anywhere;
+    word-break: break-word;
+  }
+  .orig-preview__title.is-hidden,
+  .orig-preview__caption.is-hidden {
+    display: none;
+  }
+  .orig-preview__title.is-selected,
+  .orig-preview__caption.is-selected {
+    box-shadow: 0 0 0 2px rgba(45, 212, 191, 0.72);
+  }
+  .orig-preview__title.is-dragging,
+  .orig-preview__caption.is-dragging {
+    cursor: grabbing;
+  }
   .caption-tab-font-field .form-select,
   .caption-tab-size-field .form-control {
     min-height: 46px;
@@ -6364,7 +6474,7 @@
                   {% set rail_delete_locked = row.yt_video_id or row.publish_at or row.publish_at_iso or rail_publish_status in ['scheduled', 'uploaded', 'published'] or rail_db_publish_status in ['scheduled', 'uploaded', 'published'] %}
                   {% set rail_has_rendered_media = row.status == "created" and row.video_url %}
                   {% set rail_is_rendering = generate_v2 and row.render_job_status in ['queued', 'processing', 'running'] %}
-                  {% set rail_render_aspect_class = ' is-landscape' if row.render_aspect == 'landscape' else (' is-portrait' if row.render_aspect == 'portrait' else '') %}
+                  {% set rail_render_aspect_class = ' is-landscape' if row.render_aspect == 'landscape' or (generate_v2 and not rail_has_rendered_media and (video_crop_aspect or '') == 'original') else (' is-portrait' if row.render_aspect == 'portrait' else '') %}
                   <div class="clip-rail-row" data-plan-index="{{ row.plan_index }}">
                   <button type="button" class="clip-rail-item{{ rail_render_aspect_class }}{% if row.is_ai_suggestion %} is-ai-suggestion{% endif %}{% if generate_v2 and not rail_has_rendered_media %} is-unrendered{% endif %}" title="{{ row.title or ('Manual clip #' ~ row.plan_index) }}" data-plan-index="{{ row.plan_index }}" data-origin="{{ row.origin }}" data-ai-suggestion="{{ '1' if row.is_ai_suggestion else '0' }}" data-score="{{ rail_score if rail_score is not none else '' }}" data-status="{{ row.status }}" data-render-job-status="{{ row.render_job_status or '' }}" data-filename="{{ row.video_filename or '' }}" data-media-version="{{ row.media_version or '' }}" data-render-width="{{ row.render_width or '' }}" data-render-height="{{ row.render_height or '' }}" data-render-aspect="{{ row.render_aspect or '' }}" data-outdated="{{ '1' if row.render_settings_outdated else '0' }}" data-regenerate-locked="{{ '1' if row.regenerate_locked else '0' }}" data-regenerate-lock-reason="{{ row.regenerate_lock_reason or '' }}" data-title="{{ (row.yt_title or row.title or video.title) | e }}" data-description="{{ (row.yt_description or '') | replace('\\', '\\\\') | replace('\n', '\\n') | replace('\r', '\\r') | e }}" data-yt-video-id="{{ row.yt_video_id or '' }}" data-publish-status="{{ row.publish_status or '' }}" data-db-publish-status="{{ row.db_publish_status or '' }}" data-publish-at="{{ row.publish_at or row.publish_at_iso or '' }}" data-start="{{ row.start or 0 }}" data-end="{{ row.end or 0 }}" data-edit-url="{{ editor_url('edit_clip_title_time', video_pk=video.id, plan_index=row.plan_index) }}">
                     {% if generate_v2 %}
@@ -8205,6 +8315,11 @@
           </div>
           <div class="cropper-preview-card" data-frame-width="{{ PREVIEW_CONFIG.frameWidth }}">
             <div class="small text-muted mb-2">Final Preview</div>
+            <div class="orig-preview" id="orig-preview-frame" tabindex="0" aria-label="Original preview editor">
+              <canvas class="orig-preview__canvas" id="orig-preview-canvas" width="1280" height="720" aria-hidden="true"></canvas>
+              <div class="orig-preview__title" id="orig-preview-title" data-preview-element="title">Life is full of fun</div>
+              <div class="orig-preview__caption" id="orig-preview-caption" data-preview-element="subtitle">Sample subtitle line</div>
+            </div>
             <div class="shorts-preview-frame" id="shorts-preview-frame" tabindex="0" aria-label="Shorts preview editor">
               <div class="shorts-preview-title-band crop-preview-selectable" id="shorts-preview-title-band" data-preview-element="title">Life is full of fun</div>
               <div class="shorts-preview-video crop-preview-selectable" id="shorts-preview-video" data-preview-element="video">
@@ -14813,6 +14928,10 @@ const initScoreThresholdBatchControls = () => {
 const scheduleAllState = {
   running: false,
   success: false,
+  removed: new Set(),
+  order: [],
+  lastRemoved: null,
+  undoTimer: null,
 };
 
 const connectedPublishPlatforms = {
@@ -14913,7 +15032,7 @@ const setScheduleAllFeedback = (message = "", tone = "text-white-50") => {
 
 const getScheduleAllEligibleClips = () => {
   const terminalPublishStatuses = new Set(["scheduled", "uploaded", "published"]);
-  return Array.from(document.querySelectorAll(".clip-rail-item"))
+  const clips = Array.from(document.querySelectorAll(".clip-rail-item"))
     .map((railItem) => {
       const planIndex = String(railItem.dataset.planIndex || "").trim();
       const card = getClipCardByPlanIndex(planIndex);
@@ -14936,11 +15055,23 @@ const getScheduleAllEligibleClips = () => {
       clip.status === "created" &&
       clip.filename &&
       clip.planIndex &&
+      !scheduleAllState.removed.has(String(clip.planIndex)) &&
       !clip.ytVideoId &&
       !clip.publishAt &&
       !terminalPublishStatuses.has(clip.publishStatus) &&
       !terminalPublishStatuses.has(clip.dbPublishStatus)
     ));
+  const orderMap = new Map(scheduleAllState.order.map((planIndex, index) => [String(planIndex), index]));
+  const nextClips = clips.slice().sort((a, b) => {
+    const aOrder = orderMap.has(String(a.planIndex)) ? orderMap.get(String(a.planIndex)) : Number.MAX_SAFE_INTEGER;
+    const bOrder = orderMap.has(String(b.planIndex)) ? orderMap.get(String(b.planIndex)) : Number.MAX_SAFE_INTEGER;
+    if (aOrder !== bOrder) {
+      return aOrder - bOrder;
+    }
+    return clips.indexOf(a) - clips.indexOf(b);
+  });
+  scheduleAllState.order = nextClips.map((clip) => String(clip.planIndex));
+  return nextClips;
 };
 
 const getScheduleAllNotCreatedCount = () => {
@@ -14964,10 +15095,29 @@ const buildScheduleAllRows = (clips, startValue, intervalHours) => {
   }));
 };
 
-const renderScheduleAllRows = (rows) => {
-  return rows.map((row) => (
-    `<div class="clip-schedule-all-preview-row"><span>${escapeHtml(row.label)} · ${escapeHtml(row.title)}</span><strong>${escapeHtml(formatSchedulePreviewValue(row.publishAt))}</strong></div>`
-  )).join("");
+const renderScheduleAllRows = (rows, options = {}) => {
+  const interactive = options.interactive !== false;
+  const rowHtml = rows.map((row) => {
+    const planIndex = escapeHtml(row.clip?.planIndex || "");
+    const grip = interactive
+      ? `<button type="button" class="clip-schedule-all-grip" draggable="true" data-schedule-drag-handle data-plan-index="${planIndex}" title="Drag to reorder" aria-label="Drag to reorder"><i class="bi bi-grip-vertical" aria-hidden="true"></i></button>`
+      : `<span></span>`;
+    const remove = interactive
+      ? `<button type="button" class="clip-schedule-all-remove" data-schedule-remove data-plan-index="${planIndex}" title="Remove from this batch" aria-label="Remove from this batch">×</button>`
+      : `<span></span>`;
+    return (
+      `<div class="clip-schedule-all-preview-row" data-plan-index="${planIndex}">` +
+        grip +
+        `<span class="clip-schedule-all-title">${escapeHtml(row.label)} · ${escapeHtml(row.title)}</span>` +
+        `<strong>${escapeHtml(formatSchedulePreviewValue(row.publishAt))}</strong>` +
+        remove +
+      `</div>`
+    );
+  }).join("");
+  const undo = interactive && scheduleAllState.lastRemoved
+    ? `<div class="small mt-2">Removed one clip. <button type="button" class="clip-schedule-all-undo" data-schedule-undo>Undo</button></div>`
+    : "";
+  return rowHtml + undo;
 };
 
 const setScheduleAllSuccessView = (rows) => {
@@ -14980,7 +15130,7 @@ const setScheduleAllSuccessView = (rows) => {
     successTitle.textContent = `${count} ${count === 1 ? "clip" : "clips"} scheduled`;
   }
   if (successList) {
-    successList.innerHTML = renderScheduleAllRows(rows);
+    successList.innerHTML = renderScheduleAllRows(rows, { interactive: false });
   }
   if (cancel) {
     cancel.classList.add("d-none");
@@ -15008,6 +15158,124 @@ const resetScheduleAllModalView = () => {
   }
 };
 
+const bindScheduleAllPreviewInteractions = () => {
+  const { preview } = scheduleAllElements();
+  if (!preview) {
+    return;
+  }
+  preview.querySelectorAll("[data-schedule-remove]").forEach((button) => {
+    button.addEventListener("click", () => {
+      const planIndex = String(button.dataset.planIndex || "").trim();
+      if (!planIndex) return;
+      scheduleAllState.removed.add(planIndex);
+      scheduleAllState.lastRemoved = planIndex;
+      if (scheduleAllState.undoTimer) {
+        window.clearTimeout(scheduleAllState.undoTimer);
+      }
+      scheduleAllState.undoTimer = window.setTimeout(() => {
+        scheduleAllState.lastRemoved = null;
+        updateScheduleAllPreview();
+      }, 5000);
+      updateScheduleAllPreview();
+    });
+  });
+  preview.querySelector("[data-schedule-undo]")?.addEventListener("click", () => {
+    const planIndex = scheduleAllState.lastRemoved;
+    if (planIndex) {
+      scheduleAllState.removed.delete(String(planIndex));
+    }
+    scheduleAllState.lastRemoved = null;
+    if (scheduleAllState.undoTimer) {
+      window.clearTimeout(scheduleAllState.undoTimer);
+      scheduleAllState.undoTimer = null;
+    }
+    updateScheduleAllPreview();
+  });
+  preview.querySelectorAll("[data-schedule-drag-handle]").forEach((handle) => {
+    let pointerDragPlanIndex = "";
+    handle.addEventListener("dragstart", (event) => {
+      const planIndex = String(handle.dataset.planIndex || "").trim();
+      if (!planIndex) return;
+      event.dataTransfer?.setData("text/plain", planIndex);
+      event.dataTransfer?.setDragImage?.(handle.closest(".clip-schedule-all-preview-row") || handle, 12, 12);
+      handle.closest(".clip-schedule-all-preview-row")?.classList.add("is-dragging");
+    });
+    handle.addEventListener("dragend", () => {
+      preview.querySelectorAll(".clip-schedule-all-preview-row").forEach((row) => {
+        row.classList.remove("is-dragging", "is-drop-before");
+      });
+    });
+    handle.addEventListener("pointerdown", (event) => {
+      if (event.pointerType === "mouse") {
+        return;
+      }
+      pointerDragPlanIndex = String(handle.dataset.planIndex || "").trim();
+      if (!pointerDragPlanIndex) {
+        return;
+      }
+      handle.setPointerCapture?.(event.pointerId);
+      handle.closest(".clip-schedule-all-preview-row")?.classList.add("is-dragging");
+    });
+    handle.addEventListener("pointerup", (event) => {
+      if (!pointerDragPlanIndex) {
+        return;
+      }
+      const targetRow = document
+        .elementFromPoint(event.clientX, event.clientY)
+        ?.closest?.(".clip-schedule-all-preview-row[data-plan-index]");
+      const target = String(targetRow?.dataset.planIndex || "").trim();
+      const dragged = pointerDragPlanIndex;
+      pointerDragPlanIndex = "";
+      preview.querySelectorAll(".clip-schedule-all-preview-row").forEach((row) => {
+        row.classList.remove("is-dragging", "is-drop-before");
+      });
+      if (!target || target === dragged) {
+        return;
+      }
+      const currentOrder = scheduleAllState.order.length
+        ? scheduleAllState.order.slice()
+        : getScheduleAllEligibleClips().map((clip) => String(clip.planIndex));
+      const withoutDragged = currentOrder.filter((planIndex) => planIndex !== dragged);
+      const targetIndex = withoutDragged.indexOf(target);
+      withoutDragged.splice(targetIndex < 0 ? withoutDragged.length : targetIndex, 0, dragged);
+      scheduleAllState.order = withoutDragged;
+      updateScheduleAllPreview();
+    });
+    handle.addEventListener("pointercancel", () => {
+      pointerDragPlanIndex = "";
+      preview.querySelectorAll(".clip-schedule-all-preview-row").forEach((row) => {
+        row.classList.remove("is-dragging", "is-drop-before");
+      });
+    });
+  });
+  preview.querySelectorAll(".clip-schedule-all-preview-row[data-plan-index]").forEach((row) => {
+    row.addEventListener("dragover", (event) => {
+      event.preventDefault();
+      row.classList.add("is-drop-before");
+    });
+    row.addEventListener("dragleave", () => {
+      row.classList.remove("is-drop-before");
+    });
+    row.addEventListener("drop", (event) => {
+      event.preventDefault();
+      const dragged = String(event.dataTransfer?.getData("text/plain") || "").trim();
+      const target = String(row.dataset.planIndex || "").trim();
+      if (!dragged || !target || dragged === target) {
+        row.classList.remove("is-drop-before");
+        return;
+      }
+      const currentOrder = scheduleAllState.order.length
+        ? scheduleAllState.order.slice()
+        : getScheduleAllEligibleClips().map((clip) => String(clip.planIndex));
+      const withoutDragged = currentOrder.filter((planIndex) => planIndex !== dragged);
+      const targetIndex = withoutDragged.indexOf(target);
+      withoutDragged.splice(targetIndex < 0 ? withoutDragged.length : targetIndex, 0, dragged);
+      scheduleAllState.order = withoutDragged;
+      updateScheduleAllPreview();
+    });
+  });
+};
+
 const updateScheduleAllButtonState = () => {
   const { button } = scheduleAllElements();
   if (!button) {
@@ -15031,7 +15299,7 @@ const updateScheduleAllButtonState = () => {
 };
 
 const updateScheduleAllPreview = () => {
-  const { startInput, intervalInput, eligibility, preview, confirm, confirmLabel, spinner } = scheduleAllElements();
+  const { modal, startInput, intervalInput, eligibility, preview, confirm, confirmLabel, spinner } = scheduleAllElements();
   if (!startInput || !intervalInput || !preview || !confirm || !confirmLabel) {
     return;
   }
@@ -15074,10 +15342,15 @@ const updateScheduleAllPreview = () => {
     preview.innerHTML = '<div class="text-warning">Start time must be in the future.</div>';
   } else {
     preview.innerHTML = renderScheduleAllRows(buildScheduleAllRows(clips, startValue, intervalHours));
+    bindScheduleAllPreviewInteractions();
   }
   confirmLabel.textContent = scheduleAllState.running
     ? "Scheduling…"
     : (clips.length ? `Schedule ${clips.length} ${clips.length === 1 ? "clip" : "clips"}` : "Schedule clips");
+  const title = modal?.querySelector("#scheduleAllClipsModalLabel");
+  if (title) {
+    title.textContent = clips.length ? `Schedule ${clips.length} ${clips.length === 1 ? "clip" : "clips"}` : "Schedule all clips";
+  }
   confirm.disabled = scheduleAllState.running || !clips.length || !validStart;
   spinner?.classList.toggle("d-none", !scheduleAllState.running);
 };
@@ -15142,6 +15415,10 @@ const scheduleOneClipToConnectedPlatforms = async (clip, publishAt) => {
   body.set("title", clip.title || "");
   body.set("description", clip.description || "");
   body.set("publish_at", publishAt);
+  if (clip.scheduleBatchOrder) {
+    body.set("schedule_batch_order", clip.scheduleBatchOrder);
+    body.set("schedule_batch_position", String(clip.scheduleBatchPosition || ""));
+  }
   if (connectedPublishPlatforms.youtube) {
     body.set("youtube_enabled", "on");
   }
@@ -15196,6 +15473,7 @@ const runScheduleAllClips = async () => {
     }
   }
   const scheduledRows = buildScheduleAllRows(clips, startValue, intervalHours);
+  const scheduleBatchOrder = clips.map((clip) => String(clip.planIndex || "")).filter(Boolean).join(",");
   scheduleAllState.running = true;
   updateScheduleAllPreview();
   setScheduleAllFeedback("");
@@ -15204,6 +15482,8 @@ const runScheduleAllClips = async () => {
   for (const row of scheduledRows) {
     const { clip, publishAt } = row;
     try {
+      clip.scheduleBatchOrder = scheduleBatchOrder;
+      clip.scheduleBatchPosition = row.label.replace(/\D+/g, "") || "";
       const payload = await scheduleOneClipToConnectedPlatforms(clip, publishAt);
       scheduledCount += 1;
       markClipAsScheduled(clip, publishAt, { payload });
@@ -15245,6 +15525,13 @@ const initScheduleAllClipsControls = () => {
       return;
     }
     resetScheduleAllModalView();
+    scheduleAllState.removed.clear();
+    scheduleAllState.order = getScheduleAllEligibleClips().map((clip) => String(clip.planIndex));
+    scheduleAllState.lastRemoved = null;
+    if (scheduleAllState.undoTimer) {
+      window.clearTimeout(scheduleAllState.undoTimer);
+      scheduleAllState.undoTimer = null;
+    }
     setScheduleAllFeedback("");
     const minStartValue = getScheduleMinStartValue();
     startInput.min = minStartValue;
@@ -16880,6 +17167,11 @@ document.addEventListener("DOMContentLoaded", () => {
   const previewVideo = modalEl.querySelector("#shorts-preview-video");
   const previewSubtitle = modalEl.querySelector("#shorts-preview-subtitle-band");
   const previewDate = modalEl.querySelector("#shorts-preview-date");
+  const origPreviewFrame = modalEl.querySelector("#orig-preview-frame");
+  const origPreviewCanvas = modalEl.querySelector("#orig-preview-canvas");
+  const origPreviewCtx = origPreviewCanvas?.getContext?.("2d") || null;
+  const origPreviewTitle = modalEl.querySelector("#orig-preview-title");
+  const origPreviewCaption = modalEl.querySelector("#orig-preview-caption");
   const originalResetBtn = modalEl.querySelector("#crop-original-reset-btn");
   const settingsContainer = modalEl.querySelector(".short-video-body");
   const previewToolbar = modalEl.querySelector("#crop-preview-toolbar");
@@ -17593,6 +17885,8 @@ document.addEventListener("DOMContentLoaded", () => {
     const showVideoPositionControl = activeCropAspect === "landscape" && !getEffectiveSplitEnabled();
     previewTitle?.classList.toggle("is-hidden", !titleVisible);
     previewSubtitle?.classList.toggle("is-hidden", !subtitleVisible);
+    origPreviewTitle?.classList.toggle("is-hidden", !titleVisible);
+    origPreviewCaption?.classList.toggle("is-hidden", !subtitleVisible);
     previewToolbarTitle?.classList.toggle("is-hidden", !titleVisible);
     previewToolbarSubtitle?.classList.toggle("is-hidden", !subtitleVisible);
     titleAdvancedControls.forEach((el) => el.classList.toggle("is-hidden", !titleVisible));
@@ -17642,13 +17936,13 @@ document.addEventListener("DOMContentLoaded", () => {
         ? "Title selected"
         : "Selected element";
     }
-    [previewTitle, previewVideo, previewSubtitle, previewDate].forEach((element) => {
+    [previewTitle, previewVideo, previewSubtitle, previewDate, origPreviewTitle, origPreviewCaption].forEach((element) => {
       if (!element) return;
       const matches = (element.dataset.previewElement || "") === selectedPreviewElement;
       element.classList.toggle("is-selected", matches);
     });
     if (selectedPreviewElement) {
-      previewFrame?.focus({ preventScroll: true });
+      (isOriginalCropAspect() ? origPreviewFrame : previewFrame)?.focus({ preventScroll: true });
     }
   };
   const applyElementDelta = (kind, deltaRenderY) => {
@@ -17722,6 +18016,31 @@ document.addEventListener("DOMContentLoaded", () => {
       updateFieldValue(videoDateTopInput, nextValue);
     }
   };
+  function drawOriginalResultPreview() {
+    if (!origPreviewCanvas || !origPreviewCtx || !previewImgTop?.naturalWidth || !previewImgTop?.naturalHeight) {
+      return;
+    }
+    const frameRect = origPreviewFrame?.getBoundingClientRect?.();
+    const cssWidth = Math.max(1, Math.round(frameRect?.width || 520));
+    const cssHeight = Math.max(1, Math.round(frameRect?.height || (cssWidth * 9 / 16)));
+    if (origPreviewCanvas.width !== cssWidth || origPreviewCanvas.height !== cssHeight) {
+      origPreviewCanvas.width = cssWidth;
+      origPreviewCanvas.height = cssHeight;
+    }
+    const rect = normalizeOriginalZoomRect(originalZoomRect) || { x: 0, y: 0, w: 1, h: 1 };
+    const sx = rect.x * previewImgTop.naturalWidth;
+    const sy = rect.y * previewImgTop.naturalHeight;
+    const sw = rect.w * previewImgTop.naturalWidth;
+    const sh = rect.h * previewImgTop.naturalHeight;
+    origPreviewCtx.clearRect(0, 0, cssWidth, cssHeight);
+    origPreviewCtx.fillStyle = "#020617";
+    origPreviewCtx.fillRect(0, 0, cssWidth, cssHeight);
+    try {
+      origPreviewCtx.drawImage(previewImgTop, sx, sy, sw, sh, 0, 0, cssWidth, cssHeight);
+    } catch (error) {
+      // Keep the dark background if the source frame is not drawable yet.
+    }
+  }
   const applyPreviewLayout = () => {
     const dims = getOverlayDims();
     const originalPreview = isOriginalCropAspect();
@@ -17828,6 +18147,67 @@ document.addEventListener("DOMContentLoaded", () => {
       previewSubtitle.style.height = subtitleHeight * scaleY + "px";
       previewSubtitle.style.fontSize = subtitleFontSize * elementScale + "px";
     }
+    if (origPreviewTitle) {
+      origPreviewTitle.textContent = previewTitle?.textContent || "Life is full of fun";
+      origPreviewTitle.classList.toggle("is-hidden", !isTitleVisible());
+      origPreviewTitle.style.top = titleTop * scaleY + "px";
+      origPreviewTitle.style.height = baseTitleHeight * scaleY + "px";
+      origPreviewTitle.style.fontSize = titleFontSize * elementScale + "px";
+      origPreviewTitle.style.lineHeight = previewTitle?.style.lineHeight || "1.1";
+      origPreviewTitle.style.fontFamily = previewTitle?.style.fontFamily || "";
+      origPreviewTitle.style.fontWeight = previewTitle?.style.fontWeight || "";
+      origPreviewTitle.style.color = previewTitle?.style.color || "";
+      origPreviewTitle.style.backgroundColor = previewTitle?.style.backgroundColor || "";
+      origPreviewTitle.style.textShadow = previewTitle?.style.textShadow || "";
+      origPreviewTitle.style.textTransform = previewTitle?.style.textTransform || "";
+    }
+    if (origPreviewCaption) {
+      origPreviewCaption.innerHTML = previewSubtitle?.innerHTML || "Sample subtitle line";
+      origPreviewCaption.className = "orig-preview__caption";
+      origPreviewCaption.dataset.previewElement = "subtitle";
+      previewSubtitle?.classList.forEach((className) => {
+        if (
+          className.startsWith("is-") ||
+          className.startsWith("word-highlight") ||
+          className.startsWith("caption-template")
+        ) {
+          origPreviewCaption.classList.add(className);
+        }
+      });
+      origPreviewCaption.classList.toggle("is-hidden", !isSubtitleVisible());
+      origPreviewCaption.style.top = subtitleTop * scaleY + "px";
+      origPreviewCaption.style.height = subtitleHeight * scaleY + "px";
+      origPreviewCaption.style.fontSize = subtitleFontSize * elementScale + "px";
+      origPreviewCaption.style.lineHeight = previewSubtitle?.style.lineHeight || "1.1";
+      origPreviewCaption.style.fontFamily = previewSubtitle?.style.fontFamily || "";
+      origPreviewCaption.style.fontWeight = previewSubtitle?.style.fontWeight || "";
+      origPreviewCaption.style.color = previewSubtitle?.style.color || "";
+      origPreviewCaption.style.backgroundColor = previewSubtitle?.style.backgroundColor || "";
+      origPreviewCaption.style.textShadow = previewSubtitle?.style.textShadow || "";
+      origPreviewCaption.style.textTransform = previewSubtitle?.style.textTransform || "";
+      [
+        "--word-highlight-pill-color",
+        "--word-highlight-active-color",
+        "--word-highlight-text-shadow",
+        "--word-highlight-active-text-shadow",
+        "--word-highlight-active-padding",
+        "--word-highlight-active-radius",
+        "--word-highlight-font-family",
+        "--word-highlight-font-weight",
+        "--word-highlight-inactive-color",
+        "--word-highlight-text-background",
+        "--word-highlight-active-background",
+        "--word-highlight-active-scale",
+      ].forEach((name) => {
+        const value = previewSubtitle?.style.getPropertyValue(name) || "";
+        if (value) {
+          origPreviewCaption.style.setProperty(name, value);
+        } else {
+          origPreviewCaption.style.removeProperty(name);
+        }
+      });
+    }
+    drawOriginalResultPreview();
     syncOverlayVisibilityUi();
     if (selectedPreviewElement === "video" && !isPreviewElementDraggable("video")) {
       setSelectedPreviewElement("");
@@ -18155,6 +18535,7 @@ document.addEventListener("DOMContentLoaded", () => {
 
   const drawOriginalPreviewFrame = () => {
     drawPreviewFromCropper();
+    drawOriginalResultPreview();
     if (infoEl) {
       updateInfo(originalZoomRect ? "Zoomed original preview" : "Full frame preview");
     }
@@ -18207,6 +18588,9 @@ document.addEventListener("DOMContentLoaded", () => {
       }
     }
     drawPreviewFromCropper();
+    if (isOriginalCropAspect()) {
+      drawOriginalResultPreview();
+    }
   };
 
   const drawPreviewFromCropper = () => {
@@ -18427,7 +18811,7 @@ document.addEventListener("DOMContentLoaded", () => {
     });
   });
 
-  [previewTitle, previewVideo, previewSubtitle, previewDate].forEach((element) => {
+  [previewTitle, previewVideo, previewSubtitle, previewDate, origPreviewTitle, origPreviewCaption].forEach((element) => {
     element?.addEventListener("pointerdown", (event) => {
       const kind = element.dataset.previewElement || "";
       if (!kind || !isPreviewElementDraggable(kind)) {
@@ -18443,7 +18827,7 @@ document.addEventListener("DOMContentLoaded", () => {
         moved: false,
       };
       element.classList.add("is-dragging");
-      previewFrame?.classList.add("is-dragging");
+      (isOriginalCropAspect() ? origPreviewFrame : previewFrame)?.classList.add("is-dragging");
       element.setPointerCapture?.(event.pointerId);
     });
   });
@@ -18462,16 +18846,18 @@ document.addEventListener("DOMContentLoaded", () => {
     applyElementDelta(dragState.kind, deltaRenderY);
   };
   previewFrame?.addEventListener("pointermove", handlePreviewPointerMove);
+  origPreviewFrame?.addEventListener("pointermove", handlePreviewPointerMove);
 
   const endPreviewDrag = (event) => {
     const completedDragState = dragState;
     if (event?.target && event.target.classList?.remove) {
       event.target.classList.remove("is-dragging");
     }
-    [previewTitle, previewVideo, previewSubtitle, previewDate].forEach((element) => {
+    [previewTitle, previewVideo, previewSubtitle, previewDate, origPreviewTitle, origPreviewCaption].forEach((element) => {
       element?.classList.remove("is-dragging");
     });
     previewFrame?.classList.remove("is-dragging");
+    origPreviewFrame?.classList.remove("is-dragging");
     dragState = null;
     if (completedDragState && !completedDragState.moved) {
       focusCropModalTabForPreviewKind(completedDragState.kind);
@@ -18480,13 +18866,25 @@ document.addEventListener("DOMContentLoaded", () => {
 
   previewFrame?.addEventListener("pointerup", endPreviewDrag);
   previewFrame?.addEventListener("pointercancel", endPreviewDrag);
+  origPreviewFrame?.addEventListener("pointerup", endPreviewDrag);
+  origPreviewFrame?.addEventListener("pointercancel", endPreviewDrag);
   previewFrame?.addEventListener("pointerleave", (event) => {
+    if (dragState && !(event.buttons & 1)) {
+      endPreviewDrag(event);
+    }
+  });
+  origPreviewFrame?.addEventListener("pointerleave", (event) => {
     if (dragState && !(event.buttons & 1)) {
       endPreviewDrag(event);
     }
   });
   previewFrame?.addEventListener("pointerdown", (event) => {
     if (event.target === previewFrame) {
+      setSelectedPreviewElement("");
+    }
+  });
+  origPreviewFrame?.addEventListener("pointerdown", (event) => {
+    if (event.target === origPreviewFrame) {
       setSelectedPreviewElement("");
     }
   });
@@ -18506,6 +18904,12 @@ document.addEventListener("DOMContentLoaded", () => {
     applyElementDelta(selectedPreviewElement, event.key === "ArrowDown" ? step : -step);
   };
   previewFrame?.addEventListener("keydown", handlePreviewKeydown);
+  origPreviewFrame?.addEventListener("keydown", handlePreviewKeydown);
+  window.addEventListener("resize", () => {
+    if (isOriginalCropAspect()) {
+      applyPreviewLayout();
+    }
+  });
   originalResetBtn?.addEventListener("click", () => {
     originalZoomRect = null;
     markCropDirty();
