@@ -1,0 +1,173 @@
+{% extends "vs_marketing_base.html" %}
+
+{% set is_tr = locale == 'tr' %}
+{% set switch_href = '/tools/youtube-to-shorts' if is_tr else '/tr/araclar/youtube-shorts' %}
+
+{% block title %}{{ "YouTube'dan Shorts" if is_tr else "YouTube to Shorts" }}{% endblock %}
+
+{% block extra_styles %}
+  {{ super() }}
+  <style>
+    .free-tool-page {
+      width: min(100%, 940px);
+      margin: 0 auto;
+      padding: clamp(3rem, 7vw, 5.5rem) 1rem clamp(3rem, 6vw, 4.5rem);
+    }
+    .free-tool-hero {
+      display: grid;
+      gap: 1.35rem;
+      text-align: center;
+    }
+    .free-tool-hero h1 {
+      margin: 0;
+      font-size: clamp(2.2rem, 6vw, 4.4rem);
+      line-height: 1.02;
+      letter-spacing: -0.04em;
+      color: rgba(248, 250, 252, 0.98);
+    }
+    .free-tool-subhead {
+      max-width: 660px;
+      margin: 0 auto;
+      color: rgba(226, 232, 240, 0.84);
+      font-size: clamp(1rem, 2vw, 1.2rem);
+      line-height: 1.6;
+    }
+    .free-tool-card {
+      margin: 1.4rem auto 0;
+      max-width: 720px;
+      padding: clamp(1rem, 2vw, 1.4rem);
+      border: 1px solid rgba(255, 255, 255, 0.12);
+      border-radius: 18px;
+      background: rgba(15, 23, 42, 0.72);
+      box-shadow: 0 28px 70px rgba(0, 0, 0, 0.34);
+      text-align: left;
+    }
+    .free-tool-form {
+      display: grid;
+      gap: 0.9rem;
+    }
+    .free-tool-input-row {
+      display: flex;
+      gap: 0.7rem;
+    }
+    .free-tool-input {
+      min-height: 52px;
+      flex: 1 1 auto;
+      border-radius: 14px;
+      border: 1px solid rgba(148, 163, 184, 0.32);
+      background: rgba(2, 6, 23, 0.58);
+      color: rgba(248, 250, 252, 0.96);
+      padding: 0 1rem;
+      font-size: 1rem;
+      outline: none;
+    }
+    .free-tool-input::placeholder {
+      color: rgba(148, 163, 184, 0.72);
+    }
+    .free-tool-submit {
+      min-height: 52px;
+      border: 0;
+      border-radius: 14px;
+      padding: 0 1.2rem;
+      background: #2bb3a3;
+      color: #06201d;
+      font-weight: 700;
+      white-space: nowrap;
+    }
+    .free-tool-note,
+    .free-tool-switch {
+      color: rgba(203, 213, 225, 0.74);
+      font-size: 0.92rem;
+    }
+    .free-tool-switch a,
+    .free-tool-error a {
+      color: #5dd8c7;
+    }
+    .free-tool-error {
+      padding: 0.75rem 0.9rem;
+      border: 1px solid rgba(248, 113, 113, 0.3);
+      border-radius: 12px;
+      background: rgba(127, 29, 29, 0.24);
+      color: rgba(254, 226, 226, 0.96);
+      font-size: 0.94rem;
+    }
+    .free-tool-steps {
+      display: grid;
+      grid-template-columns: repeat(3, minmax(0, 1fr));
+      gap: 0.75rem;
+      margin-top: 1.5rem;
+    }
+    .free-tool-step {
+      padding: 1rem;
+      border: 1px solid rgba(255, 255, 255, 0.1);
+      border-radius: 14px;
+      background: rgba(255, 255, 255, 0.035);
+      color: rgba(226, 232, 240, 0.88);
+      text-align: center;
+      font-weight: 600;
+    }
+    @media (max-width: 720px) {
+      .free-tool-input-row,
+      .free-tool-steps {
+        grid-template-columns: 1fr;
+        display: grid;
+      }
+      .free-tool-submit {
+        width: 100%;
+      }
+    }
+  </style>
+{% endblock %}
+
+{% block content %}
+  <main class="free-tool-page">
+    <section class="free-tool-hero">
+      <p class="free-tool-switch mb-0">
+        <a href="{{ switch_href }}">{{ "English" if is_tr else "Türkçe" }}</a>
+      </p>
+      <h1>{{ "YouTube'dan Shorts — Ücretsiz AI Klip Bulucu" if is_tr else "YouTube to Shorts — Free AI Clip Finder" }}</h1>
+      <p class="free-tool-subhead">
+        {{ "YouTube bağlantını yapıştır; Minti en iyi anları bulsun, ilk Short'u hazırlasın ve düzenlemeye hazır hale getirsin." if is_tr else "Paste a YouTube link; Minti finds the strongest moment, prepares your first Short, and opens it for editing." }}
+      </p>
+      <div class="free-tool-card">
+        {% if error %}
+          <div class="free-tool-error mb-3">
+            {{ error }}
+            {% if register_url %}
+              · <a href="{{ register_url }}">{{ "Ücretsiz hesap oluştur" if is_tr else "Create a free account" }}</a>
+            {% endif %}
+          </div>
+        {% endif %}
+        <form class="free-tool-form" method="post">
+          <div class="free-tool-input-row">
+            <input
+              class="free-tool-input"
+              type="url"
+              name="video_url"
+              value="{{ video_url or '' }}"
+              placeholder="{{ 'YouTube bağlantısını yapıştır' if is_tr else 'Paste a YouTube link' }}"
+              required
+            >
+            <button class="free-tool-submit" type="submit">{{ "Short bul" if is_tr else "Find Shorts" }}</button>
+          </div>
+          {% include "_turnstile_widget.html" %}
+          <div class="free-tool-note">
+            {{ "30 dakikaya kadar videolar · kayıt gerekmez" if is_tr else "Videos up to 30 min · no sign-up needed" }}
+          </div>
+        </form>
+      </div>
+      <div class="free-tool-steps" aria-label="{{ 'Nasıl çalışır' if is_tr else 'How it works' }}">
+        <div class="free-tool-step">{{ "Yapıştır" if is_tr else "Paste" }}</div>
+        <div class="free-tool-step">{{ "AI en iyi anları bulur" if is_tr else "AI finds the best moments" }}</div>
+        <div class="free-tool-step">{{ "Short'unu düzenle" if is_tr else "Edit your Short" }}</div>
+      </div>
+    </section>
+  </main>
+{% endblock %}
+
+{% block scripts %}
+  {{ super() }}
+  {% if vs_turnstile_enabled and vs_turnstile_site_key %}
+    <script src="https://challenges.cloudflare.com/turnstile/v0/api.js" async defer></script>
+  {% endif %}
+{% endblock %}

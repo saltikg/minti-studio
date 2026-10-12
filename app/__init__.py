@@ -113,6 +113,18 @@ def create_app():
 
         return redeem_onboarding_magic_link(token)
 
+    @app.route("/tools/youtube-to-shorts", methods=["GET", "POST"])
+    def free_tool_youtube_to_shorts_en():
+        from app.video_shorts.routes.free_tool import render_free_tool_landing
+
+        return render_free_tool_landing("en")
+
+    @app.route("/tr/araclar/youtube-shorts", methods=["GET", "POST"])
+    def free_tool_youtube_to_shorts_tr():
+        from app.video_shorts.routes.free_tool import render_free_tool_landing
+
+        return render_free_tool_landing("tr")
+
     if ENABLE_LEGACY_BLOG:
         from .trends import trend_bp
         app.register_blueprint(trend_bp)

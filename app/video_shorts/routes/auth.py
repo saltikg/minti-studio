@@ -165,6 +165,9 @@ def _current_user():
         FROM shorts_users
         WHERE id = ?
         """
+    user_columns = set()
+    has_guest_columns = False
+    has_onboarding_columns = False
     try:
         conn = get_db_readonly()
     except Exception as exc:
@@ -173,7 +176,9 @@ def _current_user():
         return None
     try:
         user_columns = table_columns(conn, "shorts_users")
-        if "onboarding_dismissed" in user_columns:
+        has_guest_columns = "is_guest" in user_columns
+        has_onboarding_columns = "onboarding_dismissed" in user_columns
+        if has_onboarding_columns:
             select_sql = """
                 SELECT
                   CAST(id AS VARCHAR),
@@ -189,7 +194,36 @@ def _current_user():
                   service_mode,
                   service_tier,
                   pending_service_intent,
-                  pending_service_tier
+                  pending_service_tier{guest_select}
+                FROM shorts_users
+                WHERE id = ?
+            """.format(
+                guest_select=""", COALESCE(is_guest, FALSE),
+                  guest_created_at,
+                  guest_ip_hash,
+                  COALESCE(guest_render_count, 0),
+                  COALESCE(guest_video_count, 0)
+                """
+                if has_guest_columns
+                else ""
+            )
+        elif has_guest_columns:
+            select_sql = """
+                SELECT
+                  CAST(id AS VARCHAR),
+                  username,
+                  name,
+                  email,
+                  plan_id,
+                  custom_limit_bytes,
+                  role,
+                  time_zone,
+                  COALESCE(email_verified, FALSE),
+                  COALESCE(is_guest, FALSE),
+                  guest_created_at,
+                  guest_ip_hash,
+                  COALESCE(guest_render_count, 0),
+                  COALESCE(guest_video_count, 0)
                 FROM shorts_users
                 WHERE id = ?
             """
@@ -218,6 +252,12 @@ def _current_user():
         session.pop("vs_user_id", None)
         g.vs_current_user = None
         return None
+    if has_onboarding_columns and len(row) >= 19:
+        guest_values = row[14:19]
+    elif not has_onboarding_columns and len(row) >= 14:
+        guest_values = row[9:14]
+    else:
+        guest_values = (False, None, None, 0, 0)
     g.vs_current_user = {
         "id": row[0],
         "username": row[1],
@@ -228,11 +268,16 @@ def _current_user():
         "role": row[6] or "member",
         "time_zone": row[7] or DEFAULT_TIME_ZONE,
         "email_verified": bool(row[8]) if len(row) > 8 else False,
-        "onboarding_dismissed": bool(row[9]) if len(row) > 9 else False,
-        "service_mode": str(row[10] or "").strip().lower() if len(row) > 10 and row[10] else "",
-        "service_tier": int(row[11]) if len(row) > 11 and row[11] is not None else None,
-        "pending_service_intent": str(row[12] or "").strip().lower() if len(row) > 12 and row[12] else "",
-        "pending_service_tier": int(row[13]) if len(row) > 13 and row[13] is not None else None,
+        "onboarding_dismissed": bool(row[9]) if has_onboarding_columns and len(row) > 9 else False,
+        "service_mode": str(row[10] or "").strip().lower() if has_onboarding_columns and len(row) > 10 and row[10] else "",
+        "service_tier": int(row[11]) if has_onboarding_columns and len(row) > 11 and row[11] is not None else None,
+        "pending_service_intent": str(row[12] or "").strip().lower() if has_onboarding_columns and len(row) > 12 and row[12] else "",
+        "pending_service_tier": int(row[13]) if has_onboarding_columns and len(row) > 13 and row[13] is not None else None,
+        "is_guest": bool(guest_values[0]),
+        "guest_created_at": guest_values[1],
+        "guest_ip_hash": guest_values[2],
+        "guest_render_count": int(guest_values[3] or 0),
+        "guest_video_count": int(guest_values[4] or 0),
     }
     return g.vs_current_user
 
@@ -946,6 +991,11 @@ def _is_authenticated():
     return _current_user() is not None
 
 
+def _is_guest_user(user: Optional[dict] = None) -> bool:
+    candidate = user if user is not None else _current_user()
+    return bool(candidate and candidate.get("is_guest"))
+
+
 def require_admin(view_func):
     @wraps(view_func)
     def wrapped(*args, **kwargs):
@@ -1292,10 +1342,52 @@ def _guard_video_shorts():
     if request.endpoint in allowed:
         return
     if request.endpoint and request.endpoint.startswith("video_shorts_bp."):
-        if not _is_authenticated():
+        current_user = getattr(g, "vs_current_user", None) or _current_user()
+        if not current_user:
             if (request.path or "").startswith("/video_shorts/admin/"):
                 abort(404)
             return redirect(url_for("video_shorts_bp.login", next=request.url))
+        if _is_guest_user(current_user):
+            guest_allowed = {
+                "video_shorts_bp.login",
+                "video_shorts_bp.register",
+                "video_shorts_bp.register_check_email",
+                "video_shorts_bp.verify_email",
+                "video_shorts_bp.resend_verification_email",
+                "video_shorts_bp.forgot_password",
+                "video_shorts_bp.reset_password",
+                "video_shorts_bp.google_login",
+                "video_shorts_bp.google_oauth_callback",
+                "video_shorts_bp.logout",
+                "video_shorts_bp.static",
+                "video_shorts_bp.serve_media",
+                "video_shorts_bp.generate_short",
+                "video_shorts_bp.auto_suggest_render_status",
+                "video_shorts_bp.generate_preview_frame_start",
+                "video_shorts_bp.generate_preview_frame_status",
+                "video_shorts_bp.transcribe_video_status",
+                "video_shorts_bp.edit_segment_text",
+                "video_shorts_bp.update_segment_non_speech",
+                "video_shorts_bp.save_short_settings",
+                "video_shorts_bp.save_crop_area",
+                "video_shorts_bp.add_clip_section",
+                "video_shorts_bp.edit_clip_title_time",
+                "video_shorts_bp.autoclip_video",
+                "video_shorts_bp.regenerate_clip_video",
+                "video_shorts_bp.render_job_status_api",
+                "video_shorts_bp.usage_api",
+                "video_shorts_bp.client_error_api",
+            }
+            if request.endpoint not in guest_allowed:
+                wants_json = (
+                    request.is_json
+                    or request.headers.get("X-Requested-With") == "XMLHttpRequest"
+                    or request.path.startswith("/video_shorts/api/")
+                    or request.method != "GET"
+                )
+                if wants_json:
+                    return jsonify(success=False, message="Create a free account to continue."), 403
+                return redirect("/tools/youtube-to-shorts")
 
 
 @video_shorts_bp.route("/login", methods=["GET", "POST"])
@@ -1308,7 +1400,7 @@ def login():
                 tier=choice["tier"],
                 plan_id=str(choice["plan_id"] or ""),
             )
-    if _is_authenticated():
+    if _is_authenticated() and not _is_guest_user():
         nxt = _normalize_next_url(request.args.get("next")) or url_for("video_shorts_bp.my_videos_page")
         return redirect(nxt)
     error = None
@@ -1345,8 +1437,9 @@ def login():
                 """
                 SELECT CAST(id AS VARCHAR), username, password_hash, name, COALESCE(email_verified, FALSE)
                 FROM shorts_users
-                WHERE lower(username) = lower(?)
-                   OR lower(email) = lower(?)
+                WHERE (lower(username) = lower(?)
+                   OR lower(email) = lower(?))
+                  AND COALESCE(is_guest, FALSE) = FALSE
                 """,
                 [username, username],
             ).fetchone()
@@ -1408,7 +1501,7 @@ def register():
                 tier=choice["tier"],
                 plan_id=str(choice["plan_id"] or ""),
             )
-    if _is_authenticated():
+    if _is_authenticated() and not _is_guest_user():
         return redirect(url_for("video_shorts_bp.my_videos_page"))
     error = None
     pending_email = ""

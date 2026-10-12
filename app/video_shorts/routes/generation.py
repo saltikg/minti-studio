@@ -10142,7 +10142,8 @@ def generate_short(video_pk):
         for user_id in str(os.getenv("GENERATE_V2_USER_IDS") or "").split(",")
         if user_id.strip()
     }
-    generate_v2 = bool(current_user_id and current_user_id in generate_v2_user_ids)
+    guest_mode = bool((current_user or {}).get("is_guest"))
+    generate_v2 = bool(guest_mode or (current_user_id and current_user_id in generate_v2_user_ids))
     hide_clip_coachmark = load_user_bool_preference(
         current_user_id if current_user else None,
         HIDE_CLIP_COACHMARK_PREFERENCE_KEY,
@@ -11961,6 +11962,7 @@ def generate_short(video_pk):
         editor_is_admin_operation=editor_context["is_admin_operation"],
         editor_is_customer_operation=bool(getattr(g, "vs_admin_operation_workspace_kind", "") == "customer"),
         generate_v2=generate_v2,
+        guest_mode=guest_mode,
         latest_scheduled_display=latest_scheduled_display,
         latest_scheduled_client_iso=latest_scheduled_client_iso,
         channel_latest_scheduled_display=channel_latest_scheduled_display,

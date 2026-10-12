@@ -658,6 +658,11 @@ def ensure_storage_user_schema(conn):
         ("email_verification_token_hash", "VARCHAR"),
         ("email_verification_expires_at", "TIMESTAMP"),
         ("email_verification_sent_at", "TIMESTAMP"),
+        ("is_guest", "BOOLEAN DEFAULT FALSE"),
+        ("guest_created_at", "TIMESTAMP"),
+        ("guest_ip_hash", "TEXT"),
+        ("guest_render_count", "INT DEFAULT 0"),
+        ("guest_video_count", "INT DEFAULT 0"),
     ]
     for col_name, definition in column_defs:
         if col_name not in user_columns:
@@ -696,6 +701,10 @@ def ensure_storage_user_schema(conn):
         pass
     try:
         conn.execute("CREATE UNIQUE INDEX IF NOT EXISTS idx_shorts_users_google_sub ON shorts_users(google_sub) WHERE google_sub IS NOT NULL")
+    except Exception:
+        pass
+    try:
+        conn.execute("CREATE INDEX IF NOT EXISTS idx_shorts_users_guest_created_at ON shorts_users(is_guest, guest_created_at)")
     except Exception:
         pass
 
@@ -784,6 +793,11 @@ def ensure_auth_user_schema(conn) -> None:
         ("service_mode_chosen_at", "TIMESTAMP"),
         ("pending_service_intent", "VARCHAR"),
         ("pending_service_tier", "INTEGER"),
+        ("is_guest", "BOOLEAN DEFAULT FALSE"),
+        ("guest_created_at", "TIMESTAMP"),
+        ("guest_ip_hash", "TEXT"),
+        ("guest_render_count", "INT DEFAULT 0"),
+        ("guest_video_count", "INT DEFAULT 0"),
     ]
     changed = False
     for col_name, definition in column_defs:
@@ -819,6 +833,10 @@ def ensure_auth_user_schema(conn) -> None:
         conn.execute(
             "CREATE UNIQUE INDEX IF NOT EXISTS idx_shorts_users_google_sub ON shorts_users(google_sub) WHERE google_sub IS NOT NULL"
         )
+    except Exception:
+        pass
+    try:
+        conn.execute("CREATE INDEX IF NOT EXISTS idx_shorts_users_guest_created_at ON shorts_users(is_guest, guest_created_at)")
     except Exception:
         pass
     try:
