@@ -801,6 +801,9 @@ def ensure_auth_user_schema(conn) -> None:
         ("guest_ip_hash", "TEXT"),
         ("guest_render_count", "INT DEFAULT 0"),
         ("guest_video_count", "INT DEFAULT 0"),
+        ("guest_resume_next", "TEXT"),
+        ("guest_resume_action", "VARCHAR"),
+        ("guest_resume_clip", "VARCHAR"),
     ]
     changed = False
     for col_name, definition in column_defs:
