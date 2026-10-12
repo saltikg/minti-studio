@@ -2,14 +2,57 @@
 
 {% set is_tr = locale == 'tr' %}
 {% set switch_href = '/tools/youtube-to-shorts' if is_tr else '/tr/araclar/youtube-shorts' %}
+{% set page_title = "YouTube'dan Shorts — Ücretsiz AI Klip Bulucu" if is_tr else "YouTube to Shorts — Free AI Clip Finder" %}
+{% set page_description = "YouTube videolarını ücretsiz Shorts'a çevir. AI en iyi anı bulur, altyazı ve düzenleme hazır olur; kayıt gerekmez." if is_tr else "Turn YouTube videos into Shorts for free. AI finds the best moment, adds editable captions, and opens your clip for editing." %}
+{% set canonical_path = '/tr/araclar/youtube-shorts' if is_tr else '/tools/youtube-to-shorts' %}
+{% set alternate_path = '/tools/youtube-to-shorts' if is_tr else '/tr/araclar/youtube-shorts' %}
+{% set site_origin = request.url_root.rstrip('/') %}
+{% set faq_items = [
+  (
+    'Bu YouTube’dan Shorts aracı gerçekten ücretsiz mi?' if is_tr else 'Is this YouTube to Shorts tool really free?',
+    'Evet. 30 dakikaya kadar bir video yapıştır; Minti en iyi Short’unu oluşturur ve kayıt olmadan 2 tane daha yapabilirsin. Ücretsiz hesap (kredi kartı yok) indirme, planlama ve daha fazla video açar.' if is_tr else 'Yes. Paste a video up to 30 minutes; Minti creates your best Short and you can make 2 more, no sign-up. A free account (no credit card) unlocks downloads, scheduling and more videos.'
+  ),
+  (
+    'AI en iyi anları nasıl seçiyor?' if is_tr else 'How does the AI choose the best moments?',
+    'Tüm videoyu yazıya döker; güçlü bir giriş, netlik ve tek başına anlamlı olma ölçütlerine göre anları puanlar.' if is_tr else 'It transcribes the full video and scores moments for a strong hook, clarity and whether they make sense on their own.'
+  ),
+  (
+    'Short’u düzenleyebilir miyim?' if is_tr else 'Can I edit the Short?',
+    'Evet. Transkriptten kelimeleri çıkarabilir, altyazıyı, başlığı ve yerleşimi değiştirebilir, sonra yeniden oluşturabilirsin.' if is_tr else 'Yes. Remove words from the transcript, change captions, title and layout, then regenerate.'
+  ),
+  (
+    'Hangi videolar daha iyi çalışır?' if is_tr else 'Which videos work best?',
+    'Konuşma ağırlıklı videolar: podcast’ler, röportajlar, dersler, sohbetler ve vloglar.' if is_tr else 'Talking videos: podcasts, interviews, lessons, talks, vlogs.'
+  ),
+  (
+    'Türkçe videolarla çalışıyor mu?' if is_tr else 'Does it work with Turkish videos?',
+    'Evet — Türkçe, İngilizce ve birçok başka dilde çalışır.' if is_tr else 'Yes — Turkish, English and many other languages.'
+  ),
+  (
+    'Watermark var mı?' if is_tr else 'Is there a watermark?',
+    'Ücretsiz araç önizlemelerinde küçük bir Minti işareti bulunur. Ücretsiz kaydolduğunda Shorts videoların temiz oluşturulur.' if is_tr else 'Free-tool previews carry a small Minti mark. Sign up free and your Shorts are rendered clean.'
+  )
+] %}
 
-{% block title %}{{ "YouTube'dan Shorts" if is_tr else "YouTube to Shorts" }}{% endblock %}
+{% block title %}{{ page_title }}{% endblock %}
+{% block meta_description %}{{ page_description }}{% endblock %}
+
+{% block seo_meta %}
+  {{ super() }}
+  <link rel="canonical" href="{{ site_origin }}{{ canonical_path }}">
+  <link rel="alternate" hreflang="{{ 'tr' if is_tr else 'en' }}" href="{{ site_origin }}{{ canonical_path }}">
+  <link rel="alternate" hreflang="{{ 'en' if is_tr else 'tr' }}" href="{{ site_origin }}{{ alternate_path }}">
+  <link rel="alternate" hreflang="x-default" href="{{ site_origin }}/tools/youtube-to-shorts">
+  <meta property="og:title" content="{{ page_title }}">
+  <meta property="og:description" content="{{ page_description }}">
+  <meta property="og:url" content="{{ site_origin }}{{ canonical_path }}">
+{% endblock %}
 
 {% block extra_styles %}
   {{ super() }}
   <style>
     .free-tool-page {
-      width: min(100%, 940px);
+      width: min(100%, 1040px);
       margin: 0 auto;
       padding: clamp(3rem, 7vw, 5.5rem) 1rem clamp(3rem, 6vw, 4.5rem);
     }
@@ -95,20 +138,185 @@
       display: grid;
       grid-template-columns: repeat(3, minmax(0, 1fr));
       gap: 0.75rem;
-      margin-top: 1.5rem;
+      margin-top: 3rem;
     }
     .free-tool-step {
+      display: grid;
+      grid-template-columns: auto minmax(0, 1fr);
+      gap: 0.8rem;
+      align-items: start;
       padding: 1rem;
       border: 1px solid rgba(255, 255, 255, 0.1);
       border-radius: 14px;
       background: rgba(255, 255, 255, 0.035);
       color: rgba(226, 232, 240, 0.88);
+      text-align: left;
+    }
+    .free-tool-step-number {
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      width: 2rem;
+      height: 2rem;
+      border-radius: 999px;
+      background: rgba(43, 179, 163, 0.14);
+      color: #8cf1e1;
+      font-size: 0.9rem;
+      font-weight: 800;
+    }
+    .free-tool-step-title {
+      margin: 0;
+      color: rgba(248, 250, 252, 0.96);
+      font-weight: 750;
+      line-height: 1.25;
+    }
+    .free-tool-step-copy {
+      margin: 0.25rem 0 0;
+      color: rgba(203, 213, 225, 0.78);
+      font-size: 0.92rem;
+      line-height: 1.5;
+    }
+    .free-tool-section {
+      margin-top: clamp(3rem, 7vw, 5.5rem);
+    }
+    .free-tool-section-head {
+      max-width: 720px;
+      margin: 0 auto 1.2rem;
       text-align: center;
-      font-weight: 600;
+    }
+    .free-tool-section-head h2 {
+      margin: 0;
+      color: rgba(248, 250, 252, 0.98);
+      font-size: clamp(1.55rem, 3vw, 2.35rem);
+      line-height: 1.12;
+      letter-spacing: -0.03em;
+    }
+    .free-tool-feature-grid {
+      display: grid;
+      grid-template-columns: repeat(4, minmax(0, 1fr));
+      gap: 0.85rem;
+    }
+    .free-tool-feature-card,
+    .free-tool-compare-card {
+      border: 1px solid rgba(255, 255, 255, 0.1);
+      border-radius: 16px;
+      background: rgba(15, 23, 42, 0.56);
+      box-shadow: 0 18px 46px rgba(0, 0, 0, 0.16);
+    }
+    .free-tool-feature-card {
+      padding: 1rem;
+    }
+    .free-tool-feature-icon {
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      width: 2.25rem;
+      height: 2.25rem;
+      border-radius: 12px;
+      background: rgba(43, 179, 163, 0.12);
+      color: #8cf1e1;
+      margin-bottom: 0.8rem;
+    }
+    .free-tool-feature-card h3,
+    .free-tool-compare-card h3 {
+      margin: 0;
+      color: rgba(248, 250, 252, 0.96);
+      font-size: 1rem;
+      line-height: 1.3;
+    }
+    .free-tool-feature-card p,
+    .free-tool-compare-card p {
+      margin: 0.45rem 0 0;
+      color: rgba(203, 213, 225, 0.78);
+      font-size: 0.92rem;
+      line-height: 1.55;
+    }
+    .free-tool-compare {
+      display: grid;
+      grid-template-columns: repeat(2, minmax(0, 1fr));
+      gap: 0.9rem;
+      max-width: 860px;
+      margin: 0 auto;
+    }
+    .free-tool-compare-card {
+      padding: 1.15rem;
+    }
+    .free-tool-compare-card.is-account {
+      border-color: rgba(43, 179, 163, 0.28);
+      background: linear-gradient(180deg, rgba(43, 179, 163, 0.08), rgba(15, 23, 42, 0.58));
+    }
+    .free-tool-account-link {
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      margin-top: 1rem;
+      min-height: 40px;
+      padding: 0.65rem 1rem;
+      border-radius: 999px;
+      background: #2bb3a3;
+      color: #06201d;
+      font-weight: 750;
+      text-decoration: none;
+    }
+    .free-tool-faq {
+      max-width: 860px;
+      margin: 0 auto;
+      display: grid;
+      gap: 0.75rem;
+    }
+    .free-tool-faq-item {
+      border: 1px solid rgba(255, 255, 255, 0.1);
+      border-radius: 16px;
+      background: rgba(255, 255, 255, 0.035);
+      overflow: hidden;
+    }
+    .free-tool-faq-trigger {
+      width: 100%;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 1rem;
+      padding: 1rem 1.05rem;
+      border: 0;
+      background: transparent;
+      color: rgba(248, 250, 252, 0.96);
+      text-align: left;
+      font-weight: 750;
+      line-height: 1.4;
+    }
+    .free-tool-faq-trigger:hover,
+    .free-tool-faq-trigger:focus-visible {
+      background: rgba(43, 179, 163, 0.08);
+      outline: none;
+    }
+    .free-tool-faq-icon {
+      flex: 0 0 auto;
+      color: rgba(140, 241, 225, 0.9);
+      transition: transform 0.18s ease;
+    }
+    .free-tool-faq-trigger[aria-expanded="true"] .free-tool-faq-icon {
+      transform: rotate(45deg);
+    }
+    .free-tool-faq-panel {
+      overflow: hidden;
+      max-height: 0;
+      transition: max-height 0.22s ease;
+    }
+    .free-tool-faq-panel[hidden] {
+      display: block;
+    }
+    .free-tool-faq-panel-inner {
+      padding: 0 1.05rem 1rem;
+      border-top: 1px solid rgba(255, 255, 255, 0.07);
+      color: rgba(203, 213, 225, 0.82);
+      font-size: 0.95rem;
+      line-height: 1.65;
     }
     @media (max-width: 720px) {
       .free-tool-input-row,
-      .free-tool-steps {
+      .free-tool-steps,
+      .free-tool-feature-grid,
+      .free-tool-compare {
         grid-template-columns: 1fr;
         display: grid;
       }
@@ -125,11 +333,11 @@
       <p class="free-tool-switch mb-0">
         <a href="{{ switch_href }}">{{ "English" if is_tr else "Türkçe" }}</a>
       </p>
-      <h1>{{ "YouTube'dan Shorts — Ücretsiz AI Klip Bulucu" if is_tr else "YouTube to Shorts — Free AI Clip Finder" }}</h1>
+      <h1>{{ page_title }}</h1>
       <p class="free-tool-subhead">
         {{ "YouTube bağlantını yapıştır; Minti en iyi anları bulsun, ilk Short'u hazırlasın ve düzenlemeye hazır hale getirsin." if is_tr else "Paste a YouTube link; Minti finds the strongest moment, prepares your first Short, and opens it for editing." }}
       </p>
-      <div class="free-tool-card">
+      <div class="free-tool-card" id="free-tool-paste-box">
         {% if error %}
           <div class="free-tool-error mb-3">
             {{ error }}
@@ -156,10 +364,96 @@
           </div>
         </form>
       </div>
-      <div class="free-tool-steps" aria-label="{{ 'Nasıl çalışır' if is_tr else 'How it works' }}">
-        <div class="free-tool-step">{{ "Yapıştır" if is_tr else "Paste" }}</div>
-        <div class="free-tool-step">{{ "AI en iyi anları bulur" if is_tr else "AI finds the best moments" }}</div>
-        <div class="free-tool-step">{{ "Short'unu düzenle" if is_tr else "Edit your Short" }}</div>
+    </section>
+
+    <section class="free-tool-section" aria-labelledby="free-tool-how-title">
+      <div class="free-tool-section-head">
+        <h2 id="free-tool-how-title">{{ "Nasıl çalışır" if is_tr else "How it works" }}</h2>
+      </div>
+      <div class="free-tool-steps">
+        <div class="free-tool-step">
+          <span class="free-tool-step-number">1</span>
+          <div>
+            <p class="free-tool-step-title">{{ "Yapıştır" if is_tr else "Paste" }}</p>
+            <p class="free-tool-step-copy">{{ "30 dakikaya kadar herhangi bir YouTube bağlantısını bırak." if is_tr else "Drop any YouTube link up to 30 minutes." }}</p>
+          </div>
+        </div>
+        <div class="free-tool-step">
+          <span class="free-tool-step-number">2</span>
+          <div>
+            <p class="free-tool-step-title">{{ "AI en iyi anları bulur" if is_tr else "AI finds the best moments" }}</p>
+            <p class="free-tool-step-copy">{{ "Minti videoyu yazıya döker ve en güçlü, tek başına anlamlı anı seçer." if is_tr else "Minti transcribes the video and picks the strongest, self-contained moment." }}</p>
+          </div>
+        </div>
+        <div class="free-tool-step">
+          <span class="free-tool-step-number">3</span>
+          <div>
+            <p class="free-tool-step-title">{{ "Short'unu düzenle" if is_tr else "Edit your Short" }}</p>
+            <p class="free-tool-step-copy">{{ "Kelimeleri çıkar, altyazı ve yerleşimi düzenle, tek tıkla yeniden oluştur." if is_tr else "Remove words, tweak captions and layout, regenerate in one click." }}</p>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <section class="free-tool-section" aria-labelledby="free-tool-get-title">
+      <div class="free-tool-section-head">
+        <h2 id="free-tool-get-title">{{ "Neler alırsın" if is_tr else "What you get" }}</h2>
+      </div>
+      <div class="free-tool-feature-grid">
+        {% set features = [
+          ('auto_awesome', 'En iyi anı bulma' if is_tr else 'Best-moment detection', 'AI, hook gücü yüksek ve tek başına anlaşılır anları puanlar.' if is_tr else 'Hooks and standalone moments, scored by AI.'),
+          ('subtitles', 'Doğru altyazılar' if is_tr else 'Accurate captions', 'YouTube otomatik altyazısı değil, kendi transkripsiyonumuz. Kelime kelime düzenle.' if is_tr else "Our own transcription, not YouTube's auto-captions. Edit word by word."),
+          ('crop_9_16', 'Akıllı dikey kadraj' if is_tr else 'Smart vertical framing', 'Yüz odaklı 9:16 yerleşimler ya da orijinal 16:9 görüntü.' if is_tr else 'Face-aware 9:16 layouts, or keep the original 16:9.'),
+          ('event_available', 'Her yerde planla' if is_tr else 'Schedule everywhere', 'Ücretsiz hesapla YouTube, Instagram ve Facebook için planla.' if is_tr else 'With a free account, schedule to YouTube, Instagram and Facebook.')
+        ] %}
+        {% for icon, title, copy in features %}
+          <article class="free-tool-feature-card">
+            <span class="material-symbols-outlined free-tool-feature-icon" aria-hidden="true">{{ icon }}</span>
+            <h3>{{ title }}</h3>
+            <p>{{ copy }}</p>
+          </article>
+        {% endfor %}
+      </div>
+    </section>
+
+    <section class="free-tool-section" aria-labelledby="free-tool-compare-title">
+      <div class="free-tool-section-head">
+        <h2 id="free-tool-compare-title">{{ "Ücretsiz araç ve ücretsiz hesap" if is_tr else "Free tool vs free account" }}</h2>
+      </div>
+      <div class="free-tool-compare">
+        <article class="free-tool-compare-card">
+          <h3>{{ "Ücretsiz araç (kayıt yok)" if is_tr else "Free tool (no sign-up)" }}</h3>
+          <p>{{ "30 dakikaya kadar 1 video · en fazla 3 Short · altyazı ve yerleşim düzenleme" if is_tr else "1 video up to 30 min · up to 3 Shorts · edit captions & layout" }}</p>
+        </article>
+        <article class="free-tool-compare-card is-account">
+          <h3>{{ "Ücretsiz hesap (kredi kartı yok)" if is_tr else "Free account (no credit card)" }}</h3>
+          <p>{{ "Daha fazla ve daha uzun video · temiz Shorts indirme (marksız) · planlama · daha fazla klip için AI Suggest" if is_tr else "More & longer videos · download clean Shorts (no mark) · scheduling · AI Suggest for more clips" }}</p>
+          <a class="free-tool-account-link" href="{{ url_for('video_shorts_bp.register') }}">{{ "Ücretsiz hesap oluştur" if is_tr else "Create free account" }}</a>
+        </article>
+      </div>
+    </section>
+
+    <section class="free-tool-section" id="faq" aria-labelledby="free-tool-faq-title">
+      <div class="free-tool-section-head">
+        <h2 id="free-tool-faq-title">{{ "Sık sorulan sorular" if is_tr else "FAQ" }}</h2>
+      </div>
+      <div class="free-tool-faq" id="free-tool-faq">
+        {% for question, answer in faq_items %}
+          <div class="free-tool-faq-item">
+            <button
+              type="button"
+              class="free-tool-faq-trigger"
+              aria-expanded="false"
+              aria-controls="free-tool-faq-{{ loop.index }}-panel"
+              id="free-tool-faq-{{ loop.index }}-trigger">
+              <span>{{ question }}</span>
+              <span class="material-symbols-outlined free-tool-faq-icon" aria-hidden="true">add</span>
+            </button>
+            <div class="free-tool-faq-panel" id="free-tool-faq-{{ loop.index }}-panel" role="region" aria-labelledby="free-tool-faq-{{ loop.index }}-trigger" hidden>
+              <div class="free-tool-faq-panel-inner">{{ answer }}</div>
+            </div>
+          </div>
+        {% endfor %}
       </div>
     </section>
   </main>
@@ -170,4 +464,56 @@
   {% if vs_turnstile_enabled and vs_turnstile_site_key %}
     <script src="https://challenges.cloudflare.com/turnstile/v0/api.js" async defer></script>
   {% endif %}
+  <script type="application/ld+json">
+{
+  "@context": "https://schema.org",
+  "@type": "FAQPage",
+  "mainEntity": [
+    {% for question, answer in faq_items %}
+      {
+        "@type": "Question",
+        "name": {{ question | tojson }},
+        "acceptedAnswer": {
+          "@type": "Answer",
+          "text": {{ answer | tojson }}
+        }
+      }{% if not loop.last %},{% endif %}
+    {% endfor %}
+  ]
+}
+  </script>
+  <script>
+    document.addEventListener("DOMContentLoaded", function () {
+      const triggers = Array.from(document.querySelectorAll(".free-tool-faq-trigger"));
+      triggers.forEach(function (trigger) {
+        trigger.addEventListener("click", function () {
+          const panel = document.getElementById(trigger.getAttribute("aria-controls"));
+          const expanded = trigger.getAttribute("aria-expanded") === "true";
+          trigger.setAttribute("aria-expanded", expanded ? "false" : "true");
+          if (!panel) return;
+          if (expanded) {
+            panel.style.maxHeight = "0px";
+            panel.hidden = true;
+          } else {
+            panel.hidden = false;
+            panel.style.maxHeight = panel.scrollHeight + "px";
+          }
+        });
+      });
+
+      const pasteInput = document.querySelector(".free-tool-input");
+      const pasteBox = document.getElementById("free-tool-paste-box");
+      const footerCta = document.querySelector(".vs-marketing-footer .hero-primary");
+      if (footerCta && pasteInput && pasteBox) {
+        footerCta.setAttribute("href", "#free-tool-paste-box");
+        footerCta.addEventListener("click", function (event) {
+          event.preventDefault();
+          pasteBox.scrollIntoView({ behavior: "smooth", block: "center" });
+          window.setTimeout(function () {
+            pasteInput.focus({ preventScroll: true });
+          }, 350);
+        });
+      }
+    });
+  </script>
 {% endblock %}
