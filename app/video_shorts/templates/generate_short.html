@@ -2472,6 +2472,20 @@
   .generate-v2-preview-slot .cropper-preview-card > .small.text-muted {
     display: none;
   }
+  .generate-v2-preview-slot.is-original-layout {
+    aspect-ratio: 16 / 9;
+    height: auto !important;
+  }
+  .generate-v2-preview-slot .cropper-preview-card.is-original-layout {
+    position: relative;
+    width: 100% !important;
+    max-width: 100%;
+    transform: none !important;
+  }
+  .generate-v2-preview-slot .cropper-preview-card.is-original-layout .orig-preview {
+    width: 100%;
+    max-width: 100%;
+  }
   .generate-v2-discard-dialog {
     position: absolute;
     left: var(--generate-v2-discard-left, 12px);
@@ -4413,6 +4427,7 @@
     max-width: 100%;
     aspect-ratio: var(--original-source-aspect, 16 / 9);
     max-height: 60vh;
+    padding: 0;
     margin-inline: auto;
     display: flex;
     align-items: center;
@@ -11316,6 +11331,14 @@ const syncGenerateV2InlinePreviewScale = () => {
   if (!slot || !frame || !card || !slot.contains(card)) {
     return;
   }
+  if (card.classList.contains("is-original-layout")) {
+    slot.classList.add("is-original-layout");
+    slot.style.removeProperty("--generate-v2-preview-frame-source-width");
+    slot.style.removeProperty("--generate-v2-preview-frame-scale");
+    slot.style.height = "";
+    return;
+  }
+  slot.classList.remove("is-original-layout");
   const frameRect = frame.getBoundingClientRect();
   const sourceWidth = frameRect.width || Number.parseFloat(frame.style.width || frame.getAttribute("data-frame-width") || card.dataset.frameWidth || "248") || frame.offsetWidth || 248;
   const sourceHeight = frameRect.height || Number.parseFloat(frame.style.height || "") || frame.offsetHeight || Math.round(sourceWidth * 16 / 9);
@@ -18531,6 +18554,7 @@ document.addEventListener("DOMContentLoaded", () => {
     if (previewFrame) {
       previewFrame.classList.toggle("is-original-layout", originalPreview);
       previewCard?.classList.toggle("is-original-layout", originalPreview);
+      document.getElementById("generate-v2-preview-slot")?.classList.toggle("is-original-layout", originalPreview);
       if (previewCard) {
         previewCard.style.width = originalPreview ? "" : `${previewConfig.frameWidth}px`;
       }

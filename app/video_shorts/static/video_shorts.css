@@ -28,6 +28,12 @@
   top: 0;
   left: 0;
   right: 0;
+  width: 100dvw;
+  max-width: 100dvw;
+  box-sizing: border-box;
+  display: flex;
+  flex-wrap: nowrap;
+  align-items: center;
   z-index: 1040;
   background: var(--surface);
   border-bottom: 1px solid var(--border);
@@ -68,6 +74,10 @@ body.vs-app {
 .vs-topnav .vs-topnav-actions {
   gap: 0.5rem;
   position: relative;
+  min-width: 0;
+  flex: 1 1 auto;
+  justify-content: flex-end;
+  max-width: 100%;
 }
 
 .vs-notification-btn {
