@@ -112,7 +112,13 @@ def _case_ok(probe: dict[str, Any], expected_duration: float = DURATION) -> tupl
     return True, f"720x1280 duration={duration:.6f} audio=yes"
 
 
-def _case_ok_original(probe: dict[str, Any], expected_duration: float) -> tuple[bool, str]:
+def _case_ok_original(
+    probe: dict[str, Any],
+    expected_duration: float,
+    *,
+    subtitle_font_size: int,
+    crop_params_ignored: bool,
+) -> tuple[bool, str]:
     streams = probe.get("streams") or []
     video = next((stream for stream in streams if stream.get("codec_type") == "video"), None)
     audio = next((stream for stream in streams if stream.get("codec_type") == "audio"), None)
@@ -128,7 +134,11 @@ def _case_ok_original(probe: dict[str, Any], expected_duration: float) -> tuple[
         return False, f"bad duration {duration:.6f}"
     if not audio:
         return False, "missing audio"
-    return True, f"{width}x{height} duration={duration:.6f} audio=yes captions_in_frame=yes"
+    if subtitle_font_size < int(round(height * 0.05)):
+        return False, f"caption font too small {subtitle_font_size}px for {height}px canvas"
+    if not crop_params_ignored:
+        return False, "crop params were not ignored"
+    return True, f"{width}x{height} duration={duration:.6f} audio=yes caption_font={subtitle_font_size}px crop_ignored=yes"
 
 
 def _append_custom_caption_position_checks(rows: list[tuple[str, str, str]]) -> None:
@@ -441,6 +451,16 @@ def main() -> int:
         original_output = temp / "original_16x9.mp4"
         original_subs = temp / "original_16x9.srt"
         original_ranges = [{"start": 0.0, "end": 2.0}, {"start": 5.0, "end": 7.0}]
+        original_caption_font_size = 65
+        original_title_font_size = 59
+        original_caption_block_height = max(24, int(round(original_caption_font_size * 2.0)))
+        original_caption_margin = int(round(1080 - (1080 * 0.72 - (original_caption_block_height / 2.0)) - original_caption_block_height))
+        original_crop_settings = {
+            "crop_x_ratio": 0.37,
+            "crop_y_ratio": 0.24,
+            "crop_w_ratio": 0.22,
+            "crop_h_ratio": 0.31,
+        }
         original_subs.write_text(
             "1\n00:00:00,000 --> 00:00:01,800\nOriginal layout caption\n\n"
             "2\n00:00:02,000 --> 00:00:03,800\nSecond caption line\n",
@@ -483,18 +503,23 @@ def main() -> int:
                 show_title=True,
                 show_subtitle=True,
                 crop_aspect="original",
-                title_font_size=38,
+                title_font_size=original_title_font_size,
                 title_margin=86,
-                subtitle_font_size=28,
-                subtitle_margin=46,
-                crop_settings={
+                subtitle_font_size=original_caption_font_size,
+                subtitle_margin=original_caption_margin,
+                crop_settings=original_crop_settings,
+            )
+            ok, detail = _case_ok_original(
+                _probe(ffprobe, original_output),
+                expected_duration=original_duration,
+                subtitle_font_size=original_caption_font_size,
+                crop_params_ignored=original_crop_settings != {
                     "crop_x_ratio": 0.0,
                     "crop_y_ratio": 0.0,
                     "crop_w_ratio": 1.0,
                     "crop_h_ratio": 1.0,
                 },
             )
-            ok, detail = _case_ok_original(_probe(ffprobe, original_output), expected_duration=original_duration)
             rows.append(("original_16x9", "PASS" if ok else "FAIL", detail))
         except Exception as exc:
             rows.append(("original_16x9", "FAIL", str(exc).splitlines()[-1][:240]))

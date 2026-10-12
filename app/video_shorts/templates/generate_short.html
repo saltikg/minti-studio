@@ -36,6 +36,8 @@
   "videoHeightLandscape": VIDEO_OVERLAY_HEIGHT_LANDSCAPE,
   "videoWidthPortrait": VIDEO_OVERLAY_WIDTH,
   "videoHeightPortrait": VIDEO_OVERLAY_HEIGHT_PORTRAIT,
+  "originalOverlayWidth": 1280,
+  "originalOverlayHeight": 720,
   "subtitleY": SUBTITLE_BAND_Y,
   "subtitleHeight": SUBTITLE_BAND_HEIGHT
 } %}
@@ -3624,6 +3626,9 @@
       background: transparent;
       text-align: left;
     }
+    #clip-workbench-shell[data-generate-v2="1"] .clip-rail-item.is-landscape {
+      grid-template-columns: 72px minmax(0, 1fr) auto;
+    }
     #clip-workbench-shell[data-generate-v2="1"] .clip-rail-item.is-ai-suggestion {
       border: 0;
       background: transparent;
@@ -3661,6 +3666,10 @@
       height: 64px;
       border-radius: 10px;
       align-self: center;
+    }
+    #clip-workbench-shell[data-generate-v2="1"] .clip-rail-thumb.is-landscape {
+      width: 72px;
+      height: 40px;
     }
     #clip-workbench-shell[data-generate-v2="1"] .clip-rail-thumb img,
     #clip-workbench-shell[data-generate-v2="1"] .clip-rail-thumb video {
@@ -4310,6 +4319,9 @@
   .cropper-surfaces.is-split {
     grid-template-columns: repeat(2, minmax(0, 1fr));
   }
+  .cropper-surfaces.is-original-layout {
+    grid-template-columns: minmax(0, 1fr);
+  }
   .cropper-surface {
     position: relative;
     min-height: 220px;
@@ -4327,6 +4339,9 @@
     color: rgba(255, 255, 255, 0.64);
     font-weight: 600;
     letter-spacing: 0.01em;
+  }
+  .cropper-surfaces.is-original-layout .cropper-surface-label {
+    display: none;
   }
   .cropper-surface-image-wrap {
     position: relative;
@@ -6291,12 +6306,13 @@
                   {% set rail_delete_locked = row.yt_video_id or row.publish_at or row.publish_at_iso or rail_publish_status in ['scheduled', 'uploaded', 'published'] or rail_db_publish_status in ['scheduled', 'uploaded', 'published'] %}
                   {% set rail_has_rendered_media = row.status == "created" and row.video_url %}
                   {% set rail_is_rendering = generate_v2 and row.render_job_status in ['queued', 'processing', 'running'] %}
+                  {% set rail_render_aspect_class = ' is-landscape' if row.render_aspect == 'landscape' else (' is-portrait' if row.render_aspect == 'portrait' else '') %}
                   <div class="clip-rail-row" data-plan-index="{{ row.plan_index }}">
-                  <button type="button" class="clip-rail-item{% if row.is_ai_suggestion %} is-ai-suggestion{% endif %}{% if generate_v2 and not rail_has_rendered_media %} is-unrendered{% endif %}" title="{{ row.title or ('Manual clip #' ~ row.plan_index) }}" data-plan-index="{{ row.plan_index }}" data-origin="{{ row.origin }}" data-ai-suggestion="{{ '1' if row.is_ai_suggestion else '0' }}" data-score="{{ rail_score if rail_score is not none else '' }}" data-status="{{ row.status }}" data-render-job-status="{{ row.render_job_status or '' }}" data-filename="{{ row.video_filename or '' }}" data-media-version="{{ row.media_version or '' }}" data-outdated="{{ '1' if row.render_settings_outdated else '0' }}" data-regenerate-locked="{{ '1' if row.regenerate_locked else '0' }}" data-regenerate-lock-reason="{{ row.regenerate_lock_reason or '' }}" data-title="{{ (row.yt_title or row.title or video.title) | e }}" data-description="{{ (row.yt_description or '') | replace('\\', '\\\\') | replace('\n', '\\n') | replace('\r', '\\r') | e }}" data-yt-video-id="{{ row.yt_video_id or '' }}" data-publish-status="{{ row.publish_status or '' }}" data-db-publish-status="{{ row.db_publish_status or '' }}" data-publish-at="{{ row.publish_at or row.publish_at_iso or '' }}" data-start="{{ row.start or 0 }}" data-end="{{ row.end or 0 }}" data-edit-url="{{ editor_url('edit_clip_title_time', video_pk=video.id, plan_index=row.plan_index) }}">
+                  <button type="button" class="clip-rail-item{{ rail_render_aspect_class }}{% if row.is_ai_suggestion %} is-ai-suggestion{% endif %}{% if generate_v2 and not rail_has_rendered_media %} is-unrendered{% endif %}" title="{{ row.title or ('Manual clip #' ~ row.plan_index) }}" data-plan-index="{{ row.plan_index }}" data-origin="{{ row.origin }}" data-ai-suggestion="{{ '1' if row.is_ai_suggestion else '0' }}" data-score="{{ rail_score if rail_score is not none else '' }}" data-status="{{ row.status }}" data-render-job-status="{{ row.render_job_status or '' }}" data-filename="{{ row.video_filename or '' }}" data-media-version="{{ row.media_version or '' }}" data-render-width="{{ row.render_width or '' }}" data-render-height="{{ row.render_height or '' }}" data-render-aspect="{{ row.render_aspect or '' }}" data-outdated="{{ '1' if row.render_settings_outdated else '0' }}" data-regenerate-locked="{{ '1' if row.regenerate_locked else '0' }}" data-regenerate-lock-reason="{{ row.regenerate_lock_reason or '' }}" data-title="{{ (row.yt_title or row.title or video.title) | e }}" data-description="{{ (row.yt_description or '') | replace('\\', '\\\\') | replace('\n', '\\n') | replace('\r', '\\r') | e }}" data-yt-video-id="{{ row.yt_video_id or '' }}" data-publish-status="{{ row.publish_status or '' }}" data-db-publish-status="{{ row.db_publish_status or '' }}" data-publish-at="{{ row.publish_at or row.publish_at_iso or '' }}" data-start="{{ row.start or 0 }}" data-end="{{ row.end or 0 }}" data-edit-url="{{ editor_url('edit_clip_title_time', video_pk=video.id, plan_index=row.plan_index) }}">
                     {% if generate_v2 %}
                     <span class="clip-rail-number">{{ loop.index }}</span>
                     {% endif %}
-                    <span class="clip-rail-thumb{% if generate_v2 and not rail_has_rendered_media %} is-placeholder{% endif %}{% if rail_is_rendering %} is-rendering{% endif %}">
+                    <span class="clip-rail-thumb{{ rail_render_aspect_class }}{% if generate_v2 and not rail_has_rendered_media %} is-placeholder{% endif %}{% if rail_is_rendering %} is-rendering{% endif %}">
                       {% if rail_has_rendered_media %}
                         {% if generate_v2 and row.poster_url %}
                           <img src="{{ row.poster_url }}" alt="" loading="lazy">
@@ -6605,6 +6621,9 @@
                  data-render-job-status="{{ row.render_job_status or '' }}"
                  data-render-error="{{ row.render_error or '' }}"
                  data-media-version="{{ row.media_version or '' }}"
+                 data-render-width="{{ row.render_width or '' }}"
+                 data-render-height="{{ row.render_height or '' }}"
+                 data-render-aspect="{{ row.render_aspect or '' }}"
                  data-outdated="{{ '1' if row.render_settings_outdated else '0' }}"
                  data-regenerate-locked="{{ '1' if row.regenerate_locked else '0' }}"
                  data-regenerate-lock-reason="{{ row.regenerate_lock_reason or '' }}"
@@ -10339,6 +10358,9 @@ const getGenerateV2ClipRefreshSignature = (scope = document, planIndex = "") => 
       renderJobStatus: railItem?.dataset?.renderJobStatus || "",
       filename: railItem?.dataset?.filename || "",
       mediaVersion: railItem?.dataset?.mediaVersion || "",
+      renderWidth: railItem?.dataset?.renderWidth || "",
+      renderHeight: railItem?.dataset?.renderHeight || "",
+      renderAspect: railItem?.dataset?.renderAspect || "",
       publishStatus: railItem?.dataset?.publishStatus || "",
       dbPublishStatus: railItem?.dataset?.dbPublishStatus || "",
       publishAt: railItem?.dataset?.publishAt || "",
@@ -10351,6 +10373,9 @@ const getGenerateV2ClipRefreshSignature = (scope = document, planIndex = "") => 
       renderJobId: card?.dataset?.renderJobId || "",
       renderJobStatus: card?.dataset?.renderJobStatus || "",
       mediaVersion: card?.dataset?.mediaVersion || "",
+      renderWidth: card?.dataset?.renderWidth || "",
+      renderHeight: card?.dataset?.renderHeight || "",
+      renderAspect: card?.dataset?.renderAspect || "",
       outdated: card?.dataset?.outdated || "",
       regenerateLocked: card?.dataset?.regenerateLocked || "",
       publish: card?.dataset?.publish || "",
@@ -10896,6 +10921,39 @@ document.addEventListener("DOMContentLoaded", () => {
   });
 });
 
+const getGenerateV2RenderedAspect = (width, height) => {
+  const renderWidth = Number(width);
+  const renderHeight = Number(height);
+  if (!Number.isFinite(renderWidth) || !Number.isFinite(renderHeight) || renderWidth <= 0 || renderHeight <= 0) {
+    return "";
+  }
+  return renderWidth >= renderHeight ? "landscape" : "portrait";
+};
+
+const applyGenerateV2RenderedAspect = (planIndex, aspect, width = "", height = "") => {
+  const normalizedAspect = aspect === "landscape" || aspect === "portrait" ? aspect : "";
+  if (!planIndex || !normalizedAspect) {
+    return;
+  }
+  const escaped = cssEscapeValue(String(planIndex));
+  const railItem = document.querySelector(`.clip-rail-item[data-plan-index='${escaped}']`);
+  const railThumb = railItem?.querySelector(".clip-rail-thumb");
+  const card = document.querySelector(`.clip-card[data-plan-index='${escaped}']`);
+  const mediaColumn = card?.querySelector(".generate-v2-media-column");
+  [railItem, railThumb, card, mediaColumn].forEach((element) => {
+    if (!element) return;
+    element.classList.toggle("is-landscape", normalizedAspect === "landscape");
+    element.classList.toggle("is-portrait", normalizedAspect === "portrait");
+    element.classList.toggle("is-original-layout", normalizedAspect === "landscape");
+  });
+  [railItem, card].forEach((element) => {
+    if (!element) return;
+    element.dataset.renderAspect = normalizedAspect;
+    if (width) element.dataset.renderWidth = String(width);
+    if (height) element.dataset.renderHeight = String(height);
+  });
+};
+
 const arrangeGenerateV2PreviewCard = (card) => {
   if (!card || card.dataset.generateV2Arranged === "1") {
     return;
@@ -10931,7 +10989,14 @@ const arrangeGenerateV2PreviewCard = (card) => {
     };
     syncActionWidth();
     setTimeout(syncActionWidth, 0);
-    mediaVideo?.addEventListener?.("loadedmetadata", syncActionWidth, { once: true });
+    mediaVideo?.addEventListener?.("loadedmetadata", () => {
+      syncActionWidth();
+      if (mediaVideo instanceof HTMLVideoElement) {
+        const aspect = getGenerateV2RenderedAspect(mediaVideo.videoWidth, mediaVideo.videoHeight);
+        applyGenerateV2RenderedAspect(card.dataset.planIndex || "", aspect, mediaVideo.videoWidth, mediaVideo.videoHeight);
+        setTimeout(syncActionWidth, 0);
+      }
+    }, { once: true });
     bindGenerateV2DownloadTile(card);
   }
   const actionBar = card.querySelector(".clip-card-action-bar");
@@ -11493,6 +11558,12 @@ const initGenerateV2LazyThumbnails = (scope = document) => {
     video.controls = false;
     video.preload = "metadata";
     video.src = src;
+    video.addEventListener("loadedmetadata", () => {
+      const row = video.closest(".clip-rail-row");
+      const planIndex = row?.dataset.planIndex || video.closest(".clip-rail-item")?.dataset.planIndex || "";
+      const aspect = getGenerateV2RenderedAspect(video.videoWidth, video.videoHeight);
+      applyGenerateV2RenderedAspect(planIndex, aspect, video.videoWidth, video.videoHeight);
+    }, { once: true });
     video.load();
   };
   if (!("IntersectionObserver" in window)) {
@@ -17216,6 +17287,27 @@ document.addEventListener("DOMContentLoaded", () => {
     const parsed = Number(field.value);
     return Number.isFinite(parsed) ? parsed : fallback;
   };
+  const getActiveRenderFrameWidth = () => (
+    isOriginalCropAspect() ? (previewConfig.originalOverlayWidth || 1280) : renderFrameWidth
+  );
+  const getActiveRenderFrameHeight = () => (
+    isOriginalCropAspect() ? (previewConfig.originalOverlayHeight || 720) : renderFrameHeight
+  );
+  const getActivePreviewFrameHeight = () => (
+    isOriginalCropAspect() ? (previewConfig.frameWidth * 9 / 16) : previewConfig.frameHeight
+  );
+  const getActivePreviewScaleX = () => previewConfig.frameWidth / Math.max(1, getActiveRenderFrameWidth());
+  const getActivePreviewScaleY = () => getActivePreviewFrameHeight() / Math.max(1, getActiveRenderFrameHeight());
+  const getActiveTitleHeight = () => (
+    isOriginalCropAspect()
+      ? Math.max(42, getNumericFieldValue(titleFontSizeInput, getActiveRenderFrameHeight() * 0.055) * 1.4)
+      : previewConfig.titleHeight
+  );
+  const getActiveSubtitleHeight = () => (
+    isOriginalCropAspect()
+      ? Math.max(52, getNumericFieldValue(subtitleFontSizeInput, getActiveRenderFrameHeight() * 0.06) * 2.0)
+      : previewConfig.subtitleHeight
+  );
   const rememberLoadedOverlayFieldValues = () => {
     if (!settingsContainer) {
       return;
@@ -17246,31 +17338,34 @@ document.addEventListener("DOMContentLoaded", () => {
   };
   const getPreviewElementBounds = (kind) => {
     const dims = getOverlayDims();
+    const activeHeight = getActiveRenderFrameHeight();
+    const titleHeight = getActiveTitleHeight();
+    const subtitleHeight = getActiveSubtitleHeight();
     if (kind === "title") {
       return {
-        size: previewConfig.titleHeight,
+        size: titleHeight,
         min: 0,
-        max: Math.max(0, renderFrameHeight - previewConfig.titleHeight),
+        max: Math.max(0, activeHeight - titleHeight),
       };
     }
     if (kind === "subtitle") {
       return {
-        size: previewConfig.subtitleHeight,
+        size: subtitleHeight,
         min: 0,
-        max: Math.max(0, renderFrameHeight - previewConfig.subtitleHeight),
+        max: Math.max(0, activeHeight - subtitleHeight),
       };
     }
     if (kind === "video") {
       return {
         size: dims.height,
         min: 0,
-        max: Math.max(0, renderFrameHeight - dims.height),
+        max: Math.max(0, activeHeight - dims.height),
       };
     }
     return {
       size: 52,
       min: 0,
-      max: Math.max(0, renderFrameHeight - 52),
+      max: Math.max(0, activeHeight - 52),
     };
   };
   const isPortraitCropAspect = () => activeCropAspect === "portrait";
@@ -17380,12 +17475,14 @@ document.addEventListener("DOMContentLoaded", () => {
   };
   const updateSplitUiState = () => {
     const effectiveSplit = getEffectiveSplitEnabled();
+    const originalLayout = isOriginalCropAspect();
+    cropperSurfaces?.classList.toggle("is-original-layout", originalLayout);
     cropperSurfaces?.classList.toggle("is-split", effectiveSplit);
     cropperSurfaceTop?.classList.toggle("is-hidden", false);
-    cropperSurfaceBottom?.classList.toggle("is-hidden", !effectiveSplit);
+    cropperSurfaceBottom?.classList.toggle("is-hidden", !effectiveSplit || originalLayout);
     const topLabel = modalEl.querySelector("#cropper-surface-top-label");
     if (topLabel) {
-      topLabel.textContent = effectiveSplit ? "Top" : "Drag to reframe";
+      topLabel.textContent = originalLayout ? "Full frame" : (effectiveSplit ? "Top" : "Drag to reframe");
     }
   };
   const isPreviewElementDraggable = (kind) => !(kind === "video" && isPortraitCropAspect());
@@ -17439,8 +17536,9 @@ document.addEventListener("DOMContentLoaded", () => {
     }
     if (kind === "subtitle") {
       const bounds = getPreviewElementBounds("subtitle");
+      const activeHeight = getActiveRenderFrameHeight();
       const nextValue = clampRenderValue(
-        getNumericFieldValue(subtitleMarginInput, renderFrameHeight - previewConfig.subtitleY - previewConfig.subtitleHeight) - deltaRenderY,
+        getNumericFieldValue(subtitleMarginInput, activeHeight - previewConfig.subtitleY - getActiveSubtitleHeight()) - deltaRenderY,
         bounds.min,
         bounds.max,
       );
@@ -17469,31 +17567,48 @@ document.addEventListener("DOMContentLoaded", () => {
   };
   const applyPreviewLayout = () => {
     const dims = getOverlayDims();
-    const baseTitleHeight = previewConfig.titleHeight;
-    const subtitleHeight = previewConfig.subtitleHeight;
+    const originalPreview = isOriginalCropAspect();
+    const activeRenderHeight = getActiveRenderFrameHeight();
+    const scaleX = getActivePreviewScaleX();
+    const scaleY = getActivePreviewScaleY();
+    const elementScale = Math.min(scaleX, scaleY);
+    const baseTitleHeight = getActiveTitleHeight();
+    const subtitleHeight = getActiveSubtitleHeight();
     const titleTemplatePreset = getActiveTitleTemplatePreset();
     const titleUsesPillowLayout = titleTemplatePreset?.engine === "pillow";
     const titleSideMargin = Number.isFinite(Number(titleTemplatePreset?.sideMargin))
       ? Number(titleTemplatePreset.sideMargin)
       : 32;
     const titleTop = clampRenderValue(
-      getNumericFieldValue(titleMarginInput, previewConfig.titleY),
+      originalPreview ? (activeRenderHeight * 0.08) : getNumericFieldValue(titleMarginInput, previewConfig.titleY),
       0,
-      Math.max(0, renderFrameHeight - baseTitleHeight),
+      Math.max(0, activeRenderHeight - baseTitleHeight),
     );
     const videoTop = clampRenderValue(
       getNumericFieldValue(videoOverlayOffsetInput, dims.y),
       0,
-      Math.max(0, renderFrameHeight - dims.height),
+      Math.max(0, activeRenderHeight - dims.height),
     );
-    const subtitleMargin = clampRenderValue(
-      getNumericFieldValue(subtitleMarginInput, renderFrameHeight - previewConfig.subtitleY - subtitleHeight),
-      0,
-      Math.max(0, renderFrameHeight - subtitleHeight),
+    const rawSubtitleMargin = getNumericFieldValue(subtitleMarginInput, renderFrameHeight - previewConfig.subtitleY - previewConfig.subtitleHeight);
+    const subtitleMargin = originalPreview && !dirtyOverlayFields.has("sub_margin") && !initialSubtitleMarginCustom
+      ? Math.max(0, activeRenderHeight - (activeRenderHeight * 0.72) - (subtitleHeight / 2))
+      : clampRenderValue(
+          originalPreview ? (rawSubtitleMargin / Math.max(1, renderFrameHeight) * activeRenderHeight) : rawSubtitleMargin,
+          0,
+          Math.max(0, activeRenderHeight - subtitleHeight),
+        );
+    const safeMargin = activeRenderHeight * 0.05;
+    const subtitleTop = clampRenderValue(
+      activeRenderHeight - subtitleMargin - subtitleHeight,
+      safeMargin,
+      Math.max(safeMargin, activeRenderHeight - safeMargin - subtitleHeight),
     );
-    const subtitleTop = renderFrameHeight - subtitleMargin - subtitleHeight;
-    const titleFontSize = Math.max(14, getNumericFieldValue(titleFontSizeInput, previewConfig.titleHeight * 0.75));
-    const subtitleFontSize = Math.max(10, getNumericFieldValue(subtitleFontSizeInput, previewConfig.subtitleHeight * 0.4));
+    const titleFontSize = originalPreview
+      ? Math.max(18, activeRenderHeight * 0.055)
+      : Math.max(14, getNumericFieldValue(titleFontSizeInput, previewConfig.titleHeight * 0.75));
+    const subtitleFontSize = originalPreview
+      ? Math.max(20, activeRenderHeight * 0.06)
+      : Math.max(10, getNumericFieldValue(subtitleFontSizeInput, previewConfig.subtitleHeight * 0.4));
     const dateText = (videoDateTextInput?.value || "").trim();
     const dateTop = clampRenderValue(
       getNumericFieldValue(videoDateTopInput, 1006),
@@ -17504,46 +17619,46 @@ document.addEventListener("DOMContentLoaded", () => {
       const originalPreview = isOriginalCropAspect();
       previewFrame.classList.toggle("is-original-layout", originalPreview);
       previewFrame.style.width = previewConfig.frameWidth + "px";
-      previewFrame.style.height = (originalPreview ? (previewConfig.frameWidth * 9 / 16) : previewConfig.frameHeight) + "px";
+      previewFrame.style.height = getActivePreviewFrameHeight() + "px";
       const bgUrl = getActiveBackgroundUrl();
       previewFrame.style.backgroundImage = originalPreview ? "none" : (bgUrl ? `url('${bgUrl}')` : "none");
     }
     if (previewTitle) {
       previewTitle.classList.toggle("is-hidden", !isTitleVisible());
-      previewTitle.style.fontSize = titleFontSize * overlayScale + "px";
-      previewTitle.style.left = titleSideMargin * overlayScale + "px";
-      previewTitle.style.right = titleSideMargin * overlayScale + "px";
+      previewTitle.style.fontSize = titleFontSize * elementScale + "px";
+      previewTitle.style.left = titleSideMargin * scaleX + "px";
+      previewTitle.style.right = titleSideMargin * scaleX + "px";
       previewTitle.style.padding = titleUsesPillowLayout ? "0" : "0 12px";
       previewTitle.style.height = "auto";
-      const minTitleHeightPx = baseTitleHeight * overlayScale;
+      const minTitleHeightPx = baseTitleHeight * scaleY;
       const contentHeightPx = previewTitle.scrollHeight || minTitleHeightPx;
       const effectiveTitleHeightPx = Math.max(minTitleHeightPx, contentHeightPx);
       previewTitle.style.height = effectiveTitleHeightPx + "px";
       if (titleUsesPillowLayout) {
-        previewTitle.style.top = Math.max(0, titleTop * overlayScale) + "px";
+        previewTitle.style.top = Math.max(0, titleTop * scaleY) + "px";
       } else {
-        const titleBottomPx = (titleTop + baseTitleHeight) * overlayScale;
+        const titleBottomPx = (titleTop + baseTitleHeight) * scaleY;
         previewTitle.style.top = Math.max(0, titleBottomPx - effectiveTitleHeightPx) + "px";
       }
     }
     if (previewVideo) {
       previewVideo.classList.toggle("is-drag-disabled", !isPreviewElementDraggable("video"));
-      previewVideo.style.left = previewConfig.videoX * overlayScale + "px";
-      previewVideo.style.top = videoTop * overlayScale + "px";
-      previewVideo.style.width = dims.width * overlayScale + "px";
-      previewVideo.style.height = dims.height * overlayScale + "px";
+      previewVideo.style.left = previewConfig.videoX * scaleX + "px";
+      previewVideo.style.top = videoTop * scaleY + "px";
+      previewVideo.style.width = dims.width * scaleX + "px";
+      previewVideo.style.height = dims.height * scaleY + "px";
     }
     if (previewDate) {
       previewDate.textContent = dateText || "Date";
-      previewDate.style.top = dateTop * overlayScale + "px";
-      previewDate.style.fontSize = 24 * overlayScale + "px";
+      previewDate.style.top = dateTop * scaleY + "px";
+      previewDate.style.fontSize = 24 * elementScale + "px";
       previewDate.classList.toggle("is-hidden", !dateText);
     }
     if (previewSubtitle) {
       previewSubtitle.classList.toggle("is-hidden", !isSubtitleVisible());
-      previewSubtitle.style.top = subtitleTop * overlayScale + "px";
-      previewSubtitle.style.height = previewConfig.subtitleHeight * overlayScale + "px";
-      previewSubtitle.style.fontSize = subtitleFontSize * overlayScale + "px";
+      previewSubtitle.style.top = subtitleTop * scaleY + "px";
+      previewSubtitle.style.height = subtitleHeight * scaleY + "px";
+      previewSubtitle.style.fontSize = subtitleFontSize * elementScale + "px";
     }
     syncOverlayVisibilityUi();
     if (selectedPreviewElement === "video" && !isPreviewElementDraggable("video")) {
@@ -17870,8 +17985,28 @@ document.addEventListener("DOMContentLoaded", () => {
     loadPreviewImage(sourceUrl);
   };
 
+  const drawOriginalPreviewFrame = () => {
+    const img = previewImgTop;
+    if (!img || !img.naturalWidth || !img.naturalHeight || !previewCanvas || !previewCtx) {
+      return;
+    }
+    syncPreviewCanvasSize();
+    const dims = getOverlayDims();
+    previewCtx.clearRect(0, 0, dims.width, dims.height);
+    previewCtx.fillStyle = "#050812";
+    previewCtx.fillRect(0, 0, dims.width, dims.height);
+    previewCtx.drawImage(img, 0, 0, dims.width, dims.height);
+    if (infoEl) {
+      updateInfo("Full frame preview");
+    }
+  };
+
   const updateCropInfo = () => {
     const visual = staticVisualMap.get(activeStaticVisualKey) || createdVisualMap.get(activeStaticVisualKey);
+    if (isOriginalCropAspect()) {
+      drawOriginalPreviewFrame();
+      return;
+    }
     const topCropper = cropperInstances.top;
     if (!topCropper || !naturalSize.width || !naturalSize.height) {
       if (visual && (activeVisualMode === "static" || activeVisualMode === "podcast")) {
@@ -18388,6 +18523,17 @@ document.addEventListener("DOMContentLoaded", () => {
       return;
     }
     updateSplitUiState();
+    if (isOriginalCropAspect()) {
+      destroyAllCroppers();
+      naturalSize.width = previewImgTop?.naturalWidth || naturalSize.width || 0;
+      naturalSize.height = previewImgTop?.naturalHeight || naturalSize.height || 0;
+      drawOriginalPreviewFrame();
+      cropDirty = false;
+      if (saveBtn) {
+        saveBtn.disabled = false;
+      }
+      return;
+    }
     initCropperInstance("top", currentPresetRatios);
     if (effectiveSplit) {
       initCropperInstance("bottom", currentPresetRatiosBottom);

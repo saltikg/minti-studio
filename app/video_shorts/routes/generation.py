@@ -6347,7 +6347,23 @@ def _load_active_render_jobs_for_video_by_plan(
     return active_by_plan
 
 
-def render_job_media_payload(job: Dict[str, Any]) -> Dict[str, str]:
+def _coerce_positive_int(value: Any) -> Optional[int]:
+    try:
+        parsed = int(round(float(value)))
+    except (TypeError, ValueError):
+        return None
+    return parsed if parsed > 0 else None
+
+
+def _render_aspect_from_dimensions(width: Any, height: Any) -> str:
+    render_width = _coerce_positive_int(width)
+    render_height = _coerce_positive_int(height)
+    if not render_width or not render_height:
+        return ""
+    return "landscape" if render_width >= render_height else "portrait"
+
+
+def render_job_media_payload(job: Dict[str, Any]) -> Dict[str, Any]:
     payload = (job or {}).get("payload") or {}
     source_video_id = str(payload.get("source_video_id") or "").strip()
     brand_id = str(payload.get("brand_id") or "").strip()
@@ -6425,6 +6441,12 @@ def render_job_media_payload(job: Dict[str, Any]) -> Dict[str, str]:
         "video_url": video_url,
         "poster_url": poster_url,
         "download_url": download_url,
+        "render_width": (target_entry or {}).get("render_width") or "",
+        "render_height": (target_entry or {}).get("render_height") or "",
+        "render_aspect": _render_aspect_from_dimensions(
+            (target_entry or {}).get("render_width"),
+            (target_entry or {}).get("render_height"),
+        ),
     }
 
 
@@ -11467,6 +11489,15 @@ def generate_short(video_pk):
         elif stored_render_settings_hash:
             media_version = stored_render_settings_hash[:12]
 
+        render_width = _coerce_positive_int(entry.get("render_width"))
+        render_height = _coerce_positive_int(entry.get("render_height"))
+        render_aspect = _render_aspect_from_dimensions(render_width, render_height)
+        design_is_original = str(video.get("crop_aspect") or "").strip().lower() == "original"
+        is_original_layout_preview = (
+            (status == "created" and render_aspect == "landscape")
+            or (status != "created" and design_is_original)
+        )
+
         clip_rows.append({
             "plan_index": pi,
             "origin": origin,
@@ -11489,7 +11520,10 @@ def generate_short(video_pk):
             "video_filename": video_filename,
             "video_url": _versioned_media_url(video_url, media_version),
             "poster_url": poster_url,
-            "is_original_layout": str(video.get("crop_aspect") or "").strip().lower() == "original",
+            "render_width": render_width,
+            "render_height": render_height,
+            "render_aspect": render_aspect,
+            "is_original_layout": is_original_layout_preview,
             "media_version": media_version,
             "subtitle": subtitle_source,
             "status": status,
@@ -27859,11 +27893,21 @@ def autoclip_video(video_pk):
             current_app.logger.warning("Original layout source probe failed video_id=%s: %s", vid, exc)
             render_target_width, render_target_height = 1280, 720
         original_scale = max(0.1, float(render_target_height) / 1280.0)
-        title_font_size = max(12, int(round(float(title_font_size or DEFAULT_EDITOR_TITLE_FONT_SIZE) * original_scale)))
-        sub_font_size = max(10, int(round(float(sub_font_size or DEFAULT_SUB_FONT_SIZE) * original_scale)))
+        title_font_size = max(18, int(round(float(render_target_height) * 0.055)))
+        sub_font_size = max(20, int(round(float(render_target_height) * 0.06)))
         title_margin = max(0, int(round(float(render_target_height) * 0.08)))
         caption_block_height = max(24, int(round(float(sub_font_size) * 2.0)))
-        sub_margin = max(10, int(round(float(render_target_height) - (float(render_target_height) * 0.82) - caption_block_height)))
+        safe_margin = max(8, int(round(float(render_target_height) * 0.05)))
+        if video_sub_margin_custom:
+            custom_bottom_fraction = max(0.0, min(1.0, float(sub_margin or SUB_MARGIN_DEFAULT) / 1280.0))
+            sub_margin = int(round(float(render_target_height) * custom_bottom_fraction))
+        else:
+            caption_center_y = float(render_target_height) * 0.72
+            caption_top = caption_center_y - (float(caption_block_height) / 2.0)
+            sub_margin = int(round(float(render_target_height) - caption_top - float(caption_block_height)))
+        min_margin = safe_margin
+        max_margin = max(min_margin, render_target_height - safe_margin - caption_block_height)
+        sub_margin = max(min_margin, min(max_margin, int(round(float(sub_margin)))))
         video_title_line_spacing = int(round(float(video_title_line_spacing or -4) * original_scale))
         current_app.logger.info(
             "Original layout render metrics video_id=%s plan_index=%s target=%sx%s title_size=%s sub_size=%s title_margin=%s sub_margin=%s",
@@ -28575,6 +28619,23 @@ def autoclip_video(video_pk):
             plan_entry["audio_start"] = adj_start
             plan_entry["audio_end"] = adj_end
             plan_entry["output_filename"] = clip_filename
+            try:
+                rendered_info = _probe_video_stream_info(final_file, log=current_app.logger)
+                rendered_width = _coerce_positive_int(rendered_info.get("width"))
+                rendered_height = _coerce_positive_int(rendered_info.get("height"))
+                if rendered_width and rendered_height:
+                    plan_entry["render_width"] = rendered_width
+                    plan_entry["render_height"] = rendered_height
+                    plan_entry["render_aspect"] = _render_aspect_from_dimensions(rendered_width, rendered_height)
+                    current_app.logger.info(
+                        "short render dimensions clip_filename=%s width=%s height=%s aspect=%s",
+                        clip_filename,
+                        rendered_width,
+                        rendered_height,
+                        plan_entry.get("render_aspect"),
+                    )
+            except Exception as exc:
+                current_app.logger.warning("Short render dimension probe skipped clip_filename=%s: %s", clip_filename, exc)
             try:
                 _maybe_autogenerate_description_for_plan_entry(
                     current_user={"id": target_owner_user_id, "plan_id": target_owner_plan_id},
