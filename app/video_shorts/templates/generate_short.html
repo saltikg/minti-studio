@@ -4140,10 +4140,14 @@
     grid-template-columns: repeat(3, minmax(0, 1fr));
     gap: 10px;
   }
+  #crop-aspect-selector .controls.has-original-layout {
+    grid-template-columns: repeat(4, minmax(0, 1fr));
+  }
   .aspect-card {
     width: 100%;
     min-width: 0;
-    padding: 12px 10px;
+    min-height: 58px;
+    padding: 10px 8px;
     border-radius: 14px;
     border: 1px solid rgba(255, 255, 255, 0.1);
     background: rgba(255, 255, 255, 0.03);
@@ -4167,9 +4171,9 @@
     color: #ecfffb;
   }
   .aspect-icon {
-    width: 34px;
-    height: 34px;
-    border-radius: 12px;
+    width: 30px;
+    height: 30px;
+    border-radius: 10px;
     display: inline-flex;
     align-items: center;
     justify-content: center;
@@ -4178,9 +4182,15 @@
     border: 1px solid rgba(255, 255, 255, 0.08);
   }
   .aspect-title {
-    font-size: 0.86rem;
+    font-size: 0.82rem;
     font-weight: 600;
     line-height: 1.15;
+  }
+  .aspect-subtitle {
+    display: block;
+    margin-top: 2px;
+    font-size: 0.68rem;
+    line-height: 1.1;
   }
   .crop-toggle-row {
     display: grid;
@@ -4229,8 +4239,21 @@
     #crop-aspect-selector .controls {
       grid-template-columns: 1fr;
     }
+    #crop-aspect-selector .controls.has-original-layout {
+      grid-template-columns: repeat(2, minmax(0, 1fr));
+    }
     .crop-toggle-row {
       grid-template-columns: repeat(2, minmax(0, 1fr));
+    }
+  }
+  @media (min-width: 992px) and (max-width: 1199.98px) {
+    #crop-aspect-selector .controls.has-original-layout {
+      grid-template-columns: repeat(2, minmax(0, 1fr));
+    }
+  }
+  @media (min-width: 1200px) and (max-width: 1340px) {
+    #crop-aspect-selector .controls.has-original-layout .aspect-subtitle {
+      display: none;
     }
   }
   @media (max-width: 575.98px) {
@@ -4321,6 +4344,22 @@
   }
   .cropper-surfaces.is-original-layout {
     grid-template-columns: minmax(0, 1fr);
+  }
+  .crop-modal-reframe-section.is-original-layout .cropper-loader,
+  .crop-modal-reframe-section.is-original-layout .cropper-surfaces {
+    display: none;
+  }
+  .crop-original-layout-note {
+    display: none;
+    padding: 12px 14px;
+    border-radius: 14px;
+    border: 1px dashed rgba(148, 163, 184, 0.28);
+    background: rgba(15, 23, 42, 0.42);
+    color: rgba(226, 232, 240, 0.62);
+    font-size: 0.84rem;
+  }
+  .crop-modal-reframe-section.is-original-layout .crop-original-layout-note {
+    display: block;
   }
   .cropper-surface {
     position: relative;
@@ -5330,6 +5369,9 @@
     width: 248px;
     padding-top: 12px;
   }
+  .cropper-preview-card.is-original-layout {
+    width: min(420px, 100%);
+  }
   .caption-tab-font-field .form-select,
   .caption-tab-size-field .form-control {
     min-height: 46px;
@@ -5412,6 +5454,12 @@
     border-radius: 18px;
     box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.08);
   }
+  .shorts-preview-frame.is-original-layout {
+    aspect-ratio: 16 / 9;
+    width: 100%;
+    background-color: #020617;
+    background-image: none;
+  }
   .shorts-preview-frame:focus-visible {
     box-shadow: inset 0 0 0 2px rgba(45, 212, 191, 0.52);
   }
@@ -5481,6 +5529,13 @@
     overflow: hidden;
     border-radius: 18px;
     z-index: 1;
+  }
+  .shorts-preview-frame.is-original-layout .shorts-preview-video {
+    border-radius: 12px;
+    background: #020617;
+  }
+  .shorts-preview-frame.is-original-layout .shorts-preview-video canvas {
+    object-fit: contain;
   }
   .shorts-preview-title-band {
     z-index: 2;
@@ -7609,7 +7664,7 @@
                   <div class="crop-modal-tab-panel crop-modal-settings-panel crop-modal-layout-panel" data-crop-modal-panel="layout" hidden>
                     <div class="layout-top-row">
                       <div class="control-group" id="crop-aspect-selector">
-                      <div class="controls" role="group" aria-label="Crop aspect ratio">
+                      <div class="controls{% if generate_v2 %} has-original-layout{% endif %}" role="group" aria-label="Crop aspect ratio">
                         <button type="button" class="aspect-card" data-crop-aspect="portrait">
                           <span class="aspect-icon"><i class="bi bi-phone"></i></span>
                           <span><div class="aspect-title text-white">Fill</div></span>
@@ -7627,7 +7682,7 @@
                           <span class="aspect-icon"><i class="bi bi-aspect-ratio"></i></span>
                           <span>
                             <div class="aspect-title text-white">Original</div>
-                            <small class="text-white-50">Keeps the video's shape</small>
+                            <small class="text-white-50 aspect-subtitle">Keeps the video's shape</small>
                           </span>
                         </button>
                         {% endif %}
@@ -7785,6 +7840,7 @@
                       <div class="static-visual-info small text-muted d-none" id="static-visual-description"></div>
                     </div>
                     <div class="crop-modal-reframe-section">
+                      <div class="crop-original-layout-note">No cropping — the full video frame is used.</div>
                       <div class="cropper-loader" id="cropper-loader">
                         <div class="spinner-border spinner-border-sm text-light" role="status" aria-hidden="true"></div>
                         <span>Loading frame…</span>
@@ -10723,8 +10779,9 @@ const syncGenerateV2InlinePreviewScale = () => {
   if (!slot || !frame || !card || !slot.contains(card)) {
     return;
   }
-  const sourceWidth = Number.parseFloat(frame.style.width || frame.getAttribute("data-frame-width") || card.dataset.frameWidth || "248") || frame.offsetWidth || 248;
-  const sourceHeight = Number.parseFloat(frame.style.height || "") || frame.offsetHeight || Math.round(sourceWidth * 16 / 9);
+  const frameRect = frame.getBoundingClientRect();
+  const sourceWidth = frameRect.width || Number.parseFloat(frame.style.width || frame.getAttribute("data-frame-width") || card.dataset.frameWidth || "248") || frame.offsetWidth || 248;
+  const sourceHeight = frameRect.height || Number.parseFloat(frame.style.height || "") || frame.offsetHeight || Math.round(sourceWidth * 16 / 9);
   const targetWidth = Math.max(1, slot.getBoundingClientRect().width || sourceWidth);
   const scale = Math.max(0.1, targetWidth / sourceWidth);
   slot.style.setProperty("--generate-v2-preview-frame-source-width", `${sourceWidth}px`);
@@ -16812,6 +16869,7 @@ document.addEventListener("DOMContentLoaded", () => {
     }
   };
   const previewFrame = modalEl.querySelector("#shorts-preview-frame");
+  const previewCard = previewFrame?.closest(".cropper-preview-card");
   const previewTitle = modalEl.querySelector("#shorts-preview-title-band");
   const previewVideo = modalEl.querySelector("#shorts-preview-video");
   const previewSubtitle = modalEl.querySelector("#shorts-preview-subtitle-band");
@@ -16874,6 +16932,7 @@ document.addEventListener("DOMContentLoaded", () => {
   const titleAdvancedControls = Array.from(settingsContainer?.querySelectorAll('[data-preview-control="title"]') || []);
   const subtitleAdvancedControls = Array.from(settingsContainer?.querySelectorAll('[data-preview-control="subtitle"]') || []);
   const videoPositionAdvancedControls = Array.from(settingsContainer?.querySelectorAll('[data-preview-control="video-position"]') || []);
+  const reframeSection = modalEl.querySelector(".crop-modal-reframe-section");
   let selectedPreviewElement = "";
   let dragState = null;
   const podcastAudioState = {
@@ -17293,10 +17352,18 @@ document.addEventListener("DOMContentLoaded", () => {
   const getActiveRenderFrameHeight = () => (
     isOriginalCropAspect() ? (previewConfig.originalOverlayHeight || 720) : renderFrameHeight
   );
+  const getActivePreviewFrameWidth = () => {
+    if (!isOriginalCropAspect()) {
+      return previewConfig.frameWidth;
+    }
+    return Math.max(1, previewFrame?.getBoundingClientRect?.().width || previewConfig.frameWidth);
+  };
   const getActivePreviewFrameHeight = () => (
-    isOriginalCropAspect() ? (previewConfig.frameWidth * 9 / 16) : previewConfig.frameHeight
+    isOriginalCropAspect()
+      ? (getActivePreviewFrameWidth() * 9 / 16)
+      : previewConfig.frameHeight
   );
-  const getActivePreviewScaleX = () => previewConfig.frameWidth / Math.max(1, getActiveRenderFrameWidth());
+  const getActivePreviewScaleX = () => getActivePreviewFrameWidth() / Math.max(1, getActiveRenderFrameWidth());
   const getActivePreviewScaleY = () => getActivePreviewFrameHeight() / Math.max(1, getActiveRenderFrameHeight());
   const getActiveTitleHeight = () => (
     isOriginalCropAspect()
@@ -17476,6 +17543,7 @@ document.addEventListener("DOMContentLoaded", () => {
   const updateSplitUiState = () => {
     const effectiveSplit = getEffectiveSplitEnabled();
     const originalLayout = isOriginalCropAspect();
+    reframeSection?.classList.toggle("is-original-layout", originalLayout);
     cropperSurfaces?.classList.toggle("is-original-layout", originalLayout);
     cropperSurfaces?.classList.toggle("is-split", effectiveSplit);
     cropperSurfaceTop?.classList.toggle("is-hidden", false);
@@ -17537,12 +17605,26 @@ document.addEventListener("DOMContentLoaded", () => {
     if (kind === "subtitle") {
       const bounds = getPreviewElementBounds("subtitle");
       const activeHeight = getActiveRenderFrameHeight();
+      const defaultActiveMargin = Math.max(
+        0,
+        activeHeight - (activeHeight * 0.72) - (getActiveSubtitleHeight() / 2),
+      );
+      const currentActiveMargin = isOriginalCropAspect()
+        ? (
+            !dirtyOverlayFields.has("sub_margin") && !initialSubtitleMarginCustom
+              ? defaultActiveMargin
+              : (getNumericFieldValue(subtitleMarginInput, defaultActiveMargin / Math.max(1, activeHeight) * renderFrameHeight) / Math.max(1, renderFrameHeight) * activeHeight)
+          )
+        : getNumericFieldValue(subtitleMarginInput, activeHeight - previewConfig.subtitleY - getActiveSubtitleHeight());
       const nextValue = clampRenderValue(
-        getNumericFieldValue(subtitleMarginInput, activeHeight - previewConfig.subtitleY - getActiveSubtitleHeight()) - deltaRenderY,
+        currentActiveMargin - deltaRenderY,
         bounds.min,
         bounds.max,
       );
-      updateFieldValue(subtitleMarginInput, nextValue);
+      updateFieldValue(
+        subtitleMarginInput,
+        isOriginalCropAspect() ? (nextValue / Math.max(1, activeHeight) * renderFrameHeight) : nextValue,
+      );
       return;
     }
     if (kind === "video") {
@@ -17568,6 +17650,15 @@ document.addEventListener("DOMContentLoaded", () => {
   const applyPreviewLayout = () => {
     const dims = getOverlayDims();
     const originalPreview = isOriginalCropAspect();
+    if (previewFrame) {
+      previewFrame.classList.toggle("is-original-layout", originalPreview);
+      previewCard?.classList.toggle("is-original-layout", originalPreview);
+      if (previewCard) {
+        previewCard.style.width = originalPreview ? "" : `${previewConfig.frameWidth}px`;
+      }
+      previewFrame.style.width = originalPreview ? "100%" : `${previewConfig.frameWidth}px`;
+      previewFrame.style.height = originalPreview ? "" : `${getActivePreviewFrameHeight()}px`;
+    }
     const activeRenderHeight = getActiveRenderFrameHeight();
     const scaleX = getActivePreviewScaleX();
     const scaleY = getActivePreviewScaleY();
@@ -17616,10 +17707,6 @@ document.addEventListener("DOMContentLoaded", () => {
       Math.max(0, renderFrameHeight - 52),
     );
     if (previewFrame) {
-      const originalPreview = isOriginalCropAspect();
-      previewFrame.classList.toggle("is-original-layout", originalPreview);
-      previewFrame.style.width = previewConfig.frameWidth + "px";
-      previewFrame.style.height = getActivePreviewFrameHeight() + "px";
       const bgUrl = getActiveBackgroundUrl();
       previewFrame.style.backgroundImage = originalPreview ? "none" : (bgUrl ? `url('${bgUrl}')` : "none");
     }
@@ -17995,7 +18082,12 @@ document.addEventListener("DOMContentLoaded", () => {
     previewCtx.clearRect(0, 0, dims.width, dims.height);
     previewCtx.fillStyle = "#050812";
     previewCtx.fillRect(0, 0, dims.width, dims.height);
-    previewCtx.drawImage(img, 0, 0, dims.width, dims.height);
+    const scale = Math.min(dims.width / img.naturalWidth, dims.height / img.naturalHeight);
+    const drawWidth = img.naturalWidth * scale;
+    const drawHeight = img.naturalHeight * scale;
+    const drawX = (dims.width - drawWidth) / 2;
+    const drawY = (dims.height - drawHeight) / 2;
+    previewCtx.drawImage(img, drawX, drawY, drawWidth, drawHeight);
     if (infoEl) {
       updateInfo("Full frame preview");
     }
@@ -18300,7 +18392,7 @@ document.addEventListener("DOMContentLoaded", () => {
     if (Math.abs(event.clientY - dragState.pointerDownClientY) > 2) {
       dragState.moved = true;
     }
-    const deltaRenderY = deltaPreviewY / overlayScale;
+    const deltaRenderY = deltaPreviewY / Math.max(0.001, getActivePreviewScaleY() || overlayScale);
     applyElementDelta(dragState.kind, deltaRenderY);
   });
 
