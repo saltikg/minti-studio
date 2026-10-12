@@ -5931,42 +5931,52 @@
     display: flex;
   }
   .free-tool-gate-modal {
-    width: min(420px, 100%);
+    width: min(460px, 100%);
     border: 1px solid rgba(45, 179, 163, 0.35);
-    border-radius: 18px;
-    background: #0b1220;
+    border-radius: 20px;
+    background: linear-gradient(180deg, rgba(15, 23, 42, 0.98), rgba(8, 13, 25, 0.98));
     color: #e6ebf2;
     box-shadow: 0 24px 70px rgba(0, 0, 0, 0.45);
-    padding: 22px;
+    padding: 26px;
   }
   .free-tool-gate-title {
-    font-size: 1.18rem;
+    font-size: 1.32rem;
+    line-height: 1.2;
     font-weight: 800;
-    margin-bottom: 8px;
+    margin-bottom: 10px;
   }
   .free-tool-gate-subtitle {
     color: rgba(230, 235, 242, 0.72);
-    font-size: 0.92rem;
-    margin-bottom: 18px;
+    font-size: 0.95rem;
+    margin-bottom: 22px;
   }
   .free-tool-gate-actions {
-    display: flex;
-    flex-wrap: nowrap;
-    align-items: center;
-    justify-content: flex-end;
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) auto;
+    align-items: stretch;
     gap: 10px;
   }
   .free-tool-gate-actions .btn {
-    min-height: 38px;
+    min-height: 44px;
+    border-radius: 12px;
+    font-weight: 750;
+  }
+  .free-tool-gate-actions #free-tool-gate-register {
+    min-height: 52px;
+    font-size: 1rem;
   }
   .free-tool-gate-actions #free-tool-gate-close {
-    margin-left: auto;
+    grid-column: 1 / -1;
+    justify-self: end;
+    min-height: 0;
+    margin-top: 2px;
     padding-left: 0;
     padding-right: 0;
     white-space: nowrap;
   }
   @media (max-width: 420px) {
     .free-tool-gate-actions {
+      grid-template-columns: minmax(0, 1fr);
       gap: 8px;
     }
     .free-tool-gate-actions .btn {
@@ -8605,7 +8615,7 @@
     <div class="free-tool-gate-title" id="free-tool-gate-title">Sign up free to continue</div>
     <div class="free-tool-gate-subtitle" id="free-tool-gate-subtitle">Free account · no credit card · your clips stay</div>
     <div class="free-tool-gate-actions">
-      <a href="{{ url_for('video_shorts_bp.register', next=request.path) }}" class="btn btn-primary" id="free-tool-gate-register">Create free account</a>
+      <a href="{{ url_for('video_shorts_bp.register', next=request.path) }}" class="btn btn-primary btn-lg" id="free-tool-gate-register">Create free account</a>
       <a href="{{ url_for('video_shorts_bp.login', next=request.path) }}" class="btn btn-outline-light" id="free-tool-gate-login">Sign in</a>
       <button type="button" class="btn btn-link text-white-50" id="free-tool-gate-close">Not now</button>
     </div>
