@@ -2690,6 +2690,13 @@
       height: 100%;
       object-fit: cover;
     }
+    #clip-workbench-shell[data-generate-v2="1"] .clip-rail-item.is-landscape {
+      grid-template-columns: 96px minmax(0, 1fr) auto;
+    }
+    #clip-workbench-shell[data-generate-v2="1"] .clip-rail-thumb.is-landscape {
+      width: 96px;
+      height: 54px;
+    }
     #clip-workbench-shell[data-generate-v2="1"] .clip-rail-duration {
       position: absolute;
       right: 4px;
@@ -5418,14 +5425,17 @@
     padding-top: 12px;
   }
   .cropper-preview-card.is-original-layout {
-    width: min(420px, 100%);
+    width: 100%;
+    max-width: min(520px, 100%);
+    box-sizing: border-box;
     display: block;
   }
   .orig-preview {
     display: none;
     position: relative;
     width: 100%;
-    max-width: 520px;
+    max-width: min(520px, 100%);
+    box-sizing: border-box;
     aspect-ratio: 16 / 9;
     overflow: hidden;
     border-radius: 18px;
@@ -5455,8 +5465,8 @@
   .orig-preview__title,
   .orig-preview__caption {
     position: absolute;
-    left: 6%;
-    right: 6%;
+    left: 5%;
+    right: 5%;
     z-index: 2;
     display: flex;
     align-items: center;
@@ -5468,8 +5478,15 @@
     touch-action: none;
     line-height: 1.1;
     white-space: normal;
-    overflow-wrap: anywhere;
-    word-break: break-word;
+    overflow-wrap: normal;
+    word-break: normal;
+  }
+  .orig-preview__caption span,
+  .orig-preview__caption .word-highlight-preview-word {
+    display: inline-block;
+    white-space: nowrap;
+    word-break: normal;
+    overflow-wrap: normal;
   }
   .orig-preview__title.is-hidden,
   .orig-preview__caption.is-hidden {
@@ -11132,6 +11149,57 @@ const applyGenerateV2RenderedAspect = (planIndex, aspect, width = "", height = "
   });
 };
 
+const hydrateGenerateV2RailThumbnailAspect = (scope = document) => {
+  const root = getGenerateV2Root();
+  if (!root) {
+    return;
+  }
+  const applyFromMedia = (media) => {
+    if (!media) {
+      return;
+    }
+    const item = media.closest(".clip-rail-item");
+    const planIndex = item?.dataset.planIndex || "";
+    if (!planIndex || String(item.dataset.renderAspect || "").trim()) {
+      return;
+    }
+    const width = media instanceof HTMLImageElement ? media.naturalWidth : media.videoWidth;
+    const height = media instanceof HTMLImageElement ? media.naturalHeight : media.videoHeight;
+    const aspect = getGenerateV2RenderedAspect(width, height);
+    if (aspect) {
+      applyGenerateV2RenderedAspect(planIndex, aspect, width, height);
+    }
+  };
+  scope.querySelectorAll(".clip-rail-thumb img").forEach((img) => {
+    if (!(img instanceof HTMLImageElement)) {
+      return;
+    }
+    if (img.complete && img.naturalWidth && img.naturalHeight) {
+      applyFromMedia(img);
+      return;
+    }
+    if (img.dataset.aspectHydrateBound === "1") {
+      return;
+    }
+    img.dataset.aspectHydrateBound = "1";
+    img.addEventListener("load", () => applyFromMedia(img), { once: true });
+  });
+  scope.querySelectorAll(".clip-rail-thumb video").forEach((video) => {
+    if (!(video instanceof HTMLVideoElement)) {
+      return;
+    }
+    if (video.videoWidth && video.videoHeight) {
+      applyFromMedia(video);
+      return;
+    }
+    if (video.dataset.aspectHydrateBound === "1") {
+      return;
+    }
+    video.dataset.aspectHydrateBound = "1";
+    video.addEventListener("loadedmetadata", () => applyFromMedia(video), { once: true });
+  });
+};
+
 const arrangeGenerateV2PreviewCard = (card) => {
   if (!card || card.dataset.generateV2Arranged === "1") {
     return;
@@ -11940,6 +12008,7 @@ const initGenerateV2Workbench = (preferredPlanIndex = "") => {
     });
   });
   applyViewerScheduleTimeFormatting(root);
+  hydrateGenerateV2RailThumbnailAspect(root);
   initGenerateV2LazyThumbnails(root);
   initGenerateV2AutoSuggestRefresh();
   initGenerateV2ClipTitleTimeEditors();
@@ -13591,6 +13660,7 @@ const refreshClipList = async (preferredPlanIndex = null, preferredViewMode = nu
       initClipCategoryAjax();
       initAdminShareLinkButtons();
       initSendToYoutubeButtons();
+      hydrateGenerateV2RailThumbnailAspect(newClipPanel);
       window.initGenerateV2TextTranscript?.();
       resumeQueuedClipJobs();
       window.__generateV2PreserveSelectedPlanIndex = "";
