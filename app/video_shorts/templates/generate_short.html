@@ -2506,6 +2506,9 @@
     );
     position: relative;
   }
+  .generate-v2-media-column.is-original-layout {
+    width: min(calc(var(--generate-v2-preview-video-height, 420px) * 16 / 9), 100%);
+  }
   @media (min-width: 1200px) {
     #clip-workbench-shell[data-generate-v2="1"] .generate-v2-workbench {
       display: grid;
@@ -3321,6 +3324,13 @@
     border-radius: 18px;
     overflow: hidden;
   }
+  .generate-v2-media-column.is-original-layout > video,
+  .generate-v2-media-column.is-original-layout > .clip-card-placeholder {
+    aspect-ratio: 16 / 9;
+  }
+  .generate-v2-media-column.is-original-layout .generate-v2-render-overlay {
+    aspect-ratio: 16 / 9;
+  }
   #clip-workbench-shell[data-generate-v2="1"] .clip-rail-state-chip {
     display: inline-flex;
     align-items: center;
@@ -3431,6 +3441,9 @@
 	    font-weight: 800;
 	    pointer-events: auto;
 	    z-index: 3;
+	  }
+	  #clip-workbench-shell[data-generate-v2="1"] .generate-v2-media-column.is-original-layout .generate-v2-render-overlay {
+	    aspect-ratio: 16 / 9;
 	  }
 	  #clip-workbench-shell[data-generate-v2="1"] .generate-v2-media-column.is-rendering > video {
 	    pointer-events: none;
@@ -3867,6 +3880,12 @@
       --generate-v2-preview-video-height: min(58vh, calc(var(--generate-v2-workbench-height) - 230px));
       width: min(
         calc((var(--generate-v2-preview-video-height) * 9) / 16),
+        calc(100% - 74px)
+      );
+    }
+    #clip-workbench-shell[data-generate-v2="1"] .generate-v2-media-column.is-original-layout {
+      width: min(
+        calc((var(--generate-v2-preview-video-height) * 16) / 9),
         calc(100% - 74px)
       );
     }
@@ -5641,7 +5660,7 @@
       {% set caption_ns.label = template.label %}
     {% endif %}
   {% endfor %}
-  {% set design_layout_label = 'Fill split' if video.split_enabled else ('Fit' if (video_crop_aspect or 'landscape') == 'landscape' else 'Fill') %}
+  {% set design_layout_label = 'Original' if (video_crop_aspect or 'landscape') == 'original' else ('Fill split' if video.split_enabled else ('Fit' if (video_crop_aspect or 'landscape') == 'landscape' else 'Fill')) %}
 {% endif %}
 
 <div class="gs-header mb-2{% if generate_v2 %} generate-v2-header{% endif %}">
@@ -6577,7 +6596,7 @@
                 {% set clip_end_label = (v2_card_end_seconds // 60) ~ ':' ~ '%02d'|format(v2_card_end_seconds % 60) %}
                 {% set clip_duration_label = (v2_card_duration_seconds // 60) ~ ':' ~ '%02d'|format(v2_card_duration_seconds % 60) %}
               {% endif %}
-            <div class="clip-card{% if row.is_ai_suggestion %} is-ai-suggestion{% endif %}"
+            <div class="clip-card{% if row.is_ai_suggestion %} is-ai-suggestion{% endif %}{% if row.is_original_layout %} is-original-layout{% endif %}"
                  data-plan-index="{{ row.plan_index }}"
                  data-origin="{{ row.origin }}"
                  data-ai-suggestion="{{ '1' if row.is_ai_suggestion else '0' }}"
@@ -6692,7 +6711,7 @@
                   {% if row.status == "created" and row.video_filename and row.video_url %}
                     {% if generate_v2 %}
                     <div class="generate-v2-media-shell">
-                      <div class="generate-v2-media-column{% if row.render_job_status in ['queued', 'processing', 'running'] %} is-rendering{% endif %}">
+                      <div class="generate-v2-media-column{% if row.is_original_layout %} is-original-layout{% endif %}{% if row.render_job_status in ['queued', 'processing', 'running'] %} is-rendering{% endif %}">
                     {% endif %}
                     <video controls preload="metadata">
                       <source src="{{ row.video_url }}" type="video/mp4">
@@ -6922,6 +6941,7 @@
                                 data-facebook-feed="{{ '1' if row.facebook_feed else '' }}"
                                 data-facebook-mode="{{ row.facebook_mode or '' }}"
                                 data-facebook-publish-at="{{ row.facebook_publish_at or '' }}"
+                                data-original-layout="{{ '1' if row.is_original_layout else '' }}"
                                 data-button-label="{% if row.publish_status == 'scheduled' %}Update schedule{% elif row.publish_status == 'uploaded' %}Update upload{% else %}Schedule & publish{% endif %}"
                                 title="{% if not (youtube_connected or instagram_connected or facebook_connected) %}No publishing platform connected{% else %}Schedule{% endif %}"
                                 aria-label="Schedule"
@@ -7410,6 +7430,9 @@
           <p id="youtube-upload-compliance-notice" class="small text-white-50 mb-0 mt-3">
             By clicking 'Schedule &amp; publish,' you certify that the content you are uploading complies with the YouTube Terms of Service (including the YouTube Community Guidelines) at <a class="link-info" href="https://www.youtube.com/t/terms" target="_blank" rel="noopener noreferrer">https://www.youtube.com/t/terms</a>. Please be sure not to violate others' copyright or privacy rights.
           </p>
+          <p id="landscape-schedule-note" class="small text-warning mb-0 mt-2 d-none">
+            Landscape video: YouTube will publish it as a regular video (not a Short); Instagram may crop it.
+          </p>
         </div>
       </form>
     </div>
@@ -7580,6 +7603,15 @@
                           <span class="aspect-icon"><i class="bi bi-display"></i></span>
                           <span><div class="aspect-title text-white">Fit</div></span>
                         </button>
+                        {% if generate_v2 %}
+                        <button type="button" class="aspect-card" data-crop-aspect="original">
+                          <span class="aspect-icon"><i class="bi bi-aspect-ratio"></i></span>
+                          <span>
+                            <div class="aspect-title text-white">Original</div>
+                            <small class="text-white-50">Keeps the video's shape</small>
+                          </span>
+                        </button>
+                        {% endif %}
                       </div>
                       </div>
                       <div class="control-group subscribe-visual-selector">
@@ -15490,6 +15522,7 @@ const youtubeModalContext = (() => {
   const youtubeEnableToggle = document.getElementById("youtubeEnableToggle");
   const youtubeDisabledHint = document.getElementById("youtubeDisabledHint");
   const youtubeComplianceNotice = document.getElementById("youtube-upload-compliance-notice");
+  const landscapeScheduleNote = document.getElementById("landscape-schedule-note");
   const defaultSubmitLabel = "Schedule & publish";
   const queueOnlyLabel = "Queue only";
   const defaultUploadUrl = form.getAttribute("action") || "{{ url_for('video_shorts_bp.upload_clip_to_youtube') }}";
@@ -16413,6 +16446,7 @@ const initSendToYoutubeButtons = () => {
         ctx.ytVideoIdInput.value = btn.dataset.ytVideoId || "";
       }
       const actionLabel = btn.dataset.buttonLabel || "Schedule & publish";
+      landscapeScheduleNote?.classList.toggle("d-none", btn.dataset.originalLayout !== "1");
       const descriptionEnabled = btn.dataset.descriptionDisabled !== "1";
       if (ctx.setDescriptionGeneratorEnabled) {
         ctx.setDescriptionGeneratorEnabled(descriptionEnabled);
@@ -17144,6 +17178,13 @@ document.addEventListener("DOMContentLoaded", () => {
     }
   };
   const getOverlayDims = () => {
+    if (activeCropAspect === "original") {
+      return {
+        width: previewConfig.videoWidthLandscape,
+        height: previewConfig.videoHeightLandscape,
+        y: 0,
+      };
+    }
     const isPortrait = activeCropAspect === "portrait";
     return {
       width: isPortrait ? previewConfig.videoWidthPortrait : previewConfig.videoWidthLandscape,
@@ -17233,6 +17274,7 @@ document.addEventListener("DOMContentLoaded", () => {
     };
   };
   const isPortraitCropAspect = () => activeCropAspect === "portrait";
+  const isOriginalCropAspect = () => activeCropAspect === "original";
   const getEffectiveSplitEnabled = () => !!(activeSplitEnabled && isPortraitCropAspect() && activeVisualMode === "video");
   const isTitleVisible = () => !!showTitleToggle?.checked;
   const isSubtitleVisible = () => !!showSubtitleToggle?.checked;
@@ -17459,10 +17501,12 @@ document.addEventListener("DOMContentLoaded", () => {
       Math.max(0, renderFrameHeight - 52),
     );
     if (previewFrame) {
+      const originalPreview = isOriginalCropAspect();
+      previewFrame.classList.toggle("is-original-layout", originalPreview);
       previewFrame.style.width = previewConfig.frameWidth + "px";
-      previewFrame.style.height = previewConfig.frameHeight + "px";
+      previewFrame.style.height = (originalPreview ? (previewConfig.frameWidth * 9 / 16) : previewConfig.frameHeight) + "px";
       const bgUrl = getActiveBackgroundUrl();
-      previewFrame.style.backgroundImage = bgUrl ? `url('${bgUrl}')` : "none";
+      previewFrame.style.backgroundImage = originalPreview ? "none" : (bgUrl ? `url('${bgUrl}')` : "none");
     }
     if (previewTitle) {
       previewTitle.classList.toggle("is-hidden", !isTitleVisible());
@@ -18036,7 +18080,7 @@ document.addEventListener("DOMContentLoaded", () => {
   };
   const setCropFormat = (value, splitEnabled = false) => {
     const wasEffectiveSplit = getEffectiveSplitEnabled();
-    let normalized = value === "portrait" ? "portrait" : "landscape";
+    let normalized = value === "portrait" ? "portrait" : (value === "original" ? "original" : "landscape");
     let nextSplitEnabled = !!splitEnabled;
     if (activeVisualMode === "podcast" && podcastAudioState.selectedId && normalized !== "landscape") {
       normalized = "landscape";
@@ -18620,7 +18664,7 @@ document.addEventListener("DOMContentLoaded", () => {
       .replace(/\b\w/g, (char) => char.toUpperCase());
     const layoutLabel = getEffectiveSplitEnabled()
       ? "Fill split"
-      : ((activeCropAspect || "landscape") === "landscape" ? "Fit" : "Fill");
+      : ((activeCropAspect || "landscape") === "original" ? "Original" : ((activeCropAspect || "landscape") === "landscape" ? "Fit" : "Fill"));
     return {
       captionLabel: activeStyleLabel || presetLabel || "Default",
       layoutLabel,

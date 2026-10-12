@@ -62,6 +62,10 @@ VIDEO_OVERLAY_WIDTH = 900
 VIDEO_OVERLAY_TOP_OFFSET = DEFAULT_VIDEO_OVERLAY_OFFSET
 PODCAST_LANDSCAPE_WIDTH = 1280
 PODCAST_LANDSCAPE_HEIGHT = 720
+ORIGINAL_LAYOUT_MAX_WIDTH = 1280
+ORIGINAL_LAYOUT_MAX_HEIGHT = 720
+ORIGINAL_LAYOUT_HD_MAX_WIDTH = 1920
+ORIGINAL_LAYOUT_HD_MAX_HEIGHT = 1080
 VIDEO_DATE_BOTTOM_MARGIN = 250
 DEFAULT_VIDEO_DATE_TOP = VIDEO_TARGET_HEIGHT - VIDEO_DATE_BOTTOM_MARGIN - 24
 TITLE_WRAP_LENGTH = 35
@@ -70,6 +74,29 @@ TITLE_WRAP_MAX_LINES = 3
 TITLE_WRAP_MIN_FONT_SIZE = 30
 TITLE_BOX_BORDER_WIDTH = 22
 STATIC_VISUAL_MAP = {entry["key"]: entry for entry in STATIC_VISUAL_PRESETS}
+
+
+def _even_dimension(value: float) -> int:
+    safe = max(2, int(round(float(value or 0))))
+    return safe if safe % 2 == 0 else safe - 1
+
+
+def _original_layout_target_dimensions(source_width: Any, source_height: Any) -> tuple[int, int]:
+    """Return an even source-aspect canvas for Original layout, capped at 720p/1080p."""
+    try:
+        width = float(source_width or 0)
+        height = float(source_height or 0)
+    except (TypeError, ValueError):
+        width = 0
+        height = 0
+    if width <= 0 or height <= 0:
+        return PODCAST_LANDSCAPE_WIDTH, PODCAST_LANDSCAPE_HEIGHT
+    max_width = ORIGINAL_LAYOUT_HD_MAX_WIDTH if width >= ORIGINAL_LAYOUT_HD_MAX_WIDTH or height >= ORIGINAL_LAYOUT_HD_MAX_HEIGHT else ORIGINAL_LAYOUT_MAX_WIDTH
+    max_height = ORIGINAL_LAYOUT_HD_MAX_HEIGHT if width >= ORIGINAL_LAYOUT_HD_MAX_WIDTH or height >= ORIGINAL_LAYOUT_HD_MAX_HEIGHT else ORIGINAL_LAYOUT_MAX_HEIGHT
+    scale = min(float(max_width) / width, float(max_height) / height, 1.0)
+    target_width = _even_dimension(width * scale)
+    target_height = _even_dimension(height * scale)
+    return max(2, target_width), max(2, target_height)
 
 
 def _ffmpeg_escape(text: str) -> str:
@@ -2836,17 +2863,34 @@ def _compose_trimmed_with_background(
 
     _log_video_dimensions("clip_scaled source", clip_video_source)
     overlay_aspect = (crop_aspect or "landscape").lower()
+    original_layout_mode = overlay_aspect == "original" and not podcast_mode
     # Shorts layout behavior:
     # - non-podcast: always render on 9:16 canvas and place overlay inside it.
     # - podcast: allow true horizontal canvas when landscape is selected.
-    if podcast_mode and overlay_aspect != "portrait":
+    if original_layout_mode:
+        try:
+            source_width, source_height = _probe_video_dimensions(clip_video_source)
+        except Exception:
+            source_width, source_height = None, None
+        target_width, target_height = _original_layout_target_dimensions(source_width, source_height)
+        current_app.logger.info(
+            "Original layout target source=%sx%s output=%sx%s",
+            source_width,
+            source_height,
+            target_width,
+            target_height,
+        )
+    elif podcast_mode and overlay_aspect != "portrait":
         target_width = PODCAST_LANDSCAPE_WIDTH
         target_height = PODCAST_LANDSCAPE_HEIGHT
     else:
         target_width = VIDEO_TARGET_WIDTH
         target_height = VIDEO_TARGET_HEIGHT
     overlay_width = min(VIDEO_OVERLAY_WIDTH, target_width)
-    if overlay_aspect == "portrait":
+    if original_layout_mode:
+        overlay_width = target_width
+        overlay_height = target_height
+    elif overlay_aspect == "portrait":
         overlay_width = target_width
         overlay_height = target_height
     else:
@@ -2932,9 +2976,10 @@ def _compose_trimmed_with_background(
         and overlay_aspect == "portrait"
         and has_crop2
         and not podcast_mode
+        and not original_layout_mode
     )
     layout_segments: List[Dict[str, Any]] = []
-    if isinstance(raw_layout_segments, list) and not split_stack_enabled and not podcast_mode and not video_override_source:
+    if isinstance(raw_layout_segments, list) and not original_layout_mode and not split_stack_enabled and not podcast_mode and not video_override_source:
         for segment in raw_layout_segments:
             if not isinstance(segment, dict):
                 continue
@@ -3012,7 +3057,7 @@ def _compose_trimmed_with_background(
         str(segment.get("mode") or "").strip().lower() == "fit"
         for segment in layout_segments
     )
-    needs_background_stream = split_stack_enabled or (not face_aware_layout_active) or face_aware_has_fit_segment
+    needs_background_stream = (not original_layout_mode) and (split_stack_enabled or (not face_aware_layout_active) or face_aware_has_fit_segment)
     filter_parts = [bg_filter] if needs_background_stream else []
     if split_stack_enabled:
         crop2_x, crop2_y, crop2_w, crop2_h = _normalize_crop_box("crop2_")
@@ -3077,7 +3122,11 @@ def _compose_trimmed_with_background(
                 crop_h,
             )
         dynamic_crop_enabled = len(face_track_points) >= 2
-        if face_aware_layout_active:
+        if original_layout_mode:
+            filter_parts.append(
+                f"[1:v]scale={target_width}:{target_height},setsar=1,setpts=PTS-STARTPTS[ov]"
+            )
+        elif face_aware_layout_active:
             for idx, segment in enumerate(layout_segments):
                 if str(segment.get("mode") or "fill").strip().lower() != "fill":
                     continue

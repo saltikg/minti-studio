@@ -125,6 +125,7 @@ from app.video_shorts.services.clip_title import generate_clip_title
 from app.video_shorts.services.clip_title import _detect_title_language
 from app.video_shorts.services.compositor import _build_static_visual_clip, _compose_trimmed_with_background, _cut_clip, _sanitize_text_for_overlay, _trim_source_to_keep_ranges
 from app.video_shorts.services.compositor import _face_aware_fill_zoom_for_segment
+from app.video_shorts.services.compositor import _original_layout_target_dimensions
 from app.video_shorts.services.db import (
     _ensure_transcript_schema,
     _ensure_video_crop_schema,
@@ -11488,6 +11489,7 @@ def generate_short(video_pk):
             "video_filename": video_filename,
             "video_url": _versioned_media_url(video_url, media_version),
             "poster_url": poster_url,
+            "is_original_layout": str(video.get("crop_aspect") or "").strip().lower() == "original",
             "media_version": media_version,
             "subtitle": subtitle_source,
             "status": status,
@@ -13899,7 +13901,7 @@ def save_crop_area(video_pk):
     crop_aspect = None
     if "crop_aspect" in form_fields:
         crop_aspect = (request.form.get("crop_aspect") or "").strip().lower()
-        if crop_aspect not in {"landscape", "portrait"}:
+        if crop_aspect not in {"landscape", "portrait", "original"}:
             crop_aspect = "landscape"
     visual_mode = (request.form.get("visual_mode") or "").strip().lower()
     crop_changed_param_present = "crop_changed" in request.form
@@ -27844,6 +27846,36 @@ def autoclip_video(video_pk):
         font_path,
         font_exists,
     )
+    render_target_width = 720
+    render_target_height = 1280
+    if str(video_crop_aspect or "").strip().lower() == "original" and not podcast_audio_path:
+        try:
+            source_info = _probe_video_stream_info(src_path, log=current_app.logger)
+            render_target_width, render_target_height = _original_layout_target_dimensions(
+                source_info.get("width"),
+                source_info.get("height"),
+            )
+        except Exception as exc:
+            current_app.logger.warning("Original layout source probe failed video_id=%s: %s", vid, exc)
+            render_target_width, render_target_height = 1280, 720
+        original_scale = max(0.1, float(render_target_height) / 1280.0)
+        title_font_size = max(12, int(round(float(title_font_size or DEFAULT_EDITOR_TITLE_FONT_SIZE) * original_scale)))
+        sub_font_size = max(10, int(round(float(sub_font_size or DEFAULT_SUB_FONT_SIZE) * original_scale)))
+        title_margin = max(0, int(round(float(render_target_height) * 0.08)))
+        caption_block_height = max(24, int(round(float(sub_font_size) * 2.0)))
+        sub_margin = max(10, int(round(float(render_target_height) - (float(render_target_height) * 0.82) - caption_block_height)))
+        video_title_line_spacing = int(round(float(video_title_line_spacing or -4) * original_scale))
+        current_app.logger.info(
+            "Original layout render metrics video_id=%s plan_index=%s target=%sx%s title_size=%s sub_size=%s title_margin=%s sub_margin=%s",
+            vid,
+            plan_index,
+            render_target_width,
+            render_target_height,
+            title_font_size,
+            sub_font_size,
+            title_margin,
+            sub_margin,
+        )
 
     temp_subs = []
     static_clip_path = None
@@ -27910,6 +27942,8 @@ def autoclip_video(video_pk):
                             subtitle_margin=sub_margin,
                             subtitle_preset=video_subtitle_preset,
                             caption_language="",
+                            target_width=render_target_width,
+                            target_height=render_target_height,
                         )
                         subtitle_overlay_specs = list((overlay_meta or {}).get("specs") or [])
                         subtitle_overlay_events = list((overlay_meta or {}).get("timing_events") or [])
@@ -27972,6 +28006,8 @@ def autoclip_video(video_pk):
                         subtitle_margin=sub_margin,
                         subtitle_preset=video_subtitle_preset,
                         caption_language=plan_entry.get("language") or "",
+                        target_width=render_target_width,
+                        target_height=render_target_height,
                     )
                     subtitle_overlay_specs = list((overlay_meta or {}).get("specs") or [])
                     subtitle_overlay_events = list((overlay_meta or {}).get("timing_events") or [])

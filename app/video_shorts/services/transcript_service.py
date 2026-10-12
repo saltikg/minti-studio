@@ -1452,6 +1452,8 @@ def _render_word_highlight_caption_frame(
     shadow_region: Optional[Dict[str, Any]] = None,
     fill_mode: str = "flat",
     gradient_layers: Optional[Dict[int, Dict[str, Dict[str, Any] | None]]] = None,
+    canvas_width: int = _PILLOW_CAPTION_WIDTH,
+    canvas_height: int = _PILLOW_CAPTION_HEIGHT,
     out_path: Path,
 ) -> Dict[str, Any]:
     active_font = active_font or font
@@ -1491,16 +1493,16 @@ def _render_word_highlight_caption_frame(
             display_words,
             font=font,
             subtitle_margin=subtitle_margin,
-            max_width=_PILLOW_CAPTION_WIDTH - _ASS_MARGIN_L - _ASS_MARGIN_R,
-            canvas_width=_PILLOW_CAPTION_WIDTH,
-            canvas_height=_PILLOW_CAPTION_HEIGHT,
+            max_width=max(80, int(canvas_width) - _ASS_MARGIN_L - _ASS_MARGIN_R),
+            canvas_width=int(canvas_width),
+            canvas_height=int(canvas_height),
             slot_widths=slot_widths,
             word_fonts=word_fonts,
             line_height_font=active_font,
         )
     else:
         layout = precomputed_layout
-    image = Image.new("RGBA", (_PILLOW_CAPTION_WIDTH, _PILLOW_CAPTION_HEIGHT), (0, 0, 0, 0))
+    image = Image.new("RGBA", (int(canvas_width), int(canvas_height)), (0, 0, 0, 0))
     draw = ImageDraw.Draw(image)
     if shadow_region:
         image.alpha_composite(
@@ -1663,12 +1665,14 @@ def _build_word_highlight_overlay_video(
     temp_dir: Path,
     overlay_specs: List[Dict[str, Any]],
     clip_duration: float,
+    canvas_width: int = _PILLOW_CAPTION_WIDTH,
+    canvas_height: int = _PILLOW_CAPTION_HEIGHT,
 ) -> Path:
     if not overlay_specs:
         raise ValueError("overlay_specs required")
 
     blank_frame = temp_dir / "caption_blank.png"
-    Image.new("RGBA", (_PILLOW_CAPTION_WIDTH, _PILLOW_CAPTION_HEIGHT), (0, 0, 0, 0)).save(blank_frame)
+    Image.new("RGBA", (int(canvas_width), int(canvas_height)), (0, 0, 0, 0)).save(blank_frame)
 
     timeline: List[Tuple[Path, float]] = []
     cursor = 0.0
@@ -1737,6 +1741,8 @@ def _build_word_highlight_caption_overlay(
     subtitle_margin: int,
     subtitle_preset: Optional[str],
     caption_language: str = "",
+    target_width: int = _PILLOW_CAPTION_WIDTH,
+    target_height: int = _PILLOW_CAPTION_HEIGHT,
 ) -> Tuple[Path | None, List[Path], Dict[str, Any]]:
     preset = _resolve_subtitle_preset(subtitle_preset)
     preset_key = str(subtitle_preset or DEFAULT_SUBTITLE_PRESET).strip() or DEFAULT_SUBTITLE_PRESET
@@ -1806,6 +1812,9 @@ def _build_word_highlight_caption_overlay(
     inactive_gradient_top = str(preset.get("inactive_gradient_top") or inactive_color).strip() or inactive_color
     inactive_gradient_mid = str(preset.get("inactive_gradient_mid") or inactive_color).strip() or inactive_color
     inactive_gradient_bottom = str(preset.get("inactive_gradient_bottom") or inactive_color).strip() or inactive_color
+    safe_target_width = max(2, int(target_width or _PILLOW_CAPTION_WIDTH))
+    safe_target_height = max(2, int(target_height or _PILLOW_CAPTION_HEIGHT))
+    safe_caption_width = max(80, safe_target_width - _ASS_MARGIN_L - _ASS_MARGIN_R)
 
     for seg in segments:
         try:
@@ -1906,9 +1915,9 @@ def _build_word_highlight_caption_overlay(
                         display_word_tokens,
                         font=font,
                         subtitle_margin=subtitle_margin,
-                        max_width=_PILLOW_CAPTION_WIDTH - _ASS_MARGIN_L - _ASS_MARGIN_R,
-                        canvas_width=_PILLOW_CAPTION_WIDTH,
-                        canvas_height=_PILLOW_CAPTION_HEIGHT,
+                        max_width=safe_caption_width,
+                        canvas_width=safe_target_width,
+                        canvas_height=safe_target_height,
                     )
                     layout_cache[chunk_key] = precomputed_layout
             gradient_layers = None
@@ -1917,9 +1926,9 @@ def _build_word_highlight_caption_overlay(
                     display_word_tokens,
                     font=font,
                     subtitle_margin=subtitle_margin,
-                    max_width=_PILLOW_CAPTION_WIDTH - _ASS_MARGIN_L - _ASS_MARGIN_R,
-                    canvas_width=_PILLOW_CAPTION_WIDTH,
-                    canvas_height=_PILLOW_CAPTION_HEIGHT,
+                    max_width=safe_caption_width,
+                    canvas_width=safe_target_width,
+                    canvas_height=safe_target_height,
                 )
                 precomputed_layout = precomputed_layout or layout_for_gradient
                 active_strip = None
@@ -2007,9 +2016,9 @@ def _build_word_highlight_caption_overlay(
                         display_word_tokens,
                         font=font,
                         subtitle_margin=subtitle_margin,
-                        max_width=_PILLOW_CAPTION_WIDTH - _ASS_MARGIN_L - _ASS_MARGIN_R,
-                        canvas_width=_PILLOW_CAPTION_WIDTH,
-                        canvas_height=_PILLOW_CAPTION_HEIGHT,
+                        max_width=safe_caption_width,
+                        canvas_width=safe_target_width,
+                        canvas_height=safe_target_height,
                     )
                     shadow_region = _build_blurred_shadow_region(
                         layout_for_shadow,
@@ -2051,6 +2060,8 @@ def _build_word_highlight_caption_overlay(
                     shadow_region=shadow_region,
                     fill_mode="gradient" if uses_gradient_layers else "flat",
                     gradient_layers=gradient_layers,
+                    canvas_width=int(target_width),
+                    canvas_height=int(target_height),
                     out_path=frame_path,
                 )
                 overlay_specs.append(
@@ -2070,6 +2081,8 @@ def _build_word_highlight_caption_overlay(
         temp_dir=temp_dir,
         overlay_specs=overlay_specs,
         clip_duration=clip_duration,
+        canvas_width=int(target_width),
+        canvas_height=int(target_height),
     )
     cleanup_paths.append(overlay_path)
     return overlay_path, cleanup_paths, {

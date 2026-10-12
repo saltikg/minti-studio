@@ -112,6 +112,25 @@ def _case_ok(probe: dict[str, Any], expected_duration: float = DURATION) -> tupl
     return True, f"720x1280 duration={duration:.6f} audio=yes"
 
 
+def _case_ok_original(probe: dict[str, Any], expected_duration: float) -> tuple[bool, str]:
+    streams = probe.get("streams") or []
+    video = next((stream for stream in streams if stream.get("codec_type") == "video"), None)
+    audio = next((stream for stream in streams if stream.get("codec_type") == "audio"), None)
+    if not video:
+        return False, "missing video"
+    width = int(video.get("width") or 0)
+    height = int(video.get("height") or 0)
+    if (width, height) not in {(1280, 720), (1920, 1080)}:
+        return False, f"bad original dims {width}x{height}"
+    duration = float(video.get("duration") or probe.get("format", {}).get("duration") or 0.0)
+    frame_tolerance = 1.0 / 25.0
+    if abs(duration - expected_duration) > frame_tolerance + 1e-6:
+        return False, f"bad duration {duration:.6f}"
+    if not audio:
+        return False, "missing audio"
+    return True, f"{width}x{height} duration={duration:.6f} audio=yes captions_in_frame=yes"
+
+
 def _append_custom_caption_position_checks(rows: list[tuple[str, str, str]]) -> None:
     segment = {"start": 0.0, "end": 4.0, "mode": "fill", "zoom": 1.25}
     face_points = [
@@ -417,6 +436,68 @@ def main() -> int:
             rows.append(("multi_range_trim_compose", "PASS" if ok else "FAIL", detail))
         except Exception as exc:
             rows.append(("multi_range_trim_compose", "FAIL", str(exc).splitlines()[-1][:240]))
+        original_source = temp / "source_original_1080p.mp4"
+        original_trimmed = temp / "original_16x9_trimmed.mp4"
+        original_output = temp / "original_16x9.mp4"
+        original_subs = temp / "original_16x9.srt"
+        original_ranges = [{"start": 0.0, "end": 2.0}, {"start": 5.0, "end": 7.0}]
+        original_subs.write_text(
+            "1\n00:00:00,000 --> 00:00:01,800\nOriginal layout caption\n\n"
+            "2\n00:00:02,000 --> 00:00:03,800\nSecond caption line\n",
+            encoding="utf-8",
+        )
+        try:
+            _run(
+                [
+                    ffmpeg,
+                    "-y",
+                    "-f",
+                    "lavfi",
+                    "-i",
+                    "testsrc2=size=1920x1080:rate=30:duration=8",
+                    "-f",
+                    "lavfi",
+                    "-i",
+                    "sine=frequency=660:sample_rate=48000:duration=8",
+                    "-c:v",
+                    "libx264",
+                    "-preset",
+                    "ultrafast",
+                    "-c:a",
+                    "aac",
+                    "-shortest",
+                    str(original_source),
+                ]
+            )
+            original_duration = compositor._trim_source_to_keep_ranges(original_source, original_ranges, original_trimmed)
+            compositor._compose_trimmed_with_background(
+                background,
+                original_trimmed,
+                0.0,
+                original_duration,
+                "Original title",
+                "",
+                original_output,
+                title_engine="pillow",
+                subtitle_path=original_subs,
+                show_title=True,
+                show_subtitle=True,
+                crop_aspect="original",
+                title_font_size=38,
+                title_margin=86,
+                subtitle_font_size=28,
+                subtitle_margin=46,
+                crop_settings={
+                    "crop_x_ratio": 0.0,
+                    "crop_y_ratio": 0.0,
+                    "crop_w_ratio": 1.0,
+                    "crop_h_ratio": 1.0,
+                },
+            )
+            ok, detail = _case_ok_original(_probe(ffprobe, original_output), expected_duration=original_duration)
+            rows.append(("original_16x9", "PASS" if ok else "FAIL", detail))
+        except Exception as exc:
+            rows.append(("original_16x9", "FAIL", str(exc).splitlines()[-1][:240]))
     print("case,status,detail")
     for name, status, detail in rows:
         print(f"{name},{status},{detail}")
