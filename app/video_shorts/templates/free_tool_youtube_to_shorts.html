@@ -3,7 +3,7 @@
 {% set is_tr = locale == 'tr' %}
 {% set switch_href = '/tools/youtube-to-shorts' if is_tr else '/tr/araclar/youtube-shorts' %}
 {% set page_title = "YouTube'dan Shorts — Ücretsiz AI Klip Bulucu" if is_tr else "YouTube to Shorts — Free AI Clip Finder" %}
-{% set page_description = "YouTube videolarını ücretsiz Shorts'a çevir. AI en iyi anı bulur, altyazı ve düzenleme hazır olur; kayıt gerekmez." if is_tr else "Turn YouTube videos into Shorts for free. AI finds the best moment, adds editable captions, and opens your clip for editing." %}
+{% set page_description = "YouTube videolarını ücretsiz Shorts'a çevir. AI en iyi anı bulur; altyazı, kadraj ve düzenleme hazır olur." if is_tr else "Turn YouTube videos into Shorts for free. AI finds the best moment, adds editable captions, and opens your clip for editing." %}
 {% set canonical_path = '/tr/araclar/youtube-shorts' if is_tr else '/tools/youtube-to-shorts' %}
 {% set alternate_path = '/tools/youtube-to-shorts' if is_tr else '/tr/araclar/youtube-shorts' %}
 {% set site_origin = request.url_root.rstrip('/') %}
@@ -64,7 +64,7 @@
   {{ super() }}
   <style>
     .free-tool-page {
-      width: min(100%, 1040px);
+      width: min(100%, 1120px);
       margin: 0 auto;
       padding: clamp(2.7rem, 6vw, 4.7rem) 1rem clamp(3rem, 6vw, 4.5rem);
     }
@@ -81,16 +81,10 @@
       text-wrap: balance;
       color: rgba(248, 250, 252, 0.98);
     }
-    .free-tool-subhead {
-      max-width: 640px;
-      margin: 0 auto;
-      color: rgba(226, 232, 240, 0.84);
-      font-size: clamp(1rem, 2vw, 1.2rem);
-      line-height: 1.6;
-    }
     .free-tool-card {
       margin: 1.4rem auto 0;
-      max-width: 880px;
+      width: 100%;
+      max-width: 1120px;
       padding: clamp(1.25rem, 3vw, 1.75rem);
       border: 1px solid rgba(255, 255, 255, 0.1);
       border-radius: 16px;
@@ -255,48 +249,6 @@
       color: rgba(254, 226, 226, 0.96);
       font-size: 0.94rem;
     }
-    .free-tool-steps {
-      display: grid;
-      grid-template-columns: repeat(3, minmax(0, 1fr));
-      gap: 0.75rem;
-      margin-top: 3rem;
-    }
-    .free-tool-step {
-      display: grid;
-      grid-template-columns: auto minmax(0, 1fr);
-      gap: 0.8rem;
-      align-items: start;
-      padding: 1rem;
-      border: 1px solid rgba(255, 255, 255, 0.1);
-      border-radius: 14px;
-      background: rgba(255, 255, 255, 0.035);
-      color: rgba(226, 232, 240, 0.88);
-      text-align: left;
-    }
-    .free-tool-step-number {
-      display: inline-flex;
-      align-items: center;
-      justify-content: center;
-      width: 2rem;
-      height: 2rem;
-      border-radius: 999px;
-      background: rgba(43, 179, 163, 0.14);
-      color: #8cf1e1;
-      font-size: 0.9rem;
-      font-weight: 800;
-    }
-    .free-tool-step-title {
-      margin: 0;
-      color: rgba(248, 250, 252, 0.96);
-      font-weight: 750;
-      line-height: 1.25;
-    }
-    .free-tool-step-copy {
-      margin: 0.25rem 0 0;
-      color: rgba(203, 213, 225, 0.78);
-      font-size: 0.92rem;
-      line-height: 1.5;
-    }
     .free-tool-section {
       margin-top: clamp(3rem, 7vw, 5.5rem);
     }
@@ -435,7 +387,6 @@
     }
     @media (max-width: 720px) {
       .mv-url-row,
-      .free-tool-steps,
       .free-tool-feature-grid,
       .free-tool-compare {
         grid-template-columns: 1fr;
@@ -455,9 +406,6 @@
   <main class="free-tool-page">
     <section class="free-tool-hero">
       <h1>{{ page_title }}</h1>
-      <p class="free-tool-subhead">
-        {{ "YouTube bağlantını yapıştır; Minti en iyi anları bulsun, ilk Short'u hazırlasın ve düzenlemeye hazır hale getirsin." if is_tr else "Paste a YouTube link; Minti finds the strongest moment, prepares your first Short, and opens it for editing." }}
-      </p>
       <div class="free-tool-card" id="free-tool-paste-box">
         {% if error %}
           <div class="free-tool-error mb-3">
@@ -490,38 +438,9 @@
           <div id="mv-youtube-preview" class="mv-youtube-preview" aria-live="polite"></div>
           {% include "_turnstile_widget.html" %}
           <div class="free-tool-note">
-            {{ "30 dakikaya kadar videolar · kayıt gerekmez" if is_tr else "Videos up to 30 min · no sign-up needed" }}
+            {{ "30 dakikaya kadar videolar" if is_tr else "Videos up to 30 min" }}
           </div>
         </form>
-      </div>
-    </section>
-
-    <section class="free-tool-section" aria-labelledby="free-tool-how-title">
-      <div class="free-tool-section-head">
-        <h2 id="free-tool-how-title">{{ "Nasıl çalışır" if is_tr else "How it works" }}</h2>
-      </div>
-      <div class="free-tool-steps">
-        <div class="free-tool-step">
-          <span class="free-tool-step-number">1</span>
-          <div>
-            <p class="free-tool-step-title">{{ "Yapıştır" if is_tr else "Paste" }}</p>
-            <p class="free-tool-step-copy">{{ "30 dakikaya kadar herhangi bir YouTube bağlantısını bırak." if is_tr else "Drop any YouTube link up to 30 minutes." }}</p>
-          </div>
-        </div>
-        <div class="free-tool-step">
-          <span class="free-tool-step-number">2</span>
-          <div>
-            <p class="free-tool-step-title">{{ "AI en iyi anları bulur" if is_tr else "AI finds the best moments" }}</p>
-            <p class="free-tool-step-copy">{{ "Minti videoyu yazıya döker ve en güçlü, tek başına anlamlı anı seçer." if is_tr else "Minti transcribes the video and picks the strongest, self-contained moment." }}</p>
-          </div>
-        </div>
-        <div class="free-tool-step">
-          <span class="free-tool-step-number">3</span>
-          <div>
-            <p class="free-tool-step-title">{{ "Short'unu düzenle" if is_tr else "Edit your Short" }}</p>
-            <p class="free-tool-step-copy">{{ "Kelimeleri çıkar, altyazı ve yerleşimi düzenle, tek tıkla yeniden oluştur." if is_tr else "Remove words, tweak captions and layout, regenerate in one click." }}</p>
-          </div>
-        </div>
       </div>
     </section>
 
