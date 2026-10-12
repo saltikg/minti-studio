@@ -2507,7 +2507,7 @@ def _compose_trimmed_with_background(
 
 
     # Step 1: trim source with pts reset
-    trimmed = out_path.parent / f"{out_path.stem}_trimmed.mp4"
+    trimmed = out_path.parent / f"{out_path.stem}_trimmed_{secrets.token_hex(4)}.mp4"
     merged_override = None
     merged_audio_override = None
     direct_audio_source: Optional[Path] = None
