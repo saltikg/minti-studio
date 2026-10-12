@@ -4358,6 +4358,30 @@
     color: rgba(226, 232, 240, 0.62);
     font-size: 0.84rem;
   }
+  .crop-original-zoom-controls {
+    display: none;
+    gap: 10px;
+    align-items: center;
+    flex-wrap: wrap;
+    padding: 0 2px;
+  }
+  .crop-modal-reframe-section.is-original-layout .crop-original-zoom-controls {
+    display: flex;
+  }
+  .crop-original-zoom-controls .form-check {
+    margin: 0;
+  }
+  .crop-original-zoom-slider {
+    flex: 1 1 180px;
+    min-width: 140px;
+    accent-color: #2dd4bf;
+  }
+  .crop-original-zoom-label {
+    min-width: 72px;
+    color: rgba(226, 232, 240, 0.68);
+    font-size: 0.8rem;
+    text-align: right;
+  }
   .crop-modal-reframe-section.is-original-layout .crop-original-layout-note {
     display: block;
   }
@@ -4384,6 +4408,8 @@
   .crop-original-preview-image {
     position: absolute;
     inset: 0;
+    right: auto;
+    bottom: auto;
     width: 100% !important;
     height: 100% !important;
     max-width: none !important;
@@ -4391,6 +4417,22 @@
     object-fit: contain;
     background: #020617;
     display: block;
+  }
+  .crop-original-zoom-box {
+    position: absolute;
+    display: none;
+    border: 2px solid rgba(45, 212, 191, 0.95);
+    border-radius: 10px;
+    box-shadow: 0 0 0 9999px rgba(2, 6, 23, 0.42), 0 8px 24px rgba(0, 0, 0, 0.26);
+    cursor: grab;
+    z-index: 4;
+    touch-action: none;
+  }
+  .crop-original-zoom-box.is-active {
+    display: block;
+  }
+  .crop-original-zoom-box.is-dragging {
+    cursor: grabbing;
   }
   .crop-original-preview-title,
   .crop-original-preview-caption {
@@ -5824,6 +5866,7 @@
       data-static-visual-key="{{ video_static_visual_key or '' }}"
       data-background-visual-key="{{ video_background_visual_key or '' }}"
       data-subscribe-visual-key="{{ video_subscribe_overlay_key or '' }}"
+      data-original-zoom-rect='{{ (video.original_zoom_rect or "") | e }}'
       data-crop-aspect="{{ video_crop_aspect or 'landscape' }}">
       📐 Crop for Shorts
     </button>
@@ -5886,6 +5929,7 @@
         data-static-visual-key="{{ video_static_visual_key or '' }}"
         data-background-visual-key="{{ video_background_visual_key or '' }}"
         data-subscribe-visual-key="{{ video_subscribe_overlay_key or '' }}"
+        data-original-zoom-rect='{{ (video.original_zoom_rect or "") | e }}'
         data-crop-aspect="{{ video_crop_aspect or 'landscape' }}">
         📐 Crop for Shorts
       </button>
@@ -7884,8 +7928,17 @@
                     </div>
                     <div class="crop-modal-reframe-section">
                       <div class="crop-original-layout-note">No cropping — the full video frame is used.</div>
+                      <div class="crop-original-zoom-controls" id="crop-original-zoom-controls">
+                        <label class="form-check d-inline-flex align-items-center gap-2">
+                          <input class="form-check-input" type="checkbox" id="crop-original-zoom-toggle">
+                          <span class="form-check-label text-white-50">Zoom in</span>
+                        </label>
+                        <input class="crop-original-zoom-slider" type="range" id="crop-original-zoom-slider" min="1" max="2" step="0.05" value="1" aria-label="Original zoom">
+                        <span class="crop-original-zoom-label" id="crop-original-zoom-label">Full frame</span>
+                      </div>
                       <div class="crop-original-preview-frame" id="crop-original-preview-frame" tabindex="0" aria-label="Original layout preview">
                         <img class="crop-original-preview-image" id="crop-original-preview-image" src="" alt="Original video frame preview">
+                        <div class="crop-original-zoom-box" id="crop-original-zoom-box" aria-hidden="true"></div>
                         <div class="crop-original-preview-title crop-preview-selectable" id="crop-original-preview-title" data-preview-element="title">Life is full of fun</div>
                         <div class="crop-original-preview-caption crop-preview-selectable" id="crop-original-preview-caption" data-preview-element="subtitle">Sample subtitle line</div>
                       </div>
@@ -16926,6 +16979,10 @@ document.addEventListener("DOMContentLoaded", () => {
   const originalPreviewImage = modalEl.querySelector("#crop-original-preview-image");
   const originalPreviewTitle = modalEl.querySelector("#crop-original-preview-title");
   const originalPreviewSubtitle = modalEl.querySelector("#crop-original-preview-caption");
+  const originalZoomToggle = modalEl.querySelector("#crop-original-zoom-toggle");
+  const originalZoomSlider = modalEl.querySelector("#crop-original-zoom-slider");
+  const originalZoomLabel = modalEl.querySelector("#crop-original-zoom-label");
+  const originalZoomBox = modalEl.querySelector("#crop-original-zoom-box");
   const settingsContainer = modalEl.querySelector(".short-video-body");
   const previewToolbar = modalEl.querySelector("#crop-preview-toolbar");
   const previewToolbarLabel = modalEl.querySelector("#crop-preview-toolbar-label");
@@ -16987,6 +17044,8 @@ document.addEventListener("DOMContentLoaded", () => {
   const reframeSection = modalEl.querySelector(".crop-modal-reframe-section");
   let selectedPreviewElement = "";
   let dragState = null;
+  let originalZoomRect = null;
+  let originalZoomDragState = null;
   const podcastAudioState = {
     audios: [],
     selectedId: settingsContainer?.dataset.selectedPodcastAudio || "",
@@ -17520,6 +17579,104 @@ document.addEventListener("DOMContentLoaded", () => {
   const markCropDirty = () => {
     cropDirty = true;
   };
+  const normalizeOriginalZoomRect = (rect) => {
+    if (!rect || typeof rect !== "object") {
+      return null;
+    }
+    let x = Number(rect.x);
+    let y = Number(rect.y);
+    let w = Number(rect.w);
+    let h = Number(rect.h);
+    if (![x, y, w, h].every(Number.isFinite)) {
+      return null;
+    }
+    w = Math.max(0.4, Math.min(1, w));
+    h = Math.max(0.4, Math.min(1, h));
+    x = Math.max(0, Math.min(1 - w, x));
+    y = Math.max(0, Math.min(1 - h, y));
+    if (w >= 0.999 && h >= 0.999) {
+      return null;
+    }
+    return { x, y, w, h };
+  };
+  const parseOriginalZoomRect = (value) => {
+    const raw = String(value || "").trim();
+    if (!raw) {
+      return null;
+    }
+    try {
+      return normalizeOriginalZoomRect(JSON.parse(raw));
+    } catch (error) {
+      return null;
+    }
+  };
+  const originalZoomFromRect = (rect) => {
+    const normalized = normalizeOriginalZoomRect(rect);
+    return normalized ? Math.max(1, Math.min(2, 1 / Math.max(normalized.w, 0.001))) : 1;
+  };
+  const setOriginalZoomRectForZoom = (zoom) => {
+    const safeZoom = Math.max(1, Math.min(2, Number(zoom) || 1));
+    if (safeZoom <= 1.001) {
+      originalZoomRect = null;
+      return;
+    }
+    const current = normalizeOriginalZoomRect(originalZoomRect);
+    const nextW = Math.max(0.4, Math.min(1, 1 / safeZoom));
+    const nextH = nextW;
+    const centerX = current ? current.x + current.w / 2 : 0.5;
+    const centerY = current ? current.y + current.h / 2 : 0.5;
+    originalZoomRect = normalizeOriginalZoomRect({
+      x: centerX - nextW / 2,
+      y: centerY - nextH / 2,
+      w: nextW,
+      h: nextH,
+    });
+  };
+  const syncOriginalZoomUi = () => {
+    const rect = normalizeOriginalZoomRect(originalZoomRect);
+    originalZoomRect = rect;
+    const zoom = originalZoomFromRect(rect);
+    if (originalZoomToggle) {
+      originalZoomToggle.checked = !!rect;
+    }
+    if (originalZoomSlider) {
+      originalZoomSlider.value = zoom.toFixed(2);
+      originalZoomSlider.disabled = !rect;
+    }
+    if (originalZoomLabel) {
+      originalZoomLabel.textContent = rect ? `Zoomed ×${zoom.toFixed(1)}` : "Full frame";
+    }
+    const note = reframeSection?.querySelector(".crop-original-layout-note");
+    if (note) {
+      note.textContent = rect
+        ? `Zoomed ×${zoom.toFixed(1)} — drag the box to reframe.`
+        : "No cropping — the full video frame is used.";
+    }
+    if (originalZoomBox) {
+      originalZoomBox.classList.toggle("is-active", !!rect && isOriginalCropAspect());
+      if (rect) {
+        originalZoomBox.style.left = `${rect.x * 100}%`;
+        originalZoomBox.style.top = `${rect.y * 100}%`;
+        originalZoomBox.style.width = `${rect.w * 100}%`;
+        originalZoomBox.style.height = `${rect.h * 100}%`;
+      }
+    }
+    if (originalPreviewImage) {
+      if (rect) {
+        originalPreviewImage.style.objectFit = "fill";
+        originalPreviewImage.style.setProperty("width", `${100 / rect.w}%`, "important");
+        originalPreviewImage.style.setProperty("height", `${100 / rect.h}%`, "important");
+        originalPreviewImage.style.left = `${-rect.x / rect.w * 100}%`;
+        originalPreviewImage.style.top = `${-rect.y / rect.h * 100}%`;
+      } else {
+        originalPreviewImage.style.objectFit = "contain";
+        originalPreviewImage.style.setProperty("width", "100%", "important");
+        originalPreviewImage.style.setProperty("height", "100%", "important");
+        originalPreviewImage.style.left = "0";
+        originalPreviewImage.style.top = "0";
+      }
+    }
+  };
   const markCropDirtyFromCropperEvent = (event) => {
     if (cropperProgrammaticUpdateDepth > 0) {
       return;
@@ -17653,12 +17810,24 @@ document.addEventListener("DOMContentLoaded", () => {
     }
     if (kind === "title") {
       const bounds = getPreviewElementBounds("title");
+      const activeHeight = getActiveRenderFrameHeight();
+      const defaultActiveTitleTop = activeHeight * 0.08;
+      const currentActiveTitleTop = isOriginalCropAspect()
+        ? (
+            !dirtyOverlayFields.has("title_margin") && getNumericFieldValue(titleMarginInput, previewConfig.titleY) === previewConfig.titleY
+              ? defaultActiveTitleTop
+              : (getNumericFieldValue(titleMarginInput, defaultActiveTitleTop / Math.max(1, activeHeight) * renderFrameHeight) / Math.max(1, renderFrameHeight) * activeHeight)
+          )
+        : getNumericFieldValue(titleMarginInput, previewConfig.titleY);
       const nextValue = clampRenderValue(
-        getNumericFieldValue(titleMarginInput, previewConfig.titleY) + deltaRenderY,
+        currentActiveTitleTop + deltaRenderY,
         bounds.min,
         bounds.max,
       );
-      updateFieldValue(titleMarginInput, nextValue);
+      updateFieldValue(
+        titleMarginInput,
+        isOriginalCropAspect() ? (nextValue / Math.max(1, activeHeight) * renderFrameHeight) : nextValue,
+      );
       return;
     }
     if (kind === "subtitle") {
@@ -17731,7 +17900,7 @@ document.addEventListener("DOMContentLoaded", () => {
     const titleSideMargin = Number.isFinite(Number(titleTemplatePreset?.sideMargin))
       ? Number(titleTemplatePreset.sideMargin)
       : 32;
-    const titleTop = clampRenderValue(
+    let titleTop = clampRenderValue(
       originalPreview ? (activeRenderHeight * 0.08) : getNumericFieldValue(titleMarginInput, previewConfig.titleY),
       0,
       Math.max(0, activeRenderHeight - baseTitleHeight),
@@ -17755,6 +17924,10 @@ document.addEventListener("DOMContentLoaded", () => {
       safeMargin,
       Math.max(safeMargin, activeRenderHeight - safeMargin - subtitleHeight),
     );
+    if (originalPreview) {
+      const minGap = Math.max(8, activeRenderHeight * 0.025);
+      titleTop = Math.min(titleTop, Math.max(safeMargin, subtitleTop - baseTitleHeight - minGap));
+    }
     const titleFontSize = originalPreview
       ? Math.max(18, activeRenderHeight * 0.055)
       : Math.max(14, getNumericFieldValue(titleFontSizeInput, previewConfig.titleHeight * 0.75));
@@ -17799,6 +17972,7 @@ document.addEventListener("DOMContentLoaded", () => {
     if (originalPreviewImage) {
       originalPreviewImage.src = previewImgTop?.getAttribute("src") || "";
     }
+    syncOriginalZoomUi();
     if (previewDate) {
       previewDate.textContent = dateText || "Date";
       previewDate.style.top = dateTop * scaleY + "px";
@@ -18590,6 +18764,64 @@ document.addEventListener("DOMContentLoaded", () => {
   previewFrame?.addEventListener("keydown", handlePreviewKeydown);
   originalPreviewFrame?.addEventListener("keydown", handlePreviewKeydown);
 
+  originalZoomToggle?.addEventListener("change", () => {
+    if (originalZoomToggle.checked) {
+      setOriginalZoomRectForZoom(Number(originalZoomSlider?.value || 1.4) > 1.01 ? Number(originalZoomSlider?.value) : 1.4);
+    } else {
+      originalZoomRect = null;
+    }
+    markCropDirty();
+    applyPreviewLayout();
+  });
+  originalZoomSlider?.addEventListener("input", () => {
+    setOriginalZoomRectForZoom(Number(originalZoomSlider.value || 1));
+    markCropDirty();
+    applyPreviewLayout();
+  });
+  originalZoomBox?.addEventListener("pointerdown", (event) => {
+    const rect = normalizeOriginalZoomRect(originalZoomRect);
+    const frameRect = originalPreviewFrame?.getBoundingClientRect();
+    if (!rect || !frameRect?.width || !frameRect?.height) {
+      return;
+    }
+    event.preventDefault();
+    event.stopPropagation();
+    originalZoomDragState = {
+      startClientX: event.clientX,
+      startClientY: event.clientY,
+      startX: rect.x,
+      startY: rect.y,
+      rect,
+    };
+    originalZoomBox.classList.add("is-dragging");
+    originalZoomBox.setPointerCapture?.(event.pointerId);
+  });
+  originalZoomBox?.addEventListener("pointermove", (event) => {
+    if (!originalZoomDragState) {
+      return;
+    }
+    const frameRect = originalPreviewFrame?.getBoundingClientRect();
+    if (!frameRect?.width || !frameRect?.height) {
+      return;
+    }
+    event.preventDefault();
+    const dx = (event.clientX - originalZoomDragState.startClientX) / frameRect.width;
+    const dy = (event.clientY - originalZoomDragState.startClientY) / frameRect.height;
+    originalZoomRect = normalizeOriginalZoomRect({
+      ...originalZoomDragState.rect,
+      x: originalZoomDragState.startX + dx,
+      y: originalZoomDragState.startY + dy,
+    });
+    markCropDirty();
+    applyPreviewLayout();
+  });
+  const endOriginalZoomDrag = () => {
+    originalZoomDragState = null;
+    originalZoomBox?.classList.remove("is-dragging");
+  };
+  originalZoomBox?.addEventListener("pointerup", endOriginalZoomDrag);
+  originalZoomBox?.addEventListener("pointercancel", endOriginalZoomDrag);
+
   staticVisualButtons.forEach((button) => {
     button.addEventListener("click", () => {
       setActiveStaticVisual(button.dataset.visualKey || "");
@@ -18820,6 +19052,7 @@ document.addEventListener("DOMContentLoaded", () => {
     );
     activeSplitEnabled = (trigger.dataset.splitEnabled || "").toLowerCase() === "1"
       || (trigger.dataset.splitEnabled || "").toLowerCase() === "true";
+    originalZoomRect = parseOriginalZoomRect(trigger.dataset.originalZoomRect || "");
     splitDefaultsPrimed = hasStoredCrop2;
     resetState();
     applyPreviewLayout();
@@ -19081,7 +19314,7 @@ document.addEventListener("DOMContentLoaded", () => {
   });
 
   saveBtn?.addEventListener("click", async () => {
-    if (!cropperInstances.top || !naturalSize.width || !naturalSize.height) {
+    if ((!isOriginalCropAspect() && !cropperInstances.top) || !naturalSize.width || !naturalSize.height) {
       return;
     }
     setSaveStatus("", "");
@@ -19095,11 +19328,11 @@ document.addEventListener("DOMContentLoaded", () => {
       window.setGenerateV2EditorStatus?.("Couldn't save. Try again.", "error");
       return;
     }
-    const data = cropperInstances.top.getData(true);
-    const xRatio = clampRatio(data.x / naturalSize.width);
-    const yRatio = clampRatio(data.y / naturalSize.height);
-    const wRatio = clampRatio(data.width / naturalSize.width);
-    const hRatio = clampRatio(data.height / naturalSize.height);
+    const data = isOriginalCropAspect() ? null : cropperInstances.top.getData(true);
+    const xRatio = data ? clampRatio(data.x / naturalSize.width) : 0;
+    const yRatio = data ? clampRatio(data.y / naturalSize.height) : 0;
+    const wRatio = data ? clampRatio(data.width / naturalSize.width) : 1;
+    const hRatio = data ? clampRatio(data.height / naturalSize.height) : 1;
     const effectiveSplit = getEffectiveSplitEnabled();
     const bottomData = effectiveSplit ? cropperInstances.bottom?.getData(true) : null;
     const crop2Ratios = bottomData && naturalSize.width && naturalSize.height
@@ -19134,6 +19367,7 @@ document.addEventListener("DOMContentLoaded", () => {
     params.append("subscribe_overlay_image", activeSubscribeKey || "");
     params.append("crop_aspect", activeCropAspect || "landscape");
     params.append("visual_mode", activeVisualMode || "video");
+    params.append("original_zoom_rect", originalZoomRect ? JSON.stringify(originalZoomRect) : "");
 	    params.append("crop_changed", cropDirty ? "1" : "0");
     if (subtitleStyleField) {
       params.append("subtitle_style", getPersistedFieldValue(subtitleStyleField));
@@ -19198,6 +19432,7 @@ document.addEventListener("DOMContentLoaded", () => {
         latestTrigger.dataset.backgroundVisualKey = activeBackgroundKey || "";
         latestTrigger.dataset.subscribeVisualKey = activeSubscribeKey || "";
         latestTrigger.dataset.cropAspect = activeCropAspect || "landscape";
+        latestTrigger.dataset.originalZoomRect = originalZoomRect ? JSON.stringify(originalZoomRect) : "";
       }
       if (chooseBtn) {
         chooseBtn.dataset.splitEnabled = effectiveSplit ? "1" : "0";
@@ -19209,6 +19444,7 @@ document.addEventListener("DOMContentLoaded", () => {
         chooseBtn.dataset.backgroundVisualKey = activeBackgroundKey || "";
         chooseBtn.dataset.subscribeVisualKey = activeSubscribeKey || "";
         chooseBtn.dataset.cropAspect = activeCropAspect || "landscape";
+        chooseBtn.dataset.originalZoomRect = originalZoomRect ? JSON.stringify(originalZoomRect) : "";
       }
       window.updateShortDesignStrip?.(currentShortDesignDetails());
       const activePlanIndex = document.getElementById("clip-management-panel")?.dataset.activePlanIndex || "";

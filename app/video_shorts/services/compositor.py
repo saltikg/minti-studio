@@ -99,6 +99,39 @@ def _original_layout_target_dimensions(source_width: Any, source_height: Any) ->
     return max(2, target_width), max(2, target_height)
 
 
+def _normalize_original_zoom_rect(raw_value: Any) -> Optional[Dict[str, float]]:
+    if raw_value is None:
+        return None
+    if isinstance(raw_value, str):
+        raw_text = raw_value.strip()
+        if not raw_text:
+            return None
+        try:
+            parsed = json.loads(raw_text)
+        except Exception:
+            return None
+    elif isinstance(raw_value, dict):
+        parsed = raw_value
+    else:
+        return None
+    try:
+        x = float(parsed.get("x"))
+        y = float(parsed.get("y"))
+        w = float(parsed.get("w"))
+        h = float(parsed.get("h"))
+    except Exception:
+        return None
+    if not all(math.isfinite(value) for value in (x, y, w, h)):
+        return None
+    w = max(0.4, min(1.0, w))
+    h = max(0.4, min(1.0, h))
+    x = max(0.0, min(1.0 - w, x))
+    y = max(0.0, min(1.0 - h, y))
+    if w >= 0.999 and h >= 0.999:
+        return None
+    return {"x": x, "y": y, "w": w, "h": h}
+
+
 def _ffmpeg_escape(text: str) -> str:
     if not text:
         return ""
@@ -3123,8 +3156,17 @@ def _compose_trimmed_with_background(
             )
         dynamic_crop_enabled = len(face_track_points) >= 2
         if original_layout_mode:
+            original_zoom_rect = _normalize_original_zoom_rect(crop_settings.get("original_zoom_rect"))
+            if original_zoom_rect:
+                crop_expr = (
+                    f"crop=iw*{_fmt(original_zoom_rect['w'])}:ih*{_fmt(original_zoom_rect['h'])}:"
+                    f"iw*{_fmt(original_zoom_rect['x'])}:ih*{_fmt(original_zoom_rect['y'])},"
+                )
+                current_app.logger.info("Original layout zoom crop rect=%s", original_zoom_rect)
+            else:
+                crop_expr = ""
             filter_parts.append(
-                f"[1:v]scale={target_width}:{target_height},setsar=1,setpts=PTS-STARTPTS[ov]"
+                f"[1:v]{crop_expr}scale={target_width}:{target_height},setsar=1,setpts=PTS-STARTPTS[ov]"
             )
         elif face_aware_layout_active:
             for idx, segment in enumerate(layout_segments):

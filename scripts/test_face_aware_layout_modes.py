@@ -449,6 +449,7 @@ def main() -> int:
         original_source = temp / "source_original_1080p.mp4"
         original_trimmed = temp / "original_16x9_trimmed.mp4"
         original_output = temp / "original_16x9.mp4"
+        original_zoom_output = temp / "original_16x9_zoom.mp4"
         original_subs = temp / "original_16x9.srt"
         original_ranges = [{"start": 0.0, "end": 2.0}, {"start": 5.0, "end": 7.0}]
         original_caption_font_size = 65
@@ -509,8 +510,31 @@ def main() -> int:
                 subtitle_margin=original_caption_margin,
                 crop_settings=original_crop_settings,
             )
+            original_zoom_crop_settings = {
+                **original_crop_settings,
+                "original_zoom_rect": {"x": 0.15, "y": 0.1, "w": 0.7, "h": 0.7},
+            }
+            compositor._compose_trimmed_with_background(
+                background,
+                original_trimmed,
+                0.0,
+                original_duration,
+                "Original title",
+                "",
+                original_zoom_output,
+                title_engine="pillow",
+                subtitle_path=original_subs,
+                show_title=True,
+                show_subtitle=True,
+                crop_aspect="original",
+                title_font_size=original_title_font_size,
+                title_margin=160,
+                subtitle_font_size=original_caption_font_size,
+                subtitle_margin=original_caption_margin,
+                crop_settings=original_zoom_crop_settings,
+            )
             ok, detail = _case_ok_original(
-                _probe(ffprobe, original_output),
+                _probe(ffprobe, original_zoom_output),
                 expected_duration=original_duration,
                 subtitle_font_size=original_caption_font_size,
                 crop_params_ignored=original_crop_settings != {
@@ -520,6 +544,25 @@ def main() -> int:
                     "crop_h_ratio": 1.0,
                 },
             )
+            nozoom_md5 = subprocess.run(
+                [ffmpeg, "-v", "error", "-i", str(original_output), "-frames:v", "1", "-f", "framemd5", "-"],
+                check=True,
+                text=True,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.DEVNULL,
+            ).stdout
+            zoom_md5 = subprocess.run(
+                [ffmpeg, "-v", "error", "-i", str(original_zoom_output), "-frames:v", "1", "-f", "framemd5", "-"],
+                check=True,
+                text=True,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.DEVNULL,
+            ).stdout
+            if ok and nozoom_md5 == zoom_md5:
+                ok = False
+                detail = "zoom rect did not change first frame"
+            elif ok:
+                detail += " zoom_rect_applied=yes title_margin=160"
             rows.append(("original_16x9", "PASS" if ok else "FAIL", detail))
         except Exception as exc:
             rows.append(("original_16x9", "FAIL", str(exc).splitlines()[-1][:240]))

@@ -8384,6 +8384,11 @@ def canonical_render_settings(options: Dict[str, Any]) -> Dict[str, Any]:
             crop_ratios.setdefault(key, None)
         crop_ratios["split_enabled"] = bool(crop_ratios.get("split_enabled"))
         crop_ratios["crop_locked"] = bool(crop_ratios.get("crop_locked"))
+        original_zoom_rect = _normalize_original_zoom_rect(crop_ratios.get("original_zoom_rect"))
+        if original_zoom_rect:
+            crop_ratios["original_zoom_rect"] = original_zoom_rect
+        else:
+            crop_ratios.pop("original_zoom_rect", None)
         payload["crop_ratios"] = crop_ratios
     try:
         payload["title_line_spacing"] = int(payload.get("title_line_spacing") if payload.get("title_line_spacing") is not None else -4)
@@ -8408,8 +8413,47 @@ def _video_crop_ratios_from_mapping(video: Dict[str, Any]) -> Dict[str, Any]:
             "crop2_w_ratio",
             "crop2_h_ratio",
             "crop_locked",
+            "original_zoom_rect",
         )
         if key in video and video.get(key) is not None
+    }
+
+
+def _normalize_original_zoom_rect(raw_value: Any) -> Optional[Dict[str, float]]:
+    if raw_value is None:
+        return None
+    if isinstance(raw_value, str):
+        raw_text = raw_value.strip()
+        if not raw_text:
+            return None
+        try:
+            parsed = json.loads(raw_text)
+        except Exception:
+            return None
+    elif isinstance(raw_value, dict):
+        parsed = raw_value
+    else:
+        return None
+    try:
+        x = float(parsed.get("x"))
+        y = float(parsed.get("y"))
+        w = float(parsed.get("w"))
+        h = float(parsed.get("h"))
+    except Exception:
+        return None
+    if not all(math.isfinite(v) for v in (x, y, w, h)):
+        return None
+    w = max(0.4, min(1.0, w))
+    h = max(0.4, min(1.0, h))
+    x = max(0.0, min(1.0 - w, x))
+    y = max(0.0, min(1.0 - h, y))
+    if w >= 0.999 and h >= 0.999:
+        return None
+    return {
+        "x": round(x, 6),
+        "y": round(y, 6),
+        "w": round(w, 6),
+        "h": round(h, 6),
     }
 
 
@@ -10135,6 +10179,8 @@ def generate_short(video_pk):
         video_sql += ", creator_email"
     if "subtitle_margin_custom" in video_columns:
         video_sql += ", subtitle_margin_custom"
+    if "original_zoom_rect" in video_columns:
+        video_sql += ", original_zoom_rect"
     row = _fetch_scoped_video_row(conn, video_pk, video_sql)
     if not row:
         conn.close()
@@ -10166,6 +10212,8 @@ def generate_short(video_pk):
         cols.append("creator_email")
     if "subtitle_margin_custom" in video_columns:
         cols.append("subtitle_margin_custom")
+    if "original_zoom_rect" in video_columns:
+        cols.append("original_zoom_rect")
     video = dict(zip(cols, row))
     def _youtube_channel_url_from_parts(channel_url: Any, youtube_channel_id: Any) -> str:
         clean_url = str(channel_url or "").strip()
@@ -13937,6 +13985,9 @@ def save_crop_area(video_pk):
         crop_aspect = (request.form.get("crop_aspect") or "").strip().lower()
         if crop_aspect not in {"landscape", "portrait", "original"}:
             crop_aspect = "landscape"
+    original_zoom_rect = None
+    if "original_zoom_rect" in form_fields:
+        original_zoom_rect = _normalize_original_zoom_rect(request.form.get("original_zoom_rect"))
     visual_mode = (request.form.get("visual_mode") or "").strip().lower()
     crop_changed_param_present = "crop_changed" in request.form
     crop_changed = (request.form.get("crop_changed") or "").strip().lower() in {"1", "true", "yes", "on"}
@@ -14068,6 +14119,9 @@ def save_crop_area(video_pk):
         if "crop_aspect" in form_fields:
             update_set_parts.append("crop_aspect = ?")
             update_params.append(crop_aspect or "landscape")
+        if "original_zoom_rect" in form_fields and "original_zoom_rect" in video_columns:
+            update_set_parts.append("original_zoom_rect = ?")
+            update_params.append(json.dumps(original_zoom_rect, sort_keys=True) if original_zoom_rect else None)
         if "enable_subscribe_overlay" in form_fields:
             update_set_parts.append("subscribe_overlay_enabled = ?")
             update_params.append(subscribe_overlay_enabled)
@@ -14120,6 +14174,7 @@ def save_crop_area(video_pk):
             "background_visual_key": background_visual_key,
             "subscribe_overlay_image": subscribe_overlay_key,
             "crop_aspect": crop_aspect,
+            "original_zoom_rect": original_zoom_rect,
         },
     )
 
@@ -27011,6 +27066,8 @@ def autoclip_video(video_pk):
             crop_sql += ", crop_locked"
         if "subtitle_margin_custom" in crop_columns:
             crop_sql += ", subtitle_margin_custom"
+        if "original_zoom_rect" in crop_columns:
+            crop_sql += ", original_zoom_rect"
         crop_sql += " FROM youtube_videos WHERE video_id = ?"
         crop_params: List[Any] = [vid]
         crop_sql += " AND owner_user_id = ? AND brand_id = ?"
@@ -27398,11 +27455,18 @@ def autoclip_video(video_pk):
                     "subtitle_style": None,
                 }
                 crop_locked_index = (len(crop_row) - 1) if "crop_locked" in crop_columns else None
+            optional_index = 39 if "subtitle_preset" in crop_columns else 38
+            crop_locked_index = None
             subtitle_margin_custom_index = None
-            if "subtitle_margin_custom" in crop_columns:
-                subtitle_margin_custom_index = len(crop_row) - 1
+            original_zoom_rect_index = None
             if "crop_locked" in crop_columns:
-                crop_locked_index = len(crop_row) - 1 - (1 if subtitle_margin_custom_index is not None else 0)
+                crop_locked_index = optional_index
+                optional_index += 1
+            if "subtitle_margin_custom" in crop_columns:
+                subtitle_margin_custom_index = optional_index
+                optional_index += 1
+            if "original_zoom_rect" in crop_columns:
+                original_zoom_rect_index = optional_index
             has_split_columns = len(crop_row) >= 35
             video_crop_ratios = {
                 "split_enabled": bool(crop_row[query_indexes["split_enabled"]]) if query_indexes["split_enabled"] is not None else False,
@@ -27416,6 +27480,10 @@ def autoclip_video(video_pk):
                 "crop2_h_ratio": crop_row[8] if has_split_columns else None,
                 "crop_locked": bool(crop_row[crop_locked_index]) if crop_locked_index is not None else False,
             }
+            if original_zoom_rect_index is not None:
+                normalized_original_zoom_rect = _normalize_original_zoom_rect(crop_row[original_zoom_rect_index])
+                if normalized_original_zoom_rect:
+                    video_crop_ratios["original_zoom_rect"] = normalized_original_zoom_rect
             video_crop_aspect = crop_row[query_indexes["crop_aspect"]] or "landscape"
             video_font_key = crop_row[query_indexes["title_font_key"]]
             video_title_font_size = crop_row[query_indexes["title_font_size"]]
@@ -27895,7 +27963,15 @@ def autoclip_video(video_pk):
         original_scale = max(0.1, float(render_target_height) / 1280.0)
         title_font_size = max(18, int(round(float(render_target_height) * 0.055)))
         sub_font_size = max(20, int(round(float(render_target_height) * 0.06)))
-        title_margin = max(0, int(round(float(render_target_height) * 0.08)))
+        try:
+            stored_title_margin = float(video_title_margin if video_title_margin is not None else DEFAULT_TITLE_MARGIN)
+        except Exception:
+            stored_title_margin = float(DEFAULT_TITLE_MARGIN)
+        if abs(stored_title_margin - float(DEFAULT_TITLE_MARGIN)) > 0.001:
+            title_margin = int(round(float(render_target_height) * max(0.0, min(1.0, stored_title_margin / 1280.0))))
+        else:
+            title_margin = max(0, int(round(float(render_target_height) * 0.08)))
+        title_block_height = max(24, int(round(float(title_font_size) * 1.4)))
         caption_block_height = max(24, int(round(float(sub_font_size) * 2.0)))
         safe_margin = max(8, int(round(float(render_target_height) * 0.05)))
         if video_sub_margin_custom:
@@ -27908,6 +27984,14 @@ def autoclip_video(video_pk):
         min_margin = safe_margin
         max_margin = max(min_margin, render_target_height - safe_margin - caption_block_height)
         sub_margin = max(min_margin, min(max_margin, int(round(float(sub_margin)))))
+        caption_top = float(render_target_height) - float(sub_margin) - float(caption_block_height)
+        title_margin = max(
+            safe_margin,
+            min(
+                max(safe_margin, int(round(caption_top - title_block_height - max(8, render_target_height * 0.025)))),
+                int(round(float(title_margin))),
+            ),
+        )
         video_title_line_spacing = int(round(float(video_title_line_spacing or -4) * original_scale))
         current_app.logger.info(
             "Original layout render metrics video_id=%s plan_index=%s target=%sx%s title_size=%s sub_size=%s title_margin=%s sub_margin=%s",
@@ -28123,6 +28207,7 @@ def autoclip_video(video_pk):
                 "crop2_w_ratio",
                 "crop2_h_ratio",
                 "crop_locked",
+                "original_zoom_rect",
             }
         }
         preferred_bg_key = load_background_preference(video_owner_user_id, brand_id) if video_owner_user_id else None
@@ -28966,6 +29051,8 @@ def regenerate_clip_video(video_pk: int, plan_index: int):
             video_sql += ", crop_locked"
         if "subtitle_margin_custom" in video_columns:
             video_sql += ", subtitle_margin_custom"
+        if "original_zoom_rect" in video_columns:
+            video_sql += ", original_zoom_rect"
         video_row = _fetch_scoped_video_row(conn, video_pk, video_sql)
     finally:
         conn.close()
@@ -28988,6 +29075,8 @@ def regenerate_clip_video(video_pk: int, plan_index: int):
         video_cols.append("crop_locked")
     if "subtitle_margin_custom" in video_columns:
         video_cols.append("subtitle_margin_custom")
+    if "original_zoom_rect" in video_columns:
+        video_cols.append("original_zoom_rect")
     video = dict(zip(video_cols, video_row))
     plan_entries = _load_plan_entries(source_video_id)
     plan_entry = None
