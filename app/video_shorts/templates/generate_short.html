@@ -7284,6 +7284,54 @@
           </div>
         </div>
       </div>
+    {% elif editor_processing and generate_v2 %}
+        <div id="clip-workbench-shell"
+             data-generate-v2="1"
+             data-video-id="{{ video.id }}"
+             data-default-tab="shorts"
+             data-auto-suggest-active="{{ '1' if auto_suggest_render_state and auto_suggest_render_state.active else '0' }}"
+             data-auto-suggest-no-strong="{{ '1' if auto_suggest_render_state and auto_suggest_render_state.no_strong else '0' }}"
+             data-auto-suggest-status-url="{{ editor_url('auto_suggest_render_status', video_pk=video.id) }}"
+             data-guest-mode="{{ '1' if guest_mode else '0' }}"
+             data-guest-renders-left="{{ guest_renders_left if guest_renders_left is not none else '' }}">
+          <div class="row g-3 generate-v2-workbench mb-3" data-generate-v2-layout>
+            <div class="col-12 col-xl-7 generate-v2-left-col">
+              <div class="gs-card generate-v2-left-card">
+                <div class="generate-v2-tabs-row">
+                  <div class="generate-v2-tabbar" role="tablist" aria-label="Clip workflow">
+                    <button type="button" class="generate-v2-tab is-active" data-generate-v2-tab="shorts" role="tab" aria-selected="true">
+                      <i class="bi bi-phone" aria-hidden="true"></i>
+                      <span>Your Clips · <span class="generate-v2-tab-count">0</span></span>
+                    </button>
+                    <button type="button" class="generate-v2-tab" data-generate-v2-tab="transcript" role="tab" aria-selected="false" disabled>
+                      <i class="bi bi-text-left" aria-hidden="true"></i>
+                      <span>Make a Clip</span>
+                    </button>
+                    <button type="button" class="generate-v2-tab" data-generate-v2-tab="edit" role="tab" aria-selected="false" disabled>
+                      <i class="bi bi-sliders" aria-hidden="true"></i>
+                      <span>Edit Shorts</span>
+                    </button>
+                  </div>
+                </div>
+                <div class="generate-v2-panel is-active" data-generate-v2-panel="shorts">
+                  <div class="clip-management-panel">
+                    <div class="generate-v2-clip-editor-empty">
+                      <span class="spinner-border spinner-border-sm me-2" aria-hidden="true"></span>
+                      Finding the best moments…
+                    </div>
+                  </div>
+                </div>
+              </div>
+            </div>
+            <div class="col-12 col-xl-5 generate-v2-right-col">
+              <div class="gs-card generate-v2-right-card">
+                <div class="generate-v2-empty-preview">
+                  Processing your video — this can take a few minutes. You can leave this page; we'll keep working and it'll be ready when you come back.
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
     {% elif editor_processing %}
         <div class="editor-empty-shell-wrap">
         <div class="editor-empty-shell">
@@ -7297,6 +7345,54 @@
           </div>
         </div>
       </div>
+    {% elif generate_v2 %}
+        <div id="clip-workbench-shell"
+             data-generate-v2="1"
+             data-video-id="{{ video.id }}"
+             data-default-tab="shorts"
+             data-auto-suggest-active="{{ '1' if auto_suggest_render_state and auto_suggest_render_state.active else '0' }}"
+             data-auto-suggest-no-strong="{{ '1' if auto_suggest_render_state and auto_suggest_render_state.no_strong else '0' }}"
+             data-auto-suggest-status-url="{{ editor_url('auto_suggest_render_status', video_pk=video.id) }}"
+             data-guest-mode="{{ '1' if guest_mode else '0' }}"
+             data-guest-renders-left="{{ guest_renders_left if guest_renders_left is not none else '' }}">
+          <div class="row g-3 generate-v2-workbench mb-3" data-generate-v2-layout>
+            <div class="col-12 col-xl-7 generate-v2-left-col">
+              <div class="gs-card generate-v2-left-card">
+                <div class="generate-v2-tabs-row">
+                  <div class="generate-v2-tabbar" role="tablist" aria-label="Clip workflow">
+                    <button type="button" class="generate-v2-tab is-active" data-generate-v2-tab="shorts" role="tab" aria-selected="true">
+                      <i class="bi bi-phone" aria-hidden="true"></i>
+                      <span>Your Clips · <span class="generate-v2-tab-count">0</span></span>
+                    </button>
+                    <button type="button" class="generate-v2-tab" data-generate-v2-tab="transcript" role="tab" aria-selected="false" disabled>
+                      <i class="bi bi-text-left" aria-hidden="true"></i>
+                      <span>Make a Clip</span>
+                    </button>
+                    <button type="button" class="generate-v2-tab" data-generate-v2-tab="edit" role="tab" aria-selected="false" disabled>
+                      <i class="bi bi-sliders" aria-hidden="true"></i>
+                      <span>Edit Shorts</span>
+                    </button>
+                  </div>
+                </div>
+                <div class="generate-v2-panel is-active" data-generate-v2-panel="shorts">
+                  <div class="clip-management-panel">
+                    <div class="generate-v2-clip-editor-empty">
+                      <span class="spinner-border spinner-border-sm me-2" aria-hidden="true"></span>
+                      Preparing your transcript…
+                    </div>
+                  </div>
+                </div>
+              </div>
+            </div>
+            <div class="col-12 col-xl-5 generate-v2-right-col">
+              <div class="gs-card generate-v2-right-card">
+                <div class="generate-v2-empty-preview">
+                  Analysis time depends on video length.
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
     {% else %}
         <div class="editor-empty-shell-wrap">
         <div class="editor-empty-shell">

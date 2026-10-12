@@ -4982,6 +4982,30 @@ def _owner_is_guest_user(owner_user_id: Any) -> bool:
         conn.close()
 
 
+def _owner_is_free_tool_user(owner_user_id: Any) -> bool:
+    clean_owner = str(owner_user_id or "").strip()
+    if not clean_owner:
+        return False
+    conn = get_db_readonly()
+    try:
+        cols = table_columns(conn, "shorts_users")
+        if "is_guest" not in cols:
+            return False
+        guest_video_expr = "COALESCE(guest_video_count, 0)" if "guest_video_count" in cols else "0"
+        row = conn.execute(
+            f"""
+            SELECT COALESCE(is_guest, FALSE), {guest_video_expr}
+            FROM shorts_users
+            WHERE CAST(id AS VARCHAR) = CAST(? AS VARCHAR)
+            LIMIT 1
+            """,
+            [clean_owner],
+        ).fetchone()
+        return bool(row and (bool(row[0]) or int(row[1] or 0) > 0))
+    finally:
+        conn.close()
+
+
 def _auto_suggest_render_input_hash(owner_user_id: Any, brand_id: Any, video_pk: Any, video_id: Any) -> str:
     raw = f"auto-suggest-render:{owner_user_id}:{brand_id}:{video_pk}:{video_id}"
     return sha256(raw.encode("utf-8")).hexdigest()
@@ -10306,7 +10330,8 @@ def generate_short(video_pk):
         if user_id.strip()
     }
     guest_mode = bool((current_user or {}).get("is_guest"))
-    generate_v2 = bool(guest_mode or (current_user_id and current_user_id in generate_v2_user_ids))
+    current_user_free_tool = guest_mode or int((current_user or {}).get("guest_video_count") or 0) > 0
+    generate_v2 = bool(current_user_free_tool or (current_user_id and current_user_id in generate_v2_user_ids))
     hide_clip_coachmark = load_user_bool_preference(
         current_user_id if current_user else None,
         HIDE_CLIP_COACHMARK_PREFERENCE_KEY,
@@ -10379,6 +10404,9 @@ def generate_short(video_pk):
     if "original_zoom_rect" in video_columns:
         cols.append("original_zoom_rect")
     video = dict(zip(cols, row))
+    owner_free_tool = _owner_is_free_tool_user(video.get("owner_user_id"))
+    guest_mode = bool(guest_mode or _owner_is_guest_user(video.get("owner_user_id")))
+    generate_v2 = bool(generate_v2 or owner_free_tool)
     def _youtube_channel_url_from_parts(channel_url: Any, youtube_channel_id: Any) -> str:
         clean_url = str(channel_url or "").strip()
         if clean_url.startswith(("http://", "https://")):

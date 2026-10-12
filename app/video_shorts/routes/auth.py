@@ -546,6 +546,8 @@ def _build_service_mode_context() -> dict[str, object]:
     user = _current_user()
     if not user:
         return {"show_modal": False}
+    if bool(user.get("is_guest")) or int(user.get("guest_video_count") or 0) > 0:
+        return {"show_modal": False}
     service_mode = _normalize_service_intent(user.get("service_mode"))
     if service_mode:
         return {"show_modal": False}
@@ -1480,7 +1482,7 @@ def claim_guest_into(
     ensure_brand_schema(conn)
     guest_row = conn.execute(
         """
-        SELECT CAST(id AS VARCHAR), COALESCE(is_guest, FALSE)
+        SELECT CAST(id AS VARCHAR), COALESCE(is_guest, FALSE), COALESCE(guest_video_count, 0)
         FROM shorts_users
         WHERE CAST(id AS VARCHAR) = ?
         LIMIT 1
@@ -1545,6 +1547,21 @@ def claim_guest_into(
         guest_brand_id=guest_brand_id,
         target_brand_id=resolved_target_brand_id,
     )
+    try:
+        conn.execute(
+            """
+            UPDATE shorts_users
+            SET service_mode = COALESCE(NULLIF(service_mode, ''), 'self'),
+                service_mode_chosen_at = COALESCE(service_mode_chosen_at, now()),
+                onboarding_dismissed = TRUE,
+                guest_video_count = GREATEST(COALESCE(guest_video_count, 0), ?),
+                updated_at = now()
+            WHERE CAST(id AS VARCHAR) = ?
+            """,
+            [max(1, int(guest_row[2] or 0)), target_user_id],
+        )
+    except Exception:
+        logger.warning("Guest claim service-mode default skipped target_user_id=%s", target_user_id, exc_info=True)
     if guest_brand_id:
         try:
             conn.execute("DELETE FROM shorts_brands WHERE CAST(id AS VARCHAR) = ?", [guest_brand_id])
@@ -1864,6 +1881,9 @@ def register():
                             email_verification_sent_at = now(),
                             pending_service_intent = ?,
                             pending_service_tier = ?,
+                            service_mode = COALESCE(NULLIF(service_mode, ''), 'self'),
+                            service_mode_chosen_at = COALESCE(service_mode_chosen_at, now()),
+                            onboarding_dismissed = TRUE,
                             is_guest = FALSE,
                             guest_resume_next = ?,
                             guest_resume_action = ?,
@@ -2760,6 +2780,9 @@ def google_oauth_callback():
                     email_verification_expires_at = NULL,
                     pending_service_intent = ?,
                     pending_service_tier = ?,
+                    service_mode = COALESCE(NULLIF(service_mode, ''), 'self'),
+                    service_mode_chosen_at = COALESCE(service_mode_chosen_at, now()),
+                    onboarding_dismissed = TRUE,
                     is_guest = FALSE,
                     updated_at = now()
                 WHERE CAST(id AS VARCHAR) = ?

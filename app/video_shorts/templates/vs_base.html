@@ -25,6 +25,46 @@
 
   {% block extra_styles %}{% endblock %}
   <style>
+    .vs-topnav {
+      max-width: 100vw;
+      overflow-x: clip;
+      justify-content: space-between;
+      gap: 12px;
+    }
+    .vs-topnav-actions {
+      min-width: 0;
+      flex-shrink: 1;
+      justify-content: flex-end;
+    }
+    .vs-guest-mode .vs-topnav {
+      padding-left: clamp(12px, 3vw, 24px) !important;
+      padding-right: clamp(12px, 3vw, 24px) !important;
+    }
+    .vs-guest-mode .vs-navbar-brand {
+      min-width: 0;
+      flex-shrink: 1;
+      margin-right: 0;
+    }
+    .vs-guest-mode .vs-navbar-brand span:last-child {
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+    }
+    .vs-guest-mode .vs-topnav-actions {
+      flex-wrap: nowrap !important;
+    }
+    .vs-guest-mode .vs-topnav-actions .btn {
+      white-space: nowrap;
+      padding-left: 10px;
+      padding-right: 10px;
+    }
+    @media (max-width: 420px) {
+      .vs-guest-mode .vs-topnav-actions .btn {
+        font-size: 0.75rem;
+        padding-left: 8px;
+        padding-right: 8px;
+      }
+    }
     .vs-onboarding-progress {
       height: 8px;
       border-radius: 999px;

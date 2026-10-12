@@ -24,6 +24,7 @@ os.environ["SIGNUPS_ENABLED"] = "1"
 
 from app import create_app
 from app.video_shorts.routes import auth
+from app.video_shorts.routes import generation
 from app.video_shorts.services.brands import create_brand, ensure_brand_for_user, ensure_brand_schema
 from app.video_shorts.services.db import ensure_auth_user_schema, ensure_storage_user_schema, get_db
 from app.video_shorts.services.render_jobs import JOB_TYPE_RENDER_SHORT, enqueue_render_job, ensure_render_jobs_schema, get_job
@@ -122,6 +123,15 @@ def _assert_move_claim(guest_id: str, target_id: str, target_brand_id: str) -> N
         second = auth.claim_guest_into(conn, target_user_id=target_id, guest_user_id=guest_id, target_brand_id=target_brand_id)
         conn.commit()
         assert second["claimed"] is False, second
+        target_row = conn.execute(
+            """
+            SELECT service_mode, COALESCE(onboarding_dismissed, FALSE), COALESCE(guest_video_count, 0)
+            FROM shorts_users
+            WHERE id = ?
+            """,
+            [target_id],
+        ).fetchone()
+        assert target_row and target_row[0] == "self" and target_row[1] is True and int(target_row[2] or 0) >= 1, target_row
     finally:
         conn.close()
 
@@ -167,11 +177,18 @@ def _assert_in_place_register(app) -> None:
     conn = get_db()
     try:
         row = conn.execute(
-            "SELECT COALESCE(is_guest, FALSE), email, guest_resume_next, guest_resume_action, guest_resume_clip FROM shorts_users WHERE id = ?",
+            """
+            SELECT COALESCE(is_guest, FALSE), email, guest_resume_next, guest_resume_action,
+                   guest_resume_clip, service_mode, COALESCE(onboarding_dismissed, FALSE),
+                   COALESCE(guest_video_count, 0)
+            FROM shorts_users
+            WHERE id = ?
+            """,
             [guest_id],
         ).fetchone()
         assert row and row[0] is False and row[1] == "guest-claim@example.com", row
         assert row[2] == "/video_shorts/generate/99" and row[3] == "download" and row[4] == "4", row
+        assert row[5] == "self" and row[6] is True and int(row[7] or 0) == 1, row
     finally:
         conn.close()
 
@@ -194,6 +211,40 @@ def _assert_gate_handler_wired() -> None:
     assert "runGuestResumeAction" in template
 
 
+def _assert_guest_generate_v2_and_no_modal(app) -> None:
+    guest_id = str(uuid4())
+    conn = get_db()
+    try:
+        ensure_brand_schema(conn)
+        conn.execute(
+            """
+            INSERT INTO shorts_users (
+                id, username, email, password_hash, name, role, email_verified,
+                is_guest, guest_created_at, guest_render_count, guest_video_count
+            )
+            VALUES (?, NULL, NULL, NULL, 'Guest', 'member', FALSE, TRUE, now(), 1, 1)
+            """,
+            [guest_id],
+        )
+        brand = ensure_brand_for_user(conn, user_id=guest_id, user_name="Guest")
+        conn.commit()
+    finally:
+        conn.close()
+    assert generation._owner_is_free_tool_user(guest_id) is True
+    with app.test_request_context("/video_shorts/generate/123"):
+        from flask import session
+
+        session["vs_user_id"] = guest_id
+        session["vs_brand_id"] = brand["id"]
+        context = auth._build_service_mode_context()
+        assert context["show_modal"] is False, context
+
+    template = (ROOT / "app/video_shorts/templates/generate_short.html").read_text()
+    assert 'data-generate-v2="1"' in template
+    assert "Finding the best moments…" in template
+    assert "Preparing your transcript…" in template
+
+
 def main() -> None:
     app = create_app()
     guest_id, target_id, _guest_brand_id, target_brand_id = _bootstrap()
@@ -202,6 +253,7 @@ def main() -> None:
         _assert_in_place_register(app)
         _assert_auth_resume_and_open_redirect(app)
         _assert_gate_handler_wired()
+        _assert_guest_generate_v2_and_no_modal(app)
     print("FREE_TOOL_PHASE3_OK")
 
 
