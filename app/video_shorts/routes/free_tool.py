@@ -111,7 +111,6 @@ def _latest_guest_generate_url(conn, user_id: str, brand_id: Optional[str]) -> s
         SELECT id
         FROM youtube_videos
         WHERE owner_user_id = ?
-          AND brand_id IS NULL
         ORDER BY id DESC
         LIMIT 1
         """,
