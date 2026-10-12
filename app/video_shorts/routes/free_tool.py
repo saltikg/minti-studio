@@ -6,6 +6,7 @@ from uuid import uuid4
 
 from flask import abort, current_app, g, redirect, render_template, request, session, url_for
 
+from app.video_shorts import video_shorts_bp
 from app.video_shorts.routes.auth import (
     _client_ip,
     _current_user,
@@ -183,9 +184,20 @@ def _ingest_youtube_for_user(*, user_id: str, brand_id: Optional[str], video_url
     return int(video_pk)
 
 
+@video_shorts_bp.route("/tools/youtube-to-shorts", methods=["GET", "POST"])
+def free_tool_youtube_to_shorts():
+    return render_free_tool_landing("en")
+
+
+@video_shorts_bp.route("/tr/araclar/youtube-shorts", methods=["GET", "POST"])
+def free_tool_youtube_to_shorts_tr():
+    return render_free_tool_landing("tr")
+
+
 def render_free_tool_landing(locale: str = "en"):
     _ensure_free_tool_visible()
     locale = "tr" if locale == "tr" else "en"
+    session["free_tool_lang"] = locale
     current_user = _current_user()
     error = ""
     video_url = ""

@@ -24,6 +24,15 @@
           {% if auth_plan %}
             <input type="hidden" name="plan" value="{{ auth_plan }}">
           {% endif %}
+          {% if auth_next %}
+            <input type="hidden" name="next" value="{{ auth_next }}">
+          {% endif %}
+          {% if auth_action %}
+            <input type="hidden" name="action" value="{{ auth_action }}">
+          {% endif %}
+          {% if auth_clip %}
+            <input type="hidden" name="clip" value="{{ auth_clip }}">
+          {% endif %}
           <div class="mb-3">
             <label class="form-label">Email (username)</label>
             <input type="email" class="form-control" name="email" placeholder="you@example.com" value="{{ pending_email or '' }}" required autofocus>

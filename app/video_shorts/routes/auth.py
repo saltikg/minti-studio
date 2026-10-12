@@ -1,3 +1,4 @@
+import json
 import logging
 import re
 from datetime import datetime, timezone
@@ -10,7 +11,7 @@ from google.oauth2 import id_token
 from google.auth.transport import requests as google_requests
 from typing import Optional
 import duckdb
-from urllib.parse import urlparse
+from urllib.parse import urlencode, urlparse
 from uuid import uuid4
 
 from app.video_shorts import video_shorts_bp
@@ -364,9 +365,7 @@ def _build_auth_route_kwargs(*, include_next: bool = False) -> dict[str, object]
     if choice["plan_id"]:
         route_kwargs["plan"] = choice["plan_id"]
     if include_next:
-        nxt = _normalize_next_url(request.args.get("next"))
-        if nxt:
-            route_kwargs["next"] = nxt
+        route_kwargs.update(_guest_resume_route_kwargs(request.args, include_next=True))
     return route_kwargs
 
 
@@ -890,6 +889,9 @@ def _render_login_page(*, resend_email: str = "", prefill_email: str = "", statu
             auth_intent=route_kwargs.get("intent", ""),
             auth_tier=route_kwargs.get("tier"),
             auth_plan=route_kwargs.get("plan", ""),
+            auth_next=route_kwargs.get("next", ""),
+            auth_action=route_kwargs.get("action", ""),
+            auth_clip=route_kwargs.get("clip", ""),
             register_url=url_for("video_shorts_bp.register", **route_kwargs),
             google_login_url=url_for("video_shorts_bp.google_login", **route_kwargs),
             seo_robots_content="noindex, follow",
@@ -909,6 +911,9 @@ def _render_register_page(*, pending_email: str = "", status_code: int = 200):
             auth_intent=route_kwargs.get("intent", ""),
             auth_tier=route_kwargs.get("tier"),
             auth_plan=route_kwargs.get("plan", ""),
+            auth_next=route_kwargs.get("next", ""),
+            auth_action=route_kwargs.get("action", ""),
+            auth_clip=route_kwargs.get("clip", ""),
             login_url=url_for("video_shorts_bp.login", **route_kwargs),
             google_login_url=url_for("video_shorts_bp.google_login", **route_kwargs),
             seo_robots_content="noindex, follow",
@@ -1295,9 +1300,264 @@ def _normalize_next_url(value: Optional[str]) -> Optional[str]:
         query = f"?{parsed.query}" if parsed.query else ""
         fragment = f"#{parsed.fragment}" if parsed.fragment else ""
         return f"{path}{query}{fragment}"
-    if value.startswith("/"):
+    if value.startswith("/") and not value.startswith("//"):
         return value
     return None
+
+
+GUEST_RESUME_ACTIONS = {
+    "download",
+    "schedule",
+    "schedule_all",
+    "ai_suggest",
+    "create_clip",
+    "regenerate",
+    "update_clips",
+    "new_video",
+}
+
+
+def _normalize_guest_resume_action(value: Optional[str]) -> str:
+    normalized = str(value or "").strip().lower()
+    return normalized if normalized in GUEST_RESUME_ACTIONS else ""
+
+
+def _normalize_guest_resume_clip(value: Optional[str]) -> str:
+    normalized = str(value or "").strip()
+    if not normalized:
+        return ""
+    return normalized if re.fullmatch(r"[A-Za-z0-9_.:-]{1,96}", normalized) else ""
+
+
+def _guest_resume_values(source=None) -> dict[str, str]:
+    values = source or request.values
+    return {
+        "next": _normalize_next_url(values.get("next")),
+        "action": _normalize_guest_resume_action(values.get("action")),
+        "clip": _normalize_guest_resume_clip(values.get("clip")),
+    }
+
+
+def _guest_resume_route_kwargs(source=None, *, include_next: bool = True) -> dict[str, str]:
+    resume = _guest_resume_values(source or request.args)
+    route_kwargs: dict[str, str] = {}
+    if include_next and resume["next"]:
+        route_kwargs["next"] = resume["next"]
+    if resume["action"]:
+        route_kwargs["action"] = resume["action"]
+    if resume["clip"]:
+        route_kwargs["clip"] = resume["clip"]
+    return route_kwargs
+
+
+def _append_resume_params(path: str, *, action: str = "", clip: str = "") -> str:
+    clean = _normalize_next_url(path) or url_for("video_shorts_bp.my_videos_page")
+    params = {}
+    normalized_action = _normalize_guest_resume_action(action)
+    normalized_clip = _normalize_guest_resume_clip(clip)
+    if normalized_action:
+        params["action"] = normalized_action
+    if normalized_clip:
+        params["clip"] = normalized_clip
+    if not params:
+        return clean
+    separator = "&" if "?" in clean else "?"
+    return f"{clean}{separator}{urlencode(params)}"
+
+
+def _current_guest_session_ids() -> tuple[str, str]:
+    current_user = getattr(g, "vs_current_user", None) or _current_user()
+    if not _is_guest_user(current_user):
+        return "", ""
+    return str(current_user.get("id") or ""), str(session.get("vs_brand_id") or "")
+
+
+def _json_value_for_conn(conn, value) -> str:
+    raw = json.dumps(value or {}, ensure_ascii=False, sort_keys=True)
+    return raw
+
+
+def _update_table_owner_if_present(
+    conn,
+    table_name: str,
+    *,
+    guest_user_id: str,
+    target_user_id: str,
+    guest_brand_id: str = "",
+    target_brand_id: str = "",
+) -> int:
+    cols = table_columns(conn, table_name)
+    if not cols:
+        return 0
+    set_parts = []
+    params: list[object] = []
+    user_col = ""
+    for candidate in ("owner_user_id", "user_id"):
+        if candidate in cols:
+            user_col = candidate
+            set_parts.append(f"{candidate} = ?")
+            params.append(target_user_id)
+            break
+    if "brand_id" in cols and target_brand_id:
+        set_parts.append("brand_id = ?")
+        params.append(target_brand_id)
+    if not user_col or not set_parts:
+        return 0
+    where = [f"CAST({user_col} AS VARCHAR) = ?"]
+    params.append(guest_user_id)
+    if "brand_id" in cols and guest_brand_id:
+        where.append("(brand_id IS NULL OR CAST(brand_id AS VARCHAR) = ?)")
+        params.append(guest_brand_id)
+    conn.execute(
+        f"UPDATE {table_name} SET {', '.join(set_parts)} WHERE {' AND '.join(where)}",
+        params,
+    )
+    return 1
+
+
+def _rewrite_guest_render_job_payloads(
+    conn,
+    *,
+    guest_user_id: str,
+    target_user_id: str,
+    guest_brand_id: str = "",
+    target_brand_id: str = "",
+) -> int:
+    if not table_columns(conn, "shorts_render_jobs"):
+        return 0
+    rows = conn.execute(
+        """
+        SELECT id, payload_json
+        FROM shorts_render_jobs
+        WHERE CAST(user_id AS VARCHAR) = ?
+        """,
+        [guest_user_id],
+    ).fetchall()
+    changed = 0
+    for job_id, raw_payload in rows:
+        payload = raw_payload if isinstance(raw_payload, dict) else None
+        if payload is None:
+            try:
+                payload = json.loads(raw_payload or "{}")
+            except Exception:
+                payload = {}
+        if not isinstance(payload, dict):
+            payload = {}
+        for key in ("owner_user_id", "user_id", "editor_owner_user_id"):
+            if str(payload.get(key) or "") == guest_user_id:
+                payload[key] = target_user_id
+        if guest_brand_id and target_brand_id:
+            for key in ("brand_id", "editor_brand_id"):
+                if str(payload.get(key) or "") == guest_brand_id:
+                    payload[key] = target_brand_id
+        conn.execute(
+            """
+            UPDATE shorts_render_jobs
+            SET user_id = ?,
+                payload_json = ?,
+                updated_at = CURRENT_TIMESTAMP
+            WHERE id = ?
+            """,
+            [target_user_id, _json_value_for_conn(conn, payload), job_id],
+        )
+        changed += 1
+    return changed
+
+
+def claim_guest_into(
+    conn,
+    *,
+    target_user_id: str,
+    guest_user_id: str,
+    target_brand_id: Optional[str] = None,
+) -> dict[str, object]:
+    guest_user_id = str(guest_user_id or "").strip()
+    target_user_id = str(target_user_id or "").strip()
+    if not guest_user_id or not target_user_id or guest_user_id == target_user_id:
+        return {"claimed": False, "mode": "noop"}
+    ensure_storage_user_schema(conn)
+    ensure_auth_user_schema(conn)
+    ensure_brand_schema(conn)
+    guest_row = conn.execute(
+        """
+        SELECT CAST(id AS VARCHAR), COALESCE(is_guest, FALSE)
+        FROM shorts_users
+        WHERE CAST(id AS VARCHAR) = ?
+        LIMIT 1
+        """,
+        [guest_user_id],
+    ).fetchone()
+    if not guest_row or not bool(guest_row[1]):
+        return {"claimed": False, "mode": "already_claimed"}
+    target_row = conn.execute(
+        "SELECT CAST(id AS VARCHAR), COALESCE(name, username, email, '') FROM shorts_users WHERE CAST(id AS VARCHAR) = ? LIMIT 1",
+        [target_user_id],
+    ).fetchone()
+    if not target_row:
+        return {"claimed": False, "mode": "missing_target"}
+    guest_brand = conn.execute(
+        """
+        SELECT CAST(id AS VARCHAR)
+        FROM shorts_brands
+        WHERE CAST(owner_user_id AS VARCHAR) = ?
+        ORDER BY created_at ASC
+        LIMIT 1
+        """,
+        [guest_user_id],
+    ).fetchone()
+    guest_brand_id = str(guest_brand[0] or "").strip() if guest_brand else ""
+    target_brand = None
+    if target_brand_id:
+        target_brand = {"id": str(target_brand_id)}
+    else:
+        target_brand = ensure_brand_for_user(conn, user_id=target_user_id, user_name=str(target_row[1] or "Minti Creator"))
+    resolved_target_brand_id = str((target_brand or {}).get("id") or target_brand_id or "").strip()
+    moved_tables = []
+    for table_name in (
+        "youtube_videos",
+        "youtube_channels",
+        "shorts_generated_videos",
+        "shorts_storage_assets",
+        "shorts_static_images",
+        "shorts_background_preferences",
+        "shorts_static_image_categories",
+        "shorts_categories",
+        "image_to_video_jobs",
+        "shorts_quick_sessions",
+        "shorts_instagram_queue",
+        "shorts_facebook_queue",
+        "shorts_tiktok_queue",
+        "user_events",
+    ):
+        if _update_table_owner_if_present(
+            conn,
+            table_name,
+            guest_user_id=guest_user_id,
+            target_user_id=target_user_id,
+            guest_brand_id=guest_brand_id,
+            target_brand_id=resolved_target_brand_id,
+        ):
+            moved_tables.append(table_name)
+    rewritten_jobs = _rewrite_guest_render_job_payloads(
+        conn,
+        guest_user_id=guest_user_id,
+        target_user_id=target_user_id,
+        guest_brand_id=guest_brand_id,
+        target_brand_id=resolved_target_brand_id,
+    )
+    if guest_brand_id:
+        try:
+            conn.execute("DELETE FROM shorts_brands WHERE CAST(id AS VARCHAR) = ?", [guest_brand_id])
+        except Exception:
+            logger.warning("Guest brand delete skipped during claim guest_brand_id=%s", guest_brand_id, exc_info=True)
+    conn.execute("DELETE FROM shorts_users WHERE CAST(id AS VARCHAR) = ?", [guest_user_id])
+    return {
+        "claimed": True,
+        "mode": "move",
+        "target_brand_id": resolved_target_brand_id,
+        "moved_tables": moved_tables,
+        "rewritten_jobs": rewritten_jobs,
+    }
 
 
 @video_shorts_bp.before_request
@@ -1318,6 +1578,8 @@ def _guard_video_shorts():
         "video_shorts_bp.data_deletion_page",
         "video_shorts_bp.terms_page",
         "video_shorts_bp.contact_page",
+        "video_shorts_bp.free_tool_youtube_to_shorts",
+        "video_shorts_bp.free_tool_youtube_to_shorts_tr",
         "video_shorts_bp.static",
         "video_shorts_bp.caption_tasks",
         "video_shorts_bp.caption_result",
@@ -1359,6 +1621,8 @@ def _guard_video_shorts():
                 "video_shorts_bp.google_login",
                 "video_shorts_bp.google_oauth_callback",
                 "video_shorts_bp.logout",
+                "video_shorts_bp.free_tool_youtube_to_shorts",
+                "video_shorts_bp.free_tool_youtube_to_shorts_tr",
                 "video_shorts_bp.static",
                 "video_shorts_bp.serve_media",
                 "video_shorts_bp.generate_short",
@@ -1414,6 +1678,8 @@ def login():
     prefill_email = (request.args.get("email") or "").strip().lower()
     resend_email = ""
     if request.method == "POST":
+        resume = _guest_resume_values(request.form)
+        guest_user_id, guest_brand_id = _current_guest_session_ids()
         post_choice = {
             "intent": _normalize_service_intent(request.form.get("intent")),
             "tier": _normalize_service_tier(request.form.get("tier")),
@@ -1461,7 +1727,6 @@ def login():
             elif not check_password_hash(row[2], password):
                 error = "Incorrect password."
             else:
-                session["vs_user_id"] = row[0]
                 brand_conn = get_db()
                 try:
                     ensure_storage_user_schema(brand_conn)
@@ -1472,10 +1737,22 @@ def login():
                         user_id=row[0],
                         user_name=row[3] or row[1],
                     )
+                    if guest_user_id:
+                        claim_result = claim_guest_into(
+                            brand_conn,
+                            target_user_id=row[0],
+                            guest_user_id=guest_user_id,
+                            target_brand_id=(brand or {}).get("id"),
+                        )
+                        brand_conn.commit()
+                        if claim_result.get("target_brand_id"):
+                            brand = {"id": claim_result["target_brand_id"]}
                 finally:
                     brand_conn.close()
+                session["vs_user_id"] = row[0]
                 if brand:
                     session["vs_brand_id"] = brand["id"]
+                g.vs_current_user = None
                 if post_choice["intent"]:
                     persist_conn = get_db()
                     try:
@@ -1491,8 +1768,8 @@ def login():
                     finally:
                         persist_conn.close()
                 flash(f"Welcome back, {row[3] or row[1]}!", "success")
-                nxt = _normalize_next_url(request.args.get("next")) or url_for("video_shorts_bp.my_videos_page")
-                return redirect(nxt)
+                nxt = resume["next"] or _normalize_next_url(request.args.get("next")) or url_for("video_shorts_bp.my_videos_page")
+                return redirect(_append_resume_params(nxt, action=resume["action"], clip=resume["clip"]))
     if error:
         flash(error, "danger")
     return _render_login_page(resend_email=resend_email, prefill_email=prefill_email)
@@ -1514,6 +1791,8 @@ def register():
     pending_email = ""
     signups_enabled = _signups_enabled()
     if request.method == "POST":
+        resume = _guest_resume_values(request.form)
+        guest_user_id, guest_brand_id = _current_guest_session_ids()
         post_choice = {
             "intent": _normalize_service_intent(request.form.get("intent")),
             "tier": _normalize_service_tier(request.form.get("tier")),
@@ -1563,39 +1842,84 @@ def register():
             else:
                 username = email
                 name = email.split("@")[0].replace(".", " ").title()
-                user_id = str(uuid4())
+                user_id = guest_user_id or str(uuid4())
                 verify_token = generate_email_verification_token()
                 verify_token_hash = hash_email_verification_token(verify_token)
                 verify_expires_at = verification_token_expiry()
-                conn.execute(
-                    """
-                    INSERT INTO shorts_users (
-                        id, username, password_hash, name, email, role, plan_id,
-                        email_verified, email_verification_token_hash, email_verification_expires_at,
-                        email_verification_sent_at, pending_service_intent, pending_service_tier
-                    )
-                    VALUES (?, ?, ?, ?, ?, 'member', ?, FALSE, ?, ?, now(), ?, ?)
-                    """,
-                    [
-                        user_id,
-                        username,
-                        generate_password_hash(password),
-                        name,
-                        email,
-                        DEFAULT_USER_PLAN_ID,
-                        verify_token_hash,
-                        verify_expires_at,
-                        post_choice["intent"] or None,
-                        post_choice["tier"],
-                    ],
-                )
                 ensure_brand_schema(conn)
-                create_brand_record(
-                    conn,
-                    user_id=user_id,
-                    name=f"{name} Workspace",
-                    make_default=True,
-                )
+                if guest_user_id:
+                    conn.execute(
+                        """
+                        UPDATE shorts_users
+                        SET username = ?,
+                            password_hash = ?,
+                            name = ?,
+                            email = ?,
+                            role = 'member',
+                            plan_id = ?,
+                            email_verified = FALSE,
+                            email_verification_token_hash = ?,
+                            email_verification_expires_at = ?,
+                            email_verification_sent_at = now(),
+                            pending_service_intent = ?,
+                            pending_service_tier = ?,
+                            is_guest = FALSE,
+                            guest_resume_next = ?,
+                            guest_resume_action = ?,
+                            guest_resume_clip = ?,
+                            updated_at = now()
+                        WHERE CAST(id AS VARCHAR) = ?
+                        """,
+                        [
+                            username,
+                            generate_password_hash(password),
+                            name,
+                            email,
+                            DEFAULT_USER_PLAN_ID,
+                            verify_token_hash,
+                            verify_expires_at,
+                            post_choice["intent"] or None,
+                            post_choice["tier"],
+                            resume["next"],
+                            resume["action"] or None,
+                            resume["clip"] or None,
+                            user_id,
+                        ],
+                    )
+                    ensure_brand_for_user(conn, user_id=user_id, user_name=name)
+                else:
+                    conn.execute(
+                        """
+                        INSERT INTO shorts_users (
+                            id, username, password_hash, name, email, role, plan_id,
+                            email_verified, email_verification_token_hash, email_verification_expires_at,
+                            email_verification_sent_at, pending_service_intent, pending_service_tier,
+                            guest_resume_next, guest_resume_action, guest_resume_clip
+                        )
+                        VALUES (?, ?, ?, ?, ?, 'member', ?, FALSE, ?, ?, now(), ?, ?, ?, ?, ?)
+                        """,
+                        [
+                            user_id,
+                            username,
+                            generate_password_hash(password),
+                            name,
+                            email,
+                            DEFAULT_USER_PLAN_ID,
+                            verify_token_hash,
+                            verify_expires_at,
+                            post_choice["intent"] or None,
+                            post_choice["tier"],
+                            resume["next"],
+                            resume["action"] or None,
+                            resume["clip"] or None,
+                        ],
+                    )
+                    create_brand_record(
+                        conn,
+                        user_id=user_id,
+                        name=f"{name} Workspace",
+                        make_default=True,
+                    )
                 conn.commit()
                 persisted = conn.execute(
                     """
@@ -1615,6 +1939,10 @@ def register():
                     persisted[0] if persisted else None,
                 )
                 conn.close()
+                if guest_user_id:
+                    session.pop("vs_user_id", None)
+                    session.pop("vs_brand_id", None)
+                    g.vs_current_user = None
                 track_event(user_id, "signup")
                 try:
                     send_verification_email(to_email=email, verify_token=verify_token, recipient_name=name)
@@ -1672,7 +2000,10 @@ def verify_email():
                 email,
                 username,
                 COALESCE(email_verified, FALSE),
-                email_verification_expires_at
+                email_verification_expires_at,
+                guest_resume_next,
+                guest_resume_action,
+                guest_resume_clip
             FROM shorts_users
             WHERE email_verification_token_hash = ?
             LIMIT 1
@@ -1697,7 +2028,16 @@ def verify_email():
             expires_at = expires_at.replace(tzinfo=timezone.utc)
         if bool(row[3]):
             flash("Email already verified. You can sign in.", "success")
-            return redirect(url_for("video_shorts_bp.login", email=_normalize_auth_email(row[1] or row[2] or "")))
+            login_kwargs = {"email": _normalize_auth_email(row[1] or row[2] or "")}
+            if _normalize_next_url(row[5] if len(row) > 5 else None):
+                login_kwargs["next"] = _normalize_next_url(row[5])
+            action = _normalize_guest_resume_action(row[6] if len(row) > 6 else "")
+            clip = _normalize_guest_resume_clip(row[7] if len(row) > 7 else "")
+            if action:
+                login_kwargs["action"] = action
+            if clip:
+                login_kwargs["clip"] = clip
+            return redirect(url_for("video_shorts_bp.login", **login_kwargs))
         if not expires_at or expires_at < now_utc:
             flash("That verification link has expired.", "warning")
             return render_template(
@@ -1729,7 +2069,16 @@ def verify_email():
     except Exception:
         logger.exception("Membership activation email orchestration failed after verify_email for user=%s", row[0])
     flash("Email verified. You can sign in.", "success")
-    return redirect(url_for("video_shorts_bp.login", email=_normalize_auth_email(row[1] or row[2] or "")))
+    login_kwargs = {"email": _normalize_auth_email(row[1] or row[2] or "")}
+    if _normalize_next_url(row[5] if len(row) > 5 else None):
+        login_kwargs["next"] = _normalize_next_url(row[5])
+    action = _normalize_guest_resume_action(row[6] if len(row) > 6 else "")
+    clip = _normalize_guest_resume_clip(row[7] if len(row) > 7 else "")
+    if action:
+        login_kwargs["action"] = action
+    if clip:
+        login_kwargs["clip"] = clip
+    return redirect(url_for("video_shorts_bp.login", **login_kwargs))
 
 
 @video_shorts_bp.route("/verification/resend", methods=["POST"])
@@ -2248,6 +2597,8 @@ def google_login():
     session["google_oauth_state"] = state
     session["google_oauth_code_verifier"] = flow.code_verifier
     session["google_login_next"] = _normalize_next_url(request.args.get("next")) or url_for("video_shorts_bp.my_videos_page")
+    session["google_login_action"] = _normalize_guest_resume_action(request.args.get("action"))
+    session["google_login_clip"] = _normalize_guest_resume_clip(request.args.get("clip"))
     return redirect(authorization_url)
 
 
@@ -2335,6 +2686,7 @@ def google_oauth_callback():
         flash("Could not read email from Google account.", "danger")
         return redirect(url_for("video_shorts_bp.login"))
 
+    guest_user_id, guest_brand_id = _current_guest_session_ids()
     conn = get_db()
     ensure_storage_user_schema(conn)
     ensure_auth_user_schema(conn)
@@ -2373,6 +2725,15 @@ def google_oauth_callback():
                 intent=str(persisted_choice["intent"]),
                 tier=persisted_choice["tier"],
             )
+        ensure_brand_schema(conn)
+        brand_for_claim = ensure_brand_for_user(conn, user_id=user_id, user_name=name or email)
+        if guest_user_id and guest_user_id != user_id:
+            claim_guest_into(
+                conn,
+                target_user_id=user_id,
+                guest_user_id=guest_user_id,
+                target_brand_id=(brand_for_claim or {}).get("id"),
+            )
         conn.commit()
     else:
         if not _signups_enabled():
@@ -2380,27 +2741,59 @@ def google_oauth_callback():
             _log_signup_refusal(method="google_oauth", email=email, source="google_callback_create")
             flash(_signup_disabled_message(), "warning")
             return redirect(url_for("video_shorts_bp.register"))
-        user_id = str(uuid4())
+        user_id = guest_user_id or str(uuid4())
         created_new_user = True
-        conn.execute(
-            """
-            INSERT INTO shorts_users (
-                id, username, name, email, google_sub, role, plan_id, email_verified, email_verified_at,
-                pending_service_intent, pending_service_tier
+        if guest_user_id:
+            conn.execute(
+                """
+                UPDATE shorts_users
+                SET username = ?,
+                    name = ?,
+                    email = ?,
+                    google_sub = ?,
+                    role = 'member',
+                    plan_id = ?,
+                    email_verified = TRUE,
+                    email_verified_at = COALESCE(email_verified_at, now()),
+                    email_verification_token_hash = NULL,
+                    email_verification_expires_at = NULL,
+                    pending_service_intent = ?,
+                    pending_service_tier = ?,
+                    is_guest = FALSE,
+                    updated_at = now()
+                WHERE CAST(id AS VARCHAR) = ?
+                """,
+                [
+                    email,
+                    name or email,
+                    email,
+                    google_sub,
+                    DEFAULT_USER_PLAN_ID,
+                    session.get("vs_pending_service_intent") or None,
+                    _normalize_service_tier(session.get("vs_pending_service_tier")),
+                    user_id,
+                ],
             )
-            VALUES (?, ?, ?, ?, ?, 'member', ?, TRUE, now(), ?, ?)
-            """,
-            [
-                user_id,
-                email,
-                name or email,
-                email,
-                google_sub,
-                DEFAULT_USER_PLAN_ID,
-                session.get("vs_pending_service_intent") or None,
-                _normalize_service_tier(session.get("vs_pending_service_tier")),
-            ],
-        )
+        else:
+            conn.execute(
+                """
+                INSERT INTO shorts_users (
+                    id, username, name, email, google_sub, role, plan_id, email_verified, email_verified_at,
+                    pending_service_intent, pending_service_tier
+                )
+                VALUES (?, ?, ?, ?, ?, 'member', ?, TRUE, now(), ?, ?)
+                """,
+                [
+                    user_id,
+                    email,
+                    name or email,
+                    email,
+                    google_sub,
+                    DEFAULT_USER_PLAN_ID,
+                    session.get("vs_pending_service_intent") or None,
+                    _normalize_service_tier(session.get("vs_pending_service_tier")),
+                ],
+            )
         conn.commit()
     ensure_brand_schema(conn)
     brand = ensure_brand_for_user(conn, user_id=user_id, user_name=name or email)
@@ -2416,7 +2809,9 @@ def google_oauth_callback():
         session["vs_brand_id"] = brand["id"]
     flash("Signed in with Google.", "success")
     nxt = _normalize_next_url(session.pop("google_login_next", None)) or url_for("video_shorts_bp.my_videos_page")
-    return redirect(nxt)
+    action = _normalize_guest_resume_action(session.pop("google_login_action", ""))
+    clip = _normalize_guest_resume_clip(session.pop("google_login_clip", ""))
+    return redirect(_append_resume_params(nxt, action=action, clip=clip))
 
 
 @video_shorts_bp.route("/brands/switch", methods=["POST"])

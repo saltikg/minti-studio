@@ -468,7 +468,7 @@
   <meta name="robots" content="noindex, nofollow">
 </head>
 
-<body class="vs-shell vs-app" data-theme="dark">
+<body class="vs-shell vs-app{% if guest_mode %} vs-guest-mode{% endif %}" data-theme="dark">
   {% set vs_sources_owner = vs_current_user and (
     (vs_current_user.get('email') or '')|lower == 'gokhansaltik@gmail.com'
     or 'cevheriden' in ((vs_current_user.get('email') or '')|lower)
@@ -477,12 +477,16 @@
 
   <!-- Top Navbar -->
   <nav class="navbar vs-topnav px-3">
-    <a class="navbar-brand vs-navbar-brand vs-app-brand fw-semibold" href="{{ url_for('video_shorts_bp.channels_page') }}">
+    <a class="navbar-brand vs-navbar-brand vs-app-brand fw-semibold" href="{% if guest_mode %}{% if session.get('free_tool_lang') == 'tr' %}/tr/araclar/youtube-shorts{% else %}/tools/youtube-to-shorts{% endif %}{% else %}{{ url_for('video_shorts_bp.channels_page') }}{% endif %}">
       <span class="vs-app-logo-dot" aria-hidden="true">●</span>
       <span>MintiStudio</span>
     </a>
     <div class="d-flex flex-wrap align-items-center gap-2 vs-topnav-actions">
-      {% if vs_current_user %}
+      {% if guest_mode %}
+        {% set guest_next = request.full_path if request.query_string else request.path %}
+        <a href="{{ url_for('video_shorts_bp.login', next=guest_next) }}" class="btn btn-sm vs-btn-outline">Sign in</a>
+        <a href="{{ url_for('video_shorts_bp.register', next=guest_next) }}" class="btn btn-sm vs-btn-solid">Sign up free</a>
+      {% elif vs_current_user %}
         <a href="{{ url_for('video_shorts_bp.shorts_storage_plans') }}" id="vs-topnav-usage-summary" class="btn btn-sm vs-btn-outline d-none" aria-label="Plan and exports summary">
           Exports
         </a>
@@ -542,6 +546,7 @@
     <div class="row g-4">
 
       <!-- Sidebar -->
+      {% if not guest_mode %}
       <aside class="col-md-3 col-lg-2 mb-4">
         {% set vs_is_first_run = vs_onboarding and not vs_onboarding.core_completed %}
         <div class="list-group shadow-sm vs-sidebar-menu">
@@ -672,9 +677,10 @@
 
         </div>
       </aside>
+      {% endif %}
 
       <!-- Main content -->
-      <main class="col-md-9 col-lg-10 vs-content">
+      <main class="{% if guest_mode %}col-12{% else %}col-md-9 col-lg-10{% endif %} vs-content">
         {% if vs_service_mode and vs_service_mode.show_modal %}
           <div class="modal fade" id="vsServiceModeModal" tabindex="-1" aria-hidden="true" data-bs-backdrop="static" data-bs-keyboard="false">
             <div class="modal-dialog modal-dialog-centered {% if vs_service_mode.variant == 'autopilot_welcome' %}vs-autopilot-welcome-dialog{% else %}modal-lg{% endif %}">

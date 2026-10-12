@@ -5848,6 +5848,47 @@
       gap: 8px;
     }
   }
+  .free-tool-gate-backdrop {
+    position: fixed;
+    inset: 0;
+    z-index: 1090;
+    display: none;
+    align-items: center;
+    justify-content: center;
+    padding: 20px;
+    background: rgba(2, 8, 23, 0.72);
+    backdrop-filter: blur(8px);
+  }
+  .free-tool-gate-backdrop.is-visible {
+    display: flex;
+  }
+  .free-tool-gate-modal {
+    width: min(420px, 100%);
+    border: 1px solid rgba(45, 179, 163, 0.35);
+    border-radius: 18px;
+    background: #0b1220;
+    color: #e6ebf2;
+    box-shadow: 0 24px 70px rgba(0, 0, 0, 0.45);
+    padding: 22px;
+  }
+  .free-tool-gate-title {
+    font-size: 1.18rem;
+    font-weight: 800;
+    margin-bottom: 8px;
+  }
+  .free-tool-gate-subtitle {
+    color: rgba(230, 235, 242, 0.72);
+    font-size: 0.92rem;
+    margin-bottom: 18px;
+  }
+  .free-tool-gate-actions {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 10px;
+  }
+  .free-tool-gate-actions .btn {
+    min-height: 38px;
+  }
 </style>
 
 
@@ -8367,6 +8408,19 @@
     </div>
   </div>
 </div>
+{% if guest_mode %}
+<div class="free-tool-gate-backdrop" id="free-tool-gate-modal" role="dialog" aria-modal="true" aria-labelledby="free-tool-gate-title" aria-hidden="true" data-free-tool-lang="{{ session.get('free_tool_lang') or 'en' }}">
+  <div class="free-tool-gate-modal">
+    <div class="free-tool-gate-title" id="free-tool-gate-title">Sign up free to continue</div>
+    <div class="free-tool-gate-subtitle" id="free-tool-gate-subtitle">Free account · no credit card · your clips stay</div>
+    <div class="free-tool-gate-actions">
+      <a href="{{ url_for('video_shorts_bp.register', next=request.path) }}" class="btn btn-primary" id="free-tool-gate-register">Create free account</a>
+      <a href="{{ url_for('video_shorts_bp.login', next=request.path) }}" class="btn btn-outline-light" id="free-tool-gate-login">Sign in</a>
+      <button type="button" class="btn btn-link text-white-50" id="free-tool-gate-close">Not now</button>
+    </div>
+  </div>
+</div>
+{% endif %}
 {% if has_transcript and v2_plan_rows %}
 <div class="row g-3 mb-3">
   <div class="col-12">
@@ -8404,6 +8458,219 @@
 
 {% block scripts %}
 <script src="{{ url_for('video_shorts_bp.static', filename='vendor/cropper/cropper.min.js') }}"></script>
+{% if guest_mode %}
+<script>
+(() => {
+  const gateModal = () => document.getElementById("free-tool-gate-modal");
+  const guestRoot = () => document.querySelector("#clip-workbench-shell[data-guest-mode='1']");
+  const copy = {
+    en: {
+      sub: "Free account · no credit card · your clips stay",
+      register: "Create free account",
+      login: "Sign in",
+      close: "Not now",
+      titles: {
+        download: "Sign up free to download your Short",
+        schedule: "Sign up free to schedule your Shorts",
+        schedule_all: "Sign up free to schedule your Shorts",
+        ai_suggest: "Sign up free to get more AI suggestions",
+        create_clip: "Sign up free to create more Shorts",
+        regenerate: "Sign up free to create more Shorts",
+        update_clips: "Sign up free to create more Shorts",
+        new_video: "Sign up free to add more videos",
+        daily_cap: "Free tool is busy today — sign up free to continue",
+      },
+    },
+    tr: {
+      sub: "Ücretsiz hesap · kredi kartı yok · klipleriniz kalır",
+      register: "Ücretsiz hesap oluştur",
+      login: "Giriş yap",
+      close: "Şimdi değil",
+      titles: {
+        download: "Short'unu indirmek için ücretsiz kaydol",
+        schedule: "Shorts'larını planlamak için ücretsiz kaydol",
+        schedule_all: "Shorts'larını planlamak için ücretsiz kaydol",
+        ai_suggest: "Daha fazla AI önerisi için ücretsiz kaydol",
+        create_clip: "Daha fazla Short oluşturmak için ücretsiz kaydol",
+        regenerate: "Daha fazla Short oluşturmak için ücretsiz kaydol",
+        update_clips: "Daha fazla Short oluşturmak için ücretsiz kaydol",
+        new_video: "Daha fazla video eklemek için ücretsiz kaydol",
+        daily_cap: "Ücretsiz araç bugün yoğun — devam etmek için ücretsiz kaydol",
+      },
+    },
+  };
+  const currentLang = () => (gateModal()?.dataset.freeToolLang === "tr" ? "tr" : "en");
+  const gateTitle = (payload = {}) => {
+    const langCopy = copy[currentLang()] || copy.en;
+    if (payload.reason === "daily_cap") return langCopy.titles.daily_cap;
+    return langCopy.titles[payload.action] || langCopy.titles.create_clip;
+  };
+  const storePendingCreateClipState = () => {
+    try {
+      const root = guestRoot();
+      if (!root) return;
+      const videoId = root.dataset.videoId || "";
+      const parts = window.generateV2TextParts || window.__generateV2TextParts || null;
+      const selection = window.getSelection?.()?.toString?.() || "";
+      sessionStorage.setItem(`minti-free-tool-pending-create:${videoId}`, JSON.stringify({
+        ts: Date.now(),
+        parts,
+        selection,
+      }));
+    } catch (error) {
+      // Session storage is best-effort only.
+    }
+  };
+  window.handleGuestGatePayload = (payload = {}) => {
+    if (!payload || payload.gate !== "signup") return false;
+    if (payload.action === "create_clip") {
+      storePendingCreateClipState();
+    }
+    const modal = gateModal();
+    if (!modal) return true;
+    const langCopy = copy[currentLang()] || copy.en;
+    const title = document.getElementById("free-tool-gate-title");
+    const subtitle = document.getElementById("free-tool-gate-subtitle");
+    const register = document.getElementById("free-tool-gate-register");
+    const login = document.getElementById("free-tool-gate-login");
+    const close = document.getElementById("free-tool-gate-close");
+    if (title) title.textContent = gateTitle(payload);
+    if (subtitle) subtitle.textContent = langCopy.sub;
+    if (register && payload.register_url) register.href = payload.register_url;
+    if (login && payload.login_url) login.href = payload.login_url;
+    if (register) register.textContent = langCopy.register;
+    if (login) login.textContent = langCopy.login;
+    if (close) close.textContent = langCopy.close;
+    modal.classList.add("is-visible");
+    modal.setAttribute("aria-hidden", "false");
+    register?.focus?.();
+    return true;
+  };
+  window.closeGuestGateModal = () => {
+    const modal = gateModal();
+    if (!modal) return;
+    modal.classList.remove("is-visible");
+    modal.setAttribute("aria-hidden", "true");
+  };
+  const originalFetch = window.fetch.bind(window);
+  window.fetch = async (...args) => {
+    const response = await originalFetch(...args);
+    try {
+      const payload = await response.clone().json();
+      if (payload && payload.gate === "signup") {
+        window.handleGuestGatePayload(payload);
+      }
+    } catch (error) {
+      // Non-JSON responses are not gate payloads.
+    }
+    return response;
+  };
+  const localGatePayload = (action, reason = "guest_action", clip = null) => {
+    const params = new URLSearchParams();
+    params.set("next", window.location.pathname);
+    params.set("action", action);
+    if (clip !== null && clip !== undefined && String(clip).trim()) params.set("clip", String(clip).trim());
+    return {
+      gate: "signup",
+      action,
+      reason,
+      clip,
+      register_url: `/video_shorts/register?${params.toString()}`,
+      login_url: `/video_shorts/login?${params.toString()}`,
+    };
+  };
+  document.getElementById("free-tool-gate-close")?.addEventListener("click", window.closeGuestGateModal);
+  document.addEventListener("click", (event) => {
+    if (!guestRoot()) return;
+    const scheduleAll = event.target.closest?.("#clip-schedule-all-btn");
+    const aiSuggest = event.target.closest?.("#ai-generate-btn");
+    const download = event.target.closest?.(".generate-v2-download-btn, a[href*='/download']");
+    const schedule = event.target.closest?.(".send-to-youtube-btn");
+    if (!scheduleAll && !aiSuggest && !download && !schedule) return;
+    event.preventDefault();
+    event.stopPropagation();
+    if (download) {
+      const card = download.closest?.(".clip-card");
+      window.handleGuestGatePayload(localGatePayload("download", "guest_action", card?.dataset.planIndex || null));
+    } else if (scheduleAll) {
+      window.handleGuestGatePayload(localGatePayload("schedule_all"));
+    } else if (aiSuggest) {
+      window.handleGuestGatePayload(localGatePayload("ai_suggest"));
+    } else if (schedule) {
+      window.handleGuestGatePayload(localGatePayload("schedule", "guest_action", schedule.dataset.planIndex || null));
+    }
+  }, true);
+  document.addEventListener("keydown", (event) => {
+    if (event.key === "Escape") window.closeGuestGateModal();
+  });
+})();
+</script>
+{% endif %}
+<script>
+(() => {
+  window.runGuestResumeAction = () => {
+    const params = new URLSearchParams(window.location.search || "");
+    const action = String(params.get("action") || "").trim();
+    const clip = String(params.get("clip") || "").trim();
+    if (!action) return;
+    const root = document.querySelector("#clip-workbench-shell[data-generate-v2='1']");
+    if (!root || root.dataset.guestMode === "1") return;
+    const selectClip = () => {
+      if (!clip) return null;
+      const escaped = window.CSS?.escape ? CSS.escape(clip) : clip.replace(/'/g, "\\'");
+      const row = document.querySelector(`.clip-rail-item[data-plan-index='${escaped}']`);
+      row?.click?.();
+      return row;
+    };
+    const stripResumeParams = () => {
+      try {
+        params.delete("action");
+        params.delete("clip");
+        const nextUrl = `${window.location.pathname}${params.toString() ? `?${params.toString()}` : ""}${window.location.hash || ""}`;
+        window.history.replaceState({}, "", nextUrl);
+      } catch (error) {
+        // URL cleanup is non-critical.
+      }
+    };
+    window.setTimeout(() => {
+      const row = selectClip();
+      if (action === "download" && clip) {
+        window.location.href = `/video_shorts/generate/${root.dataset.videoId}/clip/${encodeURIComponent(clip)}/download`;
+      } else if (action === "schedule_all") {
+        document.getElementById("clip-schedule-all-btn")?.click?.();
+      } else if (action === "schedule") {
+        const card = row ? document.querySelector(`.clip-card[data-plan-index='${CSS.escape(clip)}']`) : document.querySelector(".clip-card");
+        card?.querySelector(".send-to-youtube-btn")?.click?.();
+      } else if (action === "ai_suggest") {
+        document.getElementById("ai-generate-btn")?.click?.();
+      } else if ((action === "regenerate" || action === "update_clips") && clip) {
+        const card = document.querySelector(`.clip-card[data-plan-index='${CSS.escape(clip)}']`);
+        card?.querySelector(".generate-v2-regenerate-btn")?.click?.();
+      } else if (action === "create_clip") {
+        try {
+          const key = `minti-free-tool-pending-create:${root.dataset.videoId || ""}`;
+          window.__guestResumePendingCreateClip = JSON.parse(sessionStorage.getItem(key) || "{}");
+          sessionStorage.removeItem(key);
+        } catch (error) {
+          window.__guestResumePendingCreateClip = {};
+        }
+        const pendingParts = Array.isArray(window.__guestResumePendingCreateClip?.parts)
+          ? window.__guestResumePendingCreateClip.parts
+          : [];
+        if (pendingParts.length && typeof window.__generateV2SetTextParts === "function") {
+          window.__generateV2SetTextParts(pendingParts);
+        }
+        document.querySelector("[data-generate-v2-text-create]")?.click?.();
+      } else if (action === "new_video") {
+        window.location.href = "{{ url_for('video_shorts_bp.my_videos_page') }}";
+        return;
+      }
+      stripResumeParams();
+    }, 650);
+  };
+  document.addEventListener("DOMContentLoaded", window.runGuestResumeAction, { once: true });
+})();
+</script>
 <script>
 (function() {
   const overlay = document.getElementById('spinner-overlay');
@@ -12704,6 +12971,7 @@ window.initGenerateV2TextTranscript = () => {
     currentMatchIndex: -1,
     query: "",
   };
+  window.__generateV2TextParts = state.parts;
   const showTextToast = showGenerateV2TextToast;
   const hideToolbar = () => {
     toolbar?.classList.remove("is-visible");
@@ -12718,10 +12986,18 @@ window.initGenerateV2TextTranscript = () => {
     return { first, last, start, end, duration: Math.max(0, end - start) };
   };
   const normalizeTranscriptParts = (parts) => normalizeClipKeepRanges(parts);
+  const setTranscriptParts = (parts) => {
+    state.parts = normalizeTranscriptParts(Array.isArray(parts) ? parts : []);
+    window.__generateV2TextParts = state.parts.slice();
+    render();
+  };
+  shell.setPendingTextParts = setTranscriptParts;
+  window.__generateV2SetTextParts = setTranscriptParts;
   const partsDuration = () => clipKeepRangesDuration(state.parts);
   const updatePartsBar = () => {
     const normalizedParts = normalizeTranscriptParts(state.parts);
     state.parts = normalizedParts;
+    window.__generateV2TextParts = state.parts.slice();
     const total = partsDuration();
     const valid = total >= 5 && total <= 90;
     partsBar?.classList.toggle("is-visible", normalizedParts.length > 0);
