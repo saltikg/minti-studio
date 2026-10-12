@@ -12,6 +12,8 @@ from app.video_shorts.routes.auth import (
     _current_user,
     _establish_authenticated_session,
     _verify_turnstile_or_fail,
+    turnstile_enabled,
+    turnstile_site_key,
 )
 from app.video_shorts.routes.quick_short import (
     _ensure_quick_schema,
@@ -28,6 +30,12 @@ from app.video_shorts.youtube_api import YoutubeApiError, extract_video_id, fetc
 
 FREE_TOOL_MAX_VIDEO_SECONDS = 30 * 60
 FREE_TOOL_DAILY_GUESTS_PER_IP = 3
+
+
+def _render_free_tool_template(**context):
+    context.setdefault("vs_turnstile_enabled", turnstile_enabled())
+    context.setdefault("vs_turnstile_site_key", turnstile_site_key())
+    return render_template("free_tool_youtube_to_shorts.html", **context)
 
 
 def _free_tool_enabled() -> bool:
@@ -229,8 +237,7 @@ def render_free_tool_landing(locale: str = "en"):
                     if duration is not None and float(duration) > FREE_TOOL_MAX_VIDEO_SECONDS:
                         landing_next = "/tr/araclar/youtube-shorts" if locale == "tr" else "/tools/youtube-to-shorts"
                         register_url = url_for("video_shorts_bp.register", next=landing_next)
-                        return render_template(
-                            "free_tool_youtube_to_shorts.html",
+                        return _render_free_tool_template(
                             locale=locale,
                             error=(
                                 "Free tool supports videos up to 30 min — sign up free for longer videos"
@@ -263,8 +270,7 @@ def render_free_tool_landing(locale: str = "en"):
                                 else "Ücretsiz araç bugün yoğun — devam etmek için ücretsiz hesap oluşturun"
                             )
                             conn.close()
-                            return render_template(
-                                "free_tool_youtube_to_shorts.html",
+                            return _render_free_tool_template(
                                 locale=locale,
                                 error=error,
                                 register_url=url_for("video_shorts_bp.register", next=request.path),
@@ -290,8 +296,7 @@ def render_free_tool_landing(locale: str = "en"):
                                     else "Bugün ücretsiz aracı birkaç kez kullandınız. Devam etmek için ücretsiz hesap oluşturun."
                                 )
                                 conn.close()
-                                return render_template(
-                                    "free_tool_youtube_to_shorts.html",
+                                return _render_free_tool_template(
                                     locale=locale,
                                     error=error,
                                     register_url=url_for("video_shorts_bp.register", next=request.path),
@@ -330,8 +335,7 @@ def render_free_tool_landing(locale: str = "en"):
                         except Exception:
                             pass
 
-    return render_template(
-        "free_tool_youtube_to_shorts.html",
+    return _render_free_tool_template(
         locale=locale,
         error=error,
         register_url=url_for("video_shorts_bp.register", next=request.path),
