@@ -2904,19 +2904,12 @@
   .generate-v2-clip-editor-mount .clip-rail-edit-title-wrap:focus-within .clip-rail-edit-title-pencil {
     color: rgba(204, 251, 241, 0.92);
   }
-  .generate-v2-clip-editor-mount [data-trim-show-more='before'] {
-    order: 3;
-    margin-top: 8px;
-  }
   .generate-v2-clip-editor-mount .clip-text-trim-editor {
     order: 4;
     flex: 1 1 auto;
     max-height: none;
     min-height: 0;
     height: 100%;
-  }
-  .generate-v2-clip-editor-mount [data-trim-show-more='after'] {
-    order: 5;
   }
   .generate-v2-clip-editor-mount .clip-text-trim-readonly {
     order: 3;
@@ -2996,6 +2989,17 @@
     font-size: 0.86rem;
     line-height: 1.55;
   }
+  .clip-text-trim-editor.has-more-before {
+    box-shadow: inset 0 24px 18px -22px rgba(94, 234, 212, 0.5);
+  }
+  .clip-text-trim-editor.has-more-after {
+    box-shadow: inset 0 -24px 18px -22px rgba(94, 234, 212, 0.5);
+  }
+  .clip-text-trim-editor.has-more-before.has-more-after {
+    box-shadow:
+      inset 0 24px 18px -22px rgba(94, 234, 212, 0.5),
+      inset 0 -24px 18px -22px rgba(94, 234, 212, 0.5);
+  }
   .clip-text-trim-word {
     cursor: text;
     user-select: text;
@@ -3019,21 +3023,20 @@
     font-weight: 700;
     padding: 0;
   }
-  .clip-text-trim-below-row {
-    display: flex;
-    align-items: center;
-    justify-content: space-between;
-    gap: 10px;
-    margin: 6px 0;
-  }
   .clip-text-trim-copy-btn {
     display: inline-flex;
     align-items: center;
+    justify-content: center;
     gap: 5px;
     white-space: nowrap;
+    width: 34px;
+    min-height: 31px;
     padding: 3px 8px;
     font-size: 0.74rem;
     line-height: 1.2;
+  }
+  .clip-text-trim-copy-btn .bi-check2 {
+    color: #5eead4;
   }
   .clip-text-trim-duration {
     color: rgba(226, 232, 240, 0.72);
@@ -6438,16 +6441,8 @@
                     <input type="hidden" name="start" value="{{ row.start or 0 }}" data-edit-start-input>
                     <input type="hidden" name="end" value="{{ row.end or 0 }}" data-edit-end-input>
                     <input type="hidden" name="keep_ranges" value="" data-edit-keep-ranges-input>
-                    <button type="button" class="clip-text-trim-more d-none" data-trim-show-more="before">Show more above</button>
                     <div class="clip-text-trim-editor" data-clip-text-trim-editor aria-label="Clip transcript editor"></div>
-                    <div class="clip-text-trim-below-row">
-                      <button type="button" class="clip-text-trim-more d-none" data-trim-show-more="after">Show more below</button>
-                      <button type="button" class="btn btn-outline-light btn-sm clip-text-trim-copy-btn" data-copy-kept-clip-text>
-                        <i class="bi bi-clipboard" aria-hidden="true"></i>
-                        <span data-copy-kept-clip-text-label>Copy text</span>
-                      </button>
-                    </div>
-                    <div class="clip-text-trim-duration" data-edit-duration-label>{{ rail_duration_label }}</div>
+                    <div class="clip-text-trim-duration d-none" data-edit-duration-label>{{ rail_duration_label }}</div>
                     <div class="clip-text-trim-warning d-none" data-edit-duration-warning></div>
                     <div class="clip-rail-edit-error d-none" data-edit-title-time-error></div>
                     <div class="clip-rail-edit-actions">
@@ -11279,17 +11274,16 @@ const mountGenerateV2ClipEditor = (planIndex = "") => {
     footer.innerHTML = `
       <div class="generate-v2-clip-editor-footer-left">
         <button type="button" class="btn btn-sm generate-v2-editor-delete-clip-btn" data-generate-v2-editor-delete>Delete</button>
+        <button type="button" class="btn btn-outline-light btn-sm clip-text-trim-copy-btn" data-copy-kept-clip-text title="Copy clip text" aria-label="Copy clip text">
+          <i class="bi bi-clipboard" data-copy-kept-clip-text-icon aria-hidden="true"></i>
+          <span class="visually-hidden" data-copy-kept-clip-text-label>Copy clip text</span>
+        </button>
       </div>
       <div class="generate-v2-clip-editor-footer-right"></div>
     `;
     form.appendChild(footer);
   }
-  const footerLeft = footer.querySelector(".generate-v2-clip-editor-footer-left");
   const footerRight = footer.querySelector(".generate-v2-clip-editor-footer-right");
-  const duration = form.querySelector("[data-edit-duration-label]");
-  if (duration && footerLeft && duration.parentElement !== footerLeft) {
-    footerLeft.appendChild(duration);
-  }
   const actions = form.querySelector(".clip-rail-edit-actions");
   if (actions && footerRight && actions.parentElement !== footerRight) {
     actions.setAttribute("data-generate-v2-original-actions", "1");
@@ -11901,9 +11895,18 @@ const copyTextToClipboard = async (text) => {
 };
 
 const setCopyKeptClipTextFeedback = (button, copied = false) => {
+  const icon = button?.querySelector("[data-copy-kept-clip-text-icon]");
   const label = button?.querySelector("[data-copy-kept-clip-text-label]");
-  if (!label) return;
-  label.textContent = copied ? "Copied ✓" : "Copy text";
+  if (icon) {
+    icon.className = copied ? "bi bi-check2" : "bi bi-clipboard";
+  }
+  if (label) {
+    label.textContent = copied ? "Copied" : "Copy clip text";
+  }
+  if (button) {
+    button.title = copied ? "Copied" : "Copy clip text";
+    button.setAttribute("aria-label", copied ? "Copied" : "Copy clip text");
+  }
 };
 
 const rangesFromWordIndexes = (words, indexes) => {
@@ -12507,13 +12510,36 @@ const markGenerateV2ClipEditorTranscriptDirty = (form) => {
   }
 };
 
-const renderClipTextTrimEditor = (form) => {
+const loadClipTextTrimContext = (form, direction = "after") => {
+  const editor = form?.querySelector("[data-clip-text-trim-editor]");
+  if (!editor || form.dataset.contextLoading === "1") return;
+  const hasMore = direction === "before" ? form.dataset.hasMoreBefore === "1" : form.dataset.hasMoreAfter === "1";
+  if (!hasMore) return;
+  const key = direction === "before" ? "contextBefore" : "contextAfter";
+  const previousHeight = editor.scrollHeight;
+  const previousTop = editor.scrollTop;
+  form.dataset.contextLoading = "1";
+  form.dataset[key] = String((Number(form.dataset[key] || 3) || 3) + 3);
+  renderClipTextTrimEditor(form, { preserveScroll: true });
+  if (direction === "before") {
+    editor.scrollTop = Math.max(0, editor.scrollHeight - previousHeight + previousTop);
+  } else {
+    editor.scrollTop = previousTop;
+  }
+  window.setTimeout(() => {
+    form.dataset.contextLoading = "0";
+  }, 0);
+};
+
+const renderClipTextTrimEditor = (form, options = {}) => {
   const editor = form.querySelector("[data-clip-text-trim-editor]");
   const startInput = form.querySelector("[data-edit-start-input]");
   const endInput = form.querySelector("[data-edit-end-input]");
   const keepRangesInput = form.querySelector("[data-edit-keep-ranges-input]");
   const editUrl = document.getElementById("transcript-range-selector")?.dataset.editUrl || "";
   if (!editor || !startInput || !endInput) return;
+  const preserveScroll = !!options.preserveScroll;
+  const previousScrollTop = editor.scrollTop;
   const words = getGenerateV2WordTimestamps();
   const keepRanges = getClipKeepRangesFromForm(form, words);
   const start = keepRanges[0]?.start ?? Number(startInput.value || form.dataset.initialStart || 0);
@@ -12566,10 +12592,22 @@ const renderClipTextTrimEditor = (form) => {
     });
     fragment.appendChild(span);
   });
-  editor.replaceChildren(fragment);
-  form.querySelector("[data-trim-show-more='before']")?.classList.toggle("d-none", visibleMinSentence <= 0);
   const maxSentenceIndex = words.reduce((max, word) => Math.max(max, Number(word.sentence || 0)), 0);
-  form.querySelector("[data-trim-show-more='after']")?.classList.toggle("d-none", visibleMaxSentence >= maxSentenceIndex);
+  editor.replaceChildren(fragment);
+  const hasMoreBefore = visibleMinSentence > 0;
+  const hasMoreAfter = visibleMaxSentence < maxSentenceIndex;
+  form.dataset.hasMoreBefore = hasMoreBefore ? "1" : "0";
+  form.dataset.hasMoreAfter = hasMoreAfter ? "1" : "0";
+  editor.classList.toggle("has-more-before", hasMoreBefore);
+  editor.classList.toggle("has-more-after", hasMoreAfter);
+  if (preserveScroll) {
+    editor.scrollTop = previousScrollTop;
+  } else {
+    const firstKept = editor.querySelector(".clip-text-trim-word:not(.is-muted)");
+    if (firstKept) {
+      editor.scrollTop = Math.max(0, firstKept.offsetTop - editor.offsetTop - 10);
+    }
+  }
   if (keepRangesInput) {
     keepRangesInput.value = JSON.stringify(keepRanges);
   }
@@ -12670,16 +12708,10 @@ const initGenerateV2ClipTitleTimeEditors = () => {
   document.querySelectorAll("[data-edit-title-time-form]").forEach((form) => {
     if (form.dataset.editFormBound === "1") return;
     form.dataset.editFormBound = "1";
-    form.querySelectorAll("[data-trim-show-more]").forEach((button) => {
-      button.addEventListener("click", () => {
-        const direction = button.dataset.trimShowMore || "";
-        const key = direction === "before" ? "contextBefore" : "contextAfter";
-        form.dataset[key] = String((Number(form.dataset[key] || 3) || 3) + 3);
-        renderClipTextTrimEditor(form);
-      });
-    });
-    form.querySelector("[data-copy-kept-clip-text]")?.addEventListener("click", async (event) => {
-      const button = event.currentTarget;
+    form.addEventListener("click", async (event) => {
+      const button = event.target.closest?.("[data-copy-kept-clip-text]");
+      if (!button || !form.contains(button)) return;
+      event.preventDefault();
       const text = getKeptClipTextFromForm(form);
       if (!text) {
         setClipEditError(form, "No clip text to copy.");
@@ -12700,6 +12732,16 @@ const initGenerateV2ClipTitleTimeEditors = () => {
         button.disabled = false;
       }
     });
+    const trimEditor = form.querySelector("[data-clip-text-trim-editor]");
+    trimEditor?.addEventListener("scroll", () => {
+      if (trimEditor.scrollTop <= 2) {
+        loadClipTextTrimContext(form, "before");
+        return;
+      }
+      if (trimEditor.scrollTop + trimEditor.clientHeight >= trimEditor.scrollHeight - 2) {
+        loadClipTextTrimContext(form, "after");
+      }
+    }, { passive: true });
     const showSelectionToolbar = () => {
       if (form.dataset.readonly === "1") return;
       const selectedIndexes = normalizeWordSelection(form);
@@ -12729,8 +12771,8 @@ const initGenerateV2ClipTitleTimeEditors = () => {
       }
       toolbar.classList.add("is-visible");
     };
-    form.querySelector("[data-clip-text-trim-editor]")?.addEventListener("mouseup", showSelectionToolbar);
-    form.querySelector("[data-clip-text-trim-editor]")?.addEventListener("touchend", () => {
+    trimEditor?.addEventListener("mouseup", showSelectionToolbar);
+    trimEditor?.addEventListener("touchend", () => {
       window.setTimeout(showSelectionToolbar, 0);
     });
     form.querySelector("[data-edit-title-time-cancel]")?.addEventListener("click", () => {
