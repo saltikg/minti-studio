@@ -3170,7 +3170,7 @@ def _compose_trimmed_with_background(
                     is_default_crop,
                     podcast_mode,
                 )
-        if face_aware_layout_active:
+        if (not original_layout_mode) and face_aware_layout_active:
             if len(layout_segments) > 1:
                 source_labels = "".join(f"[layout_src_{idx}]" for idx in range(len(layout_segments)))
                 filter_parts.append(f"[1:v]split={len(layout_segments)}{source_labels}")
@@ -3363,7 +3363,7 @@ def _compose_trimmed_with_background(
                 ],
                 duration,
             )
-        else:
+        elif not original_layout_mode:
             crop_filter = (
                 f"[1:v]crop=iw*{_fmt(crop_w)}:ih*{_fmt(crop_h)}:{crop_x_expr}:{crop_y_expr},"
                 f"{scale_stage}"
