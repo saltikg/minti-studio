@@ -27,6 +27,7 @@
       <a class="footer-link" href="{{ url_for('video_shorts_bp.terms_page') }}">Terms of Service</a>
       <a class="footer-link" href="{{ url_for('video_shorts_bp.data_deletion_page') }}">Data Deletion</a>
       <a class="footer-link" href="{{ url_for('video_shorts_bp.contact_page') }}">Contact</a>
+      {% block marketing_footer_extra %}{% endblock %}
     </div>
   </div>
 

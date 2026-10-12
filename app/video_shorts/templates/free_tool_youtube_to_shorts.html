@@ -66,22 +66,23 @@
     .free-tool-page {
       width: min(100%, 1040px);
       margin: 0 auto;
-      padding: clamp(3rem, 7vw, 5.5rem) 1rem clamp(3rem, 6vw, 4.5rem);
+      padding: clamp(2.7rem, 6vw, 4.7rem) 1rem clamp(3rem, 6vw, 4.5rem);
     }
     .free-tool-hero {
       display: grid;
-      gap: 1.35rem;
+      gap: 1.2rem;
       text-align: center;
     }
     .free-tool-hero h1 {
       margin: 0;
-      font-size: clamp(2.2rem, 6vw, 4.4rem);
-      line-height: 1.02;
-      letter-spacing: -0.04em;
+      font-size: clamp(2.35rem, 5vw, 3.5rem);
+      line-height: 1.06;
+      letter-spacing: -0.035em;
+      text-wrap: balance;
       color: rgba(248, 250, 252, 0.98);
     }
     .free-tool-subhead {
-      max-width: 660px;
+      max-width: 640px;
       margin: 0 auto;
       color: rgba(226, 232, 240, 0.84);
       font-size: clamp(1rem, 2vw, 1.2rem);
@@ -89,17 +90,24 @@
     }
     .free-tool-card {
       margin: 1.4rem auto 0;
-      max-width: 860px;
-      padding: clamp(1rem, 2vw, 1.4rem);
-      border: 1px solid rgba(255, 255, 255, 0.12);
-      border-radius: 18px;
-      background: rgba(15, 23, 42, 0.72);
-      box-shadow: 0 28px 70px rgba(0, 0, 0, 0.34);
+      max-width: 880px;
+      padding: clamp(1.25rem, 3vw, 1.75rem);
+      border: 1px solid rgba(255, 255, 255, 0.1);
+      border-radius: 16px;
+      background: rgba(15, 23, 42, 0.68);
+      box-shadow: 0 22px 58px rgba(0, 0, 0, 0.26);
       text-align: left;
     }
     .free-tool-form {
       display: grid;
-      gap: 0.9rem;
+      gap: 0.8rem;
+    }
+    .free-tool-paste-label {
+      margin: 0;
+      color: rgba(248, 250, 252, 0.95);
+      font-size: clamp(1rem, 1.8vw, 1.1rem);
+      font-weight: 750;
+      line-height: 1.3;
     }
     .mv-url-row {
       display: grid;
@@ -117,25 +125,28 @@
       color: rgba(148, 163, 184, 0.58);
     }
     .mv-youtube-input {
-      min-height: 52px;
+      height: 56px;
+      min-height: 56px;
       width: 100%;
       padding: 0 18px 0 46px;
-      border-radius: 14px;
+      border-radius: 10px;
       border: 1px solid rgba(148, 163, 184, 0.32);
       background: rgba(2, 6, 23, 0.58);
       color: rgba(248, 250, 252, 0.96);
-      padding: 0 1rem;
       font-size: 1rem;
       outline: none;
+      text-overflow: clip;
     }
     .mv-youtube-input::placeholder {
       color: rgba(148, 163, 184, 0.72);
     }
     .mv-youtube-submit {
-      min-height: 52px;
+      min-width: 180px;
+      height: 56px;
+      min-height: 56px;
       border: 0;
-      border-radius: 14px;
-      padding: 0 1.2rem;
+      border-radius: 10px;
+      padding: 0 1.35rem;
       background: #2bb3a3;
       color: #06201d;
       font-weight: 700;
@@ -216,13 +227,25 @@
       to { transform: rotate(360deg); }
     }
     .free-tool-note,
-    .free-tool-switch {
+    .free-tool-footer-lang {
       color: rgba(203, 213, 225, 0.74);
       font-size: 0.92rem;
     }
-    .free-tool-switch a,
+    .free-tool-footer-lang a,
     .free-tool-error a {
       color: #5dd8c7;
+    }
+    .free-tool-footer-lang {
+      display: inline-flex;
+      align-items: center;
+      gap: 0.4rem;
+    }
+    .free-tool-footer-lang a {
+      text-decoration: none;
+      font-weight: 700;
+    }
+    .free-tool-footer-lang a[aria-current="page"] {
+      color: rgba(248, 250, 252, 0.96);
     }
     .free-tool-error {
       padding: 0.75rem 0.9rem;
@@ -411,7 +434,6 @@
       line-height: 1.65;
     }
     @media (max-width: 720px) {
-      .free-tool-input-row,
       .mv-url-row,
       .free-tool-steps,
       .free-tool-feature-grid,
@@ -423,15 +445,15 @@
         width: 100%;
       }
     }
+    .vs-marketing-footer .footer-cta {
+      display: none;
+    }
   </style>
 {% endblock %}
 
 {% block content %}
   <main class="free-tool-page">
     <section class="free-tool-hero">
-      <p class="free-tool-switch mb-0">
-        <a href="{{ switch_href }}">{{ "English" if is_tr else "Türkçe" }}</a>
-      </p>
       <h1>{{ page_title }}</h1>
       <p class="free-tool-subhead">
         {{ "YouTube bağlantını yapıştır; Minti en iyi anları bulsun, ilk Short'u hazırlasın ve düzenlemeye hazır hale getirsin." if is_tr else "Paste a YouTube link; Minti finds the strongest moment, prepares your first Short, and opens it for editing." }}
@@ -446,6 +468,7 @@
           </div>
         {% endif %}
         <form class="free-tool-form" method="post">
+          <p class="free-tool-paste-label">{{ "YouTube bağlantısı yapıştır" if is_tr else "Paste a YouTube link" }}</p>
           <div class="mv-url-row">
             <div class="mv-url-field">
               <i class="bi bi-link-45deg" aria-hidden="true"></i>
@@ -457,7 +480,7 @@
                 value="{{ video_url or '' }}"
                 inputmode="url"
                 autocomplete="off"
-                placeholder="{{ 'YouTube bağlantısı yapıştır — Minti ayrıntıları alsın' if is_tr else 'Paste a YouTube link — Minti will pull in the details' }}"
+                placeholder="https://youtube.com/watch?v=…"
                 aria-label="{{ 'YouTube bağlantısı' if is_tr else 'YouTube URL' }}"
                 required
               >
@@ -564,6 +587,14 @@
       </div>
     </section>
   </main>
+{% endblock %}
+
+{% block marketing_footer_extra %}
+  <span class="free-tool-footer-lang" aria-label="Language">
+    <a href="/tools/youtube-to-shorts" {% if not is_tr %}aria-current="page"{% endif %}>EN</a>
+    <span aria-hidden="true">|</span>
+    <a href="/tr/araclar/youtube-shorts" {% if is_tr %}aria-current="page"{% endif %}>TR</a>
+  </span>
 {% endblock %}
 
 {% block scripts %}
