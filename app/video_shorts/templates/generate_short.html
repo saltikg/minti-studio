@@ -4430,10 +4430,11 @@
     overflow: hidden;
   }
   .cropper-surfaces.is-original-layout .cropper-surface-image-wrap {
-    width: min(100%, calc(60vh * var(--original-source-aspect-number, 1.777777)));
+    --original-reframe-max-height: clamp(260px, 38vh, 380px);
+    width: min(100%, calc(var(--original-reframe-max-height) * var(--original-source-aspect-number, 1.777777)));
     max-width: 100%;
     aspect-ratio: var(--original-source-aspect, 16 / 9);
-    max-height: 60vh;
+    max-height: var(--original-reframe-max-height);
     padding: 0;
     margin-inline: auto;
     display: flex;
