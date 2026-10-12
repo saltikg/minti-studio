@@ -22867,6 +22867,8 @@ def edit_clip_title_time(video_pk: int, plan_index: int):
                 status_code = regen_response[1]
         regen_payload = response_obj.get_json(silent=True) if hasattr(response_obj, "get_json") else {}
         if status_code >= 400 or not (regen_payload or {}).get("success"):
+            if isinstance(regen_payload, dict) and regen_payload.get("gate") == "signup":
+                return jsonify(regen_payload), status_code
             return jsonify(success=False, message=(regen_payload or {}).get("message") or "Clip saved, but rendering could not start."), status_code
         response_payload.update(
             {

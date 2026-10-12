@@ -13829,6 +13829,10 @@ const initGenerateV2ClipTitleTimeEditors = () => {
           body,
         });
         const payload = await response.json().catch(() => ({}));
+        if (response.status === 403 && isGuestGatePayload(payload)) {
+          window.handleGuestGatePayload?.(payload);
+          return;
+        }
         if (!response.ok || !payload.success) {
           setClipEditError(form, payload.message || "Could not save this clip.");
           return;
