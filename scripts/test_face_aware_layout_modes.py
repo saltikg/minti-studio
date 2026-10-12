@@ -176,6 +176,18 @@ def _append_custom_caption_position_checks(rows: list[tuple[str, str, str]]) -> 
         rows.append(("default_caption_margin_auto_places", "FAIL", f"auto metrics={auto}"))
 
 
+def _append_face_track_expression_check(rows: list[tuple[str, str, str]]) -> None:
+    points = [
+        {"t": idx * 0.5, "x": 0.10 + (idx % 7) * 0.01}
+        for idx in range(120)
+    ]
+    expr = compositor._piecewise_linear_ratio_expr(points, "x")
+    if expr and "if(" not in expr and expr.count("gte(") >= 100 and expr.count("lt(") >= 100:
+        rows.append(("face_track_expr_flat", "PASS", f"points={len(points)} nested_if=0"))
+    else:
+        rows.append(("face_track_expr_flat", "FAIL", f"expr={expr[:240] if expr else expr}"))
+
+
 def _append_style_template_position_preservation_check(rows: list[tuple[str, str, str]]) -> None:
     base_video = {
         "title_font_key": "inter",
@@ -273,6 +285,7 @@ def main() -> int:
     rows: list[tuple[str, str, str]] = []
     with app.app_context(), tempfile.TemporaryDirectory(prefix="fa_layout_modes_") as temp_dir:
         _append_custom_caption_position_checks(rows)
+        _append_face_track_expression_check(rows)
         _append_style_template_position_preservation_check(rows)
         temp = Path(temp_dir)
         ffmpeg = _resolve_ffmpeg()

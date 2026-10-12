@@ -573,13 +573,29 @@ def _piecewise_linear_ratio_expr(
     *,
     time_expr: str = "t",
 ) -> Optional[str]:
+    cleaned: list[dict[str, float]] = []
+    for point in sorted(points or [], key=lambda item: float(item.get("t") or 0.0)):
+        try:
+            t_val = float(point["t"])
+            value = float(point[key])
+        except Exception:
+            continue
+        normalized = {"t": t_val, key: value}
+        if cleaned and abs(float(cleaned[-1]["t"]) - t_val) < 1e-6:
+            cleaned[-1] = normalized
+        else:
+            cleaned.append(normalized)
+    points = cleaned
     if not points:
         return None
     if len(points) == 1:
         return f"{points[0][key]:.6f}"
     t_var = str(time_expr or "t")
-    expr = f"{points[-1][key]:.6f}"
-    for index in range(len(points) - 2, -1, -1):
+    parts: list[str] = []
+    first = points[0]
+    if float(first["t"]) > 0:
+        parts.append(f"(lt({t_var},{float(first['t']):.6f})*{float(first[key]):.6f})")
+    for index in range(0, len(points) - 1):
         current = points[index]
         nxt = points[index + 1]
         t0 = float(current["t"])
@@ -590,11 +606,10 @@ def _piecewise_linear_ratio_expr(
             segment_expr = f"{v0:.6f}"
         else:
             segment_expr = f"({v0:.6f}+({v1 - v0:.6f})*({t_var}-{t0:.6f})/{t1 - t0:.6f})"
-        expr = f"if(lt({t_var},{t1:.6f}),{segment_expr},{expr})"
-    first = points[0]
-    if float(first["t"]) > 0:
-        expr = f"if(lt({t_var},{float(first['t']):.6f}),{float(first[key]):.6f},{expr})"
-    return expr
+        parts.append(f"(gte({t_var},{t0:.6f})*lt({t_var},{t1:.6f})*{segment_expr})")
+    last = points[-1]
+    parts.append(f"(gte({t_var},{float(last['t']):.6f})*{float(last[key]):.6f})")
+    return "+".join(parts)
 
 
 def _sanitize_text_for_overlay(text: str, max_len: int = 160) -> str:

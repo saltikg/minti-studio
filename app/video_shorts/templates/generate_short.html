@@ -1962,13 +1962,15 @@
   .generate-v2-design-dialog {
     position: absolute;
     left: 12px;
-    right: 12px;
+    right: auto;
     bottom: 12px;
     z-index: 20;
     display: flex;
     align-items: center;
     justify-content: space-between;
     gap: 12px;
+    width: min(460px, calc(100% - 24px));
+    min-width: min(360px, calc(100% - 24px));
     padding: 12px;
     border: 1px solid rgba(45, 212, 191, 0.22);
     border-radius: 14px;
@@ -5938,11 +5940,29 @@
   }
   .free-tool-gate-actions {
     display: flex;
-    flex-wrap: wrap;
+    flex-wrap: nowrap;
+    align-items: center;
+    justify-content: flex-end;
     gap: 10px;
   }
   .free-tool-gate-actions .btn {
     min-height: 38px;
+  }
+  .free-tool-gate-actions #free-tool-gate-close {
+    margin-left: auto;
+    padding-left: 0;
+    padding-right: 0;
+    white-space: nowrap;
+  }
+  @media (max-width: 420px) {
+    .free-tool-gate-actions {
+      gap: 8px;
+    }
+    .free-tool-gate-actions .btn {
+      font-size: 0.82rem;
+      padding-left: 10px;
+      padding-right: 10px;
+    }
   }
 </style>
 
@@ -6274,9 +6294,9 @@
                   data-youtube-connected="{{ '1' if youtube_connected else '0' }}"
                   data-instagram-connected="{{ '1' if instagram_connected else '0' }}"
                   data-facebook-connected="{{ '1' if facebook_connected else '0' }}"
-                  {% if not (youtube_connected or instagram_connected or facebook_connected) %}
+                  {% if not guest_mode and not (youtube_connected or instagram_connected or facebook_connected) %}
                     disabled title="Connect a publishing platform first"
-                  {% elif v2_schedule_all_ns.count == 0 %}
+                  {% elif not guest_mode and v2_schedule_all_ns.count == 0 %}
                     disabled title="No created clips to schedule yet — use Create clips first."
                   {% endif %}>
                   <i class="bi bi-calendar2-check" aria-hidden="true"></i>
@@ -6287,7 +6307,7 @@
                   form="step2-form"
                   class="btn btn-sm generate-v2-tab-action generate-v2-tile"
                   id="ai-generate-btn"
-                  {% if not has_transcript or plan_generation_block_reason == 'cap' %}disabled{% endif %}>
+                  {% if not guest_mode and (not has_transcript or plan_generation_block_reason == 'cap') %}disabled{% endif %}>
                   <span class="spinner-border spinner-border-sm d-none" role="status" aria-hidden="true"></span>
                   <i class="bi bi-stars" aria-hidden="true"></i>
                   <span class="btn-label">AI Suggest</span>
@@ -7245,13 +7265,13 @@
                                 data-facebook-publish-at="{{ row.facebook_publish_at or '' }}"
                                 data-original-layout="{{ '1' if row.is_original_layout else '' }}"
                                 data-button-label="{% if row.publish_status == 'scheduled' %}Update schedule{% elif row.publish_status == 'uploaded' %}Update upload{% else %}Schedule & publish{% endif %}"
-                                title="{% if not (youtube_connected or instagram_connected or facebook_connected) %}No publishing platform connected{% else %}Schedule{% endif %}"
+                                title="{% if not guest_mode and not (youtube_connected or instagram_connected or facebook_connected) %}No publishing platform connected{% else %}Schedule{% endif %}"
                                 aria-label="Schedule"
-                                {% if not (youtube_connected or instagram_connected or facebook_connected) %}disabled{% endif %}>
+                                {% if not guest_mode and not (youtube_connected or instagram_connected or facebook_connected) %}disabled{% endif %}>
                                 <i class="bi bi-youtube"></i>
                                 Schedule
                               </button>
-                              {% if not (youtube_connected or instagram_connected or facebook_connected) %}
+                              {% if not guest_mode and not (youtube_connected or instagram_connected or facebook_connected) %}
                                 <div class="small text-warning mt-2">
                                   Connect a publishing platform in
                                   <a class="text-decoration-none" href="{{ url_for('video_shorts_bp.social_connect') }}">Connections</a>
@@ -14644,6 +14664,18 @@ const formatRenderingBackgroundMessage = () => {
   return "Taking longer than usual — we'll keep checking.";
 };
 
+const isGuestGenerateMode = () => Boolean(document.querySelector("#clip-workbench-shell[data-guest-mode='1']"));
+
+const isGuestGatePayload = (payload) => {
+  return Boolean(payload && typeof payload === "object" && payload.gate === "signup");
+};
+
+const formatClipQueuePartialMessage = (createdCount, failedCount = 1) => {
+  const createdLabel = `${createdCount} ${createdCount === 1 ? "clip" : "clips"}`;
+  const failedLabel = `${failedCount} ${failedCount === 1 ? "couldn't" : "couldn't"} be queued`;
+  return `Created ${createdLabel}; ${failedLabel}.`;
+};
+
 const renderClipJobProgressState = (card, status, queuePosition, { mode = "" } = {}) => {
   const normalizedStatus = String(status || "").trim().toLowerCase();
   const ahead = Number(queuePosition);
@@ -14796,6 +14828,9 @@ const showClipFailureMessage = (card, message, { html = false } = {}) => {
 };
 
 const handleClipJobFailurePayload = (planIndex, payload = null) => {
+  if (isGuestGatePayload(payload)) {
+    return;
+  }
   stopClipJobPolling(planIndex, { clearStored: true });
   setGenerateV2RenderOverlay(planIndex, { active: false, failed: true });
   setRegenerateFeedback(planIndex, "", false);
@@ -15280,6 +15315,10 @@ const enqueueScoreClipTarget = async (target) => {
   } catch (error) {
     payload = {};
   }
+  if (response.status === 403 && isGuestGatePayload(payload)) {
+    window.handleGuestGatePayload?.(payload);
+    return { success: false, gated: true, payload };
+  }
   if (response.status === 403 && isExportLimitPayload(payload)) {
     handleClipJobFailurePayload(planIndex, payload);
     return { success: false, limitReached: true, payload };
@@ -15374,14 +15413,26 @@ const runScoreThresholdBatchCreate = async () => {
         continue;
       }
       if (result.limitReached) {
-        setScoreBatchFeedback(`Created ${createdCount} clips; export limit reached — upgrade to continue.`, "text-warning");
+        if (!isGuestGenerateMode()) {
+          setScoreBatchFeedback(`${formatClipQueuePartialMessage(createdCount, 1)} Export limit reached — upgrade to continue.`, "text-warning");
+        } else {
+          setScoreBatchFeedback("", "text-warning");
+        }
         break;
       }
-      setScoreBatchFeedback(`Created ${createdCount} clips; one clip could not be queued.`, "text-warning");
+      if (result.gated) {
+        if (!isGuestGenerateMode()) {
+          setScoreBatchFeedback(formatClipQueuePartialMessage(createdCount, 1), "text-warning");
+        } else {
+          setScoreBatchFeedback("", "text-warning");
+        }
+        break;
+      }
+      setScoreBatchFeedback(formatClipQueuePartialMessage(createdCount, 1), "text-warning");
       break;
     } catch (error) {
       handleClipJobFailure(target.planIndex);
-      setScoreBatchFeedback(`Created ${createdCount} clips; one clip could not be queued.`, "text-warning");
+      setScoreBatchFeedback(formatClipQueuePartialMessage(createdCount, 1), "text-warning");
       break;
     }
   }

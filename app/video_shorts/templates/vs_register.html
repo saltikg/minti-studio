@@ -13,6 +13,19 @@
         </div>
       </div>
       <h5 class="card-title text-center mb-3">Create your account</h5>
+      {% set free_tool_action_copy = {
+        'new_video': 'Free tool includes 1 video. Create a free account to add more.',
+        'download': 'Create a free account to download your Short.',
+        'schedule': 'Create a free account to schedule your Shorts.',
+        'schedule_all': 'Create a free account to schedule your Shorts.',
+        'ai_suggest': 'Create a free account to get more AI suggestions.',
+        'create_clip': 'Create a free account to create more Shorts.',
+        'regenerate': 'Create a free account to create more Shorts.',
+        'update_clips': 'Create a free account to create more Shorts.'
+      } %}
+      {% if auth_action and free_tool_action_copy.get(auth_action) %}
+        <div class="alert alert-info py-2 small mb-3">{{ free_tool_action_copy.get(auth_action) }}</div>
+      {% endif %}
       {% if signups_enabled %}
         <form method="post">
           {% if auth_intent %}
