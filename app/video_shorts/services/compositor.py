@@ -36,6 +36,7 @@ from app.video_shorts.config import (
 )
 
 from app.video_shorts.services.media_utils import (
+    _normalize_source_cache_container,
     _resolve_ffmpeg,
     run_media_subprocess,
     scale_media_timeout,
@@ -285,6 +286,7 @@ def _trim_source_to_keep_ranges(
         return max(0.0, (ranges[0]["end"] - ranges[0]["start"]) if ranges else 0.0)
     if not src_path.exists():
         raise FileNotFoundError(f"Source video not found: {src_path}")
+    src_path = _normalize_source_cache_container(src_path)
     resolved_ffmpeg = _resolve_ffmpeg()
     has_audio = _has_audio_stream(src_path)
     source_fps = _probe_video_frame_rate(src_path) or 30.0
@@ -297,36 +299,34 @@ def _trim_source_to_keep_ranges(
             keep_ranges[index]["end"] = item["end"]
     first_start = float(ranges[0].get("start") or 0.0)
     seek_offset = max(0.0, first_start - 2.0)
-    preroll_start = max(0.0, first_start - seek_offset)
     cmd = [resolved_ffmpeg, "-y", "-stats_period", "1"]
     if seek_offset > 0:
-        cmd.extend(["-ss", f"{seek_offset:.6f}"])
+        cmd.extend(["-ss", f"{seek_offset:.6f}", "-copyts"])
     cmd.extend(["-i", str(src_path)])
     select_terms: list[str] = []
     gap_terms: list[str] = []
     total_duration = 0.0
-    previous_end = 0.0
+    previous_end: Optional[float] = None
     for item in ranges:
         start = float(item["start"])
         end = float(item["end"])
-        local_start = max(0.0, start - first_start)
-        local_end = max(local_start + 0.001, end - first_start)
-        if select_terms:
-            gap = max(0.0, local_start - previous_end)
+        if previous_end is not None:
+            gap = max(0.0, start - previous_end)
             if gap > 0:
-                gap_terms.append(f"gte(T\\,{local_start:.6f})*{gap:.6f}")
-        duration = max(0.001, local_end - local_start)
+                gap_terms.append(f"gte(T\\,{start:.6f})*{gap:.6f}")
+        duration = max(0.001, end - start)
         total_duration += duration
-        select_terms.append(f"(gte(t\\,{local_start:.6f})*lt(t\\,{local_end:.6f}))")
-        previous_end = local_end
+        select_terms.append(f"(gte(t\\,{start:.6f})*lt(t\\,{end:.6f}))")
+        previous_end = end
     select_expr = "+".join(select_terms)
     gap_expr = "+".join(gap_terms) if gap_terms else "0"
+    origin_expr = f"{first_start:.6f}+({gap_expr})"
     filter_parts = [
-        f"[0:v]trim=start={preroll_start:.6f},setpts=PTS-STARTPTS,settb=AVTB,select='{select_expr}',setpts='PTS-STARTPTS-({gap_expr})/TB',fps=fps={source_fps:.6f}:start_time=0,settb=AVTB[v]",
+        f"[0:v]settb=AVTB,select='{select_expr}',setpts='PTS-({origin_expr})/TB',fps=fps={source_fps:.6f}:start_time=0,settb=AVTB[v]",
     ]
     if has_audio:
         filter_parts.append(
-            f"[0:a]atrim=start={preroll_start:.6f},asetpts=PTS-STARTPTS,asettb=AVTB,asetnsamples=n=480,aselect='{select_expr}',asetpts='PTS-STARTPTS-({gap_expr})/TB',asettb=AVTB,aresample=async=1:first_pts=0[a]"
+            f"[0:a]asettb=AVTB,asetnsamples=n=480,aselect='{select_expr}',asetpts='PTS-({origin_expr})/TB',asettb=AVTB,aresample=async=1:first_pts=0[a]"
         )
     cmd.extend(["-filter_complex", ";".join(filter_parts), "-map", "[v]"])
     if has_audio:
@@ -336,7 +336,7 @@ def _trim_source_to_keep_ranges(
     cmd.extend(["-c:v", "libx264", "-preset", "ultrafast", "-crf", "16"])
     if has_audio:
         cmd.extend(["-c:a", "aac"])
-    cmd.extend(["-movflags", "+faststart", str(out_path)])
+    cmd.extend(["-avoid_negative_ts", "make_zero", "-movflags", "+faststart", str(out_path)])
     current_app.logger.info("Multi-range trim ffmpeg command: %s", " ".join(cmd))
     load_start = os.getloadavg() if hasattr(os, "getloadavg") else None
     started = time.monotonic()

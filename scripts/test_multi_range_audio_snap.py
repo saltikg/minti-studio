@@ -199,6 +199,50 @@ def _build_long_gop_flash_beep_source(tmp: Path) -> Path:
     return source_path
 
 
+def _build_long_gop_mpegts_flash_beep_source(tmp: Path) -> Path:
+    ffmpeg = compositor._resolve_ffmpeg()
+    audio_path = tmp / "long_gop_ts_beeps.wav"
+    source_path = tmp / "long_gop_ts_labeled_mp4.mp4"
+    _write_beep_track(audio_path, 32.0)
+    video_filter = (
+        "color=c=black:s=160x90:r=25:d=32,"
+        "drawbox=x=0:y=0:w=iw:h=ih:color=white:t=fill:enable='lt(mod(t,1),0.04)'"
+    )
+    _run([
+        ffmpeg,
+        "-y",
+        "-hide_banner",
+        "-loglevel",
+        "error",
+        "-f",
+        "lavfi",
+        "-i",
+        video_filter,
+        "-i",
+        str(audio_path),
+        "-c:v",
+        "libx264",
+        "-preset",
+        "ultrafast",
+        "-crf",
+        "18",
+        "-g",
+        "250",
+        "-keyint_min",
+        "250",
+        "-sc_threshold",
+        "0",
+        "-pix_fmt",
+        "yuv420p",
+        "-c:a",
+        "aac",
+        "-f",
+        "mpegts",
+        str(source_path),
+    ])
+    return source_path
+
+
 def _build_late_source(tmp: Path) -> Path:
     ffmpeg = compositor._resolve_ffmpeg()
     source_path = tmp / "late_source.mp4"
@@ -254,6 +298,67 @@ def _trim_source_to_keep_ranges_old_select_graph(src_path: Path, keep_ranges: li
         "[a]",
         "-t",
         f"{total_duration:.6f}",
+        "-c:v",
+        "libx264",
+        "-preset",
+        "ultrafast",
+        "-crf",
+        "16",
+        "-c:a",
+        "aac",
+        "-movflags",
+        "+faststart",
+        str(out_path),
+    ])
+    _run(cmd)
+    return total_duration
+
+
+def _trim_source_to_keep_ranges_preroll_graph(src_path: Path, keep_ranges: list[dict[str, float]], out_path: Path) -> float:
+    ffmpeg = compositor._resolve_ffmpeg()
+    ranges = compositor._normalize_keep_ranges_for_trim(keep_ranges)
+    first_start = float(ranges[0]["start"])
+    seek_offset = max(0.0, first_start - 2.0)
+    preroll_start = first_start - seek_offset
+    select_terms: list[str] = []
+    gap_terms: list[str] = []
+    previous_end = 0.0
+    total_duration = 0.0
+    for item in ranges:
+        local_start = max(0.0, float(item["start"]) - first_start)
+        local_end = max(local_start + 0.001, float(item["end"]) - first_start)
+        if select_terms:
+            gap = max(0.0, local_start - previous_end)
+            if gap > 0:
+                gap_terms.append(f"gte(T\\,{local_start:.6f})*{gap:.6f}")
+        total_duration += max(0.001, local_end - local_start)
+        select_terms.append(f"(gte(t\\,{local_start:.6f})*lt(t\\,{local_end:.6f}))")
+        previous_end = local_end
+    select_expr = "+".join(select_terms)
+    gap_expr = "+".join(gap_terms) if gap_terms else "0"
+    cmd = [ffmpeg, "-y", "-hide_banner", "-loglevel", "error"]
+    if seek_offset > 0:
+        cmd.extend(["-ss", f"{seek_offset:.6f}"])
+    cmd.extend([
+        "-i",
+        str(src_path),
+        "-filter_complex",
+        (
+            f"[0:v]trim=start={preroll_start:.6f},setpts=PTS-STARTPTS,settb=AVTB,"
+            f"select='{select_expr}',setpts='PTS-STARTPTS-({gap_expr})/TB',fps=fps=25:start_time=0,settb=AVTB[v];"
+            f"[0:a]atrim=start={preroll_start:.6f},asetpts=PTS-STARTPTS,asettb=AVTB,asetnsamples=n=480,"
+            f"aselect='{select_expr}',asetpts='PTS-STARTPTS-({gap_expr})/TB',asettb=AVTB,aresample=async=1:first_pts=0[a]"
+        ),
+        "-map",
+        "[v]",
+        "-map",
+        "[a]",
+        "-t",
+        f"{total_duration:.6f}",
+        "-r",
+        "25",
+        "-vsync",
+        "cfr",
         "-c:v",
         "libx264",
         "-preset",
@@ -518,6 +623,41 @@ def _check_long_gop_mid_seek_av_sync(tmp: Path) -> None:
     )
 
 
+def _check_mpegts_mid_seek_av_sync(tmp: Path) -> None:
+    source = _build_long_gop_mpegts_flash_beep_source(tmp)
+    ranges = [
+        {"start": 13.32, "end": 15.46},
+        {"start": 17.24, "end": 19.51},
+        {"start": 22.18, "end": 24.62},
+    ]
+    preroll_output = tmp / "mpegts_preroll_graph.mp4"
+    _trim_source_to_keep_ranges_preroll_graph(source, ranges, preroll_output)
+    preroll_flash_times = _detect_flash_times(preroll_output)
+    preroll_beep_times = _detect_beep_times(preroll_output)
+    preroll_pair_count = min(len(preroll_flash_times), len(preroll_beep_times))
+    preroll_max_delta = max(
+        (abs(preroll_flash_times[index] - preroll_beep_times[index]) for index in range(preroll_pair_count)),
+        default=999.0,
+    )
+    _check(
+        "mpegts_preroll_graph_reproduces_offset",
+        preroll_pair_count >= 3 and preroll_max_delta > 0.04,
+        f"flashes={preroll_flash_times} beeps={preroll_beep_times} max_delta={preroll_max_delta:.4f}",
+    )
+
+    fixed_output = tmp / "mpegts_fixed_graph.mp4"
+    compositor._trim_source_to_keep_ranges(source, ranges, fixed_output)
+    flash_times = _detect_flash_times(fixed_output)
+    beep_times = _detect_beep_times(fixed_output)
+    pair_count = min(len(flash_times), len(beep_times))
+    max_delta = max((abs(flash_times[index] - beep_times[index]) for index in range(pair_count)), default=999.0)
+    _check(
+        "mpegts_mid_seek_multi_range_sync",
+        pair_count >= 3 and len(flash_times) == len(beep_times) and max_delta <= 0.04,
+        f"flashes={flash_times} beeps={beep_times} max_delta={max_delta:.4f}",
+    )
+
+
 def _check_late_multi_range_seek(tmp: Path) -> None:
     source = _build_late_source(tmp)
     output = tmp / "late_trimmed.mp4"
@@ -562,6 +702,7 @@ def main() -> None:
         )
         _check_multi_range_av_sync(tmp)
         _check_long_gop_mid_seek_av_sync(tmp)
+        _check_mpegts_mid_seek_av_sync(tmp)
         _check_multi_range_full_compose_av_sync(tmp)
         _check_multi_range_full_compose_av_sync(tmp, vfr=True)
         _check_late_multi_range_seek(tmp)

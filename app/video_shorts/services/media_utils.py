@@ -292,6 +292,112 @@ def _source_cache_identity(video_id: str, key: str, size: int, etag: str) -> Pat
     return root / f"{clean_video_id}.{int(size)}.{clean_etag}{suffix}"
 
 
+def _source_cache_normalized_path(path: Path) -> Path:
+    return path.with_name(f"{path.stem}.normalized.mp4")
+
+
+def _probe_container_format(path: Path) -> str:
+    try:
+        result = run_media_subprocess(
+            [
+                _resolve_ffprobe(),
+                "-v",
+                "error",
+                "-show_entries",
+                "format=format_name",
+                "-of",
+                "default=noprint_wrappers=1:nokey=1",
+                str(path),
+            ],
+            operation="source_cache_probe_format",
+            context=f"path={path.name}",
+            check=True,
+            timeout=FFMPEG_SHORT_TIMEOUT,
+            capture_output=True,
+            text=True,
+        )
+        return str(result.stdout or "").strip().lower()
+    except Exception:
+        logger.warning("source_cache format probe failed path=%s", path, exc_info=True)
+        return ""
+
+
+def _is_mp4_container(format_name: str) -> bool:
+    formats = {item.strip().lower() for item in str(format_name or "").split(",") if item.strip()}
+    return bool(formats & {"mov", "mp4", "m4a", "3gp", "3g2", "mj2"})
+
+
+def _normalize_source_cache_container(path: Path) -> Path:
+    """Return an MP4-remuxed cache file when the downloaded source is TS/non-MP4."""
+    format_name = _probe_container_format(path)
+    if not format_name or _is_mp4_container(format_name):
+        return path
+    normalized = _source_cache_normalized_path(path)
+    if normalized.exists() and normalized.is_file() and normalized.stat().st_size > 0:
+        os.utime(normalized, None)
+        logger.info(
+            "source_cache normalized HIT path=%s normalized=%s format=%s",
+            path.name,
+            normalized.name,
+            format_name,
+        )
+        return normalized
+    part_path = normalized.with_name(f"{normalized.name}.part")
+    try:
+        part_path.unlink(missing_ok=True)
+    except Exception:
+        pass
+    logger.info(
+        "source_cache normalizing container path=%s normalized=%s format=%s",
+        path.name,
+        normalized.name,
+        format_name,
+    )
+    try:
+        run_media_subprocess(
+            [
+                _resolve_ffmpeg(),
+                "-y",
+                "-hide_banner",
+                "-loglevel",
+                "error",
+                "-i",
+                str(path),
+                "-map",
+                "0",
+                "-c",
+                "copy",
+                "-movflags",
+                "+faststart",
+                "-f",
+                "mp4",
+                str(part_path),
+            ],
+            operation="source_cache_remux_mp4",
+            context=f"path={path.name} format={format_name}",
+            output_paths=[part_path],
+            check=True,
+            timeout=scale_media_timeout(SOURCE_FASTSTART_TIMEOUT_SECONDS * 4),
+            capture_output=True,
+            text=True,
+        )
+        part_path.replace(normalized)
+        os.utime(normalized, None)
+        return normalized
+    except Exception:
+        try:
+            part_path.unlink(missing_ok=True)
+        except Exception:
+            pass
+        logger.warning(
+            "source_cache normalization failed; using original path=%s format=%s",
+            path.name,
+            format_name,
+            exc_info=True,
+        )
+        return path
+
+
 def _source_cache_candidates(video_id: str) -> list[Path]:
     root, _, _ = _source_cache_dirs()
     clean_video_id = _safe_cache_token(video_id)
@@ -466,9 +572,10 @@ def resolve_s3_source_video_cached(
                     logger.warning("source_cache MISS video_id=%s bytes=0 key=%s reason=head_failed", clean_video_id, clean_key)
                 return None
             target = _source_cache_identity(clean_video_id, clean_key, size, etag)
+            normalized_target = _source_cache_normalized_path(target)
             active = _active_source_cache_paths()
             for stale in _source_cache_candidates(clean_video_id):
-                if stale.resolve() != target.resolve():
+                if stale.resolve() not in {target.resolve(), normalized_target.resolve()}:
                     if stale.resolve() in active:
                         continue
                     try:
@@ -478,11 +585,18 @@ def resolve_s3_source_video_cached(
             if target.exists() and target.is_file():
                 try:
                     if int(target.stat().st_size) == int(size):
-                        os.utime(target, None)
-                        _acquire_source_cache_lease(target)
-                        logger.info("source_cache HIT video_id=%s bytes=%s key=%s", clean_video_id, size, clean_key)
+                        resolved_target = _normalize_source_cache_container(target)
+                        os.utime(resolved_target, None)
+                        _acquire_source_cache_lease(resolved_target)
+                        logger.info(
+                            "source_cache HIT video_id=%s bytes=%s key=%s resolved=%s",
+                            clean_video_id,
+                            size,
+                            clean_key,
+                            resolved_target.name,
+                        )
                         _evict_source_cache(keep=target)
-                        return target
+                        return resolved_target
                 except Exception:
                     pass
                 try:
@@ -511,10 +625,17 @@ def resolve_s3_source_video_cached(
                 return None
             part_path.replace(target)
             os.utime(target, None)
-            _acquire_source_cache_lease(target)
-            logger.info("source_cache MISS video_id=%s bytes=%s key=%s", clean_video_id, size, clean_key)
+            resolved_target = _normalize_source_cache_container(target)
+            _acquire_source_cache_lease(resolved_target)
+            logger.info(
+                "source_cache MISS video_id=%s bytes=%s key=%s resolved=%s",
+                clean_video_id,
+                size,
+                clean_key,
+                resolved_target.name,
+            )
             _evict_source_cache(keep=target)
-            return target
+            return resolved_target
         finally:
             fcntl.flock(lock_handle.fileno(), fcntl.LOCK_UN)
 
