@@ -1759,6 +1759,10 @@
   }
   .generate-v2-workbench {
     align-items: stretch;
+    width: 100%;
+    max-width: 100%;
+    margin-left: 0;
+    margin-right: 0;
   }
   #clip-workbench-shell[data-generate-v2="1"] {
     --generate-v2-workbench-height: auto;
@@ -4399,6 +4403,36 @@
   }
   .cropper-surfaces.is-original-layout {
     grid-template-columns: minmax(0, 1fr);
+  }
+  .cropper-surfaces.is-original-layout .cropper-surface {
+    min-height: 0;
+    overflow: hidden;
+  }
+  .cropper-surfaces.is-original-layout .cropper-surface-image-wrap {
+    width: min(100%, calc(60vh * var(--original-source-aspect-number, 1.777777)));
+    max-width: 100%;
+    aspect-ratio: var(--original-source-aspect, 16 / 9);
+    max-height: 60vh;
+    margin-inline: auto;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    overflow: hidden;
+  }
+  .cropper-surfaces.is-original-layout .cropper-surface-image-wrap > img {
+    width: 100%;
+    height: 100%;
+    object-fit: contain;
+  }
+  .cropper-surfaces.is-original-layout .cropper-container {
+    width: 100% !important;
+    height: 100% !important;
+  }
+  .cropper-surfaces.is-original-layout .cropper-canvas,
+  .cropper-surfaces.is-original-layout .cropper-wrap-box,
+  .cropper-surfaces.is-original-layout .cropper-drag-box {
+    max-width: 100%;
+    max-height: 100%;
   }
   .crop-original-layout-note {
     display: none;
@@ -18344,6 +18378,11 @@ document.addEventListener("DOMContentLoaded", () => {
   const updateSplitUiState = () => {
     const effectiveSplit = getEffectiveSplitEnabled();
     const originalLayout = isOriginalCropAspect();
+    if (cropperSurfaces && naturalSize.width && naturalSize.height) {
+      const sourceAspect = naturalSize.width / Math.max(1, naturalSize.height);
+      cropperSurfaces.style.setProperty("--original-source-aspect", `${naturalSize.width} / ${naturalSize.height}`);
+      cropperSurfaces.style.setProperty("--original-source-aspect-number", String(sourceAspect));
+    }
     reframeSection?.classList.toggle("is-original-layout", originalLayout);
     cropperSurfaces?.classList.toggle("is-original-layout", originalLayout);
     cropperSurfaces?.classList.toggle("is-split", effectiveSplit);
