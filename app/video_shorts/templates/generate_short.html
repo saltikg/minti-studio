@@ -18498,14 +18498,20 @@ document.addEventListener("DOMContentLoaded", () => {
     "video_overlay_offset",
   ];
 
-  const appendShortDesignFields = (params, names = shortDesignFieldNames) => {
+  const appendShortDesignFields = (params, names = shortDesignFieldNames, options = {}) => {
+    const includeCleanOverlayFields = !!options.includeCleanOverlayFields;
     names.forEach((name) => {
+      if (overlayManagedFieldNames.includes(name) && !includeCleanOverlayFields && !dirtyOverlayFields.has(name)) {
+        return;
+      }
       const field = getEditorField(name);
       if (field) {
         params.set(name, getPersistedFieldValue(field));
       }
     });
-    params.set("subtitle_margin_custom", (initialSubtitleMarginCustom || dirtyOverlayFields.has("sub_margin")) ? "1" : "0");
+    if ((includeCleanOverlayFields && names.includes("sub_margin")) || dirtyOverlayFields.has("sub_margin")) {
+      params.set("subtitle_margin_custom", (initialSubtitleMarginCustom || dirtyOverlayFields.has("sub_margin")) ? "1" : "0");
+    }
   };
 
   const collectShortEditorDefaultParams = () => {
@@ -18513,6 +18519,7 @@ document.addEventListener("DOMContentLoaded", () => {
     appendShortDesignFields(
       params,
       shortDesignFieldNames.filter((name) => name !== "video_date_text" && name !== "video_date_top"),
+      { includeCleanOverlayFields: true },
     );
     const subscribeToggle = getEditorField("enable_subscribe_overlay");
     if (subscribeToggle) {

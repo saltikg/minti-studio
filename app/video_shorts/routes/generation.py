@@ -26693,7 +26693,7 @@ def save_short_settings(video_pk):
             "subtitle_font_key": "sub_font",
             "subtitle_font_size": "sub_font_size",
             "subtitle_margin": "sub_margin",
-            "subtitle_margin_custom": "subtitle_margin_custom",
+            "subtitle_margin_custom": "sub_margin",
             "subtitle_style": "subtitle_style",
             "subtitle_preset": "subtitle_preset",
             "title_margin": "title_margin",
@@ -26767,10 +26767,12 @@ def save_short_settings(video_pk):
     session["vs_title_font_size"] = title_font_size
     session["vs_sub_font"] = sub_font_key
     session["vs_sub_font_size"] = subtitle_font_size
-    session["vs_sub_margin"] = subtitle_margin
+    if "sub_margin" in form_fields:
+        session["vs_sub_margin"] = subtitle_margin
     session["vs_subtitle_style"] = subtitle_style
     session["vs_subtitle_preset"] = subtitle_preset
-    session["vs_title_margin"] = title_margin
+    if "title_margin" in form_fields:
+        session["vs_title_margin"] = title_margin
     session["vs_title_line_spacing"] = title_line_spacing
     session["vs_title_bg_color"] = title_bg_color
     session["vs_title_bg_alpha"] = title_bg_alpha
