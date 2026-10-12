@@ -1580,6 +1580,7 @@ def _guard_video_shorts():
         "video_shorts_bp.contact_page",
         "video_shorts_bp.free_tool_youtube_to_shorts",
         "video_shorts_bp.free_tool_youtube_to_shorts_tr",
+        "video_shorts_bp.quick_short_youtube_metadata",
         "video_shorts_bp.static",
         "video_shorts_bp.caption_tasks",
         "video_shorts_bp.caption_result",

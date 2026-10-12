@@ -3,15 +3,18 @@ import subprocess
 import tempfile
 import uuid
 import math
+import os
 from hashlib import sha256
 from datetime import datetime
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 
-from flask import current_app, flash, g, jsonify, redirect, render_template, request, url_for
+from flask import current_app, flash, g, jsonify, redirect, render_template, request, session, url_for
 
 from app.video_shorts import video_shorts_bp
 from app.video_shorts.config import FFPROBE_TIMEOUT, VIDEOS_DIR
+from app.video_shorts.routes.auth import _client_ip
+from app.video_shorts.services.auth_protection import RateLimitRule, check_rate_limits
 from app.video_shorts.services.brands import current_brand_id, ensure_brand_schema
 from app.video_shorts.services.db import (
     _ensure_video_crop_schema,
@@ -76,6 +79,7 @@ MULTIPART_UPLOAD_MIN_PART_SIZE_BYTES = 5 * 1024 * 1024
 MULTIPART_UPLOAD_URL_TTL_SECONDS = 6 * 60 * 60
 MULTIPART_UPLOAD_MAX_PARTS = 10_000
 MAX_UPLOAD_BYTES_PER_FILE = 3 * 1024 * 1024 * 1024
+FREE_TOOL_METADATA_RATE_LIMITS = [RateLimitRule(limit=30, window_seconds=3600)]
 
 
 def _normalize_timestamp(value):
@@ -894,6 +898,20 @@ def _require_quick_user():
     return current_user, None
 
 
+def _free_tool_metadata_preview_visible() -> bool:
+    enabled = str(os.getenv("FREE_TOOL_ENABLED") or "").strip().lower() in {"1", "true", "yes", "on"}
+    return bool(enabled or session.get("free_tool_preview"))
+
+
+def _free_tool_metadata_rate_limit_allowed() -> tuple[bool, int]:
+    allowed, _retry_after = check_rate_limits(
+        "free-tool-youtube-metadata",
+        [_client_ip()],
+        FREE_TOOL_METADATA_RATE_LIMITS,
+    )
+    return bool(allowed), int(_retry_after or 0)
+
+
 def _ensure_quick_schema() -> None:
     schema_conn = get_db()
     ensure_brand_schema(schema_conn)
@@ -1084,7 +1102,13 @@ def quick_short_session_api():
 def quick_short_youtube_metadata():
     current_user, redirect_response = _require_quick_user()
     if redirect_response:
-        return jsonify({"error": "unauthorized"}), 401
+        if not _free_tool_metadata_preview_visible():
+            return jsonify({"error": "unauthorized"}), 401
+        allowed, retry_after = _free_tool_metadata_rate_limit_allowed()
+        if not allowed:
+            response = jsonify({"ok": False, "error": "Too many preview requests. Please try again later."})
+            response.headers["Retry-After"] = str(retry_after)
+            return response, 429
     data = request.get_json(silent=True) if request.is_json else request.form
     video_url = str((data.get("video_url") if data else "") or "").strip()
     video_id = extract_video_id(video_url)
