@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import argparse
+from io import BytesIO
 import json
 import sys
 from pathlib import Path
@@ -56,6 +57,16 @@ def _poster_key_for_entry(entry: dict[str, Any]) -> str:
 def _image_size_from_storage(key: str) -> tuple[int, int] | None:
     if not key:
         return None
+    storage = get_media_storage()
+    client = getattr(storage, "client", None)
+    bucket_name = getattr(storage, "bucket_name", "")
+    if client is not None and bucket_name:
+        try:
+            response = client.get_object(Bucket=bucket_name, Key=key, Range="bytes=0-65535")
+            with Image.open(BytesIO(response["Body"].read())) as img:
+                return int(img.width), int(img.height)
+        except Exception:
+            pass
     for storage_name in ("default", "local"):
         storage = get_media_storage() if storage_name == "default" else get_media_storage("local")
         try:
