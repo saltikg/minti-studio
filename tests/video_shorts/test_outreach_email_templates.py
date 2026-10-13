@@ -139,7 +139,7 @@ def test_followup_en_uses_free_tool_and_generated_count():
     )
 
     assert rendered["subject"] == "Shorts from your other videos?"
-    assert 'Quick follow-up on the 7 Shorts we made from "A useful webinar".' in rendered["text"]
+    assert 'Quick follow-up on the 7 Shorts we made from "A useful webinar". They\'re still here if you want them:' in rendered["text"]
     assert "No sign-up needed to try it" in rendered["text"]
     assert "lid=123" in rendered["text"]
 
@@ -156,5 +156,6 @@ def test_followup_en_single_clip_uses_singular_short():
         free_tool_url="https://mintistudio.com/tools/youtube-to-shorts",
     )
 
-    assert 'Quick follow-up on the Short we made from "A useful webinar".' in rendered["text"]
+    assert 'Quick follow-up on the Short we made from "A useful webinar". It\'s still here if you want it:' in rendered["text"]
     assert "1 Shorts" not in rendered["text"]
+    assert "They're still here" not in rendered["text"]

@@ -95,50 +95,45 @@ def _free_tool_url_for_lead(lead_id: object) -> str:
 
 
 def _generated_count_for_share_link(conn, *, share_link_id: int, lead_id: object) -> int:
+    """Return the same total count shown on the recipient watch page."""
     clean_lead_id = str(lead_id or "").strip()
-    count = 0
-    if clean_lead_id:
-        try:
-            row = conn.execute(
-                """
-                SELECT COUNT(*)
-                FROM shorts_generated_videos gv
-                JOIN youtube_videos yv ON CAST(yv.video_id AS VARCHAR) = CAST(gv.source_video_id AS VARCHAR)
-                JOIN autopilot_leads l
-                  ON CAST(l.id AS VARCHAR) = ?
-                 AND CAST(l.first_video_id AS VARCHAR) = CAST(yv.id AS VARCHAR)
-                WHERE CAST(gv.brand_id AS VARCHAR) = CAST(l.brand_id AS VARCHAR)
-                  AND COALESCE(NULLIF(gv.clip_filename, ''), NULLIF(gv.storage_key, ''), NULLIF(gv.public_url, '')) IS NOT NULL
-                """,
-                [clean_lead_id],
-            ).fetchone()
-            count = int((row or [0])[0] or 0)
-        except Exception:
-            count = 0
-        if count <= 0:
-            try:
-                row = conn.execute(
-                    """
-                    SELECT COUNT(*)
-                    FROM short_share_links
-                    WHERE CAST(autopilot_lead_id AS VARCHAR) = ?
-                      AND COALESCE(archived, FALSE) = FALSE
-                    """,
-                    [clean_lead_id],
-                ).fetchone()
-                count = int((row or [0])[0] or 0)
-            except Exception:
-                count = 0
-    if count <= 0:
-        try:
-            row = conn.execute(
-                "SELECT 1 FROM short_share_links WHERE id = ? LIMIT 1",
-                [share_link_id],
-            ).fetchone()
-            count = 1 if row else 0
-        except Exception:
-            count = 0
-    return max(1, count)
+    row = conn.execute(
+        """
+        SELECT
+          CAST(sl.generated_video_id AS VARCHAR),
+          NULLIF(CAST(sl.autopilot_lead_id AS VARCHAR), ''),
+          CAST(gv.brand_id AS VARCHAR)
+        FROM short_share_links sl
+        LEFT JOIN shorts_generated_videos gv
+          ON CAST(gv.id AS VARCHAR) = CAST(sl.generated_video_id AS VARCHAR)
+        WHERE sl.id = ?
+        LIMIT 1
+        """,
+        [share_link_id],
+    ).fetchone()
+    if not row:
+        return 1
+    generated_video_id = str(row[0] or "").strip()
+    autopilot_lead_id = clean_lead_id or str(row[1] or "").strip()
+    brand_id = str(row[2] or "").strip()
+    if not generated_video_id or not autopilot_lead_id or not brand_id:
+        return 1
+    count_row = conn.execute(
+        """
+        SELECT COUNT(*)
+        FROM shorts_generated_videos gv
+        JOIN autopilot_leads l
+          ON CAST(l.id AS VARCHAR) = ?
+         AND CAST(l.user_id AS VARCHAR) = CAST(gv.user_id AS VARCHAR)
+         AND CAST(l.brand_id AS VARCHAR) = CAST(gv.brand_id AS VARCHAR)
+        WHERE CAST(gv.brand_id AS VARCHAR) = ?
+          AND CAST(gv.id AS VARCHAR) <> ?
+          AND NULLIF(trim(coalesce(gv.clip_filename, '')), '') IS NOT NULL
+        """,
+        [autopilot_lead_id, brand_id, generated_video_id],
+    ).fetchone()
+    additional_count = int((count_row or [0])[0] or 0)
+    return max(1, additional_count + 1)
 
 
 def load_share_link_discovery_signal(conn, autopilot_lead_id: object) -> dict[str, object]:

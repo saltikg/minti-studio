@@ -369,6 +369,7 @@
           <option value="all" {% if selected_engagement == 'all' %}selected{% endif %}>All</option>
           <option value="viewed" {% if selected_engagement == 'viewed' %}selected{% endif %}>Viewed only</option>
           <option value="played" {% if selected_engagement == 'played' %}selected{% endif %}>Played only</option>
+          <option value="free_tool" {% if selected_engagement == 'free_tool' %}selected{% endif %}>Free tool</option>
         </select>
       </div>
       <div>
@@ -440,6 +441,7 @@
               </a>
             </th>
             <th>Recipient</th>
+            <th>Free tool</th>
             <th>Clip</th>
             <th>Trial</th>
             <th>Views</th>
@@ -528,6 +530,18 @@
               <td>
                 <div class="admin-share-links-recipient">{{ link.recipient_name }}</div>
                 <div class="admin-share-links-email">{{ link.recipient_email }}</div>
+              </td>
+              <td class="admin-share-links-meta">
+                {% if link.free_tool_event_name %}
+                  <div class="admin-share-links-feed-detail">
+                    <span class="admin-share-links-feed-strong">{{ link.free_tool_label }}</span>
+                    {% if link.free_tool_event_at_pst %}
+                      <span>{{ link.free_tool_event_at_pst }}</span>
+                    {% endif %}
+                  </div>
+                {% else %}
+                  —
+                {% endif %}
               </td>
               <td class="admin-share-links-title">
                 <div>{{ link.clip_title }}</div>

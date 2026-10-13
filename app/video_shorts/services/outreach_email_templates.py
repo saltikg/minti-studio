@@ -88,7 +88,7 @@ mintistudio.com""",
         subject="Shorts from your other videos?",
         text="""Hi [Name],
 
-Quick follow-up on the [generated_shorts_phrase] we made from "[video_title]". They're still here if you want them: [link]
+Quick follow-up on the [generated_shorts_phrase] we made from "[video_title]". [generated_availability_sentence]: [link]
 
 If you'd rather pick the video yourself, we opened up the same engine as a free tool.
 Paste any of your YouTube links and you'll get an edited, captioned Short in a few minutes. No sign-up needed to try it:
@@ -388,6 +388,14 @@ def _format_followup_generated_shorts_phrase(value: object) -> str:
     return "Short" if count == 1 else f"{count} Shorts"
 
 
+def _format_followup_availability_sentence(value: object) -> str:
+    try:
+        count = int(value or 0)
+    except (TypeError, ValueError):
+        count = 0
+    return "It's still here if you want it" if max(1, count) == 1 else "They're still here if you want them"
+
+
 def _render_followup_en_email(
     *,
     template: OutreachEmailTemplate,
@@ -403,6 +411,7 @@ def _render_followup_en_email(
     text = _normalize_template_spacing(
         template.text.replace("Hi [Name],", greeting_line)
         .replace("[generated_shorts_phrase]", _format_followup_generated_shorts_phrase(generated_count))
+        .replace("[generated_availability_sentence]", _format_followup_availability_sentence(generated_count))
         .replace("[link]", str(share_url or "").strip())
         .replace("[free_tool_url]", str(free_tool_url or "").strip())
         .replace("[video_title]", safe_video_title)

@@ -15762,7 +15762,7 @@ def _load_admin_share_links(
     normalized_archive_filter = (archive_filter or "all").strip().lower()
     normalized_sort_key = (sort_key or "created").strip().lower()
     normalized_sort_dir = (sort_dir or "desc").strip().lower()
-    if normalized_filter not in {"all", "viewed", "played"}:
+    if normalized_filter not in {"all", "viewed", "played", "free_tool"}:
         normalized_filter = "all"
     if normalized_funnel_filter not in {
         "all",
@@ -15812,6 +15812,8 @@ def _load_admin_share_links(
     feed_item_type_expr = _user_event_metadata_text_sql(conn, "item_type")
     feed_card_type_expr = _user_event_metadata_text_sql(conn, "card_type")
     feed_item_index_expr = _user_event_metadata_numeric_sql(conn, "item_index")
+    free_tool_lead_expr = _user_event_metadata_text_sql(conn, "lead_id")
+    free_tool_title_expr = _user_event_metadata_text_sql(conn, "video_title")
     if getattr(conn, "backend_name", "") == "postgres":
         channel_connected_agg_sql = "string_agg(DISTINCT ue.platform, ', ' ORDER BY ue.platform)"
     else:
@@ -16145,6 +16147,26 @@ def _load_admin_share_links(
              AND CAST(gv.brand_id AS VARCHAR) = CAST(l.brand_id AS VARCHAR)
              AND NULLIF(trim(coalesce(gv.clip_filename, '')), '') IS NOT NULL
             GROUP BY sl.id
+        ),
+        free_tool_events AS (
+            SELECT share_link_id, event_name, video_title, created_at
+            FROM (
+              SELECT
+                sl.id AS share_link_id,
+                ue.event_name,
+                {free_tool_title_expr} AS video_title,
+                ue.created_at,
+                ROW_NUMBER() OVER (
+                  PARTITION BY sl.id
+                  ORDER BY ue.created_at DESC, ue.id DESC
+                ) AS rn
+              FROM short_share_links sl
+              JOIN user_events ue
+                ON ue.event_name IN ('free_tool_landing_view', 'free_tool_submit', 'free_tool_claim')
+               AND NULLIF(CAST(sl.autopilot_lead_id AS VARCHAR), '') IS NOT NULL
+               AND {free_tool_lead_expr} = CAST(sl.autopilot_lead_id AS VARCHAR)
+            ) ranked_free_tool_events
+            WHERE rn = 1
         )
         {redeemed_magic_cte_sql}
         {latest_scheduled_outreach_cte_sql}
@@ -16157,6 +16179,8 @@ def _load_admin_share_links(
         having_clauses.append("coalesce(views_count, 0) > 0")
     elif normalized_filter == "played":
         having_clauses.append("coalesce(plays_count, 0) > 0")
+    elif normalized_filter == "free_tool":
+        having_clauses.append("fte.created_at IS NOT NULL")
     summary_having_sql = " AND ".join(having_clauses)
     if normalized_funnel_filter == "sent":
         having_clauses.append(sent_condition_sql)
@@ -16190,6 +16214,8 @@ def _load_admin_share_links(
               ON slc.share_link_id = sr.id
             LEFT JOIN latest_yes_intent lyi
               ON lyi.share_link_id = sr.id
+            LEFT JOIN free_tool_events fte
+              ON fte.share_link_id = sr.id
             WHERE {having_sql}
             """,
             params,
@@ -16216,6 +16242,8 @@ def _load_admin_share_links(
           ON slc.share_link_id = sr.id
         LEFT JOIN latest_yes_intent lyi
           ON lyi.share_link_id = sr.id
+        LEFT JOIN free_tool_events fte
+          ON fte.share_link_id = sr.id
         WHERE {summary_having_sql}
         """,
         params,
@@ -16302,7 +16330,10 @@ def _load_admin_share_links(
           sr.declined_at,
           lyi.yes_intent_at,
           COALESCE(sr.video_loaded_count, 0) AS video_loaded_count,
-          COALESCE(sr.video_error_count, 0) AS video_error_count
+          COALESCE(sr.video_error_count, 0) AS video_error_count,
+          fte.event_name AS free_tool_event_name,
+          fte.video_title AS free_tool_video_title,
+          fte.created_at AS free_tool_event_at
         FROM share_rows sr
         LEFT JOIN latest_share_cta lsc
           ON lsc.share_link_id = sr.id
@@ -16318,6 +16349,8 @@ def _load_admin_share_links(
           ON lso.share_link_id = sr.id
         LEFT JOIN latest_yes_intent lyi
           ON lyi.share_link_id = sr.id
+        LEFT JOIN free_tool_events fte
+          ON fte.share_link_id = sr.id
         {("LEFT JOIN latest_redeemed_magic_link lr ON lr.share_link_id = sr.id" if onboarding_magic_link_columns else "")}
         {("LEFT JOIN redeemed_channel_connections rcc ON rcc.share_link_id = sr.id" if onboarding_magic_link_columns else "")}
         WHERE {having_sql}
@@ -16357,6 +16390,16 @@ def _load_admin_share_links(
         yes_intent_at = row[40]
         video_loaded_count = int(row[41] or 0)
         video_error_count = int(row[42] or 0)
+        free_tool_event_name = str(row[43] or "").strip()
+        free_tool_video_title = str(row[44] or "").strip()
+        free_tool_event_at = row[45]
+        free_tool_label = "—"
+        if free_tool_event_name == "free_tool_claim":
+            free_tool_label = "Signed up"
+        elif free_tool_event_name == "free_tool_submit":
+            free_tool_label = f"Submitted {free_tool_video_title}" if free_tool_video_title else "Submitted"
+        elif free_tool_event_name == "free_tool_landing_view":
+            free_tool_label = "Visited"
         feed_cards_seen = []
         if bool(row[27]):
             feed_cards_seen.append("A")
@@ -16398,6 +16441,10 @@ def _load_admin_share_links(
                 "video_error_count": video_error_count,
                 "video_loaded": video_loaded_count > 0,
                 "video_error": video_error_count > 0,
+                "free_tool_event_name": free_tool_event_name,
+                "free_tool_label": free_tool_label,
+                "free_tool_event_at": free_tool_event_at,
+                "free_tool_event_at_pst": _format_datetime_pst(free_tool_event_at),
                 "viewed": views_count > 0,
                 "played": plays_count > 0,
                 "first_seen": row[14],
