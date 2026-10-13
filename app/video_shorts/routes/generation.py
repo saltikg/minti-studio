@@ -5118,9 +5118,22 @@ def _auto_suggest_render_state_for_video(
 
 @video_shorts_bp.route("/generate/<int:video_pk>/auto-suggest-render-status", methods=["GET"])
 def auto_suggest_render_status(video_pk: int):
-    current_user = getattr(g, "vs_current_user", None)
+    payload, status = build_auto_suggest_render_status_payload(video_pk, getattr(g, "vs_current_user", None))
+    return jsonify(payload), status
+
+
+def _auto_status_plan_index(entry: Dict[str, Any], fallback: int) -> str:
+    for key in ("plan_index", "index", "entry_index"):
+        value = (entry or {}).get(key)
+        if value is not None and str(value).strip() != "":
+            return str(value).strip()
+    return str(fallback)
+
+
+def build_auto_suggest_render_status_payload(video_pk: int, current_user: Optional[Dict[str, Any]] = None) -> tuple[Dict[str, Any], int]:
+    current_user = current_user or getattr(g, "vs_current_user", None)
     if not current_user:
-        return jsonify(success=False, message="Authentication required."), 401
+        return {"success": False, "message": "Authentication required."}, 401
     conn = get_db_readonly()
     try:
         row = _fetch_scoped_video_row(
@@ -5129,7 +5142,7 @@ def auto_suggest_render_status(video_pk: int):
             "id, video_id, transcript_status, download_status, owner_user_id, brand_id",
         )
         if not row:
-            return jsonify(success=False, message="Video not found."), 404
+            return {"success": False, "message": "Video not found."}, 404
         _id, video_id, transcript_status, download_status, owner_user_id, brand_id = row
         state = _auto_suggest_render_state_for_video(
             conn,
@@ -5142,12 +5155,30 @@ def auto_suggest_render_status(video_pk: int):
         conn.close()
     plan_entries = _load_plan_entries(video_id) or []
     clip_count = len(plan_entries)
+    rendered_entries: list[tuple[float, int, str]] = []
     active_render_count = sum(
         1
-        for entry in plan_entries
+        for index, entry in enumerate(plan_entries)
         if str((entry or {}).get("render_job_id") or "").strip()
         or str((entry or {}).get("status") or "").strip().lower() in {"queued", "processing", "rendering"}
     )
+    for index, entry in enumerate(plan_entries):
+        entry = entry or {}
+        filename = str(
+            entry.get("output_filename")
+            or entry.get("clip_filename")
+            or entry.get("video_filename")
+            or ""
+        ).strip()
+        if not filename:
+            continue
+        try:
+            score = float(entry.get("score") or entry.get("ai_score") or 0)
+        except Exception:
+            score = 0.0
+        rendered_entries.append((score, -index, _auto_status_plan_index(entry, index)))
+    rendered_entries.sort(reverse=True)
+    selected_rendered_plan_index = rendered_entries[0][2] if rendered_entries else ""
     transcript_pending = str(transcript_status or "").strip().lower() not in {"done", "ready", "complete", "completed"}
     ingest_pending = str(download_status or "").strip().lower() in {
         "queued",
@@ -5159,19 +5190,21 @@ def auto_suggest_render_status(video_pk: int):
     gated = _owner_is_guest_user(owner_user_id) or _auto_suggest_render_gate_matches(owner_user_id)
     pending = bool(gated and (transcript_pending or ingest_pending) and not clip_count and not state.get("no_strong"))
     active = bool(state.get("active") or pending)
-    return jsonify(
-        success=True,
-        active=active,
-        pending=pending,
-        status=state.get("status") or ("transcript_pending" if pending else ""),
-        no_strong=bool(state.get("no_strong")),
-        skip_reason=state.get("skip_reason") or "",
-        job_id=state.get("job_id") or "",
-        clip_count=clip_count,
-        active_render_count=active_render_count,
-        guest_renders_left=_guest_renders_left_for_user(owner_user_id),
-        should_refresh=bool(active or state.get("no_strong") or clip_count or active_render_count),
-    )
+    return {
+        "success": True,
+        "active": active,
+        "pending": pending,
+        "status": state.get("status") or ("transcript_pending" if pending else ""),
+        "no_strong": bool(state.get("no_strong")),
+        "skip_reason": state.get("skip_reason") or "",
+        "job_id": state.get("job_id") or "",
+        "clip_count": clip_count,
+        "active_render_count": active_render_count,
+        "selected_rendered_plan_index": selected_rendered_plan_index,
+        "render_done": bool(selected_rendered_plan_index),
+        "guest_renders_left": _guest_renders_left_for_user(owner_user_id),
+        "should_refresh": bool(active or state.get("no_strong") or clip_count or active_render_count or selected_rendered_plan_index),
+    }, 200
 
 
 def _preview_source_key_for_video(video_id: str, video_url: str) -> str:

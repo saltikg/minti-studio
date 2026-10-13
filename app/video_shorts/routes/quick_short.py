@@ -1082,6 +1082,82 @@ def _json_error(message: str, status: int = 400, **extra: Any):
     return jsonify(payload), status
 
 
+def build_quick_short_session_status_payload(current_user: Dict[str, Any], session_id: str) -> tuple[Dict[str, Any], int]:
+    _ensure_quick_schema()
+    clean_session_id = str(session_id or "").strip()
+    quick_session = get_session(clean_session_id, user_id=current_user["id"]) if clean_session_id else None
+    return {"ok": True, "session": _build_session_payload(quick_session)}, 200
+
+
+def create_youtube_ingest_session_for_user(
+    *,
+    user_id: str,
+    brand_id: Optional[str],
+    video_url: str,
+    meta: Dict[str, Any],
+    source: str = "quick",
+) -> Dict[str, Any]:
+    video_id = str(meta.get("video_id") or "").strip() or extract_video_id(video_url) or ""
+    if not video_id:
+        raise ValueError("Enter a valid YouTube video URL.")
+    meta = dict(meta or {})
+    meta["video_id"] = video_id
+    _ensure_quick_schema()
+    conn = get_db()
+    try:
+        ensure_brand_schema(conn)
+        video_pk = _upsert_video(conn, meta, None, user_id, brand_id)
+        conn.commit()
+        track_event(user_id, "video_uploaded", video_id=video_id)
+    finally:
+        conn.close()
+    if not video_pk:
+        raise RuntimeError("Video record could not be created.")
+    payload = {"meta": meta}
+    if source:
+        payload["source"] = source
+    quick_session = create_session(
+        user_id=user_id,
+        brand_id=brand_id,
+        source_type="youtube",
+        source_url=video_url,
+        payload=payload,
+    )
+    job_input_hash = sha256(f"quick-youtube:{user_id}:{brand_id}:{video_id}".encode("utf-8")).hexdigest()
+    enqueue_result = enqueue_job(
+        user_id=user_id,
+        job_type=JOB_TYPE_INGEST_YOUTUBE,
+        payload={
+            "quick_session_id": quick_session["id"],
+            "video_pk": int(video_pk),
+            "video_id": video_id,
+            "video_url": video_url,
+            "duration_seconds": meta.get("duration_seconds"),
+            "brand_id": brand_id,
+        },
+        input_hash=job_input_hash,
+        max_attempts=6,
+    )
+    job = enqueue_result.get("job") or {}
+    quick_session = update_session(
+        quick_session["id"],
+        status=STATUS_INGESTING,
+        video_pk=int(video_pk),
+        video_id=video_id,
+        ingest_job_id=job.get("id"),
+        result={"stage": "queued", "message": "Queued for ingest."},
+    )
+    return {
+        "video_pk": int(video_pk),
+        "video_id": video_id,
+        "session": quick_session,
+        "quick_session_id": str(quick_session["id"]),
+        "job": job,
+        "job_id": job.get("id"),
+        "cached": enqueue_result.get("kind") == "cached",
+    }
+
+
 @video_shorts_bp.route("/shorts/quick", methods=["GET"])
 def quick_short():
     return redirect(url_for("video_shorts_bp.my_videos_page"))
@@ -1092,10 +1168,9 @@ def quick_short_session_api():
     current_user, redirect_response = _require_quick_user()
     if redirect_response:
         return jsonify({"error": "unauthorized"}), 401
-    _ensure_quick_schema()
     session_id = (request.args.get("session_id") or "").strip()
-    session = get_session(session_id, user_id=current_user["id"]) if session_id else None
-    return jsonify({"ok": True, "session": _build_session_payload(session)})
+    payload, status = build_quick_short_session_status_payload(current_user, session_id)
+    return jsonify(payload), status
 
 
 @video_shorts_bp.route("/shorts/quick/api/youtube-metadata", methods=["POST"])
@@ -1158,53 +1233,18 @@ def quick_short_ingest_youtube():
     duration = meta.get("duration_seconds")
     if duration is not None and duration > MAX_QUICK_SHORT_SECONDS:
         return _json_error("The YouTube video must be 120 minutes or shorter.")
-    conn = get_db()
-    try:
-        ensure_brand_schema(conn)
-        video_pk = _upsert_video(conn, meta, None, current_user.get("id"), brand_id)
-        conn.commit()
-        track_event(
-            current_user["id"],
-            "video_uploaded",
-            video_id=video_id,
-        )
-    finally:
-        conn.close()
-    if not video_pk:
-        return _json_error("Video record could not be created.")
-    session = create_session(
+    result = create_youtube_ingest_session_for_user(
         user_id=current_user["id"],
         brand_id=brand_id,
-        source_type="youtube",
-        source_url=video_url,
-        payload={"meta": meta},
+        video_url=video_url,
+        meta=meta,
     )
-    job_input_hash = sha256(f"quick-youtube:{current_user['id']}:{brand_id}:{video_id}".encode("utf-8")).hexdigest()
-    enqueue_result = enqueue_job(
-        user_id=current_user["id"],
-        job_type=JOB_TYPE_INGEST_YOUTUBE,
-        payload={
-            "quick_session_id": session["id"],
-            "video_pk": int(video_pk),
-            "video_id": video_id,
-            "video_url": video_url,
-            "duration_seconds": duration,
-            "brand_id": brand_id,
-        },
-        input_hash=job_input_hash,
-        max_attempts=6,   # <-- ingest için daha çok IP şansı
-
-    )
-    job = enqueue_result.get("job") or {}
-    session = update_session(
-        session["id"],
-        status=STATUS_INGESTING,
-        video_pk=int(video_pk),
-        video_id=video_id,
-        ingest_job_id=job.get("id"),
-        result={"stage": "queued", "message": "Queued for ingest."},
-    )
-    return jsonify({"ok": True, "session": _build_session_payload(session), "job_id": job.get("id"), "cached": enqueue_result.get("kind") == "cached"})
+    return jsonify({
+        "ok": True,
+        "session": _build_session_payload(result["session"]),
+        "job_id": result.get("job_id"),
+        "cached": result.get("cached"),
+    })
 
 
 @video_shorts_bp.route("/shorts/quick/api/upload/presign", methods=["POST"])
