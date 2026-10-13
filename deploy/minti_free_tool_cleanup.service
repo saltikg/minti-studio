@@ -1,0 +1,10 @@
+[Unit]
+Description=Minti Studio free-tool guest cleanup
+After=network.target
+
+[Service]
+Type=oneshot
+User=ubuntu
+WorkingDirectory=/home/ubuntu/apps/minti_studio
+EnvironmentFile=/home/ubuntu/apps/minti_studio/.env
+ExecStart=/home/ubuntu/apps/minti_studio/.venv/bin/python scripts/cleanup_free_tool_guests.py

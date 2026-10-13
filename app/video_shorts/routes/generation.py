@@ -276,9 +276,11 @@ from app.video_shorts.services.storage import (
     invalidate_cloudfront_paths,
     is_storage_reference,
     public_url_for_stored_media,
+    put_file_for_owner,
     resolve_stored_media,
     storage_reference_key,
 )
+from app.video_shorts.services.free_tool_cache import load_text_cache, write_suggestions_cache
 from app.video_shorts.services.transcript_service import (
     _build_ass_karaoke_for_clip,
     _build_word_highlight_caption_overlay,
@@ -1564,6 +1566,7 @@ def _ensure_shared_short_poster(
     duration_seconds: Optional[float] = None,
     overwrite: bool = False,
     poster_filename: Optional[str] = None,
+    owner_user_id: Any = None,
 ) -> bool:
     safe_name = Path(filename or "").name
     if not safe_name:
@@ -1628,7 +1631,7 @@ def _ensure_shared_short_poster(
             text=True,
         )
         if output_path.exists() and output_path.stat().st_size > 0:
-            storage.put_file(output_path, poster_key)
+            put_file_for_owner(output_path, poster_key, owner_user_id=owner_user_id)
             return True
     except Exception:
         current_app.logger.warning("Failed to generate short poster filename=%s", safe_name, exc_info=True)
@@ -7613,24 +7616,43 @@ def execute_auto_suggest_render_job(payload: Dict[str, Any]) -> Dict[str, Any]:
         )
         return finish("ai_entries_exist")
 
-    form_data = {
-        "_owner_user_id": owner_user_id,
-        "_brand_id": brand_id,
-        "_request_user_role": str((user_row[0] if user_row else "") or ""),
-    }
-    plan_result = _generate_clip_plan_for_video(
-        video_pk,
-        form_data,
-        owner_user_id=owner_user_id,
-        brand_id=brand_id,
-    )
-    entries = _load_plan_entries(video_id) or []
-    generated_entries = [
-        entry for entry in entries
-        if isinstance(entry, dict) and str(entry.get("origin") or "").strip().lower() == "ai"
-    ]
-    result["entries_generated"] = int(plan_result.get("clip_count") or len(generated_entries))
-    result["planner"] = next((str(entry.get("planner") or "") for entry in generated_entries if entry.get("planner")), "")
+    cached_plan_used = False
+    generated_entries: List[Dict[str, Any]] = []
+    if owner_is_guest:
+        text_cache = load_text_cache(video_id)
+        cached_entries = list((text_cache or {}).get("plan_entries") or [])
+        if cached_entries:
+            prepared_entries = _reindex_v1_plan_entries(video_id, cached_entries)
+            _write_plan_entries(video_id, prepared_entries)
+            entries = _load_plan_entries(video_id) or []
+            generated_entries = [
+                entry for entry in entries
+                if isinstance(entry, dict) and str(entry.get("origin") or "").strip().lower() == "ai"
+            ]
+            cached_plan_used = True
+            result["entries_generated"] = len(generated_entries)
+            result["planner"] = next((str(entry.get("planner") or "") for entry in generated_entries if entry.get("planner")), "cache")
+            current_app.logger.info("free_tool_text_cache suggestions HIT video_id=%s video_pk=%s", video_id, video_pk)
+
+    if not cached_plan_used:
+        form_data = {
+            "_owner_user_id": owner_user_id,
+            "_brand_id": brand_id,
+            "_request_user_role": str((user_row[0] if user_row else "") or ""),
+        }
+        plan_result = _generate_clip_plan_for_video(
+            video_pk,
+            form_data,
+            owner_user_id=owner_user_id,
+            brand_id=brand_id,
+        )
+        entries = _load_plan_entries(video_id) or []
+        generated_entries = [
+            entry for entry in entries
+            if isinstance(entry, dict) and str(entry.get("origin") or "").strip().lower() == "ai"
+        ]
+        result["entries_generated"] = int(plan_result.get("clip_count") or len(generated_entries))
+        result["planner"] = next((str(entry.get("planner") or "") for entry in generated_entries if entry.get("planner")), "")
 
     defaults_result = apply_short_editor_defaults_to_video_if_null(
         owner_user_id=owner_user_id,
@@ -26144,6 +26166,10 @@ def _generate_clip_plan_for_video(
     _emit("save_plan", "Saving plan to disk.", clip_count=len(combined_plan))
     try:
         _write_plan_entries(vid, combined_plan)
+        try:
+            write_suggestions_cache(vid, entries=timestamped_plan)
+        except Exception:
+            current_app.logger.warning("free_tool_text_cache suggestion hook failed video_id=%s", vid, exc_info=True)
     except Exception as pe:
         current_app.logger.warning("Failed to write plan file %s: %s", plan_path, pe)
         raise RuntimeError("Could not save the clip plan.")
@@ -28896,7 +28922,7 @@ def autoclip_video(video_pk):
                     short_output_key,
                     final_file,
                 )
-                storage.put_file(final_file, short_output_key)
+                put_file_for_owner(final_file, short_output_key, owner_user_id=target_owner_user_id)
                 current_app.logger.info(
                     "short s3 upload success clip_filename=%s key=%s",
                     clip_filename,
@@ -28953,6 +28979,7 @@ def autoclip_video(video_pk):
                     duration_seconds=max(0.0, float(end) - float(start)) if end is not None and start is not None else None,
                     overwrite=True,
                     poster_filename=poster_filename,
+                    owner_user_id=target_owner_user_id,
                 )
                 if poster_created:
                     plan_entry["poster_filename"] = poster_filename

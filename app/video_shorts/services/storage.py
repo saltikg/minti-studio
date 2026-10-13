@@ -25,6 +25,9 @@ from app.video_shorts.config import (
     STATIC_USER_PODCASTS_DIR,
 )
 
+GUEST_S3_TAG_KEY = "minti-guest"
+GUEST_S3_TAG_VALUE = "true"
+
 try:
     import boto3
     from botocore.exceptions import BotoCoreError, ClientError
@@ -139,10 +142,17 @@ class StorageEntry:
 class Storage:
     backend_name = "base"
 
-    def put_file(self, local_path: Path | str, key: str) -> None:
+    def put_file(self, local_path: Path | str, key: str, *, tags: Optional[dict[str, str]] = None) -> None:
         raise NotImplementedError
 
-    def put_bytes(self, data: bytes, key: str, content_type: Optional[str] = None) -> None:
+    def put_bytes(
+        self,
+        data: bytes,
+        key: str,
+        content_type: Optional[str] = None,
+        *,
+        tags: Optional[dict[str, str]] = None,
+    ) -> None:
         raise NotImplementedError
 
     def delete(self, key: str) -> None:
@@ -211,13 +221,20 @@ class LocalStorage(Storage):
         path.relative_to(self.root_dir)
         return path
 
-    def put_file(self, local_path: Path | str, key: str) -> None:
+    def put_file(self, local_path: Path | str, key: str, *, tags: Optional[dict[str, str]] = None) -> None:
         src = Path(local_path).resolve()
         dest = self._key_path(key)
         dest.parent.mkdir(parents=True, exist_ok=True)
         shutil.copyfile(src, dest)
 
-    def put_bytes(self, data: bytes, key: str, content_type: Optional[str] = None) -> None:
+    def put_bytes(
+        self,
+        data: bytes,
+        key: str,
+        content_type: Optional[str] = None,
+        *,
+        tags: Optional[dict[str, str]] = None,
+    ) -> None:
         dest = self._key_path(key)
         dest.parent.mkdir(parents=True, exist_ok=True)
         dest.write_bytes(data)
@@ -277,20 +294,31 @@ class S3Storage(Storage):
         self.region_name = region_name or "us-east-1"
         self.client = session.client("s3", region_name=self.region_name)
 
-    def put_file(self, local_path: Path | str, key: str) -> None:
+    def put_file(self, local_path: Path | str, key: str, *, tags: Optional[dict[str, str]] = None) -> None:
         extra_args = {}
         guessed_type, _ = mimetypes.guess_type(str(local_path))
         if guessed_type:
             extra_args["ContentType"] = guessed_type
+        if tags:
+            extra_args["Tagging"] = _encode_s3_tags(tags)
         kwargs = {}
         if extra_args:
             kwargs["ExtraArgs"] = extra_args
         self.client.upload_file(str(local_path), self.bucket_name, key, **kwargs)
 
-    def put_bytes(self, data: bytes, key: str, content_type: Optional[str] = None) -> None:
+    def put_bytes(
+        self,
+        data: bytes,
+        key: str,
+        content_type: Optional[str] = None,
+        *,
+        tags: Optional[dict[str, str]] = None,
+    ) -> None:
         kwargs = {"Bucket": self.bucket_name, "Key": key, "Body": data}
         if content_type:
             kwargs["ContentType"] = content_type
+        if tags:
+            kwargs["Tagging"] = _encode_s3_tags(tags)
         self.client.put_object(**kwargs)
 
     def delete(self, key: str) -> None:
@@ -359,6 +387,23 @@ class S3Storage(Storage):
         response = self.client.get_object(Bucket=self.bucket_name, Key=key)
         return response["Body"].read()
 
+    def delete_tag(self, key: str, tag_key: str) -> bool:
+        try:
+            response = self.client.get_object_tagging(Bucket=self.bucket_name, Key=key)
+            tag_set = [
+                tag
+                for tag in response.get("TagSet", [])
+                if str(tag.get("Key") or "") != str(tag_key)
+            ]
+            self.client.put_object_tagging(
+                Bucket=self.bucket_name,
+                Key=key,
+                Tagging={"TagSet": tag_set},
+            )
+            return True
+        except ClientError:
+            return False
+
 
 _STORAGE_INSTANCES: dict[str, Storage] = {}
 
@@ -373,6 +418,79 @@ def get_media_storage(backend: Optional[str] = None) -> Storage:
         else:
             _STORAGE_INSTANCES[target] = LocalStorage(_LOCAL_STATIC_ROOT)
     return _STORAGE_INSTANCES[target]
+
+
+def _encode_s3_tags(tags: dict[str, str]) -> str:
+    from urllib.parse import quote_plus
+
+    return "&".join(
+        f"{quote_plus(str(key))}={quote_plus(str(value))}"
+        for key, value in sorted((tags or {}).items())
+        if str(key or "").strip()
+    )
+
+
+def guest_s3_tags_for_owner(owner_user_id: object) -> dict[str, str]:
+    clean_owner = str(owner_user_id or "").strip()
+    if not clean_owner:
+        return {}
+    try:
+        from app.video_shorts.services.db import get_db_readonly, table_columns
+
+        conn = get_db_readonly()
+        try:
+            if "is_guest" not in table_columns(conn, "shorts_users"):
+                return {}
+            row = conn.execute(
+                "SELECT COALESCE(is_guest, FALSE) FROM shorts_users WHERE CAST(id AS VARCHAR) = CAST(? AS VARCHAR) LIMIT 1",
+                [clean_owner],
+            ).fetchone()
+            return {GUEST_S3_TAG_KEY: GUEST_S3_TAG_VALUE} if row and bool(row[0]) else {}
+        finally:
+            conn.close()
+    except Exception:
+        return {}
+
+
+def put_file_for_owner(local_path: Path | str, key: str, *, owner_user_id: object = None) -> None:
+    get_media_storage().put_file(local_path, key, tags=guest_s3_tags_for_owner(owner_user_id))
+
+
+def put_bytes_for_owner(
+    data: bytes,
+    key: str,
+    *,
+    content_type: Optional[str] = None,
+    owner_user_id: object = None,
+) -> None:
+    get_media_storage().put_bytes(
+        data,
+        key,
+        content_type=content_type,
+        tags=guest_s3_tags_for_owner(owner_user_id),
+    )
+
+
+def remove_guest_tag_from_keys(keys: Iterable[str]) -> dict[str, int]:
+    storage = get_media_storage()
+    if getattr(storage, "backend_name", "local") != "s3" or not hasattr(storage, "delete_tag"):
+        return {"scanned": 0, "updated": 0, "skipped": 0}
+    scanned = updated = skipped = 0
+    seen: set[str] = set()
+    for raw_key in keys or []:
+        key = str(raw_key or "").strip().lstrip("/")
+        if not key or key in seen:
+            continue
+        seen.add(key)
+        scanned += 1
+        try:
+            if storage.delete_tag(key, GUEST_S3_TAG_KEY):  # type: ignore[attr-defined]
+                updated += 1
+            else:
+                skipped += 1
+        except Exception:
+            skipped += 1
+    return {"scanned": scanned, "updated": updated, "skipped": skipped}
 
 
 def is_media_storage_key(key: str) -> bool:

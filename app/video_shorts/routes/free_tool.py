@@ -19,7 +19,8 @@ from app.video_shorts.routes.quick_short import (
     build_quick_short_session_status_payload,
     create_youtube_ingest_session_for_user,
 )
-from app.video_shorts.config import FREE_TOOL_DAILY_VIDEO_CAP
+from app.video_shorts.config import FREE_TOOL_DAILY_VIDEO_CAP, FREE_TOOL_GUEST_MIN_FREE_DISK_GB
+from app.video_shorts.services.disk_guard import free_disk_below_bytes
 from app.video_shorts.services.brands import current_brand_id, ensure_brand_for_user, ensure_brand_schema
 from app.video_shorts.services.db import ensure_auth_user_schema, ensure_storage_user_schema, get_db
 from app.video_shorts.services.quick_short_flow import (
@@ -359,6 +360,19 @@ def render_free_tool_landing(locale: str = "en"):
                         ensure_storage_user_schema(conn)
                         ensure_auth_user_schema(conn)
                         if FREE_TOOL_DAILY_VIDEO_CAP and _count_recent_guest_videos(conn) >= int(FREE_TOOL_DAILY_VIDEO_CAP):
+                            error = (
+                                "Free tool is busy today — sign up free to continue"
+                                if locale == "en"
+                                else "Ücretsiz araç bugün yoğun — devam etmek için ücretsiz hesap oluşturun"
+                            )
+                            conn.close()
+                            return _render_free_tool_template(
+                                locale=locale,
+                                error=error,
+                                register_url=url_for("video_shorts_bp.register", next=request.path),
+                                video_url=video_url,
+                            )
+                        if free_disk_below_bytes(int(FREE_TOOL_GUEST_MIN_FREE_DISK_GB) * 1024**3):
                             error = (
                                 "Free tool is busy today — sign up free to continue"
                                 if locale == "en"

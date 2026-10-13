@@ -29,6 +29,19 @@ def disk_usage_percent(path: Optional[Path] = None) -> float:
     return round((used_blocks / total_blocks) * 100.0, 1)
 
 
+def disk_free_bytes(path: Optional[Path] = None) -> int:
+    target = _stat_target(path)
+    stats = os.statvfs(target)
+    return int(stats.f_bavail or 0) * int(stats.f_frsize or stats.f_bsize or 0)
+
+
+def free_disk_below_bytes(threshold_bytes: int, *, path: Optional[Path] = None) -> bool:
+    try:
+        return disk_free_bytes(path) < max(0, int(threshold_bytes or 0))
+    except Exception:
+        return False
+
+
 def disk_guard_triggered(*, operation: str, log=None, path: Optional[Path] = None) -> bool:
     usage_pct = disk_usage_percent(path)
     if usage_pct < float(DISK_GUARD_PCT):

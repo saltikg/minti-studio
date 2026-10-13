@@ -49,6 +49,7 @@ from app.video_shorts.services.media_utils import (
     _cleanup_resolved_source_video,
     _resolve_source_video,
     normalize_s3_source_video_for_upload,
+    purge_source_cache_for_video,
     resolve_s3_source_video_cached,
 )
 from app.video_shorts.services.media_utils import MediaSubprocessTimeoutError
@@ -67,6 +68,7 @@ from app.video_shorts.services.render_jobs import (
     JOB_TYPE_ADMIN_PROXY_TRANSCRIPT,
     JOB_TYPE_ENRICH_AUTOPILOT_DISCOVERY_EMAILS,
     JOB_TYPE_ENRICH_DISCOVERY_EMAILS,
+    GUEST_JOB_ORIGIN,
     JOB_TYPE_INGEST_YOUTUBE,
     JOB_TYPE_INSTAGRAM_COMMENT_WEBHOOK,
     JOB_TYPE_NORMALIZE_UPLOAD,
@@ -87,6 +89,8 @@ from app.video_shorts.services.render_jobs import (
     requeue_timed_out_jobs,
     update_job_result,
 )
+from app.video_shorts.services.free_tool_cache import load_text_cache, write_transcript_cache
+from app.video_shorts.services.storage import put_file_for_owner
 from app.video_shorts.services.autopilot_email_enrichment import enrich_autopilot_discovery_email_batch
 from app.video_shorts.services.discovery_email_enrichment import enrich_discovery_email_batch
 from app.video_shorts.services.discovery_automation import process_due_discovery_automation_cycle
@@ -907,6 +911,10 @@ def _save_transcript(
         conn.commit()
     finally:
         conn.close()
+    try:
+        write_transcript_cache(video_id, full_text=full_text, segments=segments)
+    except Exception:
+        logger.warning("free_tool_text_cache transcript hook failed video_id=%s", video_id, exc_info=True)
     if should_emit_transcript_completed and owner_user_id:
         track_event(
             str(owner_user_id),
@@ -1068,9 +1076,8 @@ def _execute_ingest_youtube_job(app, job: Dict[str, Any]) -> Dict[str, Any]:
     _set_job_progress(job["id"], stage="downloading", message="Downloading the source video.", status="processing")
     local_path = _download_youtube_video(video_url, video_id)
     try:
-        storage = get_media_storage()
         source_key = f"videos/{video_id}{local_path.suffix or '.mp4'}"
-        storage.put_file(local_path, source_key)
+        put_file_for_owner(local_path, source_key, owner_user_id=owner_user_id)
         conn = get_db()
         try:
             updated = conn.execute(
@@ -1112,16 +1119,31 @@ def _execute_ingest_youtube_job(app, job: Dict[str, Any]) -> Dict[str, Any]:
             source_key=source_key,
             duration_seconds=duration_seconds,
         )
-        _set_job_progress(job["id"], stage="transcribing", message="Transcribing with Whisper.", status="processing")
-        transcript_text, segments = _transcribe_with_whisper(local_path)
-        _save_transcript(
-            video_id,
-            full_text=transcript_text,
-            segments=segments,
-            owner_user_id=owner_user_id,
-            duration_seconds=duration_seconds,
-            bill_usage=bill_usage,
-        )
+        text_cache = load_text_cache(video_id) if job_origin == GUEST_JOB_ORIGIN else None
+        if text_cache and text_cache.get("full_text") and text_cache.get("segments"):
+            transcript_text = str(text_cache.get("full_text") or "")
+            segments = list(text_cache.get("segments") or [])
+            _set_job_progress(job["id"], stage="transcribing", message="Transcript cache hit.", status="processing")
+            _save_transcript(
+                video_id,
+                full_text=transcript_text,
+                segments=segments,
+                owner_user_id=owner_user_id,
+                duration_seconds=duration_seconds,
+                bill_usage=False,
+            )
+            app.logger.info("free_tool_text_cache transcript HIT video_id=%s video_pk=%s", video_id, video_pk)
+        else:
+            _set_job_progress(job["id"], stage="transcribing", message="Transcribing with Whisper.", status="processing")
+            transcript_text, segments = _transcribe_with_whisper(local_path)
+            _save_transcript(
+                video_id,
+                full_text=transcript_text,
+                segments=segments,
+                owner_user_id=owner_user_id,
+                duration_seconds=duration_seconds,
+                bill_usage=bill_usage,
+            )
         try:
             enqueue_auto_result = generation.enqueue_auto_suggest_render_job_after_transcript(
                 owner_user_id=owner_user_id,
@@ -1385,6 +1407,7 @@ def _execute_normalize_upload_job(app, job: Dict[str, Any]) -> Dict[str, Any]:
             target_key=source_key,
             log=app.logger,
             progress_callback=handle_normalize_progress,
+            owner_user_id=owner_user_id,
         )
         if not new_key:
             _update_upload_session_progress(
@@ -1945,6 +1968,24 @@ def process_next_job(
                 finalize_job_success(job["id"])
             except Exception:
                 app.logger.exception("Render job finalize failed after done job_id=%s", job.get("id"))
+            payload = job.get("payload") or {}
+            if str(payload.get("job_origin") or "").strip() == GUEST_JOB_ORIGIN:
+                source_video_id = str(payload.get("source_video_id") or "").strip()
+                if source_video_id:
+                    try:
+                        purge_source_cache_for_video(source_video_id)
+                        app.logger.info(
+                            "guest source_cache purged after render job_id=%s video_id=%s",
+                            job.get("id"),
+                            source_video_id,
+                        )
+                    except Exception:
+                        app.logger.warning(
+                            "guest source_cache purge failed job_id=%s video_id=%s",
+                            job.get("id"),
+                            source_video_id,
+                            exc_info=True,
+                        )
             quick_session_id = str((job.get("payload") or {}).get("quick_session_id") or "").strip()
             if quick_session_id:
                 _set_quick_session_state(

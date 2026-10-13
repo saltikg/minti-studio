@@ -852,6 +852,27 @@ def ensure_auth_user_schema(conn) -> None:
     conn.commit()
 
 
+def ensure_free_tool_text_cache_schema(conn) -> None:
+    conn.execute(
+        """
+        CREATE TABLE IF NOT EXISTS free_tool_text_cache (
+            youtube_video_id VARCHAR PRIMARY KEY,
+            full_text TEXT,
+            segments_json TEXT,
+            plan_entries_json TEXT,
+            transcript_cached_at TIMESTAMP,
+            suggestions_cached_at TIMESTAMP,
+            created_at TIMESTAMP DEFAULT now(),
+            updated_at TIMESTAMP DEFAULT now()
+        )
+        """
+    )
+    try:
+        conn.execute("CREATE INDEX IF NOT EXISTS idx_free_tool_text_cache_updated_at ON free_tool_text_cache(updated_at)")
+    except Exception:
+        pass
+
+
 def ensure_channel_owner_schema(conn):
     """
     Make sure youtube_channels and youtube_videos expose owner_user_id for per-user access control.

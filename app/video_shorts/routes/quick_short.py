@@ -61,6 +61,7 @@ from app.video_shorts.services.storage import (
     build_storage_reference,
     get_media_storage,
     is_storage_reference,
+    put_file_for_owner,
     public_url_for_stored_media,
 )
 from app.video_shorts.services.user_events import track_event
@@ -1658,9 +1659,8 @@ def quick_short_upload_direct():
             return _json_error("Storage limit is full. Free up space or upgrade first.", 403, code="storage_full")
         video_id = f"local_{uuid.uuid4().hex}"
         source_key = f"videos/{video_id}{ext}"
-        storage = get_media_storage()
         upload_source_path = normalize_source_video_for_streaming(temp_path, log=current_app.logger)
-        storage.put_file(upload_source_path, source_key)
+        put_file_for_owner(upload_source_path, source_key, owner_user_id=current_user.get("id"))
         session, job = _create_uploaded_video_session_and_enqueue(
             current_user=current_user,
             brand_id=brand_id,

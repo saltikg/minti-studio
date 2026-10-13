@@ -21,7 +21,7 @@ from app.video_shorts.config import (
     SHORTS_DIR,
     VIDEOS_DIR,
 )
-from app.video_shorts.services.storage import get_media_storage
+from app.video_shorts.services.storage import get_media_storage, put_file_for_owner
 
 
 logger = logging.getLogger(__name__)
@@ -867,6 +867,7 @@ def remux_s3_source_video_if_needed(
     *,
     target_key: str | None = None,
     log: logging.Logger | None = None,
+    owner_user_id: object = None,
 ) -> str | None:
     active_logger = log or logger
     suffix = local_path.suffix.lower()
@@ -945,7 +946,7 @@ def remux_s3_source_video_if_needed(
         )
         if not temp_output.exists() or temp_output.stat().st_size <= 0:
             raise RuntimeError("remux output missing or empty")
-        storage.put_file(temp_output, upload_key)
+        put_file_for_owner(temp_output, upload_key, owner_user_id=owner_user_id)
         active_logger.info(
             "normalize done video_id=%s key=%s path=%s reason=%s new_key=%s",
             video_id,
@@ -985,6 +986,7 @@ def normalize_s3_source_video_for_upload(
     target_key: str | None = None,
     log: logging.Logger | None = None,
     progress_callback: Optional[Callable[[int], None]] = None,
+    owner_user_id: object = None,
 ) -> str | None:
     active_logger = log or logger
     suffix = local_path.suffix.lower()
@@ -1013,6 +1015,7 @@ def normalize_s3_source_video_for_upload(
             local_path,
             target_key=upload_key,
             log=active_logger,
+            owner_user_id=owner_user_id,
         )
 
     width = int(probe.get("width") or 0)
@@ -1051,6 +1054,7 @@ def normalize_s3_source_video_for_upload(
             local_path,
             target_key=upload_key,
             log=active_logger,
+            owner_user_id=owner_user_id,
         )
 
     if height <= 720:
@@ -1069,6 +1073,7 @@ def normalize_s3_source_video_for_upload(
             local_path,
             target_key=upload_key,
             log=active_logger,
+            owner_user_id=owner_user_id,
         )
 
     if suffix not in _FASTSTART_COMPATIBLE_SUFFIXES:
@@ -1087,6 +1092,7 @@ def normalize_s3_source_video_for_upload(
             local_path,
             target_key=upload_key,
             log=active_logger,
+            owner_user_id=owner_user_id,
         )
 
     storage, _ = _resolve_s3_source_video_key(video_id, suffix)
@@ -1105,6 +1111,7 @@ def normalize_s3_source_video_for_upload(
                     local_path,
                     target_key=upload_key,
                     log=active_logger,
+                    owner_user_id=owner_user_id,
                 )
     if not storage:
         active_logger.warning(
@@ -1119,6 +1126,7 @@ def normalize_s3_source_video_for_upload(
             local_path,
             target_key=upload_key,
             log=active_logger,
+            owner_user_id=owner_user_id,
         )
 
     temp_output = local_path.with_name(f"{local_path.stem}.720p.{os.getpid()}{suffix}")
@@ -1179,7 +1187,7 @@ def normalize_s3_source_video_for_upload(
         if not temp_output.exists() or temp_output.stat().st_size <= 0:
             raise RuntimeError("720p transcode output missing or empty")
         output_size_bytes = int(temp_output.stat().st_size)
-        storage.put_file(temp_output, upload_key)
+        put_file_for_owner(temp_output, upload_key, owner_user_id=owner_user_id)
         active_logger.info(
             "normalize transcode success video_id=%s key=%s target_key=%s output_size_bytes=%s transcode_seconds=%s",
             video_id,
@@ -1206,6 +1214,7 @@ def normalize_s3_source_video_for_upload(
             local_path,
             target_key=upload_key,
             log=active_logger,
+            owner_user_id=owner_user_id,
         )
     finally:
         try:

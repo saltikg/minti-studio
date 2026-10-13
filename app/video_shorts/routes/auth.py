@@ -48,6 +48,8 @@ from app.video_shorts.services.brands import (
     set_active_brand_for_user,
     set_default_brand_for_user,
 )
+from app.video_shorts.services.guest_objects import guest_storage_keys_for_user
+from app.video_shorts.services.storage import remove_guest_tag_from_keys
 from app.video_shorts.services.shorts_overview_quota import get_shorts_overview_quota_state
 from app.video_shorts.services.usage_metering import USAGE_TABLE, ensure_usage_metering_schema, get_usage_snapshot
 from app.video_shorts.services.email_verification import (
@@ -1570,6 +1572,7 @@ def claim_guest_into(
     ).fetchone()
     if not guest_row or not bool(guest_row[1]):
         return {"claimed": False, "mode": "already_claimed"}
+    guest_object_keys = guest_storage_keys_for_user(conn, guest_user_id)
     target_row = conn.execute(
         "SELECT CAST(id AS VARCHAR), COALESCE(name, username, email, ''), COALESCE(email, username, '') FROM shorts_users WHERE CAST(id AS VARCHAR) = ? LIMIT 1",
         [target_user_id],
@@ -1633,6 +1636,7 @@ def claim_guest_into(
             brand_id=resolved_target_brand_id,
             fallback_email=str(target_row[2] or ""),
         )
+    tag_result = remove_guest_tag_from_keys(guest_object_keys)
     try:
         conn.execute(
             """
@@ -1660,6 +1664,7 @@ def claim_guest_into(
         "target_brand_id": resolved_target_brand_id,
         "moved_tables": moved_tables,
         "rewritten_jobs": rewritten_jobs,
+        "guest_tag_cleanup": tag_result,
     }
 
 
