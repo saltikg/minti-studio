@@ -7,6 +7,7 @@ from datetime import datetime, timedelta, timezone
 from email.message import EmailMessage
 from email.utils import formataddr, formatdate, make_msgid
 from typing import Any
+from urllib.parse import urlencode
 from zoneinfo import ZoneInfo
 
 import requests
@@ -78,6 +79,66 @@ def load_share_link_recipient_email(conn, share_link_id: int) -> str:
         [share_link_id],
     ).fetchone()
     return normalize_outreach_recipient_email(row[0] if row else "")
+
+
+def _free_tool_url_for_lead(lead_id: object) -> str:
+    clean_lead_id = str(lead_id or "").strip()
+    query = urlencode(
+        {
+            "utm_source": "outreach",
+            "utm_medium": "email",
+            "utm_campaign": "followup",
+            "lid": clean_lead_id,
+        }
+    )
+    return f"https://mintistudio.com/tools/youtube-to-shorts?{query}"
+
+
+def _generated_count_for_share_link(conn, *, share_link_id: int, lead_id: object) -> int:
+    clean_lead_id = str(lead_id or "").strip()
+    count = 0
+    if clean_lead_id:
+        try:
+            row = conn.execute(
+                """
+                SELECT COUNT(*)
+                FROM shorts_generated_videos gv
+                JOIN youtube_videos yv ON CAST(yv.video_id AS VARCHAR) = CAST(gv.source_video_id AS VARCHAR)
+                JOIN autopilot_leads l
+                  ON CAST(l.id AS VARCHAR) = ?
+                 AND CAST(l.first_video_id AS VARCHAR) = CAST(yv.id AS VARCHAR)
+                WHERE CAST(gv.brand_id AS VARCHAR) = CAST(l.brand_id AS VARCHAR)
+                  AND COALESCE(NULLIF(gv.clip_filename, ''), NULLIF(gv.storage_key, ''), NULLIF(gv.public_url, '')) IS NOT NULL
+                """,
+                [clean_lead_id],
+            ).fetchone()
+            count = int((row or [0])[0] or 0)
+        except Exception:
+            count = 0
+        if count <= 0:
+            try:
+                row = conn.execute(
+                    """
+                    SELECT COUNT(*)
+                    FROM short_share_links
+                    WHERE CAST(autopilot_lead_id AS VARCHAR) = ?
+                      AND COALESCE(archived, FALSE) = FALSE
+                    """,
+                    [clean_lead_id],
+                ).fetchone()
+                count = int((row or [0])[0] or 0)
+            except Exception:
+                count = 0
+    if count <= 0:
+        try:
+            row = conn.execute(
+                "SELECT 1 FROM short_share_links WHERE id = ? LIMIT 1",
+                [share_link_id],
+            ).fetchone()
+            count = 1 if row else 0
+        except Exception:
+            count = 0
+    return max(1, count)
 
 
 def load_share_link_discovery_signal(conn, autopilot_lead_id: object) -> dict[str, object]:
@@ -362,6 +423,9 @@ def render_share_link_outreach_email(conn, share_link_id: int, *, stage: object,
     trial_days = normalize_trial_days(row[5], default=DEFAULT_SHARE_TRIAL_DAYS)
     recipient_name = str(row[2] or "").strip()
     source_video_title = str(row[11] or "").strip()
+    lead_id = str(row[13] or "").strip()
+    generated_count = _generated_count_for_share_link(conn, share_link_id=share_link_id, lead_id=lead_id)
+    free_tool_url = _free_tool_url_for_lead(lead_id)
     discovery_signal = load_share_link_discovery_signal(conn, row[13])
     rendered_email = render_outreach_email(
         stage=normalized_stage,
@@ -372,6 +436,8 @@ def render_share_link_outreach_email(conn, share_link_id: int, *, stage: object,
         video_title=source_video_title,
         longform_last_60d=discovery_signal.get("longform_last_60d"),
         shorts_last_15d=discovery_signal.get("shorts_last_15d"),
+        generated_count=generated_count,
+        free_tool_url=free_tool_url,
     )
     return {
         "row": row,
@@ -380,6 +446,9 @@ def render_share_link_outreach_email(conn, share_link_id: int, *, stage: object,
         "share_url": share_url,
         "trial_days": trial_days,
         "video_title": source_video_title,
+        "lead_id": lead_id,
+        "generated_count": generated_count,
+        "free_tool_url": free_tool_url,
         "discovery_signal": discovery_signal,
         "email": rendered_email,
         "clipboard_text": render_outreach_clipboard_text(
@@ -391,6 +460,8 @@ def render_share_link_outreach_email(conn, share_link_id: int, *, stage: object,
             video_title=source_video_title,
             longform_last_60d=discovery_signal.get("longform_last_60d"),
             shorts_last_15d=discovery_signal.get("shorts_last_15d"),
+            generated_count=generated_count,
+            free_tool_url=free_tool_url,
         ),
         "emailed_at": row[6],
         "first_email_template_key": str(row[7] or "").strip(),
@@ -449,6 +520,8 @@ def send_share_link_outreach_email(
             video_title=rendered.get("video_title", ""),
             longform_last_60d=rendered.get("discovery_signal", {}).get("longform_last_60d"),
             shorts_last_15d=rendered.get("discovery_signal", {}).get("shorts_last_15d"),
+            generated_count=rendered.get("generated_count"),
+            free_tool_url=rendered.get("free_tool_url", ""),
         )
     else:
         rendered_email = rendered["email"]

@@ -70,10 +70,13 @@ def test_bucket_followup_en_can_include_signal():
         video_title="A useful webinar",
         longform_last_60d=3,
         shorts_last_15d=0,
+        generated_count=5,
+        free_tool_url="https://mintistudio.com/tools/youtube-to-shorts?utm_source=outreach",
     )
 
-    assert rendered["key"] == "WATCHED_NO_CONVERT_EN"
-    assert LONGFORM_NO_SHORTS_SIGNAL_EN in rendered["text"]
+    assert rendered["key"] == "FOLLOWUP_EN"
+    assert "Quick follow-up on the 5 Shorts" in rendered["text"]
+    assert "https://mintistudio.com/tools/youtube-to-shorts?utm_source=outreach" in rendered["text"]
 
 
 def test_tr_templates_do_not_include_signal():
@@ -116,7 +119,26 @@ def test_bucket_followup_without_safe_name_uses_plain_hi():
         share_url="https://mintistudio.com/w/test",
         trial_days=30,
         video_title="A useful webinar",
+        generated_count=5,
+        free_tool_url="https://mintistudio.com/tools/youtube-to-shorts?utm_source=outreach",
     )
 
-    assert rendered["text"].startswith("Hi")
-    assert not rendered["text"].startswith("Hi there")
+    assert rendered["text"].startswith("Hi there,")
+
+
+def test_followup_en_uses_free_tool_and_generated_count():
+    rendered = render_outreach_email(
+        stage="followup",
+        language="EN",
+        recipient_name="Alex",
+        share_url="https://mintistudio.com/w/test",
+        trial_days=30,
+        video_title="A useful webinar",
+        generated_count=7,
+        free_tool_url="https://mintistudio.com/tools/youtube-to-shorts?utm_source=outreach&utm_medium=email&utm_campaign=followup&lid=123",
+    )
+
+    assert rendered["subject"] == "Shorts from your other videos?"
+    assert 'Quick follow-up on the 7 Shorts we made from "A useful webinar".' in rendered["text"]
+    assert "No sign-up needed to try it" in rendered["text"]
+    assert "lid=123" in rendered["text"]

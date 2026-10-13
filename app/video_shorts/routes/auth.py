@@ -102,6 +102,7 @@ from app.video_shorts.services.timezones import DEFAULT_TIME_ZONE, TIMEZONE_LABE
 from src.trends.instagram_tokens import get_instagram_credentials
 
 logger = logging.getLogger(__name__)
+FREE_TOOL_ATTRIBUTION_SESSION_KEY = "free_tool_attribution"
 
 COMMON_WEAK_PASSWORDS = {
     "12345678",
@@ -132,6 +133,17 @@ COMMON_WEAK_PASSWORDS = {
     "asdfghjk",
     "abcdefgh",
 }
+
+
+def _free_tool_claim_metadata(**metadata):
+    attribution = session.get(FREE_TOOL_ATTRIBUTION_SESSION_KEY)
+    merged = {key: value for key, value in metadata.items() if value not in ("", None)}
+    if isinstance(attribution, dict):
+        for key in ("utm_source", "utm_medium", "utm_campaign", "lead_id"):
+            value = str(attribution.get(key) or "").strip()
+            if value:
+                merged[key] = value
+    return merged
 AUTOPILOT_SERVICE_TIERS = {15, 30, 45, 60}
 SELF_SERVE_PLAN_IDS = {"plan_free", "plan_2gb", "plan_10gb"}
 SERVICE_MODE_VALUES = {"autopilot", "self"}
@@ -1969,7 +1981,7 @@ def login():
                                 row[0],
                                 "free_tool_claim",
                                 status="existing_account",
-                                metadata={"mode": claim_result.get("mode")},
+                                metadata=_free_tool_claim_metadata(mode=claim_result.get("mode")),
                             )
                         brand_conn.commit()
                         if claim_result.get("target_brand_id"):
@@ -2139,7 +2151,7 @@ def register():
                         user_id,
                         "free_tool_claim",
                         status="new_account",
-                        metadata={"mode": "in_place"},
+                        metadata=_free_tool_claim_metadata(mode="in_place"),
                     )
                 else:
                     conn.execute(
@@ -2997,7 +3009,7 @@ def google_oauth_callback():
                     user_id,
                     "free_tool_claim",
                     status="existing_account",
-                    metadata={"mode": claim_result.get("mode"), "method": "google"},
+                    metadata=_free_tool_claim_metadata(mode=claim_result.get("mode"), method="google"),
                 )
         conn.commit()
     else:
@@ -3077,7 +3089,7 @@ def google_oauth_callback():
             user_id,
             "free_tool_claim",
             status="new_account",
-            metadata={"mode": "in_place", "method": "google"},
+            metadata=_free_tool_claim_metadata(mode="in_place", method="google"),
         )
         conn.commit()
     conn.close()
