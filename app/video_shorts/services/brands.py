@@ -5,10 +5,16 @@ from uuid import uuid4
 
 from flask import g, has_request_context, session
 
-from app.video_shorts.services.db import get_db, get_db_readonly, table_columns
+from app.video_shorts.services.db import (
+    ensure_user_preferences_schema,
+    get_db,
+    get_db_readonly,
+    table_columns,
+)
 from app.video_shorts.services.video_metrics import ANALYTICS_ARCHIVE_TABLE, SNAPSHOT_TABLE
 
 BRAND_TABLE = "shorts_brands"
+FACE_AWARE_DEFAULT_PREFERENCE_KEY = "face_aware_layout_default"
 BRAND_AWARE_TABLES: Tuple[Tuple[str, str], ...] = (
     ("youtube_channels", "owner_user_id"),
     ("youtube_videos", "owner_user_id"),
@@ -164,6 +170,7 @@ def create_brand(
         "UPDATE shorts_users SET last_brand_id = ?, updated_at = now() WHERE id = ?",
         [brand_id, user_id],
     )
+    _ensure_face_aware_default_for_user(conn, user_id)
     if commit:
         conn.commit()
     return get_brand_for_user(conn, user_id, brand_id) or {
@@ -172,6 +179,32 @@ def create_brand(
         "slug": _slugify_brand_name(brand_name),
         "is_default": bool(make_default),
     }
+
+
+def _ensure_face_aware_default_for_user(conn, user_id: str) -> None:
+    """Enable the automatic face-aware layout for newly created brands without overriding an explicit preference."""
+    clean_user_id = str(user_id or "").strip()
+    if not clean_user_id:
+        return
+    ensure_user_preferences_schema(conn)
+    row = conn.execute(
+        """
+        SELECT 1
+        FROM shorts_user_preferences
+        WHERE user_id = ? AND preference_key = ?
+        LIMIT 1
+        """,
+        [clean_user_id, FACE_AWARE_DEFAULT_PREFERENCE_KEY],
+    ).fetchone()
+    if row:
+        return
+    conn.execute(
+        """
+        INSERT INTO shorts_user_preferences (id, user_id, preference_key, preference_value, updated_at)
+        VALUES (?, ?, ?, 'true', now())
+        """,
+        [str(uuid4()), clean_user_id, FACE_AWARE_DEFAULT_PREFERENCE_KEY],
+    )
 
 
 def _default_brand_name(user_name: Optional[str]) -> str:

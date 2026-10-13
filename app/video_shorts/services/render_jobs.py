@@ -112,9 +112,8 @@ def _prepare_guest_job_payload(conn, user_id: Any, payload: Dict[str, Any], prio
     next_payload = dict(payload or {})
     if _is_guest_user(conn, user_id):
         next_payload["job_origin"] = GUEST_JOB_ORIGIN
-        if priority is None:
-            priority = GUEST_JOB_PRIORITY
-    elif str(next_payload.get("job_origin") or "").strip() == GUEST_JOB_ORIGIN and priority is None:
+        priority = GUEST_JOB_PRIORITY
+    elif str(next_payload.get("job_origin") or "").strip() == GUEST_JOB_ORIGIN:
         priority = GUEST_JOB_PRIORITY
     return next_payload, priority
 

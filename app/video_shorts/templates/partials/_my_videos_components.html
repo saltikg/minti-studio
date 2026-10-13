@@ -1,0 +1,68 @@
+{% macro youtube_paste_box(input_id='mv-youtube-url', button_id='mv-youtube-submit', preview_id='mv-youtube-preview', input_name=None, input_value='', placeholder="Paste a YouTube link — we'll pull it in and get it ready", button_label='Add video', button_type='button', input_required=False, aria_label='YouTube URL') -%}
+  <div class="mv-url-row">
+    <div class="mv-url-field">
+      <i class="bi bi-link-45deg" aria-hidden="true"></i>
+      <input
+        id="{{ input_id }}"
+        class="mv-youtube-input"
+        type="url"
+        {% if input_name %}name="{{ input_name }}"{% endif %}
+        value="{{ input_value or '' }}"
+        inputmode="url"
+        autocomplete="off"
+        placeholder="{{ placeholder }}"
+        aria-label="{{ aria_label }}"
+        {% if input_required %}required{% endif %}
+      >
+    </div>
+    <button type="{{ button_type }}" id="{{ button_id }}" class="mv-youtube-submit">{{ button_label }}</button>
+  </div>
+  <div id="{{ preview_id }}" class="mv-youtube-preview" aria-live="polite"></div>
+{%- endmacro %}
+
+{% macro free_tool_processing_card(processing_context, video_url='', is_tr=False) -%}
+  {% set processing_video = processing_context.video or {} %}
+  <div
+    class="free-tool-processing-card"
+    id="free-tool-processing-card"
+    data-status-url="{{ processing_context.status_url }}"
+    data-fallback-url="{{ processing_context.fallback_url }}"
+    data-ready-url="{{ processing_context.redirect_url or processing_context.generate_url }}"
+    data-auto-open="{{ '0' if processing_context.status == 'ready' else '1' }}"
+    data-video-url="{{ video_url or processing_context.session.source_url if processing_context.session else video_url or '' }}">
+    <div class="free-tool-processing-media">
+      <div class="free-tool-processing-thumb" aria-hidden="true">
+        {% if processing_video.thumbnail_url %}
+          <img src="{{ processing_video.thumbnail_url }}" alt="">
+        {% endif %}
+      </div>
+      <div>
+        <h2 class="free-tool-processing-title" data-free-tool-processing-title>{{ processing_video.title or ('Videon hazırlanıyor' if is_tr else 'Your video is being prepared') }}</h2>
+        <div class="free-tool-processing-meta" data-free-tool-processing-meta>
+          {{ processing_video.duration_label or '' }}
+        </div>
+      </div>
+    </div>
+    <div class="free-tool-progress" data-free-tool-progress>
+      <div class="free-tool-progress-bar" aria-hidden="true"><span data-free-tool-progress-bar></span></div>
+      <ul class="free-tool-progress-steps">
+        <li class="free-tool-progress-step" data-free-tool-step="download">{{ "Video alınıyor" if is_tr else "Fetching the video" }}</li>
+        <li class="free-tool-progress-step" data-free-tool-step="transcript">{{ "Transkript hazırlanıyor" if is_tr else "Preparing the transcript" }}</li>
+        <li class="free-tool-progress-step" data-free-tool-step="suggestions">{{ "En iyi anlar bulunuyor" if is_tr else "Finding the best moments" }}</li>
+        <li class="free-tool-progress-step" data-free-tool-step="render">{{ "En iyi Short'un hazırlanıyor" if is_tr else "Rendering your best Short" }}</li>
+      </ul>
+    </div>
+    <div class="free-tool-processing-message" data-free-tool-processing-message>
+      {{ "Bu birkaç dakika sürebilir. Sayfadan ayrılsan bile çalışmaya devam ederiz." if is_tr else "This can take a few minutes. You can leave this page; we’ll keep working." }}
+    </div>
+    <div class="free-tool-processing-error d-none" data-free-tool-processing-error></div>
+    <div class="free-tool-processing-actions">
+      <a class="mv-youtube-submit text-decoration-none d-none" data-free-tool-open-shorts href="{{ processing_context.redirect_url or processing_context.generate_url }}">{{ "Short'larını aç →" if is_tr else "Open your Shorts →" }}</a>
+      <form method="post" class="d-none" data-free-tool-retry-form>
+        <input type="hidden" name="video_url" value="{{ video_url or processing_context.session.source_url if processing_context.session else video_url or '' }}">
+        {% include "_turnstile_widget.html" %}
+        <button class="mv-youtube-submit" type="submit">{{ "Tekrar dene" if is_tr else "Try again" }}</button>
+      </form>
+    </div>
+  </div>
+{%- endmacro %}

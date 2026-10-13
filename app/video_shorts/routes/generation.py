@@ -405,6 +405,7 @@ PST_ZONE = ZoneInfo(DEFAULT_TIME_ZONE)
 BRAND_SUBSCRIBE_OVERLAY_DIR = Path(__file__).resolve().parent.parent / "static" / "brand_subscribe_overlays"
 HIDE_CLIP_COACHMARK_PREFERENCE_KEY = "hide_clip_coachmark"
 SHORT_EDITOR_DEFAULTS_PREFERENCE_KEY = "short_editor_defaults"
+FACE_AWARE_DEFAULT_PREFERENCE_KEY = "face_aware_layout_default"
 SHORT_EDITOR_DEFAULT_FIELD_NAMES = (
     "font",
     "sub_font",
@@ -3367,6 +3368,8 @@ def _face_aware_layout_enabled_for_owner(owner_user_id: Any) -> bool:
     clean_owner = str(owner_user_id or "").strip()
     if not clean_owner:
         return False
+    if load_user_bool_preference(clean_owner, FACE_AWARE_DEFAULT_PREFERENCE_KEY, default=False):
+        return True
     enabled_ids = {
         user_id.strip()
         for user_id in str(os.getenv("FACE_AWARE_LAYOUT_USER_IDS") or "").split(",")
@@ -10506,6 +10509,8 @@ def generate_short(video_pk):
         or (brand_name_row[0] if brand_name_row else None)
         or ""
     )
+    if guest_mode and str(video.get("channel_name") or "").strip().lower() in {"guest's brand", "default brand"}:
+        video["channel_name"] = str(video.get("creator_name") or "").strip()
     video["channel_url"] = (
         _youtube_channel_url_from_parts(
             lead_channel_row[1] if lead_channel_row else None,

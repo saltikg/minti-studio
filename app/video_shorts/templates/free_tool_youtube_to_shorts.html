@@ -1,4 +1,5 @@
 {% extends "vs_marketing_base.html" %}
+{% import "partials/_my_videos_components.html" as mv_components %}
 
 {% set is_tr = locale == 'tr' %}
 {% set switch_href = '/tools/youtube-to-shorts' if is_tr else '/tr/araclar/youtube-shorts' %}
@@ -528,50 +529,7 @@
       </p>
       <div class="free-tool-card" id="free-tool-paste-box">
         {% if processing_context %}
-          {% set processing_video = processing_context.video or {} %}
-          <div
-            class="free-tool-processing-card"
-            id="free-tool-processing-card"
-            data-status-url="{{ processing_context.status_url }}"
-            data-fallback-url="{{ processing_context.fallback_url }}"
-            data-ready-url="{{ processing_context.redirect_url or processing_context.generate_url }}"
-            data-auto-open="{{ '0' if processing_context.status == 'ready' else '1' }}"
-            data-video-url="{{ video_url or processing_context.session.source_url if processing_context.session else video_url or '' }}">
-            <div class="free-tool-processing-media">
-              <div class="free-tool-processing-thumb" aria-hidden="true">
-                {% if processing_video.thumbnail_url %}
-                  <img src="{{ processing_video.thumbnail_url }}" alt="">
-                {% endif %}
-              </div>
-              <div>
-                <h2 class="free-tool-processing-title" data-free-tool-processing-title>{{ processing_video.title or ('Videon hazırlanıyor' if is_tr else 'Your video is being prepared') }}</h2>
-                <div class="free-tool-processing-meta" data-free-tool-processing-meta>
-                  {{ processing_video.duration_label or '' }}
-                </div>
-              </div>
-            </div>
-            <div class="free-tool-progress" data-free-tool-progress>
-              <div class="free-tool-progress-bar" aria-hidden="true"><span data-free-tool-progress-bar></span></div>
-              <ul class="free-tool-progress-steps">
-                <li class="free-tool-progress-step" data-free-tool-step="download">{{ "Video alınıyor" if is_tr else "Fetching the video" }}</li>
-                <li class="free-tool-progress-step" data-free-tool-step="transcript">{{ "Transkript hazırlanıyor" if is_tr else "Preparing the transcript" }}</li>
-                <li class="free-tool-progress-step" data-free-tool-step="suggestions">{{ "En iyi anlar bulunuyor" if is_tr else "Finding the best moments" }}</li>
-                <li class="free-tool-progress-step" data-free-tool-step="render">{{ "En iyi Short'un hazırlanıyor" if is_tr else "Rendering your best Short" }}</li>
-              </ul>
-            </div>
-            <div class="free-tool-processing-message" data-free-tool-processing-message>
-              {{ "Bu birkaç dakika sürebilir. Sayfadan ayrılsan bile çalışmaya devam ederiz." if is_tr else "This can take a few minutes. You can leave this page; we’ll keep working." }}
-            </div>
-            <div class="free-tool-processing-error d-none" data-free-tool-processing-error></div>
-            <div class="free-tool-processing-actions">
-              <a class="mv-youtube-submit text-decoration-none d-none" data-free-tool-open-shorts href="{{ processing_context.redirect_url or processing_context.generate_url }}">{{ "Short'larını aç →" if is_tr else "Open your Shorts →" }}</a>
-              <form method="post" class="d-none" data-free-tool-retry-form>
-                <input type="hidden" name="video_url" value="{{ video_url or processing_context.session.source_url if processing_context.session else video_url or '' }}">
-                {% include "_turnstile_widget.html" %}
-                <button class="mv-youtube-submit" type="submit">{{ "Tekrar dene" if is_tr else "Try again" }}</button>
-              </form>
-            </div>
-          </div>
+          {{ mv_components.free_tool_processing_card(processing_context, video_url=video_url, is_tr=is_tr) }}
         {% else %}
         {% if error %}
           <div class="free-tool-error mb-3">
@@ -583,25 +541,15 @@
         {% endif %}
         <form class="free-tool-form" method="post">
           <p class="free-tool-paste-label">{{ "YouTube bağlantısı yapıştır" if is_tr else "Paste a YouTube link" }}</p>
-          <div class="mv-url-row">
-            <div class="mv-url-field">
-              <i class="bi bi-link-45deg" aria-hidden="true"></i>
-              <input
-                id="mv-youtube-url"
-                class="mv-youtube-input"
-                type="url"
-                name="video_url"
-                value="{{ video_url or '' }}"
-                inputmode="url"
-                autocomplete="off"
-                placeholder="https://youtube.com/watch?v=…"
-                aria-label="{{ 'YouTube bağlantısı' if is_tr else 'YouTube URL' }}"
-                required
-              >
-            </div>
-            <button id="mv-youtube-submit" class="mv-youtube-submit" type="submit">{{ "Short bul" if is_tr else "Find Shorts" }}</button>
-          </div>
-          <div id="mv-youtube-preview" class="mv-youtube-preview" aria-live="polite"></div>
+          {{ mv_components.youtube_paste_box(
+            input_name='video_url',
+            input_value=video_url,
+            placeholder='https://youtube.com/watch?v=…',
+            button_label=("Short bul" if is_tr else "Find Shorts"),
+            button_type='submit',
+            input_required=True,
+            aria_label=("YouTube bağlantısı" if is_tr else "YouTube URL")
+          ) }}
           {% include "_turnstile_widget.html" %}
           <div class="free-tool-note">
             {{ "30 dakikaya kadar videolar · kayıt gerekmez" if is_tr else "Videos up to 30 min · no sign-up needed" }}
@@ -890,6 +838,12 @@
         if (stepState.transcript) activeStep = "suggestions";
         if (stepState.suggestions) activeStep = "render";
         if (renderDone) activeStep = "";
+        const activeMessages = {
+          download: isTurkish ? "Video alınıyor…" : "Fetching the video…",
+          transcript: isTurkish ? "Transkript hazırlanıyor…" : "Preparing the transcript…",
+          suggestions: isTurkish ? "Minti en iyi anları buluyor…" : "Minti is finding the best moments…",
+          render: isTurkish ? "En iyi Short'un hazırlanıyor…" : "Rendering your best Short…",
+        };
         order.forEach((key) => {
           const step = processingCard.querySelector(`[data-free-tool-step="${key}"]`);
           if (!step) return;
@@ -930,9 +884,7 @@
           }
         } else if (message) {
           message.classList.remove("d-none");
-          message.textContent = suggestionsDone
-            ? (isTurkish ? "En iyi Short'un hazırlanıyor…" : "Rendering your best Short…")
-            : (isTurkish ? "Minti en iyi anları buluyor…" : "Minti is finding the best moments…");
+          message.textContent = activeMessages[activeStep] || (isTurkish ? "Videon hazırlanıyor…" : "Your video is being prepared…");
         }
       }
 

@@ -6009,6 +6009,7 @@
       <span class="generate-v2-header-meta-text">{{ video_duration_label or (video.duration_seconds ~ 's' if video.duration_seconds else '-') }}</span>
       <span class="editor-header-separator">·</span>
       <span class="generate-v2-header-meta-text">{{ '{:,}'.format(video.view_count|int) if video.view_count is not none else '-' }} views</span>
+      {% if video.channel_name or not guest_mode %}
       <span class="editor-header-separator">·</span>
       <span class="generate-v2-header-meta-text">
         {% if video.channel_url %}
@@ -6017,6 +6018,7 @@
           {{ video.channel_name or '-' }}
         {% endif %}
       </span>
+      {% endif %}
       {% if video.youtube_watch_url %}
       <span class="editor-header-separator">·</span>
       <a class="editor-header-youtube-link"

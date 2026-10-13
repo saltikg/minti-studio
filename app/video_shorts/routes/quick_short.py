@@ -1010,7 +1010,7 @@ def _build_session_payload(session: Optional[Dict[str, Any]]) -> Optional[Dict[s
                     "title": row[2],
                     "thumbnail_url": row[3],
                     "duration_seconds": row[4],
-                    "duration_label": _format_time_label(row[4]) if row[4] is not None else None,
+                    "duration_label": _format_duration_observed(int(float(row[4]))) if row[4] is not None else None,
                     "download_status": row[5],
                     "transcript_status": row[6],
                     "source_url": _source_video_public_url(row[1], row[7] or ""),

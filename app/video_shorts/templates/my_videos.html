@@ -1,4 +1,5 @@
 {% extends "vs_base.html" %}
+{% import "partials/_my_videos_components.html" as mv_components %}
 {% block title %}My Videos – Video Shorts{% endblock %}
 
 {% block extra_styles %}
@@ -1242,14 +1243,7 @@
           <button type="button" class="mv-tab" id="mv-tab-upload" data-mv-tab="upload" role="tab" aria-selected="false" aria-controls="mv-pane-upload">Upload a file</button>
         </div>
         <div class="mv-pane is-active" id="mv-pane-url" role="tabpanel" aria-labelledby="mv-tab-url">
-          <div class="mv-url-row">
-            <div class="mv-url-field">
-              <i class="bi bi-link-45deg" aria-hidden="true"></i>
-              <input id="mv-youtube-url" class="mv-youtube-input" type="url" inputmode="url" autocomplete="off" placeholder="Paste a YouTube link — we'll pull it in and get it ready" aria-label="YouTube URL">
-            </div>
-            <button type="button" id="mv-youtube-submit" class="mv-youtube-submit">Add video</button>
-          </div>
-          <div id="mv-youtube-preview" class="mv-youtube-preview" aria-live="polite"></div>
+          {{ mv_components.youtube_paste_box() }}
         </div>
         <div class="mv-pane" id="mv-pane-upload" role="tabpanel" aria-labelledby="mv-tab-upload" hidden>
           <input id="mv-upload-file" type="file" class="mv-hidden-input" accept=".mp4,.mov,.mkv,video/*" />
