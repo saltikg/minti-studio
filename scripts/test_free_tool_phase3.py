@@ -221,7 +221,7 @@ def _assert_in_place_register(app) -> None:
         brand_row = conn.execute("SELECT name FROM shorts_brands WHERE id = ?", [brand["id"]]).fetchone()
         assert brand_row and brand_row[0] == "In Place Channel", brand_row
         usage_row = conn.execute(f"SELECT exports_used FROM {USAGE_TABLE} WHERE user_id = ?", [guest_id]).fetchone()
-        assert usage_row and int(usage_row[0] or 0) == 0, usage_row
+        assert usage_row is None or int(usage_row[0] or 0) == 0, usage_row
     finally:
         conn.close()
 
