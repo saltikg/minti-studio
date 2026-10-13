@@ -196,13 +196,13 @@ def main() -> None:
             [guest_id],
         ).fetchone()
         assert quick_session and quick_session[1], quick_session
-        status = client.get(f"/tools/youtube-to-shorts/status/{int(quick_session[1])}?session_id={quick_session[0]}")
-        assert status.status_code == 200, status.data[:200]
-        status_json = status.get_json()
-        assert status_json["ok"] is True
-        assert status_json["fallback_url"].startswith("/video_shorts/generate/")
     finally:
         conn.close()
+    status = client.get(f"/tools/youtube-to-shorts/status/{int(quick_session[1])}?session_id={quick_session[0]}")
+    assert status.status_code == 200, status.data[:200]
+    status_json = status.get_json()
+    assert status_json["ok"] is True
+    assert status_json["fallback_url"].startswith("/video_shorts/generate/")
 
     second = _post_video(client, "https://www.youtube.com/watch?v=ScMzIvxBSi4")
     assert second.status_code in {302, 303}, second.status_code
