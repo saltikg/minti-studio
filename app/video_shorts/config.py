@@ -104,6 +104,11 @@ FREE_TOOL_DAILY_VIDEO_CAP = max(0, _env_int("FREE_TOOL_DAILY_VIDEO_CAP", 50))
 FREE_TOOL_DAILY_RENDER_CAP = max(0, _env_int("FREE_TOOL_DAILY_RENDER_CAP", 150))
 FREE_TOOL_GUEST_TTL_DAYS = max(1, _env_int("FREE_TOOL_GUEST_TTL_DAYS", 3))
 FREE_TOOL_GUEST_MIN_FREE_DISK_GB = max(1, _env_int("FREE_TOOL_GUEST_MIN_FREE_DISK_GB", 5))
+SIGNUP_ALIAS_ALLOWLIST = {
+    email.strip().lower()
+    for email in str(os.getenv("SIGNUP_ALIAS_ALLOWLIST") or "gokhansaltik@gmail.com").split(",")
+    if email.strip()
+}
 
 
 DEFAULT_STORAGE_PLANS = [

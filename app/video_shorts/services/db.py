@@ -645,6 +645,8 @@ def ensure_storage_user_schema(conn):
         ("password_hash", "VARCHAR"),
         ("role", "VARCHAR DEFAULT 'member'"),
         ("email", "VARCHAR"),
+        ("email_normalized", "VARCHAR"),
+        ("registration_ip_hash", "TEXT"),
         ("google_sub", "VARCHAR"),
         ("stripe_customer_id", "VARCHAR"),
         ("stripe_subscription_id", "VARCHAR"),
@@ -700,6 +702,14 @@ def ensure_storage_user_schema(conn):
         pass
     try:
         conn.execute("CREATE UNIQUE INDEX IF NOT EXISTS idx_shorts_users_email ON shorts_users(lower(email))")
+    except Exception:
+        pass
+    try:
+        conn.execute("CREATE INDEX IF NOT EXISTS idx_shorts_users_email_normalized ON shorts_users(email_normalized)")
+    except Exception:
+        pass
+    try:
+        conn.execute("CREATE INDEX IF NOT EXISTS idx_shorts_users_registration_ip_created ON shorts_users(registration_ip_hash, created_at)")
     except Exception:
         pass
     try:
@@ -773,6 +783,8 @@ def ensure_auth_user_schema(conn) -> None:
         ("password_hash", "VARCHAR"),
         ("role", "VARCHAR DEFAULT 'member'"),
         ("email", "VARCHAR"),
+        ("email_normalized", "VARCHAR"),
+        ("registration_ip_hash", "TEXT"),
         ("google_sub", "VARCHAR"),
         ("stripe_customer_id", "VARCHAR"),
         ("stripe_subscription_id", "VARCHAR"),
@@ -833,6 +845,14 @@ def ensure_auth_user_schema(conn) -> None:
         pass
     try:
         conn.execute("CREATE UNIQUE INDEX IF NOT EXISTS idx_shorts_users_email ON shorts_users(lower(email))")
+    except Exception:
+        pass
+    try:
+        conn.execute("CREATE INDEX IF NOT EXISTS idx_shorts_users_email_normalized ON shorts_users(email_normalized)")
+    except Exception:
+        pass
+    try:
+        conn.execute("CREATE INDEX IF NOT EXISTS idx_shorts_users_registration_ip_created ON shorts_users(registration_ip_hash, created_at)")
     except Exception:
         pass
     try:

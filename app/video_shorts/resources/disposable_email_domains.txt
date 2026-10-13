@@ -1,0 +1,19 @@
+# Vendored disposable-email domain blocklist for signup abuse checks.
+# Refresh by replacing this file with an updated maintained disposable domain list.
+10minutemail.com
+20minutemail.com
+anonymbox.com
+cwsgear.com
+dispostable.com
+fakeinbox.com
+guerrillamail.com
+guerrillamail.net
+maildrop.cc
+mailinator.com
+moakt.com
+sharklasers.com
+temp-mail.org
+tempmail.com
+throwawaymail.com
+trashmail.com
+yopmail.com

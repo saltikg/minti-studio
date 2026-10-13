@@ -1,8 +1,11 @@
+import hashlib
 import json
 import logging
+import os
 import re
-from datetime import datetime, timezone
-from functools import wraps
+from datetime import datetime, timedelta, timezone
+from functools import lru_cache, wraps
+from pathlib import Path
 
 from flask import abort, current_app, flash, g, jsonify, redirect, render_template, request, session, url_for
 from werkzeug.security import check_password_hash, generate_password_hash
@@ -22,6 +25,7 @@ from app.video_shorts.config import (
     GOOGLE_OAUTH_CLIENT_SECRET,
     GOOGLE_OAUTH_REDIRECT_URI,
     GOOGLE_OAUTH_SCOPES,
+    SIGNUP_ALIAS_ALLOWLIST,
     SIGNUPS_ENABLED,
     SHORTS_OVERVIEW_STATS_TTL_MINUTES,
     SHORTS_OVERVIEW_STATS_MAX_VIDEOS,
@@ -134,6 +138,7 @@ SERVICE_MODE_VALUES = {"autopilot", "self"}
 
 LOGIN_RATE_LIMITS = [RateLimitRule(limit=5, window_seconds=60)]
 REGISTER_RATE_LIMITS = [RateLimitRule(limit=5, window_seconds=60)]
+REGISTER_SUCCESS_LIMIT_PER_IP = 3
 FORGOT_PASSWORD_RATE_LIMITS = [RateLimitRule(limit=1, window_seconds=60), RateLimitRule(limit=5, window_seconds=3600)]
 RESEND_VERIFICATION_RATE_LIMITS = [RateLimitRule(limit=1, window_seconds=60), RateLimitRule(limit=5, window_seconds=3600)]
 RESET_PASSWORD_RATE_LIMITS = [RateLimitRule(limit=5, window_seconds=3600)]
@@ -765,6 +770,108 @@ def _client_ip() -> str:
     if xff:
         return xff.split(",", 1)[0].strip()
     return (request.remote_addr or "").strip()
+
+
+def normalize_signup_email(email: str) -> str:
+    """Normalize email for signup abuse checks without changing the login email."""
+    value = _normalize_auth_email(email)
+    if "@" not in value:
+        return value
+    local, domain = value.rsplit("@", 1)
+    local = local.split("+", 1)[0]
+    domain = domain.strip().lower()
+    if domain in {"gmail.com", "googlemail.com"}:
+        local = local.replace(".", "")
+        domain = "gmail.com"
+    return f"{local}@{domain}"
+
+
+def _normalized_signup_allowlist() -> set[str]:
+    return {normalize_signup_email(email) for email in SIGNUP_ALIAS_ALLOWLIST if email}
+
+
+def _signup_alias_allowed(email: str) -> bool:
+    normalized = normalize_signup_email(email)
+    return bool(normalized and normalized in _normalized_signup_allowlist())
+
+
+@lru_cache(maxsize=1)
+def _disposable_email_domains() -> set[str]:
+    domains_path = Path(__file__).resolve().parents[1] / "resources" / "disposable_email_domains.txt"
+    try:
+        return {
+            line.strip().lower()
+            for line in domains_path.read_text(encoding="utf-8").splitlines()
+            if line.strip() and not line.strip().startswith("#")
+        }
+    except FileNotFoundError:
+        logger.warning("Disposable email domain list missing: %s", domains_path)
+        return set()
+
+
+def _is_disposable_signup_email(email: str) -> bool:
+    value = _normalize_auth_email(email)
+    if "@" not in value:
+        return False
+    domain = value.rsplit("@", 1)[1].lower()
+    return domain in _disposable_email_domains()
+
+
+def _registration_ip_hash(ip: str | None = None) -> str:
+    source_ip = (ip if ip is not None else _client_ip()).strip()
+    secret = (
+        current_app.config.get("SECRET_KEY")
+        or os.getenv("SECRET_KEY")
+        or os.getenv("FLASK_SECRET_KEY")
+        or "minti-signup"
+    )
+    return hashlib.sha256(f"{secret}:signup:{source_ip}".encode("utf-8")).hexdigest()
+
+
+def _signup_normalized_email_exists(conn, *, email_normalized: str, exclude_user_id: str = "") -> bool:
+    if not email_normalized:
+        return False
+    row = conn.execute(
+        """
+        SELECT 1
+        FROM shorts_users
+        WHERE email_normalized = ?
+          AND (? = '' OR CAST(id AS VARCHAR) <> ?)
+        LIMIT 1
+        """,
+        [email_normalized, str(exclude_user_id or ""), str(exclude_user_id or "")],
+    ).fetchone()
+    return bool(row)
+
+
+def _signup_ip_limit_exceeded(conn, *, registration_ip_hash: str) -> bool:
+    if not registration_ip_hash:
+        return False
+    cutoff = datetime.now(timezone.utc) - timedelta(days=1)
+    row = conn.execute(
+        """
+        SELECT COUNT(*)
+        FROM shorts_users
+        WHERE registration_ip_hash = ?
+          AND COALESCE(is_guest, FALSE) = FALSE
+          AND created_at >= ?
+        """,
+        [registration_ip_hash, cutoff],
+    ).fetchone()
+    return int(row[0] or 0) >= REGISTER_SUCCESS_LIMIT_PER_IP if row else False
+
+
+def registration_abuse_error(conn, *, email: str, registration_ip_hash: str, exclude_user_id: str = "") -> str:
+    if _is_disposable_signup_email(email):
+        return "Please use a permanent email address."
+    if _signup_alias_allowed(email):
+        return ""
+    email_normalized = normalize_signup_email(email)
+    if _signup_normalized_email_exists(conn, email_normalized=email_normalized, exclude_user_id=exclude_user_id):
+        return "An account with this email already exists — sign in instead."
+    if _signup_ip_limit_exceeded(conn, registration_ip_hash=registration_ip_hash):
+        return "Too many successful registrations from this network. Please try again later."
+    return ""
 
 
 def _turnstile_token() -> str:
@@ -1947,12 +2054,15 @@ def register():
             conn = get_db()
             ensure_storage_user_schema(conn)
             ensure_auth_user_schema(conn)
-            existing = conn.execute(
-                "SELECT 1 FROM shorts_users WHERE lower(email) = ? OR lower(username) = ?",
-                [email, email],
-            ).fetchone()
-            if existing:
-                error = "An account with this email already exists."
+            email_normalized = normalize_signup_email(email)
+            registration_ip_hash = _registration_ip_hash()
+            error = registration_abuse_error(
+                conn,
+                email=email,
+                registration_ip_hash=registration_ip_hash,
+                exclude_user_id=guest_user_id or "",
+            )
+            if error:
                 conn.close()
             else:
                 username = email
@@ -1970,6 +2080,8 @@ def register():
                             password_hash = ?,
                             name = ?,
                             email = ?,
+                            email_normalized = ?,
+                            registration_ip_hash = ?,
                             role = 'member',
                             plan_id = ?,
                             email_verified = FALSE,
@@ -1993,6 +2105,8 @@ def register():
                             generate_password_hash(password),
                             name,
                             email,
+                            email_normalized,
+                            registration_ip_hash,
                             DEFAULT_USER_PLAN_ID,
                             verify_token_hash,
                             verify_expires_at,
@@ -2016,12 +2130,13 @@ def register():
                     conn.execute(
                         """
                         INSERT INTO shorts_users (
-                            id, username, password_hash, name, email, role, plan_id,
+                            id, username, password_hash, name, email, email_normalized,
+                            registration_ip_hash, role, plan_id,
                             email_verified, email_verification_token_hash, email_verification_expires_at,
                             email_verification_sent_at, pending_service_intent, pending_service_tier,
                             guest_resume_next, guest_resume_action, guest_resume_clip
                         )
-                        VALUES (?, ?, ?, ?, ?, 'member', ?, FALSE, ?, ?, now(), ?, ?, ?, ?, ?)
+                        VALUES (?, ?, ?, ?, ?, ?, ?, 'member', ?, FALSE, ?, ?, now(), ?, ?, ?, ?, ?)
                         """,
                         [
                             user_id,
@@ -2029,6 +2144,8 @@ def register():
                             generate_password_hash(password),
                             name,
                             email,
+                            email_normalized,
+                            registration_ip_hash,
                             DEFAULT_USER_PLAN_ID,
                             verify_token_hash,
                             verify_expires_at,
