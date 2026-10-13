@@ -1795,6 +1795,7 @@ def _guard_video_shorts():
         "video_shorts_bp.contact_page",
         "video_shorts_bp.free_tool_youtube_to_shorts",
         "video_shorts_bp.free_tool_youtube_to_shorts_tr",
+        "video_shorts_bp.free_tool_event",
         "video_shorts_bp.quick_short_youtube_metadata",
         "video_shorts_bp.static",
         "video_shorts_bp.caption_tasks",
@@ -1840,6 +1841,7 @@ def _guard_video_shorts():
                 "video_shorts_bp.free_tool_youtube_to_shorts",
                 "video_shorts_bp.free_tool_youtube_to_shorts_tr",
                 "video_shorts_bp.free_tool_processing_status",
+                "video_shorts_bp.free_tool_event",
                 "video_shorts_bp.static",
                 "video_shorts_bp.serve_media",
                 "video_shorts_bp.generate_short",
@@ -1962,6 +1964,13 @@ def login():
                             guest_user_id=guest_user_id,
                             target_brand_id=(brand or {}).get("id"),
                         )
+                        if claim_result.get("claimed"):
+                            track_event(
+                                row[0],
+                                "free_tool_claim",
+                                status="existing_account",
+                                metadata={"mode": claim_result.get("mode")},
+                            )
                         brand_conn.commit()
                         if claim_result.get("target_brand_id"):
                             brand = {"id": claim_result["target_brand_id"]}
@@ -2126,6 +2135,12 @@ def register():
                         fallback_email=email,
                     )
                     _reset_guest_export_usage_on_claim(conn, user_id=user_id)
+                    track_event(
+                        user_id,
+                        "free_tool_claim",
+                        status="new_account",
+                        metadata={"mode": "in_place"},
+                    )
                 else:
                     conn.execute(
                         """
@@ -2971,12 +2986,19 @@ def google_oauth_callback():
         ensure_brand_schema(conn)
         brand_for_claim = ensure_brand_for_user(conn, user_id=user_id, user_name=name or email)
         if guest_user_id and guest_user_id != user_id:
-            claim_guest_into(
+            claim_result = claim_guest_into(
                 conn,
                 target_user_id=user_id,
                 guest_user_id=guest_user_id,
                 target_brand_id=(brand_for_claim or {}).get("id"),
             )
+            if claim_result.get("claimed"):
+                track_event(
+                    user_id,
+                    "free_tool_claim",
+                    status="existing_account",
+                    metadata={"mode": claim_result.get("mode"), "method": "google"},
+                )
         conn.commit()
     else:
         if not _signups_enabled():
@@ -3051,6 +3073,12 @@ def google_oauth_callback():
             fallback_email=email,
         )
         _reset_guest_export_usage_on_claim(conn, user_id=user_id)
+        track_event(
+            user_id,
+            "free_tool_claim",
+            status="new_account",
+            metadata={"mode": "in_place", "method": "google"},
+        )
         conn.commit()
     conn.close()
     if created_new_user:

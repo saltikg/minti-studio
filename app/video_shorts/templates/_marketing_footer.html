@@ -21,7 +21,14 @@
       <span>MintiStudio</span>
     </a>
 
-    <div class="footer-links" aria-label="Legal links">
+    <div class="footer-links" aria-label="Footer links">
+      {% if free_tool_enabled %}
+        {% set free_tool_is_tr = locale|default('en') == 'tr' or request.path.startswith('/tr/') %}
+        <span class="footer-link-disabled">{{ 'Ücretsiz araçlar' if free_tool_is_tr else 'Free tools' }}</span>
+        <a class="footer-link" href="{{ '/tr/araclar/youtube-shorts' if free_tool_is_tr else '/tools/youtube-to-shorts' }}">
+          {{ "YouTube'dan Shorts" if free_tool_is_tr else 'YouTube to Shorts' }}
+        </a>
+      {% endif %}
       <a class="footer-link" href="{{ url_for('video_shorts_bp.blog_index') }}">Blog</a>
       <a class="footer-link" href="{{ url_for('video_shorts_bp.privacy_page') }}">Privacy Policy</a>
       <a class="footer-link" href="{{ url_for('video_shorts_bp.terms_page') }}">Terms of Service</a>

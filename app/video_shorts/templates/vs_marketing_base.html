@@ -101,6 +101,62 @@
       color: rgba(248, 250, 252, 0.98);
     }
 
+    .vs-marketing-dropdown {
+      position: relative;
+      display: inline-flex;
+      align-items: center;
+    }
+
+    .vs-marketing-dropdown-toggle {
+      border: 0;
+      background: transparent;
+      padding: 0;
+      display: inline-flex;
+      align-items: center;
+      gap: 0.3rem;
+    }
+
+    .vs-marketing-dropdown-menu {
+      position: absolute;
+      top: calc(100% + 0.75rem);
+      left: 50%;
+      transform: translateX(-50%);
+      min-width: 210px;
+      padding: 0.45rem;
+      border: 1px solid rgba(255, 255, 255, 0.11);
+      border-radius: 14px;
+      background: rgba(8, 12, 18, 0.98);
+      box-shadow: 0 22px 44px rgba(0, 0, 0, 0.34);
+      opacity: 0;
+      visibility: hidden;
+      pointer-events: none;
+      transition: opacity 0.14s ease, visibility 0.14s ease;
+    }
+
+    .vs-marketing-dropdown:hover .vs-marketing-dropdown-menu,
+    .vs-marketing-dropdown:focus-within .vs-marketing-dropdown-menu {
+      opacity: 1;
+      visibility: visible;
+      pointer-events: auto;
+    }
+
+    .vs-marketing-dropdown-item {
+      display: block;
+      padding: 0.68rem 0.75rem;
+      border-radius: 10px;
+      color: rgba(226, 232, 240, 0.9);
+      text-decoration: none;
+      font-size: 0.93rem;
+      font-weight: 600;
+      white-space: nowrap;
+    }
+
+    .vs-marketing-dropdown-item:hover,
+    .vs-marketing-dropdown-item:focus {
+      background: rgba(45, 212, 191, 0.12);
+      color: rgba(248, 250, 252, 0.98);
+    }
+
     .vs-marketing-actions {
       display: flex;
       align-items: center;
@@ -445,6 +501,19 @@
           {% for label, anchor in marketing_nav_items %}
             <a class="vs-marketing-nav-link" href="{{ home_anchor_base }}{{ anchor }}">{{ label }}</a>
           {% endfor %}
+          {% if free_tool_enabled %}
+            {% set free_tool_is_tr = locale|default('en') == 'tr' or request.path.startswith('/tr/') %}
+            <div class="vs-marketing-dropdown">
+              <button type="button" class="vs-marketing-nav-link vs-marketing-dropdown-toggle" aria-haspopup="true" aria-expanded="false">
+                {{ 'Ücretsiz araçlar' if free_tool_is_tr else 'Free tools' }} <i class="bi bi-chevron-down" aria-hidden="true"></i>
+              </button>
+              <div class="vs-marketing-dropdown-menu">
+                <a class="vs-marketing-dropdown-item" href="{{ '/tr/araclar/youtube-shorts' if free_tool_is_tr else '/tools/youtube-to-shorts' }}">
+                  {{ "YouTube'dan Shorts" if free_tool_is_tr else 'YouTube to Shorts' }}
+                </a>
+              </div>
+            </div>
+          {% endif %}
           <a class="vs-marketing-nav-link" href="{{ url_for('video_shorts_bp.blog_index') }}">Blog</a>
         {% endblock %}
       </div>
@@ -479,6 +548,12 @@
           {% for label, anchor in marketing_nav_items %}
             <a class="vs-marketing-mobile-link" href="{{ home_anchor_base }}{{ anchor }}">{{ label }}</a>
           {% endfor %}
+          {% if free_tool_enabled %}
+            {% set free_tool_is_tr = locale|default('en') == 'tr' or request.path.startswith('/tr/') %}
+            <a class="vs-marketing-mobile-link" href="{{ '/tr/araclar/youtube-shorts' if free_tool_is_tr else '/tools/youtube-to-shorts' }}">
+              {{ "Ücretsiz araçlar · YouTube'dan Shorts" if free_tool_is_tr else 'Free tools · YouTube to Shorts' }}
+            </a>
+          {% endif %}
           <a class="vs-marketing-mobile-link" href="{{ url_for('video_shorts_bp.blog_index') }}">Blog</a>
           <a class="vs-marketing-mobile-link" href="{{ url_for('video_shorts_bp.login') }}">Login</a>
         {% endblock %}

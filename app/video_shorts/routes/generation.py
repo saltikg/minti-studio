@@ -9482,7 +9482,19 @@ def _guest_gate_response(
         "clip": clip,
         "register_url": register_url,
         "login_url": login_url,
+        "tracked_gate_shown": True,
     }
+    try:
+        track_event(
+            str((current_user or {}).get("id") or ""),
+            "free_tool_gate_shown",
+            video_id=str(video_pk or "").strip() or None,
+            short_id=str(clip or "").strip() or None,
+            status=action,
+            metadata={"action": action, "reason": reason, "clip": str(clip or "")},
+        )
+    except Exception:
+        current_app.logger.warning("free_tool_gate_shown tracking failed action=%s", action, exc_info=True)
     if json_only or request.method != "GET" or _wants_json_response() or request.is_json:
         return jsonify(payload), 403
     return redirect(register_url, code=302)
@@ -14153,6 +14165,15 @@ def download_generated_clip(video_pk: int, plan_index: int):
         abort(404)
     video_id = str(row[0] or "").strip()
     video_title = str(row[1] or "").strip()
+    if int((current_user or {}).get("guest_video_count") or 0) > 0:
+        track_event(
+            str(current_user.get("id") or ""),
+            "free_tool_download_after_claim",
+            video_id=video_id,
+            short_id=str(plan_index),
+            status="download",
+            metadata={"video_pk": int(video_pk), "plan_index": int(plan_index)},
+        )
     target_entry = None
     for entry in _load_plan_entries(video_id):
         if not isinstance(entry, dict):
@@ -19847,6 +19868,72 @@ PIPELINE_STATE_LABELS = {
     "failed": "Failed",
 }
 
+FREE_TOOL_ADMIN_EVENTS = [
+    "free_tool_landing_view",
+    "free_tool_submit",
+    "free_tool_top1_ready",
+    "free_tool_gate_shown",
+    "free_tool_gate_click",
+    "free_tool_claim",
+    "free_tool_download_after_claim",
+]
+
+
+def _load_free_tool_admin_stats(conn) -> dict[str, Any]:
+    if not table_columns(conn, "user_events"):
+        return {
+            "events": [],
+            "submit_to_claim_7": "0%",
+            "submit_to_claim_30": "0%",
+            "submits_7": 0,
+            "claims_7": 0,
+            "submits_30": 0,
+            "claims_30": 0,
+        }
+    placeholders = ", ".join(["?"] * len(FREE_TOOL_ADMIN_EVENTS))
+    rows = conn.execute(
+        f"""
+        SELECT
+            event_name,
+            SUM(CASE WHEN created_at >= (now() - INTERVAL '7 days') THEN 1 ELSE 0 END) AS count_7,
+            SUM(CASE WHEN created_at >= (now() - INTERVAL '30 days') THEN 1 ELSE 0 END) AS count_30
+        FROM user_events
+        WHERE event_name IN ({placeholders})
+          AND created_at >= (now() - INTERVAL '30 days')
+        GROUP BY event_name
+        """,
+        FREE_TOOL_ADMIN_EVENTS,
+    ).fetchall()
+    counts = {str(row[0] or ""): {"count_7": int(row[1] or 0), "count_30": int(row[2] or 0)} for row in rows}
+    events = [
+        {
+            "name": event_name,
+            "label": event_name.replace("free_tool_", "").replace("_", " ").title(),
+            "count_7": counts.get(event_name, {}).get("count_7", 0),
+            "count_30": counts.get(event_name, {}).get("count_30", 0),
+        }
+        for event_name in FREE_TOOL_ADMIN_EVENTS
+    ]
+    submits_7 = counts.get("free_tool_submit", {}).get("count_7", 0)
+    submits_30 = counts.get("free_tool_submit", {}).get("count_30", 0)
+    claims_7 = counts.get("free_tool_claim", {}).get("count_7", 0)
+    claims_30 = counts.get("free_tool_claim", {}).get("count_30", 0)
+
+    def _rate(claims: int, submits: int) -> str:
+        if not submits:
+            return "0%"
+        return f"{(claims / submits) * 100:.1f}%"
+
+    return {
+        "events": events,
+        "submit_to_claim_7": _rate(claims_7, submits_7),
+        "submit_to_claim_30": _rate(claims_30, submits_30),
+        "submits_7": submits_7,
+        "claims_7": claims_7,
+        "submits_30": submits_30,
+        "claims_30": claims_30,
+    }
+
 
 def _pipeline_event_step(event_type: str) -> str:
     normalized = str(event_type or "").strip()
@@ -19872,6 +19959,7 @@ def admin_leads_pipeline_overview():
     try:
         lead_columns = table_columns(conn, "autopilot_leads")
         event_columns = table_columns(conn, "lead_pipeline_events")
+        free_tool_stats = _load_free_tool_admin_stats(conn)
         state_options = _load_admin_lead_state_options(conn, selected_states)
         if "pipeline_state" not in lead_columns or not event_columns:
             leads = []
@@ -20032,6 +20120,7 @@ def admin_leads_pipeline_overview():
         page_links=page_links,
         previous_page_url=_pipeline_overview_url(page=page - 1) if page > 1 else "",
         next_page_url=_pipeline_overview_url(page=page + 1) if page < total_pages else "",
+        free_tool_stats=free_tool_stats,
     )
 
 

@@ -75,6 +75,11 @@ def create_app():
         def inject_nav():
             return {"NAV_MENU": []}
 
+    @app.context_processor
+    def inject_free_tool_flags():
+        free_tool_enabled = str(os.getenv("FREE_TOOL_ENABLED") or "").strip().lower() in {"1", "true", "yes", "on"}
+        return {"free_tool_enabled": free_tool_enabled}
+
     # --- Blueprints ---
 
     # 1) Video Shorts only
@@ -124,6 +129,12 @@ def create_app():
         from app.video_shorts.routes.free_tool import free_tool_processing_status
 
         return free_tool_processing_status(video_pk)
+
+    @app.post("/tools/youtube-to-shorts/event")
+    def free_tool_youtube_to_shorts_event():
+        from app.video_shorts.routes.free_tool import free_tool_event
+
+        return free_tool_event()
 
     @app.route("/tr/araclar/youtube-shorts", methods=["GET", "POST"])
     def free_tool_youtube_to_shorts_tr():
@@ -216,12 +227,41 @@ def create_app():
                     "lastmod": _sitemap_lastmod(lastmod),
                 }
             )
-        lines = ['<?xml version="1.0" encoding="UTF-8"?>', '<urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">']
+        free_tool_enabled = str(os.getenv("FREE_TOOL_ENABLED") or "").strip().lower() in {"1", "true", "yes", "on"}
+        if free_tool_enabled:
+            entries.extend(
+                [
+                    {
+                        "loc": _absolute_public_url("/tools/youtube-to-shorts"),
+                        "lastmod": "",
+                        "alternates": [
+                            ("en", _absolute_public_url("/tools/youtube-to-shorts")),
+                            ("tr", _absolute_public_url("/tr/araclar/youtube-shorts")),
+                            ("x-default", _absolute_public_url("/tools/youtube-to-shorts")),
+                        ],
+                    },
+                    {
+                        "loc": _absolute_public_url("/tr/araclar/youtube-shorts"),
+                        "lastmod": "",
+                        "alternates": [
+                            ("tr", _absolute_public_url("/tr/araclar/youtube-shorts")),
+                            ("en", _absolute_public_url("/tools/youtube-to-shorts")),
+                            ("x-default", _absolute_public_url("/tools/youtube-to-shorts")),
+                        ],
+                    },
+                ]
+            )
+        lines = [
+            '<?xml version="1.0" encoding="UTF-8"?>',
+            '<urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9" xmlns:xhtml="http://www.w3.org/1999/xhtml">',
+        ]
         for entry in entries:
             lines.append("  <url>")
             lines.append(f"    <loc>{escape(entry['loc'])}</loc>")
             if entry.get("lastmod"):
                 lines.append(f"    <lastmod>{escape(entry['lastmod'])}</lastmod>")
+            for hreflang, href in entry.get("alternates", []):
+                lines.append(f'    <xhtml:link rel="alternate" hreflang="{escape(hreflang)}" href="{escape(href)}" />')
             lines.append("  </url>")
         lines.append("</urlset>")
         response = Response("\n".join(lines) + "\n", mimetype="application/xml")

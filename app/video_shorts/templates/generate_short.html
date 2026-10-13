@@ -8703,6 +8703,30 @@
     },
   };
   const currentLang = () => (gateModal()?.dataset.freeToolLang === "tr" ? "tr" : "en");
+  const postGuestGateEvent = (eventName, payload = {}, choice = "") => {
+    try {
+      const body = JSON.stringify({
+        event: eventName,
+        action: payload.action || "",
+        reason: payload.reason || "",
+        clip: payload.clip || "",
+        choice,
+        path: window.location.pathname || "",
+      });
+      if (navigator.sendBeacon) {
+        navigator.sendBeacon("/tools/youtube-to-shorts/event", new Blob([body], { type: "application/json" }));
+        return;
+      }
+      fetch("/tools/youtube-to-shorts/event", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body,
+        keepalive: true,
+      }).catch(() => {});
+    } catch (error) {
+      // Analytics should never affect the guest gate.
+    }
+  };
   const gateTitle = (payload = {}) => {
     const langCopy = copy[currentLang()] || copy.en;
     if (payload.reason === "daily_cap") return langCopy.titles.daily_cap;
@@ -8744,6 +8768,10 @@
     if (register) register.textContent = langCopy.register;
     if (login) login.textContent = langCopy.login;
     if (close) close.textContent = langCopy.close;
+    if (!payload.tracked_gate_shown) postGuestGateEvent("free_tool_gate_shown", payload);
+    register?.addEventListener("click", () => postGuestGateEvent("free_tool_gate_click", payload, "create_account"), { once: true });
+    login?.addEventListener("click", () => postGuestGateEvent("free_tool_gate_click", payload, "sign_in"), { once: true });
+    close?.addEventListener("click", () => postGuestGateEvent("free_tool_gate_click", payload, "not_now"), { once: true });
     modal.classList.add("is-visible");
     modal.setAttribute("aria-hidden", "false");
     register?.focus?.();

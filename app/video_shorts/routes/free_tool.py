@@ -26,11 +26,13 @@ from app.video_shorts.services.db import ensure_auth_user_schema, ensure_storage
 from app.video_shorts.services.quick_short_flow import (
     get_session,
 )
+from app.video_shorts.services.user_events import track_event
 from app.video_shorts.youtube_api import YoutubeApiError, extract_video_id, fetch_video_metadata
 
 
 FREE_TOOL_MAX_VIDEO_SECONDS = 30 * 60
 FREE_TOOL_DAILY_GUESTS_PER_IP = 3
+FREE_TOOL_ANON_USER_PREFIX = "free_tool_anon"
 
 
 def _render_free_tool_template(**context):
@@ -62,6 +64,29 @@ def _ip_hash() -> str:
     secret = str(current_app.secret_key or os.getenv("SECRET_KEY") or "minti-free-tool").encode("utf-8")
     ip = _client_ip().encode("utf-8")
     return hashlib.sha256(secret + b":" + ip).hexdigest()
+
+
+def _free_tool_event_user_id(current_user: Optional[dict] = None) -> str:
+    if current_user and current_user.get("id"):
+        return str(current_user.get("id"))
+    return f"{FREE_TOOL_ANON_USER_PREFIX}:{_ip_hash()[:16]}"
+
+
+def _track_free_tool_event(
+    event_name: str,
+    *,
+    current_user: Optional[dict] = None,
+    video_id: Any = None,
+    status: str = "",
+    metadata: Optional[dict] = None,
+) -> None:
+    track_event(
+        _free_tool_event_user_id(current_user),
+        event_name,
+        video_id=str(video_id or "").strip() or None,
+        status=str(status or "").strip() or None,
+        metadata=metadata or {},
+    )
 
 
 def _count_recent_guest_creations(conn, guest_ip_hash: str) -> int:
@@ -219,6 +244,17 @@ def _free_tool_video_status_payload(*, current_user: dict, video_pk: int, quick_
     message = ""
     if selected_plan_index:
         status = "ready"
+        ready_key = f"free_tool_top1_ready:{video_pk}:{selected_plan_index}"
+        if not session.get(ready_key):
+            _track_free_tool_event(
+                "free_tool_top1_ready",
+                current_user=current_user,
+                video_id=video.get("video_id") or video_pk,
+                status="ready",
+                metadata={"video_pk": int(video_pk), "plan_index": selected_plan_index},
+            )
+            session[ready_key] = True
+            session.modified = True
     elif ingest_failed or transcript_failed or session_failed:
         status = "failed"
         message = "This video could not be processed right now. Please try again."
@@ -292,6 +328,28 @@ def free_tool_processing_status(video_pk: int):
     return jsonify(payload), status
 
 
+@video_shorts_bp.route("/tools/youtube-to-shorts/event", methods=["POST"])
+def free_tool_event():
+    current_user = _current_user()
+    payload = request.get_json(silent=True) or request.form.to_dict() or {}
+    event_name = str(payload.get("event") or "").strip()
+    allowed_events = {
+        "free_tool_gate_shown",
+        "free_tool_gate_click",
+    }
+    if event_name not in allowed_events:
+        return jsonify(ok=False, message="Unknown event."), 400
+    metadata = {
+        "action": str(payload.get("action") or "").strip(),
+        "reason": str(payload.get("reason") or "").strip(),
+        "choice": str(payload.get("choice") or "").strip(),
+        "clip": str(payload.get("clip") or "").strip(),
+        "path": str(payload.get("path") or request.path or "").strip(),
+    }
+    _track_free_tool_event(event_name, current_user=current_user, status=metadata.get("choice") or "", metadata=metadata)
+    return jsonify(ok=True)
+
+
 def render_free_tool_landing(locale: str = "en"):
     _ensure_free_tool_visible()
     locale = "tr" if locale == "tr" else "en"
@@ -300,8 +358,21 @@ def render_free_tool_landing(locale: str = "en"):
     error = ""
     video_url = ""
     processing_context = _processing_context_for_guest(current_user) if request.method == "GET" else None
+    if request.method == "GET":
+        _track_free_tool_event(
+            "free_tool_landing_view",
+            current_user=current_user,
+            status=locale,
+            metadata={"locale": locale, "path": request.path},
+        )
     if request.method == "POST":
         video_url = str(request.form.get("video_url") or request.form.get("youtube_url") or "").strip()
+        _track_free_tool_event(
+            "free_tool_submit",
+            current_user=current_user,
+            status=locale,
+            metadata={"locale": locale, "path": request.path},
+        )
         if not _verify_turnstile_or_fail():
             error = "Verification failed. Please try again." if locale == "en" else "Doğrulama başarısız. Lütfen tekrar deneyin."
         else:

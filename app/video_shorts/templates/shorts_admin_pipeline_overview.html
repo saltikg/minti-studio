@@ -127,10 +127,64 @@
       background: rgba(248, 113, 113, 0.15);
       color: #fecaca;
     }
+    .free-tool-admin-grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(140px, 1fr));
+      gap: 10px;
+      margin-top: 12px;
+    }
+    .free-tool-admin-stat {
+      border: 1px solid rgba(255, 255, 255, 0.08);
+      border-radius: 12px;
+      padding: 10px 12px;
+      background: rgba(255, 255, 255, 0.035);
+    }
+    .free-tool-admin-label {
+      color: rgba(255, 255, 255, 0.56);
+      font-size: 0.76rem;
+      font-weight: 800;
+      letter-spacing: 0.05em;
+      text-transform: uppercase;
+    }
+    .free-tool-admin-counts {
+      display: flex;
+      justify-content: space-between;
+      gap: 10px;
+      margin-top: 7px;
+      font-size: 0.92rem;
+    }
+    .free-tool-admin-counts strong {
+      color: #8ff3d8;
+    }
   </style>
 {% endblock %}
 
 {% block content %}
+  <section class="vs-admin-card p-3 p-lg-4 mb-3">
+    <div class="d-flex justify-content-between align-items-start gap-3 flex-wrap">
+      <div>
+        <h2 class="h5 mb-1">Free tool</h2>
+        <div class="pipeline-overview-meta mb-0">
+          Submit → claim: {{ free_tool_stats.submit_to_claim_7 }} last 7 days · {{ free_tool_stats.submit_to_claim_30 }} last 30 days
+        </div>
+      </div>
+      <div class="pipeline-overview-meta mb-0">
+        7d: {{ free_tool_stats.claims_7 }}/{{ free_tool_stats.submits_7 }} · 30d: {{ free_tool_stats.claims_30 }}/{{ free_tool_stats.submits_30 }}
+      </div>
+    </div>
+    <div class="free-tool-admin-grid">
+      {% for event in free_tool_stats.events %}
+        <div class="free-tool-admin-stat">
+          <div class="free-tool-admin-label">{{ event.label }}</div>
+          <div class="free-tool-admin-counts">
+            <span>7d <strong>{{ event.count_7 }}</strong></span>
+            <span>30d <strong>{{ event.count_30 }}</strong></span>
+          </div>
+        </div>
+      {% endfor %}
+    </div>
+  </section>
+
   <section class="vs-admin-card p-3 p-lg-4">
     <div class="d-flex justify-content-between align-items-center gap-3 flex-wrap mb-3">
       <div class="pipeline-overview-meta">{{ total_leads }} lead{{ '' if total_leads == 1 else 's' }} · {{ per_page }} per page · Pacific time</div>
