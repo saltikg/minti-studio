@@ -388,7 +388,8 @@ def render_share_link_outreach_email(conn, share_link_id: int, *, stage: object,
           sl.followup_template_key,
           COALESCE(NULLIF(yv.title, ''), NULLIF(gv.source_video_id, '')) AS source_video_title,
           COALESCE(sl.archived, false) AS archived,
-          sl.autopilot_lead_id
+          sl.autopilot_lead_id,
+          COALESCE(NULLIF(l.creator_name, ''), NULLIF(sl.recipient_name, '')) AS channel_name
         FROM short_share_links sl
         LEFT JOIN autopilot_leads l
           ON NULLIF(CAST(sl.autopilot_lead_id AS VARCHAR), '') IS NOT NULL
@@ -419,6 +420,7 @@ def render_share_link_outreach_email(conn, share_link_id: int, *, stage: object,
     recipient_name = str(row[2] or "").strip()
     source_video_title = str(row[11] or "").strip()
     lead_id = str(row[13] or "").strip()
+    channel_name = str(row[14] or "").strip()
     generated_count = _generated_count_for_share_link(conn, share_link_id=share_link_id, lead_id=lead_id)
     free_tool_url = _free_tool_url_for_lead(lead_id)
     discovery_signal = load_share_link_discovery_signal(conn, row[13])
@@ -433,6 +435,7 @@ def render_share_link_outreach_email(conn, share_link_id: int, *, stage: object,
         shorts_last_15d=discovery_signal.get("shorts_last_15d"),
         generated_count=generated_count,
         free_tool_url=free_tool_url,
+        channel_name=channel_name,
     )
     return {
         "row": row,
@@ -444,6 +447,7 @@ def render_share_link_outreach_email(conn, share_link_id: int, *, stage: object,
         "lead_id": lead_id,
         "generated_count": generated_count,
         "free_tool_url": free_tool_url,
+        "channel_name": channel_name,
         "discovery_signal": discovery_signal,
         "email": rendered_email,
         "clipboard_text": render_outreach_clipboard_text(
@@ -457,6 +461,7 @@ def render_share_link_outreach_email(conn, share_link_id: int, *, stage: object,
             shorts_last_15d=discovery_signal.get("shorts_last_15d"),
             generated_count=generated_count,
             free_tool_url=free_tool_url,
+            channel_name=channel_name,
         ),
         "emailed_at": row[6],
         "first_email_template_key": str(row[7] or "").strip(),

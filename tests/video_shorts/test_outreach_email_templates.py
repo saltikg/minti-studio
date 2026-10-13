@@ -79,6 +79,45 @@ def test_bucket_followup_en_can_include_signal():
     assert "https://mintistudio.com/tools/youtube-to-shorts?utm_source=outreach" in rendered["text"]
 
 
+def test_bucket_followup_en_sequence_three_uses_last_idea_copy():
+    rendered = render_bucket_followup_outreach_email(
+        bucket="sent_no_visit",
+        sequence_number=3,
+        language="EN",
+        recipient_name="Alex",
+        share_url="https://mintistudio.com/w/test",
+        trial_days=30,
+        video_title="A useful webinar",
+        generated_count=5,
+        free_tool_url="https://mintistudio.com/tools/youtube-to-shorts?utm_source=outreach",
+        channel_name="Alex Channel",
+    )
+
+    assert rendered["key"] == "FOLLOWUP_EN"
+    assert rendered["subject"] == "One last idea for Alex Channel"
+    assert 'One last idea on the 5 Shorts we made from "A useful webinar". They\'re still here if you want them:' in rendered["text"]
+    assert "Quick follow-up" not in rendered["text"]
+
+
+def test_bucket_followup_en_sequence_three_keeps_singular_copy():
+    rendered = render_bucket_followup_outreach_email(
+        bucket="sent_no_visit",
+        sequence_number=3,
+        language="EN",
+        recipient_name="Alex",
+        share_url="https://mintistudio.com/w/test",
+        trial_days=30,
+        video_title="A useful webinar",
+        generated_count=1,
+        free_tool_url="https://mintistudio.com/tools/youtube-to-shorts",
+        channel_name="Alex Channel",
+    )
+
+    assert rendered["subject"] == "One last idea for Alex Channel"
+    assert 'One last idea on the Short we made from "A useful webinar". It\'s still here if you want it:' in rendered["text"]
+    assert "1 Shorts" not in rendered["text"]
+
+
 def test_tr_templates_do_not_include_signal():
     rendered = render_outreach_email(
         stage="first",
