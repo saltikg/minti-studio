@@ -4,7 +4,7 @@ from __future__ import annotations
 import ast
 import re
 import sys
-from datetime import datetime
+from datetime import UTC, datetime
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -120,7 +120,7 @@ def main() -> int:
     title = str(meta.get("title") or NEW_POST_TITLE)
     slug = _slugify(meta.get("slug") or title)
     meta_description = str(meta.get("meta_description") or "").strip()
-    published_at = datetime.utcnow()
+    published_at = datetime.now(UTC)
     reading_time = _reading_time_minutes(body)
     summary = meta_description
 
