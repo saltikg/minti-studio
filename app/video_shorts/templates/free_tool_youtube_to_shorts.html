@@ -81,6 +81,14 @@
       text-wrap: balance;
       color: rgba(248, 250, 252, 0.98);
     }
+    .free-tool-subhead {
+      max-width: 640px;
+      margin: 0 auto;
+      color: rgba(203, 213, 225, 0.84);
+      font-size: clamp(1rem, 1.9vw, 1.12rem);
+      line-height: 1.55;
+      text-wrap: balance;
+    }
     .free-tool-card {
       margin: 1.4rem auto 0;
       width: 100%;
@@ -406,6 +414,9 @@
   <main class="free-tool-page">
     <section class="free-tool-hero">
       <h1>{{ page_title }}</h1>
+      <p class="free-tool-subhead">
+        {{ "Bir YouTube bağlantısı yapıştır — Minti en güçlü anı bulur ve düzenlemeye hazır bir Short’a dönüştürür." if is_tr else "Paste a YouTube link — Minti finds the strongest moment and turns it into a ready-to-edit Short." }}
+      </p>
       <div class="free-tool-card" id="free-tool-paste-box">
         {% if error %}
           <div class="free-tool-error mb-3">
@@ -438,7 +449,7 @@
           <div id="mv-youtube-preview" class="mv-youtube-preview" aria-live="polite"></div>
           {% include "_turnstile_widget.html" %}
           <div class="free-tool-note">
-            {{ "30 dakikaya kadar videolar" if is_tr else "Videos up to 30 min" }}
+            {{ "30 dakikaya kadar videolar · kayıt gerekmez" if is_tr else "Videos up to 30 min · no sign-up needed" }}
           </div>
         </form>
       </div>

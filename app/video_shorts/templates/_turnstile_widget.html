@@ -1,10 +1,68 @@
 {% if vs_turnstile_enabled and vs_turnstile_site_key %}
-  <div class="mb-3">
+  <style>
+    .minti-turnstile-wrap {
+      display: flex;
+      justify-content: flex-start;
+      min-height: 0;
+    }
+    .minti-turnstile-wrap .cf-turnstile {
+      max-width: min(100%, 320px);
+    }
+  </style>
+  <div class="minti-turnstile-wrap mb-3">
     <div
       class="cf-turnstile"
       data-sitekey="{{ vs_turnstile_site_key }}"
+      data-appearance="interaction-only"
+      data-execution="execute"
       data-theme="dark"
-      data-size="flexible">
+      data-size="flexible"
+      data-callback="mintiTurnstileCallback">
     </div>
   </div>
+  <script>
+    window.mintiTurnstileCallback = window.mintiTurnstileCallback || function () {
+      const pending = window.__mintiTurnstilePendingForm;
+      if (!pending || !pending.form) return;
+      pending.form.dataset.turnstileComplete = "1";
+      if (pending.button && pending.button.dataset.turnstileLabel) {
+        pending.button.textContent = pending.button.dataset.turnstileLabel;
+      }
+      if (pending.button) pending.button.disabled = false;
+      window.__mintiTurnstilePendingForm = null;
+      pending.form.submit();
+    };
+    (function () {
+      if (window.__mintiTurnstileFormsBound) return;
+      window.__mintiTurnstileFormsBound = true;
+      document.addEventListener("submit", function (event) {
+        const form = event.target;
+        if (!form || !form.querySelector || !form.querySelector(".cf-turnstile")) return;
+        const response = form.querySelector('input[name="cf-turnstile-response"]');
+        if (form.dataset.turnstileComplete === "1" || (response && response.value)) return;
+        if (!form.reportValidity()) return;
+        event.preventDefault();
+        const button = event.submitter || form.querySelector('button[type="submit"], input[type="submit"]');
+        if (button) {
+          button.dataset.turnstileLabel = button.textContent || button.value || "";
+          if (button.tagName === "INPUT") {
+            button.value = "Checking…";
+          } else {
+            button.textContent = "Checking…";
+          }
+          button.disabled = true;
+        }
+        window.__mintiTurnstilePendingForm = { form, button };
+        const widget = form.querySelector(".cf-turnstile");
+        const run = function () {
+          if (window.turnstile && widget) {
+            window.turnstile.execute(widget);
+          } else {
+            window.setTimeout(run, 60);
+          }
+        };
+        run();
+      }, true);
+    })();
+  </script>
 {% endif %}
