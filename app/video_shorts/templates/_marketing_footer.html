@@ -25,8 +25,9 @@
       {% if free_tool_enabled %}
         {% set free_tool_is_tr = locale|default('en') == 'tr' or request.path.startswith('/tr/') %}
         <span class="footer-link-disabled">{{ 'Ücretsiz araçlar' if free_tool_is_tr else 'Free tools' }}</span>
-        <a class="footer-link" href="{{ '/tr/araclar/youtube-shorts' if free_tool_is_tr else '/tools/youtube-to-shorts' }}">
-          {{ "YouTube'dan Shorts" if free_tool_is_tr else 'YouTube to Shorts' }}
+        <a class="footer-link footer-tool-link" href="{{ '/tr/araclar/youtube-shorts' if free_tool_is_tr else '/tools/youtube-to-shorts' }}">
+          <span class="footer-tool-title">{{ "YouTube'dan Shorts" if free_tool_is_tr else 'YouTube to Shorts' }}</span>
+          <span class="footer-tool-desc">{{ "YouTube videonu ücretsiz Shorts'a dönüştür" if free_tool_is_tr else 'Turn any YouTube video into Shorts, free' }}</span>
         </a>
       {% endif %}
       <a class="footer-link" href="{{ url_for('video_shorts_bp.blog_index') }}">Blog</a>
