@@ -4,7 +4,7 @@ from datetime import datetime
 from typing import Any, Optional
 from uuid import uuid4
 
-from flask import abort, current_app, g, redirect, render_template, request, session, url_for
+from flask import abort, current_app, g, jsonify, redirect, render_template, request, session, url_for
 
 from app.video_shorts import video_shorts_bp
 from app.video_shorts.routes.auth import (
@@ -16,6 +16,7 @@ from app.video_shorts.routes.auth import (
     turnstile_site_key,
 )
 from app.video_shorts.routes.quick_short import (
+    _build_session_payload,
     _ensure_quick_schema,
     _get_or_create_channel,
     _upsert_video,
@@ -23,7 +24,13 @@ from app.video_shorts.routes.quick_short import (
 from app.video_shorts.config import FREE_TOOL_DAILY_VIDEO_CAP
 from app.video_shorts.services.brands import current_brand_id, ensure_brand_for_user, ensure_brand_schema
 from app.video_shorts.services.db import ensure_auth_user_schema, ensure_storage_user_schema, get_db
-from app.video_shorts.services.quick_short_flow import STATUS_INGESTING, create_session, update_session
+from app.video_shorts.services.quick_short_flow import (
+    STATUS_FAILED,
+    STATUS_INGESTING,
+    create_session,
+    get_session,
+    update_session,
+)
 from app.video_shorts.services.render_jobs import JOB_TYPE_INGEST_YOUTUBE, enqueue_job
 from app.video_shorts.services.user_events import track_event
 from app.video_shorts.youtube_api import YoutubeApiError, extract_video_id, fetch_video_metadata
@@ -155,7 +162,159 @@ def _create_guest_user_and_brand(conn, guest_ip_hash: str) -> tuple[str, str]:
     return user_id, brand_id
 
 
-def _ingest_youtube_for_user(*, user_id: str, brand_id: Optional[str], video_url: str, meta: dict) -> int:
+def _generate_url(video_pk: Any, plan_index: Any = None) -> str:
+    url = url_for("video_shorts_bp.generate_short", video_pk=int(video_pk))
+    clean_plan_index = str(plan_index or "").strip()
+    if clean_plan_index:
+        return f"{url}?tab=shorts&clip={clean_plan_index}"
+    return url
+
+
+def _store_free_tool_processing_state(*, video_pk: int, video_id: str, quick_session_id: str, video_url: str) -> None:
+    session["free_tool_processing"] = {
+        "video_pk": int(video_pk),
+        "video_id": str(video_id or "").strip(),
+        "quick_session_id": str(quick_session_id or "").strip(),
+        "video_url": str(video_url or "").strip(),
+    }
+    session.modified = True
+
+
+def _lookup_processing_session_from_flask_session(current_user: Optional[dict]) -> Optional[dict]:
+    if not current_user or not current_user.get("is_guest"):
+        return None
+    state = session.get("free_tool_processing") or {}
+    session_id = str((state or {}).get("quick_session_id") or "").strip()
+    if not session_id:
+        return None
+    return get_session(session_id, user_id=str(current_user.get("id") or "")) or None
+
+
+def _plan_entry_index(entry: dict, fallback: int) -> str:
+    for key in ("plan_index", "index", "entry_index"):
+        value = entry.get(key)
+        if value is not None and str(value).strip() != "":
+            return str(value).strip()
+    return str(fallback)
+
+
+def _free_tool_video_status_payload(*, current_user: dict, video_pk: int, quick_session_id: str = "") -> tuple[dict, int]:
+    from app.video_shorts.routes import generation
+
+    conn = get_db()
+    try:
+        row = conn.execute(
+            """
+            SELECT id, video_id, title, thumbnail_url, duration_seconds, download_status,
+                   transcript_status, owner_user_id, brand_id
+            FROM youtube_videos
+            WHERE id = ?
+            """,
+            [int(video_pk)],
+        ).fetchone()
+        if not row:
+            return {"ok": False, "message": "Video not found."}, 404
+        owner_user_id = str(row[7] or "")
+        if owner_user_id != str(current_user.get("id") or ""):
+            return {"ok": False, "message": "Forbidden."}, 403
+        video = {
+            "id": int(row[0]),
+            "video_id": row[1],
+            "title": row[2] or "YouTube video",
+            "thumbnail_url": row[3],
+            "duration_seconds": row[4],
+            "duration_label": _duration_label(row[4]),
+            "download_status": row[5],
+            "transcript_status": row[6],
+        }
+        brand_id = row[8]
+    finally:
+        conn.close()
+
+    quick_session = None
+    if quick_session_id:
+        quick_session = get_session(quick_session_id, user_id=str(current_user.get("id") or ""))
+    if not quick_session:
+        quick_session = _lookup_processing_session_from_flask_session(current_user)
+    quick_payload = _build_session_payload(quick_session) if quick_session else None
+
+    plan_entries = generation._load_plan_entries(str(video.get("video_id") or "").strip()) or []
+    rendered: list[tuple[float, int, dict, str]] = []
+    failed_render = False
+    active_render_count = 0
+    for fallback_index, raw_entry in enumerate(plan_entries):
+        entry = raw_entry or {}
+        plan_index = _plan_entry_index(entry, fallback_index)
+        score = 0.0
+        try:
+            score = float(entry.get("score") or entry.get("ai_score") or 0)
+        except Exception:
+            score = 0.0
+        filename = str(entry.get("output_filename") or entry.get("clip_filename") or entry.get("video_filename") or "").strip()
+        if filename:
+            rendered.append((score, fallback_index, entry, plan_index))
+        status = str(entry.get("status") or entry.get("render_job_status") or "").strip().lower()
+        if status in {"queued", "processing", "rendering"} or str(entry.get("render_job_id") or "").strip():
+            active_render_count += 1
+        if status in {"failed", "error"}:
+            failed_render = True
+    rendered.sort(key=lambda item: (item[0], -item[1]), reverse=True)
+    selected_plan_index = rendered[0][3] if rendered else ""
+    transcript_ready = str(video.get("transcript_status") or "").strip().lower() in {"done", "ready", "complete", "completed"}
+    ingest_failed = str(video.get("download_status") or "").strip().lower() in {"failed", "error"}
+    transcript_failed = str(video.get("transcript_status") or "").strip().lower() in {"failed", "error"}
+    session_failed = str((quick_payload or {}).get("status") or "").strip().lower() == STATUS_FAILED
+    status = "processing"
+    message = ""
+    if selected_plan_index:
+        status = "ready"
+    elif ingest_failed or transcript_failed or session_failed or failed_render:
+        status = "failed"
+        message = "This video could not be processed right now. Please try again."
+    elif plan_entries and transcript_ready:
+        status = "rendering"
+    elif transcript_ready:
+        status = "finding"
+    return {
+        "ok": True,
+        "status": status,
+        "message": message,
+        "video": video,
+        "session": quick_payload,
+        "suggestions_ready": bool(plan_entries),
+        "render_done": bool(selected_plan_index),
+        "active_render_count": active_render_count,
+        "clip_count": len(plan_entries),
+        "selected_plan_index": selected_plan_index,
+        "generate_url": _generate_url(video_pk, selected_plan_index),
+        "redirect_url": _generate_url(video_pk, selected_plan_index) if selected_plan_index else "",
+        "fallback_url": _generate_url(video_pk),
+    }, 200
+
+
+def _processing_context_for_guest(current_user: Optional[dict]) -> Optional[dict]:
+    quick_session = _lookup_processing_session_from_flask_session(current_user)
+    if not quick_session:
+        return None
+    video_pk = quick_session.get("video_pk") or (session.get("free_tool_processing") or {}).get("video_pk")
+    if not video_pk:
+        return None
+    payload, status = _free_tool_video_status_payload(
+        current_user=current_user or {},
+        video_pk=int(video_pk),
+        quick_session_id=str(quick_session.get("id") or ""),
+    )
+    if status != 200 or not payload.get("ok"):
+        return None
+    return {
+        "quick_session_id": str(quick_session.get("id") or ""),
+        "video_pk": int(video_pk),
+        "status_url": url_for("video_shorts_bp.free_tool_processing_status", video_pk=int(video_pk), session_id=quick_session.get("id")),
+        **payload,
+    }
+
+
+def _ingest_youtube_for_user(*, user_id: str, brand_id: Optional[str], video_url: str, meta: dict) -> dict:
     video_id = str(meta.get("video_id") or "").strip() or extract_video_id(video_url) or ""
     if not video_id:
         raise ValueError("Enter a valid YouTube video URL.")
@@ -205,7 +364,12 @@ def _ingest_youtube_for_user(*, user_id: str, brand_id: Optional[str], video_url
         track_event(user_id, "video_uploaded", video_id=video_id)
     except Exception:
         current_app.logger.debug("free_tool_video_uploaded_event_failed", exc_info=True)
-    return int(video_pk)
+    return {
+        "video_pk": int(video_pk),
+        "video_id": video_id,
+        "quick_session_id": str(quick_session["id"]),
+        "ingest_job_id": str(job.get("id") or ""),
+    }
 
 
 @video_shorts_bp.route("/tools/youtube-to-shorts", methods=["GET", "POST"])
@@ -218,6 +382,22 @@ def free_tool_youtube_to_shorts_tr():
     return render_free_tool_landing("tr")
 
 
+@video_shorts_bp.route("/tools/youtube-to-shorts/status/<int:video_pk>", methods=["GET"])
+def free_tool_processing_status(video_pk: int):
+    current_user = _current_user()
+    if not current_user:
+        return jsonify(ok=False, message="Authentication required."), 401
+    if not current_user.get("is_guest"):
+        return jsonify(ok=False, message="Only guest processing sessions use this endpoint."), 403
+    quick_session_id = str(request.args.get("session_id") or "").strip()
+    payload, status = _free_tool_video_status_payload(
+        current_user=current_user,
+        video_pk=video_pk,
+        quick_session_id=quick_session_id,
+    )
+    return jsonify(payload), status
+
+
 def render_free_tool_landing(locale: str = "en"):
     _ensure_free_tool_visible()
     locale = "tr" if locale == "tr" else "en"
@@ -225,6 +405,7 @@ def render_free_tool_landing(locale: str = "en"):
     current_user = _current_user()
     error = ""
     video_url = ""
+    processing_context = _processing_context_for_guest(current_user) if request.method == "GET" else None
     if request.method == "POST":
         video_url = str(request.form.get("video_url") or request.form.get("youtube_url") or "").strip()
         if not _verify_turnstile_or_fail():
@@ -266,15 +447,19 @@ def render_free_tool_landing(locale: str = "en"):
                         )
                     if current_user and not current_user.get("is_guest"):
                         brand_id = current_brand_id()
-                        video_pk = _ingest_youtube_for_user(
+                        ingest_result = _ingest_youtube_for_user(
                             user_id=str(current_user["id"]),
                             brand_id=brand_id,
                             video_url=video_url,
                             meta=meta,
                         )
-                        return redirect(url_for("video_shorts_bp.generate_short", video_pk=video_pk))
+                        return redirect(url_for("video_shorts_bp.generate_short", video_pk=ingest_result["video_pk"]))
 
                     guest_ip_hash = _ip_hash()
+                    retrying_same_guest_video = False
+                    current_processing = session.get("free_tool_processing") or {}
+                    if current_user and current_user.get("is_guest"):
+                        retrying_same_guest_video = str(current_processing.get("video_id") or "").strip() == video_id
                     conn = get_db()
                     try:
                         ensure_storage_user_schema(conn)
@@ -300,7 +485,7 @@ def render_free_tool_landing(locale: str = "en"):
                                 [guest_user_id],
                             ).fetchone()
                             guest_video_count = int((guest_row or [0])[0] or 0)
-                            if guest_video_count >= 1:
+                            if guest_video_count >= 1 and not retrying_same_guest_video:
                                 generate_url = _latest_guest_generate_url(conn, guest_user_id, guest_brand_id or None)
                                 conn.close()
                                 return redirect(url_for("video_shorts_bp.register", next=generate_url, action="new_video"))
@@ -324,27 +509,41 @@ def render_free_tool_landing(locale: str = "en"):
                             g.vs_current_user = None
                         conn.close()
 
-                        video_pk = _ingest_youtube_for_user(
+                        ingest_result = _ingest_youtube_for_user(
                             user_id=guest_user_id,
                             brand_id=guest_brand_id or None,
                             video_url=video_url,
                             meta=meta,
                         )
-                        conn_update = get_db()
-                        try:
-                            conn_update.execute(
-                                """
-                                UPDATE shorts_users
-                                SET guest_video_count = COALESCE(guest_video_count, 0) + 1,
-                                    updated_at = now()
-                                WHERE id = ? AND COALESCE(is_guest, FALSE) = TRUE
-                                """,
-                                [guest_user_id],
-                            )
-                            conn_update.commit()
-                        finally:
-                            conn_update.close()
-                        return redirect(url_for("video_shorts_bp.generate_short", video_pk=video_pk))
+                        if not retrying_same_guest_video:
+                            conn_update = get_db()
+                            try:
+                                conn_update.execute(
+                                    """
+                                    UPDATE shorts_users
+                                    SET guest_video_count = COALESCE(guest_video_count, 0) + 1,
+                                        updated_at = now()
+                                    WHERE id = ? AND COALESCE(is_guest, FALSE) = TRUE
+                                    """,
+                                    [guest_user_id],
+                                )
+                                conn_update.commit()
+                            finally:
+                                conn_update.close()
+                        _store_free_tool_processing_state(
+                            video_pk=int(ingest_result["video_pk"]),
+                            video_id=str(ingest_result["video_id"]),
+                            quick_session_id=str(ingest_result["quick_session_id"]),
+                            video_url=video_url,
+                        )
+                        processing_context = _processing_context_for_guest({"id": guest_user_id, "is_guest": True})
+                        return _render_free_tool_template(
+                            locale=locale,
+                            error="",
+                            register_url=url_for("video_shorts_bp.register", next=request.path),
+                            video_url=video_url,
+                            processing_context=processing_context,
+                        )
                     finally:
                         try:
                             conn.close()
@@ -356,4 +555,5 @@ def render_free_tool_landing(locale: str = "en"):
         error=error,
         register_url=url_for("video_shorts_bp.register", next=request.path),
         video_url=video_url,
+        processing_context=processing_context,
     )

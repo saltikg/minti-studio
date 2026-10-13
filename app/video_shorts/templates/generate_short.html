@@ -12425,6 +12425,13 @@ const initGenerateV2Workbench = (preferredPlanIndex = "") => {
   if (!root) {
     return false;
   }
+  if (!preferredPlanIndex) {
+    try {
+      preferredPlanIndex = new URLSearchParams(window.location.search || "").get("clip") || "";
+    } catch (error) {
+      preferredPlanIndex = "";
+    }
+  }
   const sourceLayout = root.querySelector("[data-generate-v2-source-layout]");
   const transcriptCard = root.querySelector("[data-generate-v2-transcript-card]");
   const sourcePlayerCard = root.querySelector("[data-generate-v2-source-player-card]");

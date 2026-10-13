@@ -119,6 +119,12 @@ def create_app():
 
         return render_free_tool_landing("en")
 
+    @app.get("/tools/youtube-to-shorts/status/<int:video_pk>")
+    def free_tool_youtube_to_shorts_status(video_pk):
+        from app.video_shorts.routes.free_tool import free_tool_processing_status
+
+        return free_tool_processing_status(video_pk)
+
     @app.route("/tr/araclar/youtube-shorts", methods=["GET", "POST"])
     def free_tool_youtube_to_shorts_tr():
         from app.video_shorts.routes.free_tool import render_free_tool_landing

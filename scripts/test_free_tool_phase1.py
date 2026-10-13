@@ -88,6 +88,15 @@ def _ensure_minimal_video_tables() -> None:
             )
             """
         )
+        conn.execute(
+            """
+            CREATE TABLE IF NOT EXISTS youtube_transcripts (
+                video_id VARCHAR PRIMARY KEY,
+                full_text TEXT,
+                segments_json TEXT
+            )
+            """
+        )
         conn.execute("ALTER TABLE shorts_storage_plans ADD COLUMN IF NOT EXISTS render_priority INTEGER DEFAULT 0")
         conn.execute("ALTER TABLE shorts_storage_plans ADD COLUMN IF NOT EXISTS max_concurrent_jobs INTEGER DEFAULT 1")
         conn.commit()
@@ -157,8 +166,8 @@ def main() -> None:
         "thumbnail_url": "https://example.com/thumb.jpg",
     }
     first = _post_video(client)
-    assert first.status_code in {302, 303}, first.status_code
-    assert "/video_shorts/generate/" in first.headers["Location"]
+    assert first.status_code == 200, first.status_code
+    assert b"free-tool-processing-card" in first.data
     conn = get_db()
     try:
         guests = conn.execute(
@@ -181,6 +190,16 @@ def main() -> None:
         assert jobs[0][0] == "ingest_youtube", jobs
         assert jobs[0][1] == "queued", jobs
         assert payload.get("job_origin") == GUEST_JOB_ORIGIN, payload
+        quick_session = conn.execute(
+            "SELECT id, video_pk FROM shorts_quick_sessions WHERE user_id = ? ORDER BY created_at DESC LIMIT 1",
+            [guest_id],
+        ).fetchone()
+        assert quick_session and quick_session[1], quick_session
+        status = client.get(f"/tools/youtube-to-shorts/status/{int(quick_session[1])}?session_id={quick_session[0]}")
+        assert status.status_code == 200, status.data[:200]
+        status_json = status.get_json()
+        assert status_json["ok"] is True
+        assert status_json["fallback_url"].startswith("/video_shorts/generate/")
     finally:
         conn.close()
 
@@ -223,7 +242,7 @@ def main() -> None:
 
     print("free_tool_phase1: PASS")
     print("landing_disabled=404 preview=200 long_video_rejected_before_enqueue=ok")
-    print("public_alias_post_guest_brand_ingest_origin=ok")
+    print("public_alias_post_guest_brand_ingest_origin_processing_state=ok")
     print("second_video_redirect=ok guest_allowlist=ok guest_login_blocked=ok")
 
 
