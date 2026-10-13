@@ -28060,7 +28060,7 @@ def autoclip_video(video_pk):
                 render_job_id=job.get("id"),
             )
             reserve_result = {"allowed": True, "remaining": None}
-            if (not auto_render_job) or AUTO_RENDER_COUNTS_QUOTA:
+            if (not guest_reserve_result.get("guest")) and ((not auto_render_job) or AUTO_RENDER_COUNTS_QUOTA):
                 reserve_result = reserve_export(target_owner_user_id)
             if not reserve_result.get("allowed", False):
                 if job.get("id"):

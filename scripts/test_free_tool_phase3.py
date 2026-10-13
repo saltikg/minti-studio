@@ -28,6 +28,7 @@ from app.video_shorts.routes import generation
 from app.video_shorts.services.brands import create_brand, ensure_brand_for_user, ensure_brand_schema
 from app.video_shorts.services.db import ensure_auth_user_schema, ensure_storage_user_schema, get_db
 from app.video_shorts.services.render_jobs import JOB_TYPE_RENDER_SHORT, enqueue_render_job, ensure_render_jobs_schema, get_job
+from app.video_shorts.services.usage_metering import USAGE_TABLE, ensure_usage_metering_schema
 
 
 def _bootstrap() -> tuple[str, str, str, str]:
@@ -44,6 +45,17 @@ def _bootstrap() -> tuple[str, str, str, str]:
                 id INTEGER PRIMARY KEY DEFAULT nextval('youtube_videos_id_seq'),
                 video_id VARCHAR,
                 title VARCHAR,
+                channel_id INTEGER,
+                owner_user_id VARCHAR,
+                brand_id VARCHAR
+            )
+            """
+        )
+        conn.execute(
+            """
+            CREATE TABLE IF NOT EXISTS youtube_channels (
+                channel_id INTEGER PRIMARY KEY,
+                channel_name VARCHAR,
                 owner_user_id VARCHAR,
                 brand_id VARCHAR
             )
@@ -86,7 +98,11 @@ def _bootstrap() -> tuple[str, str, str, str]:
         guest_brand = create_brand(conn, user_id=guest_id, name="Guest Brand", make_default=True)
         target_brand = create_brand(conn, user_id=target_id, name="Real Brand", make_default=True)
         conn.execute(
-            "INSERT INTO youtube_videos (video_id, title, owner_user_id, brand_id) VALUES ('abc123', 'Guest Video', ?, ?)",
+            "INSERT INTO youtube_channels (channel_id, channel_name, owner_user_id, brand_id) VALUES (101, 'Claimed Channel', ?, ?)",
+            [guest_id, guest_brand["id"]],
+        )
+        conn.execute(
+            "INSERT INTO youtube_videos (video_id, title, channel_id, owner_user_id, brand_id) VALUES ('abc123', 'Guest Video', 101, ?, ?)",
             [guest_id, guest_brand["id"]],
         )
         conn.execute(
@@ -152,6 +168,19 @@ def _assert_in_place_register(app) -> None:
             [guest_id],
         )
         brand = ensure_brand_for_user(conn, user_id=guest_id, user_name="Guest")
+        conn.execute(
+            "INSERT INTO youtube_channels (channel_id, channel_name, owner_user_id, brand_id) VALUES (202, 'In Place Channel', ?, ?)",
+            [guest_id, brand["id"]],
+        )
+        conn.execute(
+            "INSERT INTO youtube_videos (video_id, title, channel_id, owner_user_id, brand_id) VALUES ('inplace123', 'Guest Video', 202, ?, ?)",
+            [guest_id, brand["id"]],
+        )
+        ensure_usage_metering_schema(conn)
+        conn.execute(
+            f"UPDATE {USAGE_TABLE} SET exports_used = 2 WHERE user_id = ?",
+            [guest_id],
+        )
         conn.commit()
     finally:
         conn.close()
@@ -189,6 +218,10 @@ def _assert_in_place_register(app) -> None:
         assert row and row[0] is False and row[1] == "guest-claim@example.com", row
         assert row[2] == "/video_shorts/generate/99" and row[3] == "download" and row[4] == "4", row
         assert row[5] == "self" and row[6] is True and int(row[7] or 0) == 1, row
+        brand_row = conn.execute("SELECT name FROM shorts_brands WHERE id = ?", [brand["id"]]).fetchone()
+        assert brand_row and brand_row[0] == "In Place Channel", brand_row
+        usage_row = conn.execute(f"SELECT exports_used FROM {USAGE_TABLE} WHERE user_id = ?", [guest_id]).fetchone()
+        assert usage_row and int(usage_row[0] or 0) == 0, usage_row
     finally:
         conn.close()
 

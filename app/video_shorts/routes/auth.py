@@ -38,6 +38,7 @@ from app.video_shorts.services.db import (
     table_columns,
 )
 from app.video_shorts.services.brands import (
+    _slugify_brand_name,
     current_brand_id,
     create_brand as create_brand_record,
     ensure_brand_for_user,
@@ -48,7 +49,7 @@ from app.video_shorts.services.brands import (
     set_default_brand_for_user,
 )
 from app.video_shorts.services.shorts_overview_quota import get_shorts_overview_quota_state
-from app.video_shorts.services.usage_metering import get_usage_snapshot
+from app.video_shorts.services.usage_metering import USAGE_TABLE, ensure_usage_metering_schema, get_usage_snapshot
 from app.video_shorts.services.email_verification import (
     build_password_reset_url,
     can_resend_verification,
@@ -1319,6 +1320,12 @@ GUEST_RESUME_ACTIONS = {
 }
 
 
+def _email_local_name(email: str) -> str:
+    local = str(email or "").split("@", 1)[0].split("+", 1)[0]
+    cleaned = re.sub(r"[^A-Za-z0-9]+", " ", local).strip()
+    return cleaned.title() if cleaned else "Creator"
+
+
 def _normalize_guest_resume_action(value: Optional[str]) -> str:
     normalized = str(value or "").strip().lower()
     return normalized if normalized in GUEST_RESUME_ACTIONS else ""
@@ -1377,6 +1384,78 @@ def _current_guest_session_ids() -> tuple[str, str]:
 def _json_value_for_conn(conn, value) -> str:
     raw = json.dumps(value or {}, ensure_ascii=False, sort_keys=True)
     return raw
+
+
+def _is_guest_default_brand_name(name: str) -> bool:
+    normalized = str(name or "").strip().lower().replace("’", "'")
+    return normalized in {"guest brand", "guest's brand", "default brand"}
+
+
+def _guest_claim_brand_name(conn, *, user_id: str, fallback_email: str = "") -> str:
+    row = conn.execute(
+        """
+        SELECT c.channel_name
+        FROM youtube_videos v
+        JOIN youtube_channels c ON c.channel_id = v.channel_id
+        WHERE CAST(v.owner_user_id AS VARCHAR) = ?
+          AND COALESCE(NULLIF(c.channel_name, ''), '') <> ''
+        ORDER BY v.id DESC
+        LIMIT 1
+        """,
+        [str(user_id or "").strip()],
+    ).fetchone()
+    if row and str(row[0] or "").strip():
+        return str(row[0]).strip()
+    return _email_local_name(fallback_email)
+
+
+def _rename_guest_default_brand_after_claim(
+    conn,
+    *,
+    user_id: str,
+    brand_id: str,
+    fallback_email: str = "",
+) -> Optional[str]:
+    clean_brand_id = str(brand_id or "").strip()
+    if not clean_brand_id:
+        return None
+    row = conn.execute(
+        """
+        SELECT name
+        FROM shorts_brands
+        WHERE CAST(id AS VARCHAR) = ?
+          AND CAST(owner_user_id AS VARCHAR) = ?
+        LIMIT 1
+        """,
+        [clean_brand_id, str(user_id or "").strip()],
+    ).fetchone()
+    if not row or not _is_guest_default_brand_name(str(row[0] or "")):
+        return None
+    desired_name = _guest_claim_brand_name(conn, user_id=user_id, fallback_email=fallback_email)
+    conn.execute(
+        """
+        UPDATE shorts_brands
+        SET name = ?,
+            slug = ?,
+            updated_at = now()
+        WHERE CAST(id AS VARCHAR) = ?
+        """,
+        [desired_name, _slugify_brand_name(desired_name), clean_brand_id],
+    )
+    return desired_name
+
+
+def _reset_guest_export_usage_on_claim(conn, *, user_id: str) -> None:
+    ensure_usage_metering_schema(conn)
+    conn.execute(
+        f"""
+        UPDATE {USAGE_TABLE}
+        SET exports_used = 0,
+            updated_at = CURRENT_TIMESTAMP
+        WHERE CAST(user_id AS VARCHAR) = ?
+        """,
+        [str(user_id or "").strip()],
+    )
 
 
 def _update_table_owner_if_present(
@@ -1492,7 +1571,7 @@ def claim_guest_into(
     if not guest_row or not bool(guest_row[1]):
         return {"claimed": False, "mode": "already_claimed"}
     target_row = conn.execute(
-        "SELECT CAST(id AS VARCHAR), COALESCE(name, username, email, '') FROM shorts_users WHERE CAST(id AS VARCHAR) = ? LIMIT 1",
+        "SELECT CAST(id AS VARCHAR), COALESCE(name, username, email, ''), COALESCE(email, username, '') FROM shorts_users WHERE CAST(id AS VARCHAR) = ? LIMIT 1",
         [target_user_id],
     ).fetchone()
     if not target_row:
@@ -1547,6 +1626,13 @@ def claim_guest_into(
         guest_brand_id=guest_brand_id,
         target_brand_id=resolved_target_brand_id,
     )
+    if resolved_target_brand_id:
+        _rename_guest_default_brand_after_claim(
+            conn,
+            user_id=target_user_id,
+            brand_id=resolved_target_brand_id,
+            fallback_email=str(target_row[2] or ""),
+        )
     try:
         conn.execute(
             """
@@ -1726,7 +1812,8 @@ def login():
             ensure_auth_user_schema(conn)
             row = conn.execute(
                 """
-                SELECT CAST(id AS VARCHAR), username, password_hash, name, COALESCE(email_verified, FALSE)
+                SELECT CAST(id AS VARCHAR), username, password_hash, name, COALESCE(email_verified, FALSE),
+                       COALESCE(guest_video_count, 0)
                 FROM shorts_users
                 WHERE (lower(username) = lower(?)
                    OR lower(email) = lower(?))
@@ -1785,7 +1872,11 @@ def login():
                         persist_conn.commit()
                     finally:
                         persist_conn.close()
-                flash(f"Welcome back, {row[3] or row[1]}!", "success")
+                just_verified_user_id = str(session.pop("vs_just_verified_user_id", "") or "")
+                first_account_login = just_verified_user_id == str(row[0] or "")
+                claimed_from_guest = bool(guest_user_id) or int(row[5] or 0) > 0
+                welcome_prefix = "Welcome" if first_account_login or claimed_from_guest else "Welcome back"
+                flash(f"{welcome_prefix}, {_email_local_name(row[1] or row[3] or '')}!", "success")
                 nxt = resume["next"] or _normalize_next_url(request.args.get("next")) or url_for("video_shorts_bp.my_videos_page")
                 return redirect(_append_resume_params(nxt, action=resume["action"], clip=resume["clip"]))
     if error:
@@ -1859,7 +1950,7 @@ def register():
                 conn.close()
             else:
                 username = email
-                name = email.split("@")[0].replace(".", " ").title()
+                name = _email_local_name(email)
                 user_id = guest_user_id or str(uuid4())
                 verify_token = generate_email_verification_token()
                 verify_token_hash = hash_email_verification_token(verify_token)
@@ -1907,7 +1998,14 @@ def register():
                             user_id,
                         ],
                     )
-                    ensure_brand_for_user(conn, user_id=user_id, user_name=name)
+                    brand = ensure_brand_for_user(conn, user_id=user_id, user_name=name)
+                    _rename_guest_default_brand_after_claim(
+                        conn,
+                        user_id=user_id,
+                        brand_id=str((brand or {}).get("id") or ""),
+                        fallback_email=email,
+                    )
+                    _reset_guest_export_usage_on_claim(conn, user_id=user_id)
                 else:
                     conn.execute(
                         """
@@ -2083,6 +2181,7 @@ def verify_email():
             [row[0]],
         )
         conn.commit()
+        session["vs_just_verified_user_id"] = str(row[0] or "")
     finally:
         conn.close()
     try:
@@ -2789,7 +2888,7 @@ def google_oauth_callback():
                 """,
                 [
                     email,
-                    name or email,
+                    name or _email_local_name(email),
                     email,
                     google_sub,
                     DEFAULT_USER_PLAN_ID,
@@ -2820,7 +2919,16 @@ def google_oauth_callback():
             )
         conn.commit()
     ensure_brand_schema(conn)
-    brand = ensure_brand_for_user(conn, user_id=user_id, user_name=name or email)
+    brand = ensure_brand_for_user(conn, user_id=user_id, user_name=name or _email_local_name(email))
+    if guest_user_id and guest_user_id == user_id:
+        _rename_guest_default_brand_after_claim(
+            conn,
+            user_id=user_id,
+            brand_id=str((brand or {}).get("id") or ""),
+            fallback_email=email,
+        )
+        _reset_guest_export_usage_on_claim(conn, user_id=user_id)
+        conn.commit()
     conn.close()
     if created_new_user:
         track_event(user_id, "signup")
