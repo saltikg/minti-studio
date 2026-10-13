@@ -203,6 +203,22 @@ def main() -> None:
     status_json = status.get_json()
     assert status_json["ok"] is True
     assert status_json["fallback_url"].startswith("/video_shorts/generate/")
+    conn = get_db()
+    try:
+        conn.execute(
+            """
+            INSERT INTO youtube_videos (
+                id, channel_id, video_id, title, duration_seconds, owner_user_id,
+                brand_id, download_status, transcript_status
+            )
+            VALUES (9999, NULL, 'other-video', 'Other Video', 120, 'other-user', NULL, 'downloaded', 'done')
+            """
+        )
+        conn.commit()
+    finally:
+        conn.close()
+    forbidden_status = client.get("/tools/youtube-to-shorts/status/9999")
+    assert forbidden_status.status_code == 403, forbidden_status.data[:200]
 
     second = _post_video(client, "https://www.youtube.com/watch?v=ScMzIvxBSi4")
     assert second.status_code in {302, 303}, second.status_code
