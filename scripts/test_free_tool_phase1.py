@@ -98,6 +98,16 @@ def _ensure_minimal_video_tables() -> None:
             )
             """
         )
+        conn.execute(
+            """
+            CREATE TABLE IF NOT EXISTS autopilot_leads (
+                id VARCHAR PRIMARY KEY,
+                creator_name VARCHAR,
+                recipient_name VARCHAR,
+                creator_email VARCHAR
+            )
+            """
+        )
         conn.execute("ALTER TABLE shorts_storage_plans ADD COLUMN IF NOT EXISTS render_priority INTEGER DEFAULT 0")
         conn.execute("ALTER TABLE shorts_storage_plans ADD COLUMN IF NOT EXISTS max_concurrent_jobs INTEGER DEFAULT 1")
         conn.commit()
@@ -141,6 +151,26 @@ def main() -> None:
     assert preview.status_code == 200, preview.status_code
     assert b"YouTube to Shorts" in preview.data
 
+    ignored_lid = client.get("/tools/youtube-to-shorts?preview=preview-secret&utm_source=badsource&lid=missing")
+    assert ignored_lid.status_code == 200, ignored_lid.status_code
+    conn = get_db()
+    try:
+        row = conn.execute(
+            """
+            SELECT metadata
+            FROM user_events
+            WHERE event_name = 'free_tool_landing_view'
+              AND metadata::VARCHAR LIKE '%badsource%'
+            ORDER BY created_at DESC
+            LIMIT 1
+            """
+        ).fetchone()
+        ignored_metadata = json.loads(row[0] or "{}")
+        assert ignored_metadata.get("utm_source") == "badsource", ignored_metadata
+        assert "lead_id" not in ignored_metadata, ignored_metadata
+    finally:
+        conn.close()
+
     free_tool.fetch_video_metadata = lambda video_id: {
         "video_id": video_id,
         "title": "Long Video",
@@ -166,6 +196,22 @@ def main() -> None:
         "channel_id": "channel-short",
         "thumbnail_url": "https://example.com/thumb.jpg",
     }
+    conn = get_db()
+    try:
+        conn.execute(
+            """
+            INSERT INTO autopilot_leads (id, creator_name, recipient_name, creator_email)
+            VALUES ('lead-test-1', 'Creator', 'Alex', 'alex@example.com')
+            """
+        )
+        conn.commit()
+    finally:
+        conn.close()
+    client = app.test_client()
+    attributed = client.get(
+        "/tools/youtube-to-shorts?preview=preview-secret&utm_source=outreach&utm_medium=email&utm_campaign=followup&lid=lead-test-1"
+    )
+    assert attributed.status_code == 200, attributed.status_code
     first = _post_video(client)
     assert first.status_code == 200, first.status_code
     assert b"free-tool-processing-card" in first.data
@@ -191,6 +237,21 @@ def main() -> None:
         assert jobs[0][0] == "ingest_youtube", jobs
         assert jobs[0][1] == "queued", jobs
         assert payload.get("job_origin") == GUEST_JOB_ORIGIN, payload
+        event_row = conn.execute(
+            """
+            SELECT metadata
+            FROM user_events
+            WHERE event_name = 'free_tool_submit'
+            ORDER BY created_at DESC
+            LIMIT 1
+            """
+        ).fetchone()
+        submit_metadata = json.loads(event_row[0] or "{}")
+        assert submit_metadata.get("utm_source") == "outreach", submit_metadata
+        assert submit_metadata.get("utm_medium") == "email", submit_metadata
+        assert submit_metadata.get("utm_campaign") == "followup", submit_metadata
+        assert submit_metadata.get("lead_id") == "lead-test-1", submit_metadata
+        assert submit_metadata.get("video_title") == "Short Video", submit_metadata
         quick_session = conn.execute(
             "SELECT id, video_pk FROM shorts_quick_sessions WHERE user_id = ? ORDER BY created_at DESC LIMIT 1",
             [guest_id],

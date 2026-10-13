@@ -19883,6 +19883,7 @@ def _load_free_tool_admin_stats(conn) -> dict[str, Any]:
     if not table_columns(conn, "user_events"):
         return {
             "events": [],
+            "sources": [],
             "submit_to_claim_7": "0%",
             "submit_to_claim_30": "0%",
             "submits_7": 0,
@@ -19918,6 +19919,34 @@ def _load_free_tool_admin_stats(conn) -> dict[str, Any]:
     submits_30 = counts.get("free_tool_submit", {}).get("count_30", 0)
     claims_7 = counts.get("free_tool_claim", {}).get("count_7", 0)
     claims_30 = counts.get("free_tool_claim", {}).get("count_30", 0)
+    source_expr = _user_event_metadata_text_sql(conn, "utm_source")
+    campaign_expr = _user_event_metadata_text_sql(conn, "utm_campaign")
+    source_rows = conn.execute(
+        f"""
+        SELECT
+            COALESCE({source_expr}, '(direct)') AS source,
+            COALESCE({campaign_expr}, '(none)') AS campaign,
+            SUM(CASE WHEN ue.event_name = 'free_tool_landing_view' THEN 1 ELSE 0 END) AS landing_views,
+            SUM(CASE WHEN ue.event_name = 'free_tool_submit' THEN 1 ELSE 0 END) AS submits,
+            SUM(CASE WHEN ue.event_name = 'free_tool_claim' THEN 1 ELSE 0 END) AS claims
+        FROM user_events ue
+        WHERE ue.event_name IN ('free_tool_landing_view', 'free_tool_submit', 'free_tool_claim')
+          AND ue.created_at >= (now() - INTERVAL '30 days')
+        GROUP BY source, campaign
+        ORDER BY landing_views DESC, submits DESC, claims DESC, source ASC, campaign ASC
+        LIMIT 12
+        """
+    ).fetchall()
+    source_breakdown = [
+        {
+            "source": str(row[0] or "(direct)"),
+            "campaign": str(row[1] or "(none)"),
+            "landing_views": int(row[2] or 0),
+            "submits": int(row[3] or 0),
+            "claims": int(row[4] or 0),
+        }
+        for row in source_rows
+    ]
 
     def _rate(claims: int, submits: int) -> str:
         if not submits:
@@ -19926,6 +19955,7 @@ def _load_free_tool_admin_stats(conn) -> dict[str, Any]:
 
     return {
         "events": events,
+        "sources": source_breakdown,
         "submit_to_claim_7": _rate(claims_7, submits_7),
         "submit_to_claim_30": _rate(claims_30, submits_30),
         "submits_7": submits_7,
@@ -20014,6 +20044,7 @@ def admin_leads_pipeline_overview():
             ).fetchall()
             lead_ids = [str(row[0] or "").strip() for row in rows if str(row[0] or "").strip()]
             events_by_lead: Dict[str, List[Any]] = {lead_id: [] for lead_id in lead_ids}
+            free_tool_by_lead: Dict[str, Dict[str, Any]] = {lead_id: {} for lead_id in lead_ids}
             if lead_ids:
                 placeholders = ", ".join(["?"] * len(lead_ids))
                 event_rows = conn.execute(
@@ -20027,6 +20058,34 @@ def admin_leads_pipeline_overview():
                 ).fetchall()
                 for event_row in event_rows:
                     events_by_lead.setdefault(str(event_row[0] or ""), []).append(event_row)
+                if table_columns(conn, "user_events"):
+                    lead_expr = _user_event_metadata_text_sql(conn, "lead_id")
+                    title_expr = _user_event_metadata_text_sql(conn, "video_title")
+                    free_tool_rows = conn.execute(
+                        f"""
+                        SELECT {lead_expr} AS lead_id, ue.event_name, {title_expr} AS video_title, ue.created_at
+                        FROM user_events ue
+                        WHERE ue.event_name IN ('free_tool_landing_view', 'free_tool_submit', 'free_tool_claim')
+                          AND {lead_expr} IN ({placeholders})
+                        ORDER BY ue.created_at ASC
+                        """,
+                        lead_ids,
+                    ).fetchall()
+                    for ft_row in free_tool_rows:
+                        ft_lead_id = str(ft_row[0] or "").strip()
+                        if not ft_lead_id:
+                            continue
+                        summary = free_tool_by_lead.setdefault(ft_lead_id, {})
+                        event_name = str(ft_row[1] or "").strip()
+                        if event_name == "free_tool_landing_view" and not summary.get("visited_at"):
+                            summary["visited_at"] = _format_datetime_pst(ft_row[3])
+                        elif event_name == "free_tool_submit":
+                            summary["submitted_at"] = _format_datetime_pst(ft_row[3])
+                            video_title = str(ft_row[2] or "").strip()
+                            if video_title:
+                                summary["submitted_video_title"] = video_title
+                        elif event_name == "free_tool_claim":
+                            summary["claimed_at"] = _format_datetime_pst(ft_row[3])
 
             leads = []
             for row in rows:
@@ -20081,6 +20140,7 @@ def admin_leads_pipeline_overview():
                         "youtube_video_id": str(row[8] or "").strip(),
                         "last_activity_at": _format_datetime_pst(last_activity_at),
                         "cells": cells,
+                        "free_tool": free_tool_by_lead.get(lead_id) or {},
                     }
                 )
     finally:

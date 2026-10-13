@@ -156,6 +156,36 @@
     .free-tool-admin-counts strong {
       color: #8ff3d8;
     }
+    .free-tool-source-table {
+      width: 100%;
+      margin-top: 16px;
+      color: rgba(255, 255, 255, 0.86);
+      font-size: 0.88rem;
+    }
+    .free-tool-source-table th,
+    .free-tool-source-table td {
+      padding: 7px 9px;
+      border-top: 1px solid rgba(255, 255, 255, 0.08);
+      text-align: left;
+    }
+    .free-tool-source-table th {
+      color: rgba(255, 255, 255, 0.5);
+      font-size: 0.74rem;
+      font-weight: 800;
+      letter-spacing: 0.06em;
+      text-transform: uppercase;
+    }
+    .pipeline-free-tool-line {
+      margin-top: 8px;
+      padding: 7px 9px;
+      border: 1px solid rgba(45, 212, 191, 0.16);
+      border-radius: 10px;
+      background: rgba(45, 212, 191, 0.08);
+      color: rgba(219, 255, 247, 0.84);
+      font-size: 0.8rem;
+      line-height: 1.35;
+      white-space: normal;
+    }
   </style>
 {% endblock %}
 
@@ -183,6 +213,28 @@
         </div>
       {% endfor %}
     </div>
+    {% if free_tool_stats.sources %}
+      <table class="free-tool-source-table">
+        <thead>
+          <tr>
+            <th>Source / campaign</th>
+            <th>Views</th>
+            <th>Submits</th>
+            <th>Claims</th>
+          </tr>
+        </thead>
+        <tbody>
+          {% for source in free_tool_stats.sources %}
+            <tr>
+              <td>{{ source.source }} / {{ source.campaign }}</td>
+              <td>{{ source.landing_views }}</td>
+              <td>{{ source.submits }}</td>
+              <td>{{ source.claims }}</td>
+            </tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    {% endif %}
   </section>
 
   <section class="vs-admin-card p-3 p-lg-4">
@@ -244,6 +296,20 @@
                 <div class="pipeline-lead-name">{{ lead.recipient_name or lead.creator_name }}</div>
                 <div class="pipeline-lead-meta">{{ lead.creator_email or 'No email' }}</div>
                 <div class="pipeline-lead-meta">{{ lead.video_title }}</div>
+                {% if lead.free_tool %}
+                  <div class="pipeline-free-tool-line">
+                    Free tool:
+                    {% if lead.free_tool.visited_at %}visited {{ lead.free_tool.visited_at }}{% endif %}
+                    {% if lead.free_tool.submitted_at %}
+                      {% if lead.free_tool.visited_at %} · {% endif %}
+                      submitted{% if lead.free_tool.submitted_video_title %} “{{ lead.free_tool.submitted_video_title }}”{% endif %} {{ lead.free_tool.submitted_at }}
+                    {% endif %}
+                    {% if lead.free_tool.claimed_at %}
+                      {% if lead.free_tool.visited_at or lead.free_tool.submitted_at %} · {% endif %}
+                      signed up {{ lead.free_tool.claimed_at }}
+                    {% endif %}
+                  </div>
+                {% endif %}
               </td>
               <td>
                 <span class="pipeline-time {{ 'is-empty' if not lead.created_at else '' }}">{{ lead.created_at or '—' }}</span>

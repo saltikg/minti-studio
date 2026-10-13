@@ -85,19 +85,20 @@ mintistudio.com""",
     ),
     "FOLLOWUP_EN": OutreachEmailTemplate(
         key="FOLLOWUP_EN",
-        subject="Want the rest of your Shorts?",
+        subject="Shorts from your other videos?",
         text="""Hi [Name],
 
-Following up on the Short we made from "[video_title]" — we turned the best moments into a set of ready-to-post Shorts for you.
+Quick follow-up on the [generated_shorts_phrase] we made from "[video_title]". They're still here if you want them: [link]
 
-[signal]
+If you'd rather pick the video yourself, we opened up the same engine as a free tool.
+Paste any of your YouTube links and you'll get an edited, captioned Short in a few minutes. No sign-up needed to try it:
 
-Want them? Reply "yes" and we'll email them all ready to post — you just publish. No account access, first month free.
+[free_tool_url]
 
-See them here: [link]
+Happy to make more for you if it's useful.
 
-Best,
-Gokhan""",
+Gokhan
+Minti Studio""",
     ),
     "FOLLOWUP_TR": OutreachEmailTemplate(
         key="FOLLOWUP_TR",
@@ -378,6 +379,44 @@ def _simple_html_email(*, subject: str, body_text: str) -> str:
     return "\n".join(paragraphs)
 
 
+def _format_followup_generated_shorts_phrase(value: object) -> str:
+    try:
+        count = int(value or 0)
+    except (TypeError, ValueError):
+        count = 0
+    count = max(1, count)
+    return "Short" if count == 1 else f"{count} Shorts"
+
+
+def _render_followup_en_email(
+    *,
+    template: OutreachEmailTemplate,
+    recipient_name: object,
+    share_url: str,
+    video_title: object = "",
+    generated_count: object = None,
+    free_tool_url: object = "",
+) -> dict[str, str]:
+    safe_name = outreach_greeting_name(recipient_name, language="EN")
+    greeting_line = f"Hi {safe_name}," if safe_name else "Hi there,"
+    safe_video_title = str(video_title or "").strip() or "your video"
+    text = _normalize_template_spacing(
+        template.text.replace("Hi [Name],", greeting_line)
+        .replace("[generated_shorts_phrase]", _format_followup_generated_shorts_phrase(generated_count))
+        .replace("[link]", str(share_url or "").strip())
+        .replace("[free_tool_url]", str(free_tool_url or "").strip())
+        .replace("[video_title]", safe_video_title)
+    )
+    return {
+        "key": template.key,
+        "stage": "followup",
+        "language": "EN",
+        "subject": template.subject,
+        "text": text,
+        "html": _simple_html_email(subject=template.subject, body_text=text),
+    }
+
+
 def render_outreach_email(
     *,
     stage: object,
@@ -388,11 +427,22 @@ def render_outreach_email(
     video_title: object = "",
     longform_last_60d: object = None,
     shorts_last_15d: object = None,
+    generated_count: object = None,
+    free_tool_url: object = "",
 ) -> dict[str, str]:
     normalized_stage = normalize_outreach_template_stage(stage)
     normalized_language = normalize_outreach_template_language(language)
     key = outreach_template_key(stage=normalized_stage, language=normalized_language)
     template = OUTREACH_EMAIL_TEMPLATES.get(key) or OUTREACH_EMAIL_TEMPLATES["FIRST_EN"]
+    if normalized_stage == "followup" and normalized_language == "EN":
+        return _render_followup_en_email(
+            template=template,
+            recipient_name=recipient_name,
+            share_url=share_url,
+            video_title=video_title,
+            generated_count=generated_count,
+            free_tool_url=free_tool_url,
+        )
     safe_name = outreach_greeting_name(recipient_name, language=normalized_language)
     trial_phrase = trial_duration_text(trial_days, normalized_language)
     safe_video_title = str(video_title or "").strip()
@@ -430,9 +480,22 @@ def render_bucket_followup_outreach_email(
     video_title: object = "",
     longform_last_60d: object = None,
     shorts_last_15d: object = None,
+    generated_count: object = None,
+    free_tool_url: object = "",
 ) -> dict[str, str]:
     normalized_language = normalize_outreach_template_language(language)
     normalized_bucket = normalize_outreach_followup_bucket(bucket)
+    if normalized_language == "EN":
+        rendered = _render_followup_en_email(
+            template=OUTREACH_EMAIL_TEMPLATES["FOLLOWUP_EN"],
+            recipient_name=recipient_name,
+            share_url=share_url,
+            video_title=video_title,
+            generated_count=generated_count,
+            free_tool_url=free_tool_url,
+        )
+        rendered["bucket"] = normalized_bucket
+        return rendered
     try:
         normalized_sequence = int(sequence_number or 2)
     except (TypeError, ValueError):
@@ -488,6 +551,8 @@ def render_outreach_clipboard_text(
     video_title: object = "",
     longform_last_60d: object = None,
     shorts_last_15d: object = None,
+    generated_count: object = None,
+    free_tool_url: object = "",
 ) -> str:
     rendered = render_outreach_email(
         stage=stage,
@@ -498,5 +563,7 @@ def render_outreach_clipboard_text(
         video_title=video_title,
         longform_last_60d=longform_last_60d,
         shorts_last_15d=shorts_last_15d,
+        generated_count=generated_count,
+        free_tool_url=free_tool_url,
     )
     return f"Subject: {rendered['subject']}\n\n{rendered['text']}"

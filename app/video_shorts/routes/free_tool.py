@@ -33,6 +33,7 @@ from app.video_shorts.youtube_api import YoutubeApiError, extract_video_id, fetc
 FREE_TOOL_MAX_VIDEO_SECONDS = 30 * 60
 FREE_TOOL_DAILY_GUESTS_PER_IP = 3
 FREE_TOOL_ANON_USER_PREFIX = "free_tool_anon"
+FREE_TOOL_ATTRIBUTION_SESSION_KEY = "free_tool_attribution"
 
 
 def _render_free_tool_template(**context):
@@ -72,6 +73,65 @@ def _free_tool_event_user_id(current_user: Optional[dict] = None) -> str:
     return f"{FREE_TOOL_ANON_USER_PREFIX}:{_ip_hash()[:16]}"
 
 
+def _clean_attribution_value(value: object, *, max_length: int = 120) -> str:
+    return str(value or "").strip()[:max_length]
+
+
+def _valid_free_tool_lead_id(raw_lid: object) -> str:
+    clean_lid = _clean_attribution_value(raw_lid, max_length=80)
+    if not clean_lid:
+        return ""
+    conn = get_db()
+    try:
+        row = conn.execute(
+            """
+            SELECT CAST(id AS VARCHAR)
+            FROM autopilot_leads
+            WHERE CAST(id AS VARCHAR) = ?
+            LIMIT 1
+            """,
+            [clean_lid],
+        ).fetchone()
+        return str(row[0] or "").strip() if row else ""
+    except Exception:
+        return ""
+    finally:
+        try:
+            conn.close()
+        except Exception:
+            pass
+
+
+def _capture_free_tool_first_touch() -> None:
+    existing = session.get(FREE_TOOL_ATTRIBUTION_SESSION_KEY)
+    if isinstance(existing, dict) and existing:
+        return
+    attribution = {
+        "utm_source": _clean_attribution_value(request.args.get("utm_source")),
+        "utm_medium": _clean_attribution_value(request.args.get("utm_medium")),
+        "utm_campaign": _clean_attribution_value(request.args.get("utm_campaign")),
+    }
+    lead_id = _valid_free_tool_lead_id(request.args.get("lid"))
+    if lead_id:
+        attribution["lead_id"] = lead_id
+    attribution = {key: value for key, value in attribution.items() if value}
+    if attribution:
+        session[FREE_TOOL_ATTRIBUTION_SESSION_KEY] = attribution
+        session.modified = True
+
+
+def _free_tool_attribution_metadata() -> dict:
+    attribution = session.get(FREE_TOOL_ATTRIBUTION_SESSION_KEY)
+    if not isinstance(attribution, dict):
+        return {}
+    allowed = {"utm_source", "utm_medium", "utm_campaign", "lead_id"}
+    return {
+        key: _clean_attribution_value(value)
+        for key, value in attribution.items()
+        if key in allowed and _clean_attribution_value(value)
+    }
+
+
 def _track_free_tool_event(
     event_name: str,
     *,
@@ -80,12 +140,13 @@ def _track_free_tool_event(
     status: str = "",
     metadata: Optional[dict] = None,
 ) -> None:
+    event_metadata = {**_free_tool_attribution_metadata(), **(metadata or {})}
     track_event(
         _free_tool_event_user_id(current_user),
         event_name,
         video_id=str(video_id or "").strip() or None,
         status=str(status or "").strip() or None,
-        metadata=metadata or {},
+        metadata=event_metadata,
     )
 
 
@@ -352,6 +413,7 @@ def free_tool_event():
 
 def render_free_tool_landing(locale: str = "en"):
     _ensure_free_tool_visible()
+    _capture_free_tool_first_touch()
     locale = "tr" if locale == "tr" else "en"
     session["free_tool_lang"] = locale
     current_user = _current_user()
@@ -367,12 +429,6 @@ def render_free_tool_landing(locale: str = "en"):
         )
     if request.method == "POST":
         video_url = str(request.form.get("video_url") or request.form.get("youtube_url") or "").strip()
-        _track_free_tool_event(
-            "free_tool_submit",
-            current_user=current_user,
-            status=locale,
-            metadata={"locale": locale, "path": request.path},
-        )
         if not _verify_turnstile_or_fail():
             error = "Verification failed. Please try again." if locale == "en" else "Doğrulama başarısız. Lütfen tekrar deneyin."
         else:
@@ -395,6 +451,18 @@ def render_free_tool_landing(locale: str = "en"):
                     )
                     meta = None
                 if not error and meta:
+                    _track_free_tool_event(
+                        "free_tool_submit",
+                        current_user=current_user,
+                        video_id=video_id,
+                        status=locale,
+                        metadata={
+                            "locale": locale,
+                            "path": request.path,
+                            "video_id": video_id,
+                            "video_title": str(meta.get("title") or "").strip(),
+                        },
+                    )
                     duration = meta.get("duration_seconds")
                     if duration is not None and float(duration) > FREE_TOOL_MAX_VIDEO_SECONDS:
                         landing_next = "/tr/araclar/youtube-shorts" if locale == "tr" else "/tools/youtube-to-shorts"
