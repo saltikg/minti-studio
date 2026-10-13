@@ -93,7 +93,8 @@ def _ensure_minimal_video_tables() -> None:
             CREATE TABLE IF NOT EXISTS youtube_transcripts (
                 video_id VARCHAR PRIMARY KEY,
                 full_text TEXT,
-                segments_json TEXT
+                segments_json TEXT,
+                whisper_segments_json TEXT
             )
             """
         )
