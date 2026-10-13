@@ -58,6 +58,8 @@ Create a free account (no credit card) to download your Short, or connect your c
 
 ![MintiStudio free YouTube to Shorts tool with a pasted YouTube link and video preview](/video_shorts/static/img/blog/free-youtube-to-shorts-tool/1-free-tool-landing.png "Paste any YouTube link up to 30 minutes [screenshot]")
 
+![MintiStudio free YouTube to Shorts processing card showing each creation step](/video_shorts/static/img/blog/free-youtube-to-shorts-tool/2-processing.png "Follow each step while Minti works [screenshot]")
+
 ## Framing that follows the people on screen
 
 A wide horizontal shot doesn't fit a vertical screen by default. Cropping the middle often cuts someone out.
@@ -71,8 +73,6 @@ The tool frames the Short around the faces it finds:
 :::tip
 Interviews and podcasts with two speakers are where automatic framing saves the most time. Check the split layout on your first Short before you change anything by hand.
 :::
-
-![MintiStudio editor with a rendered vertical Short, transcript editing and AI clip suggestions](/video_shorts/static/img/blog/free-youtube-to-shorts-tool/2-generate-rendered-short.png "Your first Short, ready to edit [screenshot]")
 
 ## What makes the AI pick a moment
 
@@ -102,6 +102,8 @@ Here, the transcript is the editor:
 - fix a misheard word in the captions
 - shorten the setup so the payoff comes first
 - change the title before you regenerate
+
+![MintiStudio editor with transcript word cuts and a rendered Short preview](/video_shorts/static/img/blog/free-youtube-to-shorts-tool/3-generate-rendered-short.png "Cut words in the transcript and they're cut from the Short [screenshot]")
 
 :::compare Editing a Short
 clips | Timeline scrubbing for every cut | Delete words in the transcript | up
