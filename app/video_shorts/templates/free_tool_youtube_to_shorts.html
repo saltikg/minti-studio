@@ -104,6 +104,112 @@
       display: grid;
       gap: 0.8rem;
     }
+    .free-tool-processing-card {
+      display: grid;
+      gap: 1rem;
+    }
+    .free-tool-processing-media {
+      display: grid;
+      grid-template-columns: 156px minmax(0, 1fr);
+      gap: 1rem;
+      align-items: center;
+    }
+    .free-tool-processing-thumb {
+      aspect-ratio: 16 / 9;
+      overflow: hidden;
+      border-radius: 12px;
+      background: rgba(15, 23, 42, 0.9);
+      border: 1px solid rgba(148, 163, 184, 0.22);
+    }
+    .free-tool-processing-thumb img {
+      display: block;
+      width: 100%;
+      height: 100%;
+      object-fit: cover;
+    }
+    .free-tool-processing-title {
+      margin: 0;
+      color: rgba(248, 250, 252, 0.96);
+      font-size: 1.08rem;
+      font-weight: 750;
+      line-height: 1.35;
+    }
+    .free-tool-processing-meta {
+      margin-top: 0.35rem;
+      color: rgba(203, 213, 225, 0.76);
+      font-size: 0.92rem;
+    }
+    .free-tool-progress {
+      display: grid;
+      gap: 0.55rem;
+    }
+    .free-tool-progress-bar {
+      height: 8px;
+      overflow: hidden;
+      border-radius: 999px;
+      background: rgba(148, 163, 184, 0.18);
+    }
+    .free-tool-progress-bar span {
+      display: block;
+      width: var(--free-tool-progress, 12%);
+      height: 100%;
+      border-radius: inherit;
+      background: linear-gradient(90deg, #2bb3a3, #67e8f9);
+      transition: width 0.22s ease;
+    }
+    .free-tool-progress-steps {
+      display: grid;
+      gap: 0.45rem;
+      margin: 0;
+      padding: 0;
+      list-style: none;
+    }
+    .free-tool-progress-step {
+      display: flex;
+      align-items: center;
+      gap: 0.5rem;
+      color: rgba(203, 213, 225, 0.72);
+      font-size: 0.92rem;
+    }
+    .free-tool-progress-step::before {
+      content: "";
+      width: 0.58rem;
+      height: 0.58rem;
+      flex: 0 0 auto;
+      border-radius: 999px;
+      border: 1px solid rgba(148, 163, 184, 0.5);
+      background: rgba(15, 23, 42, 0.75);
+    }
+    .free-tool-progress-step.is-done {
+      color: rgba(226, 232, 240, 0.94);
+    }
+    .free-tool-progress-step.is-done::before {
+      border-color: #2bb3a3;
+      background: #2bb3a3;
+    }
+    .free-tool-progress-step.is-active::before {
+      border-color: #67e8f9;
+      box-shadow: 0 0 0 4px rgba(45, 212, 191, 0.13);
+      background: #67e8f9;
+    }
+    .free-tool-processing-actions {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 0.7rem;
+      align-items: center;
+    }
+    .free-tool-processing-message {
+      color: rgba(203, 213, 225, 0.78);
+      font-size: 0.92rem;
+      line-height: 1.45;
+    }
+    .free-tool-processing-error {
+      color: #fecaca;
+      background: rgba(127, 29, 29, 0.22);
+      border: 1px solid rgba(248, 113, 113, 0.28);
+      border-radius: 12px;
+      padding: 0.75rem 0.9rem;
+    }
     .free-tool-paste-label {
       margin: 0;
       color: rgba(248, 250, 252, 0.95);
@@ -400,6 +506,9 @@
         grid-template-columns: 1fr;
         display: grid;
       }
+      .free-tool-processing-media {
+        grid-template-columns: 1fr;
+      }
       .mv-youtube-submit {
         width: 100%;
       }
@@ -418,6 +527,52 @@
         {{ "Bir YouTube bağlantısı yapıştır — Minti en güçlü anı bulur ve düzenlemeye hazır bir Short’a dönüştürür." if is_tr else "Paste a YouTube link — Minti finds the strongest moment and turns it into a ready-to-edit Short." }}
       </p>
       <div class="free-tool-card" id="free-tool-paste-box">
+        {% if processing_context %}
+          {% set processing_video = processing_context.video or {} %}
+          <div
+            class="free-tool-processing-card"
+            id="free-tool-processing-card"
+            data-status-url="{{ processing_context.status_url }}"
+            data-fallback-url="{{ processing_context.fallback_url }}"
+            data-ready-url="{{ processing_context.redirect_url or processing_context.generate_url }}"
+            data-auto-open="{{ '0' if processing_context.status == 'ready' else '1' }}"
+            data-video-url="{{ video_url or processing_context.session.source_url if processing_context.session else video_url or '' }}">
+            <div class="free-tool-processing-media">
+              <div class="free-tool-processing-thumb" aria-hidden="true">
+                {% if processing_video.thumbnail_url %}
+                  <img src="{{ processing_video.thumbnail_url }}" alt="">
+                {% endif %}
+              </div>
+              <div>
+                <h2 class="free-tool-processing-title" data-free-tool-processing-title>{{ processing_video.title or ('Videon hazırlanıyor' if is_tr else 'Your video is being prepared') }}</h2>
+                <div class="free-tool-processing-meta" data-free-tool-processing-meta>
+                  {{ processing_video.duration_label or '' }}
+                </div>
+              </div>
+            </div>
+            <div class="free-tool-progress" data-free-tool-progress>
+              <div class="free-tool-progress-bar" aria-hidden="true"><span data-free-tool-progress-bar></span></div>
+              <ul class="free-tool-progress-steps">
+                <li class="free-tool-progress-step" data-free-tool-step="download">{{ "Video alınıyor" if is_tr else "Fetching the video" }}</li>
+                <li class="free-tool-progress-step" data-free-tool-step="transcript">{{ "Transkript hazırlanıyor" if is_tr else "Preparing the transcript" }}</li>
+                <li class="free-tool-progress-step" data-free-tool-step="suggestions">{{ "En iyi anlar bulunuyor" if is_tr else "Finding the best moments" }}</li>
+                <li class="free-tool-progress-step" data-free-tool-step="render">{{ "En iyi Short'un hazırlanıyor" if is_tr else "Rendering your best Short" }}</li>
+              </ul>
+            </div>
+            <div class="free-tool-processing-message" data-free-tool-processing-message>
+              {{ "Bu birkaç dakika sürebilir. Sayfadan ayrılsan bile çalışmaya devam ederiz." if is_tr else "This can take a few minutes. You can leave this page; we’ll keep working." }}
+            </div>
+            <div class="free-tool-processing-error d-none" data-free-tool-processing-error></div>
+            <div class="free-tool-processing-actions">
+              <a class="mv-youtube-submit text-decoration-none d-none" data-free-tool-open-shorts href="{{ processing_context.redirect_url or processing_context.generate_url }}">{{ "Short'larını aç →" if is_tr else "Open your Shorts →" }}</a>
+              <form method="post" class="d-none" data-free-tool-retry-form>
+                <input type="hidden" name="video_url" value="{{ video_url or processing_context.session.source_url if processing_context.session else video_url or '' }}">
+                {% include "_turnstile_widget.html" %}
+                <button class="mv-youtube-submit" type="submit">{{ "Tekrar dene" if is_tr else "Try again" }}</button>
+              </form>
+            </div>
+          </div>
+        {% else %}
         {% if error %}
           <div class="free-tool-error mb-3">
             {{ error }}
@@ -452,6 +607,7 @@
             {{ "30 dakikaya kadar videolar · kayıt gerekmez" if is_tr else "Videos up to 30 min · no sign-up needed" }}
           </div>
         </form>
+        {% endif %}
       </div>
     </section>
 
@@ -558,6 +714,7 @@
       const youtubeUrlInput = document.getElementById("mv-youtube-url");
       const youtubeSubmit = document.getElementById("mv-youtube-submit");
       const youtubePreview = document.getElementById("mv-youtube-preview");
+      const processingCard = document.getElementById("free-tool-processing-card");
       let youtubePreviewTimer = null;
       let youtubePreviewRequestId = 0;
       let youtubePreviewController = null;
@@ -703,6 +860,116 @@
           scheduleYoutubePreview();
         }
       }
+
+      function updateProcessingCard(payload) {
+        if (!processingCard || !payload || !payload.ok) return;
+        const video = payload.video || {};
+        const title = processingCard.querySelector("[data-free-tool-processing-title]");
+        const meta = processingCard.querySelector("[data-free-tool-processing-meta]");
+        const progressBar = processingCard.querySelector("[data-free-tool-progress-bar]");
+        const message = processingCard.querySelector("[data-free-tool-processing-message]");
+        const errorBox = processingCard.querySelector("[data-free-tool-processing-error]");
+        const openLink = processingCard.querySelector("[data-free-tool-open-shorts]");
+        const retryForm = processingCard.querySelector("[data-free-tool-retry-form]");
+        if (title && video.title) title.textContent = video.title;
+        if (meta) meta.textContent = [video.duration_label].filter(Boolean).join(" · ");
+        const downloadDone = ["downloaded", "ready", "done", "complete", "completed"].includes(String(video.download_status || "").toLowerCase());
+        const transcriptDone = ["done", "ready", "complete", "completed"].includes(String(video.transcript_status || "").toLowerCase());
+        const suggestionsDone = Boolean(payload.suggestions_ready || payload.clip_count > 0);
+        const renderDone = Boolean(payload.render_done);
+        const failed = payload.status === "failed";
+        const stepState = {
+          download: downloadDone || transcriptDone || suggestionsDone || renderDone,
+          transcript: transcriptDone || suggestionsDone || renderDone,
+          suggestions: suggestionsDone || renderDone,
+          render: renderDone,
+        };
+        const order = ["download", "transcript", "suggestions", "render"];
+        let activeStep = "download";
+        if (stepState.download) activeStep = "transcript";
+        if (stepState.transcript) activeStep = "suggestions";
+        if (stepState.suggestions) activeStep = "render";
+        if (renderDone) activeStep = "";
+        order.forEach((key) => {
+          const step = processingCard.querySelector(`[data-free-tool-step="${key}"]`);
+          if (!step) return;
+          step.classList.toggle("is-done", Boolean(stepState[key]));
+          step.classList.toggle("is-active", key === activeStep && !failed);
+        });
+        const doneCount = order.filter((key) => stepState[key]).length;
+        if (progressBar) {
+          progressBar.style.setProperty("--free-tool-progress", `${Math.max(12, Math.min(100, doneCount * 25))}%`);
+        }
+        if (failed) {
+          if (message) message.classList.add("d-none");
+          if (errorBox) {
+            errorBox.classList.remove("d-none");
+            errorBox.textContent = payload.message || (isTurkish ? "Video şu anda işlenemedi. Lütfen tekrar deneyin." : "This video could not be processed right now. Please try again.");
+          }
+          retryForm?.classList.remove("d-none");
+          openLink?.classList.add("d-none");
+          return;
+        }
+        errorBox?.classList.add("d-none");
+        retryForm?.classList.add("d-none");
+        if (payload.redirect_url && renderDone) {
+          if (openLink) {
+            openLink.href = payload.redirect_url;
+            openLink.classList.remove("d-none");
+          }
+          if (message) {
+            message.classList.remove("d-none");
+            message.textContent = isTurkish ? "Short'un hazır. Yönlendiriyoruz…" : "Your Short is ready. Opening the editor…";
+          }
+          if (processingCard.dataset.autoOpen !== "0") {
+            window.setTimeout(() => {
+              window.location.href = payload.redirect_url;
+            }, 650);
+          } else if (message) {
+            message.textContent = isTurkish ? "Short'un hazır." : "Your Shorts are ready.";
+          }
+        } else if (message) {
+          message.classList.remove("d-none");
+          message.textContent = suggestionsDone
+            ? (isTurkish ? "En iyi Short'un hazırlanıyor…" : "Rendering your best Short…")
+            : (isTurkish ? "Minti en iyi anları buluyor…" : "Minti is finding the best moments…");
+        }
+      }
+
+      function pollProcessingCard() {
+        if (!processingCard) return;
+        const statusUrl = processingCard.dataset.statusUrl || "";
+        if (!statusUrl) return;
+        let suggestionsReadyAt = 0;
+        const poll = async () => {
+          try {
+            const response = await fetch(statusUrl, { headers: { "X-Requested-With": "XMLHttpRequest" } });
+            const payload = await response.json();
+            if (!response.ok || !payload.ok) {
+              throw new Error(payload.message || "status failed");
+            }
+            updateProcessingCard(payload);
+            if (payload.status === "ready" || payload.status === "failed") {
+              return;
+            }
+            if (payload.suggestions_ready && !payload.render_done) {
+              if (!suggestionsReadyAt) suggestionsReadyAt = Date.now();
+              if (Date.now() - suggestionsReadyAt > 4 * 60 * 1000 && payload.fallback_url) {
+                window.location.href = payload.fallback_url;
+                return;
+              }
+            }
+          } catch (error) {
+            const message = processingCard.querySelector("[data-free-tool-processing-message]");
+            if (message) {
+              message.textContent = isTurkish ? "Durumu kontrol ediyoruz…" : "Checking the processing status…";
+            }
+          }
+          window.setTimeout(poll, 5000);
+        };
+        poll();
+      }
+      pollProcessingCard();
 
       const triggers = Array.from(document.querySelectorAll(".free-tool-faq-trigger"));
       triggers.forEach(function (trigger) {

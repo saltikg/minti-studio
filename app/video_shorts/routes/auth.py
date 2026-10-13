@@ -1727,6 +1727,7 @@ def _guard_video_shorts():
                 "video_shorts_bp.logout",
                 "video_shorts_bp.free_tool_youtube_to_shorts",
                 "video_shorts_bp.free_tool_youtube_to_shorts_tr",
+                "video_shorts_bp.free_tool_processing_status",
                 "video_shorts_bp.static",
                 "video_shorts_bp.serve_media",
                 "video_shorts_bp.generate_short",
