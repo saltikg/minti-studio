@@ -1761,7 +1761,7 @@
     align-items: center;
     justify-content: flex-start;
     gap: 12px;
-    flex-wrap: nowrap;
+    flex-wrap: wrap;
     margin: 0 0 14px;
     min-width: 0;
     container-type: inline-size;
@@ -2213,20 +2213,10 @@
     position: relative;
     min-height: 0;
     height: 100%;
-    grid-template-rows: auto minmax(0, 1fr);
-    gap: 14px;
+    grid-template-rows: minmax(0, 1fr);
+    gap: 0;
     overflow: visible;
   }
-  .generate-v2-editor-topbar {
-    display: flex;
-    align-items: center;
-    justify-content: flex-start;
-    flex-wrap: wrap;
-    gap: 12px;
-    padding-bottom: 12px;
-    border-bottom: 1px solid rgba(255, 255, 255, 0.09);
-  }
-  #clip-workbench-shell[data-generate-v2="1"].is-v2-editing .generate-v2-editor-topbar { display: flex; }
   .generate-v2-editor-note {
     flex: 1 1 200px;
     min-width: 0;
@@ -2262,6 +2252,14 @@
     margin-left: auto;
     min-width: max-content;
     white-space: nowrap;
+  }
+  .generate-v2-design-actions {
+    display: none;
+    margin-left: auto;
+    align-self: center;
+  }
+  #clip-workbench-shell[data-active-tab="edit"] .generate-v2-design-actions {
+    display: inline-flex;
   }
   .generate-v2-editor-action {
     display: inline-flex;
@@ -2407,8 +2405,9 @@
     min-height: 142px;
   }
   @media (max-width: 1199.98px) {
-    .generate-v2-editor-actions {
+    .generate-v2-design-actions {
       flex: 1 1 100%;
+      justify-content: flex-end;
     }
     .generate-v2-editor-section .style-template-grid {
       grid-template-columns: repeat(auto-fit, minmax(min(180px, 100%), 1fr));
@@ -2536,11 +2535,6 @@
     z-index: 60;
   }
   @media (max-width: 991.98px) {
-    .generate-v2-editor-topbar,
-    .generate-v2-editor-actions {
-      align-items: stretch;
-      flex-direction: column;
-    }
     .generate-v2-editor-body {
       grid-template-columns: 1fr;
     }
@@ -6440,25 +6434,23 @@
                 </button>
                 <div id="plan-live-status" class="generate-v2-tab-status ai-plan-inline-status{% if plan_generation_block_reason == 'cap' and plan_generation_block_message %}{% else %} d-none{% endif %} small" role="status" aria-live="polite">{{ plan_generation_block_message if plan_generation_block_reason == 'cap' else '' }}</div>
               </div>
+              <div class="generate-v2-editor-actions generate-v2-design-actions">
+                <span class="generate-v2-editor-status" id="generate-v2-editor-status" aria-live="polite"></span>
+                <button type="button" class="btn generate-v2-editor-action" id="generate-v2-editor-cancel">
+                  <svg viewBox="0 0 24 24" aria-hidden="true" fill="none" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M18 6 6 18"/><path d="m6 6 12 12"/></svg>
+                  <span>Cancel</span>
+                </button>
+                <button type="button" class="btn generate-v2-editor-action" id="generate-v2-editor-save-default">
+                  <svg viewBox="0 0 24 24" aria-hidden="true" fill="none" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M19 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11l5 5v11a2 2 0 0 1-2 2Z"/><path d="M17 21v-8H7v8"/><path d="M7 3v5h8"/></svg>
+                  <span>Save as default</span>
+                </button>
+                <button type="button" class="btn generate-v2-editor-action" id="generate-v2-editor-save">
+                  <svg viewBox="0 0 24 24" aria-hidden="true" fill="none" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M20 6 9 17l-5-5"/></svg>
+                  <span>Save design</span>
+                </button>
+              </div>
             </div>
             <div class="generate-v2-editor-shell" id="generate-v2-editor" aria-hidden="true">
-              <div class="generate-v2-editor-topbar">
-                <div class="generate-v2-editor-actions">
-                  <span class="generate-v2-editor-status" id="generate-v2-editor-status" aria-live="polite"></span>
-                  <button type="button" class="btn generate-v2-editor-action" id="generate-v2-editor-cancel">
-                    <svg viewBox="0 0 24 24" aria-hidden="true" fill="none" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M18 6 6 18"/><path d="m6 6 12 12"/></svg>
-                    <span>Cancel</span>
-                  </button>
-                  <button type="button" class="btn generate-v2-editor-action" id="generate-v2-editor-save-default">
-                    <svg viewBox="0 0 24 24" aria-hidden="true" fill="none" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M19 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11l5 5v11a2 2 0 0 1-2 2Z"/><path d="M17 21v-8H7v8"/><path d="M7 3v5h8"/></svg>
-                    <span>Save as default</span>
-                  </button>
-                  <button type="button" class="btn generate-v2-editor-action" id="generate-v2-editor-save">
-                    <svg viewBox="0 0 24 24" aria-hidden="true" fill="none" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M20 6 9 17l-5-5"/></svg>
-                    <span>Save design</span>
-                  </button>
-                </div>
-              </div>
               <div class="generate-v2-editor-body">
                 <div class="generate-v2-editor-rail" role="tablist" aria-label="Design sections">
                   <button type="button" class="generate-v2-editor-rail-btn" data-v2-editor-section="style" role="tab" aria-selected="true">
