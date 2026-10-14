@@ -5436,11 +5436,11 @@
   }
   .crop-modal-element-grid--title-bottom,
   .crop-modal-element-grid--caption-bottom {
-    grid-template-columns: repeat(2, minmax(0, 1fr));
+    grid-template-columns: minmax(0, 1fr);
     align-items: start;
   }
   .crop-modal-element-grid--caption-top {
-    grid-template-columns: minmax(0, 1fr) 88px minmax(0, 160px);
+    grid-template-columns: minmax(0, 1fr) 88px;
     align-items: end;
   }
   .crop-modal-element-grid .input-group-inline.compact,
@@ -5525,7 +5525,8 @@
     align-items: center;
     gap: 8px;
     min-height: 44px;
-    width: 100%;
+    width: auto;
+    min-width: 148px;
     padding: 7px 10px;
     border: 1px solid rgba(255, 255, 255, 0.14);
     border-radius: 10px;
@@ -5536,12 +5537,9 @@
   .design-color-chip:hover,
   .design-color-chip:focus-visible { border-color: rgba(80, 205, 181, 0.72); }
   .design-color-chip .short-bg-swatch { flex: 0 0 22px; width: 22px; height: 22px; border-radius: 6px; }
-  .design-color-chip-copy { display: grid; gap: 1px; min-width: 0; }
+  .design-color-chip-copy { display: inline-flex; align-items: baseline; gap: 4px; min-width: 0; white-space: nowrap; }
   .design-color-chip-value { font-size: 0.78rem; font-weight: 700; }
   .design-color-chip-opacity { color: rgba(255, 255, 255, 0.58); font-size: 0.7rem; }
-  .design-position-segments { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 6px; }
-  .design-position-segments button { min-height: 44px; border: 1px solid rgba(255,255,255,.14); border-radius: 9px; background: rgba(15,23,42,.62); color: rgba(255,255,255,.68); }
-  .design-position-segments button.is-active { border-color: rgba(80,205,181,.9); background: rgba(80,205,181,.16); color: #fff; }
   .design-panel-more-options { display: none; gap: 10px; }
   .design-panel-more-options.is-open { display: grid; }
   .design-panel-more-toggle { justify-self: start; padding: 0; border: 0; background: transparent; color: rgba(255,255,255,.64); font-size: .78rem; }
@@ -5549,10 +5547,22 @@
   .design-panel-more-grid { display: grid; grid-template-columns: minmax(0,1fr) 120px; gap: 10px; }
   .design-panel-more-grid .input-group-inline { min-width: 0; }
   .design-panel-hint { color: rgba(255,255,255,.52); font-size: .76rem; }
-  .design-popover-alpha { display: grid; gap: 4px; margin-top: 8px; }
-  .design-popover-alpha label { color: rgba(255,255,255,.65); font-size: .72rem; }
+  .short-bg-popover { width: 280px; max-width: min(280px, calc(100vw - 24px)); padding: 12px; }
+  .short-bg-popover.design-compact-popover { display: grid; gap: 8px; }
+  .short-bg-popover.design-compact-popover > .short-color-swatch { display: none; }
+  .short-bg-popover.design-compact-popover > .short-color-swatch.is-visible { display: inline-flex; }
+  .short-bg-popover.design-compact-popover > .short-color-swatch:not(.design-none-swatch) { width: 25px; height: 25px; border-radius: 7px; }
+  .short-bg-popover.design-compact-popover > .short-color-swatch.design-none-swatch { width: 25px; height: 25px; border-radius: 7px; }
+  .short-bg-popover.design-compact-popover .short-color-custom { display: flex; align-items: center; gap: 8px; margin: 0 !important; padding: 0 !important; border: 0 !important; }
+  .short-bg-popover.design-compact-popover .short-color-custom label { display: none; }
+  .short-bg-popover.design-compact-popover .short-color-custom input[type="text"] { min-width: 0; flex: 1; }
+  .short-bg-popover.design-compact-popover .short-color-custom input[type="color"] { width: 44px; min-width: 44px; height: 38px; padding: 2px; }
+  .design-popover-alpha { display: grid; gap: 4px; margin: 10px 0 0; }
+  .design-popover-alpha label { display: flex; justify-content: space-between; color: rgba(255,255,255,.65); font-size: .72rem; }
   .design-popover-alpha .form-range { min-height: 28px; }
   .design-none-swatch { display: inline-flex; align-items: center; justify-content: center; font-size: .68rem; color: rgba(255,255,255,.72); background: repeating-linear-gradient(135deg, rgba(255,255,255,.08) 0 4px, transparent 4px 8px); }
+  .design-preset-row { display: grid; grid-template-columns: repeat(8, minmax(0, 1fr)); gap: 6px; }
+  .design-preset-row .short-color-swatch { width: 24px; height: 24px; }
   .caption-tab-panel .subtitle-preset-section {
     min-width: 0;
     gap: 8px;
@@ -8407,6 +8417,7 @@
                       <div class="crop-modal-element-preview">
                         <div id="subtitlePreview" class="short-font-preview">Sample subtitle line</div>
                       </div>
+                      <div class="design-panel-section-label">Text</div>
                       <div class="crop-modal-element-grid crop-modal-element-grid--caption-top">
                         <div class="caption-tab-font-field">
                           <div class="caption-tab-section-heading">Font</div>
@@ -8421,6 +8432,7 @@
                           <input type="number" name="sub_font_size" class="form-control form-control-sm" value="{{ selected_sub_font_size or 40 }}" min="1" max="990">
                         </div>
                       </div>
+                      <div class="design-panel-section-label">Background</div>
                       <div class="crop-modal-element-grid crop-modal-element-grid--caption-bottom">
                         <div class="input-group-inline compact short-alpha-control">
                           <div class="d-grid gap-1 w-100">
@@ -8456,13 +8468,6 @@
                         </div>
                         <div class="input-group-inline compact short-alpha-control">
                           <div class="d-grid gap-1 w-100">
-                            <span class="caption-tab-section-heading">Text color</span>
-                            <span class="design-panel-hint">Opacity is in the color chip.</span>
-                            <input type="range" name="subtitle_text_alpha" id="subtitleTextAlphaValue" class="form-range short-alpha-range d-none" min="0" max="100" step="1" value="{{ selected_subtitle_text_alpha if selected_subtitle_text_alpha is not none else 100 }}">
-                          </div>
-                        </div>
-                        <div class="input-group-inline compact short-alpha-control">
-                          <div class="d-grid gap-1 w-100">
                             <span class="caption-tab-section-heading">Background color</span>
                             <div class="short-bg-trigger design-color-chip" id="subtitleBgColorTrigger" role="button" tabindex="0" aria-label="Caption background color">
                               <div class="short-bg-swatch" id="subtitleBgColorSwatch"></div>
@@ -8494,21 +8499,10 @@
                             </div>
                           </div>
                         </div>
-                        <div class="input-group-inline compact short-alpha-control">
-                          <div class="d-grid gap-1 w-100">
-                            <span class="caption-tab-section-heading">Box color</span>
-                            <span class="design-panel-hint">Choose None to remove the box.</span>
-                            <input type="range" name="subtitle_bg_alpha" id="subtitleBgAlphaValue" class="form-range short-alpha-range d-none" min="0" max="100" step="1" value="{{ selected_subtitle_bg_alpha if selected_subtitle_bg_alpha is not none else 85 }}">
-                          </div>
-                        </div>
                       </div>
-                      <div class="design-panel-section-label">Position</div>
-                      <div class="design-position-segments" data-design-position-segments="caption" role="group" aria-label="Caption position">
-                        <button type="button" data-design-position="caption" data-position-value="1520">Top</button>
-                        <button type="button" data-design-position="caption" data-position-value="980">Middle</button>
-                        <button type="button" data-design-position="caption" data-position-value="520">Bottom</button>
-                      </div>
-                      <div class="design-panel-hint">Fine-tune by dragging in the preview, or use the ↑ ↓ keys.</div>
+                      <input type="range" name="subtitle_text_alpha" id="subtitleTextAlphaValue" class="d-none" min="0" max="100" step="1" value="{{ selected_subtitle_text_alpha if selected_subtitle_text_alpha is not none else 100 }}">
+                      <input type="range" name="subtitle_bg_alpha" id="subtitleBgAlphaValue" class="d-none" min="0" max="100" step="1" value="{{ selected_subtitle_bg_alpha if selected_subtitle_bg_alpha is not none else 85 }}">
+                      <div class="design-panel-hint">Drag the caption in the preview to move it, or use the ↑ ↓ keys.</div>
                       <button type="button" class="design-panel-more-toggle" data-design-more-toggle="caption" aria-expanded="false">▸ More options</button>
                       <div class="design-panel-more-options" data-design-more-options="caption">
                         <div class="design-panel-more-grid">
@@ -8541,6 +8535,7 @@
                       <div class="crop-modal-element-preview">
                         <div id="titlePreview" class="short-font-preview" data-font="{{ selected_title_font_css|default('inherit')|e }}">Life is full of fun</div>
                       </div>
+                      <div class="design-panel-section-label">Text</div>
                       <div class="crop-modal-element-grid crop-modal-element-grid--title-top">
                         <div class="font-preview-group tight">
                           {% if title_font_options %}
@@ -8559,13 +8554,14 @@
                           <input type="number" name="title_font_size" class="form-control form-control-sm short-input-small" value="{{ selected_title_font_size or 44 }}" min="1" max="990">
                         </div>
                       </div>
+                      <div class="design-panel-section-label">Background</div>
                       <div class="crop-modal-element-grid crop-modal-element-grid--title-bottom">
                         <div class="input-group-inline compact short-alpha-control">
                           <div class="d-grid gap-1 w-100">
                             <span class="caption-tab-section-heading">Text color</span>
                             <div class="short-bg-trigger design-color-chip" id="titleTextColorTrigger" role="button" tabindex="0" aria-label="Title text color">
                               <div class="short-bg-swatch" id="titleTextColorSwatch"></div>
-                              <div class="design-color-chip-copy"><span class="design-color-chip-value" id="titleTextColorChipValue">#FFFFFF</span><span class="design-color-chip-opacity" id="titleTextColorChipOpacity">100% opacity</span></div>
+                              <div class="design-color-chip-copy"><span class="design-color-chip-value" id="titleTextColorChipValue">#FFFFFF</span></div>
                               <div class="short-bg-popover closed" id="titleTextColorPopover">
                                 {% set palette_groups = [
                                   ['#FFFDE7','#FFF9C4','#FFF176','#FFEE58','#FDD835','#FFD600'],
@@ -8624,21 +8620,9 @@
                             </div>
                           </div>
                         </div>
-                        <div class="input-group-inline compact short-alpha-control">
-                          <div class="d-grid gap-1 w-100">
-                            <span class="caption-tab-section-heading">Box color</span>
-                            <span class="design-panel-hint">Choose None to remove the box.</span>
-                            <input type="range" name="title_bg_alpha" id="titleBgAlphaValue" class="form-range short-alpha-range d-none" min="0" max="100" step="1" value="{{ selected_title_bg_alpha if selected_title_bg_alpha is not none else 0 }}">
-                          </div>
-                        </div>
                       </div>
-                      <div class="design-panel-section-label">Position</div>
-                      <div class="design-position-segments" data-design-position-segments="title" role="group" aria-label="Title position">
-                        <button type="button" data-design-position="title" data-position-value="40">Top</button>
-                        <button type="button" data-design-position="title" data-position-value="720">Middle</button>
-                        <button type="button" data-design-position="title" data-position-value="1450">Bottom</button>
-                      </div>
-                      <div class="design-panel-hint">Fine-tune by dragging in the preview, or use the ↑ ↓ keys.</div>
+                      <input type="range" name="title_bg_alpha" id="titleBgAlphaValue" class="d-none" min="0" max="100" step="1" value="{{ selected_title_bg_alpha if selected_title_bg_alpha is not none else 0 }}">
+                      <div class="design-panel-hint">Drag the title in the preview to move it, or use the ↑ ↓ keys.</div>
                       <button type="button" class="design-panel-more-toggle" data-design-more-toggle="title" aria-expanded="false">▸ More options</button>
                       <div class="design-panel-more-options" data-design-more-options="title">
                         <div class="design-panel-more-grid">
@@ -8662,7 +8646,6 @@
                           </div>
                         </div>
                       </div>
-                      <div class="crop-modal-element-helper">Drag the title in Final Preview or use arrow keys to nudge.</div>
                     </div>
                   </div>
                 </div>
@@ -21160,7 +21143,41 @@ document.addEventListener("DOMContentLoaded", function () {
     const chipValue = document.getElementById(`${hiddenId.replace("Value", "")}ChipValue`);
     const chipOpacity = document.getElementById(`${hiddenId.replace("Value", "")}ChipOpacity`);
     const alphaPicker = alphaField ? popover?.querySelector(`[data-design-alpha-input="${alphaFieldId}"]`) : null;
-    const swatches = Array.from(document.querySelectorAll(`#${popoverId} .short-color-swatch`)).filter((s) => s.dataset.color);
+    const allSwatches = Array.from(document.querySelectorAll(`#${popoverId} .short-color-swatch`));
+    const swatches = allSwatches.filter((s) => s.dataset.color);
+    const presetColors = ["#000000", "#FFFFFF", "#FDE047", "#F97316", "#EF4444", "#3B82F6", "#A855F7"];
+    const currentColor = normalize(hidden?.value || "");
+    if (currentColor && !presetColors.includes(currentColor)) presetColors.push(currentColor);
+    popover?.classList.add("design-compact-popover");
+    swatches.forEach((swatch, index) => {
+      if (index < presetColors.length) {
+        swatch.dataset.color = presetColors[index];
+        swatch.classList.add("is-visible");
+      } else {
+        swatch.remove();
+      }
+    });
+    const noneSwatch = popover?.querySelector("[data-none-color]");
+    if (noneSwatch) {
+      noneSwatch.textContent = "∅";
+      noneSwatch.setAttribute("title", "No color");
+      noneSwatch.classList.add("is-visible");
+    }
+    const customWrap = popover?.querySelector(".short-color-custom");
+    if (customWrap && customInput && !customWrap.querySelector('input[type="color"]')) {
+      const nativeColor = document.createElement("input");
+      nativeColor.type = "color";
+      nativeColor.value = normalize(hidden?.value || "#FFFFFF");
+      nativeColor.title = "Custom color";
+      nativeColor.setAttribute("aria-label", "Custom color");
+      nativeColor.addEventListener("input", () => applyColor(nativeColor.value));
+      customWrap.appendChild(nativeColor);
+    }
+    const alphaWrap = popover?.querySelector(".design-popover-alpha");
+    if (alphaWrap) {
+      if (customWrap) customWrap.after(alphaWrap);
+      else popover.appendChild(alphaWrap);
+    }
     swatches.forEach((swatch) => {
       swatch.style.backgroundColor = swatch.dataset.color;
     });
@@ -21203,9 +21220,7 @@ document.addEventListener("DOMContentLoaded", function () {
     alphaPicker?.addEventListener("input", () => {
       if (alphaField) alphaField.value = alphaPicker.value;
       const color = hidden?.value || "#000000";
-      const opacity = alphaToOpacity(alphaPicker.value, 100);
-      if (swatchEl) swatchEl.style.backgroundColor = hexToRgba(color, opacity);
-      if (chipOpacity) chipOpacity.textContent = `${Math.round(opacity * 100)}% opacity`;
+      syncDesignChip(hiddenId, color, alphaPicker.value);
       if (typeof onApply === "function") onApply(color);
     });
     swatches.forEach((swatch) => {
@@ -21615,36 +21630,6 @@ document.addEventListener("DOMContentLoaded", function () {
       setActiveCropModalTab(tab);
     });
   });
-  const syncDesignPositionSegments = (kind) => {
-    const field = getDesignField(kind === "caption" ? "sub_margin" : "title_margin");
-    const value = Number(field?.value);
-    document.querySelectorAll(`[data-design-position-segments="${kind}"] [data-position-value]`).forEach((button) => {
-      button.classList.toggle("is-active", Number(button.dataset.positionValue) === value);
-    });
-  };
-  const bindDesignPositionControls = () => {
-    ["caption", "title"].forEach((kind) => {
-      const field = getDesignField(kind === "caption" ? "sub_margin" : "title_margin");
-      document.querySelectorAll(`[data-design-position-segments="${kind}"] [data-position-value]`).forEach((button) => {
-        button.addEventListener("click", () => {
-          setDesignFieldValue(field, button.dataset.positionValue);
-          syncDesignPositionSegments(kind);
-          syncFinalPreviewLayout();
-        });
-      });
-      field?.addEventListener("input", () => syncDesignPositionSegments(kind));
-      field?.addEventListener("change", () => syncDesignPositionSegments(kind));
-      field?.addEventListener("keydown", (event) => {
-        if (!["ArrowUp", "ArrowDown"].includes(event.key)) return;
-        event.preventDefault();
-        const delta = event.key === "ArrowUp" ? (kind === "caption" ? 10 : -10) : (kind === "caption" ? -10 : 10);
-        const next = Math.max(0, Number(field.value || 0) + delta);
-        setDesignFieldValue(field, next);
-        syncDesignPositionSegments(kind);
-      });
-      syncDesignPositionSegments(kind);
-    });
-  };
   const bindDesignMoreOptions = () => {
     document.querySelectorAll("[data-design-more-toggle]").forEach((toggle) => {
       const kind = toggle.dataset.designMoreToggle;
@@ -21663,7 +21648,6 @@ document.addEventListener("DOMContentLoaded", function () {
       });
     });
   };
-  bindDesignPositionControls();
   bindDesignMoreOptions();
   [titleFont, titleFontSizeInput, titleTextColorField, titleBgColorField, subtitlePresetField].forEach((field) => {
     field?.addEventListener("change", syncStyleTemplateCards);
