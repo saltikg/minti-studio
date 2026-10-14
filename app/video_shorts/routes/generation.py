@@ -432,6 +432,7 @@ SHORT_EDITOR_DEFAULT_FIELD_NAMES = (
     "show_title",
     "show_subtitle",
     "visual_mode",
+    "overlay_shapes",
 )
 
 _TRANSCRIBE_JOB_LOCK = threading.Lock()
@@ -904,6 +905,7 @@ def _short_editor_config_defaults() -> Dict[str, Any]:
         "show_title": True,
         "show_subtitle": True,
         "visual_mode": "video",
+        "overlay_shapes": [],
     }
 
 
@@ -992,6 +994,7 @@ def _clean_short_editor_default_payload(source: Any) -> Dict[str, Any]:
 
     visual_mode = str(source.get("visual_mode") or defaults["visual_mode"]).strip().lower()
     payload["visual_mode"] = visual_mode if visual_mode in {"video", "static", "created", "podcast"} else "video"
+    payload["overlay_shapes"] = _normalize_overlay_shapes(source.get("overlay_shapes"))
     return payload
 
 
@@ -7433,6 +7436,7 @@ AUTO_RENDER_DESIGN_FIELD_MAP: Dict[str, str] = {
     "show_subtitle": "show_subtitle",
     "visual_mode": "visual_mode",
     "video_overlay_offset": "video_overlay_offset",
+    "overlay_shapes": "overlay_shapes",
 }
 
 
@@ -7475,7 +7479,10 @@ def apply_short_editor_defaults_to_video_if_null(*, owner_user_id: str, brand_id
             if default_name not in resolved:
                 continue
             assignments.append(f"{column_name} = COALESCE({column_name}, ?)")
-            params.append(resolved.get(default_name))
+            value = resolved.get(default_name)
+            if default_name == "overlay_shapes":
+                value = json.dumps(_normalize_overlay_shapes(value), ensure_ascii=False, separators=(",", ":"))
+            params.append(value)
             updated_fields.append(column_name)
         if not assignments:
             conn.commit()
@@ -8441,6 +8448,7 @@ def _build_render_job_options(
     podcast_overlay_short_ids: List[str],
     video_overlay_offset: Optional[int],
     subtitle_text: Optional[str],
+    overlay_shapes: Optional[List[Dict[str, Any]]] = None,
     subtitle_margin_custom: bool = False,
 ) -> Dict[str, Any]:
     return {
@@ -8481,6 +8489,7 @@ def _build_render_job_options(
         "podcast_overlay_short_ids": podcast_overlay_short_ids or [],
         "video_overlay_offset": video_overlay_offset,
         "subtitle_text": (subtitle_text or "").strip(),
+        "overlay_shapes": _normalize_overlay_shapes(overlay_shapes),
     }
 
 
@@ -8590,6 +8599,51 @@ def _normalize_original_zoom_rect(raw_value: Any) -> Optional[Dict[str, float]]:
     }
 
 
+def _normalize_overlay_shapes(raw_value: Any) -> List[Dict[str, Any]]:
+    if isinstance(raw_value, str):
+        try:
+            raw_value = json.loads(raw_value.strip() or "[]")
+        except Exception:
+            return []
+    if not isinstance(raw_value, list):
+        return []
+    normalized: List[Dict[str, Any]] = []
+    seen_ids = set()
+    for index, item in enumerate(raw_value[:5]):
+        if not isinstance(item, dict):
+            continue
+        try:
+            x = int(round(float(item.get("x", 0))))
+            y = int(round(float(item.get("y", 0))))
+            w = int(round(float(item.get("w", 1))))
+            h = int(round(float(item.get("h", 1))))
+            alpha = max(0, min(100, int(round(float(item.get("alpha", 100))))))
+            radius = max(0, int(round(float(item.get("radius", 0)))))
+        except Exception:
+            continue
+        w = max(1, min(1080, w))
+        h = max(1, min(1920, h))
+        x = max(0, min(1080 - w, x))
+        y = max(0, min(1920 - h, y))
+        radius = min(radius, w // 2, h // 2)
+        color = _normalize_hex_color(item.get("color"), "#000000")
+        shape_id = re.sub(r"[^A-Za-z0-9_-]", "", str(item.get("id") or f"shape-{index + 1}"))[:64]
+        if not shape_id or shape_id in seen_ids:
+            shape_id = f"shape-{index + 1}"
+        seen_ids.add(shape_id)
+        normalized.append({
+            "id": shape_id,
+            "x": x,
+            "y": y,
+            "w": w,
+            "h": h,
+            "color": color,
+            "alpha": alpha,
+            "radius": radius,
+        })
+    return normalized
+
+
 def _parse_podcast_overlay_short_ids(raw_value: Any) -> List[str]:
     raw = str(raw_value or "").strip()
     if not raw:
@@ -8684,6 +8738,7 @@ def _compute_render_settings_hash_for_plan_entry(
         podcast_overlay_short_ids=_parse_podcast_overlay_short_ids(video.get("podcast_overlay_short_ids")),
         video_overlay_offset=video.get("video_overlay_offset"),
         subtitle_text=subtitle_text,
+        overlay_shapes=_normalize_overlay_shapes(video.get("overlay_shapes")),
     )
     if canonical:
         return _render_settings_hash_from_options(options)
@@ -10489,6 +10544,8 @@ def generate_short(video_pk):
         video_sql += ", original_zoom_rect"
     if "layout_mode" in video_columns:
         video_sql += ", layout_mode"
+    if "overlay_shapes" in video_columns:
+        video_sql += ", overlay_shapes"
     row = _fetch_scoped_video_row(conn, video_pk, video_sql)
     if not row:
         conn.close()
@@ -10524,6 +10581,8 @@ def generate_short(video_pk):
         cols.append("original_zoom_rect")
     if "layout_mode" in video_columns:
         cols.append("layout_mode")
+    if "overlay_shapes" in video_columns:
+        cols.append("overlay_shapes")
     video = dict(zip(cols, row))
     video["layout_mode"] = _effective_layout_mode_for_owner(video.get("owner_user_id"), video.get("layout_mode"))
     face_aware_layout_available = _face_aware_layout_enabled_for_owner(video.get("owner_user_id"))
@@ -10859,8 +10918,10 @@ def generate_short(video_pk):
         "show_title": video.get("show_title"),
         "show_subtitle": video.get("show_subtitle"),
         "visual_mode": video.get("visual_mode"),
+        "overlay_shapes": video.get("overlay_shapes"),
     }
     resolved_style_values = _apply_short_editor_defaults(raw_style_values, short_editor_defaults)
+    video["overlay_shapes"] = _normalize_overlay_shapes(resolved_style_values.get("overlay_shapes"))
 
     video_font_key = resolved_style_values.get("font") or DEFAULT_EDITOR_TITLE_FONT_KEY
     video_title_font_size = resolved_style_values.get("title_font_size") or DEFAULT_EDITOR_TITLE_FONT_SIZE
@@ -11189,6 +11250,7 @@ def generate_short(video_pk):
     selected_show_title = video_show_title if video_show_title is not None else True
     selected_show_subtitle = video_show_subtitle if video_show_subtitle is not None else True
     selected_video_overlay_offset = video_overlay_offset
+    selected_overlay_shapes = video.get("overlay_shapes") or []
     try:
         selected_video_overlay_offset = int(selected_video_overlay_offset)
     except Exception:
@@ -12299,6 +12361,7 @@ def generate_short(video_pk):
         selected_podcast_overlay_short_ids=selected_podcast_overlay_short_ids,
         selected_visual_mode=selected_visual_mode,
         selected_video_overlay_offset=selected_video_overlay_offset,
+        selected_overlay_shapes=selected_overlay_shapes,
         debug_info=debug_info,
         clip_rows=clip_rows,
         clip_edit_words=clip_edit_words,
@@ -27307,6 +27370,7 @@ def save_short_settings(video_pk):
         except Exception:
             podcast_overlay_short_ids = []
     podcast_overlay_short_ids = list(dict.fromkeys(podcast_overlay_short_ids))[:2]
+    overlay_shapes = _normalize_overlay_shapes(request.form.get("overlay_shapes"))
 
     conn = get_db()
     _ensure_video_crop_schema(conn)
@@ -27373,6 +27437,7 @@ def save_short_settings(video_pk):
             "podcast_audio_filename": podcast_audio_filename or None,
             "visual_mode": visual_mode,
             "podcast_overlay_short_ids": json.dumps(podcast_overlay_short_ids, ensure_ascii=False),
+            "overlay_shapes": json.dumps(overlay_shapes, ensure_ascii=False, separators=(",", ":")),
         }
         source_fields_by_column = {
             "title_font_key": "font",
@@ -27402,6 +27467,7 @@ def save_short_settings(video_pk):
             "podcast_audio_filename": "podcast_audio_filename",
             "visual_mode": "visual_mode",
             "podcast_overlay_short_ids": "podcast_overlay_short_ids",
+            "overlay_shapes": "overlay_shapes",
         }
         if "visual_mode" in form_fields:
             source_fields_by_column["podcast_audio_filename"] = "visual_mode"
@@ -27641,6 +27707,7 @@ def autoclip_video(video_pk):
     video_overlay_offset = DEFAULT_VIDEO_OVERLAY_OFFSET
     video_owner_user_id = None
     video_layout_mode = "manual"
+    video_overlay_shapes: List[Dict[str, Any]] = []
     try:
         conn_rw = get_db()
         _ensure_video_crop_schema(conn_rw)
@@ -27667,6 +27734,8 @@ def autoclip_video(video_pk):
             crop_sql += ", original_zoom_rect"
         if "layout_mode" in crop_columns:
             crop_sql += ", layout_mode"
+        if "overlay_shapes" in crop_columns:
+            crop_sql += ", overlay_shapes"
         crop_sql += " FROM youtube_videos WHERE video_id = ?"
         crop_params: List[Any] = [vid]
         crop_sql += " AND owner_user_id = ? AND brand_id = ?"
@@ -28059,6 +28128,7 @@ def autoclip_video(video_pk):
             subtitle_margin_custom_index = None
             original_zoom_rect_index = None
             layout_mode_index = None
+            overlay_shapes_index = None
             if "crop_locked" in crop_columns:
                 crop_locked_index = optional_index
                 optional_index += 1
@@ -28070,6 +28140,9 @@ def autoclip_video(video_pk):
                 optional_index += 1
             if "layout_mode" in crop_columns:
                 layout_mode_index = optional_index
+                optional_index += 1
+            if "overlay_shapes" in crop_columns:
+                overlay_shapes_index = optional_index
                 optional_index += 1
             has_split_columns = len(crop_row) >= 35
             video_crop_ratios = {
@@ -28094,6 +28167,8 @@ def autoclip_video(video_pk):
                     crop_row[query_indexes["owner_user_id"]],
                     crop_row[layout_mode_index],
                 )
+            if overlay_shapes_index is not None:
+                video_overlay_shapes = _normalize_overlay_shapes(crop_row[overlay_shapes_index])
             video_font_key = crop_row[query_indexes["title_font_key"]]
             video_title_font_size = crop_row[query_indexes["title_font_size"]]
             video_sub_font_key = crop_row[query_indexes["subtitle_font_key"]]
@@ -28329,6 +28404,7 @@ def autoclip_video(video_pk):
                 podcast_overlay_short_ids=video_podcast_overlay_short_ids,
                 video_overlay_offset=video_overlay_offset,
                 subtitle_text=effective_subtitle_text,
+                overlay_shapes=video_overlay_shapes,
             )
             if edit_keep_ranges_for_job:
                 job_options["edit_keep_ranges"] = edit_keep_ranges_for_job
@@ -29211,6 +29287,7 @@ def autoclip_video(video_pk):
                 crop_aspect=compose_crop_aspect,
                 music_only=video_is_music_only,
                 face_track_smooth_path=face_track_smooth_path,
+                overlay_shapes=video_overlay_shapes,
             )
             if face_aware_layout_result and face_aware_layout_result.get("enabled"):
                 plan_entry["auto_layout_segments"] = [
@@ -29702,6 +29779,8 @@ def regenerate_clip_video(video_pk: int, plan_index: int):
             video_sql += ", original_zoom_rect"
         if "layout_mode" in video_columns:
             video_sql += ", layout_mode"
+        if "overlay_shapes" in video_columns:
+            video_sql += ", overlay_shapes"
         video_row = _fetch_scoped_video_row(conn, video_pk, video_sql)
     finally:
         conn.close()
@@ -29728,6 +29807,8 @@ def regenerate_clip_video(video_pk: int, plan_index: int):
         video_cols.append("original_zoom_rect")
     if "layout_mode" in video_columns:
         video_cols.append("layout_mode")
+    if "overlay_shapes" in video_columns:
+        video_cols.append("overlay_shapes")
     video = dict(zip(video_cols, video_row))
     video["layout_mode"] = _effective_layout_mode_for_owner(video.get("owner_user_id"), video.get("layout_mode"))
     plan_entries = _load_plan_entries(source_video_id)

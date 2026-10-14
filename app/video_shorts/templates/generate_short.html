@@ -5553,6 +5553,23 @@
   .design-more-input .design-more-unit { position: absolute; right: 9px; top: 50%; transform: translateY(-50%); color: rgba(255,255,255,.48); font-size: .72rem; pointer-events: none; }
   .design-more-subheading { grid-column: 1 / -1; padding-top: 4px; color: rgba(255,255,255,.58); font-size: .72rem; font-weight: 700; text-transform: uppercase; letter-spacing: .08em; }
   .design-panel-hint { color: rgba(255,255,255,.52); font-size: .76rem; }
+  .shape-editor-list { display: grid; gap: 8px; }
+  .shape-editor-row { display: flex; align-items: center; justify-content: space-between; min-height: 44px; padding: 8px 10px; border: 1px solid rgba(255,255,255,.12); border-radius: 8px; background: rgba(15,23,42,.45); color: #fff; }
+  .shape-editor-row.is-selected { border-color: #50cdb5; box-shadow: 0 0 0 1px rgba(80,205,181,.28); }
+  .shape-editor-empty { color: rgba(255,255,255,.52); font-size: .82rem; padding: 18px 4px; }
+  .shape-editor-controls { display: grid; gap: 14px; }
+  .shape-editor-actions { display: flex; flex-wrap: wrap; gap: 8px; }
+  .preview-shapes-layer { position: absolute; inset: 0; z-index: 2; pointer-events: none; }
+  .preview-shape { position: absolute; pointer-events: auto; touch-action: none; }
+  .preview-shape.is-selected { outline: 2px solid #50cdb5; outline-offset: 1px; }
+  .preview-shape-handle { position: absolute; width: 10px; height: 10px; border: 1px solid #0f172a; border-radius: 50%; background: #fff; transform: translate(-50%, -50%); }
+  .preview-shape-handle[data-handle*="n"] { top: 0; }
+  .preview-shape-handle[data-handle*="s"] { top: 100%; }
+  .preview-shape-handle[data-handle*="w"] { left: 0; }
+  .preview-shape-handle[data-handle*="e"] { left: 100%; }
+  .preview-shape-handle[data-handle="n"], .preview-shape-handle[data-handle="s"] { left: 50%; }
+  .preview-shape-handle[data-handle="w"], .preview-shape-handle[data-handle="e"] { top: 50%; }
+  .shorts-preview-title-band, .shorts-preview-subtitle-band, .shorts-preview-date, .orig-preview__title, .orig-preview__caption { z-index: 3; }
   .short-bg-popover { width: 288px; max-width: min(288px, calc(100vw - 24px)); padding: 16px; gap: 14px; box-sizing: border-box; }
   .short-bg-popover.closed { display: none !important; visibility: hidden; pointer-events: none; }
   .short-bg-popover:not(.closed) {
@@ -6478,6 +6495,10 @@
                     <svg viewBox="0 0 24 24" aria-hidden="true" fill="none" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 7V4h16v3M9 20h6M12 4v16"/></svg>
                     <span>Title</span>
                   </button>
+                  <button type="button" class="generate-v2-editor-rail-btn" data-v2-editor-section="shapes" role="tab" aria-selected="false">
+                    <svg viewBox="0 0 24 24" aria-hidden="true" fill="none" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="4" y="6" width="16" height="12" rx="2"/></svg>
+                    <span>Shapes</span>
+                  </button>
                   <button type="button" class="generate-v2-editor-rail-btn" data-v2-editor-section="background" role="tab" aria-selected="false">
                     <svg viewBox="0 0 24 24" aria-hidden="true" fill="none" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="5" width="18" height="14" rx="2"/><circle cx="8" cy="10" r="1.5"/><path d="m21 16-5-5L5 19"/></svg>
                     <span>Background</span>
@@ -6492,6 +6513,7 @@
                   <div class="generate-v2-editor-section" id="generate-v2-editor-section-layout" data-v2-editor-section-panel="layout"></div>
                   <div class="generate-v2-editor-section" id="generate-v2-editor-section-caption" data-v2-editor-section-panel="caption"></div>
                   <div class="generate-v2-editor-section" id="generate-v2-editor-section-title" data-v2-editor-section-panel="title"></div>
+                  <div class="generate-v2-editor-section" id="generate-v2-editor-section-shapes" data-v2-editor-section-panel="shapes"></div>
                   <div class="generate-v2-editor-section" id="generate-v2-editor-section-background" data-v2-editor-section-panel="background"></div>
                   <div class="generate-v2-editor-section" id="generate-v2-editor-section-subscribe" data-v2-editor-section-panel="subscribe"></div>
                 </div>
@@ -8123,9 +8145,10 @@
         <div class="crop-modal-settings-shell">
           <div class="crop-modal-tab-nav" role="tablist" aria-label="Crop editor sections">
             <button type="button" class="crop-modal-tab is-active" data-crop-modal-tab data-crop-modal-tab-target="layout" role="tab" aria-selected="true">Layout</button>
-            <button type="button" class="crop-modal-tab" data-crop-modal-tab data-crop-modal-tab-target="background" role="tab" aria-selected="false">Background</button>
             <button type="button" class="crop-modal-tab" data-crop-modal-tab data-crop-modal-tab-target="caption" role="tab" aria-selected="false">Caption</button>
             <button type="button" class="crop-modal-tab" data-crop-modal-tab data-crop-modal-tab-target="title" role="tab" aria-selected="false">Title</button>
+            <button type="button" class="crop-modal-tab" data-crop-modal-tab data-crop-modal-tab-target="shapes" role="tab" aria-selected="false">Shapes</button>
+            <button type="button" class="crop-modal-tab" data-crop-modal-tab data-crop-modal-tab-target="background" role="tab" aria-selected="false">Background</button>
           </div>
           <div class="cropper-modal-layout">
           <div class="cropper-modal-main-panel">
@@ -8356,6 +8379,51 @@
                           </div>
                         </div>
                       </div>
+                    </div>
+                  </div>
+                  <div class="crop-modal-tab-panel crop-modal-settings-panel" data-crop-modal-panel="shapes" hidden>
+                    <input type="hidden" name="overlay_shapes" id="overlayShapesValue" value='{{ (selected_overlay_shapes or [])|tojson|safe }}'>
+                    <div class="d-flex align-items-center justify-content-between gap-3 mb-3">
+                      <div>
+                        <div class="caption-tab-section-heading">Shapes</div>
+                        <div class="design-panel-hint">Cover a fixed area of the source video.</div>
+                      </div>
+                      <button type="button" class="btn btn-sm btn-primary" id="shape-add-btn"><i class="bi bi-plus-lg me-1"></i>Add shape</button>
+                    </div>
+                    <div class="shape-editor-list" id="shape-editor-list"></div>
+                    <div class="shape-editor-empty" id="shape-editor-empty">No shapes yet.</div>
+                    <div class="shape-editor-controls d-none" id="shape-editor-controls">
+                      <div class="design-panel-section-label"><span>Appearance</span></div>
+                      <div>
+                        <label class="form-label small text-white-50">Color</label><br>
+                        <button type="button" class="short-bg-trigger design-color-chip" id="shapeColorTrigger" aria-label="Shape color">
+                          <span class="short-bg-swatch" id="shapeColorSwatch" style="background:#000"></span>
+                          <span class="design-color-chip-copy"><span class="design-color-chip-value" id="shapeColorChipValue">#000000</span><span class="design-color-chip-opacity" id="shapeColorChipOpacity">100% opacity</span></span>
+                        </button>
+                        <input type="hidden" id="shapeColorValue" value="#000000">
+                        <input type="hidden" id="shapeAlphaValue" value="100">
+                        <div class="short-bg-popover design-compact-popover closed" id="shapeColorPopover" role="dialog" aria-label="Shape color picker">
+                          <button type="button" class="short-color-swatch" data-color="#000000" aria-label="Black"></button>
+                          <button type="button" class="short-color-swatch" data-color="#FFFFFF" aria-label="White"></button>
+                          <button type="button" class="short-color-swatch" data-color="#FDE047" aria-label="Yellow"></button>
+                          <button type="button" class="short-color-swatch" data-color="#F97316" aria-label="Orange"></button>
+                          <button type="button" class="short-color-swatch" data-color="#EF4444" aria-label="Red"></button>
+                          <button type="button" class="short-color-swatch" data-color="#3B82F6" aria-label="Blue"></button>
+                          <button type="button" class="short-color-swatch" data-color="#A855F7" aria-label="Purple"></button>
+                          <div class="short-color-custom"><label for="shapeColorCustom">Hex</label><input type="text" class="form-control form-control-sm" id="shapeColorCustom" value="#000000"></div>
+                          <div class="design-popover-alpha"><div class="d-flex justify-content-between"><span>Opacity</span><span data-design-alpha-label="shape_alpha">100%</span></div><input type="range" min="0" max="100" value="100" data-design-alpha-input="shape_alpha"></div>
+                        </div>
+                      </div>
+                      <label class="form-label small text-white-50">Corner radius <input type="number" class="form-control form-control-sm mt-1" id="shape-radius" min="0" max="540" value="0"></label>
+                      <button type="button" class="design-panel-more-toggle" id="shape-more-toggle" aria-expanded="false">▸ More options</button>
+                      <div class="design-panel-more-options" id="shape-more-options">
+                        <div class="design-panel-more-grid">
+                          {% for label, key, max_value in [('X','x',1080),('Y','y',1920),('Width','w',1080),('Height','h',1920)] %}
+                          <label class="design-more-label" for="shape-{{ key }}">{{ label }}</label><span class="design-more-input"><input type="number" class="form-control form-control-sm" id="shape-{{ key }}" min="0" max="{{ max_value }}"><span class="design-more-unit">px</span></span>
+                          {% endfor %}
+                        </div>
+                      </div>
+                      <div class="shape-editor-actions"><button type="button" class="btn btn-sm btn-outline-light" id="shape-duplicate-btn"><i class="bi bi-copy me-1"></i>Duplicate</button><button type="button" class="btn btn-sm btn-outline-danger" id="shape-delete-btn"><i class="bi bi-trash me-1"></i>Delete</button></div>
                     </div>
                   </div>
                   <div class="crop-modal-tab-panel crop-modal-settings-panel" data-crop-modal-panel="background" hidden>
@@ -8685,10 +8753,12 @@
             <div class="small text-muted mb-2">Final Preview</div>
             <div class="orig-preview" id="orig-preview-frame" tabindex="0" aria-label="Original preview editor">
               <canvas class="orig-preview__canvas" id="orig-preview-canvas" width="1280" height="720" aria-hidden="true"></canvas>
+              <div class="preview-shapes-layer" id="orig-preview-shapes"></div>
               <div class="orig-preview__title" id="orig-preview-title" data-preview-element="title">Life is full of fun</div>
               <div class="orig-preview__caption" id="orig-preview-caption" data-preview-element="subtitle">Sample subtitle line</div>
             </div>
             <div class="shorts-preview-frame" id="shorts-preview-frame" tabindex="0" aria-label="Shorts preview editor">
+              <div class="preview-shapes-layer" id="shorts-preview-shapes"></div>
               <div class="shorts-preview-title-band crop-preview-selectable" id="shorts-preview-title-band" data-preview-element="title">Life is full of fun</div>
               <div class="shorts-preview-video crop-preview-selectable" id="shorts-preview-video" data-preview-element="video">
                 <canvas id="crop-preview" width="{{ VIDEO_OVERLAY_WIDTH }}" height="{{ VIDEO_OVERLAY_HEIGHT_LANDSCAPE }}" aria-hidden="true"></canvas>
@@ -11551,7 +11621,7 @@ const syncGenerateV2InlinePreviewScale = () => {
 
 const setGenerateV2EditorSection = (section = "style") => {
   const root = getGenerateV2Root();
-  const normalized = ["style", "layout", "caption", "title", "background", "subscribe"].includes(section) ? section : "style";
+  const normalized = ["style", "layout", "caption", "title", "shapes", "background", "subscribe"].includes(section) ? section : "style";
   generateV2EditState.section = normalized;
   root?.querySelectorAll("[data-v2-editor-section]").forEach((button) => {
     const isActive = button.dataset.v2EditorSection === normalized;
@@ -11561,7 +11631,7 @@ const setGenerateV2EditorSection = (section = "style") => {
   root?.querySelectorAll("[data-v2-editor-section-panel]").forEach((panel) => {
     panel.classList.toggle("is-active", panel.dataset.v2EditorSectionPanel === normalized);
   });
-  if (["layout", "caption", "title", "background"].includes(normalized)) {
+  if (["layout", "caption", "title", "shapes", "background"].includes(normalized)) {
     window.setCropEditorModalTab?.(normalized);
   }
   window.requestAnimationFrame(() => {
@@ -11580,6 +11650,7 @@ const mountGenerateV2EditorNodes = () => {
   const layoutTarget = document.getElementById("generate-v2-editor-section-layout");
   const captionTarget = document.getElementById("generate-v2-editor-section-caption");
   const titleTarget = document.getElementById("generate-v2-editor-section-title");
+  const shapesTarget = document.getElementById("generate-v2-editor-section-shapes");
   const backgroundTarget = document.getElementById("generate-v2-editor-section-background");
   const subscribeTarget = document.getElementById("generate-v2-editor-section-subscribe");
   const previewTarget = document.getElementById("generate-v2-preview-slot");
@@ -11596,6 +11667,7 @@ const mountGenerateV2EditorNodes = () => {
   moveGenerateV2Node(modal?.querySelector("[data-crop-modal-panel='layout']"), layoutTarget);
   moveGenerateV2Node(modal?.querySelector("[data-crop-modal-panel='caption']"), captionTarget);
   moveGenerateV2Node(modal?.querySelector("[data-crop-modal-panel='title']"), titleTarget);
+  moveGenerateV2Node(modal?.querySelector("[data-crop-modal-panel='shapes']"), shapesTarget);
   moveGenerateV2Node(modal?.querySelector("[data-crop-modal-panel='background']"), backgroundTarget);
   moveGenerateV2Node(modal?.querySelector(".cropper-preview-card"), previewTarget);
 };
@@ -20072,6 +20144,7 @@ document.addEventListener("DOMContentLoaded", () => {
     "video_date_text",
     "video_date_top",
     "video_overlay_offset",
+    "overlay_shapes",
   ];
 
   const appendShortDesignFields = (params, names = shortDesignFieldNames, options = {}) => {
@@ -21004,6 +21077,7 @@ document.addEventListener("DOMContentLoaded", function () {
     "enable_subscribe_overlay",
     "is_music_only",
     "visual_mode",
+    "overlay_shapes",
   ];
   const getDesignRoots = () => {
     const roots = [
@@ -21063,6 +21137,7 @@ document.addEventListener("DOMContentLoaded", function () {
     syncSubtitlePresetCards();
     syncStyleTemplateCards();
     syncFinalPreviewLayout();
+    window.syncOverlayShapesFromField?.();
   };
   window.rememberCropEditorSavedDesignState = () => {
     savedDesignState = collectDesignState();
@@ -21145,12 +21220,13 @@ document.addEventListener("DOMContentLoaded", function () {
     const chipValue = document.getElementById(`${hiddenId.replace("Value", "")}ChipValue`);
     const chipOpacity = document.getElementById(`${hiddenId.replace("Value", "")}ChipOpacity`);
     const swatch = document.getElementById(hiddenId.replace("Value", "Swatch"));
-    const picker = document.querySelector(`[data-design-alpha-input="${hiddenId === "subtitleTextColorValue" ? "subtitle_text_alpha" : hiddenId === "subtitleBgColorValue" ? "subtitle_bg_alpha" : hiddenId === "titleBgColorValue" ? "title_bg_alpha" : ""}"]`);
-    if (chipValue) chipValue.textContent = alpha === 0 && hiddenId !== "subtitleTextColorValue" ? "None" : hex;
+    const alphaKey = hiddenId === "subtitleTextColorValue" ? "subtitle_text_alpha" : hiddenId === "subtitleBgColorValue" ? "subtitle_bg_alpha" : hiddenId === "titleBgColorValue" ? "title_bg_alpha" : hiddenId === "shapeColorValue" ? "shape_alpha" : "";
+    const picker = document.querySelector(`[data-design-alpha-input="${alphaKey}"]`);
+    if (chipValue) chipValue.textContent = alpha === 0 && !["subtitleTextColorValue", "shapeColorValue"].includes(hiddenId) ? "None" : hex;
     if (chipOpacity) chipOpacity.textContent = `${alpha}% opacity`;
     if (swatch) swatch.style.backgroundColor = alpha === 0 ? "transparent" : hexToRgba(hex, alpha / 100);
     if (picker) picker.value = String(alpha);
-    const label = document.querySelector(`[data-design-alpha-label="${hiddenId === "subtitleTextColorValue" ? "subtitle_text_alpha" : hiddenId === "subtitleBgColorValue" ? "subtitle_bg_alpha" : hiddenId === "titleBgColorValue" ? "title_bg_alpha" : ""}"]`);
+    const label = document.querySelector(`[data-design-alpha-label="${alphaKey}"]`);
     if (label) label.textContent = `${alpha}%`;
   };
   const closeAllColorPopovers = (exceptId = null) => {
@@ -21162,7 +21238,7 @@ document.addEventListener("DOMContentLoaded", function () {
   document.addEventListener("keydown", (event) => {
     if (event.key === "Escape") closeAllColorPopovers();
   });
-  const bindColorPicker = ({ triggerId, popoverId, hiddenId, hexId, swatchId, customInputId, onApply }) => {
+  const bindColorPicker = ({ triggerId, popoverId, hiddenId, hexId, swatchId, customInputId, alphaFieldId: alphaFieldIdOverride = null, alphaFieldKey: alphaFieldKeyOverride = null, onApply }) => {
     const trigger = document.getElementById(triggerId);
     const popover = document.getElementById(popoverId);
     if (popover && popover.parentElement !== document.body) {
@@ -21194,12 +21270,12 @@ document.addEventListener("DOMContentLoaded", function () {
     const hexLabel = document.getElementById(hexId);
     const swatchEl = document.getElementById(swatchId);
     const customInput = document.getElementById(customInputId);
-    const alphaFieldId = hiddenId === "subtitleTextColorValue" ? "subtitleTextAlphaValue"
+    const alphaFieldId = alphaFieldIdOverride || (hiddenId === "subtitleTextColorValue" ? "subtitleTextAlphaValue"
       : hiddenId === "subtitleBgColorValue" ? "subtitleBgAlphaValue"
-      : hiddenId === "titleBgColorValue" ? "titleBgAlphaValue" : null;
-    const alphaFieldKey = hiddenId === "subtitleTextColorValue" ? "subtitle_text_alpha"
+      : hiddenId === "titleBgColorValue" ? "titleBgAlphaValue" : null);
+    const alphaFieldKey = alphaFieldKeyOverride || (hiddenId === "subtitleTextColorValue" ? "subtitle_text_alpha"
       : hiddenId === "subtitleBgColorValue" ? "subtitle_bg_alpha"
-      : hiddenId === "titleBgColorValue" ? "title_bg_alpha" : null;
+      : hiddenId === "titleBgColorValue" ? "title_bg_alpha" : null);
     const alphaField = alphaFieldId ? document.getElementById(alphaFieldId) : null;
     const chipValue = document.getElementById(`${hiddenId.replace("Value", "")}ChipValue`);
     const chipOpacity = document.getElementById(`${hiddenId.replace("Value", "")}ChipOpacity`);
@@ -21573,6 +21649,178 @@ document.addEventListener("DOMContentLoaded", function () {
     });
   };
   relocateDesignTextColorFields();
+
+  const overlayShapesField = getDesignField("overlay_shapes");
+  const shapeList = document.getElementById("shape-editor-list");
+  const shapeEmpty = document.getElementById("shape-editor-empty");
+  const shapeControls = document.getElementById("shape-editor-controls");
+  const shapeAdd = document.getElementById("shape-add-btn");
+  const shapeDuplicate = document.getElementById("shape-duplicate-btn");
+  const shapeDelete = document.getElementById("shape-delete-btn");
+  const shapeRadius = document.getElementById("shape-radius");
+  const shapeColor = document.getElementById("shapeColorValue");
+  const shapeAlpha = document.getElementById("shapeAlphaValue");
+  const shapeGeometry = Object.fromEntries(["x", "y", "w", "h"].map((key) => [key, document.getElementById(`shape-${key}`)]));
+  let overlayShapes = [];
+  let selectedShapeId = null;
+  let shapePointerState = null;
+  const shapeHandles = ["nw", "n", "ne", "e", "se", "s", "sw", "w"];
+  const clampShape = (shape) => {
+    shape.w = Math.max(1, Math.min(1080, Math.round(Number(shape.w) || 1)));
+    shape.h = Math.max(1, Math.min(1920, Math.round(Number(shape.h) || 1)));
+    shape.x = Math.max(0, Math.min(1080 - shape.w, Math.round(Number(shape.x) || 0)));
+    shape.y = Math.max(0, Math.min(1920 - shape.h, Math.round(Number(shape.y) || 0)));
+    shape.alpha = Math.max(0, Math.min(100, Math.round(Number(shape.alpha) || 0)));
+    shape.radius = Math.max(0, Math.min(Math.floor(Math.min(shape.w, shape.h) / 2), Math.round(Number(shape.radius) || 0)));
+    shape.color = normalize(shape.color || "#000000") || "#000000";
+    return shape;
+  };
+  const selectedShape = () => overlayShapes.find((shape) => shape.id === selectedShapeId) || null;
+  const persistShapes = () => {
+    overlayShapes = overlayShapes.slice(0, 5).map(clampShape);
+    if (overlayShapesField) overlayShapesField.value = JSON.stringify(overlayShapes);
+  };
+  const shapeLayerElements = () => [document.getElementById("shorts-preview-shapes"), document.getElementById("orig-preview-shapes")].filter(Boolean);
+  const renderShapeLayers = () => {
+    shapeLayerElements().forEach((layer) => {
+      layer.innerHTML = "";
+      overlayShapes.forEach((shape) => {
+        const element = document.createElement("div");
+        element.className = `preview-shape${shape.id === selectedShapeId ? " is-selected" : ""}`;
+        element.dataset.shapeId = shape.id;
+        element.tabIndex = shape.id === selectedShapeId ? 0 : -1;
+        element.style.left = `${shape.x / 10.8}%`;
+        element.style.top = `${shape.y / 19.2}%`;
+        element.style.width = `${shape.w / 10.8}%`;
+        element.style.height = `${shape.h / 19.2}%`;
+        element.style.backgroundColor = hexToRgba(shape.color, shape.alpha / 100);
+        const radiusScale = Math.min(layer.clientWidth / 1080, layer.clientHeight / 1920);
+        element.style.borderRadius = `${Math.max(0, shape.radius * radiusScale)}px`;
+        if (shape.id === selectedShapeId) {
+          shapeHandles.forEach((handle) => {
+            const grip = document.createElement("span");
+            grip.className = "preview-shape-handle";
+            grip.dataset.handle = handle;
+            element.appendChild(grip);
+          });
+        }
+        layer.appendChild(element);
+      });
+    });
+  };
+  const syncShapeControls = () => {
+    const shape = selectedShape();
+    shapeControls?.classList.toggle("d-none", !shape);
+    shapeEmpty?.classList.toggle("d-none", overlayShapes.length > 0);
+    if (shapeAdd) shapeAdd.disabled = overlayShapes.length >= 5;
+    if (!shape) return;
+    if (shapeColor) shapeColor.value = shape.color;
+    if (shapeAlpha) shapeAlpha.value = String(shape.alpha);
+    if (shapeRadius) shapeRadius.value = String(shape.radius);
+    Object.entries(shapeGeometry).forEach(([key, field]) => { if (field) field.value = String(shape[key]); });
+    syncDesignChip("shapeColorValue", shape.color, shape.alpha);
+    const native = document.querySelector("#shapeColorPopover input[type='color']");
+    if (native) native.value = shape.color;
+  };
+  const renderShapeList = () => {
+    if (!shapeList) return;
+    shapeList.innerHTML = "";
+    overlayShapes.forEach((shape, index) => {
+      const row = document.createElement("button");
+      row.type = "button";
+      row.className = `shape-editor-row${shape.id === selectedShapeId ? " is-selected" : ""}`;
+      row.innerHTML = `<span>Shape ${index + 1}</span><span class="short-bg-swatch" style="background:${hexToRgba(shape.color, shape.alpha / 100)}"></span>`;
+      row.addEventListener("click", () => { selectedShapeId = shape.id; syncShapesUi(); });
+      shapeList.appendChild(row);
+    });
+  };
+  const syncShapesUi = () => {
+    persistShapes();
+    renderShapeList();
+    syncShapeControls();
+    renderShapeLayers();
+  };
+  window.syncOverlayShapesFromField = () => {
+    try { overlayShapes = JSON.parse(overlayShapesField?.value || "[]"); } catch (_) { overlayShapes = []; }
+    if (!Array.isArray(overlayShapes)) overlayShapes = [];
+    overlayShapes = overlayShapes.slice(0, 5).filter((shape) => shape && typeof shape === "object").map((shape, index) => clampShape({ id: String(shape.id || `shape-${index + 1}`), ...shape }));
+    if (!overlayShapes.some((shape) => shape.id === selectedShapeId)) selectedShapeId = overlayShapes[0]?.id || null;
+    syncShapesUi();
+  };
+  overlayShapesField?.addEventListener("change", () => window.syncOverlayShapesFromField());
+  shapeAdd?.addEventListener("click", () => {
+    if (overlayShapes.length >= 5) return;
+    const id = `shape-${Date.now()}-${overlayShapes.length + 1}`;
+    overlayShapes.push({ id, x: 0, y: 1600, w: 1080, h: 160, color: "#000000", alpha: 100, radius: 0 });
+    selectedShapeId = id;
+    syncShapesUi();
+  });
+  shapeDuplicate?.addEventListener("click", () => {
+    const source = selectedShape();
+    if (!source || overlayShapes.length >= 5) return;
+    const copy = clampShape({ ...source, id: `shape-${Date.now()}-${overlayShapes.length + 1}`, x: source.x + 20, y: source.y + 20 });
+    overlayShapes.push(copy); selectedShapeId = copy.id; syncShapesUi();
+  });
+  shapeDelete?.addEventListener("click", () => {
+    const index = overlayShapes.findIndex((shape) => shape.id === selectedShapeId);
+    if (index < 0) return;
+    overlayShapes.splice(index, 1); selectedShapeId = overlayShapes[Math.min(index, overlayShapes.length - 1)]?.id || null; syncShapesUi();
+  });
+  shapeRadius?.addEventListener("input", () => { const shape = selectedShape(); if (shape) { shape.radius = shapeRadius.value; syncShapesUi(); } });
+  Object.entries(shapeGeometry).forEach(([key, field]) => field?.addEventListener("input", () => { const shape = selectedShape(); if (shape) { shape[key] = field.value; syncShapesUi(); } }));
+  document.getElementById("shape-more-toggle")?.addEventListener("click", (event) => {
+    const options = document.getElementById("shape-more-options");
+    const open = !options?.classList.contains("is-open");
+    options?.classList.toggle("is-open", open); event.currentTarget.setAttribute("aria-expanded", open ? "true" : "false");
+  });
+  document.addEventListener("pointerdown", (event) => {
+    const element = event.target.closest?.(".preview-shape");
+    if (!element) return;
+    const layer = element.parentElement;
+    const shape = overlayShapes.find((item) => item.id === element.dataset.shapeId);
+    if (!shape || !layer) return;
+    selectedShapeId = shape.id;
+    shapePointerState = { startX: event.clientX, startY: event.clientY, shape: { ...shape }, handle: event.target.dataset.handle || "move", width: layer.clientWidth, height: layer.clientHeight };
+    event.preventDefault(); syncShapesUi();
+    window.requestAnimationFrame(() => document.querySelector(`.preview-shape[data-shape-id="${CSS.escape(shape.id)}"]`)?.focus({ preventScroll: true }));
+  });
+  document.addEventListener("pointermove", (event) => {
+    if (!shapePointerState) return;
+    const shape = selectedShape(); if (!shape) return;
+    const dx = (event.clientX - shapePointerState.startX) * 1080 / Math.max(1, shapePointerState.width);
+    const dy = (event.clientY - shapePointerState.startY) * 1920 / Math.max(1, shapePointerState.height);
+    const base = shapePointerState.shape; const handle = shapePointerState.handle;
+    if (handle === "move") { shape.x = base.x + dx; shape.y = base.y + dy; }
+    else {
+      if (handle.includes("e")) shape.w = base.w + dx;
+      if (handle.includes("s")) shape.h = base.h + dy;
+      if (handle.includes("w")) { shape.x = base.x + dx; shape.w = base.w - dx; }
+      if (handle.includes("n")) { shape.y = base.y + dy; shape.h = base.h - dy; }
+    }
+    syncShapesUi();
+  });
+  document.addEventListener("pointerup", () => { shapePointerState = null; });
+  shapeLayerElements().forEach((layer) => layer.addEventListener("keydown", (event) => {
+    if (!["ArrowLeft", "ArrowRight", "ArrowUp", "ArrowDown"].includes(event.key)) return;
+    const shape = selectedShape(); if (!shape) return;
+    const step = event.shiftKey ? 10 : 1;
+    if (event.key === "ArrowLeft") shape.x -= step;
+    if (event.key === "ArrowRight") shape.x += step;
+    if (event.key === "ArrowUp") shape.y -= step;
+    if (event.key === "ArrowDown") shape.y += step;
+    event.preventDefault(); syncShapesUi();
+  }));
+  window.syncOverlayShapesFromField();
+  if (window.ResizeObserver) {
+    const shapeResizeObserver = new ResizeObserver(() => renderShapeLayers());
+    shapeLayerElements().forEach((layer) => shapeResizeObserver.observe(layer));
+  }
+
+  bindColorPicker({
+    triggerId: "shapeColorTrigger", popoverId: "shapeColorPopover", hiddenId: "shapeColorValue", hexId: "shapeColorChipValue", swatchId: "shapeColorSwatch", customInputId: "shapeColorCustom",
+    alphaFieldId: "shapeAlphaValue", alphaFieldKey: "shape_alpha",
+    onApply: (hex) => { const shape = selectedShape(); if (shape) { shape.color = hex; shape.alpha = Number(shapeAlpha?.value ?? shape.alpha); syncShapesUi(); } },
+  });
 
   bindColorPicker({
     triggerId: "titleBgTrigger",

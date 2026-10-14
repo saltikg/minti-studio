@@ -554,6 +554,7 @@ def _ensure_video_crop_schema(conn) -> set:
         ("podcast_overlay_short_ids", "VARCHAR", None),
         ("original_zoom_rect", "VARCHAR", None),
         ("layout_mode", "VARCHAR", None),
+        ("overlay_shapes", "VARCHAR", None),
         ("creator_name", "VARCHAR", None),
         ("creator_email", "VARCHAR", None),
     ]

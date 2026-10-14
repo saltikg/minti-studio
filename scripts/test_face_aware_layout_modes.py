@@ -237,6 +237,7 @@ def _append_style_template_position_preservation_check(rows: list[tuple[str, str
         brand_id="brand",
         crop_ratios={},
         crop_aspect="portrait",
+        layout_mode="manual",
         title_font_key=saved_video["title_font_key"],
         title_font_size=saved_video["title_font_size"],
         subtitle_font_key=saved_video["subtitle_font_key"],

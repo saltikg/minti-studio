@@ -76,6 +76,55 @@ TITLE_BOX_BORDER_WIDTH = 22
 STATIC_VISUAL_MAP = {entry["key"]: entry for entry in STATIC_VISUAL_PRESETS}
 
 
+def _render_overlay_shapes(
+    shapes: Optional[list[Dict[str, Any]]],
+    *,
+    target_width: int,
+    target_height: int,
+) -> Optional[Path]:
+    if not shapes:
+        return None
+    canvas = Image.new("RGBA", (target_width, target_height), (0, 0, 0, 0))
+    draw = ImageDraw.Draw(canvas, "RGBA")
+    scale_x = float(target_width) / 1080.0
+    scale_y = float(target_height) / 1920.0
+    drawn = 0
+    for shape in list(shapes)[:5]:
+        if not isinstance(shape, dict):
+            continue
+        try:
+            x = max(0.0, min(1080.0, float(shape.get("x", 0))))
+            y = max(0.0, min(1920.0, float(shape.get("y", 0))))
+            w = max(1.0, min(1080.0 - x, float(shape.get("w", 1))))
+            h = max(1.0, min(1920.0 - y, float(shape.get("h", 1))))
+            alpha = max(0, min(100, int(round(float(shape.get("alpha", 100))))))
+            radius = max(0.0, float(shape.get("radius", 0)))
+        except Exception:
+            continue
+        color = str(shape.get("color") or "#000000").strip().lstrip("#")
+        if not re.fullmatch(r"[0-9A-Fa-f]{6}", color):
+            color = "000000"
+        rgba = tuple(int(color[offset:offset + 2], 16) for offset in (0, 2, 4)) + (round(alpha * 255 / 100),)
+        left = int(round(x * scale_x))
+        top = int(round(y * scale_y))
+        right = int(round((x + w) * scale_x))
+        bottom = int(round((y + h) * scale_y))
+        scaled_radius = int(round(radius * min(scale_x, scale_y)))
+        draw.rounded_rectangle(
+            [left, top, max(left + 1, right), max(top + 1, bottom)],
+            radius=max(0, scaled_radius),
+            fill=rgba,
+        )
+        drawn += 1
+    if not drawn:
+        return None
+    handle = tempfile.NamedTemporaryFile(prefix="minti-shapes-", suffix=".png", delete=False)
+    handle.close()
+    output = Path(handle.name)
+    canvas.save(output, format="PNG")
+    return output
+
+
 def _even_dimension(value: float) -> int:
     safe = max(2, int(round(float(value or 0))))
     return safe if safe % 2 == 0 else safe - 1
@@ -2267,6 +2316,7 @@ def _compose_trimmed_with_background(
     crop_aspect: Optional[str] = None,
     music_only: bool = False,
     face_track_smooth_path: Optional[Path] = None,
+    overlay_shapes: Optional[list[Dict[str, Any]]] = None,
 ):
     """Single-pass trim + compose to reduce processing time."""
     if not bg_path.exists():
@@ -3493,6 +3543,19 @@ def _compose_trimmed_with_background(
     title_overlay_path: Optional[Path] = None
     title_overlay_paths: List[Path] = []
     next_video_input_index = 3 if direct_audio_source else 2
+    shape_overlay_path = _render_overlay_shapes(
+        overlay_shapes,
+        target_width=target_width,
+        target_height=target_height,
+    )
+    if shape_overlay_path:
+        shape_input_index = next_video_input_index
+        next_video_input_index += 1
+        filter_parts.append(f"[{shape_input_index}:v]format=rgba[shape_overlay_src]")
+        filter_parts.append(
+            f"{final_label}[shape_overlay_src]overlay=0:0:shortest=1[shape_overlay_out]"
+        )
+        final_label = "[shape_overlay_out]"
     if show_title and title_txt:
         test_font_file = font_path or "/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf"
         if normalized_title_engine == "pillow":
@@ -3892,6 +3955,8 @@ def _compose_trimmed_with_background(
             ]
         )
         audio_map = "2:a"
+    if shape_overlay_path:
+        cmd.extend(["-loop", "1", "-i", str(shape_overlay_path)])
     for overlay_path in title_overlay_paths:
         cmd.extend(["-loop", "1", "-i", str(overlay_path)])
     if effective_subtitle_overlay_specs:
@@ -4024,7 +4089,7 @@ def _compose_trimmed_with_background(
             f"FFmpeg compose failed (key={bg_path.name}): {err.stderr.strip() or err.stdout.strip()}"
         ) from err
     finally:
-        for temp_path in (trimmed, merged_override, merged_audio_override, temp_out_path, face_aware_subtitle_path, *title_overlay_paths):
+        for temp_path in (trimmed, merged_override, merged_audio_override, temp_out_path, face_aware_subtitle_path, shape_overlay_path, *title_overlay_paths):
             if temp_path and temp_path.exists():
                 try:
                     temp_path.unlink()
