@@ -2213,7 +2213,7 @@
     position: relative;
     min-height: 0;
     height: 100%;
-    grid-template-rows: auto minmax(0, 1fr);
+    grid-template-rows: auto minmax(0, 1fr) auto;
     gap: 14px;
     overflow: visible;
   }
@@ -2226,6 +2226,22 @@
     padding-bottom: 12px;
     border-bottom: 1px solid rgba(255, 255, 255, 0.09);
   }
+  #clip-workbench-shell[data-generate-v2="1"].is-v2-editing .generate-v2-editor-topbar { display: none; }
+  .generate-v2-editor-footer {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    min-width: 0;
+    padding-top: 12px;
+    border-top: 1px solid rgba(255, 255, 255, 0.09);
+    position: sticky;
+    bottom: 0;
+    z-index: 10;
+    background: rgba(9, 16, 29, 0.96);
+  }
+  .generate-v2-editor-footer .generate-v2-editor-note { flex: 0 1 260px; }
+  .generate-v2-editor-footer .generate-v2-editor-actions { flex: 1 1 auto; min-width: 0; }
+  .generate-v2-editor-footer #generate-v2-editor-cancel { margin-right: auto; }
   .generate-v2-editor-note {
     flex: 1 1 200px;
     min-width: 0;
@@ -5521,6 +5537,7 @@
     background: rgba(255, 255, 255, 0.1);
   }
   .design-color-chip {
+    position: relative;
     display: inline-flex;
     align-items: center;
     gap: 8px;
@@ -5548,6 +5565,16 @@
   .design-panel-more-grid .input-group-inline { min-width: 0; }
   .design-panel-hint { color: rgba(255,255,255,.52); font-size: .76rem; }
   .short-bg-popover { width: 280px; max-width: min(280px, calc(100vw - 24px)); padding: 12px; }
+  .short-bg-popover.closed { display: none !important; visibility: hidden; pointer-events: none; }
+  .short-bg-popover:not(.closed) {
+    position: absolute;
+    left: 0;
+    top: calc(100% + 8px);
+    display: grid;
+    visibility: visible;
+    pointer-events: auto;
+    z-index: 70;
+  }
   .short-bg-popover.design-compact-popover { display: grid; gap: 8px; }
   .short-bg-popover.design-compact-popover > .short-color-swatch { display: none; }
   .short-bg-popover.design-compact-popover > .short-color-swatch.is-visible { display: inline-flex; }
@@ -5560,8 +5587,14 @@
   .design-popover-alpha { display: grid; gap: 4px; margin: 10px 0 0; }
   .design-popover-alpha label { display: flex; justify-content: space-between; color: rgba(255,255,255,.65); font-size: .72rem; }
   .design-popover-alpha .form-range { min-height: 28px; }
+  .design-popover-alpha input[type="range"] { width: 100%; height: 28px; min-height: 28px; padding: 0; }
+  .design-popover-alpha input[type="range"]::-webkit-slider-runnable-track { height: 6px; }
+  .design-popover-alpha input[type="range"]::-webkit-slider-thumb { width: 20px; height: 20px; margin-top: -7px; }
+  .design-popover-alpha input[type="range"]::-moz-range-track { height: 6px; }
+  .design-popover-alpha input[type="range"]::-moz-range-thumb { width: 20px; height: 20px; }
+  [data-design-text-color] { grid-column: 1 / -1; }
   .design-none-swatch { display: inline-flex; align-items: center; justify-content: center; font-size: .68rem; color: rgba(255,255,255,.72); background: repeating-linear-gradient(135deg, rgba(255,255,255,.08) 0 4px, transparent 4px 8px); }
-  .design-preset-row { display: grid; grid-template-columns: repeat(8, minmax(0, 1fr)); gap: 6px; }
+  .design-preset-row { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; }
   .design-preset-row .short-color-swatch { width: 24px; height: 24px; }
   .caption-tab-panel .subtitle-preset-section {
     min-width: 0;
@@ -6468,6 +6501,7 @@
                   <div class="generate-v2-editor-section" id="generate-v2-editor-section-subscribe" data-v2-editor-section-panel="subscribe"></div>
                 </div>
               </div>
+              <div class="generate-v2-editor-footer" id="generate-v2-editor-footer"></div>
               <div class="generate-v2-discard-dialog d-none" id="generate-v2-discard-dialog" role="dialog" aria-live="polite" aria-labelledby="generate-v2-discard-title">
                 <div>
                   <div class="generate-v2-discard-dialog-title" id="generate-v2-discard-title">Discard changes?</div>
@@ -8434,7 +8468,7 @@
                       </div>
                       <div class="design-panel-section-label">Background</div>
                       <div class="crop-modal-element-grid crop-modal-element-grid--caption-bottom">
-                        <div class="input-group-inline compact short-alpha-control">
+                        <div class="input-group-inline compact short-alpha-control" data-design-text-color="caption">
                           <div class="d-grid gap-1 w-100">
                             <span class="caption-tab-section-heading">Text color</span>
                             <div class="short-bg-trigger design-color-chip" id="subtitleTextColorTrigger" role="button" tabindex="0" aria-label="Caption text color">
@@ -8466,7 +8500,7 @@
                             </div>
                           </div>
                         </div>
-                        <div class="input-group-inline compact short-alpha-control">
+                        <div class="input-group-inline compact short-alpha-control" data-design-box-color="caption">
                           <div class="d-grid gap-1 w-100">
                             <span class="caption-tab-section-heading">Background color</span>
                             <div class="short-bg-trigger design-color-chip" id="subtitleBgColorTrigger" role="button" tabindex="0" aria-label="Caption background color">
@@ -8556,7 +8590,7 @@
                       </div>
                       <div class="design-panel-section-label">Background</div>
                       <div class="crop-modal-element-grid crop-modal-element-grid--title-bottom">
-                        <div class="input-group-inline compact short-alpha-control">
+                        <div class="input-group-inline compact short-alpha-control" data-design-text-color="title">
                           <div class="d-grid gap-1 w-100">
                             <span class="caption-tab-section-heading">Text color</span>
                             <div class="short-bg-trigger design-color-chip" id="titleTextColorTrigger" role="button" tabindex="0" aria-label="Title text color">
@@ -8587,7 +8621,7 @@
                             </div>
                           </div>
                         </div>
-                        <div class="input-group-inline compact short-alpha-control">
+                        <div class="input-group-inline compact short-alpha-control" data-design-box-color="title">
                           <div class="d-grid gap-1 w-100">
                             <span class="caption-tab-section-heading">Background color</span>
                             <div class="short-bg-trigger design-color-chip" id="titleBgTrigger" role="button" tabindex="0" aria-label="Title background color">
@@ -11565,6 +11599,15 @@ const mountGenerateV2EditorNodes = () => {
   const backgroundTarget = document.getElementById("generate-v2-editor-section-background");
   const subscribeTarget = document.getElementById("generate-v2-editor-section-subscribe");
   const previewTarget = document.getElementById("generate-v2-preview-slot");
+  const footerTarget = document.getElementById("generate-v2-editor-footer");
+  const captionPanel = modal?.querySelector("[data-crop-modal-panel='caption']");
+  const titlePanel = modal?.querySelector("[data-crop-modal-panel='title']");
+  const captionTextColor = captionPanel?.querySelector("[data-design-text-color='caption']");
+  const titleTextColor = titlePanel?.querySelector("[data-design-text-color='title']");
+  const captionTextTarget = captionPanel?.querySelector(".crop-modal-element-grid--caption-top");
+  const titleTextTarget = titlePanel?.querySelector(".crop-modal-element-grid--title-top");
+  if (captionTextColor && captionTextTarget && captionTextColor.parentNode !== captionTextTarget) captionTextTarget.appendChild(captionTextColor);
+  if (titleTextColor && titleTextTarget && titleTextColor.parentNode !== titleTextTarget) titleTextTarget.appendChild(titleTextColor);
   moveGenerateV2Node(modal?.querySelector(".style-template-section"), styleTarget);
   moveGenerateV2Node(modal?.querySelector(".subscribe-visual-selector"), subscribeTarget);
   moveGenerateV2Node(modal?.querySelector("[data-crop-modal-panel='layout']"), layoutTarget);
@@ -11572,6 +11615,8 @@ const mountGenerateV2EditorNodes = () => {
   moveGenerateV2Node(modal?.querySelector("[data-crop-modal-panel='title']"), titleTarget);
   moveGenerateV2Node(modal?.querySelector("[data-crop-modal-panel='background']"), backgroundTarget);
   moveGenerateV2Node(modal?.querySelector(".cropper-preview-card"), previewTarget);
+  moveGenerateV2Node(document.querySelector(".generate-v2-editor-note"), footerTarget);
+  moveGenerateV2Node(document.querySelector(".generate-v2-editor-actions"), footerTarget);
 };
 
 const enterGenerateV2EditMode = ({ section = "style" } = {}) => {
@@ -21129,6 +21174,9 @@ document.addEventListener("DOMContentLoaded", function () {
       popover.classList.add("closed");
     });
   };
+  document.addEventListener("keydown", (event) => {
+    if (event.key === "Escape") closeAllColorPopovers();
+  });
   const bindColorPicker = ({ triggerId, popoverId, hiddenId, hexId, swatchId, customInputId, onApply }) => {
     const trigger = document.getElementById(triggerId);
     const popover = document.getElementById(popoverId);
@@ -21139,10 +21187,13 @@ document.addEventListener("DOMContentLoaded", function () {
     const alphaFieldId = hiddenId === "subtitleTextColorValue" ? "subtitleTextAlphaValue"
       : hiddenId === "subtitleBgColorValue" ? "subtitleBgAlphaValue"
       : hiddenId === "titleBgColorValue" ? "titleBgAlphaValue" : null;
+    const alphaFieldKey = hiddenId === "subtitleTextColorValue" ? "subtitle_text_alpha"
+      : hiddenId === "subtitleBgColorValue" ? "subtitle_bg_alpha"
+      : hiddenId === "titleBgColorValue" ? "title_bg_alpha" : null;
     const alphaField = alphaFieldId ? document.getElementById(alphaFieldId) : null;
     const chipValue = document.getElementById(`${hiddenId.replace("Value", "")}ChipValue`);
     const chipOpacity = document.getElementById(`${hiddenId.replace("Value", "")}ChipOpacity`);
-    const alphaPicker = alphaField ? popover?.querySelector(`[data-design-alpha-input="${alphaFieldId}"]`) : null;
+    const alphaPicker = alphaFieldKey ? popover?.querySelector(`[data-design-alpha-input="${alphaFieldKey}"]`) : null;
     const allSwatches = Array.from(document.querySelectorAll(`#${popoverId} .short-color-swatch`));
     const swatches = allSwatches.filter((s) => s.dataset.color);
     const presetColors = ["#000000", "#FFFFFF", "#FDE047", "#F97316", "#EF4444", "#3B82F6", "#A855F7"];
@@ -21162,6 +21213,13 @@ document.addEventListener("DOMContentLoaded", function () {
       noneSwatch.textContent = "∅";
       noneSwatch.setAttribute("title", "No color");
       noneSwatch.classList.add("is-visible");
+    }
+    if (popover && !popover.querySelector(".design-preset-row")) {
+      const presetRow = document.createElement("div");
+      presetRow.className = "design-preset-row";
+      if (noneSwatch) presetRow.appendChild(noneSwatch);
+      swatches.filter((swatch) => swatch.isConnected).forEach((swatch) => presetRow.appendChild(swatch));
+      popover.prepend(presetRow);
     }
     const customWrap = popover?.querySelector(".short-color-custom");
     if (customWrap && customInput && !customWrap.querySelector('input[type="color"]')) {
@@ -21487,6 +21545,21 @@ document.addEventListener("DOMContentLoaded", function () {
     syncSubtitlePresetCards();
     syncStyleTemplateCards();
   };
+
+  const relocateDesignTextColorFields = () => {
+    const modal = document.getElementById("crop-area-modal");
+    const moves = [
+      ["caption", ".crop-modal-element-grid--caption-top"],
+      ["title", ".crop-modal-element-grid--title-top"],
+    ];
+    moves.forEach(([kind, targetSelector]) => {
+      const panel = modal?.querySelector(`[data-crop-modal-panel="${kind}"]`);
+      const field = panel?.querySelector(`[data-design-text-color="${kind}"]`);
+      const target = panel?.querySelector(targetSelector);
+      if (field && target && field.parentNode !== target) target.appendChild(field);
+    });
+  };
+  relocateDesignTextColorFields();
 
   bindColorPicker({
     triggerId: "titleBgTrigger",
