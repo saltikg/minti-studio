@@ -1144,6 +1144,22 @@ def _execute_ingest_youtube_job(app, job: Dict[str, Any]) -> Dict[str, Any]:
                 duration_seconds=duration_seconds,
                 bill_usage=bill_usage,
             )
+            try:
+                record_lead_pipeline_event_for_scope(
+                    owner_user_id=owner_user_id,
+                    brand_id=brand_id,
+                    video_pk=video_pk,
+                    event_type="transcript_completed",
+                    to_state="downloaded",
+                    detail={
+                        "video_pk": video_pk,
+                        "video_id": video_id,
+                        "job_id": job.get("id"),
+                        "source": "ingest_youtube",
+                    },
+                )
+            except Exception as exc:
+                app.logger.warning("Failed to record lead transcript event video_pk=%s job_id=%s: %s", video_pk, job.get("id"), exc)
         try:
             enqueue_auto_result = generation.enqueue_auto_suggest_render_job_after_transcript(
                 owner_user_id=owner_user_id,

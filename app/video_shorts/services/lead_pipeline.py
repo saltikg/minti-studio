@@ -97,6 +97,101 @@ def lead_pipeline_available(conn) -> bool:
     )
 
 
+def source_video_ready_for_planning(conn, video_pk: Any, video_id: Any = None) -> Dict[str, Any]:
+    """Return the shared source-readiness decision used before auto planning.
+
+    A lead source is ready when the scoped source row says the full video was
+    downloaded and Whisper transcription completed, and the transcript table has
+    usable text or segment data for that YouTube video id.
+    """
+    try:
+        parsed_video_pk = int(video_pk)
+    except (TypeError, ValueError):
+        return {"ready": False, "reason": "missing_video_pk"}
+    row = conn.execute(
+        """
+        SELECT video_id, COALESCE(download_status, ''), COALESCE(transcript_status, '')
+        FROM youtube_videos
+        WHERE id = ?
+        LIMIT 1
+        """,
+        [parsed_video_pk],
+    ).fetchone()
+    if not row:
+        return {"ready": False, "reason": "video_not_found", "video_pk": parsed_video_pk}
+    row_video_id = str(row[0] or "").strip()
+    expected_video_id = str(video_id or row_video_id or "").strip()
+    download_status = str(row[1] or "").strip().lower()
+    transcript_status = str(row[2] or "").strip().lower()
+    if not row_video_id:
+        return {
+            "ready": False,
+            "reason": "missing_video_id",
+            "video_pk": parsed_video_pk,
+            "download_status": download_status,
+            "transcript_status": transcript_status,
+        }
+    if expected_video_id and expected_video_id != row_video_id:
+        return {
+            "ready": False,
+            "reason": "video_id_mismatch",
+            "video_pk": parsed_video_pk,
+            "video_id": row_video_id,
+            "expected_video_id": expected_video_id,
+            "download_status": download_status,
+            "transcript_status": transcript_status,
+        }
+    if download_status != "downloaded":
+        return {
+            "ready": False,
+            "reason": "download_not_done",
+            "video_pk": parsed_video_pk,
+            "video_id": row_video_id,
+            "download_status": download_status,
+            "transcript_status": transcript_status,
+        }
+    if transcript_status != "done":
+        return {
+            "ready": False,
+            "reason": "transcript_not_done",
+            "video_pk": parsed_video_pk,
+            "video_id": row_video_id,
+            "download_status": download_status,
+            "transcript_status": transcript_status,
+        }
+    transcript_row = conn.execute(
+        """
+        SELECT 1
+        FROM youtube_transcripts
+        WHERE video_id = ?
+          AND (
+              COALESCE(full_text, '') <> ''
+              OR segments_json IS NOT NULL
+              OR whisper_segments_json IS NOT NULL
+          )
+        LIMIT 1
+        """,
+        [row_video_id],
+    ).fetchone()
+    if not transcript_row:
+        return {
+            "ready": False,
+            "reason": "transcript_row_missing",
+            "video_pk": parsed_video_pk,
+            "video_id": row_video_id,
+            "download_status": download_status,
+            "transcript_status": transcript_status,
+        }
+    return {
+        "ready": True,
+        "reason": "ready",
+        "video_pk": parsed_video_pk,
+        "video_id": row_video_id,
+        "download_status": download_status,
+        "transcript_status": transcript_status,
+    }
+
+
 def find_active_lead_for_scope(
     conn,
     *,

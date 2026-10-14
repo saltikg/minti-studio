@@ -30,6 +30,7 @@ from app.video_shorts.services.db import (
     ensure_user_preferences_schema,
     table_columns,
 )
+from app.video_shorts.services.lead_pipeline import source_video_ready_for_planning
 
 AUTOPILOT_LEADS_TABLE = "autopilot_leads"
 LOCAL_UPLOADS_CHANNEL_NAME = "Local uploads"
@@ -406,41 +407,7 @@ _LEAD_EMAIL_RE = re.compile(r"^[^\s@]+@[^\s@]+\.[^\s@]+$")
 
 
 def _source_video_ready_for_planning(conn, video_pk: Any) -> bool:
-    try:
-        parsed_video_pk = int(video_pk)
-    except (TypeError, ValueError):
-        return False
-    row = conn.execute(
-        """
-        SELECT video_id, COALESCE(download_status, ''), COALESCE(transcript_status, '')
-        FROM youtube_videos
-        WHERE id = ?
-        LIMIT 1
-        """,
-        [parsed_video_pk],
-    ).fetchone()
-    if not row:
-        return False
-    video_id = str(row[0] or "").strip()
-    download_status = str(row[1] or "").strip().lower()
-    transcript_status = str(row[2] or "").strip().lower()
-    if download_status != "downloaded" or transcript_status != "done" or not video_id:
-        return False
-    transcript_row = conn.execute(
-        """
-        SELECT 1
-        FROM youtube_transcripts
-        WHERE video_id = ?
-          AND (
-              COALESCE(full_text, '') <> ''
-              OR segments_json IS NOT NULL
-              OR whisper_segments_json IS NOT NULL
-          )
-        LIMIT 1
-        """,
-        [video_id],
-    ).fetchone()
-    return bool(transcript_row)
+    return bool(source_video_ready_for_planning(conn, video_pk).get("ready"))
 
 
 def _get_or_create_local_uploads_channel(conn, *, owner_user_id: str, brand_id: str) -> int:

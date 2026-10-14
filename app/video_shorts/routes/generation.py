@@ -325,6 +325,7 @@ from app.video_shorts.services.lead_pipeline import (
     lead_pipeline_available,
     record_lead_pipeline_event,
     record_lead_pipeline_event_for_scope,
+    source_video_ready_for_planning,
 )
 from app.video_shorts.services.discovery_automation import load_discovery_automation_dashboard
 from app.video_shorts.services.discovery_email_enrichment import _auto_trakk_remaining
@@ -6881,40 +6882,17 @@ def process_new_lead_autodownload(*, limit: int = 1) -> bool:
 
 
 def _lead_source_video_ready_for_planning(video_pk: int, video_id: str) -> bool:
-    if not video_pk or not video_id:
-        return False
     conn = get_db_readonly()
     try:
-        row = conn.execute(
-            """
-            SELECT COALESCE(download_status, ''), COALESCE(transcript_status, '')
-            FROM youtube_videos
-            WHERE id = ?
-            LIMIT 1
-            """,
-            [int(video_pk)],
-        ).fetchone()
-        if not row:
-            return False
-        download_status = str(row[0] or "").strip().lower()
-        transcript_status = str(row[1] or "").strip().lower()
-        if download_status != "downloaded" or transcript_status != "done":
-            return False
-        transcript_row = conn.execute(
-            """
-            SELECT 1
-            FROM youtube_transcripts
-            WHERE video_id = ?
-              AND (
-                  COALESCE(full_text, '') <> ''
-                  OR segments_json IS NOT NULL
-                  OR whisper_segments_json IS NOT NULL
-              )
-            LIMIT 1
-            """,
-            [video_id],
-        ).fetchone()
-        return bool(transcript_row)
+        return bool(source_video_ready_for_planning(conn, video_pk, video_id).get("ready"))
+    finally:
+        conn.close()
+
+
+def _lead_source_video_readiness(video_pk: int, video_id: str) -> Dict[str, Any]:
+    conn = get_db_readonly()
+    try:
+        return source_video_ready_for_planning(conn, video_pk, video_id)
     finally:
         conn.close()
 
@@ -6990,7 +6968,7 @@ def _route_lead_back_to_download(lead_id: str, *, video_pk: int, video_id: str, 
             detail={
                 "mechanism": "cron_poll",
                 "reason": reason,
-                "reset_to_state": "new",
+                "retry_state": "downloaded",
                 "from_state": from_state,
                 "video_pk": video_pk,
                 "video_id": video_id,
@@ -7000,7 +6978,7 @@ def _route_lead_back_to_download(lead_id: str, *, video_pk: int, video_id: str, 
         conn.execute(
             """
             UPDATE autopilot_leads
-            SET pipeline_state = 'new'
+            SET pipeline_state = 'downloaded'
             WHERE CAST(id AS VARCHAR) = CAST(? AS VARCHAR)
               AND COALESCE(pipeline_state, 'new') IN ('downloaded', 'planning')
             """,
@@ -7108,14 +7086,16 @@ def process_downloaded_lead_autoplan(*, limit: int = 1, timeout_seconds: int = A
         download_status = str(row[6] or "").strip().lower()
         transcript_status = str(row[7] or "").strip().lower()
 
-        if not _lead_source_video_ready_for_planning(video_pk, video_id):
+        readiness = _lead_source_video_readiness(video_pk, video_id)
+        if not readiness.get("ready"):
             _route_lead_back_to_download(
                 lead_id,
                 video_pk=video_pk,
                 video_id=video_id,
                 from_state=pipeline_state,
                 reason=(
-                    f"source_not_ready download_status={download_status or 'unknown'} "
+                    f"{readiness.get('reason') or 'source_not_ready'} "
+                    f"download_status={download_status or 'unknown'} "
                     f"transcript_status={transcript_status or 'unknown'}"
                 ),
             )
