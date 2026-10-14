@@ -5560,7 +5560,8 @@
   .shape-editor-controls { display: grid; gap: 14px; }
   .shape-editor-actions { display: flex; flex-wrap: wrap; gap: 8px; }
   .preview-shapes-layer { position: absolute; inset: 0; z-index: 2; pointer-events: none; }
-  .preview-shape { position: absolute; pointer-events: auto; touch-action: none; }
+  .preview-shape { position: absolute; pointer-events: auto; touch-action: none; cursor: grab; }
+  body.is-shape-moving .preview-shape { cursor: grabbing; }
   .preview-shape.is-selected { outline: 2px solid #50cdb5; outline-offset: 1px; }
   .preview-shape-handle { position: absolute; width: 10px; height: 10px; border: 1px solid #0f172a; border-radius: 50%; background: #fff; transform: translate(-50%, -50%); }
   .preview-shape-handle[data-handle*="n"] { top: 0; }
@@ -5569,6 +5570,10 @@
   .preview-shape-handle[data-handle*="e"] { left: 100%; }
   .preview-shape-handle[data-handle="n"], .preview-shape-handle[data-handle="s"] { left: 50%; }
   .preview-shape-handle[data-handle="w"], .preview-shape-handle[data-handle="e"] { top: 50%; }
+  .preview-shape-handle[data-handle="n"], .preview-shape-handle[data-handle="s"] { cursor: ns-resize; }
+  .preview-shape-handle[data-handle="e"], .preview-shape-handle[data-handle="w"] { cursor: ew-resize; }
+  .preview-shape-handle[data-handle="nw"], .preview-shape-handle[data-handle="se"] { cursor: nwse-resize; }
+  .preview-shape-handle[data-handle="ne"], .preview-shape-handle[data-handle="sw"] { cursor: nesw-resize; }
   .shorts-preview-title-band, .shorts-preview-subtitle-band, .shorts-preview-date, .orig-preview__title, .orig-preview__caption { z-index: 3; }
   .short-bg-popover { width: 288px; max-width: min(288px, calc(100vw - 24px)); padding: 16px; gap: 14px; box-sizing: border-box; }
   .short-bg-popover.closed { display: none !important; visibility: hidden; pointer-events: none; }
@@ -21781,6 +21786,7 @@ document.addEventListener("DOMContentLoaded", function () {
     if (!shape || !layer) return;
     selectedShapeId = shape.id;
     shapePointerState = { startX: event.clientX, startY: event.clientY, shape: { ...shape }, handle: event.target.dataset.handle || "move", width: layer.clientWidth, height: layer.clientHeight };
+    document.body.classList.toggle("is-shape-moving", shapePointerState.handle === "move");
     event.preventDefault(); syncShapesUi();
     window.requestAnimationFrame(() => document.querySelector(`.preview-shape[data-shape-id="${CSS.escape(shape.id)}"]`)?.focus({ preventScroll: true }));
   });
@@ -21799,7 +21805,12 @@ document.addEventListener("DOMContentLoaded", function () {
     }
     syncShapesUi();
   });
-  document.addEventListener("pointerup", () => { shapePointerState = null; });
+  const finishShapePointerInteraction = () => {
+    shapePointerState = null;
+    document.body.classList.remove("is-shape-moving");
+  };
+  document.addEventListener("pointerup", finishShapePointerInteraction);
+  document.addEventListener("pointercancel", finishShapePointerInteraction);
   shapeLayerElements().forEach((layer) => layer.addEventListener("keydown", (event) => {
     if (!["ArrowLeft", "ArrowRight", "ArrowUp", "ArrowDown"].includes(event.key)) return;
     const shape = selectedShape(); if (!shape) return;
