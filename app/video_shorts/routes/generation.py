@@ -3413,22 +3413,32 @@ def _face_aware_layout_enabled_for_owner(owner_user_id: Any) -> bool:
     return clean_owner in enabled_ids
 
 
+def _normalize_layout_mode(value: Any) -> str:
+    return "auto" if str(value or "").strip().lower() == "auto" else "manual"
+
+
+def _effective_layout_mode_for_owner(owner_user_id: Any, raw_layout_mode: Any = None) -> str:
+    raw = str(raw_layout_mode or "").strip().lower()
+    if raw in {"auto", "manual"}:
+        return raw
+    return "auto" if _face_aware_layout_enabled_for_owner(owner_user_id) else "manual"
+
+
 def _face_aware_layout_skip_reason(
     *,
     owner_user_id: Any,
     crop_settings: Dict[str, Any],
     crop_aspect: Any,
     visual_mode: Any,
+    layout_mode: Any = None,
     static_visual_key: Any = None,
 ) -> Optional[str]:
     if not _face_aware_layout_enabled_for_owner(owner_user_id):
         return "flag_disabled"
-    if bool((crop_settings or {}).get("crop_locked")):
-        return "crop_locked"
-    if str(crop_aspect or "").strip().lower() != "portrait":
-        return "not_portrait_fill"
-    if bool((crop_settings or {}).get("split_enabled")):
-        return "split_enabled"
+    if _normalize_layout_mode(layout_mode) != "auto":
+        return "layout_mode_manual"
+    if str(crop_aspect or "").strip().lower() == "original":
+        return "original_layout"
     if str(visual_mode or "video").strip().lower() != "video":
         return "visual_mode_not_video"
     if str(static_visual_key or "").strip():
@@ -3980,6 +3990,7 @@ def _compute_face_aware_layout_segments(
     crop_settings: Dict[str, Any],
     crop_aspect: Any,
     visual_mode: Any,
+    layout_mode: Any = None,
     static_visual_key: Any = None,
     face_track_smooth_path: Optional[Path] = None,
 ) -> Dict[str, Any]:
@@ -3988,6 +3999,7 @@ def _compute_face_aware_layout_segments(
         crop_settings=crop_settings,
         crop_aspect=crop_aspect,
         visual_mode=visual_mode,
+        layout_mode=layout_mode,
         static_visual_key=static_visual_key,
     )
     if reason:
@@ -8398,6 +8410,7 @@ def _build_render_job_options(
     brand_id: Optional[str],
     crop_ratios: Dict[str, Any],
     crop_aspect: str,
+    layout_mode: Optional[str],
     title_font_key: Optional[str],
     title_font_size: Optional[int],
     subtitle_font_key: Optional[str],
@@ -8436,6 +8449,7 @@ def _build_render_job_options(
         "brand_id": brand_id,
         "crop_ratios": crop_ratios or {},
         "crop_aspect": crop_aspect or "landscape",
+        "layout_mode": _normalize_layout_mode(layout_mode),
         "title_font_key": title_font_key,
         "title_font_size": title_font_size,
         "subtitle_font_key": subtitle_font_key,
@@ -8634,6 +8648,7 @@ def _compute_render_settings_hash_for_plan_entry(
         brand_id=brand_id,
         crop_ratios=_video_crop_ratios_from_mapping(video),
         crop_aspect=str(video.get("crop_aspect") or "landscape").strip() or "landscape",
+        layout_mode=_effective_layout_mode_for_owner(owner_user_id, video.get("layout_mode")),
         title_font_key=video.get("title_font_key") or DEFAULT_EDITOR_TITLE_FONT_KEY,
         title_font_size=video.get("title_font_size") or DEFAULT_EDITOR_TITLE_FONT_SIZE,
         subtitle_font_key=video.get("subtitle_font_key"),
@@ -10472,6 +10487,8 @@ def generate_short(video_pk):
         video_sql += ", subtitle_margin_custom"
     if "original_zoom_rect" in video_columns:
         video_sql += ", original_zoom_rect"
+    if "layout_mode" in video_columns:
+        video_sql += ", layout_mode"
     row = _fetch_scoped_video_row(conn, video_pk, video_sql)
     if not row:
         conn.close()
@@ -10505,7 +10522,11 @@ def generate_short(video_pk):
         cols.append("subtitle_margin_custom")
     if "original_zoom_rect" in video_columns:
         cols.append("original_zoom_rect")
+    if "layout_mode" in video_columns:
+        cols.append("layout_mode")
     video = dict(zip(cols, row))
+    video["layout_mode"] = _effective_layout_mode_for_owner(video.get("owner_user_id"), video.get("layout_mode"))
+    face_aware_layout_available = _face_aware_layout_enabled_for_owner(video.get("owner_user_id"))
     owner_free_tool = _owner_is_free_tool_user(video.get("owner_user_id"))
     guest_mode = bool(guest_mode or _owner_is_guest_user(video.get("owner_user_id")))
     generate_v2 = bool(generate_v2 or owner_free_tool)
@@ -11871,6 +11892,25 @@ def generate_short(video_pk):
             (status == "created" and render_aspect == "landscape")
             or (status != "created" and design_is_original)
         )
+        auto_layout_summary = ""
+        try:
+            auto_segments = entry.get("auto_layout_segments") if isinstance(entry, dict) else None
+            if isinstance(auto_segments, list) and auto_segments:
+                modes = [str(segment.get("mode") or "").strip() for segment in auto_segments if isinstance(segment, dict)]
+                clean_modes = [mode for mode in modes if mode]
+                if clean_modes:
+                    unique_modes = []
+                    for mode in clean_modes:
+                        label = {"fill": "Fill", "fit": "Fit", "split": "Fill split"}.get(mode, mode.title())
+                        if label not in unique_modes:
+                            unique_modes.append(label)
+                    auto_layout_summary = " + ".join(unique_modes)
+                    if len(clean_modes) == 1:
+                        face_count_label = {"fill": "1 face", "split": "2 faces", "fit": "0 or 3+ faces"}.get(clean_modes[0], "")
+                        if face_count_label:
+                            auto_layout_summary = f"{auto_layout_summary} · {face_count_label}"
+        except Exception:
+            auto_layout_summary = ""
 
         clip_rows.append({
             "plan_index": pi,
@@ -11898,6 +11938,7 @@ def generate_short(video_pk):
             "render_height": render_height,
             "render_aspect": render_aspect,
             "is_original_layout": is_original_layout_preview,
+            "auto_layout_summary": auto_layout_summary,
             "media_version": media_version,
             "subtitle": subtitle_source,
             "status": status,
@@ -12310,6 +12351,8 @@ def generate_short(video_pk):
         clip_coachmark_preference_url=url_for("video_shorts_bp.update_clip_coachmark_preference"),
         hide_clip_coachmark=hide_clip_coachmark,
         video_crop_aspect=video.get("crop_aspect") if video else None,
+        video_layout_mode=video.get("layout_mode") if video else "manual",
+        face_aware_layout_available=face_aware_layout_available,
         instagram_connected=instagram_connected,
         tiktok_connected=tiktok_connected,
         facebook_connected=facebook_connected,
@@ -14326,6 +14369,9 @@ def save_crop_area(video_pk):
         crop_aspect = (request.form.get("crop_aspect") or "").strip().lower()
         if crop_aspect not in {"landscape", "portrait", "original"}:
             crop_aspect = "landscape"
+    layout_mode = None
+    if "layout_mode" in form_fields:
+        layout_mode = _normalize_layout_mode(request.form.get("layout_mode"))
     original_zoom_rect = None
     if "original_zoom_rect" in form_fields:
         original_zoom_rect = _normalize_original_zoom_rect(request.form.get("original_zoom_rect"))
@@ -14463,6 +14509,9 @@ def save_crop_area(video_pk):
         if "original_zoom_rect" in form_fields and "original_zoom_rect" in video_columns:
             update_set_parts.append("original_zoom_rect = ?")
             update_params.append(json.dumps(original_zoom_rect, sort_keys=True) if original_zoom_rect else None)
+        if "layout_mode" in form_fields and "layout_mode" in video_columns:
+            update_set_parts.append("layout_mode = ?")
+            update_params.append(layout_mode or "manual")
         if "enable_subscribe_overlay" in form_fields:
             update_set_parts.append("subscribe_overlay_enabled = ?")
             update_params.append(subscribe_overlay_enabled)
@@ -14515,6 +14564,7 @@ def save_crop_area(video_pk):
             "background_visual_key": background_visual_key,
             "subscribe_overlay_image": subscribe_overlay_key,
             "crop_aspect": crop_aspect,
+            "layout_mode": layout_mode,
             "original_zoom_rect": original_zoom_rect,
         },
     )
@@ -27590,6 +27640,7 @@ def autoclip_video(video_pk):
     video_podcast_audio_filename = ""
     video_overlay_offset = DEFAULT_VIDEO_OVERLAY_OFFSET
     video_owner_user_id = None
+    video_layout_mode = "manual"
     try:
         conn_rw = get_db()
         _ensure_video_crop_schema(conn_rw)
@@ -27614,6 +27665,8 @@ def autoclip_video(video_pk):
             crop_sql += ", subtitle_margin_custom"
         if "original_zoom_rect" in crop_columns:
             crop_sql += ", original_zoom_rect"
+        if "layout_mode" in crop_columns:
+            crop_sql += ", layout_mode"
         crop_sql += " FROM youtube_videos WHERE video_id = ?"
         crop_params: List[Any] = [vid]
         crop_sql += " AND owner_user_id = ? AND brand_id = ?"
@@ -28005,6 +28058,7 @@ def autoclip_video(video_pk):
             crop_locked_index = None
             subtitle_margin_custom_index = None
             original_zoom_rect_index = None
+            layout_mode_index = None
             if "crop_locked" in crop_columns:
                 crop_locked_index = optional_index
                 optional_index += 1
@@ -28013,6 +28067,10 @@ def autoclip_video(video_pk):
                 optional_index += 1
             if "original_zoom_rect" in crop_columns:
                 original_zoom_rect_index = optional_index
+                optional_index += 1
+            if "layout_mode" in crop_columns:
+                layout_mode_index = optional_index
+                optional_index += 1
             has_split_columns = len(crop_row) >= 35
             video_crop_ratios = {
                 "split_enabled": bool(crop_row[query_indexes["split_enabled"]]) if query_indexes["split_enabled"] is not None else False,
@@ -28031,6 +28089,11 @@ def autoclip_video(video_pk):
                 if normalized_original_zoom_rect:
                     video_crop_ratios["original_zoom_rect"] = normalized_original_zoom_rect
             video_crop_aspect = crop_row[query_indexes["crop_aspect"]] or "landscape"
+            if layout_mode_index is not None:
+                video_layout_mode = _effective_layout_mode_for_owner(
+                    crop_row[query_indexes["owner_user_id"]],
+                    crop_row[layout_mode_index],
+                )
             video_font_key = crop_row[query_indexes["title_font_key"]]
             video_title_font_size = crop_row[query_indexes["title_font_size"]]
             video_sub_font_key = crop_row[query_indexes["subtitle_font_key"]]
@@ -28095,6 +28158,7 @@ def autoclip_video(video_pk):
                     except Exception:
                         video_podcast_overlay_short_ids = []
             video_owner_user_id = crop_row[query_indexes["owner_user_id"]]
+            video_layout_mode = _effective_layout_mode_for_owner(video_owner_user_id, video_layout_mode)
             video_subscribe_overlay = _normalize_optional_bool(raw_subscribe_overlay, default=True)
             video_show_title = _normalize_optional_bool(raw_show_title, default=True)
             video_show_subtitle = _normalize_optional_bool(raw_show_subtitle, default=True)
@@ -28229,6 +28293,7 @@ def autoclip_video(video_pk):
                 brand_id=brand_id,
                 crop_ratios=video_crop_ratios,
                 crop_aspect=video_crop_aspect,
+                layout_mode=video_layout_mode,
                 title_font_key=video_font_key,
                 title_font_size=video_title_font_size,
                 subtitle_font_key=video_sub_font_key,
@@ -29045,6 +29110,7 @@ def autoclip_video(video_pk):
                     crop_settings=crop_settings,
                     crop_aspect=video_crop_aspect,
                     visual_mode=video_visual_mode,
+                    layout_mode=video_layout_mode,
                     static_visual_key=video_static_visual_key,
                     face_track_smooth_path=face_track_smooth_path,
                 )
@@ -29078,7 +29144,7 @@ def autoclip_video(video_pk):
             current_app.logger.info(
                 "resolved_render_settings video_pk=%s plan_index=%s queued=%s regenerate=%s edit_keep_ranges=%s "
                 "subtitle_margin=%s subtitle_margin_custom=%s subtitle_style=%s subtitle_preset=%s "
-                "title_margin=%s title_line_spacing=%s crop_aspect=%s subscribe=%s face_aware=%s",
+                "title_margin=%s title_line_spacing=%s crop_aspect=%s layout_mode=%s subscribe=%s face_aware=%s",
                 video_pk,
                 plan_index,
                 bool(queued_job),
@@ -29091,6 +29157,7 @@ def autoclip_video(video_pk):
                 title_margin,
                 video_title_line_spacing,
                 compose_crop_aspect,
+                video_layout_mode,
                 video_subscribe_overlay,
                 bool(face_aware_layout_result.get("enabled") if isinstance(face_aware_layout_result, dict) else False),
             )

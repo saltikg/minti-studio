@@ -4218,6 +4218,9 @@
   #crop-aspect-selector .controls.has-original-layout {
     grid-template-columns: repeat(4, minmax(0, 1fr));
   }
+  #crop-aspect-selector .controls.has-auto-layout {
+    grid-template-columns: repeat(5, minmax(0, 1fr));
+  }
   .aspect-card {
     width: 100%;
     min-width: 0;
@@ -4317,6 +4320,9 @@
     #crop-aspect-selector .controls.has-original-layout {
       grid-template-columns: repeat(2, minmax(0, 1fr));
     }
+    #crop-aspect-selector .controls.has-auto-layout {
+      grid-template-columns: repeat(2, minmax(0, 1fr));
+    }
     .crop-toggle-row {
       grid-template-columns: repeat(2, minmax(0, 1fr));
     }
@@ -4325,9 +4331,15 @@
     #crop-aspect-selector .controls.has-original-layout {
       grid-template-columns: repeat(2, minmax(0, 1fr));
     }
+    #crop-aspect-selector .controls.has-auto-layout {
+      grid-template-columns: repeat(2, minmax(0, 1fr));
+    }
   }
   @media (min-width: 1200px) and (max-width: 1340px) {
     #crop-aspect-selector .controls.has-original-layout .aspect-subtitle {
+      display: none;
+    }
+    #crop-aspect-selector .controls.has-auto-layout .aspect-subtitle {
       display: none;
     }
   }
@@ -4413,6 +4425,48 @@
     display: grid;
     grid-template-columns: minmax(0, 1fr);
     gap: 12px;
+  }
+  .cropper-surfaces.is-auto-layout {
+    position: relative;
+  }
+  .cropper-surfaces.is-auto-layout .cropper-container,
+  .cropper-surfaces.is-auto-layout .cropper-drag-box,
+  .cropper-surfaces.is-auto-layout .cropper-crop-box {
+    pointer-events: none !important;
+  }
+  .cropper-surfaces.is-auto-layout .cropper-face,
+  .cropper-surfaces.is-auto-layout .cropper-line,
+  .cropper-surfaces.is-auto-layout .cropper-point {
+    display: none !important;
+  }
+  .crop-auto-layout-overlay {
+    display: none;
+    position: absolute;
+    inset: 12px;
+    z-index: 4;
+    align-items: center;
+    justify-content: center;
+    text-align: center;
+    pointer-events: none;
+  }
+  .cropper-surfaces.is-auto-layout .crop-auto-layout-overlay {
+    display: flex;
+  }
+  .crop-auto-layout-message {
+    max-width: min(520px, calc(100% - 32px));
+    padding: 16px 18px;
+    border-radius: 16px;
+    border: 1px solid rgba(45, 212, 191, 0.34);
+    background: rgba(15, 23, 42, 0.84);
+    box-shadow: 0 18px 42px rgba(0, 0, 0, 0.28);
+    color: rgba(240, 253, 250, 0.94);
+    font-size: 0.9rem;
+    line-height: 1.35;
+  }
+  .crop-auto-layout-last {
+    margin-top: 8px;
+    font-size: 0.78rem;
+    color: rgba(153, 246, 228, 0.76);
   }
   .cropper-surfaces.is-split {
     grid-template-columns: repeat(2, minmax(0, 1fr));
@@ -5951,7 +6005,7 @@
       {% set caption_ns.label = template.label %}
     {% endif %}
   {% endfor %}
-  {% set design_layout_label = 'Original' if (video_crop_aspect or 'landscape') == 'original' else ('Fill split' if video.split_enabled else ('Fit' if (video_crop_aspect or 'landscape') == 'landscape' else 'Fill')) %}
+  {% set design_layout_label = 'Auto' if video_layout_mode == 'auto' else ('Original' if (video_crop_aspect or 'landscape') == 'original' else ('Fill split' if video.split_enabled else ('Fit' if (video_crop_aspect or 'landscape') == 'landscape' else 'Fill'))) %}
 {% endif %}
 
 <div class="gs-header mb-2{% if generate_v2 %} generate-v2-header{% endif %}">
@@ -6005,6 +6059,8 @@
       data-background-visual-key="{{ video_background_visual_key or '' }}"
       data-subscribe-visual-key="{{ video_subscribe_overlay_key or '' }}"
       data-original-zoom-rect='{{ (video.original_zoom_rect or "") | e }}'
+      data-layout-mode="{{ video_layout_mode or 'manual' }}"
+      data-face-aware-enabled="{{ '1' if face_aware_layout_available else '0' }}"
       data-crop-aspect="{{ video_crop_aspect or 'landscape' }}">
       📐 Crop for Shorts
     </button>
@@ -6068,6 +6124,8 @@
         data-background-visual-key="{{ video_background_visual_key or '' }}"
         data-subscribe-visual-key="{{ video_subscribe_overlay_key or '' }}"
         data-original-zoom-rect='{{ (video.original_zoom_rect or "") | e }}'
+        data-layout-mode="{{ video_layout_mode or 'manual' }}"
+        data-face-aware-enabled="{{ '1' if face_aware_layout_available else '0' }}"
         data-crop-aspect="{{ video_crop_aspect or 'landscape' }}">
         📐 Crop for Shorts
       </button>
@@ -6899,6 +6957,7 @@
                  data-render-width="{{ row.render_width or '' }}"
                  data-render-height="{{ row.render_height or '' }}"
                  data-render-aspect="{{ row.render_aspect or '' }}"
+                 data-auto-layout-summary="{{ row.auto_layout_summary or '' }}"
                  data-outdated="{{ '1' if row.render_settings_outdated else '0' }}"
                  data-regenerate-locked="{{ '1' if row.regenerate_locked else '0' }}"
                  data-regenerate-lock-reason="{{ row.regenerate_lock_reason or '' }}"
@@ -7984,7 +8043,16 @@
                   <div class="crop-modal-tab-panel crop-modal-settings-panel crop-modal-layout-panel" data-crop-modal-panel="layout" hidden>
                     <div class="layout-top-row">
                       <div class="control-group" id="crop-aspect-selector">
-                      <div class="controls{% if generate_v2 %} has-original-layout{% endif %}" role="group" aria-label="Crop aspect ratio">
+                      <div class="controls{% if generate_v2 %} has-original-layout{% endif %}{% if face_aware_layout_available %} has-auto-layout{% endif %}" role="group" aria-label="Crop aspect ratio">
+                        {% if face_aware_layout_available %}
+                        <button type="button" class="aspect-card" data-layout-mode="auto" data-crop-aspect="portrait">
+                          <span class="aspect-icon"><i class="bi bi-stars"></i></span>
+                          <span>
+                            <div class="aspect-title text-white">Auto</div>
+                            <small class="text-white-50 aspect-subtitle">Face-aware</small>
+                          </span>
+                        </button>
+                        {% endif %}
                         <button type="button" class="aspect-card" data-crop-aspect="portrait">
                           <span class="aspect-icon"><i class="bi bi-phone"></i></span>
                           <span><div class="aspect-title text-white">Fill</div></span>
@@ -8169,6 +8237,12 @@
                         <span>Loading frame…</span>
                       </div>
                       <div class="cropper-surfaces" id="cropper-surfaces">
+                        <div class="crop-auto-layout-overlay" id="crop-auto-layout-overlay" aria-hidden="true">
+                          <div class="crop-auto-layout-message">
+                            <div>Auto layout — We pick Fill, Fill split or Fit for each clip based on the number of faces. Choose a layout to set it yourself.</div>
+                            <div class="crop-auto-layout-last d-none" id="crop-auto-layout-last"></div>
+                          </div>
+                        </div>
                         <div class="cropper-surface" id="cropper-surface-top" data-crop-box="top">
                           <div class="cropper-surface-label" id="cropper-surface-top-label">Drag to reframe</div>
                           <div class="cropper-surface-image-wrap">
@@ -17690,6 +17764,7 @@ document.addEventListener("DOMContentLoaded", () => {
   let activeBackgroundKey = "";
   let activeSubscribeKey = "";
   let activeCropAspect = "landscape";
+  let activeLayoutMode = "manual";
   let activeVisualMode = "video";
   let currentPresetRatios = { x: 0, y: 0, w: 1, h: 1 };
   let currentPresetRatiosBottom = { x: 0, y: 0, w: 1, h: 1 };
@@ -17828,6 +17903,7 @@ document.addEventListener("DOMContentLoaded", () => {
   const subtitleAdvancedControls = Array.from(settingsContainer?.querySelectorAll('[data-preview-control="subtitle"]') || []);
   const videoPositionAdvancedControls = Array.from(settingsContainer?.querySelectorAll('[data-preview-control="video-position"]') || []);
   const reframeSection = modalEl.querySelector(".crop-modal-reframe-section");
+  const autoLayoutOverlayLast = modalEl.querySelector("#crop-auto-layout-last");
   let selectedPreviewElement = "";
   let dragState = null;
   let originalZoomRect = null;
@@ -18341,6 +18417,10 @@ document.addEventListener("DOMContentLoaded", () => {
   };
   const isPortraitCropAspect = () => activeCropAspect === "portrait";
   const isOriginalCropAspect = () => activeCropAspect === "original";
+  const isAutoLayoutMode = () => activeLayoutMode === "auto";
+  const setLayoutMode = (mode) => {
+    activeLayoutMode = mode === "auto" ? "auto" : "manual";
+  };
   const getEffectiveSplitEnabled = () => !!(activeSplitEnabled && isPortraitCropAspect() && activeVisualMode === "video");
   const isTitleVisible = () => !!showTitleToggle?.checked;
   const isSubtitleVisible = () => !!showSubtitleToggle?.checked;
@@ -18510,12 +18590,18 @@ document.addEventListener("DOMContentLoaded", () => {
     }
     reframeSection?.classList.toggle("is-original-layout", originalLayout);
     cropperSurfaces?.classList.toggle("is-original-layout", originalLayout);
+    cropperSurfaces?.classList.toggle("is-auto-layout", isAutoLayoutMode());
     cropperSurfaces?.classList.toggle("is-split", effectiveSplit);
     cropperSurfaceTop?.classList.toggle("is-hidden", false);
     cropperSurfaceBottom?.classList.toggle("is-hidden", !effectiveSplit || originalLayout);
     const topLabel = modalEl.querySelector("#cropper-surface-top-label");
     if (topLabel) {
       topLabel.textContent = originalLayout ? "Drag to reframe" : (effectiveSplit ? "Top" : "Drag to reframe");
+    }
+    if (autoLayoutOverlayLast) {
+      const summary = String(latestTrigger?.dataset.autoLayoutSummary || "").trim();
+      autoLayoutOverlayLast.textContent = summary ? `Last render: ${summary}` : "";
+      autoLayoutOverlayLast.classList.toggle("d-none", !summary);
     }
   };
   const isPreviewElementDraggable = (kind) => !(kind === "video" && isPortraitCropAspect());
@@ -19384,7 +19470,9 @@ document.addEventListener("DOMContentLoaded", () => {
     activeCropAspect = normalized;
     activeSplitEnabled = nextSplitEnabled;
     cropAspectButtons.forEach((button) => {
-      const matches = (button.dataset.cropAspect || "") === normalized
+      const buttonLayoutMode = (button.dataset.layoutMode || "manual") === "auto" ? "auto" : "manual";
+      const matches = buttonLayoutMode === activeLayoutMode
+        && (button.dataset.cropAspect || "") === normalized
         && (((button.dataset.splitEnabled || "") === "1") === nextSplitEnabled);
       button.classList.toggle("active", matches);
       button.setAttribute("aria-pressed", matches ? "true" : "false");
@@ -19600,9 +19688,15 @@ document.addEventListener("DOMContentLoaded", () => {
     button.addEventListener("click", () => {
       const nextAspect = button.dataset.cropAspect || "landscape";
       const nextSplit = (button.dataset.splitEnabled || "") === "1";
-      if ((activeCropAspect || "landscape") !== nextAspect || getEffectiveSplitEnabled() !== nextSplit) {
+      const nextLayoutMode = (button.dataset.layoutMode || "manual") === "auto" ? "auto" : "manual";
+      if (
+        activeLayoutMode !== nextLayoutMode ||
+        (activeCropAspect || "landscape") !== nextAspect ||
+        getEffectiveSplitEnabled() !== nextSplit
+      ) {
         markCropDirty();
       }
+      setLayoutMode(nextLayoutMode);
       setCropFormat(
         nextAspect,
         nextSplit,
@@ -19739,6 +19833,16 @@ document.addEventListener("DOMContentLoaded", () => {
       return false;
     }
     latestTrigger = trigger;
+    if (!latestTrigger.dataset.autoLayoutSummary) {
+      const activePlanIndex = document.getElementById("clip-management-panel")?.dataset.activePlanIndex || "";
+      const escapedPlanIndex = window.CSS?.escape ? CSS.escape(activePlanIndex) : activePlanIndex.replace(/"/g, '\\"');
+      const activeCard = activePlanIndex
+        ? document.querySelector(`.clip-card[data-plan-index="${escapedPlanIndex}"]`)
+        : document.querySelector(".clip-card.is-selected, .clip-card.active");
+      if (activeCard?.dataset?.autoLayoutSummary) {
+        latestTrigger.dataset.autoLayoutSummary = activeCard.dataset.autoLayoutSummary;
+      }
+    }
     modalEl.dataset.saveUrl = trigger.dataset.saveUrl || modalEl.dataset.saveUrl;
     const previewUrl = trigger.dataset.previewUrl || "";
     modalEl.dataset.videoPreviewUrl = previewUrl;
@@ -19768,6 +19872,7 @@ document.addEventListener("DOMContentLoaded", () => {
     );
     activeSplitEnabled = (trigger.dataset.splitEnabled || "").toLowerCase() === "1"
       || (trigger.dataset.splitEnabled || "").toLowerCase() === "true";
+    setLayoutMode(trigger.dataset.layoutMode || "manual");
     originalZoomRect = parseOriginalZoomRect(trigger.dataset.originalZoomRect || "");
     splitDefaultsPrimed = hasStoredCrop2;
     window.restoreCropEditorDesignState?.();
@@ -20002,7 +20107,9 @@ document.addEventListener("DOMContentLoaded", () => {
     const presetLabel = String(subtitlePresetField?.value || "default")
       .replace(/_/g, " ")
       .replace(/\b\w/g, (char) => char.toUpperCase());
-    const layoutLabel = getEffectiveSplitEnabled()
+    const layoutLabel = isAutoLayoutMode()
+      ? "Auto"
+      : getEffectiveSplitEnabled()
       ? "Fill split"
       : ((activeCropAspect || "landscape") === "original" ? "Original" : ((activeCropAspect || "landscape") === "landscape" ? "Fit" : "Fill"));
     return {
@@ -20096,6 +20203,7 @@ document.addEventListener("DOMContentLoaded", () => {
     params.append("background_visual_key", activeBackgroundKey || "");
     params.append("subscribe_overlay_image", activeSubscribeKey || "");
     params.append("crop_aspect", activeCropAspect || "landscape");
+    params.append("layout_mode", activeLayoutMode || "manual");
     params.append("visual_mode", activeVisualMode || "video");
     params.append("original_zoom_rect", originalZoomRect ? JSON.stringify(originalZoomRect) : "");
 	    params.append("crop_changed", cropDirty ? "1" : "0");
@@ -20162,6 +20270,7 @@ document.addEventListener("DOMContentLoaded", () => {
         latestTrigger.dataset.backgroundVisualKey = activeBackgroundKey || "";
         latestTrigger.dataset.subscribeVisualKey = activeSubscribeKey || "";
         latestTrigger.dataset.cropAspect = activeCropAspect || "landscape";
+        latestTrigger.dataset.layoutMode = activeLayoutMode || "manual";
         latestTrigger.dataset.originalZoomRect = originalZoomRect ? JSON.stringify(originalZoomRect) : "";
       }
       if (chooseBtn) {
@@ -20174,6 +20283,7 @@ document.addEventListener("DOMContentLoaded", () => {
         chooseBtn.dataset.backgroundVisualKey = activeBackgroundKey || "";
         chooseBtn.dataset.subscribeVisualKey = activeSubscribeKey || "";
         chooseBtn.dataset.cropAspect = activeCropAspect || "landscape";
+        chooseBtn.dataset.layoutMode = activeLayoutMode || "manual";
         chooseBtn.dataset.originalZoomRect = originalZoomRect ? JSON.stringify(originalZoomRect) : "";
       }
       window.updateShortDesignStrip?.(currentShortDesignDetails());
