@@ -18,6 +18,7 @@ from app.video_shorts.config import (
     FFMPEG_RENDER_TIMEOUT,
     FFPROBE_TIMEOUT,
     OPENAI_MODEL,
+    SUB_FONT_CHOICES,
     SUBTITLE_PILL_FONT_MAP,
     SUBTITLE_PRESETS,
     SUBTITLE_HIGHLIGHT_COLOR,
@@ -715,7 +716,8 @@ def _build_ass_karaoke_for_clip(
     except Exception:
         active_box_padding_spaces = 0
     pill_enabled = bool(preset.get("active_pill"))
-    show_box = bool(preset.get("box", True))
+    bg_alpha_percent = _normalize_alpha_percent(subtitle_bg_alpha, DEFAULT_SUBTITLE_BG_ALPHA)
+    show_box = bg_alpha_percent > 0
     use_active_word_style = bool(active_box_color)
     try:
         active_scale = max(1, int(preset.get("active_scale", 100) or 100))
@@ -723,9 +725,7 @@ def _build_ass_karaoke_for_clip(
         active_scale = 100
     bold = -1 if bool(preset.get("bold")) else 0
     preset_font = str(preset.get("font") or "").strip()
-    resolved_font = subtitle_font
-    if preset_font and str(subtitle_preset or DEFAULT_SUBTITLE_PRESET).strip() != DEFAULT_SUBTITLE_PRESET:
-        resolved_font = preset_font
+    resolved_font = str(subtitle_font or preset_font or "DejaVu Sans").strip() or "DejaVu Sans"
     pill_metrics = _pill_font_metrics(preset_key, resolved_font, subtitle_font_size) if pill_enabled else None
     pill_font = pill_metrics[0] if pill_metrics else None
     pill_padding_x = max(10, int(round(float(subtitle_font_size) * 0.48)))
@@ -1048,7 +1048,7 @@ def _build_ass_karaoke_for_clip(
     if show_box:
         back_color = _hex_to_ass_color_with_alpha(
             subtitle_bg_color,
-            subtitle_bg_alpha,
+            bg_alpha_percent,
             DEFAULT_SUBTITLE_BG_COLOR,
             DEFAULT_SUBTITLE_BG_ALPHA,
         )
@@ -1074,7 +1074,7 @@ def _build_ass_karaoke_for_clip(
         f"{_hex_to_ass_color_with_alpha(inactive_color, subtitle_text_alpha, '#FFFFFF', DEFAULT_SUBTITLE_TEXT_ALPHA)},"
         f"{_hex_to_ass_color_with_alpha(outline_color, 100, '#000000', 100)},"
         f"{back_color},"
-        f"{bold},0,0,0,100,100,0,0,{border_style},{outline_width},0,2,40,40,"
+        f"{bold},0,0,0,100,100,0,0,{4 if show_box else border_style},{outline_width},0,2,40,40,"
         f"{int(subtitle_margin)},1",
     ]
     if use_active_word_style:
@@ -1161,6 +1161,30 @@ def _hex_to_rgba(color: str, alpha: int = 255) -> tuple[int, int, int, int]:
         int(value[5:7], 16),
         max(0, min(255, int(alpha))),
     )
+
+
+def _normalize_alpha_percent(value: Any, default: int = 100) -> int:
+    try:
+        raw = int(round(float(value)))
+    except (TypeError, ValueError):
+        raw = int(default)
+    return max(0, min(100, raw))
+
+
+def _alpha_percent_to_byte(value: Any, default: int = 100) -> int:
+    return int(round(_normalize_alpha_percent(value, default) * 255 / 100.0))
+
+
+def _subtitle_font_path_for_key(font_key: Optional[str]) -> Optional[Path]:
+    key = str(font_key or "").strip()
+    if not key:
+        return None
+    for candidate_key, _label, font_path, _font_name in SUB_FONT_CHOICES:
+        if str(candidate_key) != key:
+            continue
+        path = Path(font_path)
+        return path if path.exists() else None
+    return None
 
 
 def _build_blurred_shadow_region(
@@ -1444,8 +1468,11 @@ def _render_word_highlight_caption_frame(
     active_color: str,
     outline_color: str,
     outline_width: int,
+    inactive_alpha: int = 255,
     active_outline: bool = False,
     pill_color: str,
+    caption_bg_color: Optional[str] = None,
+    caption_bg_alpha: Optional[int] = None,
     draw_pill: bool = True,
     force_uppercase: bool = False,
     precomputed_layout: Optional[Dict[str, Any]] = None,
@@ -1509,6 +1536,30 @@ def _render_word_highlight_caption_frame(
             shadow_region["image"],
             (int(shadow_region["x"]), int(shadow_region["y"])),
         )
+
+    caption_bg_alpha_byte = _alpha_percent_to_byte(caption_bg_alpha, 0)
+    if caption_bg_alpha_byte > 0 and layout.get("lines"):
+        line_boxes: List[Tuple[int, int, int, int]] = []
+        for line in layout["lines"]:
+            words_in_line = list(line.get("words") or [])
+            if not words_in_line:
+                continue
+            line_left = min(int(word.get("x", 0)) for word in words_in_line)
+            line_right = max(int(word.get("x", 0)) + int(word.get("slot_width") or word.get("width") or 0) for word in words_in_line)
+            line_y = int(line.get("y", 0))
+            line_height = int(line.get("height") or layout.get("line_height") or font_size)
+            line_boxes.append((line_left, line_y, line_right, line_y + line_height))
+        if line_boxes:
+            bg_left = max(0, min(box[0] for box in line_boxes) - max(10, int(round(float(font_size) * 0.32))))
+            bg_top = max(0, min(box[1] for box in line_boxes) - max(5, int(round(float(font_size) * 0.16))))
+            bg_right = min(int(canvas_width), max(box[2] for box in line_boxes) + max(10, int(round(float(font_size) * 0.32))))
+            bg_bottom = min(int(canvas_height), max(box[3] for box in line_boxes) + max(5, int(round(float(font_size) * 0.16))))
+            radius = max(6, int(round(float(font_size) * 0.18)))
+            draw.rounded_rectangle(
+                [bg_left, bg_top, bg_right, bg_bottom],
+                radius=radius,
+                fill=_hex_to_rgba(caption_bg_color or DEFAULT_SUBTITLE_BG_COLOR, caption_bg_alpha_byte),
+            )
 
     active_word = layout["words"][active_index]
     active_bbox = draw.textbbox(
@@ -1575,7 +1626,7 @@ def _render_word_highlight_caption_frame(
             fill=_hex_to_rgba(pill_color),
         )
 
-    inactive_rgba = _hex_to_rgba(inactive_color)
+    inactive_rgba = _hex_to_rgba(inactive_color, inactive_alpha)
     active_rgba = _hex_to_rgba(active_color)
     outline_rgba = _hex_to_rgba(outline_color)
 
@@ -1740,6 +1791,11 @@ def _build_word_highlight_caption_overlay(
     subtitle_font_size: int,
     subtitle_margin: int,
     subtitle_preset: Optional[str],
+    subtitle_font_key: Optional[str] = None,
+    subtitle_text_color: Optional[str] = None,
+    subtitle_text_alpha: Optional[int] = None,
+    subtitle_bg_color: Optional[str] = None,
+    subtitle_bg_alpha: Optional[int] = None,
     caption_language: str = "",
     target_width: int = _PILLOW_CAPTION_WIDTH,
     target_height: int = _PILLOW_CAPTION_HEIGHT,
@@ -1749,7 +1805,7 @@ def _build_word_highlight_caption_overlay(
     font_info = SUBTITLE_PILL_FONT_MAP.get(preset_key)
     if not font_info:
         return None, [], {"reason": "missing_font_map"}
-    font_path = Path(font_info.get("font_path") or "")
+    font_path = _subtitle_font_path_for_key(subtitle_font_key) or Path(font_info.get("font_path") or "")
     if not font_path.exists():
         return None, [], {"reason": "missing_font_file", "font_path": str(font_path)}
 
@@ -1767,7 +1823,8 @@ def _build_word_highlight_caption_overlay(
     )
     active_outline = bool(preset.get("active_outline", False))
     force_uppercase = bool(preset.get("force_uppercase", False))
-    inactive_color = str(preset.get("inactive_color") or "#FFFFFF").strip() or "#FFFFFF"
+    inactive_color = str(subtitle_text_color or preset.get("inactive_color") or "#FFFFFF").strip() or "#FFFFFF"
+    inactive_alpha = _alpha_percent_to_byte(subtitle_text_alpha, DEFAULT_SUBTITLE_TEXT_ALPHA)
     active_color = str(preset.get("active_color") or "#111827").strip() or "#111827"
     outline_color = str(preset.get("outline_color") or "#000000").strip() or "#000000"
     pill_color = str(preset.get("active_box_color") or "#FFD84D").strip() or "#FFD84D"
@@ -2052,8 +2109,11 @@ def _build_word_highlight_caption_overlay(
                     active_color=active_color,
                     outline_color=outline_color,
                     outline_width=outline_width,
+                    inactive_alpha=inactive_alpha,
                     active_outline=active_outline,
                     pill_color=pill_color,
+                    caption_bg_color=subtitle_bg_color,
+                    caption_bg_alpha=subtitle_bg_alpha,
                     draw_pill=draw_pill,
                     force_uppercase=force_uppercase,
                     precomputed_layout=precomputed_layout,

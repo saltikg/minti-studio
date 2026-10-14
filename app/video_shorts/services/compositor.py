@@ -922,6 +922,8 @@ def _render_title_overlay(
     line_spacing: int,
     title_text_color: Optional[str],
     subtitle_preset: Optional[str],
+    title_bg_color: Optional[str] = DEFAULT_TITLE_BG_COLOR,
+    title_bg_alpha: Optional[int] = DEFAULT_TITLE_BG_ALPHA,
     uppercase: bool,
     video_top_limit: Optional[int],
     title_language: Optional[str] = None,
@@ -1008,6 +1010,37 @@ def _render_title_overlay(
         overlay = Image.alpha_composite(overlay, shadow_layer)
 
     draw = ImageDraw.Draw(overlay)
+    bg_alpha = _normalize_alpha_percent(title_bg_alpha, DEFAULT_TITLE_BG_ALPHA)
+    if bg_alpha > 0 and line_entries:
+        bg_pad_x = max(10, int(round(float(chosen_font_size) * 0.45)))
+        bg_pad_y = max(6, int(round(float(chosen_font_size) * 0.20)))
+        bg_left = int(target_width)
+        bg_top = int(target_height)
+        bg_right = 0
+        bg_bottom = 0
+        for entry in line_entries:
+            bbox = draw.textbbox(
+                (int(entry["x"]), int(entry["y"])),
+                str(entry["text"]),
+                font=chosen_font,
+                anchor="la",
+                stroke_width=safe_outline_width,
+            )
+            bg_left = min(bg_left, int(bbox[0]))
+            bg_top = min(bg_top, int(bbox[1]))
+            bg_right = max(bg_right, int(bbox[2]))
+            bg_bottom = max(bg_bottom, int(bbox[3]))
+        if bg_right > bg_left and bg_bottom > bg_top:
+            draw.rounded_rectangle(
+                [
+                    max(0, bg_left - bg_pad_x),
+                    max(0, bg_top - bg_pad_y),
+                    min(int(target_width), bg_right + bg_pad_x),
+                    min(int(target_height), bg_bottom + bg_pad_y),
+                ],
+                radius=max(6, int(round(float(chosen_font_size) * 0.18))),
+                fill=_hex_to_rgba(title_bg_color or DEFAULT_TITLE_BG_COLOR, int(round(bg_alpha * 255 / 100.0))),
+            )
     text_fill = _hex_to_rgba(title_text_color or "#FFFFFF", 255)
     outline_fill = _hex_to_rgba(title_outline_color or "#000000", 255)
     for entry in line_entries:
@@ -1446,8 +1479,13 @@ def _face_aware_ass_style_line(
     normalized_subtitle_style = str(subtitle_style or "plain").strip().lower()
     primary = _hex_to_ass_color_with_alpha(subtitle_text_color, subtitle_text_alpha, "#FFFFFF", DEFAULT_SUBTITLE_TEXT_ALPHA)
     if normalized_subtitle_style == "karaoke":
-        back = _hex_to_ass_color_with_alpha("#000000", 0, "#000000", 0)
-        border_style = "1"
+        bg_alpha = _normalize_alpha_percent(subtitle_bg_alpha, 0)
+        if bg_alpha > 0:
+            back = _hex_to_ass_color_with_alpha(subtitle_bg_color, bg_alpha, DEFAULT_SUBTITLE_BG_COLOR, DEFAULT_SUBTITLE_BG_ALPHA)
+            border_style = "4"
+        else:
+            back = _hex_to_ass_color_with_alpha("#000000", 0, "#000000", 0)
+            border_style = "1"
         outline = "0"
     else:
         back = _hex_to_ass_color_with_alpha(subtitle_bg_color, subtitle_bg_alpha, DEFAULT_SUBTITLE_BG_COLOR, DEFAULT_SUBTITLE_BG_ALPHA)
@@ -2355,6 +2393,8 @@ def _compose_trimmed_with_background(
                     line_spacing=safe_title_line_spacing,
                     title_text_color=title_text_color,
                     subtitle_preset=subtitle_preset,
+                    title_bg_color=title_bg_color,
+                    title_bg_alpha=title_bg_alpha,
                     uppercase=bool(title_uppercase),
                     title_language=title_language,
                     title_outline_color=title_outline_color,
@@ -3473,6 +3513,8 @@ def _compose_trimmed_with_background(
                 line_spacing=safe_title_line_spacing_main,
                 title_text_color=title_text_color,
                 subtitle_preset=subtitle_preset,
+                title_bg_color=title_bg_color,
+                title_bg_alpha=title_bg_alpha,
                 uppercase=bool(title_uppercase),
                 title_language=title_language,
                 title_outline_color=title_outline_color,
@@ -3521,6 +3563,8 @@ def _compose_trimmed_with_background(
                         line_spacing=safe_title_line_spacing_main,
                         title_text_color=title_text_color,
                         subtitle_preset=subtitle_preset,
+                        title_bg_color=title_bg_color,
+                        title_bg_alpha=title_bg_alpha,
                         uppercase=bool(title_uppercase),
                         title_language=title_language,
                         title_outline_color=title_outline_color,
