@@ -7983,8 +7983,12 @@
                       data-style-template-title-font-family="{{ template.title_font }}"
                       data-style-template-title-text-color="{{ template.title_text_color }}"
                       data-style-template-title-bg-color="{{ template.title_bg_color }}"
-                      data-style-template-title-bg-alpha="{{ template.title_bg_alpha if template.title_bg_alpha is defined else '' }}"
+                      data-style-template-title-bg-alpha="{{ template.title_bg_alpha if template.title_bg_alpha is defined else 0 }}"
                       data-style-template-title-font-size="{{ template.title_font_size }}"
+                      data-style-template-subtitle-text-color="{{ subtitle_preset_config.get('inactive_color', '#FFFFFF') }}"
+                      data-style-template-subtitle-text-alpha="100"
+                      data-style-template-subtitle-bg-color="#000000"
+                      data-style-template-subtitle-bg-alpha="{{ 85 if subtitle_preset_config.get('box') else 0 }}"
                       aria-pressed="false"
                     >
                       <div class="style-template-card-preview style-template-card-preview--{{ preview_variant }}">
@@ -19804,6 +19808,7 @@ document.addEventListener("DOMContentLoaded", () => {
       || (trigger.dataset.splitEnabled || "").toLowerCase() === "true";
     originalZoomRect = parseOriginalZoomRect(trigger.dataset.originalZoomRect || "");
     splitDefaultsPrimed = hasStoredCrop2;
+    window.restoreCropEditorDesignState?.();
     resetState();
     applyPreviewLayout();
     setActiveStaticVisual(trigger.dataset.staticVisualKey || "");
@@ -20024,6 +20029,7 @@ document.addEventListener("DOMContentLoaded", () => {
     if (!response.ok || !payload.success) {
       throw new Error(payload.message || "Settings could not be saved.");
     }
+    window.rememberCropEditorSavedDesignState?.();
     if (settingsContainer) {
       settingsContainer.dataset.selectedVisualMode = activeVisualMode || "video";
     }
@@ -20891,6 +20897,97 @@ document.addEventListener("DOMContentLoaded", function () {
   const styleTemplateCarouselNext = cropAreaModalEl?.querySelector("[data-style-template-carousel-next]") || null;
   const cropModalTabs = Array.from(document.querySelectorAll("[data-crop-modal-tab]"));
   const cropModalPanels = Array.from(document.querySelectorAll("[data-crop-modal-panel]"));
+  const designStateFieldNames = [
+    "font",
+    "sub_font",
+    "title_font_size",
+    "sub_font_size",
+    "sub_margin",
+    "subtitle_style",
+    "subtitle_preset",
+    "title_margin",
+    "title_line_spacing",
+    "title_bg_color",
+    "title_bg_alpha",
+    "title_text_color",
+    "subtitle_text_color",
+    "subtitle_text_alpha",
+    "subtitle_bg_color",
+    "subtitle_bg_alpha",
+    "video_date_text",
+    "video_date_top",
+    "video_overlay_offset",
+    "show_title",
+    "show_subtitle",
+    "enable_subscribe_overlay",
+    "is_music_only",
+    "visual_mode",
+  ];
+  const getDesignRoots = () => {
+    const roots = [
+      document.getElementById("generate-v2-editor"),
+      cropAreaModalEl,
+    ].filter(Boolean);
+    return Array.from(new Set(roots));
+  };
+  const getDesignField = (name) => {
+    for (const root of getDesignRoots()) {
+      const field = root.querySelector(`[name="${name}"]`);
+      if (field) {
+        return field;
+      }
+    }
+    return null;
+  };
+  const getDesignFieldValue = (field) => {
+    if (!field) return "";
+    if (field.type === "checkbox") {
+      return field.checked ? "1" : "0";
+    }
+    return field.value || "";
+  };
+  const setDesignFieldValue = (field, value, dispatch = true) => {
+    if (!field) return;
+    if (field.type === "checkbox") {
+      field.checked = String(value || "").toLowerCase() === "1" || String(value || "").toLowerCase() === "true";
+    } else {
+      field.value = value ?? "";
+    }
+    if (dispatch) {
+      field.dispatchEvent(new Event("input", { bubbles: true }));
+      field.dispatchEvent(new Event("change", { bubbles: true }));
+    }
+  };
+  const collectDesignState = () => {
+    const state = {};
+    designStateFieldNames.forEach((name) => {
+      const field = getDesignField(name);
+      if (field) {
+        state[name] = getDesignFieldValue(field);
+      }
+    });
+    return state;
+  };
+  let savedDesignState = collectDesignState();
+  const applyDesignState = (state) => {
+    Object.entries(state || {}).forEach(([name, value]) => {
+      setDesignFieldValue(getDesignField(name), value, false);
+    });
+    updateTitleFont();
+    updateSubtitleFont();
+    applyTitleTextPreview(normalize(titleTextColorField?.value || "#FFFFFF"));
+    applyTitleBgPreview();
+    applySubtitlePreview();
+    syncSubtitlePresetCards();
+    syncStyleTemplateCards();
+    syncFinalPreviewLayout();
+  };
+  window.rememberCropEditorSavedDesignState = () => {
+    savedDesignState = collectDesignState();
+  };
+  window.restoreCropEditorDesignState = () => {
+    applyDesignState(savedDesignState);
+  };
   const syncFinalPreviewLayout = () => {
     if (typeof window.syncCropEditorFinalPreviewLayout === "function") {
       window.syncCropEditorFinalPreviewLayout();
@@ -21221,31 +21318,36 @@ document.addEventListener("DOMContentLoaded", function () {
       }
     }
     const nextTitleBgAlpha = String(card.dataset.styleTemplateTitleBgAlpha || "").trim();
-    if (titleBgAlphaInput && nextTitleBgAlpha) {
+    if (titleBgAlphaInput && nextTitleBgAlpha !== "") {
       titleBgAlphaInput.value = nextTitleBgAlpha;
     }
+    const nextSubtitleTextColor = normalize(card.dataset.styleTemplateSubtitleTextColor || "");
+    if (nextSubtitleTextColor) {
+      setDesignFieldValue(getDesignField("subtitle_text_color"), nextSubtitleTextColor, false);
+      const custom = document.getElementById("subtitleTextCustomColor");
+      if (custom) custom.value = nextSubtitleTextColor;
+    }
+    const nextSubtitleTextAlpha = String(card.dataset.styleTemplateSubtitleTextAlpha || "").trim();
+    if (nextSubtitleTextAlpha !== "") {
+      setDesignFieldValue(getDesignField("subtitle_text_alpha"), nextSubtitleTextAlpha, false);
+    }
+    const nextSubtitleBgColor = normalize(card.dataset.styleTemplateSubtitleBgColor || "");
+    if (nextSubtitleBgColor) {
+      setDesignFieldValue(getDesignField("subtitle_bg_color"), nextSubtitleBgColor, false);
+      const custom = document.getElementById("subtitleBgCustomColor");
+      if (custom) custom.value = nextSubtitleBgColor;
+    }
+    const nextSubtitleBgAlpha = String(card.dataset.styleTemplateSubtitleBgAlpha || "").trim();
+    if (nextSubtitleBgAlpha !== "") {
+      setDesignFieldValue(getDesignField("subtitle_bg_alpha"), nextSubtitleBgAlpha, false);
+    }
     applyTitleBgPreview();
+    applySubtitlePreview();
     syncStyleTemplateCards();
   };
   const applyInitialStyleTemplateSelection = () => {
-    if (clipHasSavedStyleTemplate) {
-      return;
-    }
-    const defaultKey = String(defaultStyleTemplateKey || "").trim();
-    if (!defaultKey) {
-      return;
-    }
-    const activeCard = styleTemplateCards.find((card) => card.classList.contains("is-active"));
-    if (activeCard && String(activeCard.dataset.styleTemplateKey || "").trim() === defaultKey) {
-      return;
-    }
-    const defaultCard = styleTemplateCards.find(
-      (card) => String(card.dataset.styleTemplateKey || "").trim() === defaultKey
-    );
-    if (!defaultCard) {
-      return;
-    }
-    applyStyleTemplate(defaultCard);
+    syncSubtitlePresetCards();
+    syncStyleTemplateCards();
   };
 
   bindColorPicker({
