@@ -5741,7 +5741,6 @@
   }
   .shorts-preview-subtitle-band.is-word-highlight,
   .short-font-preview.is-word-highlight {
-    background: transparent !important;
     box-shadow: none;
   }
   .shorts-preview-subtitle-band.is-gradient-fill .word-highlight-preview-word,
@@ -18859,6 +18858,7 @@ document.addEventListener("DOMContentLoaded", () => {
       setSelectedPreviewElement("");
     }
   };
+  window.syncCropEditorFinalPreviewLayout = applyPreviewLayout;
   const clearPreviewCanvas = () => {
     if (!previewCanvas || !previewCtx) {
       return;
@@ -20891,6 +20891,11 @@ document.addEventListener("DOMContentLoaded", function () {
   const styleTemplateCarouselNext = cropAreaModalEl?.querySelector("[data-style-template-carousel-next]") || null;
   const cropModalTabs = Array.from(document.querySelectorAll("[data-crop-modal-tab]"));
   const cropModalPanels = Array.from(document.querySelectorAll("[data-crop-modal-panel]"));
+  const syncFinalPreviewLayout = () => {
+    if (typeof window.syncCropEditorFinalPreviewLayout === "function") {
+      window.syncCropEditorFinalPreviewLayout();
+    }
+  };
 
   const updateTitleFont = () => {
     if (titleFont) {
@@ -20903,6 +20908,7 @@ document.addEventListener("DOMContentLoaded", function () {
       if (previewTitle) {
         previewTitle.style.fontFamily = fontFamily || "inherit";
       }
+      syncFinalPreviewLayout();
     }
   };
   const updateSubtitleFont = () => {
@@ -20916,6 +20922,7 @@ document.addEventListener("DOMContentLoaded", function () {
       if (previewSubtitle) {
         previewSubtitle.style.fontFamily = fontFamily || "inherit";
       }
+      syncFinalPreviewLayout();
     }
   };
 
@@ -21008,7 +21015,8 @@ document.addEventListener("DOMContentLoaded", function () {
     const previewTitle = document.getElementById("shorts-preview-title-band");
     const activePreset = String(subtitlePresetField?.value || "").trim();
     const titleTemplatePreset = TITLE_TEMPLATE_PRESETS[activePreset] || null;
-    const alpha = alphaToOpacity(titleTemplatePreset?.bgAlpha ?? titleBgAlphaInput?.value, 92);
+    const alphaSource = String(titleBgAlphaInput?.value ?? "").trim();
+    const alpha = alphaToOpacity(alphaSource !== "" ? alphaSource : titleTemplatePreset?.bgAlpha, 92);
     const hex = normalize(titleBgHidden?.value || "#111827");
     const rgba = hexToRgba(hex, alpha);
     const hasVisibleBand = alpha > 0.001;
@@ -21025,6 +21033,7 @@ document.addEventListener("DOMContentLoaded", function () {
     if (titlePreview) titlePreview.style.fontWeight = titleTemplatePreset?.fontWeight || "700";
     if (previewTitle) previewTitle.style.fontWeight = titleTemplatePreset?.fontWeight || "700";
     syncPreviewTitleText();
+    syncFinalPreviewLayout();
   };
   const applySubtitlePreview = () => {
     const subtitleTextHidden = document.getElementById("subtitleTextColorValue");
@@ -21040,9 +21049,7 @@ document.addEventListener("DOMContentLoaded", function () {
     const effectiveTextHex = wordHighlightPreset?.inactiveTextColor || textHex;
     const textRgba = hexToRgba(effectiveTextHex, textAlpha);
     const bgRgba = hexToRgba(bgHex, bgAlpha);
-    const pillColor = String(wordHighlightPreset?.pillColor || "").trim().toLowerCase();
-    const usesTransparentPill = pillColor === "transparent";
-    const effectiveSubtitleBackground = (isWordHighlight || usesTransparentPill) ? "transparent" : bgRgba;
+    const effectiveSubtitleBackground = bgRgba;
     if (subtitlePreview) {
       subtitlePreview.classList.toggle("is-word-highlight", isWordHighlight);
       subtitlePreview.classList.toggle("is-gradient-fill", wordHighlightPreset?.fillMode === "gradient");
@@ -21105,6 +21112,7 @@ document.addEventListener("DOMContentLoaded", function () {
     if (subtitleTextSwatch) subtitleTextSwatch.style.backgroundColor = textRgba;
     const subtitleBgSwatch = document.getElementById("subtitleBgColorSwatch");
     if (subtitleBgSwatch) subtitleBgSwatch.style.backgroundColor = bgRgba;
+    syncFinalPreviewLayout();
   };
   const applySubtitlePresetValue = (nextValue) => {
     if (!nextValue || !subtitlePresetField) {
@@ -21128,6 +21136,7 @@ document.addEventListener("DOMContentLoaded", function () {
     const previewTitle = document.getElementById("shorts-preview-title-band");
     if (previewTitle) previewTitle.style.color = hex;
     if (titleTextColorSwatch) titleTextColorSwatch.style.backgroundColor = hex;
+    syncFinalPreviewLayout();
   };
   const syncStyleTemplateCards = () => {
     const activeSubtitlePreset = String(subtitlePresetField?.value || "").trim();
