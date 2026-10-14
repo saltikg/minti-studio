@@ -5424,8 +5424,7 @@
     font-size: 0.84rem;
   }
   .crop-modal-element-preview {
-    display: grid;
-    gap: 8px;
+    display: none;
   }
   .crop-modal-element-grid {
     display: grid;
@@ -5504,6 +5503,56 @@
     text-transform: uppercase;
     color: rgba(255, 255, 255, 0.66);
   }
+  .design-panel-section-label {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    margin-top: 4px;
+    color: rgba(255, 255, 255, 0.55);
+    font-size: 0.72rem;
+    font-weight: 800;
+    letter-spacing: 0.12em;
+    text-transform: uppercase;
+  }
+  .design-panel-section-label::after {
+    content: "";
+    height: 1px;
+    flex: 1;
+    background: rgba(255, 255, 255, 0.1);
+  }
+  .design-color-chip {
+    display: inline-flex;
+    align-items: center;
+    gap: 8px;
+    min-height: 44px;
+    width: 100%;
+    padding: 7px 10px;
+    border: 1px solid rgba(255, 255, 255, 0.14);
+    border-radius: 10px;
+    background: rgba(15, 23, 42, 0.72);
+    color: rgba(255, 255, 255, 0.88);
+    text-align: left;
+  }
+  .design-color-chip:hover,
+  .design-color-chip:focus-visible { border-color: rgba(80, 205, 181, 0.72); }
+  .design-color-chip .short-bg-swatch { flex: 0 0 22px; width: 22px; height: 22px; border-radius: 6px; }
+  .design-color-chip-copy { display: grid; gap: 1px; min-width: 0; }
+  .design-color-chip-value { font-size: 0.78rem; font-weight: 700; }
+  .design-color-chip-opacity { color: rgba(255, 255, 255, 0.58); font-size: 0.7rem; }
+  .design-position-segments { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 6px; }
+  .design-position-segments button { min-height: 44px; border: 1px solid rgba(255,255,255,.14); border-radius: 9px; background: rgba(15,23,42,.62); color: rgba(255,255,255,.68); }
+  .design-position-segments button.is-active { border-color: rgba(80,205,181,.9); background: rgba(80,205,181,.16); color: #fff; }
+  .design-panel-more-options { display: none; gap: 10px; }
+  .design-panel-more-options.is-open { display: grid; }
+  .design-panel-more-toggle { justify-self: start; padding: 0; border: 0; background: transparent; color: rgba(255,255,255,.64); font-size: .78rem; }
+  .design-panel-more-toggle:hover { color: #fff; }
+  .design-panel-more-grid { display: grid; grid-template-columns: minmax(0,1fr) 120px; gap: 10px; }
+  .design-panel-more-grid .input-group-inline { min-width: 0; }
+  .design-panel-hint { color: rgba(255,255,255,.52); font-size: .76rem; }
+  .design-popover-alpha { display: grid; gap: 4px; margin-top: 8px; }
+  .design-popover-alpha label { color: rgba(255,255,255,.65); font-size: .72rem; }
+  .design-popover-alpha .form-range { min-height: 28px; }
+  .design-none-swatch { display: inline-flex; align-items: center; justify-content: center; font-size: .68rem; color: rgba(255,255,255,.72); background: repeating-linear-gradient(135deg, rgba(255,255,255,.08) 0 4px, transparent 4px 8px); }
   .caption-tab-panel .subtitle-preset-section {
     min-width: 0;
     gap: 8px;
@@ -8347,7 +8396,7 @@
                     <input type="hidden" name="subtitle_preset" id="subtitlePresetValue" value="{{ subtitle_preset_value }}">
                     <div id="crop-preview-toolbar-subtitle" class="crop-modal-element-editor">
                       <div class="crop-modal-element-header">
-                        <div class="crop-modal-element-title">Subtitle</div>
+                        <div class="crop-modal-element-title">Captions</div>
                         <div class="crop-modal-inline-toggle crop-toggle-card">
                           <div class="form-check form-switch mb-0">
                             <input class="form-check-input" type="checkbox" name="show_subtitle" id="showSubtitleToggle" {% if selected_show_subtitle %}checked{% endif %}>
@@ -8371,21 +8420,16 @@
                           <div class="caption-tab-section-heading">Size</div>
                           <input type="number" name="sub_font_size" class="form-control form-control-sm" value="{{ selected_sub_font_size or 40 }}" min="1" max="990">
                         </div>
-                        <div class="input-group-inline compact" data-preview-control="subtitle">
-                          <span class="advanced-field-label">
-                            <span class="advanced-field-label-main">Position</span>
-                            <span class="advanced-field-label-direction">from bottom</span>
-                          </span>
-                          <input type="number" name="sub_margin" class="form-control form-control-sm short-input-small" value="{{ selected_sub_margin or 520 }}" min="0" max="2000">
-                        </div>
                       </div>
                       <div class="crop-modal-element-grid crop-modal-element-grid--caption-bottom">
                         <div class="input-group-inline compact short-alpha-control">
                           <div class="d-grid gap-1 w-100">
                             <span class="caption-tab-section-heading">Text color</span>
-                            <div class="short-bg-trigger" id="subtitleTextColorTrigger">
+                            <div class="short-bg-trigger design-color-chip" id="subtitleTextColorTrigger" role="button" tabindex="0" aria-label="Caption text color">
                               <div class="short-bg-swatch" id="subtitleTextColorSwatch"></div>
+                              <div class="design-color-chip-copy"><span class="design-color-chip-value" id="subtitleTextColorChipValue">#FFFFFF</span><span class="design-color-chip-opacity" id="subtitleTextColorChipOpacity">100% opacity</span></div>
                               <div class="short-bg-popover closed" id="subtitleTextColorPopover">
+                                <div class="design-popover-alpha"><label for="subtitleTextAlphaPicker">Opacity <span data-design-alpha-label="subtitle_text_alpha">100%</span></label><input type="range" id="subtitleTextAlphaPicker" data-design-alpha-input="subtitle_text_alpha" min="0" max="100" step="1" value="{{ selected_subtitle_text_alpha if selected_subtitle_text_alpha is not none else 100 }}"></div>
                                 {% set palette_groups = [
                                   ['#FFFDE7','#FFF9C4','#FFF176','#FFEE58','#FDD835','#FFD600'],
                                   ['#FFE0B2','#FFCC80','#FFB74D','#FFA726','#FB8C00','#EF6C00'],
@@ -8412,16 +8456,20 @@
                         </div>
                         <div class="input-group-inline compact short-alpha-control">
                           <div class="d-grid gap-1 w-100">
-                            <span class="caption-tab-section-heading">Text alpha</span>
-                            <input type="range" name="subtitle_text_alpha" id="subtitleTextAlphaValue" class="form-range short-alpha-range" min="0" max="100" step="1" value="{{ selected_subtitle_text_alpha if selected_subtitle_text_alpha is not none else 100 }}">
+                            <span class="caption-tab-section-heading">Text color</span>
+                            <span class="design-panel-hint">Opacity is in the color chip.</span>
+                            <input type="range" name="subtitle_text_alpha" id="subtitleTextAlphaValue" class="form-range short-alpha-range d-none" min="0" max="100" step="1" value="{{ selected_subtitle_text_alpha if selected_subtitle_text_alpha is not none else 100 }}">
                           </div>
                         </div>
                         <div class="input-group-inline compact short-alpha-control">
                           <div class="d-grid gap-1 w-100">
                             <span class="caption-tab-section-heading">Background color</span>
-                            <div class="short-bg-trigger" id="subtitleBgColorTrigger">
+                            <div class="short-bg-trigger design-color-chip" id="subtitleBgColorTrigger" role="button" tabindex="0" aria-label="Caption background color">
                               <div class="short-bg-swatch" id="subtitleBgColorSwatch"></div>
+                              <div class="design-color-chip-copy"><span class="design-color-chip-value" id="subtitleBgColorChipValue">#000000</span><span class="design-color-chip-opacity" id="subtitleBgColorChipOpacity">85% opacity</span></div>
                               <div class="short-bg-popover closed" id="subtitleBgColorPopover">
+                                <div class="short-color-swatch design-none-swatch" data-none-color="1" aria-label="None">None</div>
+                                <div class="design-popover-alpha"><label for="subtitleBgAlphaPicker">Opacity <span data-design-alpha-label="subtitle_bg_alpha">{{ selected_subtitle_bg_alpha if selected_subtitle_bg_alpha is not none else 85 }}%</span></label><input type="range" id="subtitleBgAlphaPicker" data-design-alpha-input="subtitle_bg_alpha" min="0" max="100" step="1" value="{{ selected_subtitle_bg_alpha if selected_subtitle_bg_alpha is not none else 85 }}"></div>
                                 {% set palette_groups = [
                                   ['#FFFDE7','#FFF9C4','#FFF176','#FFEE58','#FDD835','#FFD600'],
                                   ['#FFE0B2','#FFCC80','#FFB74D','#FFA726','#FB8C00','#EF6C00'],
@@ -8448,12 +8496,28 @@
                         </div>
                         <div class="input-group-inline compact short-alpha-control">
                           <div class="d-grid gap-1 w-100">
-                            <span class="caption-tab-section-heading">BG alpha</span>
-                            <input type="range" name="subtitle_bg_alpha" id="subtitleBgAlphaValue" class="form-range short-alpha-range" min="0" max="100" step="1" value="{{ selected_subtitle_bg_alpha if selected_subtitle_bg_alpha is not none else 85 }}">
+                            <span class="caption-tab-section-heading">Box color</span>
+                            <span class="design-panel-hint">Choose None to remove the box.</span>
+                            <input type="range" name="subtitle_bg_alpha" id="subtitleBgAlphaValue" class="form-range short-alpha-range d-none" min="0" max="100" step="1" value="{{ selected_subtitle_bg_alpha if selected_subtitle_bg_alpha is not none else 85 }}">
                           </div>
                         </div>
                       </div>
-                      <div class="crop-modal-element-helper">Drag the subtitle in Final Preview or use arrow keys to nudge.</div>
+                      <div class="design-panel-section-label">Position</div>
+                      <div class="design-position-segments" data-design-position-segments="caption" role="group" aria-label="Caption position">
+                        <button type="button" data-design-position="caption" data-position-value="1520">Top</button>
+                        <button type="button" data-design-position="caption" data-position-value="980">Middle</button>
+                        <button type="button" data-design-position="caption" data-position-value="520">Bottom</button>
+                      </div>
+                      <div class="design-panel-hint">Fine-tune by dragging in the preview, or use the ↑ ↓ keys.</div>
+                      <button type="button" class="design-panel-more-toggle" data-design-more-toggle="caption" aria-expanded="false">▸ More options</button>
+                      <div class="design-panel-more-options" data-design-more-options="caption">
+                        <div class="design-panel-more-grid">
+                          <div class="input-group-inline compact" data-preview-control="subtitle">
+                            <span class="advanced-field-label"><span class="advanced-field-label-main">Exact position</span><span class="advanced-field-label-direction">px from bottom</span></span>
+                            <input type="number" name="sub_margin" class="form-control form-control-sm short-input-small" value="{{ selected_sub_margin or 520 }}" min="0" max="2000">
+                          </div>
+                        </div>
+                      </div>
                     </div>
                     <div class="input-group-inline compact subtitle-style-hidden">
                       <span>Style</span>
@@ -8496,24 +8560,12 @@
                         </div>
                       </div>
                       <div class="crop-modal-element-grid crop-modal-element-grid--title-bottom">
-                        <div class="input-group-inline compact">
-                          <span class="advanced-field-label">
-                            <span class="advanced-field-label-main">Line spacing</span>
-                          </span>
-                          <input type="number" name="title_line_spacing" class="form-control form-control-sm short-input-small" value="{{ selected_title_line_spacing if selected_title_line_spacing is not none else -4 }}" min="-50" max="100">
-                        </div>
-                        <div class="input-group-inline compact" data-preview-control="title">
-                          <span class="advanced-field-label">
-                            <span class="advanced-field-label-main">Position</span>
-                            <span class="advanced-field-label-direction">from top</span>
-                          </span>
-                          <input type="number" name="title_margin" class="form-control form-control-sm short-input-small" value="{{ selected_title_margin or 40 }}" min="0" max="500">
-                        </div>
                         <div class="input-group-inline compact short-alpha-control">
                           <div class="d-grid gap-1 w-100">
                             <span class="caption-tab-section-heading">Text color</span>
-                            <div class="short-bg-trigger" id="titleTextColorTrigger">
+                            <div class="short-bg-trigger design-color-chip" id="titleTextColorTrigger" role="button" tabindex="0" aria-label="Title text color">
                               <div class="short-bg-swatch" id="titleTextColorSwatch"></div>
+                              <div class="design-color-chip-copy"><span class="design-color-chip-value" id="titleTextColorChipValue">#FFFFFF</span><span class="design-color-chip-opacity" id="titleTextColorChipOpacity">100% opacity</span></div>
                               <div class="short-bg-popover closed" id="titleTextColorPopover">
                                 {% set palette_groups = [
                                   ['#FFFDE7','#FFF9C4','#FFF176','#FFEE58','#FDD835','#FFD600'],
@@ -8542,9 +8594,12 @@
                         <div class="input-group-inline compact short-alpha-control">
                           <div class="d-grid gap-1 w-100">
                             <span class="caption-tab-section-heading">Background color</span>
-                            <div class="short-bg-trigger" id="titleBgTrigger">
+                            <div class="short-bg-trigger design-color-chip" id="titleBgTrigger" role="button" tabindex="0" aria-label="Title background color">
                               <div class="short-bg-swatch" id="titleBgSwatch"></div>
+                              <div class="design-color-chip-copy"><span class="design-color-chip-value" id="titleBgColorChipValue">#111827</span><span class="design-color-chip-opacity" id="titleBgColorChipOpacity">0% opacity</span></div>
                               <div class="short-bg-popover closed" id="titleBgPopover">
+                                <div class="short-color-swatch design-none-swatch" data-none-color="1" aria-label="None">None</div>
+                                <div class="design-popover-alpha"><label for="titleBgAlphaPicker">Opacity <span data-design-alpha-label="title_bg_alpha">{{ selected_title_bg_alpha if selected_title_bg_alpha is not none else 0 }}%</span></label><input type="range" id="titleBgAlphaPicker" data-design-alpha-input="title_bg_alpha" min="0" max="100" step="1" value="{{ selected_title_bg_alpha if selected_title_bg_alpha is not none else 0 }}"></div>
                                 {% set palette_groups = [
                                   ['#FFFDE7','#FFF9C4','#FFF176','#FFEE58','#FDD835','#FFD600'],
                                   ['#FFE0B2','#FFCC80','#FFB74D','#FFA726','#FB8C00','#EF6C00'],
@@ -8571,33 +8626,40 @@
                         </div>
                         <div class="input-group-inline compact short-alpha-control">
                           <div class="d-grid gap-1 w-100">
-                            <span class="caption-tab-section-heading">BG alpha</span>
-                            <input type="range" name="title_bg_alpha" id="titleBgAlphaValue" class="form-range short-alpha-range" min="0" max="100" step="1" value="{{ selected_title_bg_alpha if selected_title_bg_alpha is not none else 0 }}">
+                            <span class="caption-tab-section-heading">Box color</span>
+                            <span class="design-panel-hint">Choose None to remove the box.</span>
+                            <input type="range" name="title_bg_alpha" id="titleBgAlphaValue" class="form-range short-alpha-range d-none" min="0" max="100" step="1" value="{{ selected_title_bg_alpha if selected_title_bg_alpha is not none else 0 }}">
                           </div>
                         </div>
                       </div>
-                      <div class="crop-modal-title-grid">
-                        <div class="input-group-inline compact">
-                          <span class="advanced-field-label">
-                            <span class="advanced-field-label-main">Date text</span>
-                          </span>
-                          <input type="text"
-                                 name="video_date_text"
-                                 class="form-control form-control-sm short-input-small short-input-wide"
-                                 value="{{ selected_video_date|e }}"
-                                 placeholder="Optional date">
+                      <div class="design-panel-section-label">Position</div>
+                      <div class="design-position-segments" data-design-position-segments="title" role="group" aria-label="Title position">
+                        <button type="button" data-design-position="title" data-position-value="40">Top</button>
+                        <button type="button" data-design-position="title" data-position-value="720">Middle</button>
+                        <button type="button" data-design-position="title" data-position-value="1450">Bottom</button>
+                      </div>
+                      <div class="design-panel-hint">Fine-tune by dragging in the preview, or use the ↑ ↓ keys.</div>
+                      <button type="button" class="design-panel-more-toggle" data-design-more-toggle="title" aria-expanded="false">▸ More options</button>
+                      <div class="design-panel-more-options" data-design-more-options="title">
+                        <div class="design-panel-more-grid">
+                          <div class="input-group-inline compact" data-preview-control="title">
+                            <span class="advanced-field-label"><span class="advanced-field-label-main">Exact position</span><span class="advanced-field-label-direction">px from top</span></span>
+                            <input type="number" name="title_margin" class="form-control form-control-sm short-input-small" value="{{ selected_title_margin or 40 }}" min="0" max="2000">
+                          </div>
+                          <div class="input-group-inline compact">
+                            <span class="advanced-field-label"><span class="advanced-field-label-main">Line spacing</span></span>
+                            <input type="number" name="title_line_spacing" class="form-control form-control-sm short-input-small" value="{{ selected_title_line_spacing if selected_title_line_spacing is not none else -4 }}" min="-50" max="100">
+                          </div>
                         </div>
-                        <div class="input-group-inline compact">
-                          <span class="advanced-field-label">
-                            <span class="advanced-field-label-main">Date position</span>
-                            <span class="advanced-field-label-direction">from top</span>
-                          </span>
-                          <input type="number"
-                                 name="video_date_top"
-                                 class="form-control form-control-sm short-input-small"
-                                 value="{{ selected_video_date_top if selected_video_date_top is not none else 1006 }}"
-                                 min="0"
-                                 max="1200">
+                        <div class="design-panel-more-grid">
+                          <div class="input-group-inline compact">
+                            <span class="advanced-field-label"><span class="advanced-field-label-main">Extra line under title</span></span>
+                            <input type="text" name="video_date_text" class="form-control form-control-sm" value="{{ selected_video_date|e }}" placeholder="Optional date">
+                          </div>
+                          <div class="input-group-inline compact">
+                            <span class="advanced-field-label"><span class="advanced-field-label-main">Extra line position</span><span class="advanced-field-label-direction">px from top</span></span>
+                            <input type="number" name="video_date_top" class="form-control form-control-sm short-input-small" value="{{ selected_video_date_top if selected_video_date_top is not none else 1006 }}" min="0" max="2000">
+                          </div>
                         </div>
                       </div>
                       <div class="crop-modal-element-helper">Drag the title in Final Preview or use arrow keys to nudge.</div>
@@ -21064,6 +21126,20 @@ document.addEventListener("DOMContentLoaded", function () {
     const b = parseInt(value.slice(4, 6), 16);
     return `rgba(${r}, ${g}, ${b}, ${alpha})`;
   };
+  const syncDesignChip = (hiddenId, color, alphaValue) => {
+    const hex = normalize(color || "#000000") || "#000000";
+    const alpha = Math.max(0, Math.min(100, Number(alphaValue ?? 100)));
+    const chipValue = document.getElementById(`${hiddenId.replace("Value", "")}ChipValue`);
+    const chipOpacity = document.getElementById(`${hiddenId.replace("Value", "")}ChipOpacity`);
+    const swatch = document.getElementById(hiddenId.replace("Value", "Swatch"));
+    const picker = document.querySelector(`[data-design-alpha-input="${hiddenId === "subtitleTextColorValue" ? "subtitle_text_alpha" : hiddenId === "subtitleBgColorValue" ? "subtitle_bg_alpha" : hiddenId === "titleBgColorValue" ? "title_bg_alpha" : ""}"]`);
+    if (chipValue) chipValue.textContent = alpha === 0 && hiddenId !== "subtitleTextColorValue" ? "None" : hex;
+    if (chipOpacity) chipOpacity.textContent = `${alpha}% opacity`;
+    if (swatch) swatch.style.backgroundColor = alpha === 0 ? "transparent" : hexToRgba(hex, alpha / 100);
+    if (picker) picker.value = String(alpha);
+    const label = document.querySelector(`[data-design-alpha-label="${hiddenId === "subtitleTextColorValue" ? "subtitle_text_alpha" : hiddenId === "subtitleBgColorValue" ? "subtitle_bg_alpha" : hiddenId === "titleBgColorValue" ? "title_bg_alpha" : ""}"]`);
+    if (label) label.textContent = `${alpha}%`;
+  };
   const closeAllColorPopovers = (exceptId = null) => {
     document.querySelectorAll(".short-bg-popover").forEach((popover) => {
       if (exceptId && popover.id === exceptId) return;
@@ -21077,6 +21153,13 @@ document.addEventListener("DOMContentLoaded", function () {
     const hexLabel = document.getElementById(hexId);
     const swatchEl = document.getElementById(swatchId);
     const customInput = document.getElementById(customInputId);
+    const alphaFieldId = hiddenId === "subtitleTextColorValue" ? "subtitleTextAlphaValue"
+      : hiddenId === "subtitleBgColorValue" ? "subtitleBgAlphaValue"
+      : hiddenId === "titleBgColorValue" ? "titleBgAlphaValue" : null;
+    const alphaField = alphaFieldId ? document.getElementById(alphaFieldId) : null;
+    const chipValue = document.getElementById(`${hiddenId.replace("Value", "")}ChipValue`);
+    const chipOpacity = document.getElementById(`${hiddenId.replace("Value", "")}ChipOpacity`);
+    const alphaPicker = alphaField ? popover?.querySelector(`[data-design-alpha-input="${alphaFieldId}"]`) : null;
     const swatches = Array.from(document.querySelectorAll(`#${popoverId} .short-color-swatch`)).filter((s) => s.dataset.color);
     swatches.forEach((swatch) => {
       swatch.style.backgroundColor = swatch.dataset.color;
@@ -21086,16 +21169,45 @@ document.addEventListener("DOMContentLoaded", function () {
         s.classList.toggle("active", normalize(s.dataset.color) === color);
       });
     };
+    let allowAlphaRestore = true;
     const applyColor = (value) => {
       const hex = normalize(value);
       if (!hex) return;
       if (hidden) hidden.value = hex;
       if (hexLabel) hexLabel.textContent = hex;
-      if (swatchEl) swatchEl.style.backgroundColor = hex;
+      if (allowAlphaRestore && alphaField && Number(alphaField.value) === 0) {
+        alphaField.value = "100";
+        alphaPicker && (alphaPicker.value = "100");
+      }
+      const opacity = alphaField ? alphaToOpacity(alphaField.value, 100) : 1;
+      if (swatchEl) swatchEl.style.backgroundColor = hexToRgba(hex, opacity);
+      if (chipValue) chipValue.textContent = hex;
+      if (chipOpacity) chipOpacity.textContent = `${Math.round(opacity * 100)}% opacity`;
+      trigger?.setAttribute("aria-label", `${hiddenId.includes("Bg") ? "Background" : "Text"} color: ${hex}, ${Math.round(opacity * 100)}% opacity`);
       if (customInput) customInput.value = hex;
       if (typeof onApply === "function") onApply(hex);
       setActiveSwatch(hex);
     };
+    const applyNone = () => {
+      if (!alphaField) return;
+      alphaField.value = "0";
+      if (alphaPicker) alphaPicker.value = "0";
+      if (chipValue) chipValue.textContent = "None";
+      if (chipOpacity) chipOpacity.textContent = "0% opacity";
+      if (swatchEl) swatchEl.style.backgroundColor = "transparent";
+      if (typeof onApply === "function") onApply(hidden?.value || "#000000");
+    };
+    popover?.querySelectorAll("[data-none-color]").forEach((none) => {
+      none.addEventListener("click", () => { applyNone(); popover.classList.add("closed"); });
+    });
+    alphaPicker?.addEventListener("input", () => {
+      if (alphaField) alphaField.value = alphaPicker.value;
+      const color = hidden?.value || "#000000";
+      const opacity = alphaToOpacity(alphaPicker.value, 100);
+      if (swatchEl) swatchEl.style.backgroundColor = hexToRgba(color, opacity);
+      if (chipOpacity) chipOpacity.textContent = `${Math.round(opacity * 100)}% opacity`;
+      if (typeof onApply === "function") onApply(color);
+    });
     swatches.forEach((swatch) => {
       swatch.addEventListener("click", () => {
         applyColor(swatch.dataset.color);
@@ -21121,8 +21233,14 @@ document.addEventListener("DOMContentLoaded", function () {
       applyColor(value);
     });
     const initialColor = normalize(hidden?.value) || normalize(swatches[0]?.dataset.color);
+    allowAlphaRestore = false;
     if (initialColor) {
       applyColor(initialColor);
+    }
+    allowAlphaRestore = true;
+    if (alphaField && alphaPicker) {
+      alphaPicker.value = alphaField.value || "0";
+      alphaPicker.dispatchEvent(new Event("input", { bubbles: true }));
     }
   };
 
@@ -21144,6 +21262,7 @@ document.addEventListener("DOMContentLoaded", function () {
     if (previewTitle) previewTitle.style.backgroundColor = effectiveTitleBackground;
     const titleBgSwatch = document.getElementById("titleBgSwatch");
     if (titleBgSwatch) titleBgSwatch.style.backgroundColor = rgba;
+    syncDesignChip("titleBgColorValue", hex, alphaSource !== "" ? alphaSource : 0);
     const titleShadow = titleTemplatePreset?.outlineWidth
       ? outlineShadow(titleTemplatePreset.outlineWidth)
       : (titleTemplatePreset?.shadowSpec ? scaledRenderShadow(titleTemplatePreset.shadowSpec) : titleTemplatePreset?.textShadow || "none");
@@ -21211,6 +21330,8 @@ document.addEventListener("DOMContentLoaded", function () {
     if (subtitleTextSwatch) subtitleTextSwatch.style.backgroundColor = textRgba;
     const subtitleBgSwatch = document.getElementById("subtitleBgColorSwatch");
     if (subtitleBgSwatch) subtitleBgSwatch.style.backgroundColor = bgRgba;
+    syncDesignChip("subtitleTextColorValue", textHex, Number(subtitleTextAlphaInput?.value ?? 100));
+    syncDesignChip("subtitleBgColorValue", bgHex, Number(subtitleBgAlphaInput?.value ?? 85));
     syncFinalPreviewLayout();
   };
   const applySubtitlePresetValue = (nextValue) => {
@@ -21494,6 +21615,56 @@ document.addEventListener("DOMContentLoaded", function () {
       setActiveCropModalTab(tab);
     });
   });
+  const syncDesignPositionSegments = (kind) => {
+    const field = getDesignField(kind === "caption" ? "sub_margin" : "title_margin");
+    const value = Number(field?.value);
+    document.querySelectorAll(`[data-design-position-segments="${kind}"] [data-position-value]`).forEach((button) => {
+      button.classList.toggle("is-active", Number(button.dataset.positionValue) === value);
+    });
+  };
+  const bindDesignPositionControls = () => {
+    ["caption", "title"].forEach((kind) => {
+      const field = getDesignField(kind === "caption" ? "sub_margin" : "title_margin");
+      document.querySelectorAll(`[data-design-position-segments="${kind}"] [data-position-value]`).forEach((button) => {
+        button.addEventListener("click", () => {
+          setDesignFieldValue(field, button.dataset.positionValue);
+          syncDesignPositionSegments(kind);
+          syncFinalPreviewLayout();
+        });
+      });
+      field?.addEventListener("input", () => syncDesignPositionSegments(kind));
+      field?.addEventListener("change", () => syncDesignPositionSegments(kind));
+      field?.addEventListener("keydown", (event) => {
+        if (!["ArrowUp", "ArrowDown"].includes(event.key)) return;
+        event.preventDefault();
+        const delta = event.key === "ArrowUp" ? (kind === "caption" ? 10 : -10) : (kind === "caption" ? -10 : 10);
+        const next = Math.max(0, Number(field.value || 0) + delta);
+        setDesignFieldValue(field, next);
+        syncDesignPositionSegments(kind);
+      });
+      syncDesignPositionSegments(kind);
+    });
+  };
+  const bindDesignMoreOptions = () => {
+    document.querySelectorAll("[data-design-more-toggle]").forEach((toggle) => {
+      const kind = toggle.dataset.designMoreToggle;
+      const panel = document.querySelector(`[data-design-more-options="${kind}"]`);
+      let open = false;
+      try { open = window.localStorage.getItem(`minti.design.more.${kind}`) === "1"; } catch (_) {}
+      panel?.classList.toggle("is-open", open);
+      toggle.setAttribute("aria-expanded", open ? "true" : "false");
+      toggle.textContent = `${open ? "▾" : "▸"} More options`;
+      toggle.addEventListener("click", () => {
+        const next = !panel?.classList.contains("is-open");
+        panel?.classList.toggle("is-open", next);
+        toggle.setAttribute("aria-expanded", next ? "true" : "false");
+        toggle.textContent = `${next ? "▾" : "▸"} More options`;
+        try { window.localStorage.setItem(`minti.design.more.${kind}`, next ? "1" : "0"); } catch (_) {}
+      });
+    });
+  };
+  bindDesignPositionControls();
+  bindDesignMoreOptions();
   [titleFont, titleFontSizeInput, titleTextColorField, titleBgColorField, subtitlePresetField].forEach((field) => {
     field?.addEventListener("change", syncStyleTemplateCards);
     field?.addEventListener("input", syncStyleTemplateCards);
