@@ -5561,37 +5561,49 @@
   .design-panel-more-options.is-open { display: grid; }
   .design-panel-more-toggle { justify-self: start; padding: 0; border: 0; background: transparent; color: rgba(255,255,255,.64); font-size: .78rem; }
   .design-panel-more-toggle:hover { color: #fff; }
-  .design-panel-more-grid { display: grid; grid-template-columns: minmax(0,1fr) 120px; gap: 10px; }
-  .design-panel-more-grid .input-group-inline { min-width: 0; }
+  .design-panel-more-grid { display: grid; grid-template-columns: 180px 120px; align-items: center; gap: 10px; }
+  .design-panel-more-grid .input-group-inline { min-width: 0; display: contents; }
+  .design-more-label { color: rgba(255,255,255,.72); font-size: .78rem; }
+  .design-more-input { position: relative; width: 120px; }
+  .design-more-input input { width: 100%; padding-right: 28px; }
+  .design-more-input .design-more-unit { position: absolute; right: 9px; top: 50%; transform: translateY(-50%); color: rgba(255,255,255,.48); font-size: .72rem; pointer-events: none; }
+  .design-more-subheading { grid-column: 1 / -1; padding-top: 4px; color: rgba(255,255,255,.58); font-size: .72rem; font-weight: 700; text-transform: uppercase; letter-spacing: .08em; }
   .design-panel-hint { color: rgba(255,255,255,.52); font-size: .76rem; }
-  .short-bg-popover { width: 280px; max-width: min(280px, calc(100vw - 24px)); padding: 12px; }
+  .short-bg-popover { width: 288px; max-width: min(288px, calc(100vw - 24px)); padding: 16px; gap: 14px; box-sizing: border-box; }
   .short-bg-popover.closed { display: none !important; visibility: hidden; pointer-events: none; }
   .short-bg-popover:not(.closed) {
-    position: absolute;
-    left: 0;
-    top: calc(100% + 8px);
     display: grid;
     visibility: visible;
     pointer-events: auto;
-    z-index: 70;
+    z-index: 2000;
   }
-  .short-bg-popover.design-compact-popover { display: grid; gap: 8px; }
+  .short-bg-popover.design-popover-portal { position: fixed !important; margin: 0; }
+  .short-bg-popover.design-compact-popover { display: grid; gap: 14px; }
   .short-bg-popover.design-compact-popover > .short-color-swatch { display: none; }
   .short-bg-popover.design-compact-popover > .short-color-swatch.is-visible { display: inline-flex; }
-  .short-bg-popover.design-compact-popover > .short-color-swatch:not(.design-none-swatch) { width: 25px; height: 25px; border-radius: 7px; }
-  .short-bg-popover.design-compact-popover > .short-color-swatch.design-none-swatch { width: 25px; height: 25px; border-radius: 7px; }
+  .short-bg-popover.design-compact-popover .design-preset-row { display: grid; grid-template-columns: repeat(8, 28px); gap: 8px; }
+  .short-bg-popover.design-compact-popover .design-preset-row .short-color-swatch,
+  .short-bg-popover.design-compact-popover .design-preset-row .design-none-swatch { width: 28px; height: 28px; border-radius: 7px; box-sizing: border-box; }
+  .short-bg-popover.design-compact-popover .design-preset-row .short-color-swatch.active { outline: 2px solid #fff; outline-offset: 1px; }
   .short-bg-popover.design-compact-popover .short-color-custom { display: flex; align-items: center; gap: 8px; margin: 0 !important; padding: 0 !important; border: 0 !important; }
   .short-bg-popover.design-compact-popover .short-color-custom label { display: none; }
   .short-bg-popover.design-compact-popover .short-color-custom input[type="text"] { min-width: 0; flex: 1; }
-  .short-bg-popover.design-compact-popover .short-color-custom input[type="color"] { width: 44px; min-width: 44px; height: 38px; padding: 2px; }
-  .design-popover-alpha { display: grid; gap: 4px; margin: 10px 0 0; }
+  .short-bg-popover.design-compact-popover .short-color-custom input[type="color"] { width: 36px; min-width: 36px; height: 36px; padding: 2px; }
+  .design-popover-alpha { display: grid; gap: 6px; margin: 0; }
   .design-popover-alpha label { display: flex; justify-content: space-between; color: rgba(255,255,255,.65); font-size: .72rem; }
   .design-popover-alpha .form-range { min-height: 28px; }
-  .design-popover-alpha input[type="range"] { width: 100%; height: 28px; min-height: 28px; padding: 0; }
+  .design-popover-alpha input[type="range"] { width: 100%; height: 28px; min-height: 28px; padding: 0; outline: none; }
   .design-popover-alpha input[type="range"]::-webkit-slider-runnable-track { height: 6px; }
   .design-popover-alpha input[type="range"]::-webkit-slider-thumb { width: 20px; height: 20px; margin-top: -7px; }
   .design-popover-alpha input[type="range"]::-moz-range-track { height: 6px; }
   .design-popover-alpha input[type="range"]::-moz-range-thumb { width: 20px; height: 20px; }
+  .design-popover-alpha input[type="range"]:focus-visible::-webkit-slider-thumb { box-shadow: 0 0 0 3px rgba(80,205,181,.45); }
+  .design-section-controls.is-dimmed,
+  .design-panel-section-label.is-dimmed,
+  .crop-modal-element-grid.is-dimmed,
+  .design-panel-hint.is-dimmed,
+  .design-panel-more-toggle.is-dimmed,
+  .design-panel-more-options.is-dimmed { opacity: .5; }
   [data-design-text-color] { grid-column: 1 / -1; }
   .design-none-swatch { display: inline-flex; align-items: center; justify-content: center; font-size: .68rem; color: rgba(255,255,255,.72); background: repeating-linear-gradient(135deg, rgba(255,255,255,.08) 0 4px, transparent 4px 8px); }
   .design-preset-row { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; }
@@ -8541,8 +8553,8 @@
                       <div class="design-panel-more-options" data-design-more-options="caption">
                         <div class="design-panel-more-grid">
                           <div class="input-group-inline compact" data-preview-control="subtitle">
-                            <span class="advanced-field-label"><span class="advanced-field-label-main">Exact position</span><span class="advanced-field-label-direction">px from bottom</span></span>
-                            <input type="number" name="sub_margin" class="form-control form-control-sm short-input-small" value="{{ selected_sub_margin or 520 }}" min="0" max="2000">
+                            <span class="design-more-label">Distance from bottom</span>
+                            <span class="design-more-input"><input type="number" name="sub_margin" class="form-control form-control-sm short-input-small" value="{{ selected_sub_margin or 520 }}" min="0" max="2000"><span class="design-more-unit">px</span></span>
                           </div>
                         </div>
                       </div>
@@ -8661,22 +8673,23 @@
                       <div class="design-panel-more-options" data-design-more-options="title">
                         <div class="design-panel-more-grid">
                           <div class="input-group-inline compact" data-preview-control="title">
-                            <span class="advanced-field-label"><span class="advanced-field-label-main">Exact position</span><span class="advanced-field-label-direction">px from top</span></span>
-                            <input type="number" name="title_margin" class="form-control form-control-sm short-input-small" value="{{ selected_title_margin or 40 }}" min="0" max="2000">
+                            <span class="design-more-label">Distance from top</span>
+                            <span class="design-more-input"><input type="number" name="title_margin" class="form-control form-control-sm short-input-small" value="{{ selected_title_margin or 40 }}" min="0" max="2000"><span class="design-more-unit">px</span></span>
                           </div>
                           <div class="input-group-inline compact">
-                            <span class="advanced-field-label"><span class="advanced-field-label-main">Line spacing</span></span>
-                            <input type="number" name="title_line_spacing" class="form-control form-control-sm short-input-small" value="{{ selected_title_line_spacing if selected_title_line_spacing is not none else -4 }}" min="-50" max="100">
+                            <span class="design-more-label">Line spacing</span>
+                            <span class="design-more-input"><input type="number" name="title_line_spacing" class="form-control form-control-sm short-input-small" value="{{ selected_title_line_spacing if selected_title_line_spacing is not none else -4 }}" min="-50" max="100"></span>
+                            <span class="design-more-subheading">Extra line under title</span>
                           </div>
                         </div>
                         <div class="design-panel-more-grid">
                           <div class="input-group-inline compact">
-                            <span class="advanced-field-label"><span class="advanced-field-label-main">Extra line under title</span></span>
-                            <input type="text" name="video_date_text" class="form-control form-control-sm" value="{{ selected_video_date|e }}" placeholder="Optional date">
+                            <span class="design-more-label">Text</span>
+                            <span class="design-more-input"><input type="text" name="video_date_text" class="form-control form-control-sm" value="{{ selected_video_date|e }}" placeholder="e.g. date or series name"></span>
                           </div>
                           <div class="input-group-inline compact">
-                            <span class="advanced-field-label"><span class="advanced-field-label-main">Extra line position</span><span class="advanced-field-label-direction">px from top</span></span>
-                            <input type="number" name="video_date_top" class="form-control form-control-sm short-input-small" value="{{ selected_video_date_top if selected_video_date_top is not none else 1006 }}" min="0" max="2000">
+                            <span class="design-more-label">Distance from top</span>
+                            <span class="design-more-input"><input type="number" name="video_date_top" class="form-control form-control-sm short-input-small" value="{{ selected_video_date_top if selected_video_date_top is not none else 1006 }}" min="0" max="2000"><span class="design-more-unit">px</span></span>
                           </div>
                         </div>
                       </div>
@@ -11520,20 +11533,9 @@ const clampGenerateV2ColorPopovers = () => {
   if (!generateV2EditState.active) {
     return;
   }
-  document.querySelectorAll("#generate-v2-editor .short-bg-popover:not(.closed)").forEach((popover) => {
-    popover.style.removeProperty("bottom");
-    popover.style.removeProperty("top");
-    popover.style.maxHeight = "min(360px, calc(100vh - 24px))";
-    popover.style.overflowY = "auto";
-    const rect = popover.getBoundingClientRect();
-    if (rect.bottom > window.innerHeight - 12) {
-      popover.style.top = "auto";
-      popover.style.bottom = "calc(100% + 8px)";
-    }
-    const nextRect = popover.getBoundingClientRect();
-    if (nextRect.top < 12) {
-      popover.style.top = "12px";
-      popover.style.bottom = "auto";
+  document.querySelectorAll(".short-bg-popover:not(.closed)").forEach((popover) => {
+    if (typeof popover.__designPosition === "function") {
+      popover.__designPosition();
     }
   });
 };
@@ -18004,6 +18006,8 @@ document.addEventListener("DOMContentLoaded", () => {
   const videoDateTextInput = getEditorField("video_date_text");
   const titleAdvancedControls = Array.from(settingsContainer?.querySelectorAll('[data-preview-control="title"]') || []);
   const subtitleAdvancedControls = Array.from(settingsContainer?.querySelectorAll('[data-preview-control="subtitle"]') || []);
+  const titleDesignControls = Array.from(settingsContainer?.querySelectorAll('[data-crop-modal-panel="title"] .design-panel-section-label, [data-crop-modal-panel="title"] .crop-modal-element-grid, [data-crop-modal-panel="title"] .design-panel-hint, [data-crop-modal-panel="title"] .design-panel-more-toggle, [data-crop-modal-panel="title"] .design-panel-more-options') || []);
+  const subtitleDesignControls = Array.from(settingsContainer?.querySelectorAll('[data-crop-modal-panel="caption"] .design-panel-section-label, [data-crop-modal-panel="caption"] .crop-modal-element-grid, [data-crop-modal-panel="caption"] .design-panel-hint, [data-crop-modal-panel="caption"] .design-panel-more-toggle, [data-crop-modal-panel="caption"] .design-panel-more-options') || []);
   const videoPositionAdvancedControls = Array.from(settingsContainer?.querySelectorAll('[data-preview-control="video-position"]') || []);
   const reframeSection = modalEl.querySelector(".crop-modal-reframe-section");
   const autoLayoutOverlayLast = modalEl.querySelector("#crop-auto-layout-last");
@@ -18672,8 +18676,10 @@ document.addEventListener("DOMContentLoaded", () => {
     origPreviewCaption?.classList.toggle("is-hidden", !subtitleVisible);
     previewToolbarTitle?.classList.toggle("is-hidden", !titleVisible);
     previewToolbarSubtitle?.classList.toggle("is-hidden", !subtitleVisible);
-    titleAdvancedControls.forEach((el) => el.classList.toggle("is-hidden", !titleVisible));
-    subtitleAdvancedControls.forEach((el) => el.classList.toggle("is-hidden", !subtitleVisible));
+    titleAdvancedControls.forEach((el) => el.classList.toggle("is-hidden", false));
+    subtitleAdvancedControls.forEach((el) => el.classList.toggle("is-hidden", false));
+    titleDesignControls.forEach((el) => el.classList.toggle("is-dimmed", !titleVisible));
+    subtitleDesignControls.forEach((el) => el.classList.toggle("is-dimmed", !subtitleVisible));
     videoPositionAdvancedControls.forEach((el) => el.classList.toggle("is-hidden", !showVideoPositionControl));
     layoutVideoPositionRow?.classList.toggle("is-hidden", !showVideoPositionControl);
     if ((selectedPreviewElement === "title" && !titleVisible) || (selectedPreviewElement === "subtitle" && !subtitleVisible)) {
@@ -21180,6 +21186,31 @@ document.addEventListener("DOMContentLoaded", function () {
   const bindColorPicker = ({ triggerId, popoverId, hiddenId, hexId, swatchId, customInputId, onApply }) => {
     const trigger = document.getElementById(triggerId);
     const popover = document.getElementById(popoverId);
+    if (popover && popover.parentElement !== document.body) {
+      document.body.appendChild(popover);
+      popover.classList.add("design-popover-portal");
+    }
+    const positionPopover = () => {
+      if (!popover || !trigger || popover.classList.contains("closed")) return;
+      const triggerRect = trigger.getBoundingClientRect();
+      const margin = 12;
+      const gap = 8;
+      const popoverWidth = Math.min(288, window.innerWidth - (margin * 2));
+      popover.style.width = `${popoverWidth}px`;
+      popover.style.maxHeight = `min(360px, calc(100vh - ${margin * 2}px))`;
+      popover.style.overflowY = "auto";
+      const measuredHeight = popover.getBoundingClientRect().height;
+      let left = Math.min(triggerRect.left, window.innerWidth - popoverWidth - margin);
+      let top = triggerRect.bottom + gap;
+      if (top + measuredHeight > window.innerHeight - margin) {
+        top = triggerRect.top - measuredHeight - gap;
+      }
+      if (top < margin) top = margin;
+      if (left < margin) left = margin;
+      popover.style.left = `${Math.round(left)}px`;
+      popover.style.top = `${Math.round(top)}px`;
+    };
+    if (popover) popover.__designPosition = positionPopover;
     const hidden = document.getElementById(hiddenId);
     const hexLabel = document.getElementById(hexId);
     const swatchEl = document.getElementById(swatchId);
@@ -21293,7 +21324,10 @@ document.addEventListener("DOMContentLoaded", function () {
       const shouldOpen = popover.classList.contains("closed");
       closeAllColorPopovers(shouldOpen ? popoverId : null);
       popover.classList.toggle("closed");
+      if (shouldOpen) window.requestAnimationFrame(positionPopover);
     });
+    window.addEventListener("resize", positionPopover);
+    window.addEventListener("scroll", positionPopover, true);
     document.addEventListener("click", (event) => {
       if (!popover) return;
       if (trigger?.contains(event.target) || popover.contains(event.target)) return;
@@ -21635,6 +21669,7 @@ document.addEventListener("DOMContentLoaded", function () {
   });
   updateStyleTemplateCarouselNav();
   const setActiveCropModalTab = (nextTab) => {
+    closeAllColorPopovers();
     const target = String(nextTab?.dataset.cropModalTabTarget || "").trim().toLowerCase();
     cropModalTabs.forEach((candidate) => {
       const isActive = candidate === nextTab;
