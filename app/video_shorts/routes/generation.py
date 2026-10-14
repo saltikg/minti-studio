@@ -29700,6 +29700,8 @@ def regenerate_clip_video(video_pk: int, plan_index: int):
             video_sql += ", subtitle_margin_custom"
         if "original_zoom_rect" in video_columns:
             video_sql += ", original_zoom_rect"
+        if "layout_mode" in video_columns:
+            video_sql += ", layout_mode"
         video_row = _fetch_scoped_video_row(conn, video_pk, video_sql)
     finally:
         conn.close()
@@ -29724,7 +29726,10 @@ def regenerate_clip_video(video_pk: int, plan_index: int):
         video_cols.append("subtitle_margin_custom")
     if "original_zoom_rect" in video_columns:
         video_cols.append("original_zoom_rect")
+    if "layout_mode" in video_columns:
+        video_cols.append("layout_mode")
     video = dict(zip(video_cols, video_row))
+    video["layout_mode"] = _effective_layout_mode_for_owner(video.get("owner_user_id"), video.get("layout_mode"))
     plan_entries = _load_plan_entries(source_video_id)
     plan_entry = None
     for entry in plan_entries:
