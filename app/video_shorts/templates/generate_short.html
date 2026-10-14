@@ -7483,8 +7483,21 @@
                 <div class="generate-v2-panel is-active" data-generate-v2-panel="shorts">
                   <div class="clip-management-panel">
                     <div class="generate-v2-clip-editor-empty">
-                      <span class="spinner-border spinner-border-sm me-2" aria-hidden="true"></span>
-                      Preparing your transcript…
+                      <div class="editor-empty-shell-actions">
+                        <button type="submit"
+                                form="step1-form"
+                                id="step1-btn"
+                                class="editor-empty-shell-primary">
+                          Start Video Analysis
+                        </button>
+                        <div id="transcribe-shell-helper" class="editor-empty-shell-helper d-none">
+                          Analysis time depends on video length.
+                        </div>
+                        <div id="transcribe-live-status"
+                             class="alert alert-secondary py-2 px-3 d-none small editor-empty-shell-status"
+                             role="status"
+                             aria-live="polite"></div>
+                      </div>
                     </div>
                   </div>
                 </div>
