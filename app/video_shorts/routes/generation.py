@@ -10230,17 +10230,38 @@ def process_due_youtube_publish_reconcile(*, force: bool = False) -> bool:
 def _build_display_timing(start: Any, end: Any, plan_start: Any = None, plan_end: Any = None) -> Dict[str, Optional[str]]:
     display_start = _to_float(plan_start if plan_start is not None else start)
     display_end = _to_float(plan_end if plan_end is not None else end)
-    start_label = _format_time_label(display_start) if display_start is not None else None
-    end_label = _format_time_label(display_end) if display_end is not None else None
+    start_label = _format_editor_time_label(display_start, rounding="floor") if display_start is not None else None
+    end_label = _format_editor_time_label(display_end, rounding="ceil") if display_end is not None else None
     duration = None
     if display_start is not None and display_end is not None:
         duration = max(0.0, display_end - display_start)
-    duration_label = _format_time_label(duration) if duration is not None else None
+    duration_label = _format_editor_time_label(duration, rounding="ceil") if duration is not None else None
     return {
         "display_start_label": start_label,
         "display_end_label": end_label,
         "display_duration_label": duration_label,
     }
+
+
+def _format_editor_time_label(seconds: Any, *, rounding: str = "nearest") -> Optional[str]:
+    try:
+        total = float(seconds)
+    except Exception:
+        return None
+    if not math.isfinite(total):
+        return None
+    total = max(0.0, total)
+    if rounding == "floor":
+        whole = int(math.floor(total))
+    elif rounding == "ceil":
+        whole = int(math.ceil(total))
+    else:
+        whole = int(round(total))
+    hours, remainder = divmod(whole, 3600)
+    minutes, secs = divmod(remainder, 60)
+    if hours:
+        return f"{hours}:{minutes:02d}:{secs:02d}"
+    return f"{minutes}:{secs:02d}"
 
 
 def _fetch_video_with_transcript(video_pk: int) -> Optional[Tuple[str, str, Optional[float], str, List[Dict[str, Any]]]]:
@@ -22962,6 +22983,9 @@ def adjust_clip_timing(video_pk):
     end_label = _format_time_label(new_end) or f"{new_end:.2f}"
     duration_val = max(new_end - new_start, 0.0)
     duration_label = _format_time_label(duration_val) or f"{duration_val:.2f}"
+    display_start_label = _format_editor_time_label(new_start, rounding="floor") or start_label
+    display_end_label = _format_editor_time_label(new_end, rounding="ceil") or end_label
+    display_duration_label = _format_editor_time_label(duration_val, rounding="ceil") or duration_label
     message = f"Clip #{plan_index} updated: {start_label} → {end_label}"
     return _respond(
         message,
@@ -22972,6 +22996,9 @@ def adjust_clip_timing(video_pk):
             "start_label": start_label,
             "end_label": end_label,
             "duration_label": duration_label,
+            "display_start_label": display_start_label,
+            "display_end_label": display_end_label,
+            "display_duration_label": display_duration_label,
             "start": round(new_start, 3),
             "end": round(new_end, 3),
             "duration": round(duration_val, 3),

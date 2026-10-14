@@ -6583,14 +6583,6 @@
                   {% set clip_start_label = row.display_start_label or row.start_label or (row.start if row.start is not none else '-') %}
                   {% set clip_end_label = row.display_end_label or row.end_label or (row.end if row.end is not none else '-') %}
                   {% set rail_duration_label = row.display_duration_label or row.duration_label or ((row.duration ~ 's') if row.duration is not none else '-') %}
-                  {% if generate_v2 %}
-                    {% set v2_start_seconds = (row.start or 0)|int %}
-                    {% set v2_end_seconds = (row.end or 0)|int %}
-                    {% set v2_duration_seconds = (row.duration if row.duration is not none else (v2_end_seconds - v2_start_seconds))|int %}
-                    {% set clip_start_label = (v2_start_seconds // 60) ~ ':' ~ '%02d'|format(v2_start_seconds % 60) %}
-                    {% set clip_end_label = (v2_end_seconds // 60) ~ ':' ~ '%02d'|format(v2_end_seconds % 60) %}
-                    {% set rail_duration_label = (v2_duration_seconds // 60) ~ ':' ~ '%02d'|format(v2_duration_seconds % 60) %}
-                  {% endif %}
                   {% set rail_score = row.get('score') %}
                   {% set rail_publish_status = (row.publish_status or '')|lower %}
                   {% set rail_db_publish_status = (row.db_publish_status or '')|lower %}
@@ -6894,14 +6886,6 @@
                 {% endif %}
                 {% set modal_fb_tooltip_label = "Published date" if "published" in modal_fb_label_lower else "Schedule date" %}
                 {% set modal_fb_tooltip = modal_fb_tooltip_label ~ ": " ~ modal_fb_tooltip %}
-              {% endif %}
-              {% if generate_v2 %}
-                {% set v2_card_start_seconds = (row.start or 0)|int %}
-                {% set v2_card_end_seconds = (row.end or 0)|int %}
-                {% set v2_card_duration_seconds = (row.duration if row.duration is not none else (v2_card_end_seconds - v2_card_start_seconds))|int %}
-                {% set clip_start_label = (v2_card_start_seconds // 60) ~ ':' ~ '%02d'|format(v2_card_start_seconds % 60) %}
-                {% set clip_end_label = (v2_card_end_seconds // 60) ~ ':' ~ '%02d'|format(v2_card_end_seconds % 60) %}
-                {% set clip_duration_label = (v2_card_duration_seconds // 60) ~ ':' ~ '%02d'|format(v2_card_duration_seconds % 60) %}
               {% endif %}
             <div class="clip-card{% if row.is_ai_suggestion %} is-ai-suggestion{% endif %}{% if row.is_original_layout %} is-original-layout{% endif %}"
                  data-plan-index="{{ row.plan_index }}"
@@ -9480,6 +9464,22 @@ document.addEventListener("DOMContentLoaded", () => {
     return `${minutes}:${String(seconds).padStart(2, "0")}`;
   };
 
+  const formatSecondsDisplay = (value, rounding = "nearest") => {
+    const raw = Number(value || 0);
+    if (!Number.isFinite(raw) || raw < 0) {
+      return "-";
+    }
+    const rounded = rounding === "ceil"
+      ? Math.ceil(raw)
+      : (rounding === "floor" ? Math.floor(raw) : Math.round(raw));
+    const hours = Math.floor(rounded / 3600);
+    const minutes = Math.floor((rounded % 3600) / 60);
+    const seconds = rounded % 60;
+    return hours > 0
+      ? `${hours}:${String(minutes).padStart(2, "0")}:${String(seconds).padStart(2, "0")}`
+      : `${minutes}:${String(seconds).padStart(2, "0")}`;
+  };
+
   const parseTimeToSeconds = (value) => {
     const raw = String(value || "").trim();
     if (!raw) {
@@ -9919,6 +9919,8 @@ document.addEventListener("DOMContentLoaded", () => {
           end,
           startLabel: segment?.start_label || formatSeconds(start),
           endLabel: segment?.end_label || formatSeconds(end),
+          displayStartLabel: formatSecondsDisplay(start, "floor"),
+          displayEndLabel: formatSecondsDisplay(end, "ceil"),
           text,
           normalized: normalizeSearchText(text),
           rowEl: null,
@@ -10438,8 +10440,8 @@ document.addEventListener("DOMContentLoaded", () => {
         timeEl.setAttribute("aria-label", `Play from ${segment.startLabel}`);
         const useCompactTime = !!document.querySelector("#clip-workbench-shell[data-generate-v2='1']");
         const timeCopy = useCompactTime
-          ? formatSecondsCompact(segment.start)
-          : `${segment.startLabel} – ${segment.endLabel}`;
+          ? formatSecondsDisplay(segment.start, "floor")
+          : `${segment.displayStartLabel || segment.startLabel} – ${segment.displayEndLabel || segment.endLabel}`;
         timeEl.innerHTML = `<span class="material-symbols-outlined trs-row-time-icon" aria-hidden="true">play_arrow</span><span>${escapeHtml(timeCopy)}&nbsp;</span>`;
 
         const mainEl = document.createElement("div");
@@ -16393,13 +16395,16 @@ const initClipTitleRowAjax = () => {
           if (savedTitle) {
             syncClipCardTitleUi(card, savedTitle);
           }
+          const displayStartLabel = payload.display_start_label || payload.start_label;
+          const displayEndLabel = payload.display_end_label || payload.end_label;
+          const displayDurationLabel = payload.display_duration_label || payload.duration_label;
           const metaTime = card.querySelector(".clip-card-meta-time");
-          if (metaTime && payload.start_label && payload.end_label && payload.duration_label) {
-            metaTime.textContent = `${payload.start_label} – ${payload.end_label} (${payload.duration_label})`;
+          if (metaTime && displayStartLabel && displayEndLabel && displayDurationLabel) {
+            metaTime.textContent = `${displayStartLabel} – ${displayEndLabel} (${displayDurationLabel})`;
           }
           const railMeta = document.querySelector(`.clip-rail-item[data-plan-index="${CSS.escape(String(card.dataset.planIndex || ""))}"] .clip-rail-meta`);
-          if (railMeta && payload.start_label && payload.end_label && payload.duration_label) {
-            railMeta.textContent = `${payload.start_label} – ${payload.end_label} · ${payload.duration_label}`;
+          if (railMeta && displayStartLabel && displayEndLabel && displayDurationLabel) {
+            railMeta.textContent = `${displayStartLabel} – ${displayEndLabel} · ${displayDurationLabel}`;
           }
           if (payload.start !== undefined) {
             card.dataset.start = payload.start;
@@ -20607,12 +20612,25 @@ document.addEventListener("DOMContentLoaded", function () {
     const width = frame?.getBoundingClientRect?.().width || 248;
     return Math.max(0.12, Math.min(1, width / 1080));
   };
+  const colorToRgbTriplet = (value = "0, 0, 0") => {
+    const raw = String(value || "").trim();
+    const hex = raw.replace(/^#/, "");
+    if (/^[0-9a-f]{6}$/i.test(hex)) {
+      return `${parseInt(hex.slice(0, 2), 16)}, ${parseInt(hex.slice(2, 4), 16)}, ${parseInt(hex.slice(4, 6), 16)}`;
+    }
+    const rgbaMatch = raw.match(/rgba?\(([^)]+)\)/i);
+    if (rgbaMatch) {
+      return rgbaMatch[1].split(",").slice(0, 3).join(",");
+    }
+    return raw || "0, 0, 0";
+  };
   const scaledRenderShadow = ({ color = "0, 0, 0", opacity = 0.55, x = 0, y = 8, blur = 17 } = {}) => {
     const scale = getPreviewRenderScale();
+    const rgb = colorToRgbTriplet(color);
     const sx = Math.round(Number(x || 0) * scale * 10) / 10;
     const sy = Math.round(Number(y || 0) * scale * 10) / 10;
     const sb = Math.max(0.5, Math.round(Number(blur || 0) * scale * 10) / 10);
-    return `0 ${Math.max(0.6, 2 * scale).toFixed(1)}px ${Math.max(0.8, 4 * scale).toFixed(1)}px rgba(${color}, 0.75), ${sx}px ${sy}px ${sb}px rgba(${color}, ${opacity})`;
+    return `0 ${Math.max(0.6, 2 * scale).toFixed(1)}px ${Math.max(0.8, 4 * scale).toFixed(1)}px rgba(${rgb}, 0.75), ${sx}px ${sy}px ${sb}px rgba(${rgb}, ${opacity})`;
   };
   const outlineShadow = (px = 2, color = "rgba(0, 0, 0, 0.98)") => {
     const scale = getPreviewRenderScale();
@@ -20624,159 +20642,68 @@ document.addEventListener("DOMContentLoaded", function () {
       `${offset}px ${offset}px 0 ${color}`,
     ].join(", ");
   };
-  const WORD_HIGHLIGHT_PRESETS = {
-    word_highlight: {
-      pillColor: "#FFD84D",
-      activeTextColor: "#111827",
-      inactiveTextColor: "#FFFFFF",
-    },
-    word_highlight_flame: {
-      pillColor: "#F26522",
-      activeTextColor: "#FFFFFF",
-      inactiveTextColor: "#FFFFFF",
-    },
-    word_highlight_ocean: {
-      pillColor: "#3B7DED",
-      activeTextColor: "#FFFFFF",
-      inactiveTextColor: "#FFFFFF",
-    },
-    blue_pop: {
-      pillColor: "#2E7FFF",
-      activeTextColor: "#FFFFFF",
-      inactiveTextColor: "#FFFFFF",
-      fontFamily: '"Archivo Black", "Archivo", sans-serif',
-      fontWeight: "900",
-      uppercase: true,
-      activePadding: "0.14em 0.48em",
-      activeRadius: "999px",
-      textShadow: outlineShadow(3),
-      activeTextShadow: "none",
-    },
-    green_pop: {
-      pillColor: "transparent",
-      activeTextColor: "#3CE84A",
-      inactiveTextColor: "#FFFFFF",
-      textShadow: "0 2px 4px rgba(0, 0, 0, 0.75), 0 8px 14px rgba(0, 0, 0, 0.48)",
-      activeTextShadow: "0 2px 4px rgba(0, 0, 0, 0.75), 0 8px 14px rgba(0, 0, 0, 0.48)",
-      activePadding: "0",
-      activeRadius: "0",
-      fontFamily: "\"Montserrat\", sans-serif",
-      fontWeight: "900",
-    },
-    opus: {
-      pillColor: "transparent",
-      activeTextColor: "#1EE05C",
-      inactiveTextColor: "#FFFFFF",
-      textShadow: "-2px -2px 0 rgba(0, 0, 0, 0.98), 2px -2px 0 rgba(0, 0, 0, 0.98), -2px 2px 0 rgba(0, 0, 0, 0.98), 2px 2px 0 rgba(0, 0, 0, 0.98)",
-      activeTextShadow: "-2px -2px 0 rgba(0, 0, 0, 0.98), 2px -2px 0 rgba(0, 0, 0, 0.98), -2px 2px 0 rgba(0, 0, 0, 0.98), 2px 2px 0 rgba(0, 0, 0, 0.98)",
-      activePadding: "0",
-      activeRadius: "0",
-      fontFamily: "\"Montserrat\", sans-serif",
-      fontWeight: "900",
-      activeScale: "1.1",
-      uppercase: true,
-      outlineWidth: 3,
-    },
-    silver_pop: {
-      pillColor: "transparent",
-      activeTextColor: "#FFFFFF",
-      inactiveTextColor: "#E2E4E7",
-      textShadow: "0 2px 4px rgba(0, 0, 0, 0.75), 0 8px 14px rgba(0, 0, 0, 0.48)",
-      activeTextShadow: "0 2px 4px rgba(0, 0, 0, 0.75), 0 8px 14px rgba(0, 0, 0, 0.48)",
-      activePadding: "0",
-      activeRadius: "0",
-      fontFamily: "\"Anton\", sans-serif",
-      fontWeight: "400",
-      fillMode: "gradient",
-      shadowSpec: { opacity: 0.55, x: 0, y: 8, blur: 17 },
-      textBackground: "linear-gradient(180deg, #E2E4E7 0%, #F3F4F6 56%, #767C85 100%)",
-      activeBackground: "linear-gradient(180deg, #F7F7F7 0%, #FFFFFF 54%, #B5BBC4 100%)",
-    },
-    amber_gold: {
-      pillColor: "transparent",
-      activeTextColor: "#FFFFFF",
-      inactiveTextColor: "#FFFFFF",
-      textShadow: "0 2px 4px rgba(0, 0, 0, 0.75), 0 8px 14px rgba(0, 0, 0, 0.48)",
-      activeTextShadow: "0 2px 4px rgba(0, 0, 0, 0.75), 0 8px 14px rgba(0, 0, 0, 0.48)",
-      activePadding: "0",
-      activeRadius: "0",
-      fontFamily: "\"Fjalla One\", sans-serif",
-      fontWeight: "400",
-      fillMode: "active_gradient_only",
-      shadowSpec: { opacity: 0.55, x: 0, y: 8, blur: 17 },
-      activeBackground: "linear-gradient(180deg, #FFE07A 0%, #FFC233 52%, #E89400 100%)",
-    },
-    modern_pink: {
-      pillColor: "transparent",
-      activeTextColor: "#FFFFFF",
-      inactiveTextColor: "#FFFFFF",
-      textShadow: "0 2px 4px rgba(0, 0, 0, 0.75), 0 8px 14px rgba(0, 0, 0, 0.48)",
-      activeTextShadow: "0 2px 4px rgba(0, 0, 0, 0.75), 0 8px 14px rgba(0, 0, 0, 0.48)",
-      activePadding: "0",
-      activeRadius: "0",
-      fontFamily: "\"Montserrat\", sans-serif",
-      fontWeight: "900",
-      fillMode: "active_gradient_only",
-      shadowSpec: { opacity: 0.55, x: 0, y: 8, blur: 17 },
-      activeBackground: "linear-gradient(180deg, #FF8FCF 0%, #FF4FAA 52%, #FF1F8F 100%)",
-    },
-    modern_purple: {
-      pillColor: "transparent",
-      activeTextColor: "#FFFFFF",
-      inactiveTextColor: "#FFFFFF",
-      textShadow: "0 2px 4px rgba(0, 0, 0, 0.75), 0 8px 14px rgba(0, 0, 0, 0.48)",
-      activeTextShadow: "0 2px 4px rgba(0, 0, 0, 0.75), 0 8px 14px rgba(0, 0, 0, 0.48)",
-      activePadding: "0",
-      activeRadius: "0",
-      fontFamily: "\"Montserrat\", sans-serif",
-      fontWeight: "900",
-      fillMode: "active_gradient_only",
-      shadowSpec: { opacity: 0.55, x: 0, y: 8, blur: 17 },
-      activeBackground: "linear-gradient(180deg, #C77DFF 0%, #9F55FB 52%, #7B2FF7 100%)",
-    },
-    sky_cyan: {
-      pillColor: "transparent",
-      activeTextColor: "#FFFFFF",
-      inactiveTextColor: "#FFFFFF",
-      textShadow: "0 2px 4px rgba(0, 0, 0, 0.75), 0 8px 14px rgba(0, 0, 0, 0.48)",
-      activeTextShadow: "0 2px 4px rgba(0, 0, 0, 0.75), 0 8px 14px rgba(0, 0, 0, 0.48)",
-      activePadding: "0",
-      activeRadius: "0",
-      fontFamily: "\"Archivo Black\", sans-serif",
-      fontWeight: "400",
-      fillMode: "active_gradient_only",
-      shadowSpec: { opacity: 0.55, x: 0, y: 8, blur: 17 },
-      activeBackground: "linear-gradient(180deg, #9BF3F7 0%, #38D6E0 52%, #1AA6B5 100%)",
-    },
-    electric_lime: {
-      pillColor: "transparent",
-      activeTextColor: "#FFFFFF",
-      inactiveTextColor: "#FFFFFF",
-      textShadow: "0 2px 4px rgba(0, 0, 0, 0.75), 0 8px 14px rgba(0, 0, 0, 0.48)",
-      activeTextShadow: "0 2px 4px rgba(0, 0, 0, 0.75), 0 8px 14px rgba(0, 0, 0, 0.48)",
-      activePadding: "0",
-      activeRadius: "0",
-      fontFamily: "\"Teko\", sans-serif",
-      fontWeight: "700",
-      fillMode: "active_gradient_only",
-      shadowSpec: { opacity: 0.55, x: 0, y: 8, blur: 17 },
-      activeBackground: "linear-gradient(180deg, #E8FFA8 0%, #C6F24D 52%, #8AB800 100%)",
-    },
-    serif_bordo: {
-      pillColor: "transparent",
-      activeTextColor: "#FFFFFF",
-      inactiveTextColor: "#FFFFFF",
-      textShadow: "0 2px 4px rgba(0, 0, 0, 0.75), 0 8px 14px rgba(0, 0, 0, 0.48)",
-      activeTextShadow: "0 2px 4px rgba(0, 0, 0, 0.75), 0 8px 14px rgba(0, 0, 0, 0.48)",
-      activePadding: "0",
-      activeRadius: "0",
-      fontFamily: "\"Roboto Slab\", serif",
-      fontWeight: "900",
-      fillMode: "active_gradient_only",
-      shadowSpec: { opacity: 0.55, x: 0, y: 8, blur: 17 },
-      activeBackground: "linear-gradient(180deg, #FBE9EC 0%, #E8A9B8 52%, #9B2D4F 100%)",
-    },
+  const RENDERER_SUBTITLE_PRESETS = {{ subtitle_presets|tojson }};
+  const gradientCss = (top, mid, bottom) => `linear-gradient(180deg, ${top} 0%, ${mid} 52%, ${bottom} 100%)`;
+  const buildPreviewSubtitlePreset = (preset = {}) => {
+    const outlineWidth = Math.max(0, Number(preset.outline_width ?? 0) || 0);
+    const activePill = Boolean(preset.active_pill);
+    const hasRendererEffect = activePill || Boolean(preset.pillow_engine) || outlineWidth > 0 || Boolean(preset.box);
+    const fillMode = String(preset.fill_mode || "flat").toLowerCase();
+    const activeFillMode = String(preset.active_fill_mode || fillMode).toLowerCase();
+    const inactiveFillMode = String(preset.inactive_fill_mode || fillMode).toLowerCase();
+    const activeColor = preset.active_color || "#FFFFFF";
+    const inactiveColor = preset.inactive_color || "#FFFFFF";
+    const shadowColor = preset.shadow_color || "";
+    const shadowSpec = shadowColor
+      ? {
+          color: shadowColor,
+          opacity: Number(preset.shadow_opacity ?? 0.55) || 0.55,
+          x: Number(preset.shadow_offset_x ?? 0) || 0,
+          y: Number(preset.shadow_offset_y ?? 8) || 8,
+          blur: Number(preset.shadow_blur_radius ?? 17) || 17,
+        }
+      : null;
+    const activeGradient = gradientCss(
+      preset.active_gradient_top || activeColor,
+      preset.active_gradient_mid || activeColor,
+      preset.active_gradient_bottom || activeColor
+    );
+    const inactiveGradient = gradientCss(
+      preset.inactive_gradient_top || inactiveColor,
+      preset.inactive_gradient_mid || inactiveColor,
+      preset.inactive_gradient_bottom || inactiveColor
+    );
+    let previewFillMode = "flat";
+    if (fillMode === "gradient" && inactiveFillMode === "gradient") {
+      previewFillMode = "gradient";
+    } else if (activeFillMode === "gradient") {
+      previewFillMode = "active_gradient_only";
+    }
+    return {
+      hasRendererEffect,
+      pillColor: activePill ? (preset.active_box_color || "#FFD84D") : "transparent",
+      activeTextColor: activeColor,
+      inactiveTextColor: inactiveColor,
+      outlineWidth,
+      activeOutlineWidth: (Boolean(preset.active_outline) || (!preset.pillow_engine && !activePill)) ? outlineWidth : 0,
+      shadowSpec,
+      activePadding: activePill ? "0.14em 0.48em" : "0",
+      activeRadius: activePill ? "999px" : "0",
+      activeScale: String(
+        Math.max(
+          Math.max(1, Number(preset.active_scale ?? 100) || 100) / 100,
+          1 + (Math.max(0, Number(preset.active_font_size_delta ?? 0) || 0) / 45)
+        )
+      ),
+      uppercase: Boolean(preset.force_uppercase),
+      fillMode: previewFillMode,
+      textBackground: previewFillMode === "gradient" ? inactiveGradient : "none",
+      activeBackground: previewFillMode !== "flat" ? activeGradient : "none",
+    };
   };
+  const WORD_HIGHLIGHT_PRESETS = Object.fromEntries(
+    Object.entries(RENDERER_SUBTITLE_PRESETS || {}).map(([key, preset]) => [key, buildPreviewSubtitlePreset(preset)])
+  );
   const TITLE_TEMPLATE_PRESETS = {
     green_pop: {
       engine: "pillow",
@@ -21115,11 +21042,34 @@ document.addEventListener("DOMContentLoaded", function () {
     const bgHex = normalize(subtitleBgHidden?.value || "#000000");
     const activePreset = String(subtitlePresetField?.value || "").trim();
     const wordHighlightPreset = WORD_HIGHLIGHT_PRESETS[activePreset] || null;
-    const isWordHighlight = Boolean(wordHighlightPreset);
-    const effectiveTextHex = wordHighlightPreset?.inactiveTextColor || textHex;
-    const textRgba = hexToRgba(effectiveTextHex, textAlpha);
+    const isWordHighlight = Boolean(wordHighlightPreset?.hasRendererEffect);
+    const textRgba = hexToRgba(textHex, textAlpha);
     const bgRgba = hexToRgba(bgHex, bgAlpha);
     const effectiveSubtitleBackground = bgRgba;
+    const presetTextShadow = wordHighlightPreset?.outlineWidth
+      ? outlineShadow(wordHighlightPreset.outlineWidth)
+      : (wordHighlightPreset?.shadowSpec ? scaledRenderShadow(wordHighlightPreset.shadowSpec) : "none");
+    const presetActiveShadow = wordHighlightPreset?.activeOutlineWidth
+      ? outlineShadow(wordHighlightPreset.activeOutlineWidth)
+      : (wordHighlightPreset?.shadowSpec ? scaledRenderShadow(wordHighlightPreset.shadowSpec) : "none");
+    const applyPresetEffectVars = (element) => {
+      if (!element) return;
+      element.style.color = textRgba;
+      element.style.backgroundColor = effectiveSubtitleBackground;
+      element.style.setProperty("--word-highlight-pill-color", wordHighlightPreset?.pillColor || "#FFD84D");
+      element.style.setProperty("--word-highlight-active-color", wordHighlightPreset?.activeTextColor || "#111827");
+      element.style.setProperty("--word-highlight-text-shadow", presetTextShadow);
+      element.style.setProperty("--word-highlight-active-text-shadow", presetActiveShadow);
+      element.style.setProperty("--word-highlight-active-padding", wordHighlightPreset?.activePadding || "0.14em 0.48em");
+      element.style.setProperty("--word-highlight-active-radius", wordHighlightPreset?.activeRadius || "999px");
+      element.style.setProperty("--word-highlight-font-family", "inherit");
+      element.style.setProperty("--word-highlight-font-weight", "inherit");
+      element.style.setProperty("--word-highlight-inactive-color", textRgba);
+      element.style.setProperty("--word-highlight-text-background", wordHighlightPreset?.textBackground || "none");
+      element.style.setProperty("--word-highlight-active-background", wordHighlightPreset?.activeBackground || "none");
+      element.style.setProperty("--word-highlight-active-scale", wordHighlightPreset?.activeScale || "1");
+      element.style.textTransform = wordHighlightPreset?.uppercase ? "uppercase" : "";
+    };
     if (subtitlePreview) {
       subtitlePreview.classList.toggle("is-word-highlight", isWordHighlight);
       subtitlePreview.classList.toggle("is-gradient-fill", wordHighlightPreset?.fillMode === "gradient");
@@ -21132,52 +21082,8 @@ document.addEventListener("DOMContentLoaded", function () {
       previewSubtitle.classList.toggle("is-active-gradient-fill", wordHighlightPreset?.fillMode === "active_gradient_only");
       previewSubtitle.innerHTML = isWordHighlight ? wordHighlightSampleMarkup : "Sample subtitle line";
     }
-    if (subtitlePreview) {
-      const presetTextShadow = wordHighlightPreset?.outlineWidth
-        ? outlineShadow(wordHighlightPreset.outlineWidth)
-        : (wordHighlightPreset?.shadowSpec ? scaledRenderShadow(wordHighlightPreset.shadowSpec) : wordHighlightPreset?.textShadow);
-      const presetActiveShadow = wordHighlightPreset?.outlineWidth
-        ? outlineShadow(wordHighlightPreset.outlineWidth)
-        : (wordHighlightPreset?.shadowSpec ? scaledRenderShadow(wordHighlightPreset.shadowSpec) : wordHighlightPreset?.activeTextShadow);
-      subtitlePreview.style.color = textRgba;
-      subtitlePreview.style.backgroundColor = effectiveSubtitleBackground;
-      subtitlePreview.style.setProperty("--word-highlight-pill-color", wordHighlightPreset?.pillColor || "#FFD84D");
-      subtitlePreview.style.setProperty("--word-highlight-active-color", wordHighlightPreset?.activeTextColor || "#111827");
-      subtitlePreview.style.setProperty("--word-highlight-text-shadow", presetTextShadow || "-2px -2px 0 rgba(0, 0, 0, 0.98), 2px -2px 0 rgba(0, 0, 0, 0.98), -2px 2px 0 rgba(0, 0, 0, 0.98), 2px 2px 0 rgba(0, 0, 0, 0.98)");
-      subtitlePreview.style.setProperty("--word-highlight-active-text-shadow", presetActiveShadow || "none");
-      subtitlePreview.style.setProperty("--word-highlight-active-padding", wordHighlightPreset?.activePadding || "0.14em 0.48em");
-      subtitlePreview.style.setProperty("--word-highlight-active-radius", wordHighlightPreset?.activeRadius || "999px");
-      subtitlePreview.style.setProperty("--word-highlight-font-family", "inherit");
-      subtitlePreview.style.setProperty("--word-highlight-font-weight", "inherit");
-      subtitlePreview.style.setProperty("--word-highlight-inactive-color", wordHighlightPreset?.inactiveTextColor || textHex);
-      subtitlePreview.style.setProperty("--word-highlight-text-background", wordHighlightPreset?.textBackground || "none");
-      subtitlePreview.style.setProperty("--word-highlight-active-background", wordHighlightPreset?.activeBackground || "none");
-      subtitlePreview.style.setProperty("--word-highlight-active-scale", wordHighlightPreset?.activeScale || "1");
-      subtitlePreview.style.textTransform = wordHighlightPreset?.uppercase ? "uppercase" : "";
-    }
-    if (previewSubtitle) {
-      const presetTextShadow = wordHighlightPreset?.outlineWidth
-        ? outlineShadow(wordHighlightPreset.outlineWidth)
-        : (wordHighlightPreset?.shadowSpec ? scaledRenderShadow(wordHighlightPreset.shadowSpec) : wordHighlightPreset?.textShadow);
-      const presetActiveShadow = wordHighlightPreset?.outlineWidth
-        ? outlineShadow(wordHighlightPreset.outlineWidth)
-        : (wordHighlightPreset?.shadowSpec ? scaledRenderShadow(wordHighlightPreset.shadowSpec) : wordHighlightPreset?.activeTextShadow);
-      previewSubtitle.style.color = textRgba;
-      previewSubtitle.style.backgroundColor = effectiveSubtitleBackground;
-      previewSubtitle.style.setProperty("--word-highlight-pill-color", wordHighlightPreset?.pillColor || "#FFD84D");
-      previewSubtitle.style.setProperty("--word-highlight-active-color", wordHighlightPreset?.activeTextColor || "#111827");
-      previewSubtitle.style.setProperty("--word-highlight-text-shadow", presetTextShadow || "-2px -2px 0 rgba(0, 0, 0, 0.98), 2px -2px 0 rgba(0, 0, 0, 0.98), -2px 2px 0 rgba(0, 0, 0, 0.98), 2px 2px 0 rgba(0, 0, 0, 0.98)");
-      previewSubtitle.style.setProperty("--word-highlight-active-text-shadow", presetActiveShadow || "none");
-      previewSubtitle.style.setProperty("--word-highlight-active-padding", wordHighlightPreset?.activePadding || "0.14em 0.48em");
-      previewSubtitle.style.setProperty("--word-highlight-active-radius", wordHighlightPreset?.activeRadius || "999px");
-      previewSubtitle.style.setProperty("--word-highlight-font-family", "inherit");
-      previewSubtitle.style.setProperty("--word-highlight-font-weight", "inherit");
-      previewSubtitle.style.setProperty("--word-highlight-inactive-color", wordHighlightPreset?.inactiveTextColor || textHex);
-      previewSubtitle.style.setProperty("--word-highlight-text-background", wordHighlightPreset?.textBackground || "none");
-      previewSubtitle.style.setProperty("--word-highlight-active-background", wordHighlightPreset?.activeBackground || "none");
-      previewSubtitle.style.setProperty("--word-highlight-active-scale", wordHighlightPreset?.activeScale || "1");
-      previewSubtitle.style.textTransform = wordHighlightPreset?.uppercase ? "uppercase" : "";
-    }
+    applyPresetEffectVars(subtitlePreview);
+    applyPresetEffectVars(previewSubtitle);
     const subtitleTextSwatch = document.getElementById("subtitleTextColorSwatch");
     if (subtitleTextSwatch) subtitleTextSwatch.style.backgroundColor = textRgba;
     const subtitleBgSwatch = document.getElementById("subtitleBgColorSwatch");
