@@ -92,6 +92,7 @@ from app.video_shorts.config import (
     SHORTS_CATEGORY_OPTIONS,
     SHORTS_DIR,
     SIGNUPS_ENABLED,
+    STATIC_FONTS_DIR,
     SUB_FONT_CHOICES,
     SUB_FONT_SIZES,
     SUB_MARGIN_DEFAULT,
@@ -693,6 +694,36 @@ def _build_title_font_choice(font_key: Optional[str]) -> Optional[Dict[str, Any]
         "label": font_cfg["label"],
         "path": str(font_cfg["path"]),
         "css": font_cfg["css_family"],
+    }
+
+
+def _preview_font_weight(font_key: str, label: str, path: Path) -> int:
+    value = f"{font_key} {label} {path.name}".lower()
+    if "black" in value:
+        return 900
+    if "bold" in value:
+        return 700
+    if "medium" in value or "semi" in value:
+        return 500
+    return 400
+
+
+def _build_static_preview_font_entry(font_key: str, label: str, path_value: Any) -> Optional[Dict[str, Any]]:
+    try:
+        font_path = Path(path_value).expanduser().resolve()
+        static_root = STATIC_FONTS_DIR.resolve()
+        static_relative = font_path.relative_to(static_root)
+    except (TypeError, ValueError, OSError):
+        return None
+    if not font_path.exists():
+        return None
+    return {
+        "key": str(font_key),
+        "label": str(label),
+        "family": f"MintiPreview-{font_key}",
+        "weight": _preview_font_weight(str(font_key), str(label), font_path),
+        "static_filename": f"fonts/{static_relative.as_posix()}",
+        "renderer_path": str(font_path),
     }
 
 
@@ -10708,11 +10739,24 @@ def generate_short(video_pk):
             )
     if preview_path.exists():
         preview_url = _preview_frame_static_url(str(video["video_id"])) or None
-    title_font_options = [
-        {"key": key, "label": cfg["label"], "css_family": cfg["css_family"]}
-        for key, cfg in TITLE_FONTS.items()
-        if Path(cfg.get("path") or "").exists()
-    ]
+    preview_font_faces_by_key: Dict[str, Dict[str, Any]] = {}
+    title_font_options = []
+    for key, cfg in TITLE_FONTS.items():
+        font_entry = _build_static_preview_font_entry(key, cfg.get("label") or key, cfg.get("path"))
+        if not font_entry:
+            continue
+        preview_font_faces_by_key[font_entry["key"]] = font_entry
+        title_font_options.append(
+            {
+                "key": key,
+                "label": cfg["label"],
+                "css_family": f"'{font_entry['family']}', sans-serif",
+                "preview_family": font_entry["family"],
+                "preview_weight": font_entry["weight"],
+                "renderer_path": font_entry["renderer_path"],
+                "static_filename": font_entry["static_filename"],
+            }
+        )
     if not title_font_options:
         default_cfg = TITLE_FONTS.get(DEFAULT_EDITOR_TITLE_FONT_KEY)
         if default_cfg:
@@ -10727,11 +10771,28 @@ def generate_short(video_pk):
     # Subtitle fonts
     sub_fonts = []
     for key, label, path, fontname in SUB_FONT_CHOICES:
-        exists = Path(path).exists()
-        if exists:
-            sub_fonts.append({"key": key, "label": label, "path": path, "fontname": fontname})
+        font_entry = _build_static_preview_font_entry(key, label, path)
+        if font_entry:
+            preview_font_faces_by_key[font_entry["key"]] = font_entry
+            sub_fonts.append(
+                {
+                    "key": key,
+                    "label": label,
+                    "path": path,
+                    "fontname": f"'{font_entry['family']}', sans-serif",
+                    "preview_family": font_entry["family"],
+                    "preview_weight": font_entry["weight"],
+                    "renderer_fontname": fontname,
+                    "renderer_path": font_entry["renderer_path"],
+                    "static_filename": font_entry["static_filename"],
+                }
+            )
     if not sub_fonts:
         sub_fonts.append({"key": "dejavu", "label": "DejaVu Sans", "path": "/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf", "fontname": "DejaVu Sans"})
+    preview_font_faces = sorted(
+        preview_font_faces_by_key.values(),
+        key=lambda item: (str(item.get("label") or ""), str(item.get("key") or "")),
+    )
 
     short_editor_defaults = _load_short_editor_defaults(editor_owner_user_id)
     raw_style_values = {
@@ -12140,6 +12201,7 @@ def generate_short(video_pk):
         preview_url=preview_url,
         generated_clip_entries=generated_clip_entries,
         title_font_options=title_font_options,
+        preview_font_faces=preview_font_faces,
         selected_title_font_key=selected_title_font_key,
         selected_title_font_css=selected_title_font_css,
         sub_fonts=sub_fonts,

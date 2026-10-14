@@ -67,30 +67,15 @@
 <link rel="stylesheet" href="{{ url_for('video_shorts_bp.static', filename='vendor/cropper/cropper.min.css') }}">
 <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Roboto:wght@400;700&family=Merriweather:wght@700&family=Source+Code+Pro:wght@700&family=Arimo:wght@400;700&family=Open+Sans+Condensed:wght@400;700&display=swap">
 <style>
+  {% for font in preview_font_faces or [] %}
   @font-face {
-    font-family: "Fjalla One";
-    src: url("{{ url_for('video_shorts_bp.static', filename='fonts/FjallaOne-Regular.ttf') }}") format("truetype");
-    font-weight: 400;
+    font-family: "{{ font.family }}";
+    src: url("{{ url_for('video_shorts_bp.static', filename=font.static_filename) }}") format("truetype");
+    font-weight: {{ font.weight }};
     font-style: normal;
+    font-display: swap;
   }
-  @font-face {
-    font-family: "Archivo Black";
-    src: url("{{ url_for('video_shorts_bp.static', filename='fonts/ArchivoBlack-Regular.ttf') }}") format("truetype");
-    font-weight: 400;
-    font-style: normal;
-  }
-  @font-face {
-    font-family: "Teko";
-    src: url("{{ url_for('video_shorts_bp.static', filename='fonts/Teko-Bold.ttf') }}") format("truetype");
-    font-weight: 700;
-    font-style: normal;
-  }
-  @font-face {
-    font-family: "Roboto Slab";
-    src: url("{{ url_for('video_shorts_bp.static', filename='fonts/RobotoSlab-Black.ttf') }}") format("truetype");
-    font-weight: 900;
-    font-style: normal;
-  }
+  {% endfor %}
   .editor-header {
     display: flex;
     align-items: center;
@@ -5693,34 +5678,6 @@
     overflow-wrap: anywhere;
     word-break: break-word;
   }
-  @font-face {
-    font-family: "Archivo Black";
-    src: url("{{ url_for('video_shorts_bp.static', filename='fonts/ArchivoBlack-Regular.ttf') }}") format("truetype");
-    font-weight: 900;
-    font-style: normal;
-    font-display: swap;
-  }
-  @font-face {
-    font-family: "Fjalla One";
-    src: url("{{ url_for('video_shorts_bp.static', filename='fonts/FjallaOne-Regular.ttf') }}") format("truetype");
-    font-weight: 400;
-    font-style: normal;
-    font-display: swap;
-  }
-  @font-face {
-    font-family: "Teko";
-    src: url("{{ url_for('video_shorts_bp.static', filename='fonts/Teko-Bold.ttf') }}") format("truetype");
-    font-weight: 700;
-    font-style: normal;
-    font-display: swap;
-  }
-  @font-face {
-    font-family: "Roboto Slab";
-    src: url("{{ url_for('video_shorts_bp.static', filename='fonts/RobotoSlab-Black.ttf') }}") format("truetype");
-    font-weight: 900;
-    font-style: normal;
-    font-display: swap;
-  }
   .shorts-preview-video {
     overflow: hidden;
     border-radius: 18px;
@@ -8335,7 +8292,7 @@
                           <div class="caption-tab-section-heading">Font</div>
                           <select name="sub_font" id="subtitleFont" class="form-select form-select-sm">
                             {% for f in sub_fonts %}
-                              <option value="{{ f.key }}" data-font-family="{{ f.fontname|e }}" {% if f.key == selected_sub_font %}selected{% endif %}>{{ f.label }}</option>
+                              <option value="{{ f.key }}" data-font-family="{{ f.fontname|e }}" data-font-weight="{{ f.preview_weight|default(400) }}" {% if f.key == selected_sub_font %}selected{% endif %}>{{ f.label }}</option>
                             {% endfor %}
                           </select>
                         </div>
@@ -8455,7 +8412,7 @@
                           <div class="caption-tab-section-heading">Font</div>
                           <select name="font" id="titleFont" class="form-select form-select-sm">
                             {% for font in title_font_options %}
-                              <option value="{{ font.key }}" data-font-family="{{ font.css_family|e }}" {% if font.key == selected_title_font_key %}selected{% endif %}>{{ font.label }}</option>
+                              <option value="{{ font.key }}" data-font-family="{{ font.css_family|e }}" data-font-weight="{{ font.preview_weight|default(700) }}" {% if font.key == selected_title_font_key %}selected{% endif %}>{{ font.label }}</option>
                             {% endfor %}
                           </select>
                           {% endif %}
@@ -20998,12 +20955,18 @@ document.addEventListener("DOMContentLoaded", function () {
     if (titleFont) {
       const option = titleFont.options[titleFont.selectedIndex];
       const fontFamily = option?.dataset.fontFamily || option?.value || "";
+      const fontWeight = option?.dataset.fontWeight || "700";
       if (titlePreview) {
         titlePreview.style.fontFamily = fontFamily || "inherit";
+        titlePreview.style.fontWeight = fontWeight;
       }
       const previewTitle = document.getElementById("shorts-preview-title-band");
       if (previewTitle) {
         previewTitle.style.fontFamily = fontFamily || "inherit";
+        previewTitle.style.fontWeight = fontWeight;
+      }
+      if (fontFamily && document.fonts?.load) {
+        document.fonts.load(`${fontWeight} 24px ${fontFamily}`).then(syncFinalPreviewLayout).catch(() => {});
       }
       syncFinalPreviewLayout();
     }
@@ -21012,12 +20975,21 @@ document.addEventListener("DOMContentLoaded", function () {
     if (subtitleFont) {
       const option = subtitleFont.options[subtitleFont.selectedIndex];
       const fontFamily = option?.dataset.fontFamily || option?.value || "";
+      const fontWeight = option?.dataset.fontWeight || "700";
       if (subtitlePreview) {
         subtitlePreview.style.fontFamily = fontFamily || "inherit";
+        subtitlePreview.style.fontWeight = fontWeight;
       }
       const previewSubtitle = document.getElementById("shorts-preview-subtitle-band");
       if (previewSubtitle) {
         previewSubtitle.style.fontFamily = fontFamily || "inherit";
+        previewSubtitle.style.fontWeight = fontWeight;
+      }
+      if (fontFamily && document.fonts?.load) {
+        document.fonts.load(`${fontWeight} 24px ${fontFamily}`).then(() => {
+          applySubtitlePreview();
+          syncFinalPreviewLayout();
+        }).catch(() => {});
       }
       syncFinalPreviewLayout();
     }
@@ -21127,8 +21099,9 @@ document.addEventListener("DOMContentLoaded", function () {
       : (titleTemplatePreset?.shadowSpec ? scaledRenderShadow(titleTemplatePreset.shadowSpec) : titleTemplatePreset?.textShadow || "none");
     if (titlePreview) titlePreview.style.textShadow = titleShadow;
     if (previewTitle) previewTitle.style.textShadow = titleShadow;
-    if (titlePreview) titlePreview.style.fontWeight = titleTemplatePreset?.fontWeight || "700";
-    if (previewTitle) previewTitle.style.fontWeight = titleTemplatePreset?.fontWeight || "700";
+    const selectedTitleWeight = titleFont?.options?.[titleFont.selectedIndex]?.dataset.fontWeight || titleTemplatePreset?.fontWeight || "700";
+    if (titlePreview) titlePreview.style.fontWeight = selectedTitleWeight;
+    if (previewTitle) previewTitle.style.fontWeight = selectedTitleWeight;
     syncPreviewTitleText();
     syncFinalPreviewLayout();
   };
@@ -21174,8 +21147,8 @@ document.addEventListener("DOMContentLoaded", function () {
       subtitlePreview.style.setProperty("--word-highlight-active-text-shadow", presetActiveShadow || "none");
       subtitlePreview.style.setProperty("--word-highlight-active-padding", wordHighlightPreset?.activePadding || "0.14em 0.48em");
       subtitlePreview.style.setProperty("--word-highlight-active-radius", wordHighlightPreset?.activeRadius || "999px");
-      subtitlePreview.style.setProperty("--word-highlight-font-family", wordHighlightPreset?.fontFamily || "inherit");
-      subtitlePreview.style.setProperty("--word-highlight-font-weight", wordHighlightPreset?.fontWeight || "700");
+      subtitlePreview.style.setProperty("--word-highlight-font-family", "inherit");
+      subtitlePreview.style.setProperty("--word-highlight-font-weight", "inherit");
       subtitlePreview.style.setProperty("--word-highlight-inactive-color", wordHighlightPreset?.inactiveTextColor || textHex);
       subtitlePreview.style.setProperty("--word-highlight-text-background", wordHighlightPreset?.textBackground || "none");
       subtitlePreview.style.setProperty("--word-highlight-active-background", wordHighlightPreset?.activeBackground || "none");
@@ -21197,8 +21170,8 @@ document.addEventListener("DOMContentLoaded", function () {
       previewSubtitle.style.setProperty("--word-highlight-active-text-shadow", presetActiveShadow || "none");
       previewSubtitle.style.setProperty("--word-highlight-active-padding", wordHighlightPreset?.activePadding || "0.14em 0.48em");
       previewSubtitle.style.setProperty("--word-highlight-active-radius", wordHighlightPreset?.activeRadius || "999px");
-      previewSubtitle.style.setProperty("--word-highlight-font-family", wordHighlightPreset?.fontFamily || "inherit");
-      previewSubtitle.style.setProperty("--word-highlight-font-weight", wordHighlightPreset?.fontWeight || "700");
+      previewSubtitle.style.setProperty("--word-highlight-font-family", "inherit");
+      previewSubtitle.style.setProperty("--word-highlight-font-weight", "inherit");
       previewSubtitle.style.setProperty("--word-highlight-inactive-color", wordHighlightPreset?.inactiveTextColor || textHex);
       previewSubtitle.style.setProperty("--word-highlight-text-background", wordHighlightPreset?.textBackground || "none");
       previewSubtitle.style.setProperty("--word-highlight-active-background", wordHighlightPreset?.activeBackground || "none");
