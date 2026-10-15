@@ -78,7 +78,9 @@ def guest_storage_keys_for_user(conn, user_id: str) -> set[str]:
                 _add_key(keys, _poster_key(clip_filename, poster_filename))
     generated_cols = table_columns(conn, "shorts_generated_videos")
     if generated_cols:
-        select_cols = ["clip_filename", "video_filename"]
+        # Production uses output_filename; older installations used video_filename.
+        fallback_name = next((name for name in ("output_filename", "video_filename") if name in generated_cols), "NULL")
+        select_cols = ["clip_filename" if "clip_filename" in generated_cols else "NULL", fallback_name]
         if "poster_filename" in generated_cols:
             select_cols.append("poster_filename")
         user_expr = "user_id" if "user_id" in generated_cols else "owner_user_id"

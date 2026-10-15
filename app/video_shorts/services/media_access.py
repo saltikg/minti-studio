@@ -204,7 +204,7 @@ def _authorize_preview(video_id, filename, owner, brand):
         conn = get_db_readonly()
         try:
             row = conn.execute("SELECT user_id, brand_id FROM image_to_video_jobs WHERE CAST(job_id AS VARCHAR) = ?", [str(video_id)[4:]]).fetchone()
-            if not row or (str(row[0]), row[1]) != (str(owner), brand):
+            if not row or (str(row[0]), str(row[1]) if row[1] else None) != (str(owner), brand):
                 raise tenant_media.TenantMediaConflict("Preview belongs to another tenant")
         finally:
             conn.close()
