@@ -1133,7 +1133,7 @@ def _upsert_storage_asset(
                   size_bytes = excluded.size_bytes,
                   user_id = COALESCE(shorts_storage_assets.user_id, excluded.user_id),
                   brand_id = COALESCE(shorts_storage_assets.brand_id, excluded.brand_id),
-                  status = COALESCE(shorts_storage_assets.status, 'active'),
+                  status = 'active',
                   updated_at = now()
                 """,
                 [file_key, file_path, file_type, size_bytes, user_id, brand_id],
@@ -1149,7 +1149,7 @@ def _upsert_storage_asset(
                   file_type = excluded.file_type,
                   size_bytes = excluded.size_bytes,
                   user_id = COALESCE(shorts_storage_assets.user_id, excluded.user_id),
-                  status = COALESCE(shorts_storage_assets.status, 'active'),
+                  status = 'active',
                   updated_at = now()
                 """,
                 [file_key, file_path, file_type, size_bytes, user_id],
@@ -1740,6 +1740,31 @@ def _delete_short_media(filename: str) -> bool:
     if local_path.exists() and local_path.is_file():
         local_path.unlink()
         deleted = True
+    conn = get_db()
+    try:
+        file_key = f"short:{safe_name}"
+        conn.execute(
+            """
+            UPDATE shorts_storage_assets
+            SET status = 'deleted', updated_at = now()
+            WHERE file_key = ?
+            """,
+            [file_key],
+        )
+        conn.execute(
+            """
+            UPDATE shorts_generated_videos
+            SET storage_file_key = NULL
+            WHERE clip_filename = ? OR output_filename = ?
+            """,
+            [safe_name, safe_name],
+        )
+        conn.commit()
+    except Exception:
+        conn.rollback()
+        current_app.logger.exception("Failed to mark deleted short media filename=%s", safe_name)
+    finally:
+        conn.close()
     return deleted
 
 

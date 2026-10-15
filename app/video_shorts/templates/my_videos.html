@@ -1297,8 +1297,6 @@
 	                  <video src="{{ short.video_url }}#t=1" data-short-preview-video data-short-index="{{ loop.index0 }}" data-preview-src="{{ short.video_url }}" muted playsinline preload="metadata" aria-label="Preview: {{ short.title }}"></video>
 	                {% elif short.poster_url %}
 	                  <img src="{{ short.poster_url }}" alt="{{ short.title }}">
-	                {% elif short.thumbnail_url %}
-	                  <img src="{{ short.thumbnail_url }}" alt="{{ short.title }}">
 	                {% else %}
 	                  <div class="mv-short-empty" aria-hidden="true"><i class="bi bi-film"></i></div>
 	                {% endif %}
@@ -1596,9 +1594,9 @@
 	      video.preload = 'metadata';
 	      video.setAttribute('aria-label', `Preview: ${short.title || 'Untitled short'}`);
 	      frame.appendChild(video);
-	    } else if (short.poster_url || short.thumbnail_url) {
+	    } else if (short.poster_url) {
 	      const image = document.createElement('img');
-	      image.src = short.poster_url || short.thumbnail_url;
+	      image.src = short.poster_url;
 	      image.alt = short.title || 'Untitled short';
 	      frame.appendChild(image);
 	    } else {

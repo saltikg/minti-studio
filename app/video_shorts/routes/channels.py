@@ -259,34 +259,37 @@ def _cached_preview_frame_url(video_id: str) -> str:
     return url_for("video_shorts_bp.static", filename=str(rel_preview))
 
 
-def _short_card_media_urls(filename: str) -> tuple[str, str]:
-    """Resolve the generated short and its optional poster for My Videos cards."""
+def _short_card_media_urls(filename: str, storage_file_key: str = "") -> tuple[str, str]:
+    """Build card URLs, avoiding storage probes when the asset index verified the clip."""
     safe_name = Path(str(filename or "")).name
+    stored_key = str(storage_file_key or "").strip()
     if not safe_name:
         return "", ""
     storage = get_media_storage()
-    local_storage = get_media_storage("local")
     short_key = f"shorts/{safe_name}"
-    local_short_path = SHORTS_DIR / safe_name
-    video_url = ""
+    if not stored_key:
+        local_short_path = SHORTS_DIR / safe_name
+        try:
+            resolved = storage.resolve_local_or_s3(short_key, fallback_local_paths=[local_short_path])
+        except Exception:
+            current_app.logger.warning("Could not resolve generated short card media filename=%s", safe_name)
+            return "", ""
+        if not resolved.exists or not resolved.public_url:
+            return "", ""
+        poster_url = ""
+        try:
+            poster = storage.resolve_local_or_s3(f"shorts/posters/{safe_name}.jpg")
+            if poster.exists and poster.public_url:
+                poster_url = poster.public_url
+        except Exception:
+            current_app.logger.warning("Could not resolve generated short poster filename=%s", safe_name)
+        return resolved.public_url, poster_url
     try:
-        resolved = storage.resolve_local_or_s3(short_key, fallback_local_paths=[local_short_path])
-        if resolved.exists and resolved.public_url:
-            video_url = resolved.public_url
+        video_url = storage.public_url(short_key)
     except Exception:
-        current_app.logger.warning("Could not resolve generated short card media filename=%s", safe_name)
-    if not video_url and local_short_path.exists():
-        video_url = local_storage.public_url(short_key)
-
-    poster_key = f"shorts/posters/{safe_name}.jpg"
-    poster_url = ""
-    try:
-        poster = storage.resolve_local_or_s3(poster_key)
-        if poster.exists and poster.public_url:
-            poster_url = poster.public_url
-    except Exception:
-        current_app.logger.warning("Could not resolve generated short poster filename=%s", safe_name)
-    return video_url, poster_url
+        current_app.logger.warning("Could not build generated short card URL filename=%s", safe_name)
+        return "", ""
+    return video_url, ""
 
 
 def _load_recent_short_cards(conn, user_id: str, brand_id: str | None, user_tz: str, *, limit: int, offset: int = 0) -> tuple[list[dict], bool]:
@@ -314,8 +317,12 @@ def _load_recent_short_cards(conn, user_id: str, brand_id: str | None, user_tz: 
             published_video.like_count,
             published_video.comment_count,
             source_video.id,
-            source_video.thumbnail_url
+            render_asset.file_key
         FROM shorts_generated_videos gv
+        JOIN shorts_storage_assets render_asset
+          ON render_asset.file_key = gv.storage_file_key
+         AND lower(coalesce(render_asset.status, 'active')) = 'active'
+         AND render_asset.size_bytes > 0
         LEFT JOIN youtube_videos published_video
           ON published_video.video_id = gv.youtube_video_id
          AND published_video.owner_user_id = gv.user_id
@@ -326,6 +333,8 @@ def _load_recent_short_cards(conn, user_id: str, brand_id: str | None, user_tz: 
          AND source_video.brand_id = gv.brand_id
         WHERE gv.user_id = ?
           AND gv.brand_id = ?
+          AND NULLIF(trim(coalesce(gv.clip_filename, '')), '') IS NOT NULL
+          AND NULLIF(trim(coalesce(gv.storage_file_key, '')), '') IS NOT NULL
         ORDER BY gv.created_at DESC
         LIMIT ?
         OFFSET ?
@@ -353,7 +362,7 @@ def _load_recent_short_cards(conn, user_id: str, brand_id: str | None, user_tz: 
 
         metric_values = [row[7], row[8], row[9]]
         has_real_metrics = is_published and bool(youtube_video_id) and any(value is not None for value in metric_values)
-        video_url, poster_url = _short_card_media_urls(clip_filename)
+        video_url, poster_url = _short_card_media_urls(clip_filename, str(row[11] or ""))
         if has_real_metrics:
             meta_label = "Published " + _format_video_timestamp(published_at, user_tz)
         elif is_preparing:
@@ -377,7 +386,6 @@ def _load_recent_short_cards(conn, user_id: str, brand_id: str | None, user_tz: 
                 "comment_count": int(row[9] or 0),
                 "source_video_pk": source_video_pk,
                 "editor_url": url_for("video_shorts_bp.generate_short", video_pk=source_video_pk) if source_video_pk else "",
-                "thumbnail_url": str(row[11] or "").strip(),
             }
         )
     return cards, has_more
