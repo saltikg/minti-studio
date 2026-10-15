@@ -4170,8 +4170,6 @@ def shorts_overview():
         if clip_filename:
             clip_preview_url = _short_public_url(clip_filename)
         thumbnail_url = video_meta.get("thumbnail_url")
-        if not thumbnail_url and entry.get("video_id"):
-            thumbnail_url = f"https://i.ytimg.com/vi/{entry['video_id']}/hqdefault.jpg"
         processed_entries.append(
             {
                 **entry,
