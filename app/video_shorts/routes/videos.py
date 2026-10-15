@@ -3920,10 +3920,11 @@ def add_video_by_url(channel_id):
             SELECT id
             FROM youtube_videos
             WHERE video_id = ?
+              AND owner_user_id = ? AND brand_id IS NOT DISTINCT FROM ?
               AND (channel_id = ? OR local_bucket_channel_id = ?)
             LIMIT 1
             """,
-            [video_id, channel_id, channel_id],
+            [video_id, channel.get("owner_user_id"), channel.get("brand_id"), channel_id, channel_id],
         ).fetchone()
         if existing:
             flash("This video is already visible in Local uploads.", "info")
@@ -3999,10 +4000,10 @@ def add_video_by_url(channel_id):
             """
             SELECT id, owner_user_id, brand_id, local_bucket_channel_id
             FROM youtube_videos
-            WHERE video_id = ?
+            WHERE video_id = ? AND owner_user_id = ? AND brand_id IS NOT DISTINCT FROM ?
             LIMIT 1
             """,
-            [video_id],
+            [video_id, channel.get("owner_user_id"), channel.get("brand_id")],
         ).fetchone()
         if existing:
             existing_owner_user_id = str(existing[1] or "").strip() or None

@@ -69,16 +69,18 @@ def enqueue_facebook_clip(
 ) -> str:
     conn = _connect(read_only=False)
     scoped_user_id = brand_scoped_user_id(user_id)
+    queue_owner, _, queue_brand = str(scoped_user_id or "").partition("::")
+    queue_brand = queue_brand or None
     try:
         ensure_facebook_queue_schema(conn)
         now = _utc_now_iso()
         existing = conn.execute(
             """
             SELECT id FROM shorts_facebook_queue
-            WHERE video_id = ? AND plan_index = ? AND media_type = ?
+            WHERE user_id = ? AND brand_id IS NOT DISTINCT FROM ? AND clip_filename = ? AND video_id = ? AND plan_index = ? AND media_type = ?
             LIMIT 1
             """,
-            [video_id, plan_index or "", media_type],
+            [queue_owner, queue_brand, clip_filename, video_id, plan_index or "", media_type],
         ).fetchone()
         if existing:
             queue_id = existing[0]
@@ -113,6 +115,7 @@ def enqueue_facebook_clip(
             INSERT INTO shorts_facebook_queue (
                 id,
                 user_id,
+                brand_id,
                 video_id,
                 plan_index,
                 clip_filename,
@@ -126,11 +129,12 @@ def enqueue_facebook_clip(
                 page_name,
                 plan_title,
                 media_type
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             """,
             [
                 queue_id,
-                scoped_user_id,
+                queue_owner,
+                queue_brand,
                 video_id,
                 plan_index or "",
                 clip_filename,

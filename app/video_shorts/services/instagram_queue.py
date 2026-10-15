@@ -84,6 +84,8 @@ def enqueue_instagram_clip(
     if media_type_norm not in {"reel", "feed"}:
         media_type_norm = "reel"
     scoped_user_id = brand_scoped_user_id(user_id)
+    queue_owner, _, queue_brand = str(scoped_user_id or "").partition("::")
+    queue_brand = queue_brand or None
     queue_id = str(uuid.uuid4())
     conn = None
     for attempt in range(3):
@@ -103,14 +105,14 @@ def enqueue_instagram_clip(
                 """
                 SELECT id
                 FROM shorts_instagram_queue
-                WHERE video_id = ?
+                WHERE user_id = ? AND brand_id IS NOT DISTINCT FROM ? AND clip_filename = ? AND video_id = ?
                   AND plan_index = ?
                   AND media_type = ?
                   AND status = 'published'
                 ORDER BY created_at DESC
                 LIMIT 1
                 """,
-                [video_id, plan_index or "", media_type_norm],
+                [queue_owner, queue_brand, clip_filename, video_id, plan_index or "", media_type_norm],
             ).fetchone()
             if published:
                 return published[0]
@@ -118,14 +120,14 @@ def enqueue_instagram_clip(
             """
             SELECT id
             FROM shorts_instagram_queue
-            WHERE video_id = ?
+            WHERE user_id = ? AND brand_id IS NOT DISTINCT FROM ? AND clip_filename = ? AND video_id = ?
               AND plan_index = ?
               AND media_type = ?
               AND status != 'published'
             ORDER BY created_at DESC
             LIMIT 1
             """,
-            [video_id, plan_index or "", media_type_norm],
+            [queue_owner, queue_brand, clip_filename, video_id, plan_index or "", media_type_norm],
         ).fetchone()
         if existing:
             queue_id = existing[0]
@@ -165,6 +167,7 @@ def enqueue_instagram_clip(
             INSERT INTO shorts_instagram_queue (
                 id,
                 user_id,
+                brand_id,
                 video_id,
                 plan_index,
                 clip_filename,
@@ -181,11 +184,12 @@ def enqueue_instagram_clip(
                 plan_title,
                 media_type
             )
-            VALUES (?, ?, ?, ?, ?, ?, ?, 'pending', NULL, ?, ?, ?, ?, ?, ?, ?, ?)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'pending', NULL, ?, ?, ?, ?, ?, ?, ?, ?)
             """,
             [
                 queue_id,
-                scoped_user_id,
+                queue_owner,
+                queue_brand,
                 video_id,
                 plan_index or "",
                 clip_filename,
