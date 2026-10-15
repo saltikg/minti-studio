@@ -199,34 +199,8 @@ def ensure_generated_videos_schema(conn) -> None:
             )
         except Exception:
             pass
-    if "user_id" in table_columns(conn, TABLE_NAME):
-        try:
-            conn.execute(
-                f"""
-                UPDATE {TABLE_NAME} AS gv
-                SET user_id = b.owner_user_id
-                FROM shorts_brands AS b
-                WHERE gv.user_id IS NULL
-                  AND gv.brand_id IS NOT NULL
-                  AND b.id = gv.brand_id
-                """
-            )
-        except Exception:
-            pass
-        try:
-            conn.execute(
-                f"""
-                UPDATE {TABLE_NAME} AS gv
-                SET user_id = yv.owner_user_id
-                FROM youtube_videos AS yv
-                JOIN shorts_video_legacy_owners AS legacy ON legacy.video_pk = yv.id
-                WHERE gv.user_id IS NULL
-                  AND legacy.youtube_id = gv.source_video_id
-                  AND yv.brand_id IS NOT DISTINCT FROM gv.brand_id
-                """
-            )
-        except Exception:
-            pass
+    # Ownership repairs require the explicit tenant-scoped manual backfill.
+    # Schema checks must never infer or rewrite owners across all tenants.
     if backend_name == "postgres":
         try:
             conn.execute(
