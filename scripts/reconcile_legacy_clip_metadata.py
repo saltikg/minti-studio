@@ -1,8 +1,8 @@
 #!/usr/bin/env python3
 """Manually reconcile existing legacy media; default is a read-only inventory.
 
-Only insert missing metadata when a live source and frozen registry or exact,
-unambiguous successful render establish ownership. Never overwrite metadata,
+Only insert missing metadata when a frozen registry or exact, unambiguous
+successful render establish ownership. Never overwrite metadata,
 reassign a registry, resurrect a deleted source, or infer publishing success.
 --apply requires a new backup directory outside the repository.
 """
@@ -75,9 +75,17 @@ def inventory(cur, storage, local):
             candidate = sources.get(pk)
             if candidate and (candidate["owner_user_id"], candidate["brand_id"]) == (owner, brand):
                 source, evidence = candidate, "successful_render"
+            elif (not candidate and pk.isdecimal() and asset
+                  and (str(asset["user_id"]), asset["brand_id"]) == (owner, brand)
+                  and all((j["payload_json"] or {}).get("source_video_id") == source_id for j in jobs[name])):
+                # A deleted source must not erase exact creation evidence. Recover
+                # only the clip metadata; never recreate its source or registry.
+                source = dict(id=int(pk), video_id=source_id, owner_user_id=owner,
+                              brand_id=brand, deleted_source=True)
+                evidence = "successful_render_and_matching_existing_asset"
         reason = None
         if not source:
-            reason = "no_live_source_with_registry_or_creation_evidence"
+            reason = "no_registry_or_unambiguous_creation_evidence"
         else:
             scope = (source["owner_user_id"], source["brand_id"])
             if any((u, b) != scope for u, b, _ in creators):
@@ -85,7 +93,10 @@ def inventory(cur, storage, local):
             for record in (life, asset):
                 if record and (str(record["user_id"] or ""), record["brand_id"]) != scope:
                     reason = "existing_metadata_owner_conflict"
-        entry = plans.get(name) or {}
+        entry = dict(plans.get(name) or {})
+        creation = min(jobs[name], key=lambda j: str(j["finished_at"] or "")) if jobs[name] else None
+        if creation:
+            entry.setdefault("render_job_id", creation["id"])
         brand = source["brand_id"] if source else (asset or life or {}).get("brand_id")
         size = obj.size_bytes
         if size is None:
@@ -94,7 +105,7 @@ def inventory(cur, storage, local):
         results.append(dict(filename=name, source=source, brand_name=brands.get(brand), evidence=evidence,
                             skip_reason=reason, missing_lifecycle=life is None, missing_asset=asset is None,
                             file_key=asset_key, file_path="s3://" + obj.key if backend.backend_name == "s3" else str(backend._key_path(obj.key)),
-                            size_bytes=size, entry=entry))
+                            size_bytes=size, entry=entry, created_at=creation["finished_at"] if creation else None))
     return results
 
 
@@ -136,8 +147,18 @@ def main():
             name, source, entry = row["filename"], row["source"], row["entry"]
             # Refuse a concurrent source ownership change since inventory.
             current = query(cur, "SELECT owner_user_id,brand_id FROM youtube_videos WHERE id=%s", [source["id"]])
-            if not current or (current[0]["owner_user_id"], current[0]["brand_id"]) != (source["owner_user_id"], source["brand_id"]):
+            if source.get("deleted_source"):
+                if current:
+                    raise RuntimeError("Deleted source was replaced during reconciliation")
+            elif not current or (current[0]["owner_user_id"], current[0]["brand_id"]) != (source["owner_user_id"], source["brand_id"]):
                 raise RuntimeError("Source changed during reconciliation")
+            for table, clause, params in (
+                ("shorts_generated_videos", "clip_filename=%s OR output_filename=%s", [name, name]),
+                ("shorts_storage_assets", "file_key=%s", [row["file_key"]]),
+            ):
+                existing = query(cur, f"SELECT user_id,brand_id FROM {table} WHERE {clause}", params)
+                if any((str(r["user_id"]), r["brand_id"]) != (source["owner_user_id"], source["brand_id"]) for r in existing):
+                    raise RuntimeError("Metadata ownership changed during reconciliation")
             if row["missing_asset"]:
                 cur.execute("""INSERT INTO shorts_storage_assets(file_key,file_path,file_type,size_bytes,user_id,brand_id,status)
                     VALUES (%s,%s,'short',%s,%s,%s,'active') ON CONFLICT DO NOTHING RETURNING file_key""",
@@ -148,11 +169,11 @@ def main():
             if row["missing_lifecycle"]:
                 # Preserve any explicit publication evidence from the retained plan.
                 cur.execute("""INSERT INTO shorts_generated_videos(user_id,brand_id,source_video_id,source_channel_type,
-                    clip_filename,output_filename,storage_file_key,generation_status,publish_status,youtube_video_id,raw_plan_entry_json,generated_title)
-                    VALUES (%s,%s,%s,'youtube',%s,%s,%s,'created',%s,%s,%s::jsonb,%s)
+                    clip_filename,output_filename,storage_file_key,generation_status,publish_status,youtube_video_id,raw_plan_entry_json,generated_title,created_at)
+                    VALUES (%s,%s,%s,'youtube',%s,%s,%s,'created',%s,%s,%s::jsonb,%s,COALESCE(%s,CURRENT_TIMESTAMP))
                     ON CONFLICT DO NOTHING RETURNING id""", [source["owner_user_id"], source["brand_id"], source["video_id"],
                     name, name, row["file_key"], entry.get("publish_status") or "not_ready",
-                    entry.get("yt_video_id") or entry.get("short_video_id"), json.dumps(entry), entry.get("title")])
+                    entry.get("yt_video_id") or entry.get("short_video_id"), json.dumps(entry), entry.get("title"), row["created_at"]])
                 result = cur.fetchone()
                 if result:
                     inserted.append(dict(table="shorts_generated_videos", key="id", value=result[0]))
@@ -161,6 +182,15 @@ def main():
         path.write_text(json.dumps(inserted, indent=2))
         os.chmod(path, 0o600)
         with path.open("rb") as handle:
+            os.fsync(handle.fileno())
+        restore = ["BEGIN;"]
+        for item in reversed(inserted):
+            value = "'" + str(item["value"]).replace("'", "''") + "'"
+            restore.append(f"DELETE FROM main.{item['table']} WHERE {item['key']}={value};")
+        restore_path = backup / "restore.sql"
+        restore_path.write_text("\n".join(restore + ["COMMIT;"]) + "\n")
+        os.chmod(restore_path, 0o600)
+        with restore_path.open("rb") as handle:
             os.fsync(handle.fileno())
         conn.commit()
         print(json.dumps(dict(inserted=dict(Counter(r["table"] for r in inserted)), backup=str(backup))))
