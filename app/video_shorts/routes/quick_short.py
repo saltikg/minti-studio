@@ -12,6 +12,7 @@ from typing import Any, Dict, List, Optional
 from flask import current_app, flash, g, jsonify, redirect, render_template, request, session, url_for
 
 from app.video_shorts import video_shorts_bp
+from app.video_shorts.services import tenant_media
 from app.video_shorts.config import FFPROBE_TIMEOUT, VIDEOS_DIR
 from app.video_shorts.routes.auth import _client_ip
 from app.video_shorts.services.auth_protection import RateLimitRule, check_rate_limits

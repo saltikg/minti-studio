@@ -1,3 +1,4 @@
+from app.video_shorts.services.social_queue_identity import queue_identity_filter
 import json
 from app.video_shorts.services import tenant_media
 import errno
@@ -5993,6 +5994,7 @@ def _cancel_pending_social_queue_rows(
     scope = _active_editor_context()
     video = tenant_media.resolve_video(video_id, video_pk=video_pk,
                                        owner_user_id=scope["owner_user_id"], brand_id=scope["brand_id"])
+    identity_sql, identity_params = queue_identity_filter(video.owner_user_id, video.brand_id)
     try:
         result = conn.execute(
             f"""
@@ -6002,11 +6004,11 @@ def _cancel_pending_social_queue_rows(
                    updated_at = ?
              WHERE video_id = ?
                AND plan_index = ?
-               AND user_id = ? AND brand_id IS NOT DISTINCT FROM ?
+               AND {identity_sql}
                AND clip_filename = ?
                AND lower(coalesce(status, '')) IN ('pending', 'retry', 'uploading', 'queued', 'scheduled')
             """,
-            [_utc_now_iso(), video_id, str(plan_index), video.owner_user_id, video.brand_id, clip_filename],
+            [_utc_now_iso(), video_id, str(plan_index), *identity_params, clip_filename],
         )
         try:
             return int(getattr(result, "rowcount", 0) or 0)

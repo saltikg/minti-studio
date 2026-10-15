@@ -14,6 +14,7 @@ from app.video_shorts.services.facebook_queue import (
 from app.video_shorts.services.storage import get_media_storage
 from requests.exceptions import ConnectionError as RequestsConnectionError
 from src.trends.facebook_page_tokens import get_facebook_page_data
+from app.video_shorts.services.social_queue_identity import queue_token_identity
 
 
 def _utc_now_iso() -> str:
@@ -189,6 +190,14 @@ def _fetch_facebook_metrics(video_id: str, page_token: str):
     }
 
 
+def _queue_credentials(job: dict) -> dict:
+    user_id = queue_token_identity(job)
+    creds = get_facebook_page_data(user_id)
+    if not creds or not creds.get("page_access_token") or not creds.get("page_id"):
+        raise RuntimeError(f"Facebook brand token or Page missing for {user_id}.")
+    return creds
+
+
 def process_queue(max_jobs: int = 5) -> None:
     jobs = fetch_due_facebook_jobs(max_jobs)
     if not jobs:
@@ -199,10 +208,10 @@ def process_queue(max_jobs: int = 5) -> None:
         if not queue_id:
             continue
         update_facebook_job_status(queue_id, status="uploading")
-        user_id = job.get("user_id")
-        creds = get_facebook_page_data(user_id)
-        if not creds or not creds.get("page_access_token") or not creds.get("page_id"):
-            update_facebook_job_status(queue_id, status="failed", status_detail="Facebook Page token missing.")
+        try:
+            creds = _queue_credentials(job)
+        except Exception as exc:
+            update_facebook_job_status(queue_id, status="failed", status_detail=str(exc))
             continue
         page_id = creds.get("page_id")
         clip_filename = job.get("clip_filename") or ""

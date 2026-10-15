@@ -1,4 +1,5 @@
 from app.video_shorts.services import tenant_media
+from app.video_shorts.services.social_queue_identity import queue_identity, queue_identity_filter
 import uuid
 from datetime import datetime, timedelta
 from typing import Dict, List, Optional, Tuple
@@ -71,16 +72,17 @@ def enqueue_facebook_clip(
     scoped_user_id = brand_scoped_user_id(user_id)
     queue_owner, _, queue_brand = str(scoped_user_id or "").partition("::")
     queue_brand = queue_brand or None
+    identity_sql, identity_params = queue_identity_filter(queue_owner, queue_brand)
     try:
         ensure_facebook_queue_schema(conn)
         now = _utc_now_iso()
         existing = conn.execute(
-            """
+            f"""
             SELECT id FROM shorts_facebook_queue
-            WHERE user_id = ? AND brand_id IS NOT DISTINCT FROM ? AND clip_filename = ? AND video_id = ? AND plan_index = ? AND media_type = ?
+            WHERE {identity_sql} AND clip_filename = ? AND video_id = ? AND plan_index = ? AND media_type = ?
             LIMIT 1
             """,
-            [queue_owner, queue_brand, clip_filename, video_id, plan_index or "", media_type],
+            [*identity_params, clip_filename, video_id, plan_index or "", media_type],
         ).fetchone()
         if existing:
             queue_id = existing[0]
@@ -226,6 +228,7 @@ def fetch_due_facebook_jobs(limit: int = 5) -> List[Dict[str, Optional[str]]]:
             SELECT
                 id,
                 user_id,
+                brand_id,
                 video_id,
                 plan_index,
                 clip_filename,
@@ -316,6 +319,7 @@ def update_facebook_job_status(
     try:
         if not lifecycle_row:
             return
+        lifecycle_owner, lifecycle_brand = queue_identity(lifecycle_row[4], lifecycle_row[5])
         clip_filename = str(lifecycle_row[1] or "").strip()
         resolved_facebook_video_id = facebook_video_id or lifecycle_row[3]
         publish_status = (
@@ -323,8 +327,8 @@ def update_facebook_job_status(
             else ("failed" if status == "failed" else "queued")
         )
         upsert_generated_video_record(
-            user_id=lifecycle_row[4],
-            brand_id=lifecycle_row[5],
+            user_id=lifecycle_owner,
+            brand_id=lifecycle_brand,
             source_video_id=str(lifecycle_row[0] or "").strip(),
             source_channel_type="youtube",
             clip_filename=clip_filename,
@@ -421,8 +425,8 @@ def load_facebook_queue_map(video_ids: List[str], *, owner_user_id=None, brand_i
         return {}
     if owner_user_id is None:
         owner_user_id, brand_id = tenant_media.current_scope()
-    scope_sql = " AND user_id = ? AND brand_id IS NOT DISTINCT FROM ?" if owner_user_id else ""
-    scope_params = [owner_user_id, brand_id] if owner_user_id else []
+    scope_sql, scope_params = queue_identity_filter(owner_user_id, brand_id) if owner_user_id else ("", [])
+    scope_sql = f" AND {scope_sql}" if scope_sql else ""
     conn = get_db_readonly()
     try:
         ensure_facebook_queue_schema(conn)

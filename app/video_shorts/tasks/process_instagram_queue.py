@@ -17,6 +17,7 @@ from app.video_shorts.services.instagram_queue import (
     update_instagram_job_status,
 )
 from app.video_shorts.services.storage import get_media_storage
+from app.video_shorts.services.social_queue_identity import queue_token_identity
 from src.trends.instagram_tokens import get_instagram_credentials
 from app.video_shorts.tasks.process_facebook_queue import process_queue as process_facebook_queue
 
@@ -107,19 +108,22 @@ def _proxy_video_url(job: dict) -> str:
     return f"{base_url}/video_shorts/ig-media/{token}"
 
 
+def _queue_credentials(job: dict) -> dict:
+    user_id = queue_token_identity(job)
+    creds = get_instagram_credentials(user_id)
+    if not creds or not creds.get("page_access_token") or not creds.get("instagram_business_account_id"):
+        raise RuntimeError(f"Instagram brand token or account missing for {user_id}.")
+    return creds
+
+
 def _upload_reel(job: dict) -> Optional[str]:
+    creds = _queue_credentials(job)
     clip_filename = job.get("clip_filename") or ""
     resolved = _resolve_clip(clip_filename)
     if not resolved.exists:
         raise RuntimeError(f"Clip dosyası bulunamadı: {tenant_media.short_path(clip_filename)}")
-    user_id = job.get("user_id")
-    creds = get_instagram_credentials(user_id)
-    if not creds:
-        raise RuntimeError("Instagram bağlantısı bulunamadı veya geçersiz.")
     access_token = creds.get("page_access_token")
     business_id = creds.get("instagram_business_account_id")
-    if not access_token or not business_id:
-        raise RuntimeError("Instagram token veya Business ID eksik.")
     caption = (job.get("caption_text") or "").strip()
     media_type = (job.get("media_type") or "reel").lower()
     if media_type not in {"reel", "feed"}:

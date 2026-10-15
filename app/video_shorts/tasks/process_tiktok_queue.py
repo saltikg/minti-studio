@@ -29,6 +29,7 @@ from app.video_shorts.services.tiktok_queue import (
     update_tiktok_job_status,
 )
 from src.trends.tiktok_tokens import get_tiktok_data, store_tiktok_token
+from app.video_shorts.services.social_queue_identity import queue_token_identity
 
 
 def _tiktok_v2_url(path: str) -> str:
@@ -509,21 +510,26 @@ def _wait_for_publish(access_token: str, publish_id: str, *, queue_id: Optional[
     return False, video_id or None
 
 
-def _publish_tiktok(job: dict) -> Optional[str]:
-    clip_path = SHORTS_DIR / (job.get("clip_filename") or "")
-    if not clip_path.exists():
-        raise RuntimeError(f"Clip dosyası bulunamadı: {clip_path}")
-    user_id = job.get("user_id")
+def _queue_credentials(job: dict) -> dict:
+    user_id = queue_token_identity(job)
     creds = get_tiktok_data(user_id)
     if not creds:
-        raise RuntimeError("TikTok bağlantısı bulunamadı veya geçersiz.")
+        raise RuntimeError(f"TikTok brand token missing for {user_id}.")
     if _is_token_expired(creds.get("expires_at")):
         refreshed = _refresh_access_token(user_id)
         if refreshed:
             creds = refreshed
-    access_token = creds.get("access_token")
-    if not access_token:
-        raise RuntimeError("TikTok access token bulunamadı.")
+    if not creds.get("access_token"):
+        raise RuntimeError(f"TikTok brand access token missing for {user_id}.")
+    return creds
+
+
+def _publish_tiktok(job: dict) -> Optional[str]:
+    creds = _queue_credentials(job)
+    access_token = creds["access_token"]
+    clip_path = SHORTS_DIR / (job.get("clip_filename") or "")
+    if not clip_path.exists():
+        raise RuntimeError(f"Clip dosyası bulunamadı: {clip_path}")
 
     update_tiktok_job_status(
         job["id"],
