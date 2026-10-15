@@ -52,6 +52,8 @@ def enqueue_tiktok_clip(
     queue_owner, _, queue_brand = str(scoped_user_id or "").partition("::")
     queue_brand = queue_brand or None
     identity_sql, identity_params = queue_identity_filter(queue_owner, queue_brand)
+    from app.video_shorts.services.media_access import authorize_file
+    authorize_file(clip_filename, owner_user_id=queue_owner, brand_id=queue_brand)
     conn = get_db()
     try:
         ensure_tiktok_queue_schema(conn)

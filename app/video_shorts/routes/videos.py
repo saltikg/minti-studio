@@ -152,23 +152,9 @@ def _delete_short_media(filename: str, *, video_pk=None, owner_user_id=None, bra
     delete_media(filename, video_pk=video_pk, owner_user_id=owner_user_id, brand_id=brand_id)
 
 
-def _short_public_url(filename: str) -> Optional[str]:
-    safe_name = Path(filename or "").name
-    if not safe_name:
-        return None
-    key = _short_storage_key(safe_name)
-    storage = get_media_storage()
-    if getattr(storage, "backend_name", "local") == "s3":
-        try:
-            short_keys = _short_s3_index()
-            if short_keys is not None and safe_name in short_keys:
-                return storage.public_url(key)
-        except Exception:
-            current_app.logger.exception("Failed to resolve overview short url filename=%s key=%s", safe_name, key)
-    clip_path = tenant_media.short_path(safe_name)
-    if clip_path.exists() and clip_path.is_file():
-        return get_media_storage("local").public_url(key)
-    return None
+def _short_public_url(filename: str) -> str:
+    from app.video_shorts.services.media_access import media_url
+    return media_url(filename)
 
 
 def _channel_video_scope_sql(*, include_local_bucket_attachment: bool) -> str:

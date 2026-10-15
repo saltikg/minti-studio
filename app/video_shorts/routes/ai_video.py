@@ -90,7 +90,7 @@ def _normalize_ai_video_items(
         normalized.append(
             {
                 **item,
-                "clip_url": item.get("public_url") or _short_public_url(item.get("clip_filename") or ""),
+                "clip_url": _short_public_url(item.get("clip_filename") or ""),
                 "youtube_status_label": (item.get("youtube_status") or "draft").replace("_", " ").title(),
                 "instagram_published": _queue_has_published(ig_records),
                 "facebook_published": _queue_has_published(fb_records),
@@ -242,7 +242,7 @@ def ai_video_create():
         temp_size = temp_clip_path.stat().st_size
         shutil.copyfile(temp_clip_path, local_clip_path)
         storage.put_file(temp_clip_path, clip_key)
-        clip_url = storage.public_url(clip_key)
+        clip_url = ""  # Playback grants are issued when the owning tenant loads the page.
         try:
             _upsert_storage_asset(
                 tenant_media.asset_key(clip_filename),
@@ -328,6 +328,12 @@ def ai_video_publish(ai_video_id: str):
     item = get_ai_video(user_id, brand_id, ai_video_id)
     if not item:
         return jsonify({"success": False, "message": "AI video not found."}), 404
+
+    from app.video_shorts.services.media_access import authorize_file
+    try:
+        authorize_file(item.get("clip_filename"), owner_user_id=user_id, brand_id=brand_id)
+    except (ValueError, TypeError):
+        return jsonify({"success": False, "message": "Clip does not belong to this tenant."}), 403
 
     youtube_enabled = str(request.form.get("youtube_enabled") or "").lower() in {"on", "1", "true", "yes"}
     instagram_reel = str(request.form.get("schedule_instagram_reel") or "").lower() in {"on", "1", "true", "yes"}

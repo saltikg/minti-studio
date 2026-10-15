@@ -15,9 +15,10 @@ if str(ROOT) not in sys.path:
 
 load_dotenv(ROOT / ".env")
 
-from app.video_shorts.config import FREE_TOOL_GUEST_TTL_DAYS, SHORTS_DIR
+from app.video_shorts.config import FREE_TOOL_GUEST_TTL_DAYS, SHORTS_DIR, PRIVATE_STATE_DIR
 from app.video_shorts.services.db import ensure_auth_user_schema, get_db, table_columns
-from app.video_shorts.services.guest_objects import guest_storage_keys_for_user
+from app.video_shorts.services.guest_objects import guest_storage_keys_for_user, non_guest_source_references
+from app.video_shorts.services import tenant_media
 from app.video_shorts.services.media_utils import purge_source_cache_for_video
 from app.video_shorts.services.storage import get_media_storage
 
@@ -57,7 +58,8 @@ def _local_files_for_video(video_id: str) -> list[Path]:
         f"{video_id}_auto_suggest_render.json",
         f"preview_frames/{video_id}_*",
     ):
-        files.extend(path for path in SHORTS_DIR.glob(pattern) if path.is_file())
+        for root in (SHORTS_DIR, PRIVATE_STATE_DIR / "legacy"):
+            files.extend(path for path in root.glob(pattern) if path.is_file())
     return files
 
 
@@ -120,10 +122,13 @@ def main() -> int:
     no_source = 0
     try:
         for user_id, created_at in guests:
+            tenant_media.lock_source_references(conn)
             video_ids = _video_ids_for_user(conn, user_id)
             keys = guest_storage_keys_for_user(conn, user_id)
             object_count += len(keys)
             for key in keys:
+                if non_guest_source_references(conn, key=key):
+                    continue
                 total_bytes += _s3_size(storage, key)
                 if not args.dry_run:
                     try:
@@ -131,6 +136,8 @@ def main() -> int:
                     except Exception:
                         pass
             for video_id in video_ids:
+                if non_guest_source_references(conn, video_id=video_id):
+                    continue
                 if not keys:
                     no_source += 1
                 if not args.dry_run:
@@ -144,7 +151,12 @@ def main() -> int:
                             pass
             print(f"guest id={user_id} created_at={created_at} videos={len(video_ids)} objects={len(keys)}")
             if not args.dry_run:
+                owned_pks = conn.execute("SELECT id FROM youtube_videos WHERE CAST(owner_user_id AS VARCHAR) = ?", [user_id]).fetchall()
+                for (video_pk,) in owned_pks:
+                    for path in PRIVATE_STATE_DIR.glob(f"{int(video_pk)}_*.json"):
+                        path.unlink(missing_ok=True)
                 _delete_user_rows(conn, user_id)
+                conn.commit()
         if not args.dry_run:
             conn.commit()
     except Exception:

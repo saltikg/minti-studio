@@ -88,6 +88,8 @@ def enqueue_instagram_clip(
     queue_owner, _, queue_brand = str(scoped_user_id or "").partition("::")
     queue_brand = queue_brand or None
     identity_sql, identity_params = queue_identity_filter(queue_owner, queue_brand)
+    from app.video_shorts.services.media_access import authorize_file
+    authorize_file(clip_filename, owner_user_id=queue_owner, brand_id=queue_brand)
     queue_id = str(uuid.uuid4())
     conn = None
     for attempt in range(3):
@@ -779,6 +781,7 @@ def get_instagram_queue_entry(queue_id: str) -> Optional[Dict[str, Optional[str]
             SELECT
                 id,
                 user_id,
+                brand_id,
                 video_id,
                 clip_filename,
                 instagram_media_id,

@@ -257,40 +257,13 @@ def _cached_preview_frame_url(video_id: str) -> str:
         rel_preview = preview_path.resolve().relative_to(SHORTS_DIR.parent.resolve())
     except Exception:
         return ""
-    return url_for("video_shorts_bp.static", filename=str(rel_preview))
+    from app.video_shorts.services.media_access import preview_url
+    return preview_url(video_id, preview_path.name)
 
 
 def _short_card_media_urls(filename: str, storage_file_key: str = "") -> tuple[str, str]:
-    """Build card URLs, avoiding storage probes when the asset index verified the clip."""
-    safe_name = Path(str(filename or "")).name
-    stored_key = str(storage_file_key or "").strip()
-    if not safe_name:
-        return "", ""
-    storage = get_media_storage()
-    short_key = tenant_media.short_key(safe_name)
-    if not stored_key:
-        local_short_path = tenant_media.short_path(safe_name)
-        try:
-            resolved = storage.resolve_local_or_s3(short_key, fallback_local_paths=[local_short_path])
-        except Exception:
-            current_app.logger.warning("Could not resolve generated short card media filename=%s", safe_name)
-            return "", ""
-        if not resolved.exists or not resolved.public_url:
-            return "", ""
-        poster_url = ""
-        try:
-            poster = storage.resolve_local_or_s3(tenant_media.poster_key(f'{safe_name}.jpg'))
-            if poster.exists and poster.public_url:
-                poster_url = poster.public_url
-        except Exception:
-            current_app.logger.warning("Could not resolve generated short poster filename=%s", safe_name)
-        return resolved.public_url, poster_url
-    try:
-        video_url = storage.public_url(short_key)
-    except Exception:
-        current_app.logger.warning("Could not build generated short card URL filename=%s", safe_name)
-        return "", ""
-    return video_url, ""
+    from app.video_shorts.services.media_access import media_url
+    return media_url(filename), media_url(filename, poster_filename=f"{filename}.jpg")
 
 
 def _load_recent_short_cards(conn, user_id: str, brand_id: str | None, user_tz: str, *, limit: int, offset: int = 0) -> tuple[list[dict], bool]:

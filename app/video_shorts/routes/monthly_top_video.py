@@ -1,5 +1,6 @@
 from __future__ import annotations
-from app.video_shorts.services import tenant_media
+from app.video_shorts.services import tenant_media, compilation_media
+from app.video_shorts.services.media_access import media_url
 
 import json
 import re
@@ -48,7 +49,7 @@ DEFAULT_TIME_ZONE = "America/Los_Angeles"
 
 
 def _monthly_output_meta_path(output_path: Path) -> Path:
-    return output_path.with_suffix(".meta.json")
+    return compilation_media.metadata_path(output_path, "monthly_top")
 
 
 def _write_monthly_output_meta(
@@ -101,15 +102,11 @@ def _list_generated_monthly_videos(limit: int = 12) -> List[Dict[str, object]]:
     if not SHORTS_DIR.exists():
         return rows
     brand_id = current_brand_id()
-    candidates = sorted(
-        SHORTS_DIR.glob("monthly_top_*.mp4"),
-        key=lambda p: p.stat().st_mtime if p.exists() else 0,
-        reverse=True,
-    )
+    candidates = compilation_media.list_compilation_paths("monthly_top", limit=limit)
     for path in candidates[: max(1, int(limit))]:
         item = {
             "filename": path.name,
-            "url": url_for("video_shorts_bp.static", filename=tenant_media.short_key(path.name)),
+            "url": media_url(path.name),
             "month": _extract_month_from_filename(path.name) or "-",
             "video_count": None,
             "videos": [],
@@ -208,7 +205,7 @@ def _is_safe_monthly_output_name(filename: str) -> bool:
     name = (filename or "").strip()
     if not name or "/" in name or "\\" in name:
         return False
-    return bool(re.match(r"^monthly_top_[a-z0-9_-]+\.mp4$", name))
+    return bool(re.match(r"^monthly_top_[A-Za-z0-9_-]+\.mp4$", name))
 
 
 def _month_bounds(month_value: Optional[str]) -> tuple[str, date, date]:
@@ -847,7 +844,8 @@ def _build_monthly_compilation(
 
         ts = datetime.utcnow().strftime("%Y%m%d_%H%M%S")
         safe_channel = re.sub(r"[^a-z0-9_]+", "_", (channel_type or "all").lower())
-        output_filename = f"monthly_top_{month_value}_{safe_channel}_{ts}.mp4"
+        video_identity = compilation_media.monthly_source_identity(included_rows)
+        output_filename = compilation_media.compilation_filename(video_identity, "monthly_top", f"{month_value}_{safe_channel}_{ts}")
         output_path = tenant_media.short_path(output_filename)
         transition_d = 0.40
         cmd_concat: List[str] = [ffmpeg_bin, "-y"]
@@ -960,6 +958,7 @@ def _build_monthly_compilation(
                 "skipped": skipped,
                 "error_reason": "concat_failed",
             }
+        compilation_media.register_compilation(output_path, video_identity, "monthly_top")
         _write_monthly_output_meta(
             output_path=output_path,
             month_value=month_value,
@@ -969,7 +968,7 @@ def _build_monthly_compilation(
         return {
             "ok": output_path.exists(),
             "output_filename": output_filename,
-            "output_url": url_for("video_shorts_bp.static", filename=tenant_media.short_key(output_filename)),
+            "output_url": media_url(output_filename),
             "created_count": len(prepared_segments),
             "skipped": skipped,
             "error_reason": None,
@@ -1122,6 +1121,11 @@ def workflow_monthly_top_video_delete():
     if not _is_safe_monthly_output_name(filename):
         return jsonify({"ok": False, "message": "Invalid filename."}), 400
 
+    try:
+        compilation_media.authorize_compilation(filename, kind="monthly_top")
+    except (ValueError, TypeError):
+        return jsonify({"ok": False, "message": "Compilation does not belong to this tenant."}), 403
+
     target = tenant_media.short_path(filename)
     meta = _monthly_output_meta_path(target)
     removed = False
@@ -1157,6 +1161,11 @@ def workflow_monthly_top_video_publish():
     filename = str(data.get("filename") or "").strip()
     if not _is_safe_monthly_output_name(filename):
         return jsonify({"ok": False, "message": "Invalid filename."}), 400
+    try:
+        compilation_media.authorize_compilation(filename, kind="monthly_top")
+    except (ValueError, TypeError):
+        return jsonify({"ok": False, "message": "Compilation does not belong to this tenant."}), 403
+
     media_path = tenant_media.short_path(filename)
     if not media_path.exists():
         return jsonify({"ok": False, "message": "Video file not found."}), 404

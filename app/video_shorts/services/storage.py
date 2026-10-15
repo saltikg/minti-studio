@@ -452,23 +452,35 @@ def guest_s3_tags_for_owner(owner_user_id: object) -> dict[str, str]:
         return {}
 
 
+def _put_for_owner(key, owner_user_id, write):
+    storage = get_media_storage()
+    tags = guest_s3_tags_for_owner(owner_user_id)
+    if not str(key).startswith("videos/"):
+        return write(storage, tags)
+    from app.video_shorts.services.db import get_db
+    from app.video_shorts.services.tenant_media import lock_source_references
+    from app.video_shorts.services.guest_objects import non_guest_source_references
+    conn = get_db()
+    try:
+        lock_source_references(conn)
+        # Shared source objects are immutable, including when owner lookup fails.
+        # Reuse their bytes and tags rather than uploading or retagging them.
+        if storage.exists(key):
+            return
+        if non_guest_source_references(conn, key=key):
+            tags = {}
+        write(storage, tags)
+        conn.commit()
+    finally:
+        conn.close()
+
+
 def put_file_for_owner(local_path: Path | str, key: str, *, owner_user_id: object = None) -> None:
-    get_media_storage().put_file(local_path, key, tags=guest_s3_tags_for_owner(owner_user_id))
+    _put_for_owner(key, owner_user_id, lambda storage, tags: storage.put_file(local_path, key, tags=tags))
 
 
-def put_bytes_for_owner(
-    data: bytes,
-    key: str,
-    *,
-    content_type: Optional[str] = None,
-    owner_user_id: object = None,
-) -> None:
-    get_media_storage().put_bytes(
-        data,
-        key,
-        content_type=content_type,
-        tags=guest_s3_tags_for_owner(owner_user_id),
-    )
+def put_bytes_for_owner(data: bytes, key: str, *, content_type: Optional[str] = None, owner_user_id: object = None) -> None:
+    _put_for_owner(key, owner_user_id, lambda storage, tags: storage.put_bytes(data, key, content_type=content_type, tags=tags))
 
 
 def remove_guest_tag_from_keys(keys: Iterable[str]) -> dict[str, int]:

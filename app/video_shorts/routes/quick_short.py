@@ -1768,6 +1768,12 @@ def quick_short_publish():
     if not clip_filename or not generation._short_exists(clip_filename):
         return _json_error("Short file could not be found.", 404)
 
+    from app.video_shorts.services.media_access import authorize_plan_clip
+    try:
+        authorize_plan_clip(session["video_pk"], clip_filename)
+    except (ValueError, TypeError):
+        return _json_error("Clip does not belong to this plan and tenant.", 403)
+
     brand_id = session.get("brand_id")
     target = str(data.get("target") or "").strip().lower()
     mode = str(data.get("mode") or "now").strip().lower()

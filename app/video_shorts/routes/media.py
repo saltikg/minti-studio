@@ -5,7 +5,8 @@ from pathlib import Path
 from typing import Optional, Tuple
 
 from botocore.exceptions import ClientError
-from flask import Response, current_app, request, send_from_directory, stream_with_context
+from flask import Response, abort, current_app, request, send_from_directory, stream_with_context
+from itsdangerous import BadSignature
 
 from app.video_shorts import video_shorts_bp
 from app.video_shorts.config import SHORTS_DIR, VIDEOS_DIR
@@ -15,6 +16,7 @@ from app.video_shorts.services.instagram_media_proxy import (
 )
 from app.video_shorts.services.instagram_queue import get_instagram_queue_entry
 from app.video_shorts.services.storage import S3Storage, get_media_storage
+from app.video_shorts.services.media_access import read_media_grant, authorize_queue_clip
 
 
 logger = logging.getLogger(__name__)
@@ -52,13 +54,36 @@ def _resolve_instagram_proxy_clip(queue_id: str):
     clip_filename = str(entry.get("clip_filename") or "").strip()
     if not clip_filename:
         return entry, None
-    key = tenant_media.short_key(clip_filename)
+    try:
+        key = authorize_queue_clip(entry)["storage_key"]
+    except ValueError:
+        return entry, None
     local_path = tenant_media.short_path(clip_filename)
     storage = get_media_storage()
     resolved = storage.resolve_local_or_s3(key, fallback_local_paths=[local_path])
     if not resolved.exists:
         return entry, None
     return entry, resolved
+
+
+@video_shorts_bp.route("/short-media/<filename>", methods=["GET", "HEAD"])
+def serve_short_media(filename):
+    try:
+        info = read_media_grant(filename, request.args.get("grant") or "")
+        key = info["storage_key"]
+        storage = get_media_storage()
+        if isinstance(storage, S3Storage) and storage.exists(key):
+            response = _s3_proxy_response(storage, key)
+        else:
+            path = SHORTS_DIR / key.removeprefix("shorts/")
+            if not path.is_file():
+                abort(404)
+            response = _local_proxy_response(path)
+        response.headers["Cache-Control"] = "private, no-store"
+        response.headers["Referrer-Policy"] = "no-referrer"
+        return response
+    except (BadSignature, ValueError, TypeError):
+        abort(404)
 
 
 def _request_log_fields() -> dict:
@@ -244,3 +269,15 @@ def serve_instagram_media_proxy(token):
         return "proxy error", 500
     _log_proxy_request(status_code=404, bytes_served=0, note="unsupported-storage")
     return "not found", 404
+
+
+@video_shorts_bp.route("/short-preview/<filename>", methods=["GET", "HEAD"])
+def serve_short_preview(filename):
+    from app.video_shorts.services.media_access import read_preview_grant
+    try:
+        name = read_preview_grant(filename, request.args.get("grant") or "")
+    except (BadSignature, ValueError, TypeError):
+        abort(404)
+    response = send_from_directory(SHORTS_DIR / "preview_frames", name, conditional=True)
+    response.headers["Cache-Control"] = "private, no-store"
+    return response

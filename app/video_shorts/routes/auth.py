@@ -1789,6 +1789,13 @@ def claim_guest_into(
 
 @video_shorts_bp.before_request
 def _guard_video_shorts():
+    # No generated media or private JSON may bypass the ownership routes.
+    if request.endpoint == "video_shorts_bp.static":
+        from pathlib import PurePosixPath
+        filename = str((request.view_args or {}).get("filename") or "").replace("\\", "/")
+        parts = PurePosixPath(filename).parts
+        if ".." in parts or (parts and parts[0] == "shorts"):
+            abort(404)
     # allow static and login and API endpoints
     allowed = {
         "video_shorts_bp.login",
@@ -1821,6 +1828,8 @@ def _guard_video_shorts():
         "video_shorts_bp.redeem_onboarding_magic_link",
         "video_shorts_bp.serve_media",
         "video_shorts_bp.serve_instagram_media_proxy",
+        "video_shorts_bp.serve_short_media",
+        "video_shorts_bp.serve_short_preview",
         "video_shorts_bp.home",
         "video_shorts_bp.blog_index",
         "video_shorts_bp.blog_article",

@@ -15,118 +15,84 @@ from app.video_shorts.services.storage import get_media_storage
 from requests.exceptions import ConnectionError as RequestsConnectionError
 from src.trends.facebook_page_tokens import get_facebook_page_data
 from app.video_shorts.services.social_queue_identity import queue_token_identity
+from app.video_shorts.services.media_access import worker_clip_path
 
 
 def _utc_now_iso() -> str:
     return datetime.utcnow().isoformat()
 
 
-def _resolve_clip_url(filename: str) -> str:
-    key = tenant_media.short_key(filename)
-    local_path = tenant_media.short_path(filename)
-    resolved = get_media_storage().resolve_local_or_s3(key, fallback_local_paths=[local_path])
-    if resolved.public_url:
-        return resolved.public_url
-    return f"{os.getenv('BASE_URL', '').rstrip('/')}/video_shorts/static/shorts/{filename}"
-
-
-def _download_video(video_url: str) -> tuple[str, int, str]:
-    resp = requests.get(video_url, stream=True, timeout=60)
-    resp.raise_for_status()
-    content_type = resp.headers.get("Content-Type") or "application/octet-stream"
-    file_size = resp.headers.get("Content-Length")
-    temp = tempfile.NamedTemporaryFile(delete=False, suffix=".mp4")
-    size = 0
-    try:
-        for chunk in resp.iter_content(chunk_size=1024 * 1024):
-            if not chunk:
-                continue
-            temp.write(chunk)
-            size += len(chunk)
-    finally:
-        temp.flush()
-        temp.close()
-    return temp.name, int(file_size or size), content_type
-
-
-def _publish_facebook_reel(page_id: str, page_token: str, video_url: str, caption: str):
-    temp_path = None
-    try:
-        temp_path, file_size, _content_type = _download_video(video_url)
-        start_url = f"{FB_API_BASE.rstrip('/')}/{page_id}/video_reels"
-        start_payload = {
-            "access_token": page_token,
-            "upload_phase": "start",
-            "file_size": file_size,
+def _publish_facebook_reel(page_id: str, page_token: str, video_path: str, caption: str):
+    file_size = os.path.getsize(video_path)
+    start_url = f"{FB_API_BASE.rstrip('/')}/{page_id}/video_reels"
+    start_payload = {
+        "access_token": page_token,
+        "upload_phase": "start",
+        "file_size": file_size,
+    }
+    start_resp = requests.post(start_url, data=start_payload, timeout=30)
+    if start_resp.status_code != 200:
+        raise RuntimeError(
+            f"Facebook reel start failed status={start_resp.status_code} body={start_resp.text}"
+        )
+    start_data = start_resp.json() or {}
+    upload_url = start_data.get("upload_url")
+    video_id = start_data.get("video_id") or start_data.get("id")
+    if not upload_url or not video_id:
+        raise RuntimeError(
+            f"Facebook reel start missing upload_url/video_id body={start_resp.text}"
+        )
+    with open(video_path, "rb") as handle:
+        upload_headers = {
+            "Authorization": f"OAuth {page_token}",
+            "offset": "0",
+            "file_size": str(file_size),
         }
-        start_resp = requests.post(start_url, data=start_payload, timeout=30)
-        if start_resp.status_code != 200:
-            raise RuntimeError(
-                f"Facebook reel start failed status={start_resp.status_code} body={start_resp.text}"
-            )
-        start_data = start_resp.json() or {}
-        upload_url = start_data.get("upload_url")
-        video_id = start_data.get("video_id") or start_data.get("id")
-        if not upload_url or not video_id:
-            raise RuntimeError(
-                f"Facebook reel start missing upload_url/video_id body={start_resp.text}"
-            )
-        with open(temp_path, "rb") as handle:
-            upload_headers = {
-                "Authorization": f"OAuth {page_token}",
-                "offset": "0",
-                "file_size": str(file_size),
-            }
-            upload_resp = requests.post(
-                upload_url,
-                headers=upload_headers,
-                data=handle,
-                timeout=120,
-            )
-        if upload_resp.status_code not in {200, 201}:
-            raise RuntimeError(
-                f"Facebook reel upload failed status={upload_resp.status_code} body={upload_resp.text}"
-            )
-        finish_payload = {
-            "access_token": page_token,
-            "upload_phase": "finish",
-            "video_id": video_id,
-            "description": caption,
-            "share_to_feed": "true",
-        }
-        finish_resp = requests.post(start_url, data=finish_payload, timeout=30)
-        if finish_resp.status_code != 200:
-            raise RuntimeError(
-                f"Facebook reel finish failed status={finish_resp.status_code} body={finish_resp.text}"
-            )
-        finish_data = finish_resp.json() or {}
-        finish_data.setdefault("id", video_id)
-        return finish_data
-    finally:
-        if temp_path and os.path.exists(temp_path):
-            try:
-                os.remove(temp_path)
-            except Exception:
-                pass
+        upload_resp = requests.post(
+            upload_url,
+            headers=upload_headers,
+            data=handle,
+            timeout=120,
+        )
+    if upload_resp.status_code not in {200, 201}:
+        raise RuntimeError(
+            f"Facebook reel upload failed status={upload_resp.status_code} body={upload_resp.text}"
+        )
+    finish_payload = {
+        "access_token": page_token,
+        "upload_phase": "finish",
+        "video_id": video_id,
+        "description": caption,
+        "share_to_feed": "true",
+    }
+    finish_resp = requests.post(start_url, data=finish_payload, timeout=30)
+    if finish_resp.status_code != 200:
+        raise RuntimeError(
+            f"Facebook reel finish failed status={finish_resp.status_code} body={finish_resp.text}"
+        )
+    finish_data = finish_resp.json() or {}
+    finish_data.setdefault("id", video_id)
+    return finish_data
+
 
 
 def _publish_facebook_video(
     page_id: str,
     page_token: str,
-    video_url: str,
+    video_path: str,
     caption: str,
     media_type: str,
 ):
     if media_type == "reel":
-        return _publish_facebook_reel(page_id, page_token, video_url, caption)
+        return _publish_facebook_reel(page_id, page_token, video_path, caption)
     endpoint = "videos"
     url = f"{FB_API_BASE.rstrip('/')}/{page_id}/{endpoint}"
     payload = {
         "access_token": page_token,
         "description": caption,
-        "file_url": video_url,
     }
-    resp = requests.post(url, data=payload, timeout=30)
+    with open(video_path, "rb") as handle:
+        resp = requests.post(url, data=payload, files={"source": (os.path.basename(video_path), handle, "video/mp4")}, timeout=120)
     if resp.status_code != 200:
         raise RuntimeError(f"Facebook publish failed status={resp.status_code} body={resp.text}")
     return resp.json()
@@ -215,11 +181,12 @@ def process_queue(max_jobs: int = 5) -> None:
             continue
         page_id = creds.get("page_id")
         clip_filename = job.get("clip_filename") or ""
-        video_url = _resolve_clip_url(clip_filename)
         caption = (job.get("caption_text") or "").strip()
         media_type = (job.get("media_type") or "feed").lower()
+        media_path = None
         try:
-            payload = _publish_facebook_video(page_id, creds.get("page_access_token"), video_url, caption, media_type)
+            media_path = worker_clip_path(job)
+            payload = _publish_facebook_video(page_id, creds.get("page_access_token"), str(media_path), caption, media_type)
             video_id = payload.get("id") or payload.get("video_id")
             metrics = {}
             if video_id:
@@ -251,6 +218,10 @@ def process_queue(max_jobs: int = 5) -> None:
                 status_detail=str(exc),
             )
             print(f"Facebook publish failed queue_id={queue_id}: {exc}")
+        finally:
+            cleanup = getattr(media_path, "cleanup", None)
+            if callable(cleanup):
+                cleanup()
 
 
 def main() -> None:

@@ -18,14 +18,9 @@ from app.video_shorts.services.instagram_queue import (
 )
 from app.video_shorts.services.storage import get_media_storage
 from app.video_shorts.services.social_queue_identity import queue_token_identity
+from app.video_shorts.services.media_access import authorize_queue_clip
 from src.trends.instagram_tokens import get_instagram_credentials
 from app.video_shorts.tasks.process_facebook_queue import process_queue as process_facebook_queue
-
-
-def _resolve_clip(filename: str):
-    key = tenant_media.short_key(filename)
-    local_path = tenant_media.short_path(filename)
-    return get_media_storage().resolve_local_or_s3(key, fallback_local_paths=[local_path])
 
 
 def _now_iso() -> str:
@@ -119,8 +114,8 @@ def _queue_credentials(job: dict) -> dict:
 def _upload_reel(job: dict) -> Optional[str]:
     creds = _queue_credentials(job)
     clip_filename = job.get("clip_filename") or ""
-    resolved = _resolve_clip(clip_filename)
-    if not resolved.exists:
+    media = authorize_queue_clip(job)
+    if not tenant_media.short_path(clip_filename).is_file() and not get_media_storage().exists(media["storage_key"]):
         raise RuntimeError(f"Clip dosyası bulunamadı: {tenant_media.short_path(clip_filename)}")
     access_token = creds.get("page_access_token")
     business_id = creds.get("instagram_business_account_id")

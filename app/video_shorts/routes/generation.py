@@ -1,3 +1,4 @@
+from app.video_shorts.services import compilation_media
 from app.video_shorts.services.social_queue_identity import queue_identity_filter
 import json
 from app.video_shorts.services import tenant_media
@@ -1460,25 +1461,9 @@ def invalidate_short_cdn_cache(filename: str) -> None:
         )
 
 
-def _short_public_url(filename: str) -> str:
-    safe_name = Path(filename or "").name
-    if not safe_name:
-        return ""
-    key = _short_storage_key(safe_name)
-    storage = get_media_storage()
-    if getattr(storage, "backend_name", "local") == "s3":
-        try:
-            if storage.exists(key):
-                current_app.logger.debug("short url resolved from s3 filename=%s key=%s", safe_name, key)
-                return storage.public_url(key)
-        except Exception:
-            current_app.logger.exception("Failed to resolve short url from s3 filename=%s key=%s", safe_name, key)
-    local_storage = get_media_storage("local")
-    local_path = _short_local_path(safe_name)
-    if local_path.exists() and local_path.is_file():
-        current_app.logger.debug("short url resolved from local filename=%s key=%s", safe_name, key)
-        return local_storage.public_url(key)
-    return ""
+def _short_public_url(filename: str, *, share_token=None) -> str:
+    from app.video_shorts.services.media_access import media_url
+    return media_url(filename, share_token=share_token)
 
 
 def _versioned_media_url(url: str, version: Optional[str]) -> str:
@@ -1535,26 +1520,9 @@ def _short_poster_filename_for_render(clip_filename: str, version: Optional[str]
     return f"{stem}-{clean_version}.jpg"
 
 
-def _short_poster_public_url(filename: str, poster_filename: Optional[str] = None) -> str:
-    safe_name = Path(filename or "").name
-    safe_poster_name = Path(poster_filename or "").name
-    if not safe_name and not safe_poster_name:
-        return ""
-    key = _short_poster_storage_key_for_poster(safe_poster_name) if safe_poster_name else _short_poster_storage_key(safe_name)
-    storage = get_media_storage()
-    if getattr(storage, "backend_name", "local") == "s3":
-        try:
-            if storage.exists(key):
-                return storage.public_url(key)
-        except Exception:
-            current_app.logger.exception("Failed to resolve short poster url from s3 filename=%s key=%s", safe_name, key)
-    local_storage = get_media_storage("local")
-    try:
-        if local_storage.exists(key):
-            return local_storage.public_url(key)
-    except Exception:
-        current_app.logger.exception("Failed to resolve short poster url from local storage filename=%s key=%s", safe_name, key)
-    return ""
+def _short_poster_public_url(filename: str, poster_filename: Optional[str] = None, *, share_token=None) -> str:
+    from app.video_shorts.services.media_access import media_url
+    return media_url(filename, poster_filename=poster_filename or f"{filename}.jpg", share_token=share_token)
 
 
 def _cleanup_managed_temp_path(path_obj: Any) -> None:
@@ -2847,7 +2815,8 @@ def _preview_frame_static_url(video_id: str) -> str:
         if not preview_path.exists():
             return ""
         rel_preview = preview_path.resolve().relative_to(SHORTS_DIR.parent.resolve())
-        return url_for("video_shorts_bp.static", filename=str(rel_preview))
+        from app.video_shorts.services.media_access import preview_url
+        return preview_url(video_id, preview_path.name)
     except Exception:
         return ""
 
@@ -4328,7 +4297,7 @@ def _probe_media_duration_seconds(path: Path) -> Optional[int]:
 
 
 def _long_comp_meta_path(output_path: Path) -> Path:
-    return output_path.with_suffix(".long.meta.json")
+    return compilation_media.metadata_path(output_path, "long_from_shorts")
 
 
 def _format_long_created_at_pst(created_at_iso: Optional[str], fallback_ts: Optional[float]) -> str:
@@ -4452,16 +4421,13 @@ def _list_generated_long_compilations(video_id: str, limit: int = 12) -> List[Di
     rows: List[Dict[str, Any]] = []
     if not SHORTS_DIR.exists() or not safe_video_id:
         return rows
-    candidates = sorted(
-        SHORTS_DIR.glob(f"long_from_shorts_{safe_video_id}_*.mp4"),
-        key=lambda p: p.stat().st_mtime if p.exists() else 0,
-        reverse=True,
-    )
+    video = tenant_media.resolve_video(video_id)
+    candidates = compilation_media.list_compilation_paths("long_from_shorts", video_pk=video.video_pk, limit=limit)
     for path in candidates[: max(1, int(limit))]:
         mtime_ts = path.stat().st_mtime
         item = {
             "filename": path.name,
-            "url": url_for("video_shorts_bp.static", filename=tenant_media.short_key(path.name)),
+            "url": _short_public_url(path.name),
             "created_at": _format_long_created_at_pst(None, mtime_ts),
             "clip_count": None,
             "source_titles": [],
@@ -4755,7 +4721,8 @@ def _build_long_compilation_from_published(
 
         safe_video_id = re.sub(r"[^A-Za-z0-9_-]+", "_", (video_id or "").strip())[:72]
         ts = datetime.utcnow().strftime("%Y%m%d_%H%M%S")
-        output_filename = f"long_from_shorts_{safe_video_id}_{ts}.mp4"
+        video_identity = tenant_media.resolve_video(video_id)
+        output_filename = compilation_media.compilation_filename(video_identity, "long_from_shorts", ts)
         output_path = tenant_media.short_path(output_filename)
 
         transition_d = 0.40
@@ -4858,6 +4825,7 @@ def _build_long_compilation_from_published(
                 next_delta = max(0.0, float(durations_for_chapters[idx]) - (transition_d if idx < len(used) - 1 else 0.0))
                 chapter_cursor += next_delta
 
+        compilation_media.register_compilation(output_path, video_identity, "long_from_shorts")
         _write_long_comp_meta(
             output_path,
             video_id=video_id,
@@ -4876,7 +4844,7 @@ def _build_long_compilation_from_published(
             "ok": True,
             "message": "Long video created.",
             "output_filename": output_filename,
-            "output_url": url_for("video_shorts_bp.static", filename=tenant_media.short_key(output_filename)),
+            "output_url": _short_public_url(output_filename),
             "skipped": skipped,
         }
     except Exception as exc:
@@ -11128,7 +11096,8 @@ def generate_short(video_pk):
                     )
                     if preview_path:
                         rel_preview = preview_path.resolve().relative_to(SHORTS_DIR.parent.resolve())
-                        preview_image_url = url_for("video_shorts_bp.static", filename=str(rel_preview))
+                        from app.video_shorts.services.media_access import preview_url
+                        preview_image_url = preview_url(f"i2v_{job_id}", preview_path.name)
                 except Exception:
                     preview_image_url = None
                 created_visual_options.append(
@@ -11381,7 +11350,7 @@ def generate_short(video_pk):
                 "yt_status": entry.get("yt_status"),
             }
         )
-    debug_path = SHORTS_DIR / f"{video['video_id']}_debug.json"
+    debug_path = tenant_media.state_path(video["video_id"], "debug", video_pk=video_pk, read=True)
     debug_info = None
     if debug_path.exists():
         try:
@@ -12499,6 +12468,7 @@ def _load_shared_short_row(conn, token: str) -> dict[str, Any] | None:
               ON CAST(b.id AS VARCHAR) = CAST(gv.brand_id AS VARCHAR)
             LEFT JOIN youtube_videos yv
               ON CAST(yv.video_id AS VARCHAR) = CAST(gv.source_video_id AS VARCHAR)
+             AND yv.owner_user_id = gv.user_id AND yv.brand_id IS NOT DISTINCT FROM gv.brand_id
             WHERE sl.token = ?
             LIMIT 1
             """,
@@ -12537,6 +12507,7 @@ def _load_shared_short_row(conn, token: str) -> dict[str, Any] | None:
           ON CAST(b.id AS VARCHAR) = CAST(gv.brand_id AS VARCHAR)
         LEFT JOIN youtube_videos yv
           ON CAST(yv.video_id AS VARCHAR) = CAST(gv.source_video_id AS VARCHAR)
+         AND yv.owner_user_id = gv.user_id AND yv.brand_id IS NOT DISTINCT FROM gv.brand_id
         WHERE gv.share_token = ?
         LIMIT 1
         """,
@@ -13075,11 +13046,11 @@ def _render_public_short_watch_page(token: str):
     if not clip_filename:
         return render_template("short_share_unavailable.html", clip_title=clip_title), 404
 
-    playback_url = _short_public_url(clip_filename)
+    playback_url = _short_public_url(clip_filename, share_token=normalized_token)
     if not playback_url:
         return render_template("short_share_unavailable.html", clip_title=clip_title), 404
 
-    poster_url = _short_poster_public_url(clip_filename) or None
+    poster_url = _short_poster_public_url(clip_filename, share_token=normalized_token) or None
     onboarding_url = ""
     resolved_language = normalize_outreach_language(row.get("language"), default="EN")
     recipient_email = str(row.get("recipient_email") or "").strip().lower()
@@ -14094,6 +14065,11 @@ def publish_long_video_from_generate(video_pk: int):
     filename = str(request.form.get("filename") or "").strip()
     if not _safe_long_comp_name(filename):
         return jsonify({"success": False, "message": "Invalid long video filename."}), 400
+    try:
+        compilation_media.authorize_compilation(filename, video_pk=video_pk, kind="long_from_shorts")
+    except (ValueError, TypeError):
+        return jsonify({"success": False, "message": "Compilation does not belong to this video and tenant."}), 403
+
     media_path = tenant_media.short_path(filename)
     if not media_path.exists():
         return jsonify({"success": False, "message": "Long video file not found."}), 404
@@ -14299,6 +14275,11 @@ def delete_long_video_from_generate(video_pk: int):
     filename = str(payload.get("filename") or request.form.get("filename") or "").strip()
     if not _safe_long_comp_name(filename):
         return jsonify({"ok": False, "message": "Invalid filename."}), 400
+
+    try:
+        compilation_media.authorize_compilation(filename, video_pk=video_pk, kind="long_from_shorts")
+    except (ValueError, TypeError):
+        return jsonify({"success": False, "message": "Compilation does not belong to this video and tenant."}), 403
 
     target = tenant_media.short_path(filename)
     meta = _long_comp_meta_path(target)
@@ -25048,6 +25029,13 @@ def upload_clip_to_youtube():
         if not is_ajax:
             flash(message, category)
 
+    from app.video_shorts.services.media_access import authorize_plan_clip
+    try:
+        authorize_plan_clip(request.form.get("video_pk"), request.form.get("filename"),
+                            plan_index=request.form.get("plan_index"))
+    except (ValueError, TypeError):
+        return _ajax_fail("Clip does not belong to this plan and tenant.", status=403)
+
     youtube_enabled = (request.form.get("youtube_enabled") or "0").strip().lower() in {"1", "true", "yes", "on"}
     schedule_instagram_reel = (request.form.get("schedule_instagram_reel") or "").strip().lower() in {"1", "true", "yes", "on"}
     schedule_instagram_feed = (request.form.get("schedule_instagram_feed") or "").strip().lower() in {"1", "true", "yes", "on"}
@@ -25193,6 +25181,8 @@ def upload_clip_to_youtube():
                     if entry.get("clip_filename") == filename or entry.get("output_filename") == filename:
                         target_entry = entry
                         break
+    if target_entry is None or (target_entry.get("output_filename") or target_entry.get("clip_filename")) != filename:
+        return _ajax_fail("Clip does not belong to this plan entry.", status=403)
     if not _short_exists(filename):
         message = "Klip dosyası sunucuda bulunamadı."
         if is_ajax:
@@ -26418,7 +26408,7 @@ def _generate_clip_plan_for_video(
 
     if debug_info:
         try:
-            debug_path = SHORTS_DIR / f"{vid}_debug.json"
+            debug_path = tenant_media.state_path(vid, "debug", video_pk=video_pk)
             debug_path.write_text(json.dumps(debug_info, ensure_ascii=False, indent=2))
         except Exception:
             pass
@@ -26887,7 +26877,7 @@ def create_clip_plan_v2(video_pk):
 
     if debug_info:
         try:
-            debug_path = SHORTS_DIR / f"{vid}_debug_v2.json"
+            debug_path = tenant_media.state_path(vid, "debug_v2", video_pk=video_pk)
             debug_path.write_text(json.dumps(debug_info, ensure_ascii=False, indent=2))
         except Exception:
             pass
@@ -27020,7 +27010,7 @@ def create_clip_plan_v3(video_pk):
 
     if debug_info:
         try:
-            debug_path = SHORTS_DIR / f"{vid}_debug_v3.json"
+            debug_path = tenant_media.state_path(vid, "debug_v3", video_pk=video_pk)
             debug_path.write_text(json.dumps(debug_info, ensure_ascii=False, indent=2))
         except Exception:
             pass
@@ -27137,7 +27127,7 @@ def create_clip_plan_v4(video_pk):
 
     if debug_info:
         try:
-            debug_path = SHORTS_DIR / f"{vid}_debug_v4.json"
+            debug_path = tenant_media.state_path(vid, "debug_v4", video_pk=video_pk)
             debug_path.write_text(json.dumps(debug_info, ensure_ascii=False, indent=2))
         except Exception:
             pass
@@ -27200,7 +27190,7 @@ def delete_clip_plan_v2(video_pk):
         return redirect(url_for("video_shorts_bp.channels_page"))
     vid, _, _, _, _ = video_info
     plan_path = tenant_media.state_path(vid, "plan_v2", read=True, video_pk=video_pk)
-    debug_path = SHORTS_DIR / f"{vid}_debug_v2.json"
+    debug_path = tenant_media.state_path(vid, "debug_v2", video_pk=video_pk)
     deleted_any = False
     try:
         if plan_path.exists():

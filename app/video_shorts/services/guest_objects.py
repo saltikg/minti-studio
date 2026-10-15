@@ -123,4 +123,19 @@ def guest_storage_keys_for_user(conn, user_id: str) -> set[str]:
                         _add_key(keys, _poster_key("", str(value or "")))
                     else:
                         _add_key(keys, _short_key(str(value or "")))
-    return {key for key in keys if key}
+    return {key for key in keys if key and not non_guest_source_references(conn, key=key)}
+
+
+def non_guest_source_references(conn, *, video_id=None, key=None) -> bool:
+    """Check current customer references, including legacy keys and stored source URLs."""
+    if key is not None and not str(key).startswith("videos/"):
+        return False
+    source_id = str(video_id or (Path(str(key)).stem if key else ""))
+    stored = f"s3://{key}" if key else ""
+    return conn.execute(
+        """SELECT 1 FROM youtube_videos v
+           LEFT JOIN shorts_users u ON CAST(u.id AS VARCHAR) = v.owner_user_id
+           WHERE NOT COALESCE(u.is_guest, FALSE)
+             AND (v.video_id = ? OR (? <> '' AND v.video_url = ?)) LIMIT 1""",
+        [source_id, stored, stored],
+    ).fetchone() is not None

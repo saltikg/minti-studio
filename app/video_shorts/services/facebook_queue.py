@@ -68,11 +68,13 @@ def enqueue_facebook_clip(
     plan_title: Optional[str],
     media_type: str,
 ) -> str:
-    conn = _connect(read_only=False)
     scoped_user_id = brand_scoped_user_id(user_id)
     queue_owner, _, queue_brand = str(scoped_user_id or "").partition("::")
     queue_brand = queue_brand or None
     identity_sql, identity_params = queue_identity_filter(queue_owner, queue_brand)
+    from app.video_shorts.services.media_access import authorize_file
+    authorize_file(clip_filename, owner_user_id=queue_owner, brand_id=queue_brand)
+    conn = _connect(read_only=False)
     try:
         ensure_facebook_queue_schema(conn)
         now = _utc_now_iso()

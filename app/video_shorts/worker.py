@@ -1,4 +1,5 @@
 from __future__ import annotations
+from app.video_shorts.services import tenant_media
 
 import errno
 import json
@@ -1074,10 +1075,21 @@ def _execute_ingest_youtube_job(app, job: Dict[str, Any]) -> Dict[str, Any]:
     _set_quick_session_state(session_id, status=STATUS_INGESTING)
     _set_job_progress(job["id"], stage="queued", message="Queued for ingest.", status="queued")
     _set_job_progress(job["id"], stage="downloading", message="Downloading the source video.", status="processing")
-    local_path = _download_youtube_video(video_url, video_id)
+    storage = get_media_storage()
+    source_key = next((f"videos/{video_id}{suffix}" for suffix in tenant_media.SOURCE_VIDEO_SUFFIXES
+                       if storage.exists(f"videos/{video_id}{suffix}")), None)
+    if source_key:
+        local_path = storage.download_to_temp(source_key)
+        if getattr(storage, "backend_name", "local") == "local":
+            copied = Path(tempfile.mkdtemp(prefix="ingest-existing-")) / Path(source_key).name
+            shutil.copyfile(local_path, copied)
+            local_path = copied
+    else:
+        local_path = _download_youtube_video(video_url, video_id)
     try:
-        source_key = f"videos/{video_id}{local_path.suffix or '.mp4'}"
-        put_file_for_owner(local_path, source_key, owner_user_id=owner_user_id)
+        if not source_key:
+            source_key = f"videos/{video_id}{local_path.suffix or '.mp4'}"
+            put_file_for_owner(local_path, source_key, owner_user_id=owner_user_id)
         conn = get_db()
         try:
             updated = conn.execute(
@@ -1845,6 +1857,9 @@ def _execute_publish_job(app, job: Dict[str, Any]) -> Dict[str, Any]:
     brand_id = (brand or {}).get("id")
     _set_quick_session_state(session_id, status=STATUS_PUBLISHING)
     _set_job_progress(job["id"], stage="queued", message="Publish queued.", status="queued")
+
+    from app.video_shorts.services.media_access import authorize_file
+    authorize_file(clip_filename, owner_user_id=user.get("id"), brand_id=brand_id, video_pk=video_pk)
 
     clip_path = generation._resolve_short_path_for_processing(clip_filename)
     if not clip_path or not clip_path.exists():

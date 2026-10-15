@@ -13,7 +13,7 @@ from pathlib import Path
 
 from flask import g, has_request_context, request
 
-from app.video_shorts.config import SHORTS_DIR
+from app.video_shorts.config import SHORTS_DIR, PRIVATE_STATE_DIR
 from app.video_shorts.services.db import get_db_readonly
 
 log = logging.getLogger(__name__)
@@ -83,20 +83,34 @@ def _legacy_owner(conn, video):
 
 
 def state_path(video_id=None, kind="plan", *, video_pk=None, read=False):
-    if kind not in {"plan", "plan_v2", "plan_v3", "plan_v4", "auto_suggest_render", "non_speech_overrides"}:
+    if kind not in {"plan", "plan_v2", "plan_v3", "plan_v4", "auto_suggest_render", "non_speech_overrides", "debug", "debug_v2", "debug_v3", "debug_v4"}:
         raise ValueError("Unknown video state kind")
     video = resolve_video(video_id, video_pk=video_pk)
-    path = SHORTS_DIR / f"{video.video_pk}_{kind}.json"
-    if read and not path.exists():
-        legacy = SHORTS_DIR / f"{video.youtube_id}_{kind}.json"
-        if not legacy.exists():
-            return path
+    path = PRIVATE_STATE_DIR / f"{video.video_pk}_{kind}.json"
+    if not path.exists():
+        names = [f"{video.video_pk}_{kind}.json"]
         conn = get_db_readonly()
         try:
             if _legacy_owner(conn, video) == video.video_pk:
-                return legacy
+                names.append(f"{video.youtube_id}_{kind}.json")
         finally:
             conn.close()
+        for name in names:
+            for root in (PRIVATE_STATE_DIR / "legacy", SHORTS_DIR):
+                legacy = root / name
+                if legacy.is_file():
+                    path.parent.mkdir(parents=True, exist_ok=True)
+                    try:
+                        # Link without replacing a concurrent reader/writer's result.
+                        import os
+                        os.link(legacy, path)
+                    except FileExistsError:
+                        pass
+                    except FileNotFoundError:
+                        if not path.exists():
+                            continue
+                    legacy.unlink(missing_ok=True)
+                    return path
     return path
 
 

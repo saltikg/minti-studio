@@ -30,6 +30,7 @@ from app.video_shorts.services.tiktok_queue import (
 )
 from src.trends.tiktok_tokens import get_tiktok_data, store_tiktok_token
 from app.video_shorts.services.social_queue_identity import queue_token_identity
+from app.video_shorts.services.media_access import worker_clip_path
 
 
 def _tiktok_v2_url(path: str) -> str:
@@ -526,11 +527,17 @@ def _queue_credentials(job: dict) -> dict:
 
 def _publish_tiktok(job: dict) -> Optional[str]:
     creds = _queue_credentials(job)
-    access_token = creds["access_token"]
-    clip_path = SHORTS_DIR / (job.get("clip_filename") or "")
-    if not clip_path.exists():
-        raise RuntimeError(f"Clip dosyası bulunamadı: {clip_path}")
+    media_path = worker_clip_path(job)
+    try:
+        return _publish_tiktok_path(job, creds, Path(str(media_path)))
+    finally:
+        cleanup = getattr(media_path, "cleanup", None)
+        if callable(cleanup):
+            cleanup()
 
+
+def _publish_tiktok_path(job: dict, creds: dict, clip_path: Path) -> Optional[str]:
+    access_token = creds["access_token"]
     update_tiktok_job_status(
         job["id"],
         status=job.get("status") or "uploading",

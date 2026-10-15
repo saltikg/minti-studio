@@ -38,6 +38,9 @@ CLOUDFRONT_KEY_PAIR_ID = (os.getenv("CLOUDFRONT_KEY_PAIR_ID", "") or "").strip()
 CLOUDFRONT_PRIVATE_KEY_PATH = (os.getenv("CLOUDFRONT_PRIVATE_KEY_PATH", "") or "").strip()
 CLOUDFRONT_DISTRIBUTION_ID = (os.getenv("CLOUDFRONT_DISTRIBUTION_ID", "") or "").strip() or None
 SHORTS_DIR = Path(__file__).resolve().parent / "static" / "shorts"
+PRIVATE_STATE_DIR = Path(os.getenv("VIDEO_SHORTS_PRIVATE_STATE_DIR") or (Path(__file__).resolve().parent / "private_state"))
+if PRIVATE_STATE_DIR.resolve().is_relative_to((Path(__file__).resolve().parent / "static").resolve()):
+    raise RuntimeError("VIDEO_SHORTS_PRIVATE_STATE_DIR must not be inside static storage")
 VIDEOS_DIR = Path(__file__).resolve().parent / "videos"
 VIDEO_SHORTS_TMP_DIR = Path(os.getenv("VIDEO_SHORTS_TMP_DIR") or (Path(__file__).resolve().parent / "tmp"))
 SOURCE_CACHE_DIR = Path(os.getenv("SOURCE_CACHE_DIR") or (Path(__file__).resolve().parent / "source_cache"))
