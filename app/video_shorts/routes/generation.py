@@ -6471,7 +6471,11 @@ def render_job_media_payload(job: Dict[str, Any]) -> Dict[str, Any]:
         conn.close()
     video_url = _versioned_media_url(_short_public_url(clip_filename), media_version)
     poster_filename = str((target_entry or {}).get("poster_filename") or "").strip()
-    poster_url = _short_poster_public_url(clip_filename, poster_filename=poster_filename)
+    poster_url = (
+        _short_poster_public_url(clip_filename, poster_filename=poster_filename)
+        if poster_filename
+        else ""
+    )
     download_url = ""
     try:
         video_pk = int(payload.get("video_pk"))
@@ -11589,7 +11593,11 @@ def generate_short(video_pk):
         clip_exists = _short_exists(clip_filename) if clip_filename else False
         video_url = _short_public_url(clip_filename) if clip_exists and clip_filename else ""
         poster_filename = str(entry.get("poster_filename") or "").strip()
-        poster_url = _short_poster_public_url(clip_filename, poster_filename=poster_filename) if clip_exists and clip_filename else ""
+        poster_url = (
+            _short_poster_public_url(clip_filename, poster_filename=poster_filename)
+            if clip_exists and clip_filename and poster_filename
+            else ""
+        )
         status = "created" if clip_exists else (entry.get("status") or "pending")
         video_filename = clip_filename if clip_exists else None
         yt_id = entry.get("yt_video_id")

@@ -264,7 +264,10 @@ def _cached_preview_frame_url(video_id: str) -> str:
 
 def _short_card_media_urls(filename: str, storage_file_key: str = "") -> tuple[str, str]:
     from app.video_shorts.services.media_access import media_url
-    return media_url(filename), media_url(filename, poster_filename=f"{filename}.jpg")
+    # Cards render the signed video at t=1. Legacy clips generally have no
+    # poster object, so do not issue an S3 lookup for a URL the template will
+    # not use while the video is available.
+    return media_url(filename), ""
 
 
 def _visible_short_rows(conn, user_id, brand_id):
