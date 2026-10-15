@@ -4425,12 +4425,6 @@ def shorts_overview():
             entry["short_like_count"] = stats.get("like_count")
             entry["short_comment_count"] = stats.get("comment_count")
             entry["short_thumbnail_url"] = stats.get("thumbnail_url")
-        if short_id and not entry["short_thumbnail_url"]:
-            entry["short_thumbnail_url"] = f"https://i.ytimg.com/vi/{short_id}/hqdefault.jpg"
-        if entry["publish_status"] == "scheduled" and entry.get("short_video_id"):
-            entry["short_thumbnail_url"] = entry["short_thumbnail_url"] or f"https://i.ytimg.com/vi/{entry['short_video_id']}/hqdefault.jpg"
-        elif entry["publish_status"] == "scheduled" and entry.get("video_id"):
-            entry["short_thumbnail_url"] = entry["short_thumbnail_url"] or f"https://i.ytimg.com/vi/{entry['video_id']}/hqdefault.jpg"
         if short_id and entry.get("publish_status") != "published":
             published_at = entry.get("published_at") or entry.get("youtube_published_at")
             if published_at:
