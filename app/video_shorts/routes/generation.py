@@ -28704,26 +28704,12 @@ def autoclip_video(video_pk):
             caption_center_y = float(render_target_height) * 0.72
             caption_top = caption_center_y - (float(caption_block_height) / 2.0)
             sub_margin = int(round(float(render_target_height) - caption_top - float(caption_block_height)))
-        if video_sub_margin_custom:
-            sub_margin = clamp_design_position(
-                "sub_margin",
-                sub_margin,
-                target_height=render_target_height,
-                element_height=caption_block_height,
-            )
-        else:
+        if not video_sub_margin_custom:
             min_margin = safe_margin
             max_margin = max(min_margin, render_target_height - safe_margin - caption_block_height)
             sub_margin = max(min_margin, min(max_margin, int(round(float(sub_margin)))))
         caption_top = float(render_target_height) - float(sub_margin) - float(caption_block_height)
-        if title_margin_custom:
-            title_margin = clamp_design_position(
-                "title_margin",
-                title_margin,
-                target_height=render_target_height,
-                element_height=title_block_height,
-            )
-        else:
+        if not title_margin_custom:
             title_margin = max(
                 safe_margin,
                 min(
