@@ -69,8 +69,8 @@ def guest_storage_keys_for_user(conn, user_id: str) -> set[str]:
         for video_id, video_url, video_pk in rows:
             clean_video_id = str(video_id or "").strip()
             _add_key(keys, video_url)
-            for suffix in (".mp4", ".mov", ".mkv", ".webm", ".mp3", ".wav", ".m4a", ".aac", ".ogg", ".flac"):
-                keys.add(f"videos/{clean_video_id}{suffix}")
+            for location in tenant_media.source_locations(clean_video_id, video_pk=video_pk, conn=conn):
+                keys.add(location["storage_key"])
             for entry in _plan_entries_for_video_id(clean_video_id, video_pk):
                 clip_filename = str(entry.get("clip_filename") or entry.get("output_filename") or "").strip()
                 poster_filename = str(entry.get("poster_filename") or "").strip()
@@ -130,9 +130,7 @@ def guest_storage_keys_for_user(conn, user_id: str) -> set[str]:
 
 def non_guest_source_references(conn, *, video_id=None, key=None) -> bool:
     """Check current customer references, including legacy keys and stored source URLs."""
-    if key is not None and not str(key).startswith("videos/"):
-        return False
-    source_id = str(video_id or (Path(str(key)).stem if key else ""))
+    source_id = str(video_id or (Path(str(key)).stem if str(key or "").startswith("videos/") else ""))
     stored = f"s3://{key}" if key else ""
     return conn.execute(
         """SELECT 1 FROM youtube_videos v

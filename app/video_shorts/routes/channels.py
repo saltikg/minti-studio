@@ -1,3 +1,4 @@
+import re
 from app.video_shorts.services import tenant_media
 import hashlib
 from datetime import datetime, timezone
@@ -266,17 +267,13 @@ def _short_card_media_urls(filename: str, storage_file_key: str = "") -> tuple[s
     return media_url(filename), media_url(filename, poster_filename=f"{filename}.jpg")
 
 
-def _load_recent_short_cards(conn, user_id: str, brand_id: str | None, user_tz: str, *, limit: int, offset: int = 0) -> tuple[list[dict], bool]:
-    if not brand_id:
-        return [], False
-    try:
-        safe_limit = max(1, min(int(limit or RECENT_SHORTS_PAGE_SIZE), RECENT_SHORTS_PAGE_SIZE))
-    except Exception:
-        safe_limit = RECENT_SHORTS_PAGE_SIZE
-    try:
-        safe_offset = max(0, int(offset or 0))
-    except Exception:
-        safe_offset = 0
+def _visible_short_rows(conn, user_id, brand_id):
+    """Single rendered-media rule for the strip and per-source table counts."""
+    from flask import has_request_context
+    cache = getattr(g, "vs_visible_short_rows", {}) if has_request_context() else {}
+    scope = (user_id, brand_id)
+    if scope in cache:
+        return cache[scope]
     rows = conn.execute(
         """
         SELECT
@@ -291,12 +288,13 @@ def _load_recent_short_cards(conn, user_id: str, brand_id: str | None, user_tz: 
             published_video.like_count,
             published_video.comment_count,
             source_video.id,
-            render_asset.file_key
+            render_asset.file_key,
+            render_asset.file_path
         FROM shorts_generated_videos gv
         JOIN shorts_storage_assets render_asset
           ON render_asset.file_key = gv.storage_file_key
          AND CAST(render_asset.user_id AS VARCHAR) = CAST(gv.user_id AS VARCHAR)
-         AND CAST(render_asset.brand_id AS VARCHAR) = CAST(gv.brand_id AS VARCHAR)
+         AND render_asset.brand_id IS NOT DISTINCT FROM gv.brand_id
          AND lower(coalesce(render_asset.status, 'active')) = 'active'
          AND render_asset.size_bytes > 0
         LEFT JOIN youtube_videos published_video
@@ -308,15 +306,64 @@ def _load_recent_short_cards(conn, user_id: str, brand_id: str | None, user_tz: 
          AND source_video.owner_user_id = gv.user_id
          AND source_video.brand_id = gv.brand_id
         WHERE gv.user_id = ?
-          AND gv.brand_id = ?
+          AND gv.brand_id IS NOT DISTINCT FROM ?
           AND NULLIF(trim(coalesce(gv.clip_filename, '')), '') IS NOT NULL
           AND NULLIF(trim(coalesce(gv.storage_file_key, '')), '') IS NOT NULL
         ORDER BY gv.created_at DESC
-        LIMIT ?
-        OFFSET ?
         """,
-        [user_id, brand_id, safe_limit + 1, safe_offset],
+        [user_id, brand_id],
     ).fetchall()
+    storage = get_media_storage()
+    locations = []
+    for row in rows:
+        try:
+            locations.append((row, tenant_media.storage_location(row[12])))
+        except ValueError:
+            current_app.logger.warning("Invalid stored clip location: %s", row[0])
+    # One listing avoids hundreds of serial HEAD calls; unusual stored keys use HEAD.
+    remote_keys = ({item.key for item in storage.list_prefix("shorts/")}
+                   if storage.backend_name == "s3" and any(not loc["local_path"].is_file() for _, loc in locations) else set())
+    visible = []
+    for row, loc in locations:
+        scoped = re.search(r"_v(\d+)\.mp4$", str(row[0]))
+        if scoped and (row[10] is None or int(scoped[1]) != int(row[10])):
+            continue
+        if str(row[2] or "").lower() in {"pending", "queued", "processing", "rendering"}:
+            continue
+        exists = loc["local_path"].is_file() or loc["storage_key"] in remote_keys
+        if not exists and storage.backend_name == "s3" and not loc["storage_key"].startswith("shorts/"):
+            exists = storage.exists(loc["storage_key"])
+        if exists:
+            visible.append(row)
+    if has_request_context():
+        cache[scope] = visible
+        g.vs_visible_short_rows = cache
+    return visible
+
+
+def _short_counts_by_video(conn, user_id, brand_id):
+    counts = {}
+    for row in _visible_short_rows(conn, user_id, brand_id):
+        if row[10] is None:
+            continue
+        count = counts.setdefault(int(row[10]), [0, 0])
+        count[0] += 1
+        count[1] += int(str(row[3] or "").lower() == "published" or bool(row[6]))
+    return counts
+
+
+def _load_recent_short_cards(conn, user_id: str, brand_id: str | None, user_tz: str, *, limit: int, offset: int = 0) -> tuple[list[dict], bool]:
+    if not brand_id:
+        return [], False
+    try:
+        safe_limit = max(1, min(int(limit or RECENT_SHORTS_PAGE_SIZE), RECENT_SHORTS_PAGE_SIZE))
+    except Exception:
+        safe_limit = RECENT_SHORTS_PAGE_SIZE
+    try:
+        safe_offset = max(0, int(offset or 0))
+    except Exception:
+        safe_offset = 0
+    rows = _visible_short_rows(conn, user_id, brand_id)[safe_offset:safe_offset + safe_limit + 1]
     has_more = len(rows) > safe_limit
     cards = []
     for row in rows[:safe_limit]:
@@ -717,8 +764,8 @@ def my_videos_page():
             v.channel_id,
             c.channel_url,
             v.video_url,
-            COALESCE(g.short_count, 0) AS short_count,
-            COALESCE(g.published_count, 0) AS published_count,
+            0 AS short_count,
+            0 AS published_count,
             EXISTS (
                 SELECT 1
                 FROM youtube_transcripts t
@@ -803,22 +850,6 @@ def my_videos_page():
             ) AS completed_source_job_max_attempts
         FROM youtube_videos v
         LEFT JOIN youtube_channels c ON c.channel_id = v.channel_id
-        LEFT JOIN (
-            SELECT
-                source_video_id,
-                COUNT(*) AS short_count,
-                SUM(
-                    CASE
-                        WHEN lower(coalesce(publish_status, '')) = 'published'
-                          OR NULLIF(CAST(youtube_published_at AS VARCHAR), '') IS NOT NULL
-                          OR NULLIF(CAST(published_at AS VARCHAR), '') IS NOT NULL
-                        THEN 1
-                        ELSE 0
-                    END
-                ) AS published_count
-            FROM shorts_generated_videos
-            GROUP BY source_video_id
-        ) g ON CAST(g.source_video_id AS VARCHAR) = CAST(v.video_id AS VARCHAR)
         WHERE {where_sql}
         ORDER BY added_at DESC NULLS LAST, v.id DESC
         """,
@@ -857,6 +888,7 @@ def my_videos_page():
             [current_user["id"], brand_id],
         ).fetchone()
         prepared_short_count = int(prepared_short_count_row[0] or 0) if prepared_short_count_row else 0
+    short_counts = _short_counts_by_video(conn, current_user["id"], brand_id)
     recent_shorts, recent_shorts_has_more = _load_recent_short_cards(
         conn,
         current_user["id"],
@@ -883,8 +915,8 @@ def my_videos_page():
             "channel_id": row[9],
             "channel_url": row[10] or "",
             "video_url": row[11] or "",
-            "short_count": int(row[12] or 0),
-            "published_count": int(row[13] or 0),
+            "short_count": short_counts.get(int(row[0]), [0, 0])[0],
+            "published_count": short_counts.get(int(row[0]), [0, 0])[1],
         }
         item["source_kind"] = "url" if row[9] is None else "upload"
         item["source_label"] = "From URL" if item["source_kind"] == "url" else "Uploaded"

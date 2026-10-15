@@ -60,71 +60,14 @@ def write_transcript_cache(video_id: str, *, full_text: str, segments: list[dict
         conn.close()
 
 
-def write_suggestions_cache(video_id: str, *, entries: list[dict]) -> bool:
-    clean_video_id = str(video_id or "").strip()
-    clean_entries = [dict(entry) for entry in (entries or []) if isinstance(entry, dict)]
-    if not clean_video_id or not clean_entries:
-        return False
-    # Keep only text/planner data. Render state, filenames and publish state must remain per owner.
-    cached_entries: list[dict] = []
-    for index, entry in enumerate(clean_entries, start=1):
-        item = {
-            key: entry.get(key)
-            for key in (
-                "title",
-                "start",
-                "end",
-                "excerpt",
-                "transcript_full",
-                "language",
-                "origin",
-                "planner",
-                "score",
-                "score_breakdown",
-                "score_source",
-                "focus_categories",
-                "ai_title_generated",
-                "title_source",
-            )
-            if key in entry
-        }
-        item["plan_index"] = index
-        item["origin"] = "ai"
-        item["status"] = "pending"
-        item["clip_filename"] = f"{index}_{clean_video_id}.mp4"
-        item["publish_status"] = "not_ready"
-        cached_entries.append(item)
-    conn = get_db()
-    try:
-        ensure_free_tool_text_cache_schema(conn)
-        conn.execute(
-            """
-            INSERT INTO free_tool_text_cache (
-                youtube_video_id, plan_entries_json,
-                suggestions_cached_at, created_at, updated_at
-            )
-            VALUES (?, ?, now(), now(), now())
-            ON CONFLICT (youtube_video_id) DO UPDATE
-            SET plan_entries_json = EXCLUDED.plan_entries_json,
-                suggestions_cached_at = now(),
-                updated_at = now()
-            """,
-            [clean_video_id, _json_dumps(cached_entries)],
-        )
-        conn.commit()
-        return True
-    except Exception:
-        try:
-            conn.rollback()
-        except Exception:
-            pass
-        logger.warning("free_tool_text_cache suggestions write failed video_id=%s", clean_video_id, exc_info=True)
-        return False
-    finally:
-        conn.close()
+def write_suggestions_cache(video_id: str, *, entries: list[dict], video_pk: int) -> bool:
+    from app.video_shorts.services import tenant_media
+    video = tenant_media.resolve_video(video_id, video_pk=video_pk)
+    tenant_media.write_state(video, {"entries": entries}, kind="suggestions")
+    return True
 
 
-def load_text_cache(video_id: str) -> Optional[dict[str, Any]]:
+def load_text_cache(video_id: str, *, video_pk: int | None = None) -> Optional[dict[str, Any]]:
     clean_video_id = str(video_id or "").strip()
     if not clean_video_id:
         return None
@@ -146,15 +89,22 @@ def load_text_cache(video_id: str) -> Optional[dict[str, Any]]:
         return {
             "full_text": str(row[0] or ""),
             "segments": _json_loads(row[1], []),
-            "plan_entries": _json_loads(row[2], []),
+            "plan_entries": _load_tenant_suggestions(clean_video_id, video_pk),
             "transcript_cached_at": row[3],
-            "suggestions_cached_at": row[4],
+            "suggestions_cached_at": None,
         }
     except Exception:
         logger.warning("free_tool_text_cache load failed video_id=%s", clean_video_id, exc_info=True)
         return None
     finally:
         conn.close()
+
+
+def _load_tenant_suggestions(video_id, video_pk):
+    if video_pk is None:
+        return []
+    from app.video_shorts.services import tenant_media
+    return tenant_media.load_state(video_id, "suggestions", video_pk=video_pk).get("entries", [])
 
 
 def user_is_guest(user_id: Any) -> bool:

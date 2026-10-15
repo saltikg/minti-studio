@@ -11,6 +11,7 @@ from app.video_shorts.services import tenant_media
 import argparse
 import json
 from datetime import date, datetime, timedelta
+from collections import defaultdict
 from typing import Any, Dict, Iterable, List, Mapping, Optional, Tuple, Union
 
 import duckdb
@@ -33,6 +34,7 @@ from app.video_shorts.services.video_metrics import (
 )
 from app.video_shorts.youtube_api import YoutubeApiError, fetch_video_stats
 from src.trends.facebook_page_tokens import get_facebook_page_data
+from app.video_shorts.services.social_queue_identity import queue_identity, queue_token_identity
 
 
 def _parse_args():
@@ -47,6 +49,7 @@ def _parse_args():
         action="store_true",
         help="Suppress log output except for errors.",
     )
+    parser.add_argument("--dry-run", action="store_true", help="Print tenant attribution only; no API calls, migration, or writes.")
     return parser.parse_args()
 
 
@@ -97,39 +100,37 @@ def _parse_publish_timestamp(value: object) -> Optional[datetime]:
     return None
 
 
-def _collect_published_entries(target_date: Optional[date] = None) -> List[Dict[str, Any]]:
+def _collect_published_entries(target_date: Optional[date] = None, *, migrate=True) -> List[Dict[str, Any]]:
     plan_suffix = "_plan.json"
     entries: List[Dict[str, Any]] = []
-    if not SHORTS_DIR.exists():
-        return entries
-    for plan_video, plan_path in tenant_media.iter_plans():
+    for plan_video, plan_path in tenant_media.iter_plans(migrate=migrate):
         if not plan_path.is_file():
             continue
         video_id = plan_video.youtube_id
         if not video_id:
             continue
         try:
-            raw = tenant_media.load_state(plan_video)
+            raw = tenant_media.load_state(plan_video, migrate=migrate)
         except Exception:
             continue
         plan_entries = raw.get("plan") or raw.get("clips") or []
         for plan_entry in plan_entries:
             publish_status = (plan_entry.get("publish_status") or "").lower()
+            short_video_id = (plan_entry.get("yt_video_id") or plan_entry.get("short_video_id") or "").strip()
             if publish_status != "published":
-                short_video_id = (plan_entry.get("yt_video_id") or plan_entry.get("short_video_id") or "").strip()
-                if publish_status != "scheduled" or not short_video_id:
-                    continue
-                publish_at_raw = plan_entry.get("publish_at_iso") or plan_entry.get("publish_at")
-                publish_at = _parse_publish_timestamp(publish_at_raw)
-                publish_date = publish_at.date() if publish_at else None
-                if target_date and publish_date and publish_date > target_date:
-                    continue
+                publish_at = _parse_publish_timestamp(plan_entry.get("publish_at_iso") or plan_entry.get("publish_at"))
+                if publish_status != "scheduled" or (target_date and publish_at and publish_at.date() > target_date):
+                    short_video_id = ""
             plan_index = plan_entry.get("plan_index")
             plan_index_key = str(plan_index) if plan_index is not None else ""
-            short_video_id = (plan_entry.get("yt_video_id") or plan_entry.get("short_video_id") or "").strip()
             entries.append(
                 {
                     "video_id": video_id,
+                    "video_pk": plan_video.video_pk,
+                    "owner_user_id": plan_video.owner_user_id,
+                    "brand_id": plan_video.brand_id,
+                    "identity": plan_video,
+                    "clip_filename": plan_entry.get("output_filename") or plan_entry.get("clip_filename"),
                     "plan_index": plan_index,
                     "plan_index_key": plan_index_key,
                     "plan_title": plan_entry.get("title") or plan_entry.get("plan_title"),
@@ -151,6 +152,9 @@ def _collect_published_entries(target_date: Optional[date] = None) -> List[Dict[
         entries.append(
             {
                 "video_id": item.get("video_id"),
+                "video_pk": None,
+                "owner_user_id": _split_scoped_user_id(item.get("user_id"))[0],
+                "clip_filename": item.get("clip_filename"),
                 "plan_index": 1,
                 "plan_index_key": "1",
                 "plan_title": item.get("title") or "",
@@ -165,7 +169,6 @@ def _collect_published_entries(target_date: Optional[date] = None) -> List[Dict[
 def _list_all_ai_broadcast_entries() -> List[Dict[str, Any]]:
     conn = get_db_readonly()
     try:
-        ensure_ai_video_schema(conn)
         rows = conn.execute(
             """
             SELECT
@@ -198,46 +201,65 @@ def _list_all_ai_broadcast_entries() -> List[Dict[str, Any]]:
     ]
 
 
-def _load_youtube_meta(video_ids: List[str]) -> Dict[str, Mapping[str, Any]]:
-    if not video_ids:
-        return {}
-    placeholders = ", ".join("?" for _ in video_ids)
-    query = f"""
-        SELECT
-            v.video_id,
-            v.channel_id,
-            COALESCE(c.channel_name, '') AS channel_name,
-            v.title AS video_title,
-            COALESCE(v.brand_id, c.brand_id) AS brand_id
-        FROM youtube_videos v
-        LEFT JOIN youtube_channels c ON c.channel_id = v.channel_id
-        WHERE v.video_id IN ({placeholders})
-    """
+def _entry_scope(entry):
+    return (entry.get("owner_user_id"), entry.get("brand_id"),
+            entry.get("video_pk") if entry.get("video_pk") is not None else entry.get("video_id"))
+
+
+def _social_key(entry):
+    return (*_entry_scope(entry), str(entry.get("plan_index_key") or entry.get("plan_index") or ""))
+
+
+def _load_scoped_queue_map(entries, platform):
+    """Join persisted queue identities to the exact tenant plan, including old rows."""
+    grouped = defaultdict(list)
+    for entry in entries:
+        if entry.get("owner_user_id"):
+            grouped[(entry["owner_user_id"], entry.get("brand_id"))].append(entry)
+    result = defaultdict(list)
     conn = get_db_readonly()
     try:
-        rows = conn.execute(query, video_ids).fetchall()
+        for (owner, brand), scoped in grouped.items():
+            from app.video_shorts.services.social_queue_identity import queue_identity_filter
+            where, params = queue_identity_filter(owner, brand)
+            cursor = conn.execute(f"SELECT * FROM shorts_{platform}_queue WHERE {where}", params)
+            names = [d[0] for d in cursor.description]
+            records = [dict(zip(names, row)) for row in cursor.fetchall()]
+            for entry in scoped:
+                for record in records:
+                    if (str(record.get("video_id")) != str(entry["video_id"])
+                            or str(record.get("plan_index")) != str(entry["plan_index_key"])):
+                        continue
+                    # An exact stored filename binds old queues (which have no video_pk).
+                    if not entry.get("clip_filename") or record.get("clip_filename") != entry["clip_filename"]:
+                        continue
+                    result[_social_key(entry)].append(record)
     finally:
         conn.close()
-    meta = {
-        row[0]: {
-            "channel_id": row[1],
-            "channel_name": row[2],
-            "video_title": row[3],
-            "brand_id": row[4],
-        }
-        for row in rows
-        if row[0]
-    }
-    ai_items = [item for item in _list_all_ai_broadcast_entries() if item.get("video_id") in set(video_ids)]
-    for item in ai_items:
-        meta[item["video_id"]] = {
-            "channel_id": None,
-            "channel_name": "AI Video",
-            "video_title": item.get("title") or "",
-            "brand_id": _normalize_brand_id(item.get("brand_id"))
-            or _split_scoped_user_id(item.get("user_id"))[1],
-        }
-    return meta
+    return result
+
+
+def _load_youtube_meta(entries):
+    result = {}
+    conn = get_db_readonly()
+    try:
+        for entry in entries:
+            scope = _entry_scope(entry)
+            if scope in result:
+                continue
+            if entry.get("video_pk") is None:
+                result[scope] = {"channel_name": "AI Video", "brand_id": entry.get("brand_id")}
+                continue
+            row = conn.execute("""SELECT v.channel_id, c.channel_name, v.title, v.brand_id
+                FROM youtube_videos v LEFT JOIN youtube_channels c ON c.channel_id=v.channel_id
+                  AND c.owner_user_id=v.owner_user_id AND c.brand_id IS NOT DISTINCT FROM v.brand_id
+                WHERE v.id=? AND v.owner_user_id=? AND v.brand_id IS NOT DISTINCT FROM ?""",
+                [entry["video_pk"], entry["owner_user_id"], entry.get("brand_id")]).fetchone()
+            if row:
+                result[scope] = dict(channel_id=row[0], channel_name=row[1], video_title=row[2], brand_id=row[3])
+    finally:
+        conn.close()
+    return result
 
 
 def _fetch_short_stats(short_ids: List[str]) -> Dict[str, Mapping[str, int]]:
@@ -262,13 +284,13 @@ def _build_youtube_rows(
 ) -> List[Mapping[str, object]]:
     rows: List[Mapping[str, object]] = []
     for entry in entries:
-        short_id = entry.get("short_video_id") or entry.get("video_id")
+        short_id = entry.get("short_video_id")
         if not short_id:
             continue
         stats = short_stats.get(short_id) or {}
         if not stats:
             continue
-        meta = video_meta.get(entry["video_id"], {})
+        meta = video_meta.get(_entry_scope(entry), {})
         entry_brand_id = _normalize_brand_id(entry.get("brand_id")) or _split_scoped_user_id(
             str(entry.get("scoped_user_id") or "")
         )[1]
@@ -276,7 +298,7 @@ def _build_youtube_rows(
             {
                 "snapshot_date": target_date,
                 "effective_at": now,
-                "brand_id": _normalize_brand_id(meta.get("brand_id")) or entry_brand_id,
+                "brand_id": entry_brand_id,
                 "channel_type": "youtube",
                 "video_id": short_id,
                 "channel_id": meta.get("channel_id"),
@@ -299,7 +321,6 @@ def _build_youtube_rows(
 def _load_previous_youtube_snapshot(target_date: date) -> List[Dict[str, object]]:
     conn = get_db_readonly()
     try:
-        ensure_snapshot_table(conn)
         prev_row = conn.execute(
             f"""
             SELECT MAX(snapshot_date) AS snapshot_date
@@ -344,7 +365,7 @@ def _build_instagram_rows(
 ) -> List[Mapping[str, object]]:
     rows: List[Mapping[str, object]] = []
     for entry in entries:
-        key = (entry["video_id"], entry["plan_index_key"])
+        key = _social_key(entry)
         records = instagram_map.get(key) or []
         for record in records:
             if (record.get("status") or "").lower() != "published":
@@ -441,10 +462,11 @@ def _build_facebook_rows(
     facebook_map: Dict[tuple, List[Dict[str, Any]]],
     target_date: date,
     now: datetime,
+    *, refresh_metrics: bool = True,
 ) -> List[Mapping[str, object]]:
     rows: List[Mapping[str, object]] = []
     for entry in entries:
-        key = (entry["video_id"], entry["plan_index_key"])
+        key = _social_key(entry)
         records = facebook_map.get(key) or []
         for record in records:
             if (record.get("status") or "").lower() != "published":
@@ -461,8 +483,8 @@ def _build_facebook_rows(
                 "permalink": record.get("permalink"),
             }
             user_id = record.get("user_id")
-            if user_id:
-                creds = get_facebook_page_data(user_id)
+            if user_id and refresh_metrics:
+                creds = get_facebook_page_data(queue_token_identity(record))
                 if creds and creds.get("page_access_token"):
                     metrics = _fetch_facebook_metrics(fb_video_id, creds.get("page_access_token"))
                     update_facebook_queue_metrics(
@@ -508,119 +530,18 @@ def _insert_records(conn: duckdb.DuckDBPyConnection, records: Iterable[Mapping[s
     return len(params)
 
 
-def _load_brand_map_for_video_ids(video_ids: List[str]) -> Dict[str, str]:
-    normalized_ids = [str(video_id).strip() for video_id in video_ids if str(video_id).strip()]
-    if not normalized_ids:
-        return {}
-    conn = get_db_readonly()
-    try:
-        placeholders = ", ".join("?" for _ in normalized_ids)
-        rows = conn.execute(
-            f"""
-            SELECT video_id, brand_id
-            FROM youtube_videos
-            WHERE video_id IN ({placeholders})
-              AND brand_id IS NOT NULL
-            """,
-            normalized_ids,
-        ).fetchall()
-        return {str(row[0]).strip(): str(row[1]).strip() for row in rows if row[0] and row[1]}
-    finally:
-        conn.close()
-
-
-def _load_brand_map_for_channel_ids(channel_ids: List[str]) -> Dict[str, str]:
-    normalized_ids = [str(channel_id).strip() for channel_id in channel_ids if str(channel_id).strip()]
-    if not normalized_ids:
-        return {}
-    conn = get_db_readonly()
-    try:
-        placeholders = ", ".join("?" for _ in normalized_ids)
-        rows = conn.execute(
-            f"""
-            SELECT channel_id, brand_id
-            FROM youtube_channels
-            WHERE channel_id IN ({placeholders})
-              AND brand_id IS NOT NULL
-            """,
-            normalized_ids,
-        ).fetchall()
-        return {str(row[0]).strip(): str(row[1]).strip() for row in rows if row[0] and row[1]}
-    finally:
-        conn.close()
-
-
-def _load_default_brand_id() -> Optional[str]:
-    conn = get_db_readonly()
-    try:
-        rows = conn.execute(
-            """
-            SELECT id
-            FROM shorts_brands
-            WHERE COALESCE(is_default, FALSE) = TRUE
-            ORDER BY created_at DESC
-            LIMIT 2
-            """
-        ).fetchall()
-        if len(rows) == 1 and rows[0] and rows[0][0]:
-            return str(rows[0][0]).strip()
-        return None
-    finally:
-        conn.close()
-
-
-def _enforce_non_null_brand_ids(records: List[Dict[str, object]]) -> None:
-    if not records:
-        return
-    video_brand_map = _load_brand_map_for_video_ids(
-        [str(row.get("video_id") or "").strip() for row in records]
-    )
-    channel_brand_map = _load_brand_map_for_channel_ids(
-        [str(row.get("channel_id") or "").strip() for row in records]
-    )
-    default_brand_id = _load_default_brand_id()
-    unresolved: List[Dict[str, object]] = []
-    for row in records:
-        resolved_brand = _normalize_brand_id(row.get("brand_id"))
-        if not resolved_brand:
-            scoped_brand = _split_scoped_user_id(
-                str(row.get("scoped_user_id") or "")
-            )[1]
-            resolved_brand = _normalize_brand_id(scoped_brand)
-        if not resolved_brand:
-            resolved_brand = _normalize_brand_id(
-                video_brand_map.get(str(row.get("video_id") or "").strip())
-            )
-        if not resolved_brand:
-            resolved_brand = _normalize_brand_id(
-                channel_brand_map.get(str(row.get("channel_id") or "").strip())
-            )
-        if resolved_brand:
-            row["brand_id"] = resolved_brand
-        elif default_brand_id:
-            row["brand_id"] = default_brand_id
-        else:
-            unresolved.append(row)
-
+def _enforce_non_null_brand_ids(records):
+    # Never guess a brand from a shared source ID, channel, or global default.
+    unresolved = [r for r in records if not _normalize_brand_id(r.get("brand_id"))]
     if unresolved:
-        by_channel: Dict[str, int] = {}
-        for item in unresolved:
-            channel_key = str(item.get("channel_type") or "unknown").strip().lower() or "unknown"
-            by_channel[channel_key] = by_channel.get(channel_key, 0) + 1
-        sample = ", ".join(
-            f"{item.get('channel_type')}:{item.get('video_id')}"
-            for item in unresolved[:10]
-        )
-        raise RuntimeError(
-            "Refusing to write snapshot rows with NULL brand_id. "
-            f"unresolved={len(unresolved)} by_channel={by_channel} sample=[{sample}]"
-        )
+        raise RuntimeError(f"Refusing unscoped snapshot rows: {len(unresolved)} missing brand identities")
 
 
 def capture_daily_snapshot(
     target_date: Optional[Union[str, date]] = None,
     *,
     quiet: bool = False,
+    dry_run: bool = False,
 ) -> int:
     if target_date and isinstance(target_date, str):
         try:
@@ -632,20 +553,40 @@ def capture_daily_snapshot(
     if not quiet:
         print(f"Taking daily snapshot for {target.isoformat()}", flush=True)
 
-    plan_entries = _collect_published_entries(target)
+    plan_entries = _collect_published_entries(target, migrate=not dry_run)
     if not plan_entries and not quiet:
         print("No published short entries found; refreshing snapshot rows from existing sources.", flush=True)
 
     video_ids = sorted({entry["video_id"] for entry in plan_entries if entry.get("video_id")})
-    video_meta = _load_youtube_meta(video_ids)
+    video_meta = _load_youtube_meta(plan_entries)
     short_ids = sorted({entry["short_video_id"] for entry in plan_entries if entry.get("short_video_id")})
+    if dry_run:
+        for entry in plan_entries:
+            if entry.get("short_video_id"):
+                print(json.dumps({"filename": entry.get("clip_filename"), "video_pk": entry.get("video_pk"),
+                    "owner": entry.get("owner_user_id"), "brand": entry.get("brand_id"),
+                    "metadata_brand": video_meta.get(_entry_scope(entry), {}).get("brand_id"),
+                    "youtube_video_id": entry.get("short_video_id")}, default=str))
+        for platform in ("instagram", "facebook"):
+            mapping = _load_scoped_queue_map(plan_entries, platform)
+            for scope, records in mapping.items():
+                for record in records:
+                    if record.get("status") == "published":
+                        print(json.dumps({"platform": platform, "scope": scope, "queue_id": record["id"]}, default=str))
+        return 0
     short_stats = _fetch_short_stats(short_ids)
-    instagram_map = load_instagram_queue_map(video_ids)
-    facebook_map = load_facebook_queue_map(video_ids)
+    instagram_map = _load_scoped_queue_map(plan_entries, "instagram")
+    facebook_map = _load_scoped_queue_map(plan_entries, "facebook")
 
     now = datetime.utcnow()
     youtube_rows = _build_youtube_rows(plan_entries, video_meta, short_stats, target, now)
     previous_rows = _load_previous_youtube_snapshot(target)
+    # Never carry a previously misattributed brand forward when the current
+    # tenant plan establishes ownership of that exact published video.
+    published_scopes = {(e.get("short_video_id"), e.get("brand_id")) for e in plan_entries if e.get("short_video_id")}
+    known_ids = {video_id for video_id, _ in published_scopes}
+    previous_rows = [r for r in previous_rows if r["video_id"] not in known_ids
+                     or (r["video_id"], r.get("brand_id")) in published_scopes]
     current_ids = {row.get("video_id") for row in youtube_rows if row.get("video_id")}
     missing_ids = [
         row["video_id"]
@@ -710,7 +651,7 @@ def capture_daily_snapshot(
 def main() -> int:
     args = _parse_args()
     try:
-        capture_daily_snapshot(target_date=args.snapshot_date, quiet=args.quiet)
+        capture_daily_snapshot(target_date=args.snapshot_date, quiet=args.quiet, dry_run=args.dry_run)
     except ValueError as exc:
         raise SystemExit(str(exc))
     return 0

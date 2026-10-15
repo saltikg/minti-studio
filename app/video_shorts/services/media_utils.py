@@ -231,32 +231,11 @@ def _format_time_label(seconds: float):
         return None
 
 
-def _find_source_video(video_id: str):
-    candidates = [
-        VIDEOS_DIR / f"{video_id}.mp4",
-        VIDEOS_DIR / f"{video_id}.mov",
-        VIDEOS_DIR / f"{video_id}.mkv",
-        VIDEOS_DIR / f"{video_id}.webm",
-        VIDEOS_DIR / f"{video_id}.mp3",
-        VIDEOS_DIR / f"{video_id}.wav",
-        VIDEOS_DIR / f"{video_id}.m4a",
-        VIDEOS_DIR / f"{video_id}.aac",
-        VIDEOS_DIR / f"{video_id}.ogg",
-        VIDEOS_DIR / f"{video_id}.flac",
-        SHORTS_DIR / f"{video_id}.mp4",
-        SHORTS_DIR / f"{video_id}.mov",
-        SHORTS_DIR / f"{video_id}.mkv",
-        SHORTS_DIR / f"{video_id}.webm",
-        SHORTS_DIR / f"{video_id}.mp3",
-        SHORTS_DIR / f"{video_id}.wav",
-        SHORTS_DIR / f"{video_id}.m4a",
-        SHORTS_DIR / f"{video_id}.aac",
-        SHORTS_DIR / f"{video_id}.ogg",
-        SHORTS_DIR / f"{video_id}.flac",
-    ]
-    for c in candidates:
-        if c.exists():
-            return c
+def _find_source_video(video_id: str, *, video_pk=None):
+    from app.video_shorts.services import tenant_media
+    for location in tenant_media.source_locations(video_id, video_pk=video_pk):
+        if location["local_path"].is_file():
+            return location["local_path"]
     return None
 
 
@@ -640,33 +619,16 @@ def resolve_s3_source_video_cached(
             fcntl.flock(lock_handle.fileno(), fcntl.LOCK_UN)
 
 
-def _resolve_source_video(video_id: str):
-    local_path = _find_source_video(video_id)
-    if local_path and local_path.exists():
-        return local_path, False
-
-    storages = []
-    primary_storage = get_media_storage()
-    storages.append(primary_storage)
-    if getattr(primary_storage, "backend_name", "local") != "s3" and S3_BUCKET_NAME:
-        try:
-            storages.append(get_media_storage("s3"))
-        except Exception:
-            logger.exception("source video explicit s3 storage init failed video_id=%s", video_id)
-
-    for suffix in _SOURCE_SUFFIXES:
-        key = f"videos/{video_id}{suffix}"
-        for storage in storages:
-            if getattr(storage, "backend_name", "local") != "s3":
-                continue
-            try:
-                cached = resolve_s3_source_video_cached(video_id, key, storage=storage, log_missing=False)
-                if cached and cached.exists():
-                    logger.info("source video resolved from source_cache video_id=%s key=%s", video_id, key)
-                    return cached, True
-            except Exception:
-                logger.exception("source video s3 download failed video_id=%s key=%s", video_id, key)
-                continue
+def _resolve_source_video(video_id: str, *, video_pk=None):
+    from app.video_shorts.services import tenant_media
+    storage = get_media_storage()
+    for location in tenant_media.source_locations(video_id, video_pk=video_pk):
+        if location["local_path"].is_file():
+            return location["local_path"], False
+        if storage.backend_name == "s3":
+            cached = resolve_s3_source_video_cached(video_id, location["storage_key"], storage=storage, log_missing=False)
+            if cached and cached.exists():
+                return cached, True
     return None, False
 
 
@@ -825,38 +787,14 @@ def source_video_needs_remux(path: Path) -> bool:
     return _source_video_remux_reason(path) is not None
 
 
-def _resolve_s3_source_video_key(video_id: str, preferred_suffix: str | None = None) -> tuple[object | None, str | None]:
-    candidate_suffixes: list[str] = []
-    if preferred_suffix:
-        candidate_suffixes.append(str(preferred_suffix))
-    candidate_suffixes.extend([".mp4", ".mov", ".mkv", ".webm", ".mp3", ".wav", ".m4a", ".aac", ".ogg", ".flac"])
-    seen: set[str] = set()
-    suffixes = []
-    for suffix in candidate_suffixes:
-        normalized = str(suffix or "").strip().lower()
-        if not normalized or normalized in seen:
-            continue
-        seen.add(normalized)
-        suffixes.append(normalized)
-    storages = []
-    primary_storage = get_media_storage()
-    if getattr(primary_storage, "backend_name", "local") == "s3":
-        storages.append(primary_storage)
-    elif S3_BUCKET_NAME:
-        try:
-            storages.append(get_media_storage("s3"))
-        except Exception:
-            logger.exception("source video explicit s3 storage init failed video_id=%s", video_id)
-            return None, None
-    for storage in storages:
-        for suffix in suffixes:
-            key = f"videos/{video_id}{suffix}"
-            try:
-                if storage.exists(key):
-                    return storage, key
-            except Exception:
-                logger.exception("source video s3 exists check failed video_id=%s key=%s", video_id, key)
-                continue
+def _resolve_s3_source_video_key(video_id: str, preferred_suffix: str | None = None):
+    from app.video_shorts.services import tenant_media
+    storage = get_media_storage()
+    if storage.backend_name != "s3":
+        return None, None
+    for location in tenant_media.source_locations(video_id):
+        if storage.exists(location["storage_key"]):
+            return storage, location["storage_key"]
     return None, None
 
 
@@ -887,7 +825,7 @@ def remux_s3_source_video_if_needed(
         )
         return None
 
-    storage, resolved_source_key = _resolve_s3_source_video_key(video_id, suffix)
+    storage, resolved_source_key = (get_media_storage(), source_key) if source_key else _resolve_s3_source_video_key(video_id, suffix)
     if not storage:
         primary_storage = get_media_storage()
         if getattr(primary_storage, "backend_name", "local") == "s3":
@@ -1095,7 +1033,7 @@ def normalize_s3_source_video_for_upload(
             owner_user_id=owner_user_id,
         )
 
-    storage, _ = _resolve_s3_source_video_key(video_id, suffix)
+    storage = get_media_storage() if source_key else _resolve_s3_source_video_key(video_id, suffix)[0]
     if not storage:
         primary_storage = get_media_storage()
         if getattr(primary_storage, "backend_name", "local") == "s3":

@@ -1260,7 +1260,7 @@ def _execute_transcribe_upload_job(app, job: Dict[str, Any]) -> Dict[str, Any]:
         transcript={"status": "processing", "message": "Preparing your transcript...", "percent": 5},
     )
     _set_job_progress(job["id"], stage="uploaded", message="Preparing your video.", status="processing")
-    source_path, is_temp = _resolve_source_video(video_id)
+    source_path, is_temp = _resolve_source_video(video_id, video_pk=video_pk)
     if not source_path or not source_path.exists():
         raise PermanentRenderJobError("Uploaded source file could not be found.")
     try:

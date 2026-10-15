@@ -75,7 +75,7 @@ def serve_short_media(filename):
         if isinstance(storage, S3Storage) and storage.exists(key):
             response = _s3_proxy_response(storage, key)
         else:
-            path = SHORTS_DIR / key.removeprefix("shorts/")
+            path = info["local_path"]
             if not path.is_file():
                 abort(404)
             response = _local_proxy_response(path)

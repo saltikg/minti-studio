@@ -1692,7 +1692,8 @@ def _delete_short_media(filename: str, *, video_pk=None, owner_user_id=None, bra
         deleted = True
     conn = get_db()
     try:
-        file_key = tenant_media.asset_key(safe_name)
+        location = tenant_media.clip_location(safe_name, conn=conn)
+        file_key = location["file_key"] if location else tenant_media.asset_key(safe_name)
         conn.execute(
             """
             UPDATE shorts_storage_assets
@@ -5173,30 +5174,10 @@ def build_auto_suggest_render_status_payload(video_pk: int, current_user: Option
 
 
 def _preview_source_key_for_video(video_id: str, video_url: str) -> str:
-    clean_video_id = str(video_id or "").strip()
-    clean_url = str(video_url or "").strip()
-    if not clean_video_id:
-        return ""
-    if is_storage_reference(clean_url):
-        key = storage_reference_key(clean_url)
-        expected_prefix = f"videos/{clean_video_id}."
-        if key.startswith(expected_prefix) and "/" not in key[len("videos/") :]:
-            return key
-        return ""
-    storage = get_media_storage()
-    for suffix in (".mp4", ".mov", ".mkv", ".webm"):
-        key = f"videos/{clean_video_id}{suffix}"
-        try:
-            if storage.exists(key):
-                return key
-        except Exception:
-            current_app.logger.warning(
-                "preview_frame_source_key_check_failed video_id=%s key=%s",
-                clean_video_id,
-                key,
-                exc_info=True,
-            )
-    return ""
+    if is_storage_reference(video_url):
+        return tenant_media.storage_location(video_url)["storage_key"]
+    locations = tenant_media.source_locations(video_id)
+    return locations[0]["storage_key"] if len(locations) == 1 else ""
 
 
 @video_shorts_bp.route("/generate/<int:video_pk>/preview-frame/start", methods=["POST"])
@@ -7578,7 +7559,7 @@ def execute_auto_suggest_render_job(payload: Dict[str, Any]) -> Dict[str, Any]:
     cached_plan_used = False
     generated_entries: List[Dict[str, Any]] = []
     if owner_is_guest:
-        text_cache = load_text_cache(video_id)
+        text_cache = load_text_cache(video_id, video_pk=video_pk)
         cached_entries = list((text_cache or {}).get("plan_entries") or [])
         if cached_entries:
             prepared_entries = _reindex_v1_plan_entries(video_id, cached_entries, video_pk=video_pk)
@@ -14381,7 +14362,10 @@ def download_generated_clip(video_pk: int, plan_index: int):
         str(target_entry.get("yt_title") or target_entry.get("title") or video_title or "").strip(),
         clip_filename,
     )
-    key = _short_storage_key(clip_filename)
+    from app.video_shorts.services.media_access import authorize_file
+    media = authorize_file(clip_filename, owner_user_id=editor_context["owner_user_id"],
+                           brand_id=editor_context["brand_id"], video_pk=video_pk)
+    key = media["storage_key"]
     storage = get_media_storage()
     if getattr(storage, "backend_name", "local") == "s3":
         client = getattr(storage, "client", None)
@@ -14692,8 +14676,17 @@ def download_video(video_pk):
         flash("Video URL missing.", "danger")
         return redirect(url_for("video_shorts_bp.generate_short", video_pk=video_pk))
 
+    locations = tenant_media.source_locations(video_id, video_pk=video_pk)
+    if locations:
+        source, temporary = _resolve_source_video(video_id, video_pk=video_pk)
+        if source:
+            _cleanup_resolved_source_video(source, temporary)
+            flash("Stored video is available.", "success")
+            return redirect(url_for("video_shorts_bp.generate_short", video_pk=video_pk))
+    if is_storage_reference(video_url):
+        abort(404)
     SHORTS_DIR.mkdir(parents=True, exist_ok=True)
-    out_path = SHORTS_DIR / f"{video_id}.mp4"
+    out_path = SHORTS_DIR / f"source_v{video_pk}.mp4"
 
     try:
         try:
@@ -14746,7 +14739,7 @@ def download_video(video_pk):
 
         # Normalize to .mp4 extension if different
         if not out_path.exists():
-            candidates = list(out_path.parent.glob(f"{video_id}.*"))
+            candidates = list(out_path.parent.glob(f"source_v{video_pk}.*"))
             if candidates:
                 candidates[0].rename(out_path)
         out_path = normalize_source_video_for_streaming(out_path, log=current_app.logger)
@@ -14788,13 +14781,14 @@ def download_video(video_pk):
                 """
                 UPDATE youtube_videos
                 SET download_status = 'downloaded',
-                    downloaded_at = now()
+                    downloaded_at = now(), video_url = ?
                 WHERE id = ?
                   AND owner_user_id = ?
                   AND ((? IS NULL AND brand_id IS NULL) OR brand_id = ?)
                 """,
-                [video_pk, current_user["id"], current_brand_id(), current_brand_id()],
+                ["s3://" + tenant_media.storage_location(str(out_path))["storage_key"], video_pk, current_user["id"], current_brand_id(), current_brand_id()],
             )
+            conn_w.commit()
         finally:
             conn_w.close()
 
@@ -26014,7 +26008,7 @@ def transcribe_video(video_pk):
     if disk_guard_triggered(operation="transcribe_video_sync", log=current_app.logger):
         flash(USER_FACING_DISK_GUARD_MESSAGE, "warning")
         return _generate_redirect()
-    source_path, source_path_is_temp = _resolve_source_video(vid)
+    source_path, source_path_is_temp = _resolve_source_video(vid, video_pk=video_pk)
     if not source_path or not source_path.exists():
         conn.close()
         flash("Source video file not found on server. Upload or download it first.", "danger")
@@ -26534,7 +26528,7 @@ def _generate_clip_plan_for_video(
     try:
         _write_plan_entries(vid, combined_plan, video_pk=video_pk)
         try:
-            write_suggestions_cache(vid, entries=timestamped_plan)
+            write_suggestions_cache(vid, entries=timestamped_plan, video_pk=video_pk)
         except Exception:
             current_app.logger.warning("free_tool_text_cache suggestion hook failed video_id=%s", vid, exc_info=True)
     except Exception as pe:
@@ -28598,7 +28592,7 @@ def autoclip_video(video_pk):
             _cleanup_video_shorts_temp_path(podcast_audio_path)
             for overlay_source in podcast_overlay_video_sources:
                 _cleanup_video_shorts_temp_path(overlay_source)
-    src_path, src_path_is_temp = _resolve_source_video(vid)
+    src_path, src_path_is_temp = _resolve_source_video(vid, video_pk=video_pk)
     if not src_path or not src_path.exists():
         return _respond(
             "Source video file not found on server. Upload or download it first.",

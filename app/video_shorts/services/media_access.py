@@ -76,10 +76,8 @@ def authorize_file(filename, *, owner_user_id, brand_id, video_pk=None, require_
             ).fetchone()
             if not frozen or (str(frozen[0] or ""), str(frozen[1]) if frozen[1] else None) != (owner, brand):
                 raise tenant_media.TenantMediaConflict("Legacy media is reserved for its frozen owner")
-        stored_path = str(asset[2] or "")
-        storage_key = stored_path[5:] if stored_path.startswith("s3://") else tenant_media.short_key(name)
-        if storage_key != tenant_media.short_key(name):
-            raise tenant_media.TenantMediaConflict("Stored media key does not match this file")
+        location = tenant_media.storage_location(asset[2])
+        storage_key = location["storage_key"]
         posters = {name + ".jpg", Path(name).stem + ".jpg"}
         for row in rows:
             raw = row[4]
@@ -89,7 +87,8 @@ def authorize_file(filename, *, owner_user_id, brand_id, video_pk=None, require_
                     posters.add(tenant_media.safe_filename(entry["poster_filename"]))
             except (TypeError, ValueError):
                 pass
-        return {"filename": name, "storage_key": storage_key, "owner": owner, "brand": brand,
+        return {"filename": name, "storage_key": storage_key, "local_path": location["local_path"],
+                "storage_file_key": asset_key, "owner": owner, "brand": brand,
                 "posters": posters, "source_ids": {str(r[2]) for r in rows}}
     finally:
         conn.close()
@@ -172,6 +171,7 @@ def read_media_grant(filename, grant):
     # Poster names are included in the signed grant only after checking the plan.
     if data.get("poster"):
         info["storage_key"] = tenant_media.poster_key(tenant_media.safe_filename(data["poster"]))
+        info["local_path"] = tenant_media.storage_location(info["storage_key"])["local_path"]
     return info
 
 

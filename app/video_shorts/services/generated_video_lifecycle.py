@@ -336,11 +336,12 @@ def _resolve_brand_id(
     brand_id: Optional[str],
     *,
     prefer_publish_brand: bool,
+    owner_user_id: Optional[str] = None,
 ) -> Optional[str]:
     clean_brand_id = str(brand_id or "").strip() or None
     # An explicit render/publish owner is authoritative. Falling back to the
     # newest matching source row is only safe when no scoped owner was supplied.
-    if clean_brand_id:
+    if owner_user_id is not None or clean_brand_id:
         return clean_brand_id
     source_brand_id = _resolve_source_brand_id(conn, source_video_id)
     if source_brand_id:
@@ -439,6 +440,7 @@ def upsert_generated_video_record(
             source_video_id,
             brand_id,
             prefer_publish_brand=prefer_publish_binding,
+            owner_user_id=user_id,
         )
         resolved_user_id = _resolve_user_id(
             conn,

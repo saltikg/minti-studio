@@ -13,7 +13,7 @@ from pathlib import Path
 
 from flask import g, has_request_context, request
 
-from app.video_shorts.config import SHORTS_DIR, PRIVATE_STATE_DIR
+from app.video_shorts.config import SHORTS_DIR, PRIVATE_STATE_DIR, VIDEOS_DIR
 from app.video_shorts.services.db import get_db_readonly
 
 log = logging.getLogger(__name__)
@@ -82,8 +82,8 @@ def _legacy_owner(conn, video):
     return int(row[0]) if row else None
 
 
-def state_path(video_id=None, kind="plan", *, video_pk=None, read=False):
-    if kind not in {"plan", "plan_v2", "plan_v3", "plan_v4", "auto_suggest_render", "non_speech_overrides", "debug", "debug_v2", "debug_v3", "debug_v4"}:
+def state_path(video_id=None, kind="plan", *, video_pk=None, read=False, migrate=True):
+    if kind not in {"suggestions", "plan", "plan_v2", "plan_v3", "plan_v4", "auto_suggest_render", "non_speech_overrides", "debug", "debug_v2", "debug_v3", "debug_v4"}:
         raise ValueError("Unknown video state kind")
     video = resolve_video(video_id, video_pk=video_pk)
     path = PRIVATE_STATE_DIR / f"{video.video_pk}_{kind}.json"
@@ -91,7 +91,7 @@ def state_path(video_id=None, kind="plan", *, video_pk=None, read=False):
         names = [f"{video.video_pk}_{kind}.json"]
         conn = get_db_readonly()
         try:
-            if _legacy_owner(conn, video) == video.video_pk:
+            if kind != "suggestions" and _legacy_owner(conn, video) == video.video_pk:
                 names.append(f"{video.youtube_id}_{kind}.json")
         finally:
             conn.close()
@@ -99,6 +99,8 @@ def state_path(video_id=None, kind="plan", *, video_pk=None, read=False):
             for root in (PRIVATE_STATE_DIR / "legacy", SHORTS_DIR):
                 legacy = root / name
                 if legacy.is_file():
+                    if not migrate:
+                        return legacy
                     path.parent.mkdir(parents=True, exist_ok=True)
                     try:
                         # Link without replacing a concurrent reader/writer's result.
@@ -129,7 +131,9 @@ def safe_filename(filename):
 
 
 def short_key(filename):
-    return f"shorts/{safe_filename(filename)}"
+    location = clip_location(filename)
+    # Only a new output (or an unindexed legacy file) needs a generated name.
+    return location["storage_key"] if location else f"shorts/{safe_filename(filename)}"
 
 
 def asset_key(filename):
@@ -137,7 +141,102 @@ def asset_key(filename):
 
 
 def short_path(filename):
-    return SHORTS_DIR / safe_filename(filename)
+    location = clip_location(filename)
+    return location["local_path"] if location else SHORTS_DIR / safe_filename(filename)
+
+
+def storage_location(reference):
+    """Decode a persisted storage reference without deriving it from a media ID."""
+    from app.video_shorts.services.storage import get_media_storage
+    raw = str(reference or "").strip()
+    if not raw:
+        raise TenantMediaConflict("Stored media location is missing")
+    root = get_media_storage("local").root_dir
+    if raw.startswith("s3://"):
+        key = raw[5:]
+    else:
+        path = Path(raw)
+        if path.is_absolute():
+            try:
+                key = path.resolve().relative_to(root).as_posix()
+            except ValueError:
+                if path.resolve().is_relative_to(VIDEOS_DIR.resolve()):
+                    key = "videos/" + path.resolve().relative_to(VIDEOS_DIR.resolve()).as_posix()
+                elif "/app/video_shorts/videos/" in raw:
+                    key = "videos/" + raw.split("/app/video_shorts/videos/", 1)[1]
+                elif "/app/video_shorts/static/" in raw:
+                    key = raw.split("/app/video_shorts/static/", 1)[1]
+                else:
+                    raise TenantMediaConflict("Stored path is outside media storage")
+        else:
+            key = raw
+    if not key or key.startswith("/") or ".." in Path(key).parts or "://" in key:
+        raise TenantMediaConflict("Invalid stored media key")
+    return {"storage_key": key, "local_path": (VIDEOS_DIR / key[7:] if key.startswith("videos/") else root / key)}
+
+
+def clip_location(filename, *, conn=None):
+    name = safe_filename(filename)
+    own = conn is None
+    conn = conn or get_db_readonly()
+    try:
+        keys = conn.execute("""SELECT DISTINCT storage_file_key FROM shorts_generated_videos
+            WHERE (clip_filename=? OR output_filename=?) AND storage_file_key IS NOT NULL""", [name, name]).fetchall()
+        if len(keys) > 1:
+            raise TenantMediaConflict("Ambiguous stored clip keys")
+        key = keys[0][0] if keys else asset_key(name)
+        row = conn.execute("SELECT file_path FROM shorts_storage_assets WHERE file_key=?", [key]).fetchone()
+        if not row:
+            return None
+        return {**storage_location(row[0]), "file_key": key}
+    finally:
+        if own:
+            conn.close()
+
+
+def clip_exists(filename, *, conn=None):
+    from app.video_shorts.services.storage import get_media_storage
+    location = clip_location(filename, conn=conn)
+    if location is None:
+        location = storage_location(f"shorts/{safe_filename(filename)}")
+    if location["local_path"].is_file():
+        return True
+    storage = get_media_storage()
+    return storage.backend_name == "s3" and storage.exists(location["storage_key"])
+
+
+def source_locations(video_id, *, video_pk=None, conn=None):
+    """Resolve stored source URLs/assets; unscoped workers may only share one key."""
+    own = conn is None
+    conn = conn or get_db_readonly()
+    try:
+        sql = "SELECT id, video_url, owner_user_id, brand_id FROM youtube_videos WHERE video_id=?"
+        params = [str(video_id)]
+        if video_pk is not None:
+            sql += " AND id=?"
+            params.append(int(video_pk))
+        elif has_request_context():
+            owner, brand = current_scope()
+            if owner:
+                sql += " AND owner_user_id=? AND brand_id IS NOT DISTINCT FROM ?"
+                params.extend([owner, brand])
+        locations = {}
+        for pk, url, owner, brand in conn.execute(sql, params).fetchall():
+            refs = [url] if str(url or "").startswith("s3://") else []
+            if not refs:
+                assets = conn.execute("""SELECT file_key,file_path FROM shorts_storage_assets
+                    WHERE file_type='downloaded' AND CAST(user_id AS VARCHAR)=?
+                    AND brand_id IS NOT DISTINCT FROM ?""", [owner, brand]).fetchall()
+                refs = [path for key, path in assets if Path(str(key).removeprefix("downloaded:")).stem == str(video_id)]
+            for ref in refs:
+                location = storage_location(ref)
+                locations[location["storage_key"]] = location
+        if video_pk is None and len(locations) > 1:
+            raise TenantMediaConflict("Source has multiple stored locations; video_pk required")
+        return list(locations.values())
+    finally:
+        if own:
+            conn.close()
 
 
 def poster_key(filename):
@@ -226,11 +325,19 @@ def delete_source_media(conn, youtube_id, *, excluding_pks=()):
     purge_source_cache_for_video(youtube_id)
     storage = get_media_storage()
     local = get_media_storage("local")
-    for suffix in SOURCE_VIDEO_SUFFIXES:
-        key = f"videos/{youtube_id}{suffix}"
+    for location in source_locations(youtube_id, conn=conn):
+        key = location["storage_key"]
+        params = [f"s3://{key}"]
+        sql = "SELECT 1 FROM youtube_videos WHERE video_url=?"
+        if excluding_pks:
+            sql += " AND id NOT IN (" + ",".join("?" for _ in excluding_pks) + ")"
+            params.extend(excluding_pks)
+        if conn.execute(sql + " LIMIT 1", params).fetchone():
+            continue
         if storage.backend_name == "s3" and storage.exists(key):
             storage.delete(key)
         local.delete(key)
+        location["local_path"].unlink(missing_ok=True)
     return True
 
 
@@ -249,8 +356,15 @@ def render_filename(video_id, entry, plan_index, *, video_pk=None):
             ).fetchone()
             if row:
                 stored = str(row[2] or "")
-                name = stored.removeprefix("short:") if stored.startswith("short:") else (row[1] or row[0])
-                assert_asset_owner(conn, asset_key(name), video.owner_user_id, video.brand_id)
+                name = row[1] or row[0]
+                assert_asset_owner(conn, stored or asset_key(name), video.owner_user_id, video.brand_id)
+                authorize_clip_delete(conn, name, video_pk=video.video_pk,
+                                      owner_user_id=video.owner_user_id, brand_id=video.brand_id)
+                return safe_filename(name)
+            # A frozen owner's existing legacy media must survive unrelated edits,
+            # even before the manual lifecycle/asset reconciliation has run.
+            if (re.fullmatch(r"\d+_[A-Za-z0-9_-]+\.mp4", name)
+                    and not re.search(r"_v\d+\.mp4$", name) and clip_exists(name, conn=conn)):
                 authorize_clip_delete(conn, name, video_pk=video.video_pk,
                                       owner_user_id=video.owner_user_id, brand_id=video.brand_id)
                 return safe_filename(name)
@@ -280,9 +394,19 @@ def authorize_clip_delete(conn, filename, *, video_pk=None, owner_user_id=None, 
     ).fetchall()
     if video_pk is not None:
         rows = [r for r in rows if int(r[0]) == int(video_pk)]
+    if not rows:
+        existing = conn.execute("SELECT 1 FROM shorts_generated_videos WHERE clip_filename=? OR output_filename=?",
+                                [name, name]).fetchone()
+        legacy = re.fullmatch(r"\d+_([A-Za-z0-9_-]+)\.mp4", name)
+        if not existing and legacy and not match:
+            assert_clip_write_owner(conn, name, owner_user_id, brand_id, video_pk=video_pk)
+            rows = conn.execute("""SELECT v.id,v.video_id,v.owner_user_id,v.brand_id
+                FROM youtube_videos v JOIN shorts_video_legacy_owners l ON l.video_pk=v.id
+                WHERE l.youtube_id=?""", [legacy[1]]).fetchall()
     if len(rows) != 1:
         raise TenantMediaConflict("Clip is not bound to this tenant's video")
-    assert_asset_owner(conn, asset_key(name), owner_user_id, brand_id)
+    location = clip_location(name, conn=conn)
+    assert_asset_owner(conn, location["file_key"] if location else asset_key(name), owner_user_id, brand_id)
     foreign = conn.execute(
         """SELECT 1 FROM shorts_generated_videos
            WHERE (clip_filename = ? OR output_filename = ?) AND
@@ -297,9 +421,9 @@ def authorize_clip_delete(conn, filename, *, video_pk=None, owner_user_id=None, 
     return VideoIdentity(int(row[0]), str(row[1]), str(row[2]), str(row[3]) if row[3] else None)
 
 
-def load_state(video_id, kind="plan", *, video_pk=None):
+def load_state(video_id, kind="plan", *, video_pk=None, migrate=True):
     video = resolve_video(video_id, video_pk=video_pk)
-    path = state_path(video, kind, read=True)
+    path = state_path(video, kind, read=True, migrate=migrate)
     if not path.exists():
         return {}
     data = json.loads(path.read_text())
@@ -363,7 +487,7 @@ def write_state(video_id, data, kind="plan", *, video_pk=None):
         Path(name).unlink(missing_ok=True)
 
 
-def iter_plans(*, owner_user_id=None, brand_id=None):
+def iter_plans(*, owner_user_id=None, brand_id=None, migrate=True):
     """Enumerate rows, never infer tenant identities by splitting filenames."""
     if owner_user_id is None and has_request_context():
         owner_user_id, brand_id = current_scope()
@@ -384,6 +508,12 @@ def iter_plans(*, owner_user_id=None, brand_id=None):
         conn.close()
     for row in rows:
         video = VideoIdentity(int(row[0]), str(row[1]), str(row[2] or ""), str(row[3]) if row[3] else None)
-        path = state_path(video, read=True)
+        path = PRIVATE_STATE_DIR / f"{video.video_pk}_plan.json"
+        if not path.exists():
+            candidates = [root / name for root in (PRIVATE_STATE_DIR / "legacy", SHORTS_DIR)
+                          for name in (f"{video.video_pk}_plan.json", f"{video.youtube_id}_plan.json")]
+            if not any(p.is_file() for p in candidates):
+                continue
+            path = state_path(video, read=True, migrate=migrate)
         if path.exists():
             yield video, path
