@@ -17,6 +17,7 @@ from PIL import Image, ImageDraw, ImageFilter, ImageFont
 from flask import current_app
 
 from app.video_shorts.config import (
+    DESIGN_GEOMETRY,
     DEFAULT_SUB_FONT_SIZE,
     DEFAULT_SUBTITLE_BG_ALPHA,
     DEFAULT_SUBTITLE_BG_COLOR,
@@ -44,12 +45,11 @@ from app.video_shorts.services.media_utils import (
     scale_media_timeout,
 )
 
-SUBSCRIBE_OVERLAY_WIDTH = 260
-SUBSCRIBE_OVERLAY_PADDING = 40
-SUBSCRIBE_OVERLAY_BOTTOM_OFFSET = 30
+SUBSCRIBE_OVERLAY_SCALE = DESIGN_GEOMETRY["subscribe_scale"]
+SUBSCRIBE_OVERLAY_BOTTOM_OFFSET = DESIGN_GEOMETRY["subscribe_bottom"]
 SUBSCRIBE_OVERLAY_PATH = Path(__file__).resolve().parents[1] / "static" / "subscribe.gif"
 SUBTITLE_FONTS_DIR = Path(__file__).resolve().parents[1] / "static" / "fonts"
-FACE_AWARE_FIT_FRAME_TOP = 330.0
+FACE_AWARE_FIT_FRAME_TOP = DESIGN_GEOMETRY["fit_top"]
 FACE_AWARE_FILL_FALLBACK_SUBTITLE_MARGIN = 405
 FACE_AWARE_FILL_CAPTION_GAP = 36.0
 FACE_AWARE_FILL_CAPTION_MIN_TOP = 640.0
@@ -57,24 +57,24 @@ FACE_AWARE_FILL_SUBSCRIBE_ROOM = 300.0
 FACE_AWARE_LEGACY_DEFAULT_SUBTITLE_MARGINS = {270, 320, 405, 520}
 
 CROP_TARGET_SIZE = 1080  # reference crop resolution before resizing for display
-VIDEO_TARGET_WIDTH = 720
+VIDEO_TARGET_WIDTH = DESIGN_GEOMETRY["width"]
 _target_height = int(round(VIDEO_TARGET_WIDTH * 16 / 9))
 VIDEO_TARGET_HEIGHT = _target_height + (_target_height % 2)
 VIDEO_OVERLAY_WIDTH = 900
 VIDEO_OVERLAY_TOP_OFFSET = DEFAULT_VIDEO_OVERLAY_OFFSET
 PODCAST_LANDSCAPE_WIDTH = 1280
 PODCAST_LANDSCAPE_HEIGHT = 720
-ORIGINAL_LAYOUT_MAX_WIDTH = 1280
-ORIGINAL_LAYOUT_MAX_HEIGHT = 720
-ORIGINAL_LAYOUT_HD_MAX_WIDTH = 1920
-ORIGINAL_LAYOUT_HD_MAX_HEIGHT = 1080
+ORIGINAL_LAYOUT_MAX_WIDTH = DESIGN_GEOMETRY["original_width"]
+ORIGINAL_LAYOUT_MAX_HEIGHT = DESIGN_GEOMETRY["original_height"]
+ORIGINAL_LAYOUT_HD_MAX_WIDTH = DESIGN_GEOMETRY["original_hd_width"]
+ORIGINAL_LAYOUT_HD_MAX_HEIGHT = DESIGN_GEOMETRY["original_hd_height"]
 VIDEO_DATE_BOTTOM_MARGIN = 250
 DEFAULT_VIDEO_DATE_TOP = VIDEO_TARGET_HEIGHT - VIDEO_DATE_BOTTOM_MARGIN - 24
 TITLE_WRAP_LENGTH = 35
-TITLE_WRAP_SIDE_MARGIN = 48
-TITLE_WRAP_MAX_LINES = 3
-TITLE_WRAP_MIN_FONT_SIZE = 30
-TITLE_BOX_BORDER_WIDTH = 22
+TITLE_WRAP_SIDE_MARGIN = DESIGN_GEOMETRY["title_side_margin"]
+TITLE_WRAP_MAX_LINES = DESIGN_GEOMETRY["title_max_lines"]
+TITLE_WRAP_MIN_FONT_SIZE = DESIGN_GEOMETRY["title_min_font_size"]
+TITLE_BOX_BORDER_WIDTH = DESIGN_GEOMETRY["title_box_border"]
 STATIC_VISUAL_MAP = {entry["key"]: entry for entry in STATIC_VISUAL_PRESETS}
 
 
@@ -744,7 +744,8 @@ def _title_layout_metrics(
     block_height = safe_line_height * safe_lines + safe_spacing * max(0, safe_lines - 1)
     block_height = max(safe_line_height, block_height)
     visual_y = _title_visual_y(base_y, font_size)
-    adjusted_y = visual_y - max(0, block_height - safe_line_height)
+    # Title position is its top edge, independent of the number of lines.
+    adjusted_y = visual_y
     return {
         "line_height": safe_line_height,
         "block_height": block_height,
@@ -814,8 +815,6 @@ def _fit_title_text(
             line_height=line_height,
             line_spacing=line_spacing,
         )
-        if layout["draw_y"] < TITLE_BOX_BORDER_WIDTH:
-            continue
         chosen_lines = lines
         chosen_font_size = candidate_font_size
         chosen_layout = layout
@@ -971,7 +970,7 @@ def _resolve_title_shadow_style(subtitle_preset: Optional[str]) -> dict[str, Any
     }
 
 
-def _render_title_overlay(
+def _title_overlay_layout(
     text: str,
     *,
     font_path: str,
@@ -991,7 +990,10 @@ def _render_title_overlay(
     title_outline_width: int = 0,
     max_lines: int = TITLE_WRAP_MAX_LINES,
     min_font_size: int = TITLE_WRAP_MIN_FONT_SIZE,
-) -> tuple[Path, dict[str, Any]]:
+) -> dict[str, Any]:
+    """Measure title geometry without generating an image."""
+    font_size = max(1, int(round(font_size * DESIGN_GEOMETRY["font_scale"])))
+    min_font_size = min(font_size, min_font_size)
     font = _load_title_font(font_path, font_size)
     if font is None:
         raise RuntimeError(f"Pillow title font could not be resolved: {font_path}")
@@ -1058,6 +1060,53 @@ def _render_title_overlay(
             }
         )
 
+    return dict(font=chosen_font, font_size=chosen_font_size, lines=chosen_lines,
+                line_height=chosen_line_height, entries=line_entries, draw_y=draw_y,
+                block_height=block_height, side_margin=side_margin,
+                outline_width=safe_outline_width, max_text_width=max_text_width,
+                text=display_text)
+
+
+def _render_title_overlay(
+    text: str,
+    *,
+    font_path: str,
+    font_size: int,
+    target_width: int,
+    target_height: int,
+    base_y: int,
+    line_spacing: int,
+    title_text_color: Optional[str],
+    subtitle_preset: Optional[str],
+    title_bg_color: Optional[str] = DEFAULT_TITLE_BG_COLOR,
+    title_bg_alpha: Optional[int] = DEFAULT_TITLE_BG_ALPHA,
+    uppercase: bool,
+    video_top_limit: Optional[int],
+    title_language: Optional[str] = None,
+    title_outline_color: Optional[str] = "#000000",
+    title_outline_width: int = 0,
+    max_lines: int = TITLE_WRAP_MAX_LINES,
+    min_font_size: int = TITLE_WRAP_MIN_FONT_SIZE,
+) -> tuple[Path, dict[str, Any]]:
+    layout = _title_overlay_layout(
+        text, font_path=font_path, font_size=font_size, target_width=target_width,
+        target_height=target_height, base_y=base_y, line_spacing=line_spacing,
+        title_text_color=title_text_color, subtitle_preset=subtitle_preset,
+        title_bg_color=title_bg_color, title_bg_alpha=title_bg_alpha,
+        uppercase=uppercase, video_top_limit=video_top_limit,
+        title_language=title_language, title_outline_color=title_outline_color,
+        title_outline_width=title_outline_width, max_lines=max_lines, min_font_size=min_font_size,
+    )
+    chosen_font = layout["font"]
+    chosen_font_size = layout["font_size"]
+    chosen_lines = layout["lines"]
+    line_entries = layout["entries"]
+    draw_y = layout["draw_y"]
+    block_height = layout["block_height"]
+    side_margin = layout["side_margin"]
+    safe_outline_width = layout["outline_width"]
+    max_text_width = layout["max_text_width"]
+    display_text = layout["text"]
     overlay = Image.new("RGBA", (int(target_width), int(target_height)), (0, 0, 0, 0))
     shadow_style = _resolve_title_shadow_style(subtitle_preset)
     shadow_layer = _build_blurred_text_shadow(
@@ -1077,8 +1126,8 @@ def _render_title_overlay(
     draw = ImageDraw.Draw(overlay)
     bg_alpha = _normalize_alpha_percent(title_bg_alpha, DEFAULT_TITLE_BG_ALPHA)
     if bg_alpha > 0 and line_entries:
-        bg_pad_x = max(10, int(round(float(chosen_font_size) * 0.45)))
-        bg_pad_y = max(6, int(round(float(chosen_font_size) * 0.20)))
+        bg_pad_x = max(DESIGN_GEOMETRY["title_padding_min_x"], int(round(float(chosen_font_size) * DESIGN_GEOMETRY["title_padding_x"])))
+        bg_pad_y = max(DESIGN_GEOMETRY["title_padding_min_y"], int(round(float(chosen_font_size) * DESIGN_GEOMETRY["title_padding_y"])))
         bg_left = int(target_width)
         bg_top = int(target_height)
         bg_right = 0
@@ -1103,7 +1152,7 @@ def _render_title_overlay(
                     min(int(target_width), bg_right + bg_pad_x),
                     min(int(target_height), bg_bottom + bg_pad_y),
                 ],
-                radius=max(6, int(round(float(chosen_font_size) * 0.18))),
+                radius=max(DESIGN_GEOMETRY["box_radius_min"], int(round(float(chosen_font_size) * DESIGN_GEOMETRY["box_radius"]))),
                 fill=_hex_to_rgba(title_bg_color or DEFAULT_TITLE_BG_COLOR, int(round(bg_alpha * 255 / 100.0))),
             )
     text_fill = _hex_to_rgba(title_text_color or "#FFFFFF", 255)
@@ -1293,13 +1342,13 @@ def _face_aware_fit_position_metrics(
     )
     frame_bottom = frame_top + frame_height
     caption_block_height = max(24.0, float(subtitle_font_size or DEFAULT_SUB_FONT_SIZE) * 2.0)
-    caption_top = min(float(target_height) - caption_block_height - 30.0, frame_bottom + 24.0)
+    caption_top = min(float(target_height) - caption_block_height - 30.0, frame_bottom + DESIGN_GEOMETRY["fit_caption_gap"])
     caption_margin_v = max(0.0, float(target_height) - caption_top - caption_block_height)
-    subscribe_y = min(float(target_height) - 30.0, caption_top + caption_block_height + 24.0)
+    subscribe_y = min(float(target_height) - 30.0, caption_top + caption_block_height + DESIGN_GEOMETRY["fit_caption_gap"])
     return {
         "frame_top": frame_top,
         "frame_bottom": frame_bottom,
-        "title_bottom": max(0.0, frame_top - 24.0),
+        "title_bottom": max(0.0, frame_top - DESIGN_GEOMETRY["fit_caption_gap"]),
         "caption_top": caption_top,
         "caption_margin_v": caption_margin_v,
         "subscribe_y": subscribe_y,
@@ -1312,7 +1361,7 @@ def _face_aware_split_position_metrics(
     subtitle_font_size: int = DEFAULT_SUB_FONT_SIZE,
 ) -> Dict[str, float]:
     caption_block_height = _face_aware_caption_block_height(subtitle_font_size)
-    caption_top = max(0.0, min(float(target_height) - caption_block_height, (float(target_height) / 2.0) - (caption_block_height / 2.0)))
+    caption_top = max(0.0, min(float(target_height) - caption_block_height, (float(target_height) * DESIGN_GEOMETRY["split_ratio"]) - (caption_block_height / 2.0)))
     return {
         "caption_top": caption_top,
         "caption_margin_v": max(0.0, float(target_height) - caption_top - caption_block_height),
@@ -1369,14 +1418,14 @@ def _face_aware_caption_top_for_block(
         )
         return max(0.0, float(target_height) - float(margin) - safe_block_height)
     if mode == "split":
-        return max(0.0, min(float(target_height) - safe_block_height, (float(target_height) / 2.0) - (safe_block_height / 2.0)))
+        return max(0.0, min(float(target_height) - safe_block_height, (float(target_height) * DESIGN_GEOMETRY["split_ratio"]) - (safe_block_height / 2.0)))
     if mode == "fit":
         metrics = _face_aware_fit_position_metrics(
             target_width=target_width,
             target_height=target_height,
             subtitle_font_size=int(max(1, round(safe_block_height / 2.0))),
         )
-        return max(0.0, min(float(target_height) - safe_block_height, float(metrics["frame_bottom"]) + 24.0))
+        return max(0.0, min(float(target_height) - safe_block_height, float(metrics["frame_bottom"]) + DESIGN_GEOMETRY["fit_caption_gap"]))
     if not _is_face_aware_default_subtitle_margin(subtitle_margin, subtitle_margin_custom=subtitle_margin_custom):
         margin = _face_aware_fill_subtitle_margin(subtitle_margin, subtitle_margin_custom=subtitle_margin_custom)
         return max(0.0, float(target_height) - float(margin) - safe_block_height)
@@ -1438,7 +1487,7 @@ def _face_aware_fill_caption_metrics_for_segment(
             "caption_top": caption_top,
             "caption_margin_v": float(margin),
             "caption_block_height": caption_block_height,
-            "subscribe_y": caption_top + caption_block_height + 24.0,
+            "subscribe_y": caption_top + caption_block_height + DESIGN_GEOMETRY["fit_caption_gap"],
         }
     try:
         seg_start = float(segment.get("start") or 0.0)
@@ -1472,7 +1521,7 @@ def _face_aware_fill_caption_metrics_for_segment(
             "caption_top": caption_top,
             "caption_margin_v": float(margin),
             "caption_block_height": caption_block_height,
-            "subscribe_y": caption_top + caption_block_height + 24.0,
+            "subscribe_y": caption_top + caption_block_height + DESIGN_GEOMETRY["fit_caption_gap"],
         }
     face_bottom_values.sort()
     mid = len(face_bottom_values) // 2
@@ -1490,7 +1539,7 @@ def _face_aware_fill_caption_metrics_for_segment(
         "caption_top": caption_top,
         "caption_margin_v": caption_margin_v,
         "caption_block_height": caption_block_height,
-        "subscribe_y": caption_top + caption_block_height + 24.0,
+        "subscribe_y": caption_top + caption_block_height + DESIGN_GEOMETRY["fit_caption_gap"],
     }
 
 
@@ -2350,7 +2399,7 @@ def _compose_trimmed_with_background(
         raise FileNotFoundError(f"Source video not found: {src_path}")
     resolved_ffmpeg = _resolve_ffmpeg()
     podcast_mode = bool(audio_override_source and Path(audio_override_source).exists())
-    normalized_title_engine = str(title_engine or "drawtext").strip().lower() or "drawtext"
+    normalized_title_engine = DESIGN_GEOMETRY["title_engine"]  # Includes legacy drawtext designs.
     duration = max(end - start, 1.0)
     if music_only and video_override_source:
         override_duration = _probe_media_duration_seconds(video_override_source)
@@ -2389,7 +2438,7 @@ def _compose_trimmed_with_background(
             safe_subtitle_margin = int(subtitle_margin if subtitle_margin is not None else SUB_MARGIN_DEFAULT)
         except (TypeError, ValueError):
             safe_subtitle_margin = 60
-        normalized_title_engine = str(title_engine or "drawtext").strip().lower() or "drawtext"
+        normalized_title_engine = DESIGN_GEOMETRY["title_engine"]  # Includes legacy drawtext designs.
         if overlay_aspect == "portrait":
             target_width = VIDEO_TARGET_WIDTH
             target_height = VIDEO_TARGET_HEIGHT
@@ -2585,7 +2634,7 @@ def _compose_trimmed_with_background(
         overlay_enabled = subscribe_overlay_enabled and bool(overlay_asset_path)
         if overlay_enabled:
             subscribe_input_index = next_video_input_index
-            filter_parts.append(f"[{subscribe_input_index}:v]format=rgba[ov_sub_src]")
+            filter_parts.append(f"[{subscribe_input_index}:v]scale=iw*{SUBSCRIBE_OVERLAY_SCALE}:ih*{SUBSCRIBE_OVERLAY_SCALE},format=rgba[ov_sub_src]")
             filter_parts.append(
                 f"{final_label}[ov_sub_src]overlay=(W-w)/2:H-h-{SUBSCRIBE_OVERLAY_BOTTOM_OFFSET}:shortest=1[ov_sub]"
             )
@@ -3231,11 +3280,11 @@ def _compose_trimmed_with_background(
     if split_stack_enabled:
         crop2_x, crop2_y, crop2_w, crop2_h = _normalize_crop_box("crop2_")
         split_tile_width = target_width
-        split_tile_height = max(2, int(target_height / 2))
+        split_tile_height = max(2, int(target_height * DESIGN_GEOMETRY["split_ratio"]))
         split_tile_height -= split_tile_height % 2
-        split_seam_y = int(target_height / 2)
-        split_divider_thickness = 6
-        split_divider_outline_thickness = 1
+        split_seam_y = int(target_height * DESIGN_GEOMETRY["split_ratio"])
+        split_divider_thickness = DESIGN_GEOMETRY["split_divider"]
+        split_divider_outline_thickness = DESIGN_GEOMETRY["split_outline"]
         filter_parts.extend(
             [
                 "[1:v]split=2[split_top_src][split_bottom_src]",
@@ -3399,11 +3448,11 @@ def _compose_trimmed_with_background(
                     top_rect = split_crops.get("top") if isinstance(split_crops, dict) else {}
                     bottom_rect = split_crops.get("bottom") if isinstance(split_crops, dict) else {}
                     split_tile_width = target_width
-                    split_tile_height = max(2, int(target_height / 2))
+                    split_tile_height = max(2, int(target_height * DESIGN_GEOMETRY["split_ratio"]))
                     split_tile_height -= split_tile_height % 2
-                    split_seam_y = int(target_height / 2)
-                    split_divider_thickness = 6
-                    split_divider_outline_thickness = 1
+                    split_seam_y = int(target_height * DESIGN_GEOMETRY["split_ratio"])
+                    split_divider_thickness = DESIGN_GEOMETRY["split_divider"]
+                    split_divider_outline_thickness = DESIGN_GEOMETRY["split_outline"]
                     split_top_src = f"[layout_split_top_src_{idx}]"
                     split_bottom_src = f"[layout_split_bottom_src_{idx}]"
                     split_top = f"[layout_split_top_{idx}]"
@@ -3937,7 +3986,7 @@ def _compose_trimmed_with_background(
         overlay_src_label = "[ov_sub_src]"
         overlay_out_label = "[ov_sub]"
         filter_parts.append(
-            f"[{subscribe_input_index}:v]format=rgba{overlay_src_label}"
+            f"[{subscribe_input_index}:v]scale=iw*{SUBSCRIBE_OVERLAY_SCALE}:ih*{SUBSCRIBE_OVERLAY_SCALE},format=rgba{overlay_src_label}"
         )
         subscribe_y_expr = f"H-h-{SUBSCRIBE_OVERLAY_BOTTOM_OFFSET}"
         if face_aware_layout_active:

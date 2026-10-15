@@ -1330,3 +1330,30 @@ for entry in STATIC_VISUAL_PRESETS:
     filename = entry.get("image_filename")
     if filename:
         entry["image_path"] = STATIC_IMG_DIR / Path(filename).name
+
+
+# Design geometry is expressed in the compositor's 720 x 1280 working units.
+# Multiply by 1.5 for 1080 x 1920; the browser scales this same coordinate space.
+DESIGN_GEOMETRY = {
+    "width": 720, "height": 1280, "preview_width": 270,
+    "split_ratio": 0.5, "split_divider": 6, "split_outline": 1,
+    "letter_spacing": 0, "font_scale": 1, "title_engine": "pillow",
+    "title_side_margin": 48, "title_box_border": 22,
+    "title_max_lines": 3, "title_min_font_size": 30,
+    "title_padding_x": 0.45, "title_padding_y": 0.20,
+    "title_padding_min_x": 10, "title_padding_min_y": 6,
+    "caption_side_margin": 40, "caption_line_gap": 0.18,
+    "caption_line_gap_min": 4, "caption_words": 4,
+    "gradient_mid": 0.46,
+    "caption_padding_x": 0.32, "caption_padding_y": 0.16,
+    "caption_padding_min_x": 10, "caption_padding_min_y": 5,
+    "pill_padding_x": 0.48, "pill_padding_y": 0.14,
+    "pill_padding_min_x": 10, "pill_padding_min_y": 4,
+    "pill_min_aspect": 2.0, "box_radius": 0.18, "box_radius_min": 6,
+    "subscribe_bottom": 30, "subscribe_scale": 1,
+    "fit_top": 330, "fit_caption_gap": 24,
+    "original_width": 1280, "original_height": 720,
+    "original_hd_width": 1920, "original_hd_height": 1080,
+    "original_title_scale": 0.055, "original_caption_scale": 0.06,
+    "original_title_top": 0.08, "original_caption_center": 0.72,
+}

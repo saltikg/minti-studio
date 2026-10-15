@@ -11,6 +11,7 @@ from PIL import Image, ImageDraw, ImageFilter, ImageFont
 from flask import current_app
 
 from app.video_shorts.config import (
+    DESIGN_GEOMETRY,
     DEFAULT_SUBTITLE_PRESET,
     DEFAULT_SUBTITLE_BG_ALPHA,
     DEFAULT_SUBTITLE_BG_COLOR,
@@ -42,11 +43,11 @@ _TR_STOPWORDS = {
     "da", "mi", "mı", "mu", "mü", "sen", "ben", "biz", "siz", "onlar",
 }
 _MIN_BOUNDARY_CUE_SECONDS = 0.7
-KARAOKE_MAX_WORDS = 4
+KARAOKE_MAX_WORDS = DESIGN_GEOMETRY["caption_words"]
 _ASS_RENDER_WIDTH = 720
 _ASS_RENDER_HEIGHT = 1280
-_ASS_MARGIN_L = 40
-_ASS_MARGIN_R = 40
+_ASS_MARGIN_L = DESIGN_GEOMETRY["caption_side_margin"]
+_ASS_MARGIN_R = DESIGN_GEOMETRY["caption_side_margin"]
 _PILL_CURVE_FACTOR = 0.55228475
 _PILLOW_CAPTION_WIDTH = 720
 _PILLOW_CAPTION_HEIGHT = 1280
@@ -729,8 +730,8 @@ def _build_ass_karaoke_for_clip(
     resolved_font = str(subtitle_font or preset_font or "DejaVu Sans").strip() or "DejaVu Sans"
     pill_metrics = _pill_font_metrics(preset_key, resolved_font, subtitle_font_size) if pill_enabled else None
     pill_font = pill_metrics[0] if pill_metrics else None
-    pill_padding_x = max(10, int(round(float(subtitle_font_size) * 0.48)))
-    pill_padding_y = max(4, int(round(float(subtitle_font_size) * 0.14)))
+    pill_padding_x = max(DESIGN_GEOMETRY["pill_padding_min_x"], int(round(float(subtitle_font_size) * DESIGN_GEOMETRY["pill_padding_x"])))
+    pill_padding_y = max(DESIGN_GEOMETRY["pill_padding_min_y"], int(round(float(subtitle_font_size) * DESIGN_GEOMETRY["pill_padding_y"])))
     effective_line_width = _ASS_RENDER_WIDTH - _ASS_MARGIN_L - _ASS_MARGIN_R
     pill_single_line_count = 0
     pill_wrap_fallback_count = 0
@@ -1300,7 +1301,7 @@ def _layout_wrapped_caption(
     space_width = _measure_text_width(font, " ")
     line_height = max(_measure_line_height(font), _measure_line_height(line_height_font or font))
     line_ascent = max(_font_ascent(font), _font_ascent(line_height_font or font))
-    line_gap = max(4, int(round(line_height * 0.18)))
+    line_gap = max(DESIGN_GEOMETRY["caption_line_gap_min"], int(round(line_height * DESIGN_GEOMETRY["caption_line_gap"])))
     total_height = (line_height * len(lines)) + (line_gap * max(0, len(lines) - 1))
     safe_margin = clamp_design_position(
         "sub_margin",
@@ -1395,7 +1396,7 @@ def _build_vertical_gradient_strip(
     bottom_rgba = _hex_to_rgba(bottom_color)
     gradient = Image.new("RGBA", (1, safe_height), (0, 0, 0, 0))
     pixels = gradient.load()
-    mid_position = 0.46
+    mid_position = DESIGN_GEOMETRY["gradient_mid"]
     for y in range(safe_height):
         ratio = 0.0 if safe_height <= 1 else float(y) / float(safe_height - 1)
         if ratio <= mid_position:
@@ -1462,6 +1463,62 @@ def _build_gradient_word_layer(
     }
 
 
+def _caption_frame_layout(
+    words, *, active_index, font, active_font=None, caption_language="",
+    subtitle_margin, font_size, outline_width, force_uppercase=False,
+    precomputed_layout=None, canvas_width=_PILLOW_CAPTION_WIDTH,
+    canvas_height=_PILLOW_CAPTION_HEIGHT,
+):
+    """Font-measured geometry shared by the renderer and live DOM preview."""
+    active_font = active_font or font
+    display_words = _caption_display_words(words, force_uppercase=force_uppercase, language=caption_language)
+    word_fonts = [active_font if index == active_index else font for index in range(len(display_words))]
+    base_pad_x = max(DESIGN_GEOMETRY["pill_padding_min_x"], int(round(float(font_size) * DESIGN_GEOMETRY["pill_padding_x"])))
+    pad_y = max(DESIGN_GEOMETRY["pill_padding_min_y"], int(round(float(font_size) * DESIGN_GEOMETRY["pill_padding_y"])))
+    if precomputed_layout is None:
+        probe_image = Image.new("RGBA", (8, 8), (0, 0, 0, 0))
+        probe_draw = ImageDraw.Draw(probe_image)
+        word_metrics: List[Dict[str, int]] = []
+        for index, word in enumerate(display_words):
+            word_font = word_fonts[index]
+            bbox = probe_draw.textbbox(
+                (0, 0),
+                str(word),
+                font=word_font,
+                anchor="la",
+                stroke_width=outline_width,
+            )
+            text_w = max(1, int(bbox[2] - bbox[0]))
+            text_h = max(1, int(bbox[3] - bbox[1]))
+            pill_h = text_h + (pad_y * 2)
+            desired_pill_w = max(text_w + (base_pad_x * 2), int(round(pill_h * DESIGN_GEOMETRY["pill_min_aspect"])))
+            word_metrics.append(
+                {
+                    "text_w": text_w,
+                    "text_h": text_h,
+                    "pill_h": pill_h,
+                    "desired_pill_w": desired_pill_w,
+                }
+            )
+
+        slot_widths = [metric["text_w"] for metric in word_metrics]
+        slot_widths[active_index] = max(slot_widths[active_index], word_metrics[active_index]["desired_pill_w"])
+        layout = _layout_wrapped_caption(
+            display_words,
+            font=font,
+            subtitle_margin=subtitle_margin,
+            max_width=max(80, int(canvas_width) - _ASS_MARGIN_L - _ASS_MARGIN_R),
+            canvas_width=int(canvas_width),
+            canvas_height=int(canvas_height),
+            slot_widths=slot_widths,
+            word_fonts=word_fonts,
+            line_height_font=active_font,
+        )
+    else:
+        layout = precomputed_layout
+    return layout
+
+
 def _render_word_highlight_caption_frame(
     words: List[str],
     *,
@@ -1491,51 +1548,14 @@ def _render_word_highlight_caption_frame(
     out_path: Path,
 ) -> Dict[str, Any]:
     active_font = active_font or font
-    display_words = _caption_display_words(words, force_uppercase=force_uppercase, language=caption_language)
-    word_fonts = [active_font if index == active_index else font for index in range(len(display_words))]
-    base_pad_x = max(10, int(round(float(font_size) * 0.48)))
-    pad_y = max(4, int(round(float(font_size) * 0.14)))
-    if precomputed_layout is None:
-        probe_image = Image.new("RGBA", (8, 8), (0, 0, 0, 0))
-        probe_draw = ImageDraw.Draw(probe_image)
-        word_metrics: List[Dict[str, int]] = []
-        for index, word in enumerate(display_words):
-            word_font = word_fonts[index]
-            bbox = probe_draw.textbbox(
-                (0, 0),
-                str(word),
-                font=word_font,
-                anchor="la",
-                stroke_width=outline_width,
-            )
-            text_w = max(1, int(bbox[2] - bbox[0]))
-            text_h = max(1, int(bbox[3] - bbox[1]))
-            pill_h = text_h + (pad_y * 2)
-            desired_pill_w = max(text_w + (base_pad_x * 2), int(round(pill_h * 2.0)))
-            word_metrics.append(
-                {
-                    "text_w": text_w,
-                    "text_h": text_h,
-                    "pill_h": pill_h,
-                    "desired_pill_w": desired_pill_w,
-                }
-            )
-
-        slot_widths = [metric["text_w"] for metric in word_metrics]
-        slot_widths[active_index] = max(slot_widths[active_index], word_metrics[active_index]["desired_pill_w"])
-        layout = _layout_wrapped_caption(
-            display_words,
-            font=font,
-            subtitle_margin=subtitle_margin,
-            max_width=max(80, int(canvas_width) - _ASS_MARGIN_L - _ASS_MARGIN_R),
-            canvas_width=int(canvas_width),
-            canvas_height=int(canvas_height),
-            slot_widths=slot_widths,
-            word_fonts=word_fonts,
-            line_height_font=active_font,
-        )
-    else:
-        layout = precomputed_layout
+    layout = _caption_frame_layout(
+        words, active_index=active_index, font=font, active_font=active_font,
+        caption_language=caption_language, subtitle_margin=subtitle_margin,
+        font_size=font_size, outline_width=outline_width,
+        force_uppercase=force_uppercase, precomputed_layout=precomputed_layout,
+        canvas_width=canvas_width, canvas_height=canvas_height,
+    )
+    pad_y = max(DESIGN_GEOMETRY["pill_padding_min_y"], int(round(float(font_size) * DESIGN_GEOMETRY["pill_padding_y"])))
     image = Image.new("RGBA", (int(canvas_width), int(canvas_height)), (0, 0, 0, 0))
     draw = ImageDraw.Draw(image)
     if shadow_region:
@@ -1557,11 +1577,11 @@ def _render_word_highlight_caption_frame(
             line_height = int(line.get("height") or layout.get("line_height") or font_size)
             line_boxes.append((line_left, line_y, line_right, line_y + line_height))
         if line_boxes:
-            bg_left = max(0, min(box[0] for box in line_boxes) - max(10, int(round(float(font_size) * 0.32))))
-            bg_top = max(0, min(box[1] for box in line_boxes) - max(5, int(round(float(font_size) * 0.16))))
-            bg_right = min(int(canvas_width), max(box[2] for box in line_boxes) + max(10, int(round(float(font_size) * 0.32))))
-            bg_bottom = min(int(canvas_height), max(box[3] for box in line_boxes) + max(5, int(round(float(font_size) * 0.16))))
-            radius = max(6, int(round(float(font_size) * 0.18)))
+            bg_left = max(0, min(box[0] for box in line_boxes) - max(DESIGN_GEOMETRY["caption_padding_min_x"], int(round(float(font_size) * DESIGN_GEOMETRY["caption_padding_x"]))))
+            bg_top = max(0, min(box[1] for box in line_boxes) - max(DESIGN_GEOMETRY["caption_padding_min_y"], int(round(float(font_size) * DESIGN_GEOMETRY["caption_padding_y"]))))
+            bg_right = min(int(canvas_width), max(box[2] for box in line_boxes) + max(DESIGN_GEOMETRY["caption_padding_min_x"], int(round(float(font_size) * DESIGN_GEOMETRY["caption_padding_x"]))))
+            bg_bottom = min(int(canvas_height), max(box[3] for box in line_boxes) + max(DESIGN_GEOMETRY["caption_padding_min_y"], int(round(float(font_size) * DESIGN_GEOMETRY["caption_padding_y"]))))
+            radius = max(DESIGN_GEOMETRY["box_radius_min"], int(round(float(font_size) * DESIGN_GEOMETRY["box_radius"])))
             draw.rounded_rectangle(
                 [bg_left, bg_top, bg_right, bg_bottom],
                 radius=radius,
@@ -1588,7 +1608,7 @@ def _render_word_highlight_caption_frame(
     pad_right = 0
     if draw_pill:
         radius = pill_h // 2
-        min_pill_w = int(round(pill_h * 2.0))
+        min_pill_w = int(round(pill_h * DESIGN_GEOMETRY["pill_min_aspect"]))
         slot_width = max(int(active_word.get("slot_width") or active_text_w), min_pill_w)
 
         line_words = layout["lines"][int(active_word["line_index"])]["words"]
@@ -1818,6 +1838,7 @@ def _build_word_highlight_caption_overlay(
 
     temp_dir = Path(tempfile.mkdtemp(prefix="word_highlight_overlay_"))
     cleanup_paths: List[Path] = [temp_dir]
+    subtitle_font_size = max(1, int(round(subtitle_font_size * DESIGN_GEOMETRY["font_scale"])))
     font = ImageFont.truetype(str(font_path), int(subtitle_font_size))
     try:
         active_font_size_delta = int(preset.get("active_font_size_delta", 0) or 0)
@@ -1838,7 +1859,7 @@ def _build_word_highlight_caption_overlay(
     draw_pill = bool(preset.get("draw_pill", True))
     shadow_color = str(preset.get("shadow_color") or "").strip()
     try:
-        outline_width = max(0, int(preset.get("outline_width", 3) or 3))
+        outline_width = max(0, int(preset.get("outline_width", 3) or 0))
     except Exception:
         outline_width = 3
     try:

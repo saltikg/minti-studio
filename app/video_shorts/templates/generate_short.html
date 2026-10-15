@@ -4,9 +4,9 @@
 {% set short_bg_url = url_for('video_shorts_bp.static', filename='img/1-short_bg_8.png') %}
 {% set SHORT_BG_WIDTH = 900 %}
 {% set SHORT_BG_HEIGHT = 1600 %}
-{% set OVERLAY_WIDTH = 720 %}
-{% set OVERLAY_HEIGHT = 1280 %}
-{% set PREVIEW_BG_WIDTH = 270 %}
+{% set OVERLAY_WIDTH = design_geometry.width %}
+{% set OVERLAY_HEIGHT = design_geometry.height %}
+{% set PREVIEW_BG_WIDTH = design_geometry.preview_width %}
 {% set PREVIEW_SCALE = PREVIEW_BG_WIDTH / SHORT_BG_WIDTH %}
 {% set OVERLAY_SCALE = PREVIEW_BG_WIDTH / OVERLAY_WIDTH %}
 {% set PREVIEW_BG_HEIGHT = (SHORT_BG_HEIGHT * PREVIEW_SCALE) | round(2) %}
@@ -36,10 +36,12 @@
   "videoHeightLandscape": VIDEO_OVERLAY_HEIGHT_LANDSCAPE,
   "videoWidthPortrait": VIDEO_OVERLAY_WIDTH,
   "videoHeightPortrait": VIDEO_OVERLAY_HEIGHT_PORTRAIT,
-  "originalOverlayWidth": 1280,
-  "originalOverlayHeight": 720,
+  "originalOverlayWidth": design_geometry.original_width,
+  "originalOverlayHeight": design_geometry.original_height,
   "subtitleY": SUBTITLE_BAND_Y,
   "subtitleHeight": SUBTITLE_BAND_HEIGHT,
+  "geometry": design_geometry,
+  "metricsUrl": url_for("video_shorts_bp.design_layout_metrics"),
   "positionLimits": design_position_limits
 } %}
 {% set has_transcript = transcript_text or (segments_view|length > 0) %}
@@ -5829,19 +5831,17 @@
   }
   .shorts-preview-title-band,
   .shorts-preview-subtitle-band {
-    left: 12px;
-    right: 12px;
-    display: flex;
-    align-items: center;
-    justify-content: center;
+    left: 0;
+    right: 0;
+    display: block;
     text-align: center;
     box-sizing: border-box;
-    font-weight: 700;
-    line-height: 1.1;
-    border-radius: 16px;
+    line-height: normal;
     white-space: normal;
-    overflow-wrap: anywhere;
-    word-break: break-word;
+    overflow-wrap: normal;
+    word-break: normal;
+    letter-spacing: {{ design_geometry.letter_spacing }}px;
+    font-synthesis: none;
   }
   .shorts-preview-title-band.is-hidden,
   .shorts-preview-subtitle-band.is-hidden {
@@ -5861,12 +5861,12 @@
   }
   .shorts-preview-title-band {
     z-index: 2;
-    padding: 0 12px;
+    padding: 0;
   }
   .shorts-preview-subtitle-band {
     z-index: 3;
     min-height: 0;
-    padding: 4px 6px;
+    padding: 0;
   }
   .shorts-preview-subtitle-band.is-word-highlight,
   .short-font-preview.is-word-highlight {
@@ -5905,12 +5905,9 @@
     color: transparent;
   }
   .shorts-preview-subtitle-band.is-word-highlight {
-    gap: 6px;
-    flex-wrap: wrap;
-    align-content: center;
-    align-items: center;
-    line-height: 1.18;
+    line-height: normal;
   }
+
   .preview-ui-safe-guides {
     position: absolute;
     inset: 0;
@@ -7120,6 +7117,7 @@
                  data-regenerate-lock-reason="{{ row.regenerate_lock_reason or '' }}"
                  data-regenerate-url="{{ editor_url('regenerate_clip_video', video_pk=video.id, plan_index=row.plan_index) }}"
                  data-publish="{{ row.publish_status }}"
+                 data-preview-caption="{{ (row.transcript_full or row.excerpt or '')|e }}"
                  data-start="{{ row.start or 0 }}"
                  data-duration="{{ row.duration or 0 }}"
                  data-modal-yt-tooltip="{{ modal_yt_tooltip|e }}"
@@ -9164,13 +9162,15 @@
 })();
 </script>
 <script>
+const DESIGN_GEOMETRY = {{ design_geometry|tojson }};
+const DESIGN_STYLE_TEMPLATES = {{ style_templates|tojson }};
 const getActiveTitleTemplatePreset = () => {
   const subtitlePresetField = document.getElementById("subtitlePresetValue");
   const presetKey = String(subtitlePresetField?.value || "").trim();
-  if (!presetKey || typeof TITLE_TEMPLATE_PRESETS !== "object" || !TITLE_TEMPLATE_PRESETS) {
-    return null;
-  }
-  return TITLE_TEMPLATE_PRESETS[presetKey] || null;
+  const fontKey = document.getElementById("titleFont")?.value;
+  const template = DESIGN_STYLE_TEMPLATES.find(item => item.subtitle_preset === presetKey && item.title_font_key === fontKey);
+  return template ? {engine: "pillow", uppercase: template.title_uppercase,
+    sideMargin: DESIGN_GEOMETRY.title_side_margin, outlineWidth: template.title_outline_width || 0} : null;
 };
 const getPreviewTitleDisplayText = (value) => {
   const preset = getActiveTitleTemplatePreset();
@@ -9179,16 +9179,18 @@ const getPreviewTitleDisplayText = (value) => {
 };
 const syncPreviewTitleText = (nextTitle = null) => {
   const modalEl = document.getElementById("crop-area-modal");
-  const previewTitle = modalEl?.querySelector("#shorts-preview-title-band");
+  const previewTitle = document.getElementById("shorts-preview-title-band");
   if (!previewTitle) {
     return;
   }
-  const activeCard = document.querySelector(".clip-card.is-active") || document.querySelector(".clip-card");
+  const activeIndex = document.getElementById("clip-management-panel")?.dataset.activePlanIndex;
+  const activeCard = (activeIndex && document.querySelector(`.clip-card[data-plan-index="${CSS.escape(activeIndex)}"]`)) || document.querySelector(".clip-card");
   const activeTitle = activeCard?.querySelector(".clip-title-input")?.value
     || activeCard?.querySelector(".clip-card-title")?.textContent
     || activeCard?.dataset.title;
   const fallbackTitle = document.getElementById("clip-detail-modal-title")?.textContent;
   const resolvedTitle = String((nextTitle ?? activeTitle) || fallbackTitle || "Life is full of fun").trim() || "Life is full of fun";
+  previewTitle.dataset.rawTitle = resolvedTitle;
   previewTitle.textContent = getPreviewTitleDisplayText(resolvedTitle);
   const titlePreview = document.getElementById("titlePreview");
   if (titlePreview) {
@@ -18462,6 +18464,7 @@ document.addEventListener("DOMContentLoaded", () => {
       button.setAttribute("aria-pressed", matches ? "true" : "false");
     });
     syncActiveSubscribeCard();
+    window.syncCropEditorFinalPreviewLayout?.();
     if (closePicker) {
       setSubscribePickerOpen(false);
     }
@@ -18529,12 +18532,17 @@ document.addEventListener("DOMContentLoaded", () => {
     const parsed = Number(field.value);
     return Number.isFinite(parsed) ? parsed : fallback;
   };
-  const getActiveRenderFrameWidth = () => (
-    isOriginalCropAspect() ? (previewConfig.originalOverlayWidth || 1280) : renderFrameWidth
-  );
-  const getActiveRenderFrameHeight = () => (
-    isOriginalCropAspect() ? (previewConfig.originalOverlayHeight || 720) : renderFrameHeight
-  );
+  const originalRenderDimensions = () => {
+    const width = naturalSize.width || previewConfig.originalOverlayWidth;
+    const height = naturalSize.height || previewConfig.originalOverlayHeight;
+    const hd = width >= DESIGN_GEOMETRY.original_hd_width || height >= DESIGN_GEOMETRY.original_hd_height;
+    const scale = Math.min((hd ? DESIGN_GEOMETRY.original_hd_width : previewConfig.originalOverlayWidth)/width,
+      (hd ? DESIGN_GEOMETRY.original_hd_height : previewConfig.originalOverlayHeight)/height, 1);
+    const even = value => Math.max(2, Math.round(value)-Math.round(value)%2);
+    return [even(width*scale), even(height*scale)];
+  };
+  const getActiveRenderFrameWidth = () => isOriginalCropAspect() ? originalRenderDimensions()[0] : renderFrameWidth;
+  const getActiveRenderFrameHeight = () => isOriginalCropAspect() ? originalRenderDimensions()[1] : renderFrameHeight;
   const getActivePreviewFrameWidth = () => {
     if (!isOriginalCropAspect()) {
       return previewConfig.frameWidth;
@@ -18765,7 +18773,7 @@ document.addEventListener("DOMContentLoaded", () => {
     if (!sourceWidth || !sourceHeight) {
       return { x: 0, y: 0, w: 0.5, h: 1 };
     }
-    const aspectRatio = renderFrameWidth / Math.max(1, renderFrameHeight / 2);
+    const aspectRatio = renderFrameWidth / Math.max(1, renderFrameHeight * DESIGN_GEOMETRY.split_ratio);
     let cropWidth = sourceWidth / 2;
     let cropHeight = cropWidth / aspectRatio;
     if (cropHeight > sourceHeight) {
@@ -18882,7 +18890,7 @@ document.addEventListener("DOMContentLoaded", () => {
     if (kind === "title") {
       const bounds = getPreviewElementBounds("title");
       const activeHeight = getActiveRenderFrameHeight();
-      const defaultActiveTitleTop = activeHeight * 0.08;
+      const defaultActiveTitleTop = activeHeight * DESIGN_GEOMETRY.original_title_top;
       const currentActiveTitleTop = isOriginalCropAspect()
         ? (
             !dirtyOverlayFields.has("title_margin") && getNumericFieldValue(titleMarginInput, previewConfig.titleY) === previewConfig.titleY
@@ -18906,7 +18914,7 @@ document.addEventListener("DOMContentLoaded", () => {
       const activeHeight = getActiveRenderFrameHeight();
       const defaultActiveMargin = Math.max(
         0,
-        activeHeight - (activeHeight * 0.72) - (getActiveSubtitleHeight() / 2),
+        activeHeight - (activeHeight * DESIGN_GEOMETRY.original_caption_center) - (getActiveSubtitleHeight() / 2),
       );
       const currentActiveMargin = isOriginalCropAspect()
         ? (
@@ -18973,6 +18981,176 @@ document.addEventListener("DOMContentLoaded", () => {
       // Keep the dark background if the source frame is not drawable yet.
     }
   }
+  let measuredDesign = null;
+  let measuredDesignKey = "";
+  let pendingDesignKey = "";
+  let designMeasureTimer = null;
+  const svgNode = (tag, attrs = {}) => {
+    const node = document.createElementNS("http://www.w3.org/2000/svg", tag);
+    Object.entries(attrs).forEach(([key, value]) => node.setAttribute(key, String(value)));
+    return node;
+  };
+  const paintMeasuredText = (element, spec, kind, scaleX, scaleY) => {
+    if (!element || !spec) return;
+    const [left, top, right, bottom] = spec.box;
+    Object.assign(element.style, {left: `${left*scaleX}px`, right: "auto", top: `${top*scaleY}px`,
+      width: `${(right-left)*scaleX}px`, height: `${(bottom-top)*scaleY}px`, padding: "0",
+      minHeight: "0", display: (kind === "title" ? isTitleVisible() : isSubtitleVisible()) ? "block" : "none", lineHeight: "normal", letterSpacing: `${DESIGN_GEOMETRY.letter_spacing}px`,
+      borderRadius: `${Math.max(DESIGN_GEOMETRY.box_radius_min, Math.round(spec.font_size*DESIGN_GEOMETRY.box_radius))*scaleX}px`});
+    element.dataset.renderBbox = JSON.stringify(spec.box);
+    element.dataset.lineCount = String(spec.lines);
+    const svg = svgNode("svg", {viewBox: `${left} ${top} ${right-left} ${bottom-top}`, width: "100%", height: "100%"});
+    svg.style.overflow = "visible";
+    svg.style.display = "block";
+    svg.style.position = "absolute";
+    svg.style.inset = "0";
+    svg.style.pointerEvents = "none";
+    const preset = {{ subtitle_presets|tojson }}[subtitlePresetField?.value] || {};
+    const defs = svgNode("defs");
+    svg.appendChild(defs);
+    const shadow = kind === "title" ? spec.shadow : preset;
+    const shadowId = `${element.id}-shadow`;
+    if (shadow?.shadow_color && Number(shadow.shadow_opacity) > 0) {
+      const filter = svgNode("filter", {id: shadowId, x: "-100%", y: "-100%", width: "300%", height: "300%"});
+      filter.appendChild(svgNode("feDropShadow", {dx: shadow.shadow_offset_x || 0, dy: shadow.shadow_offset_y || 0,
+        stdDeviation: shadow.shadow_blur_radius || 0, "flood-color": shadow.shadow_color, "flood-opacity": shadow.shadow_opacity}));
+      defs.appendChild(filter);
+    }
+    if (spec.pill) {
+      const [x, y, r, b] = spec.pill;
+      svg.appendChild(svgNode("rect", {x, y, width: r-x, height: b-y, rx: (b-y)/2,
+        fill: preset.active_box_color || "transparent"}));
+    }
+    for (const run of spec.runs) {
+      const text = svgNode("text", {x: run.x, y: run.y, "font-size": run.size,
+        "letter-spacing": DESIGN_GEOMETRY.letter_spacing, "font-weight": "normal",
+        "paint-order": "stroke fill", "stroke-linejoin": "round"});
+      text.style.fontFamily = element.style.fontFamily;
+      text.style.fontSynthesis = "none";
+      text.style.textTransform = "none";
+      text.style.textShadow = "none";
+      text.setAttribute("fill", kind === "caption" && run.active ? (preset.active_color || "currentColor") : "currentColor");
+      const stroke = kind === "title" ? spec.outline : (run.active && !spec.active_outline ? 0 : spec.outline);
+      text.setAttribute("stroke", stroke ? (preset.outline_color || "#000000") : "none");
+      text.setAttribute("stroke-width", 2*(stroke || 0));
+      if (shadow?.shadow_color && Number(shadow.shadow_opacity) > 0) text.setAttribute("filter", `url(#${shadowId})`);
+      const fillKind = run.active ? "active" : "inactive";
+      if (kind === "caption" && (preset[`${fillKind}_fill_mode`] || preset.fill_mode) === "gradient") {
+        const gradientId = `${element.id}-${fillKind}-gradient`;
+        if (!defs.querySelector(`#${CSS.escape(gradientId)}`)) {
+          const gradient = svgNode("linearGradient", {id: gradientId, x1: 0, y1: 0, x2: 0, y2: 1});
+          for (const [stop, offset] of [["top", 0], ["mid", DESIGN_GEOMETRY.gradient_mid], ["bottom", 1]]) {
+            gradient.appendChild(svgNode("stop", {offset, "stop-color": preset[`${fillKind}_gradient_${stop}`] || preset[`${fillKind}_color`]}));
+          }
+          defs.appendChild(gradient);
+        }
+        text.setAttribute("fill", `url(#${gradientId})`);
+      }
+      text.textContent = run.text;
+      svg.appendChild(text);
+    }
+    element.replaceChildren(svg);
+  };
+  const repaintMeasuredDesign = () => {
+    if (!measuredDesign) return;
+    const titleEl = isOriginalCropAspect() ? origPreviewTitle : previewTitle;
+    const captionEl = isOriginalCropAspect() ? origPreviewCaption : previewSubtitle;
+    paintMeasuredText(titleEl, measuredDesign.title, "title", getActivePreviewScaleX(), getActivePreviewScaleY());
+    paintMeasuredText(captionEl, measuredDesign.caption, "caption", getActivePreviewScaleX(), getActivePreviewScaleY());
+  };
+  const requestMeasuredDesign = () => {
+    const original = isOriginalCropAspect();
+    const height = getActiveRenderFrameHeight();
+    const activeIndex = document.getElementById("clip-management-panel")?.dataset.activePlanIndex;
+    const card = (activeIndex && document.querySelector(`.clip-card[data-plan-index="${CSS.escape(activeIndex)}"]`)) || document.querySelector(".clip-card");
+    const captionText = previewSubtitle?.dataset.captionText || card?.dataset.previewCaption || "Sample subtitle line";
+    const titleText = previewTitle?.dataset.rawTitle || previewTitle?.textContent || "";
+    const data = {
+      width: getActiveRenderFrameWidth(), height,
+      title: titleText, caption: captionText,
+      title_font: getEditorField("font")?.value, caption_font: getEditorField("sub_font")?.value,
+      title_size: original ? Math.max(18, Math.round(height*DESIGN_GEOMETRY.original_title_scale)) : Number(titleFontSizeInput?.value),
+      caption_size: original ? Math.max(20, Math.round(height*DESIGN_GEOMETRY.original_caption_scale)) : Number(subtitleFontSizeInput?.value),
+      title_top: original && !dirtyOverlayFields.has("title_margin") && Number(titleMarginInput?.value) === previewConfig.titleY
+        ? Math.round(height*DESIGN_GEOMETRY.original_title_top) : Math.round(Number(titleMarginInput?.value || previewConfig.titleY)*height/renderFrameHeight),
+      caption_margin: Math.round(Number(subtitleMarginInput?.value)*height/renderFrameHeight),
+      line_spacing: Math.round(Number(getEditorField("title_line_spacing")?.value || -4)*(original ? height/renderFrameHeight : 1)),
+      preset: subtitlePresetField?.value, caption_style: subtitleStyleField?.value, language: {{ (transcript_language or '')|tojson }},
+      active_word: Number(previewSubtitle?.dataset.activeWord || 0),
+    };
+    if (original && !initialSubtitleMarginCustom && !dirtyOverlayFields.has("sub_margin")) {
+      data.caption_margin = Math.round(height-height*DESIGN_GEOMETRY.original_caption_center-data.caption_size);
+    }
+    const key = JSON.stringify(data);
+    if (key === measuredDesignKey) { repaintMeasuredDesign(); return; }
+    if (key === pendingDesignKey) return;
+    pendingDesignKey = key;
+    clearTimeout(designMeasureTimer);
+    designMeasureTimer = setTimeout(async () => {
+      try {
+        const response = await fetch(previewConfig.metricsUrl, {method: "POST", credentials: "same-origin",
+          headers: {"Content-Type": "application/json"}, body: key});
+        if (!response.ok) throw new Error(`Design metrics ${response.status}`);
+        const result = await response.json();
+        if (pendingDesignKey !== key) return;
+        measuredDesign = result;
+        measuredDesignKey = key;
+        pendingDesignKey = "";
+        repaintMeasuredDesign();
+      } catch (error) {
+        if (pendingDesignKey === key) pendingDesignKey = "";
+        console.warn("Unable to measure Final Preview", error);
+      }
+    }, 80);
+  };
+  let subscribeStillKey = "";
+  let subscribeStill = null;
+  const subscribeCanvas = document.createElement("canvas");
+  subscribeCanvas.className = "final-preview-subscribe";
+  Object.assign(subscribeCanvas.style, {position: "absolute", zIndex: "4", pointerEvents: "none"});
+  const syncSubscribeStill = () => {
+    const frame = isOriginalCropAspect() ? origPreviewFrame : previewFrame;
+    if (!frame) return;
+    frame.appendChild(subscribeCanvas);
+    const option = getActiveSubscribeOption();
+    subscribeCanvas.hidden = !subscribeToggle?.checked || !option;
+    if (subscribeCanvas.hidden) return;
+    const url = option.image_url || "";
+    if (url !== subscribeStillKey) {
+      subscribeStillKey = url;
+      subscribeStill = null;
+      const media = document.createElement(option.file_ext === "mp4" ? "video" : "img");
+      const ready = () => {
+        if (subscribeStillKey !== url) return;
+        const still = document.createElement("canvas");
+        still.width = media.videoWidth || media.naturalWidth;
+        still.height = media.videoHeight || media.naturalHeight;
+        still.getContext("2d").drawImage(media, 0, 0);
+        subscribeStill = still;
+        syncSubscribeStill();
+      };
+      if (media.tagName === "VIDEO") {
+        media.muted = true; media.preload = "auto";
+        media.addEventListener("loadeddata", () => { media.currentTime = Math.min(1, (media.duration || 1)/2); }, {once: true});
+        media.addEventListener("seeked", ready, {once: true});
+      } else media.addEventListener("load", ready, {once: true});
+      media.src = url;
+    }
+    if (!subscribeStill) return;
+    const sourceWidth = subscribeStill.width;
+    const sourceHeight = subscribeStill.height;
+    if (!sourceWidth || !sourceHeight) return;
+    const width = sourceWidth*DESIGN_GEOMETRY.subscribe_scale;
+    const height = sourceHeight*DESIGN_GEOMETRY.subscribe_scale;
+    subscribeCanvas.width = width; subscribeCanvas.height = height;
+    subscribeCanvas.getContext("2d").drawImage(subscribeStill, 0, 0, width, height);
+    const x = (getActiveRenderFrameWidth()-width)/2;
+    const y = getActiveRenderFrameHeight()-height-DESIGN_GEOMETRY.subscribe_bottom;
+    Object.assign(subscribeCanvas.style, {left: `${x*getActivePreviewScaleX()}px`, top: `${y*getActivePreviewScaleY()}px`,
+      width: `${width*getActivePreviewScaleX()}px`, height: `${height*getActivePreviewScaleY()}px`});
+    subscribeCanvas.dataset.renderBbox = JSON.stringify([x,y,x+width,y+height]);
+  };
+
   const applyPreviewLayout = () => {
     const dims = getOverlayDims();
     const originalPreview = isOriginalCropAspect();
@@ -18997,18 +19175,18 @@ document.addEventListener("DOMContentLoaded", () => {
     const titleUsesPillowLayout = titleTemplatePreset?.engine === "pillow";
     const titleSideMargin = Number.isFinite(Number(titleTemplatePreset?.sideMargin))
       ? Number(titleTemplatePreset.sideMargin)
-      : 32;
+      : DESIGN_GEOMETRY.title_side_margin;
     const titleFontSize = originalPreview
-      ? Math.max(18, activeRenderHeight * 0.055)
+      ? Math.max(18, activeRenderHeight * DESIGN_GEOMETRY.original_title_scale)
       : Math.max(14, getNumericFieldValue(titleFontSizeInput, previewConfig.titleHeight * 0.75));
     const subtitleFontSize = originalPreview
-      ? Math.max(20, activeRenderHeight * 0.06)
+      ? Math.max(20, activeRenderHeight * DESIGN_GEOMETRY.original_caption_scale)
       : Math.max(10, getNumericFieldValue(subtitleFontSizeInput, previewConfig.subtitleHeight * 0.4));
     if (previewTitle) {
       previewTitle.style.fontSize = titleFontSize * elementScale + "px";
       previewTitle.style.left = titleSideMargin * scaleX + "px";
       previewTitle.style.right = titleSideMargin * scaleX + "px";
-      previewTitle.style.padding = titleUsesPillowLayout ? "0" : "0 12px";
+      previewTitle.style.padding = "0";
       previewTitle.style.height = "auto";
     }
     if (previewSubtitle) {
@@ -19021,7 +19199,7 @@ document.addEventListener("DOMContentLoaded", () => {
     const titleMarginCustom = dirtyOverlayFields.has("title_margin") || rawTitleMargin !== previewConfig.titleY;
     let titleTop = clampRenderValue(
       originalPreview && !titleMarginCustom
-        ? (activeRenderHeight * 0.08)
+        ? (activeRenderHeight * DESIGN_GEOMETRY.original_title_top)
         : (originalPreview ? rawTitleMargin / Math.max(1, renderFrameHeight) * activeRenderHeight : rawTitleMargin),
       getPositionBounds("title_margin", baseTitleHeight, activeRenderHeight).min,
       getPositionBounds("title_margin", baseTitleHeight, activeRenderHeight).max,
@@ -19035,7 +19213,7 @@ document.addEventListener("DOMContentLoaded", () => {
     const subtitleMarginCustom = dirtyOverlayFields.has("sub_margin") || initialSubtitleMarginCustom;
     const subtitleBounds = getPositionBounds("sub_margin", subtitleHeight, activeRenderHeight);
     const subtitleMargin = originalPreview && !subtitleMarginCustom
-      ? Math.max(0, activeRenderHeight - (activeRenderHeight * 0.72) - (subtitleHeight / 2))
+      ? Math.max(0, activeRenderHeight - (activeRenderHeight * DESIGN_GEOMETRY.original_caption_center) - (subtitleHeight / 2))
       : clampRenderValue(
           originalPreview ? (rawSubtitleMargin / Math.max(1, renderFrameHeight) * activeRenderHeight) : rawSubtitleMargin,
           subtitleBounds.min,
@@ -19159,6 +19337,8 @@ document.addEventListener("DOMContentLoaded", () => {
       });
     }
     drawOriginalResultPreview();
+    requestMeasuredDesign();
+    syncSubscribeStill();
     syncOverlayVisibilityUi();
     if (selectedPreviewElement === "video" && !isPreviewElementDraggable("video")) {
       setSelectedPreviewElement("");
@@ -19561,7 +19741,7 @@ document.addEventListener("DOMContentLoaded", () => {
     const effectiveSplit = getEffectiveSplitEnabled();
     const topSnapshot = topCropper.getCroppedCanvas({
       width: canvasWidth,
-      height: effectiveSplit ? Math.floor(canvasHeight / 2) : canvasHeight,
+      height: effectiveSplit ? Math.floor(canvasHeight * previewConfig.geometry.split_ratio) : canvasHeight,
     });
     if (!topSnapshot || !topSnapshot.width || !topSnapshot.height) {
       return;
@@ -19575,13 +19755,13 @@ document.addEventListener("DOMContentLoaded", () => {
       if (!bottomCropper) {
         return;
       }
-      const dividerThickness = 6 * overlayScale;
-      const dividerOutlineThickness = Math.max(1, Math.round(overlayScale));
+      const dividerThickness = previewConfig.geometry.split_divider;
+      const dividerOutlineThickness = previewConfig.geometry.split_outline;
       const bottomSnapshot = bottomCropper?.getCroppedCanvas({
         width: canvasWidth,
-        height: Math.floor(canvasHeight / 2),
+        height: Math.floor(canvasHeight * previewConfig.geometry.split_ratio),
       });
-      const halfHeight = Math.floor(canvasHeight / 2);
+      const halfHeight = Math.floor(canvasHeight * previewConfig.geometry.split_ratio);
       const bottomHeight = canvasHeight - halfHeight;
       previewCtx.save();
       previewCtx.beginPath();
@@ -19991,6 +20171,7 @@ document.addEventListener("DOMContentLoaded", () => {
   });
   subscribeToggle?.addEventListener("change", () => {
     syncSubscribePickerEnabled();
+    syncSubscribeStill();
   });
 
   setActiveStaticVisual(activeStaticVisualKey);
@@ -21080,7 +21261,7 @@ document.addEventListener("DOMContentLoaded", function () {
       engine: "pillow",
       uppercase: true,
       fontWeight: "900",
-      sideMargin: 48,
+      sideMargin: DESIGN_GEOMETRY.title_side_margin,
       textShadow: "0 2px 4px rgba(0, 0, 0, 0.72), 0 8px 14px rgba(0, 0, 0, 0.45)",
       bgAlpha: "0",
     },
@@ -21088,7 +21269,7 @@ document.addEventListener("DOMContentLoaded", function () {
       engine: "pillow",
       uppercase: true,
       fontWeight: "400",
-      sideMargin: 48,
+      sideMargin: DESIGN_GEOMETRY.title_side_margin,
       shadowSpec: { opacity: 0.55, x: 0, y: 8, blur: 17 },
       bgAlpha: "0",
     },
@@ -21096,7 +21277,7 @@ document.addEventListener("DOMContentLoaded", function () {
       engine: "pillow",
       uppercase: true,
       fontWeight: "400",
-      sideMargin: 48,
+      sideMargin: DESIGN_GEOMETRY.title_side_margin,
       shadowSpec: { opacity: 0.55, x: 0, y: 8, blur: 17 },
       bgAlpha: "0",
     },
@@ -21104,7 +21285,7 @@ document.addEventListener("DOMContentLoaded", function () {
       engine: "pillow",
       uppercase: true,
       fontWeight: "400",
-      sideMargin: 48,
+      sideMargin: DESIGN_GEOMETRY.title_side_margin,
       shadowSpec: { opacity: 0.55, x: 0, y: 8, blur: 17 },
       bgAlpha: "0",
     },
@@ -21112,7 +21293,7 @@ document.addEventListener("DOMContentLoaded", function () {
       engine: "pillow",
       uppercase: true,
       fontWeight: "700",
-      sideMargin: 48,
+      sideMargin: DESIGN_GEOMETRY.title_side_margin,
       shadowSpec: { opacity: 0.55, x: 0, y: 8, blur: 17 },
       bgAlpha: "0",
     },
@@ -21120,7 +21301,7 @@ document.addEventListener("DOMContentLoaded", function () {
       engine: "pillow",
       uppercase: true,
       fontWeight: "900",
-      sideMargin: 48,
+      sideMargin: DESIGN_GEOMETRY.title_side_margin,
       shadowSpec: { opacity: 0.55, x: 0, y: 8, blur: 17 },
       bgAlpha: "0",
     },

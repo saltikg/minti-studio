@@ -59,6 +59,7 @@ from app.video_shorts.config import (
     DEFAULT_TITLE_FONT_KEY,
     DEFAULT_TITLE_FONT_SIZE,
     DEFAULT_TITLE_MARGIN,
+    DESIGN_GEOMETRY,
     DESIGN_POSITION_LIMITS,
     clamp_design_position,
     DEFAULT_SUBTITLE_TEXT_COLOR,
@@ -10465,6 +10466,36 @@ def _get_font_settings_from_session(
     )
 
 
+@video_shorts_bp.route("/api/design-layout", methods=["POST"])
+def design_layout_metrics():
+    """Measure live text using renderer fonts; no images or render jobs."""
+    if not getattr(g, "vs_current_user", None):
+        return jsonify(error="Authentication required"), 401
+    from app.video_shorts.services.design_preview import measure_design
+    data = request.get_json(silent=True) or {}
+    if not isinstance(data, dict):
+        return jsonify(error="Invalid design settings"), 400
+    try:
+        title_key = _resolve_title_font_key(data.get("title_font"))
+        title_font = TITLE_FONTS[title_key]["path"]
+        caption_font = next(f[2] for f in SUB_FONT_CHOICES if f[0] == data.get("caption_font"))
+        for key, minimum, maximum in (
+            ("width", 2, 1920), ("height", 2, 1920),
+            ("title_size", 1, 990), ("caption_size", 1, 990),
+            ("title_top", 0, 1920), ("caption_margin", 0, 1920),
+            ("line_spacing", -100, 200), ("active_word", 0, DESIGN_GEOMETRY["caption_words"]-1),
+        ):
+            data[key] = max(minimum, min(maximum, int(data.get(key, minimum))))
+        data["title"] = str(data.get("title") or "")[:500]
+        data["caption"] = str(data.get("caption") or "")[:1000]
+        behavior = _resolve_title_template_behavior(subtitle_preset=data.get("preset"), title_font_key=title_key)
+        result = measure_design(data, title_font_path=title_font, caption_font_path=caption_font, title_behavior=behavior)
+    except (ValueError, TypeError, KeyError, StopIteration, OSError) as exc:
+        current_app.logger.warning("Invalid design layout: %s", type(exc).__name__)
+        return jsonify(error="Invalid design settings"), 400
+    return jsonify(result)
+
+
 @video_shorts_bp.route("/generate/<int:video_pk>")
 def generate_short(video_pk):
     ensure_video_shorts_tmp_dir()
@@ -12313,6 +12344,7 @@ def generate_short(video_pk):
         title_font_options=title_font_options,
         preview_font_faces=preview_font_faces,
         design_position_limits=DESIGN_POSITION_LIMITS,
+        design_geometry=DESIGN_GEOMETRY,
         selected_title_font_key=selected_title_font_key,
         selected_title_font_css=selected_title_font_css,
         sub_fonts=sub_fonts,
@@ -28675,8 +28707,8 @@ def autoclip_video(video_pk):
             current_app.logger.warning("Original layout source probe failed video_id=%s: %s", vid, exc)
             render_target_width, render_target_height = 1280, 720
         original_scale = max(0.1, float(render_target_height) / 1280.0)
-        title_font_size = max(18, int(round(float(render_target_height) * 0.055)))
-        sub_font_size = max(20, int(round(float(render_target_height) * 0.06)))
+        title_font_size = max(18, int(round(float(render_target_height) * DESIGN_GEOMETRY["original_title_scale"])))
+        sub_font_size = max(20, int(round(float(render_target_height) * DESIGN_GEOMETRY["original_caption_scale"])))
         try:
             stored_title_margin = float(video_title_margin if video_title_margin is not None else DEFAULT_TITLE_MARGIN)
         except Exception:
@@ -28685,7 +28717,7 @@ def autoclip_video(video_pk):
         if title_margin_custom:
             title_margin = int(round(float(render_target_height) * max(0.0, min(1.0, stored_title_margin / 1280.0))))
         else:
-            title_margin = max(0, int(round(float(render_target_height) * 0.08)))
+            title_margin = max(0, int(round(float(render_target_height) * DESIGN_GEOMETRY["original_title_top"])))
         title_block_height = max(24, int(round(float(title_font_size) * 1.4)))
         caption_block_height = max(24, int(round(float(sub_font_size) * 2.0)))
         safe_margin = max(8, int(round(float(render_target_height) * 0.05)))
@@ -28693,7 +28725,7 @@ def autoclip_video(video_pk):
             custom_bottom_fraction = max(0.0, min(1.0, float(sub_margin or SUB_MARGIN_DEFAULT) / 1280.0))
             sub_margin = int(round(float(render_target_height) * custom_bottom_fraction))
         else:
-            caption_center_y = float(render_target_height) * 0.72
+            caption_center_y = float(render_target_height) * DESIGN_GEOMETRY["original_caption_center"]
             caption_top = caption_center_y - (float(caption_block_height) / 2.0)
             sub_margin = int(round(float(render_target_height) - caption_top - float(caption_block_height)))
         if not video_sub_margin_custom:
