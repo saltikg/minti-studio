@@ -106,6 +106,12 @@ def authorize_plan_clip(video_pk, filename, *, plan_index=None):
         stored_name = entry.get("output_filename") or entry.get("clip_filename")
         if stored_name == filename:
             authorize_file(filename, owner_user_id=owner, brand_id=brand, video_pk=video.video_pk)
+            conn = get_db_readonly()
+            try:
+                tenant_media.assert_clip_write_owner(conn, filename, owner, brand,
+                                                     video_pk=video.video_pk, source_id=video.youtube_id)
+            finally:
+                conn.close()
             return video, entry
     raise tenant_media.TenantMediaConflict("Filename is not the stored clip of this plan entry")
 
@@ -172,7 +178,13 @@ def read_media_grant(filename, grant):
 def authorize_queue_clip(job):
     from app.video_shorts.services.social_queue_identity import queue_identity
     owner, brand = queue_identity(job.get("user_id"), job.get("brand_id"))
-    return authorize_file(job.get("clip_filename"), owner_user_id=owner, brand_id=brand)
+    info = authorize_file(job.get("clip_filename"), owner_user_id=owner, brand_id=brand)
+    conn = get_db_readonly()
+    try:
+        tenant_media.assert_clip_write_owner(conn, info["filename"], owner, brand)
+    finally:
+        conn.close()
+    return info
 
 
 def worker_clip_path(job):

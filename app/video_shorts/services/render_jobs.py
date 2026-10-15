@@ -9,7 +9,7 @@ from datetime import datetime, timedelta
 from typing import Any, Dict, Optional
 from uuid import uuid4
 
-from app.video_shorts.services.db import get_db, table_columns
+from app.video_shorts.services.db import get_db, get_db_readonly, table_columns
 from app.video_shorts.services.usage_metering import (
     ensure_usage_metering_schema,
     finalize_export,
@@ -358,22 +358,56 @@ def count_processing_jobs() -> int:
         conn.close()
 
 
-def _find_job_by_hash(conn, *, user_id: str, input_hash: str, statuses: tuple[str, ...]) -> Optional[Dict[str, Any]]:
+def _find_job_by_hash(conn, *, user_id: str, input_hash: str, statuses: tuple[str, ...],
+                      job_type=None, payload=None) -> Optional[Dict[str, Any]]:
     if not input_hash:
         return None
     placeholders = ", ".join("?" for _ in statuses)
+    scope_sql = ""
+    scope_params = []
+    if job_type:
+        scope_sql += " AND type = ?"
+        scope_params.append(job_type)
+    if job_type == JOB_TYPE_RENDER_SHORT:
+        for key in ("video_pk", "brand_id", "source_video_id", "plan_index"):
+            expr = (f"payload_json->>'{key}'" if getattr(conn, "backend_name", "") == "postgres"
+                    else f"json_extract_string(payload_json, '$.{key}')")
+            scope_sql += f" AND COALESCE({expr}, '') = ?"
+            scope_params.append(str((payload or {}).get(key) or ""))
     row = conn.execute(
         f"""
         {_job_select_sql()}
         WHERE user_id = ?
           AND input_hash = ?
           AND status IN ({placeholders})
+          {scope_sql}
         ORDER BY created_at DESC
         LIMIT 1
         """,
-        [user_id, input_hash, *statuses],
+        [user_id, input_hash, *statuses, *scope_params],
     ).fetchone()
     return _row_to_job(row) if row else None
+
+
+def validate_render_job_scope(job, conn=None):
+    """A stored job may only run or expose results for its original tenant video."""
+    from app.video_shorts.services.tenant_media import TenantMediaConflict
+    payload = job.get("payload") or {}
+    if not payload.get("video_pk") or not payload.get("source_video_id") or not job.get("user_id"):
+        raise TenantMediaConflict("Render job has no complete tenant video identity")
+    own_conn = conn is None
+    if own_conn:
+        conn = get_db_readonly()
+    try:
+        row = conn.execute("SELECT video_id, owner_user_id, brand_id FROM youtube_videos WHERE id = ?",
+                           [int(payload["video_pk"])]).fetchone()
+        if (not row or str(row[0]) != str(payload["source_video_id"])
+                or str(row[1] or "") != str(job["user_id"])
+                or str(row[2] or "") != str(payload.get("brand_id") or "")):
+            raise TenantMediaConflict("Render job owner, brand, or video no longer matches")
+    finally:
+        if own_conn:
+            conn.close()
 
 
 def _invalidate_done_job_cache_entry(conn, job_id: str) -> None:
@@ -403,7 +437,7 @@ def invalidate_done_job_cache(job_id: str) -> int:
         conn.close()
 
 
-def is_render_job_cache_valid(job: Dict[str, Any]) -> bool:
+def is_render_job_cache_valid(job: Dict[str, Any], *, conn=None) -> bool:
     if not isinstance(job, dict):
         return False
     if str(job.get("type") or "").strip() != JOB_TYPE_RENDER_SHORT:
@@ -419,6 +453,7 @@ def is_render_job_cache_valid(job: Dict[str, Any]) -> bool:
     try:
         from app.video_shorts.routes import generation
 
+        validate_render_job_scope(job, conn)
         plan_entries = generation._load_plan_entries(source_video_id, video_pk=payload.get("video_pk")) or []
         target_entry = None
         for entry in plan_entries:
@@ -429,6 +464,11 @@ def is_render_job_cache_valid(job: Dict[str, Any]) -> bool:
             except Exception:
                 continue
         if not target_entry:
+            return False
+        if target_entry.get("render_job_id") and str(target_entry["render_job_id"]) != str(job.get("id")):
+            return False
+        result_name = (job.get("result") or {}).get("clip_filename")
+        if result_name and result_name != (target_entry.get("output_filename") or target_entry.get("clip_filename")):
             return False
         status = str(target_entry.get("status") or "").strip().lower()
         output_filename = str(target_entry.get("output_filename") or "").strip()
@@ -525,6 +565,12 @@ def update_job_payload(job_id: str, payload: Dict[str, Any]) -> Dict[str, Any]:
     conn = get_db()
     try:
         ensure_render_jobs_schema(conn)
+        row = conn.execute(f"SELECT type, payload_json FROM {JOBS_TABLE} WHERE id = ?", [job_id]).fetchone()
+        if row and row[0] == JOB_TYPE_RENDER_SHORT:
+            old = _parse_json(row[1]) or {}
+            if any(str(old.get(key) or "") != str(payload.get(key) or "")
+                   for key in ("video_pk", "source_video_id", "brand_id", "plan_index")):
+                raise ValueError("A render job's original video, brand and plan cannot change")
         conn.execute(
             f"""
             UPDATE {JOBS_TABLE}
@@ -551,10 +597,17 @@ def enqueue_job(
 ) -> Dict[str, Any]:
     conn = get_db()
     try:
+        if job_type == JOB_TYPE_RENDER_SHORT:
+            validate_render_job_scope({"user_id": user_id, "payload": payload}, conn)
+            # Scope even callers that supplied a pre-cutover or incomplete hash.
+            raw = json.dumps([input_hash, int(payload["video_pk"]), payload.get("brand_id"),
+                              payload["source_video_id"], payload.get("plan_index")], separators=(",", ":"))
+            input_hash = hashlib.sha256(raw.encode("utf-8")).hexdigest()
         ensure_render_jobs_schema(conn)
         payload, priority = _prepare_guest_job_payload(conn, user_id, payload, priority)
-        existing_done = _find_job_by_hash(conn, user_id=user_id, input_hash=input_hash, statuses=(JOB_STATUS_DONE,))
-        if existing_done and job_type == JOB_TYPE_RENDER_SHORT and not is_render_job_cache_valid(existing_done):
+        existing_done = _find_job_by_hash(conn, user_id=user_id, input_hash=input_hash,
+                                          statuses=(JOB_STATUS_DONE,), job_type=job_type, payload=payload)
+        if existing_done and job_type == JOB_TYPE_RENDER_SHORT and not is_render_job_cache_valid(existing_done, conn=conn):
             _invalidate_done_job_cache_entry(conn, existing_done["id"])
             existing_done = None
         if existing_done:
@@ -567,6 +620,7 @@ def enqueue_job(
             user_id=user_id,
             input_hash=input_hash,
             statuses=ACTIVE_JOB_STATUSES,
+            job_type=job_type, payload=payload,
         )
         if existing_active:
             existing_active["queue_position"] = _queue_position(conn, existing_active["id"])
@@ -1280,7 +1334,7 @@ def finalize_job_success(job_id: str) -> Dict[str, Any]:
     return job or {}
 
 
-def clear_done_job_cache_for_plan(*, user_id: str, source_video_id: str, plan_index: int) -> int:
+def clear_done_job_cache_for_plan(*, user_id: str, source_video_id: str, plan_index: int, video_pk=None, brand_id=None) -> int:
     if not user_id or not source_video_id:
         return 0
     conn = get_db()
@@ -1307,6 +1361,9 @@ def clear_done_job_cache_for_plan(*, user_id: str, source_video_id: str, plan_in
             if str(payload.get("source_video_id") or "").strip() != str(source_video_id).strip():
                 continue
             if payload_plan_index != int(plan_index):
+                continue
+            if video_pk is not None and (str(payload.get("video_pk") or "") != str(video_pk)
+                    or str(payload.get("brand_id") or "") != str(brand_id or "")):
                 continue
             matching_ids.append(job["id"])
         for job_id in matching_ids:

@@ -5501,6 +5501,11 @@ def render_job_status_api(job_id: str):
         return jsonify({"error": str(exc)}), 500
     if not job:
         return jsonify({"error": "not_found"}), 404
+    if job.get("type") == "render_short":
+        from app.video_shorts.services.tenant_media import current_scope
+        _, brand = current_scope()
+        if str((job.get("payload") or {}).get("brand_id") or "") != str(brand or ""):
+            return jsonify({"error": "not_found"}), 404
     error_text = str(job.get("error") or "").strip()
     error_code = None
     lowered_error = error_text.lower()

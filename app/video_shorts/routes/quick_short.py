@@ -1005,7 +1005,7 @@ def _build_session_payload(session: Optional[Dict[str, Any]]) -> Optional[Dict[s
                     "source_url": _source_video_public_url(row[1], row[7] or ""),
                 }
             if video_id:
-                transcript_text, segments = generation._fetch_transcript(conn, video_id)
+                transcript_text, segments = generation._fetch_transcript(conn, video_id, video_pk=video_pk)
                 payload["transcript"] = {
                     "full_text": transcript_text or "",
                     "segments": [

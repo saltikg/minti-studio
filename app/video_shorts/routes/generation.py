@@ -293,6 +293,7 @@ from app.video_shorts.services.transcript_service import (
     _build_srt_for_clip,
     _build_srt_from_text,
     _fetch_transcript,
+    save_transcript_override,
     _normalize_segments_for_use,
     _transcribe_with_whisper,
     build_transcript_for_range,
@@ -6297,7 +6298,7 @@ def _active_render_queue_depth(conn) -> int:
         return 0
 
 
-def _load_render_jobs_by_id(conn, job_ids: List[str]) -> Dict[str, Dict[str, Any]]:
+def _load_render_jobs_by_id(conn, job_ids: List[str], *, video_pk: int) -> Dict[str, Dict[str, Any]]:
     cleaned = [str(job_id or "").strip() for job_id in job_ids or [] if str(job_id or "").strip()]
     if not cleaned:
         return {}
@@ -6309,7 +6310,7 @@ def _load_render_jobs_by_id(conn, job_ids: List[str]) -> Dict[str, Dict[str, Any
             status,
             started_at,
             finished_at,
-            error
+            error, user_id, payload_json
         FROM shorts_render_jobs
         WHERE CAST(id AS VARCHAR) IN ({placeholders})
         """,
@@ -6317,6 +6318,14 @@ def _load_render_jobs_by_id(conn, job_ids: List[str]) -> Dict[str, Dict[str, Any
     ).fetchall()
     jobs: Dict[str, Dict[str, Any]] = {}
     for row in rows:
+        payload = row[6] if isinstance(row[6], dict) else json.loads(row[6] or "{}")
+        if str(payload.get("video_pk") or "") != str(video_pk):
+            continue
+        from app.video_shorts.services.render_jobs import validate_render_job_scope
+        try:
+            validate_render_job_scope({"user_id": row[5], "payload": payload}, conn)
+        except tenant_media.TenantMediaConflict:
+            continue
         job_id = str(row[0] or "").strip()
         if not job_id:
             continue
@@ -6410,6 +6419,11 @@ def _render_aspect_from_dimensions(width: Any, height: Any) -> str:
 
 
 def render_job_media_payload(job: Dict[str, Any]) -> Dict[str, Any]:
+    from app.video_shorts.services.render_jobs import validate_render_job_scope
+    try:
+        validate_render_job_scope(job)
+    except tenant_media.TenantMediaConflict:
+        return {}
     payload = (job or {}).get("payload") or {}
     source_video_id = str(payload.get("source_video_id") or "").strip()
     brand_id = str(payload.get("brand_id") or "").strip()
@@ -6429,6 +6443,9 @@ def render_job_media_payload(job: Dict[str, Any]) -> Dict[str, Any]:
                 break
         except Exception:
             continue
+    if not target_entry or (target_entry.get("render_job_id")
+            and str(target_entry["render_job_id"]) != str(job.get("id"))):
+        return {}
     result_payload = (job or {}).get("result") or {}
     if not isinstance(result_payload, dict):
         result_payload = {}
@@ -6501,6 +6518,7 @@ def _selected_processing_timeout_entries(
     *,
     now: datetime,
     timeout_seconds: int,
+    video_pk: int,
 ) -> List[Dict[str, Any]]:
     job_ids = [
         str(entry.get("render_job_id") or "").strip()
@@ -6509,7 +6527,7 @@ def _selected_processing_timeout_entries(
     ]
     conn = get_db_readonly()
     try:
-        jobs_by_id = _load_render_jobs_by_id(conn, job_ids)
+        jobs_by_id = _load_render_jobs_by_id(conn, job_ids, video_pk=video_pk)
     finally:
         conn.close()
 
@@ -7826,6 +7844,7 @@ def process_planned_lead_autogenerate(
                 incomplete,
                 now=now_utc,
                 timeout_seconds=int(processing_timeout_seconds),
+                video_pk=video_pk,
             )
             if timed_out:
                 conn_timeout = get_db()
@@ -9815,6 +9834,12 @@ def _load_generated_video_publish_guard_row(
         return None
     conn = get_db_readonly()
     try:
+        tenant_media.assert_clip_write_owner(conn, clip_filename, target_owner_user_id, brand_id,
+                                            video_pk=video_pk, source_id=source_video_id)
+    except tenant_media.TenantMediaConflict as exc:
+        conn.close()
+        return jsonify(success=False, message=str(exc)), 403
+    try:
         generated_columns = table_columns(conn, "shorts_generated_videos")
         if not generated_columns:
             return None
@@ -10320,7 +10345,7 @@ def _fetch_video_with_transcript(video_pk: int) -> Optional[Tuple[str, str, Opti
         conn.close()
         return None
     video_id, title, duration_seconds = row
-    transcript_text, segments = _fetch_transcript(conn, video_id)
+    transcript_text, segments = _fetch_transcript(conn, video_id, video_pk=video_pk)
     conn.close()
     return video_id, title, duration_seconds, transcript_text, segments or []
 
@@ -10343,7 +10368,7 @@ def _fetch_video_with_transcript_for_scope(
         conn.close()
         return None
     video_id, title, duration_seconds = row
-    transcript_text, segments = _fetch_transcript(conn, video_id)
+    transcript_text, segments = _fetch_transcript(conn, video_id, video_pk=video_pk)
     conn.close()
     return video_id, title, duration_seconds, transcript_text, segments or []
 
@@ -10660,7 +10685,7 @@ def generate_short(video_pk):
     if video_duration_label and video_duration_label.endswith(".000"):
         video_duration_label = video_duration_label[:-4]
 
-    transcript_text, segments = _fetch_transcript(conn, video["video_id"])
+    transcript_text, segments = _fetch_transcript(conn, video["video_id"], video_pk=video_pk)
     latest_upload_session = conn.execute(
         """
         SELECT status
@@ -11505,7 +11530,7 @@ def generate_short(video_pk):
     if render_job_ids or source_video_id:
         conn_jobs = get_db_readonly()
         try:
-            render_jobs_by_id = _load_render_jobs_by_id(conn_jobs, render_job_ids)
+            render_jobs_by_id = _load_render_jobs_by_id(conn_jobs, render_job_ids, video_pk=video_pk)
             active_render_jobs_by_plan = _load_active_render_jobs_for_video_by_plan(
                 conn_jobs,
                 user_id=editor_owner_user_id,
@@ -19029,7 +19054,7 @@ def shorts_scripts():
         if not entries:
             continue
         if video_id not in grouped:
-            full_text, segments = _fetch_transcript(conn, video_id)
+            full_text, segments = _fetch_transcript(conn, video_id, video_pk=plan_video.video_pk)
             grouped[video_id] = {
                 "video_id": video_id,
                 "long_text": full_text or "",
@@ -22422,6 +22447,7 @@ def delete_clip(video_pk):
                             user_id=str(_active_editor_context()["owner_user_id"] or ""),
                             source_video_id=str(row[0] or ""),
                             plan_index=int(match_entry.get("plan_index") or 0),
+                            video_pk=video_pk, brand_id=_active_editor_context()["brand_id"],
                         )
                     except Exception as exc:
                         current_app.logger.warning("Failed to clear render cache after delete: %s", exc)
@@ -22429,6 +22455,8 @@ def delete_clip(video_pk):
             success = True
         else:
             message = "Clip not found."
+    except tenant_media.TenantMediaConflict as exc:
+        return jsonify(success=False, message=str(exc)), 403
     except Exception as e:
         message = f"Delete failed: {e}"
 
@@ -22480,6 +22508,8 @@ def remove_plan_entry(video_pk):
 
     try:
         removed_entry = _remove_plan_entry_and_media(video_id, plan_entries, target_entry, video_pk=video_pk)
+    except tenant_media.TenantMediaConflict as exc:
+        return jsonify(success=False, message=str(exc)), 403
     except Exception as exc:
         current_app.logger.warning("Failed to remove plan entry for %s: %s", video_id, exc)
         message = "Unable to remove the plan section."
@@ -22547,6 +22577,14 @@ def _remove_plan_entry_and_media(
         if isinstance(val, str) and val:
             clip_names.add(val)
 
+    conn = get_db_readonly()
+    try:
+        scope = _active_editor_context()
+        for name in clip_names:
+            tenant_media.assert_clip_write_owner(conn, name, scope["owner_user_id"], scope["brand_id"],
+                                                video_pk=video_pk, source_id=video_id)
+    finally:
+        conn.close()
     plan_entries.remove(target_entry)
     _write_plan_entries(video_id, plan_entries, video_pk=video_pk)
 
@@ -22561,6 +22599,7 @@ def _remove_plan_entry_and_media(
                 user_id=str(_active_editor_context()["owner_user_id"] or ""),
                 source_video_id=str(video_id or ""),
                 plan_index=target_plan_index,
+                video_pk=video_pk, brand_id=_active_editor_context()["brand_id"],
             )
     except Exception as exc:
         current_app.logger.warning("Failed to clear render cache after plan removal: %s", exc)
@@ -22589,6 +22628,8 @@ def delete_clip_plan_entry(video_pk, plan_index):
 
     try:
         removed_entry = _remove_plan_entry_and_media(video_id, plan_entries, target_entry, video_pk=video_pk)
+    except tenant_media.TenantMediaConflict as exc:
+        return jsonify(success=False, message=str(exc)), 403
     except Exception as exc:
         current_app.logger.warning("Failed to delete clip plan entry for %s plan %s: %s", video_id, plan_index, exc)
         return jsonify(success=False, message="Unable to delete the clip."), 500
@@ -22749,7 +22790,7 @@ def add_clip_section(video_pk):
     conn_transcript = None
     try:
         conn_transcript = get_db_readonly()
-        _, segments = _fetch_transcript(conn_transcript, video_id)
+        _, segments = _fetch_transcript(conn_transcript, video_id, video_pk=video_pk)
         if segments:
             if len(requested_keep_ranges) > 1:
                 remapped_segments = _remap_transcript_segments_to_keep_ranges(
@@ -22983,7 +23024,7 @@ def adjust_clip_timing(video_pk):
     conn_transcript = None
     try:
         conn_transcript = get_db_readonly()
-        _, segments = _fetch_transcript(conn_transcript, video_id)
+        _, segments = _fetch_transcript(conn_transcript, video_id, video_pk=video_pk)
     except Exception:
         segments = []
     finally:
@@ -23185,7 +23226,7 @@ def edit_clip_title_time(video_pk: int, plan_index: int):
     try:
         conn_transcript = get_db_readonly()
         try:
-            _, segments = _fetch_transcript(conn_transcript, video_id)
+            _, segments = _fetch_transcript(conn_transcript, video_id, video_pk=video_pk)
         finally:
             conn_transcript.close()
         if requested_keep_ranges:
@@ -26091,7 +26132,7 @@ def edit_segment_text(video_pk):
         return jsonify({"success": False, "message": "Video not found."}), 404
 
     video_id = row[0]
-    full_text, segments = _fetch_transcript(conn, video_id)
+    full_text, segments = _fetch_transcript(conn, video_id, video_pk=video_pk)
     if not segments:
         conn.close()
         return jsonify({"success": False, "message": "No transcript segments available."}), 400
@@ -26179,12 +26220,9 @@ def edit_segment_text(video_pk):
 
     updated_full_text = _joined_transcript_tr(segments)
     response_payload["transcript"] = updated_full_text
-    segments_json = json.dumps(segments, ensure_ascii=False)
     try:
-        conn.execute(
-            "UPDATE youtube_transcripts SET full_text = ?, segments_json = ?, whisper_segments_json = ? WHERE video_id = ?",
-            [updated_full_text, segments_json, segments_json, video_id],
-        )
+        save_transcript_override(conn, video_pk=video_pk, video_id=video_id,
+                                 full_text=updated_full_text, segments=segments)
         conn.commit()
     except Exception as exc:
         conn.close()
@@ -26211,6 +26249,8 @@ def edit_segment_text(video_pk):
                             user_id=user_id,
                             source_video_id=str(video_id or ""),
                             plan_index=plan_index,
+                            video_pk=video_pk,
+                            brand_id=_active_editor_context()["brand_id"],
                         )
                     except Exception as exc:
                         current_app.logger.warning(
@@ -26249,7 +26289,7 @@ def update_segment_non_speech(video_pk):
         conn.close()
         return jsonify({"success": False, "message": "Video not found."}), 404
     video_id = row[0]
-    _, segments = _fetch_transcript(conn, video_id)
+    _, segments = _fetch_transcript(conn, video_id, video_pk=video_pk)
     conn.close()
     if not segments:
         return jsonify({"success": False, "message": "No transcript segments available."}), 400
@@ -27632,6 +27672,18 @@ def autoclip_video(video_pk):
             category="warning",
         )
     plan_entries = _load_plan_entries(vid, video_pk=video_pk)
+    check = get_db_readonly()
+    try:
+        for entry in plan_entries:
+            if str(entry.get("plan_index")) == str(plan_index):
+                name = entry.get("output_filename") or entry.get("clip_filename")
+                if name:
+                    tenant_media.assert_clip_write_owner(check, name, target_owner_user_id, brand_id,
+                                                        video_pk=video_pk, source_id=vid)
+    except tenant_media.TenantMediaConflict as exc:
+        return jsonify(success=False, message=str(exc)), 403
+    finally:
+        check.close()
     video_crop_ratios = {}
     video_static_visual_key = None
     video_background_visual_key = None
@@ -28690,7 +28742,10 @@ def autoclip_video(video_pk):
     multi_range_source_path: Optional[Path] = None
     made = 0
     missing_outputs = 0
-    clip_filename = tenant_media.render_filename(vid, plan_entry, plan_index, video_pk=video_pk)
+    try:
+        clip_filename = tenant_media.render_filename(vid, plan_entry, plan_index, video_pk=video_pk)
+    except tenant_media.TenantMediaConflict as exc:
+        return _respond(str(exc), success=False, status=403, category="warning")
     plan_entry["clip_filename"] = clip_filename
     output_path = tenant_media.short_path(clip_filename)
     error_message = None
@@ -29769,6 +29824,12 @@ def regenerate_clip_video(video_pk: int, plan_index: int):
         return jsonify(success=False, message="Render this Short before regenerating it."), 409
     conn = get_db_readonly()
     try:
+        tenant_media.assert_clip_write_owner(conn, clip_filename, target_owner_user_id, brand_id,
+                                            video_pk=video_pk, source_id=source_video_id)
+    except tenant_media.TenantMediaConflict as exc:
+        conn.close()
+        return jsonify(success=False, message=str(exc)), 403
+    try:
         generated_columns = table_columns(conn, "shorts_generated_videos")
         if "render_settings_hash" not in generated_columns:
             return jsonify(success=False, message="Render settings tracking has not been migrated yet."), 409
@@ -29848,6 +29909,8 @@ def regenerate_clip_video(video_pk: int, plan_index: int):
         "regenerate": True,
         "render_settings_hash": current_hash,
         "plan_index": int(plan_index),
+        "video_pk": int(video_pk),
+        "brand_id": brand_id,
     }
     input_hash = build_input_hash(source_id=source_video_id, start=start, end=end, options=job_options)
     payload = {
@@ -30267,7 +30330,7 @@ def prepare_description(video_pk):
         return _respond(False, "Clip not found in plan.", category="warning", status=404)
 
     conn = get_db_readonly()
-    _, segments = _fetch_transcript(conn, vid)
+    _, segments = _fetch_transcript(conn, vid, video_pk=video_pk)
     conn.close()
 
     try:

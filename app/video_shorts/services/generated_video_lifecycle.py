@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import logging
-from app.video_shorts.services.tenant_media import TenantMediaConflict
+from app.video_shorts.services.tenant_media import TenantMediaConflict, assert_clip_write_owner
 
 import json
 from typing import Any, Dict, Optional
@@ -219,8 +219,10 @@ def ensure_generated_videos_schema(conn) -> None:
                 UPDATE {TABLE_NAME} AS gv
                 SET user_id = yv.owner_user_id
                 FROM youtube_videos AS yv
+                JOIN shorts_video_legacy_owners AS legacy ON legacy.video_pk = yv.id
                 WHERE gv.user_id IS NULL
-                  AND yv.video_id = gv.source_video_id
+                  AND legacy.youtube_id = gv.source_video_id
+                  AND yv.brand_id IS NOT DISTINCT FROM gv.brand_id
                 """
             )
         except Exception:
@@ -288,9 +290,10 @@ def _resolve_source_brand_id(conn, source_video_id: Optional[str]) -> Optional[s
         row = conn.execute(
             """
             SELECT CAST(brand_id AS VARCHAR)
-            FROM youtube_videos
-            WHERE video_id = ?
-            ORDER BY id DESC
+            FROM youtube_videos v
+            JOIN shorts_video_legacy_owners legacy ON legacy.video_pk = v.id
+            WHERE legacy.youtube_id = ?
+            ORDER BY v.id
             LIMIT 1
             """,
             [source_video_id],
@@ -307,9 +310,10 @@ def _resolve_source_user_id(conn, source_video_id: Optional[str]) -> Optional[st
         row = conn.execute(
             """
             SELECT CAST(owner_user_id AS VARCHAR)
-            FROM youtube_videos
-            WHERE video_id = ?
-            ORDER BY id DESC
+            FROM youtube_videos v
+            JOIN shorts_video_legacy_owners legacy ON legacy.video_pk = v.id
+            WHERE legacy.youtube_id = ?
+            ORDER BY v.id
             LIMIT 1
             """,
             [source_video_id],
@@ -469,6 +473,14 @@ def upsert_generated_video_record(
             user_id,
             prefer_publish_user=prefer_publish_binding,
         )
+        if user_id is not None:
+            # An explicit unbranded scope must never inherit another brand.
+            resolved_brand_id = str(brand_id) if brand_id else None
+        assert_clip_write_owner(conn, clip_filename, resolved_user_id, resolved_brand_id,
+                                source_id=source_video_id)
+        if output_filename and output_filename != clip_filename:
+            assert_clip_write_owner(conn, output_filename, resolved_user_id, resolved_brand_id,
+                                    source_id=source_video_id)
         raw_plan_entry_json = _serialize_raw_plan_entry(raw_plan_entry)
         normalized_generation_status = _normalize_generation_status(generation_status, publish_status)
         content_fields = _extract_content_fields(raw_plan_entry)

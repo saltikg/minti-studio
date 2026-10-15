@@ -1,16 +1,77 @@
 #!/usr/bin/env python3
-"""Manually freeze legacy plan owners on production before tenant-media cutover.
+"""Audit or manually repair frozen legacy owners without touching media files.
 
-Default: read-only report. --apply creates the registry and inserts missing
-decisions. Existing decisions are immutable; no media or plan files are changed.
+Earliest source wins unless the earliest legacy clip has direct render-job
+creation evidence for another owner. Missing source rows never transfer ownership.
+Default is read-only; --apply inserts missing decisions and repairs proven errors.
 """
 from __future__ import annotations
 
 import argparse
 import json
-from pathlib import Path
+from collections import defaultdict
 
 from safe_to_deploy import _connect, _load_env_file
+
+
+def audit(cur):
+    cur.execute("SELECT id, video_id, owner_user_id, brand_id FROM youtube_videos ORDER BY created_at NULLS LAST, id")
+    sources = defaultdict(list)
+    by_pk = {}
+    for pk, source, owner, brand in cur.fetchall():
+        row = {"video_pk": pk, "owner": owner, "brand": brand}
+        sources[source].append(row)
+        by_pk[pk] = row
+    cur.execute("SELECT youtube_id, video_pk, ownership_rule FROM shorts_video_legacy_owners")
+    frozen = {source: (pk, rule) for source, pk, rule in cur.fetchall()}
+    cur.execute("""SELECT source_video_id, clip_filename, created_at
+        FROM shorts_generated_videos
+        WHERE clip_filename ~ '^[0-9]+_.+\\.mp4$' AND clip_filename !~ '_v[0-9]+\\.mp4$'
+        ORDER BY created_at NULLS LAST, id""")
+    earliest_clip = {}
+    for source, name, created in cur.fetchall():
+        earliest_clip.setdefault(source, (name, created))
+    cur.execute("""SELECT id, user_id, payload_json->>'video_pk', payload_json->>'source_video_id',
+            payload_json->>'brand_id', result_json->>'clip_filename', created_at
+        FROM shorts_render_jobs WHERE type = 'render_short' AND status = 'done'
+        ORDER BY created_at, id""")
+    jobs = defaultdict(list)
+    for job_id, owner, pk, source, brand, filename, created in cur.fetchall():
+        jobs[filename].append((job_id, owner, pk, source, brand, created))
+    decisions = []
+    for source in sorted(set(sources) | set(frozen)):
+        old_pk, old_rule = frozen.get(source, (None, None))
+        candidates = sources[source]
+        if old_pk is not None and old_pk not in by_pk:
+            decisions.append(dict(youtube_id=source, old_pk=old_pk, video_pk=old_pk,
+                                  rule=old_rule, evidence="frozen_source_missing_preserved"))
+            continue
+        if old_pk is not None and not any(v["video_pk"] == old_pk for v in candidates):
+            decisions.append(dict(youtube_id=source, old_pk=old_pk, video_pk=old_pk,
+                                  rule=old_rule, evidence="frozen_source_rehomed_preserved"))
+            continue
+        if not candidates:
+            continue
+        chosen = candidates[0]
+        rule = "earliest_video_row"
+        evidence = None
+        if source in earliest_clip:
+            filename, created = earliest_clip[source]
+            for job_id, owner, raw_pk, job_source, brand, job_created in jobs[filename]:
+                if not created or not job_created or job_created > created or job_source != source:
+                    continue
+                matches = [v for v in candidates if v["owner"] == owner and
+                           (not brand or str(v["brand"] or "") == brand) and
+                           (not raw_pk or str(v["video_pk"]) == raw_pk)]
+                if len(matches) == 1:
+                    chosen = matches[0]
+                    rule = "creation_render_job"
+                    evidence = job_id
+                    break
+        decisions.append(dict(youtube_id=source, old_pk=old_pk, video_pk=chosen["video_pk"],
+                              earliest_pk=candidates[0]["video_pk"], rule=rule, evidence=evidence,
+                              owner=chosen["owner"], brand=chosen["brand"]))
+    return decisions
 
 
 def main():
@@ -18,48 +79,26 @@ def main():
     parser.add_argument("--apply", action="store_true")
     args = parser.parse_args()
     _load_env_file()
-    shorts = Path(__file__).resolve().parents[1] / "app/video_shorts/static/shorts"
-    with _connect() as conn:
-        with conn.cursor() as cur:
-            if args.apply:
-                cur.execute("LOCK TABLE youtube_videos IN SHARE ROW EXCLUSIVE MODE")
-                cur.execute("""CREATE TABLE IF NOT EXISTS shorts_video_legacy_owners (
-                    youtube_id VARCHAR PRIMARY KEY, video_pk BIGINT NOT NULL,
-                    ownership_rule VARCHAR NOT NULL, created_at TIMESTAMPTZ NOT NULL DEFAULT now()
-                )""")
-            else:
-                cur.execute("SET TRANSACTION READ ONLY")
-            cur.execute("SELECT video_id, MIN(id) FROM youtube_videos GROUP BY video_id")
-            sources = cur.fetchall()
-            count = 0
-            for youtube_id, earliest_pk in sources:
-                owner_pk, rule = earliest_pk, "earliest_video_row"
-                path = shorts / f"{youtube_id}_plan.json"
-                names = []
-                if path.exists():
-                    data = json.loads(path.read_text())
-                    names = sorted({str(e[k]) for e in data.get("plan", data.get("clips", []))
-                                    if isinstance(e, dict) for k in ("clip_filename", "output_filename") if e.get(k)})
-                if names:
-                    # Use the earliest recorded render among filenames actually
-                    # present in the legacy plan, rather than its latest job IDs.
-                    cur.execute("""SELECT v.id FROM shorts_generated_videos s
-                        JOIN youtube_videos v ON v.video_id = s.source_video_id
-                         AND v.owner_user_id = s.user_id
-                         AND v.brand_id IS NOT DISTINCT FROM s.brand_id
-                        WHERE v.video_id = %s AND
-                         (s.clip_filename = ANY(%s) OR s.output_filename = ANY(%s))
-                        ORDER BY s.created_at NULLS LAST, s.id, v.id LIMIT 1""", [youtube_id, names, names])
-                    row = cur.fetchone()
-                    if row:
-                        owner_pk, rule = row[0], "earliest_legacy_plan_render"
-                if args.apply:
-                    cur.execute("""INSERT INTO shorts_video_legacy_owners (youtube_id, video_pk, ownership_rule)
-                        VALUES (%s, %s, %s) ON CONFLICT (youtube_id) DO NOTHING""", [youtube_id, owner_pk, rule])
-                if path.exists():
-                    print(f"{youtube_id} video_pk={owner_pk} rule={rule}")
-                count += 1
-            print(f"{'APPLIED' if args.apply else 'READ_ONLY'} sources={count}")
+    with _connect() as conn, conn.cursor() as cur:
+        if args.apply:
+            cur.execute("LOCK TABLE youtube_videos, shorts_video_legacy_owners IN SHARE ROW EXCLUSIVE MODE")
+        else:
+            cur.execute("SET TRANSACTION READ ONLY")
+        decisions = audit(cur)
+        changes = [d for d in decisions if d["old_pk"] != d["video_pk"]]
+        exceptions = [d for d in decisions if d.get("earliest_pk") and d["earliest_pk"] != d["video_pk"]]
+        for decision in changes + [d for d in exceptions if d not in changes]:
+            print(json.dumps(decision, default=str))
+        if args.apply:
+            for d in changes:
+                cur.execute("""INSERT INTO shorts_video_legacy_owners (youtube_id, video_pk, ownership_rule)
+                    VALUES (%s, %s, %s) ON CONFLICT(youtube_id) DO UPDATE SET
+                    video_pk = excluded.video_pk, ownership_rule = excluded.ownership_rule""",
+                    [d["youtube_id"], d["video_pk"], d["rule"]])
+        print(json.dumps({"mode": "APPLIED" if args.apply else "READ_ONLY", "sources": len(decisions),
+                          "inserted": sum(d["old_pk"] is None for d in changes),
+                          "corrected": sum(d["old_pk"] is not None for d in changes),
+                          "supported_exceptions": len(exceptions), "files_changed": 0}))
 
 
 if __name__ == "__main__":

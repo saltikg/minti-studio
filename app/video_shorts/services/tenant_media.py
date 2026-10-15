@@ -151,7 +151,39 @@ def assert_asset_owner(conn, file_key, user_id, brand_id):
         raise TenantMediaConflict("Media key belongs to another tenant")
 
 
+def assert_clip_write_owner(conn, filename, owner_user_id, brand_id, *, video_pk=None, source_id=None):
+    """Authorize a clip mutation independently of mutable lifecycle ownership."""
+    name = safe_filename(filename)
+    scoped = re.fullmatch(r"\d+_([A-Za-z0-9_-]+)_v(\d+)\.mp4", name)
+    legacy = re.fullmatch(r"\d+_([A-Za-z0-9_-]+)\.mp4", name)
+    if not scoped and not legacy:
+        return  # AI videos and compilations have their own ownership records.
+    source = (scoped or legacy)[1]
+    if scoped:
+        pk = int(scoped[2])
+    else:
+        row = conn.execute(
+            "SELECT video_pk FROM shorts_video_legacy_owners WHERE youtube_id = ?", [source],
+        ).fetchone()
+        if not row:
+            raise TenantMediaConflict("Legacy clip has no frozen owner")
+        pk = int(row[0])
+    row = conn.execute(
+        "SELECT video_id, owner_user_id, brand_id FROM youtube_videos WHERE id = ?", [pk],
+    ).fetchone()
+    # A source can be rehomed from YouTube to a local upload without renaming
+    # its old clips. The frozen/scoped PK remains authoritative in that case.
+    if (not row or not owner_user_id
+            or (source_id is not None and str(row[0]) != str(source_id))
+            or str(row[1] or "") != str(owner_user_id)
+            or str(row[2] or "") != str(brand_id or "")
+            or (video_pk is not None and int(video_pk) != pk)):
+        raise TenantMediaConflict("Clip is reserved for its original video owner and brand")
+
+
 def upsert_asset(conn, *, file_key, file_path, file_type, size_bytes, user_id, brand_id=None):
+    if file_key.startswith("short:"):
+        assert_clip_write_owner(conn, file_key.removeprefix("short:"), user_id, brand_id)
     row = conn.execute(
         """INSERT INTO shorts_storage_assets
            (file_key, file_path, file_type, size_bytes, user_id, brand_id, status, updated_at)
@@ -260,6 +292,8 @@ def authorize_clip_delete(conn, filename, *, video_pk=None, owner_user_id=None, 
     if foreign:
         raise TenantMediaConflict("Legacy clip is referenced by another tenant; manual review required")
     row = rows[0]
+    assert_clip_write_owner(conn, name, owner_user_id, brand_id,
+                            video_pk=row[0], source_id=row[1])
     return VideoIdentity(int(row[0]), str(row[1]), str(row[2]), str(row[3]) if row[3] else None)
 
 

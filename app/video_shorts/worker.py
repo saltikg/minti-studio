@@ -1673,6 +1673,8 @@ def _ensure_render_face_track_cache(app, payload: Dict[str, Any]) -> None:
 
 
 def _execute_render_job(app, job: Dict[str, Any]) -> Dict[str, Any]:
+    from app.video_shorts.services.render_jobs import validate_render_job_scope
+    validate_render_job_scope(job)
     payload = job.get("payload") or {}
     video_pk = int(payload.get("video_pk"))
     plan_index = int(payload.get("plan_index"))
@@ -2079,6 +2081,8 @@ def _render_job_completion_from_plan(job: Dict[str, Any]) -> Optional[Dict[str, 
     except Exception:
         return None
     try:
+        from app.video_shorts.services.render_jobs import validate_render_job_scope
+        validate_render_job_scope(job)
         entries = generation._load_plan_entries(source_video_id, video_pk=payload.get("video_pk")) or []
     except Exception:
         logger.exception("Could not load plan entries for stuck render recovery job_id=%s", job.get("id"))
@@ -2090,6 +2094,8 @@ def _render_job_completion_from_plan(job: Dict[str, Any]) -> Optional[Dict[str, 
             continue
         if entry_index != plan_index:
             continue
+        if str(entry.get("render_job_id") or "") != str(job.get("id") or ""):
+            return None
         status = str((entry or {}).get("status") or "").strip().lower()
         clip_filename = str((entry or {}).get("clip_filename") or (entry or {}).get("output_filename") or "").strip()
         if status != "created" or not clip_filename:

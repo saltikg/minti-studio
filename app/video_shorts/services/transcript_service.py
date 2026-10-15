@@ -2863,7 +2863,45 @@ def _refine_arabic_segments_with_whisper(segments: List[Dict[str, Any]], video_p
     return updated
 
 
-def _fetch_transcript(conn, video_id: str) -> Tuple[str, List[Dict[str, Any]]]:
+def _transcript_video_pk(conn, video_id, video_pk=None):
+    from app.video_shorts.services.tenant_media import current_scope, TenantMediaConflict
+    if video_pk is not None:
+        row = conn.execute("SELECT id FROM youtube_videos WHERE id = ? AND video_id = ?",
+                           [int(video_pk), video_id]).fetchone()
+        if not row:
+            raise TenantMediaConflict("Transcript does not belong to this video row")
+        return int(row[0])
+    owner, brand = current_scope()
+    if not owner:
+        return None  # Background ingestion reads the shared base explicitly.
+    rows = conn.execute(
+        "SELECT id FROM youtube_videos WHERE video_id = ? AND owner_user_id = ? AND brand_id IS NOT DISTINCT FROM ?",
+        [video_id, owner, brand],
+    ).fetchall()
+    if len(rows) != 1:
+        raise TenantMediaConflict("Transcript tenant is missing or ambiguous")
+    return int(rows[0][0])
+
+
+def save_transcript_override(conn, *, video_pk, video_id, full_text, segments):
+    pk = _transcript_video_pk(conn, video_id, video_pk)
+    conn.execute(
+        """INSERT INTO shorts_transcript_overrides (video_pk, full_text, segments_json, updated_at)
+           VALUES (?, ?, ?, CURRENT_TIMESTAMP)
+           ON CONFLICT(video_pk) DO UPDATE SET full_text = excluded.full_text,
+             segments_json = excluded.segments_json, updated_at = CURRENT_TIMESTAMP""",
+        [pk, full_text, json.dumps(segments, ensure_ascii=False)],
+    )
+
+
+def _fetch_transcript(conn, video_id: str, *, video_pk=None) -> Tuple[str, List[Dict[str, Any]]]:
+    pk = _transcript_video_pk(conn, video_id, video_pk)
+    if pk is not None:
+        override = conn.execute(
+            "SELECT full_text, segments_json FROM shorts_transcript_overrides WHERE video_pk = ?", [pk],
+        ).fetchone()
+        if override:
+            return override[0] or "", _normalize_segments_for_use(json.loads(override[1] or "[]"))
     cols = _ensure_transcript_schema(conn)
     has_whisper_col = "whisper_segments_json" in cols
     select_sql = (
