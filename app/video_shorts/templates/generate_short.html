@@ -19261,6 +19261,8 @@ document.addEventListener("DOMContentLoaded", () => {
     });
     return fragment;
   };
+  window.getHonestCaptionPreviewText = longestRenderedCaptionGroup;
+  window.buildCaptionPreviewMarkup = captionPreviewMarkup;
   const requestMeasuredDesign = () => {
     const original = isOriginalCropAspect();
     const height = getActiveRenderFrameHeight();
@@ -21924,14 +21926,14 @@ document.addEventListener("DOMContentLoaded", function () {
       subtitlePreview.classList.toggle("is-word-highlight", isWordHighlight);
       subtitlePreview.classList.toggle("is-gradient-fill", wordHighlightPreset?.fillMode === "gradient");
       subtitlePreview.classList.toggle("is-active-gradient-fill", wordHighlightPreset?.fillMode === "active_gradient_only");
-      subtitlePreview.replaceChildren(captionPreviewMarkup(longestRenderedCaptionGroup(), isWordHighlight));
+      subtitlePreview.replaceChildren(window.buildCaptionPreviewMarkup(window.getHonestCaptionPreviewText(), isWordHighlight));
     }
     if (previewSubtitle) {
       previewSubtitle.classList.toggle("is-word-highlight", isWordHighlight);
       previewSubtitle.classList.toggle("is-gradient-fill", wordHighlightPreset?.fillMode === "gradient");
       previewSubtitle.classList.toggle("is-active-gradient-fill", wordHighlightPreset?.fillMode === "active_gradient_only");
-      previewSubtitle.replaceChildren(captionPreviewMarkup(longestRenderedCaptionGroup(), isWordHighlight));
-      previewSubtitle.dataset.captionText = longestRenderedCaptionGroup();
+      previewSubtitle.replaceChildren(window.buildCaptionPreviewMarkup(window.getHonestCaptionPreviewText(), isWordHighlight));
+      previewSubtitle.dataset.captionText = window.getHonestCaptionPreviewText();
     }
     applyPresetEffectVars(subtitlePreview);
     applyPresetEffectVars(previewSubtitle);
