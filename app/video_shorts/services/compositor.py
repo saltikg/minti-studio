@@ -28,6 +28,7 @@ from app.video_shorts.config import (
     DEFAULT_VIDEO_OVERLAY_OFFSET,
     DESIGN_POSITION_LIMITS,
     clamp_design_position,
+    normalize_caption_anchor,
     FFMPEG_RENDER_TIMEOUT,
     FFMPEG_SHORT_TIMEOUT,
     FFPROBE_TIMEOUT,
@@ -1299,6 +1300,7 @@ def _subtitle_force_style(
     target_height: int,
     subtitle_font_size: int,
     subtitle_margin: int,
+    caption_anchor: str = "bottom",
     subtitle_font: str,
     subtitle_text_color: Optional[str],
     subtitle_text_alpha: Optional[int],
@@ -1308,17 +1310,14 @@ def _subtitle_force_style(
 ) -> str:
     clean_font = (subtitle_font or "DejaVu Sans").replace("'", "")
     normalized_subtitle_style = str(subtitle_style or "plain").strip().lower()
+    alignment = {"top": 8, "center": 5, "bottom": 2}[normalize_caption_anchor(caption_anchor)]
     base = (
         f"PlayResX={int(target_width)},"
         f"PlayResY={int(target_height)},"
         f"Fontsize={subtitle_font_size},"
     )
     if normalized_subtitle_style == "karaoke":
-        return (
-            base
-            + f"MarginV={subtitle_margin},"
-            + "Alignment=2,"
-        )
+        return base + f"MarginV={subtitle_margin}," + f"Alignment={alignment},"
     return (
         base
         + f"PrimaryColour={_hex_to_ass_color_with_alpha(subtitle_text_color, subtitle_text_alpha, '#FFFFFF', DEFAULT_SUBTITLE_TEXT_ALPHA)},"
@@ -1327,9 +1326,60 @@ def _subtitle_force_style(
         + "Outline=1,"
         + "Shadow=0,"
         + f"MarginV={subtitle_margin},"
-        + "Alignment=2,"
+        + f"Alignment={alignment},"
         + f"FontName={clean_font}"
     )
+
+
+def _anchored_ass_from_srt(
+    subtitle_path: Path,
+    *,
+    target_width: int,
+    target_height: int,
+    caption_position: int,
+    caption_anchor: str,
+) -> Optional[Path]:
+    """Convert SRT cues to ASS so an arbitrary top/center anchor can use \pos."""
+    if Path(subtitle_path).suffix.lower() == ".ass":
+        return None
+    try:
+        raw = Path(subtitle_path).read_text(encoding="utf-8-sig")
+    except Exception:
+        return None
+    anchor = normalize_caption_anchor(caption_anchor)
+    alignment = {"top": 8, "center": 5, "bottom": 2}[anchor]
+    y = int(caption_position) if anchor in {"top", "center"} else int(target_height) - int(caption_position)
+    events = []
+    for block in re.split(r"\r?\n\s*\r?\n", raw.strip()):
+        lines = [line.strip("\ufeff") for line in block.splitlines() if line.strip()]
+        timing_index = next((idx for idx, line in enumerate(lines) if "-->" in line), None)
+        if timing_index is None:
+            continue
+        start_raw, end_raw = [part.strip().replace(",", ".") for part in lines[timing_index].split("-->", 1)]
+        def ass_time(value: str) -> str:
+            hours, minutes, seconds = value.split(":")
+            return f"{int(hours)}:{int(minutes):02d}:{float(seconds):05.2f}"
+        try:
+            start_value, end_value = ass_time(start_raw), ass_time(end_raw)
+        except Exception:
+            continue
+        text_value = r"\N".join(lines[timing_index + 1:]).replace("{", r"\{").replace("}", r"\}")
+        events.append(f"Dialogue: 0,{start_value},{end_value},Default,,0,0,0,,{{\\an{alignment}\\pos({int(target_width)//2},{y})}}{text_value}")
+    if not events:
+        return None
+    content = [
+        "[Script Info]", "ScriptType: v4.00+", "WrapStyle: 2", "ScaledBorderAndShadow: yes",
+        f"PlayResX: {int(target_width)}", f"PlayResY: {int(target_height)}", "",
+        "[V4+ Styles]",
+        "Format: Name, Fontname, Fontsize, PrimaryColour, SecondaryColour, OutlineColour, BackColour, Bold, Italic, Underline, StrikeOut, ScaleX, ScaleY, Spacing, Angle, BorderStyle, Outline, Shadow, Alignment, MarginL, MarginR, MarginV, Encoding",
+        f"Style: Default,DejaVu Sans,45,&H00FFFFFF,&H00FFFFFF,&H00000000,&H80000000,0,0,0,0,100,100,0,0,4,1,0,{alignment},40,40,0,1",
+        "", "[Events]", "Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text", *events,
+    ]
+    handle = tempfile.NamedTemporaryFile(delete=False, suffix=".ass")
+    path = Path(handle.name)
+    handle.write("\n".join(content).encode("utf-8"))
+    handle.close()
+    return path
 
 
 def _face_aware_fit_position_metrics(
@@ -2189,6 +2239,7 @@ def _compose_with_background(
     title_text_color: Optional[str] = None,
     subtitle_font_size: int = DEFAULT_SUB_FONT_SIZE,
     subtitle_margin: int = SUB_MARGIN_DEFAULT,
+    caption_anchor: str = "bottom",
     subtitle_margin_custom: bool = False,
     subtitle_text_color: Optional[str] = None,
     subtitle_bg_color: Optional[str] = None,
@@ -2268,6 +2319,7 @@ def _compose_with_background(
             target_height=VIDEO_TARGET_HEIGHT,
             subtitle_font_size=subtitle_font_size,
             subtitle_margin=subtitle_margin,
+            caption_anchor=caption_anchor,
             subtitle_font=subtitle_font,
             subtitle_text_color=subtitle_text_color,
             subtitle_text_alpha=subtitle_text_alpha,
@@ -2371,6 +2423,7 @@ def _compose_trimmed_with_background(
     title_outline_width: int = 0,
     subtitle_font_size: int = DEFAULT_SUB_FONT_SIZE,
     subtitle_margin: int = SUB_MARGIN_DEFAULT,
+    caption_anchor: str = "bottom",
     subtitle_margin_custom: bool = False,
     subtitle_text_color: Optional[str] = None,
     subtitle_bg_color: Optional[str] = None,
@@ -3825,10 +3878,21 @@ def _compose_trimmed_with_background(
                 filter_parts.append(debug_drawtext)
                 final_label = "[ov_title_debug]"
     face_aware_subtitle_path: Optional[Path] = None
+    anchored_subtitle_path: Optional[Path] = None
     if effective_subtitle_path:
         subtitle_path_for_filter = effective_subtitle_path
         subtitle_margin_for_filter = subtitle_margin
-        if face_aware_layout_active and not subtitle_margin_custom:
+        if normalize_caption_anchor(caption_anchor) != "bottom":
+            anchored_subtitle_path = _anchored_ass_from_srt(
+                effective_subtitle_path,
+                target_width=target_width,
+                target_height=target_height,
+                caption_position=subtitle_margin,
+                caption_anchor=caption_anchor,
+            )
+            if anchored_subtitle_path:
+                subtitle_path_for_filter = anchored_subtitle_path
+        if face_aware_layout_active and not subtitle_margin_custom and normalize_caption_anchor(caption_anchor) == "bottom":
             try:
                 face_aware_subtitle_path = _build_face_aware_subtitle_path(
                     effective_subtitle_path,
@@ -3855,6 +3919,7 @@ def _compose_trimmed_with_background(
             target_height=target_height,
             subtitle_font_size=subtitle_font_size,
             subtitle_margin=subtitle_margin_for_filter,
+            caption_anchor=caption_anchor,
             subtitle_font=subtitle_font,
             subtitle_text_color=subtitle_text_color,
             subtitle_text_alpha=subtitle_text_alpha,
@@ -3882,7 +3947,7 @@ def _compose_trimmed_with_background(
     elif effective_subtitle_overlay_path:
         filter_parts.append(f"[{next_video_input_index}:v]format=rgba[caption_src]")
         caption_overlay_y_expr = "0"
-        if face_aware_layout_active and not subtitle_margin_custom:
+        if face_aware_layout_active and not subtitle_margin_custom and normalize_caption_anchor(caption_anchor) == "bottom":
             caption_overlay_y_expr = "0"
             if effective_subtitle_overlay_events:
                 fallback_height = _face_aware_caption_block_height(subtitle_font_size)
@@ -4180,7 +4245,7 @@ def _compose_trimmed_with_background(
             f"FFmpeg compose failed (key={bg_path.name}): {err.stderr.strip() or err.stdout.strip()}"
         ) from err
     finally:
-        for temp_path in (trimmed, merged_override, merged_audio_override, temp_out_path, face_aware_subtitle_path, shape_overlay_path, *title_overlay_paths):
+        for temp_path in (trimmed, merged_override, merged_audio_override, temp_out_path, face_aware_subtitle_path, anchored_subtitle_path, shape_overlay_path, *title_overlay_paths):
             if temp_path and temp_path.exists():
                 try:
                     temp_path.unlink()

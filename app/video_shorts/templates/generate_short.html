@@ -8646,12 +8646,22 @@
                       </div>
                       <input type="range" name="subtitle_text_alpha" id="subtitleTextAlphaValue" class="d-none" min="0" max="100" step="1" value="{{ selected_subtitle_text_alpha if selected_subtitle_text_alpha is not none else 100 }}">
                       <input type="range" name="subtitle_bg_alpha" id="subtitleBgAlphaValue" class="d-none" min="0" max="100" step="1" value="{{ selected_subtitle_bg_alpha if selected_subtitle_bg_alpha is not none else 85 }}">
+                      <div class="caption-anchor-control mt-3">
+                        <div class="caption-tab-section-heading">Anchor</div>
+                        <div class="btn-group btn-group-sm w-100" role="group" aria-label="Caption vertical anchor">
+                          {% for value, label in [('top', 'Top'), ('center', 'Center'), ('bottom', 'Bottom')] %}
+                            <input type="radio" class="btn-check" name="caption_anchor" id="captionAnchor{{ label }}" value="{{ value }}" {% if (selected_caption_anchor or 'bottom') == value %}checked{% endif %}>
+                            <label class="btn btn-outline-light" for="captionAnchor{{ label }}">{{ label }}</label>
+                          {% endfor %}
+                        </div>
+                        <div class="design-panel-hint mt-1">Top keeps the first line in place; extra lines grow downward.</div>
+                      </div>
                       <div class="design-panel-hint">Drag the caption in the preview to move it, or use the ↑ ↓ keys.</div>
                       <button type="button" class="design-panel-more-toggle" data-design-more-toggle="caption" aria-expanded="false">▸ More options</button>
                       <div class="design-panel-more-options" data-design-more-options="caption">
                         <div class="design-panel-more-grid">
                           <div class="input-group-inline compact" data-preview-control="subtitle">
-                            <span class="design-more-label">Distance from bottom</span>
+                            <span class="design-more-label" id="captionPositionLabel">Caption position</span>
                             <span class="design-more-input"><input type="number" name="sub_margin" class="form-control form-control-sm short-input-small" value="{{ selected_sub_margin or 520 }}" min="{{ design_position_limits.sub_margin.min }}" max="{{ design_position_limits.sub_margin.max }}"><span class="design-more-unit">px</span></span>
                           </div>
                         </div>
@@ -18039,7 +18049,7 @@ document.addEventListener("DOMContentLoaded", () => {
   };
   const getEditorField = (name) => {
     for (const root of getEditorRoots()) {
-      const field = root.querySelector(`[name="${name}"]`);
+      const field = root.querySelector(`[name="${name}"]:checked`) || root.querySelector(`[name="${name}"]`);
       if (field) {
         return field;
       }
@@ -18151,6 +18161,8 @@ document.addEventListener("DOMContentLoaded", () => {
     suppressDesignStateSync += 1;
     try {
       window.applyCropEditorFieldState?.(snapshot.fields || {});
+      previousCaptionAnchor = getCaptionAnchor();
+      syncCaptionPositionLabel();
       activeLayoutMode = snapshot.layout_mode === "auto" ? "auto" : "manual";
       activeCropAspect = snapshot.crop_aspect || "landscape";
       activeSplitEnabled = !!snapshot.split_enabled;
@@ -18206,6 +18218,45 @@ document.addEventListener("DOMContentLoaded", () => {
   const subtitleFontSizeInput = getEditorField("sub_font_size");
   const titleMarginInput = getEditorField("title_margin");
   const subtitleMarginInput = getEditorField("sub_margin");
+  const captionAnchorInputs = queryEditorFields('[name="caption_anchor"]');
+  const captionPositionLabel = document.getElementById("captionPositionLabel");
+  const getCaptionAnchor = () => captionAnchorInputs.find((input) => input.checked)?.value || "bottom";
+  let previousCaptionAnchor = getCaptionAnchor();
+  const captionTopForPosition = (position, anchor, blockHeight, frameHeight) => {
+    if (anchor === "top") return position;
+    if (anchor === "center") return position - blockHeight / 2;
+    return frameHeight - position - blockHeight;
+  };
+  const captionPositionForTop = (top, anchor, blockHeight, frameHeight) => {
+    if (anchor === "top") return top;
+    if (anchor === "center") return top + blockHeight / 2;
+    return frameHeight - top - blockHeight;
+  };
+  const syncCaptionPositionLabel = () => {
+    if (!captionPositionLabel) return;
+    captionPositionLabel.textContent = getCaptionAnchor() === "top"
+      ? "Distance from top"
+      : (getCaptionAnchor() === "center" ? "Center Y" : "Distance from bottom");
+  };
+  captionAnchorInputs.forEach((input) => input.addEventListener("change", () => {
+    if (!input.checked) return;
+    const activeHeight = getActiveRenderFrameHeight();
+    const blockHeight = getActiveSubtitleHeight();
+    const storedPosition = getNumericFieldValue(subtitleMarginInput, 0);
+    const activePosition = isOriginalCropAspect()
+      ? storedPosition / Math.max(1, renderFrameHeight) * activeHeight
+      : storedPosition;
+    const currentTop = captionTopForPosition(activePosition, previousCaptionAnchor, blockHeight, activeHeight);
+    const nextPosition = captionPositionForTop(currentTop, input.value, blockHeight, activeHeight);
+    previousCaptionAnchor = input.value;
+    updateFieldValue(subtitleMarginInput, isOriginalCropAspect()
+      ? nextPosition / Math.max(1, activeHeight) * renderFrameHeight
+      : nextPosition);
+    syncCaptionPositionLabel();
+    requestMeasuredDesign();
+    applyPreviewLayout();
+  }));
+  syncCaptionPositionLabel();
   const showTitleToggle = getEditorField("show_title");
   const showSubtitleToggle = getEditorField("show_subtitle");
   const videoOverlayOffsetInput = getEditorField("video_overlay_offset");
@@ -18744,6 +18795,9 @@ document.addEventListener("DOMContentLoaded", () => {
     }
     if (kind === "subtitle") {
       const bounds = getPositionBounds("sub_margin", subtitleHeight, activeHeight);
+      if (getCaptionAnchor() === "center") {
+        return { size: subtitleHeight, min: subtitleHeight / 2, max: Math.max(subtitleHeight / 2, activeHeight - subtitleHeight / 2) };
+      }
       return {
         size: subtitleHeight,
         min: bounds.min,
@@ -18903,7 +18957,7 @@ document.addEventListener("DOMContentLoaded", () => {
     currentPresetRatios = buildDefaultSplitPreset("left");
     currentPresetRatiosBottom = buildDefaultSplitPreset("right");
     splitDefaultsPrimed = true;
-    if (subtitleMarginInput && !dirtyOverlayFields.has("sub_margin")) {
+    if (subtitleMarginInput && getCaptionAnchor() === "bottom" && !dirtyOverlayFields.has("sub_margin")) {
       updateFieldValue(subtitleMarginInput, 600);
     }
   };
@@ -19024,16 +19078,16 @@ document.addEventListener("DOMContentLoaded", () => {
       );
       const currentActiveMargin = isOriginalCropAspect()
         ? (
-            !dirtyOverlayFields.has("sub_margin") && !initialSubtitleMarginCustom
+            getCaptionAnchor() === "bottom" && !dirtyOverlayFields.has("sub_margin") && !initialSubtitleMarginCustom
               ? defaultActiveMargin
               : (getNumericFieldValue(subtitleMarginInput, defaultActiveMargin / Math.max(1, activeHeight) * renderFrameHeight) / Math.max(1, renderFrameHeight) * activeHeight)
           )
         : getNumericFieldValue(subtitleMarginInput, activeHeight - previewConfig.subtitleY - getActiveSubtitleHeight());
-      const nextValue = clampRenderValue(
-        currentActiveMargin - deltaRenderY,
-        bounds.min,
-        bounds.max,
-      );
+      const anchor = getCaptionAnchor();
+      const blockHeight = getActiveSubtitleHeight();
+      const currentTop = captionTopForPosition(currentActiveMargin, anchor, blockHeight, activeHeight);
+      const nextTop = clampRenderValue(currentTop + deltaRenderY, 0, Math.max(0, activeHeight - blockHeight));
+      const nextValue = clampRenderValue(captionPositionForTop(nextTop, anchor, blockHeight, activeHeight), bounds.min, bounds.max);
       updateFieldValue(
         subtitleMarginInput,
         isOriginalCropAspect() ? (nextValue / Math.max(1, activeHeight) * renderFrameHeight) : nextValue,
@@ -19164,27 +19218,70 @@ document.addEventListener("DOMContentLoaded", () => {
     paintMeasuredText(titleEl, measuredDesign.title, "title", getActivePreviewScaleX(), getActivePreviewScaleY());
     paintMeasuredText(captionEl, measuredDesign.caption, "caption", getActivePreviewScaleX(), getActivePreviewScaleY());
   };
+  const getActiveClipCard = () => {
+    const activeIndex = document.getElementById("clip-management-panel")?.dataset.activePlanIndex;
+    return (activeIndex && document.querySelector(`.clip-card[data-plan-index="${CSS.escape(activeIndex)}"]`)) || document.querySelector(".clip-card");
+  };
+  const longestRenderedCaptionGroup = () => {
+    const transcript = String(getActiveClipCard()?.dataset.previewCaption || "").trim();
+    if (!transcript) return "Sample subtitle line";
+    const tokens = transcript.match(/\S+/g) || [];
+    const groupSize = subtitleStyleField?.value === "karaoke" ? Number(DESIGN_GEOMETRY.caption_words || 4) : 10;
+    const groups = [];
+    for (let index = 0; index < tokens.length; index += groupSize) groups.push(tokens.slice(index, index + groupSize));
+    if (!groups.length) return "Sample subtitle line";
+    const context = document.createElement("canvas").getContext("2d");
+    const computed = window.getComputedStyle(previewSubtitle || subtitlePreview);
+    const size = Number(subtitleFontSizeInput?.value || 45) * Number(DESIGN_GEOMETRY.font_scale || 1);
+    context.font = `${computed.fontWeight || 400} ${size}px ${computed.fontFamily || "sans-serif"}`;
+    const maxWidth = getActiveRenderFrameWidth() - (2 * Number(DESIGN_GEOMETRY.caption_side_margin || 40));
+    const score = (words) => {
+      let lines = 1; let width = 0; let widest = 0;
+      words.forEach((word) => {
+        const wordWidth = context.measureText(word).width;
+        const candidate = width ? width + context.measureText(" ").width + wordWidth : wordWidth;
+        if (width && candidate > maxWidth) { widest = Math.max(widest, width); lines += 1; width = wordWidth; }
+        else width = candidate;
+      });
+      return [lines, Math.max(widest, width), words.join(" ").length];
+    };
+    return groups.reduce((best, group) => {
+      const a = score(group); const b = score(best);
+      return (a[0] > b[0] || (a[0] === b[0] && (a[1] > b[1] || (a[1] === b[1] && a[2] > b[2])))) ? group : best;
+    }, groups[0]).join(" ");
+  };
+  const captionPreviewMarkup = (text, wordHighlight) => {
+    if (!wordHighlight) return document.createTextNode(text);
+    const fragment = document.createDocumentFragment();
+    String(text).split(/\s+/).filter(Boolean).forEach((word, index) => {
+      const span = document.createElement("span");
+      span.className = `word-highlight-preview-word${index === 0 ? " is-active" : ""}`;
+      span.textContent = word;
+      fragment.append(span, " ");
+    });
+    return fragment;
+  };
   const requestMeasuredDesign = () => {
     const original = isOriginalCropAspect();
     const height = getActiveRenderFrameHeight();
-    const activeIndex = document.getElementById("clip-management-panel")?.dataset.activePlanIndex;
-    const card = (activeIndex && document.querySelector(`.clip-card[data-plan-index="${CSS.escape(activeIndex)}"]`)) || document.querySelector(".clip-card");
-    const captionText = previewSubtitle?.dataset.captionText || card?.dataset.previewCaption || "Sample subtitle line";
+    const captionText = longestRenderedCaptionGroup();
     const titleText = previewTitle?.dataset.rawTitle || previewTitle?.textContent || "";
     const data = {
       width: getActiveRenderFrameWidth(), height,
       title: titleText, caption: captionText,
+      caption_source: String(getActiveClipCard()?.dataset.previewCaption || ""),
       title_font: getEditorField("font")?.value, caption_font: getEditorField("sub_font")?.value,
       title_size: original ? Math.max(18, Math.round(height*DESIGN_GEOMETRY.original_title_scale)) : Number(titleFontSizeInput?.value),
       caption_size: original ? Math.max(20, Math.round(height*DESIGN_GEOMETRY.original_caption_scale)) : Number(subtitleFontSizeInput?.value),
       title_top: original && !dirtyOverlayFields.has("title_margin") && Number(titleMarginInput?.value) === previewConfig.titleY
         ? Math.round(height*DESIGN_GEOMETRY.original_title_top) : Math.round(Number(titleMarginInput?.value || previewConfig.titleY)*height/renderFrameHeight),
       caption_margin: Math.round(Number(subtitleMarginInput?.value)*height/renderFrameHeight),
+      caption_anchor: getCaptionAnchor(),
       line_spacing: Math.round(Number(getEditorField("title_line_spacing")?.value || -4)*(original ? height/renderFrameHeight : 1)),
       preset: subtitlePresetField?.value, caption_style: subtitleStyleField?.value, language: {{ (transcript_language or '')|tojson }},
       active_word: Number(previewSubtitle?.dataset.activeWord || 0),
     };
-    if (original && !initialSubtitleMarginCustom && !dirtyOverlayFields.has("sub_margin")) {
+    if (original && getCaptionAnchor() === "bottom" && !initialSubtitleMarginCustom && !dirtyOverlayFields.has("sub_margin")) {
       data.caption_margin = Math.round(height-height*DESIGN_GEOMETRY.original_caption_center-data.caption_size);
     }
     const key = JSON.stringify(data);
@@ -19318,7 +19415,7 @@ document.addEventListener("DOMContentLoaded", () => {
     const rawSubtitleMargin = getNumericFieldValue(subtitleMarginInput, renderFrameHeight - previewConfig.subtitleY - previewConfig.subtitleHeight);
     const subtitleMarginCustom = dirtyOverlayFields.has("sub_margin") || initialSubtitleMarginCustom;
     const subtitleBounds = getPositionBounds("sub_margin", subtitleHeight, activeRenderHeight);
-    const subtitleMargin = originalPreview && !subtitleMarginCustom
+    const subtitleMargin = originalPreview && getCaptionAnchor() === "bottom" && !subtitleMarginCustom
       ? Math.max(0, activeRenderHeight - (activeRenderHeight * DESIGN_GEOMETRY.original_caption_center) - (subtitleHeight / 2))
       : clampRenderValue(
           originalPreview ? (rawSubtitleMargin / Math.max(1, renderFrameHeight) * activeRenderHeight) : rawSubtitleMargin,
@@ -19326,9 +19423,9 @@ document.addEventListener("DOMContentLoaded", () => {
           subtitleBounds.max,
         );
     const safeMargin = activeRenderHeight * 0.05;
-    const subtitleSafeMargin = originalPreview && !subtitleMarginCustom ? safeMargin : 0;
+    const subtitleSafeMargin = originalPreview && getCaptionAnchor() === "bottom" && !subtitleMarginCustom ? safeMargin : 0;
     const subtitleTop = clampRenderValue(
-      activeRenderHeight - subtitleMargin - subtitleHeight,
+      captionTopForPosition(subtitleMargin, getCaptionAnchor(), subtitleHeight, activeRenderHeight),
       subtitleSafeMargin,
       Math.max(subtitleSafeMargin, activeRenderHeight - subtitleSafeMargin - subtitleHeight),
     );
@@ -20536,6 +20633,7 @@ document.addEventListener("DOMContentLoaded", () => {
     "title_font_size",
     "sub_font_size",
     "sub_margin",
+    "caption_anchor",
     "subtitle_style",
     "subtitle_preset",
     "title_margin",
@@ -21432,15 +21530,6 @@ document.addEventListener("DOMContentLoaded", function () {
       bgAlpha: "0",
     },
   };
-  const wordHighlightSampleMarkup = `
-    <span class="word-highlight-preview-word">Exactly.</span>
-    <span class="word-highlight-preview-word">So</span>
-    <span class="word-highlight-preview-word">it</span>
-    <span class="word-highlight-preview-word is-active">puts</span>
-    <span class="word-highlight-preview-word">them</span>
-    <span class="word-highlight-preview-word">for</span>
-    <span class="word-highlight-preview-word">both</span>
-  `;
   const titleFontSizeInput = document.querySelector('.short-video-body [name="title_font_size"]');
   const titleTextColorField = document.getElementById("titleTextColorValue");
   const titleTextColorCustomInput = document.getElementById("titleTextCustomColor");
@@ -21835,13 +21924,14 @@ document.addEventListener("DOMContentLoaded", function () {
       subtitlePreview.classList.toggle("is-word-highlight", isWordHighlight);
       subtitlePreview.classList.toggle("is-gradient-fill", wordHighlightPreset?.fillMode === "gradient");
       subtitlePreview.classList.toggle("is-active-gradient-fill", wordHighlightPreset?.fillMode === "active_gradient_only");
-      subtitlePreview.innerHTML = isWordHighlight ? wordHighlightSampleMarkup : "Sample subtitle line";
+      subtitlePreview.replaceChildren(captionPreviewMarkup(longestRenderedCaptionGroup(), isWordHighlight));
     }
     if (previewSubtitle) {
       previewSubtitle.classList.toggle("is-word-highlight", isWordHighlight);
       previewSubtitle.classList.toggle("is-gradient-fill", wordHighlightPreset?.fillMode === "gradient");
       previewSubtitle.classList.toggle("is-active-gradient-fill", wordHighlightPreset?.fillMode === "active_gradient_only");
-      previewSubtitle.innerHTML = isWordHighlight ? wordHighlightSampleMarkup : "Sample subtitle line";
+      previewSubtitle.replaceChildren(captionPreviewMarkup(longestRenderedCaptionGroup(), isWordHighlight));
+      previewSubtitle.dataset.captionText = longestRenderedCaptionGroup();
     }
     applyPresetEffectVars(subtitlePreview);
     applyPresetEffectVars(previewSubtitle);

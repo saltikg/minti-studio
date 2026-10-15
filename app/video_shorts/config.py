@@ -714,6 +714,28 @@ DESIGN_POSITION_LIMITS = {
     "video_date_top": {"min": 0, "max": 1200, "fallback_element_height": 80},
 }
 
+CAPTION_ANCHORS = {"top", "center", "bottom"}
+
+
+def normalize_caption_anchor(value, *, default="bottom") -> str:
+    anchor = str(value or "").strip().lower()
+    return anchor if anchor in CAPTION_ANCHORS else default
+
+
+def caption_block_top(position, anchor, block_height, frame_height) -> float:
+    """Resolve a saved caption coordinate to the text block's top edge."""
+    safe_height = max(0.0, float(block_height or 0))
+    safe_frame = max(1.0, float(frame_height or 1))
+    coordinate = float(position or 0)
+    normalized = normalize_caption_anchor(anchor)
+    if normalized == "top":
+        top = coordinate
+    elif normalized == "center":
+        top = coordinate - (safe_height / 2.0)
+    else:
+        top = safe_frame - coordinate - safe_height
+    return max(0.0, min(max(0.0, safe_frame - safe_height), top))
+
 
 def design_position_limits(
     field_name: str,

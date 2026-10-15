@@ -528,6 +528,7 @@ def _ensure_video_crop_schema(conn) -> set:
         ("subtitle_font_size", "INTEGER", DEFAULT_SUB_FONT_SIZE),
         ("subtitle_margin", "INTEGER", SUB_MARGIN_DEFAULT),
         ("subtitle_margin_custom", "BOOLEAN", False),
+        ("caption_anchor", "VARCHAR", "top"),
         ("subtitle_style", "VARCHAR", "plain"),
         ("subtitle_preset", "VARCHAR", DEFAULT_SUBTITLE_PRESET),
         ("title_margin", "INTEGER", DEFAULT_TITLE_MARGIN),

@@ -47,13 +47,31 @@ def measure_design(data, *, title_font_path, caption_font_path, title_behavior):
     font = ImageFont.truetype(str(caption_font_path), caption_size)
     active_size = max(1, caption_size + int(preset.get('active_font_size_delta') or 0))
     active_font = ImageFont.truetype(str(caption_font_path), active_size)
-    words = str(data.get('caption') or '').split()
-    if karaoke:
-        words = words[:D['caption_words']]
+    source_words = str(data.get('caption_source') or data.get('caption') or '').split()
+    group_size = D['caption_words'] if karaoke else 10
+    groups = [source_words[index:index+group_size] for index in range(0, len(source_words), group_size)]
+    def group_score(group):
+        best = (0, 0, 0)
+        best_active = 0
+        active_indexes = range(len(group)) if karaoke else (0,)
+        for candidate_active in active_indexes:
+            candidate = _caption_frame_layout(group, active_index=candidate_active, font=font,
+                active_font=active_font, caption_language=data.get('language', ''),
+                subtitle_margin=int(data['caption_margin']), font_size=caption_size,
+                outline_width=int(preset.get('outline_width') or 0),
+                force_uppercase=bool(preset.get('force_uppercase')),
+                canvas_width=width, canvas_height=height, caption_anchor=data.get('caption_anchor', 'bottom'))
+            widths = [int(line.get('width') or 0) for line in candidate['lines']]
+            score = (len(candidate['lines']), max(widths or [0]), candidate['total_height'])
+            if score > best:
+                best, best_active = score, candidate_active
+        return best, best_active
+    selected_group = max(((group_score(group), group) for group in groups), key=lambda item: item[0][0]) if groups else None
+    words = selected_group[1] if selected_group else []
     if not words:
         return dict(title=title_result, caption=dict(box=[0, 0, 1, 1], runs=[],
                     lines=0, font_size=caption_size, outline=0), width=width, height=height)
-    active = min(max(0, int(data.get('active_word', 0))), max(0, len(words)-1))
+    active = selected_group[0][1] if selected_group and karaoke else min(max(0, int(data.get('active_word', 0))), max(0, len(words)-1))
     outline = int(preset.get('outline_width') or 0)
     draw_pill = bool(preset.get('active_pill')) and bool(preset.get('draw_pill', True))
     precomputed = None
@@ -61,12 +79,12 @@ def measure_design(data, *, title_font_path, caption_font_path, title_behavior):
         display = [w.upper() if preset.get('force_uppercase') else w for w in words]
         precomputed = _layout_wrapped_caption(display, font=font,
             subtitle_margin=int(data['caption_margin']), max_width=width-2*D['caption_side_margin'],
-            canvas_width=width, canvas_height=height)
+            canvas_width=width, canvas_height=height, caption_anchor=data.get('caption_anchor', 'bottom'))
     layout = _caption_frame_layout(words, active_index=active, font=font, active_font=active_font,
         caption_language=data.get('language', ''), subtitle_margin=int(data['caption_margin']),
         font_size=caption_size, outline_width=outline,
         force_uppercase=bool(preset.get('force_uppercase')), precomputed_layout=precomputed,
-        canvas_width=width, canvas_height=height)
+        canvas_width=width, canvas_height=height, caption_anchor=data.get('caption_anchor', 'bottom'))
     runs, line_boxes, glyph_boxes = [], [], []
     pill = None
     for word in layout['words']:
@@ -92,5 +110,5 @@ def measure_design(data, *, title_font_path, caption_font_path, title_behavior):
     return dict(title=title_result, caption=dict(box=caption_box, runs=runs, pill=pill,
         glyph_box=_union(glyph_boxes), lines=len(layout['lines']), font_size=caption_size,
         outline=outline, active_outline=bool(preset.get('active_outline')),
-        anchor=height-int(data['caption_margin'])-layout['total_height'],
-        block_height=layout['total_height']), width=width, height=height)
+        anchor=layout['lines'][0]['y'] if layout['lines'] else 0,
+        block_height=layout['total_height'], text=' '.join(words)), width=width, height=height)

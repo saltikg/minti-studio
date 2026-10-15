@@ -25,6 +25,8 @@ from app.video_shorts.config import (
     SUBTITLE_HIGHLIGHT_COLOR,
     WHISPER_MODEL,
     clamp_design_position,
+    caption_block_top,
+    normalize_caption_anchor,
     _openai_client,
 )
 from app.video_shorts.services.db import _ensure_transcript_schema
@@ -623,6 +625,7 @@ def _compute_single_line_pill_layout(
     subtitle_margin: int,
     pad_y: int,
     effective_line_width: int,
+    caption_anchor: str = "bottom",
 ) -> Dict[str, int] | None:
     full_line = " ".join(words)
     before_text = " ".join(words[:active_index])
@@ -632,7 +635,7 @@ def _compute_single_line_pill_layout(
     if line_width > effective_line_width:
         return None
     line_height = _measure_line_height(font)
-    text_top = max(0, _ASS_RENDER_HEIGHT - int(subtitle_margin) - line_height)
+    text_top = int(round(caption_block_top(subtitle_margin, caption_anchor, line_height, _ASS_RENDER_HEIGHT)))
     x0 = max(_ASS_MARGIN_L, int(round((_ASS_RENDER_WIDTH - line_width) / 2)))
     before_width = _measure_text_width(font, before_text)
     active_word_width = _measure_text_width(font, words[active_index])
@@ -684,6 +687,7 @@ def _build_ass_karaoke_for_clip(
     subtitle_font: str,
     subtitle_font_size: int,
     subtitle_margin: int,
+    caption_anchor: str,
     subtitle_text_color: Optional[str],
     subtitle_text_alpha: Optional[int],
     subtitle_bg_color: Optional[str],
@@ -821,6 +825,7 @@ def _build_ass_karaoke_for_clip(
                             subtitle_margin=subtitle_margin,
                             pad_y=pill_padding_y,
                             effective_line_width=effective_line_width,
+                            caption_anchor=caption_anchor,
                         )
                         if layout_probe is not None:
                             for index, item in enumerate(chunk_words):
@@ -838,6 +843,7 @@ def _build_ass_karaoke_for_clip(
                                     subtitle_margin=subtitle_margin,
                                     pad_y=pill_padding_y,
                                     effective_line_width=effective_line_width,
+                                    caption_anchor=caption_anchor,
                                 )
                                 if layout is None:
                                     pill_wrap_fallback_count += (len(chunk_words) - index)
@@ -956,6 +962,7 @@ def _build_ass_karaoke_for_clip(
                         subtitle_margin=subtitle_margin,
                         pad_y=pill_padding_y,
                         effective_line_width=effective_line_width,
+                        caption_anchor=caption_anchor,
                     )
                     if layout_probe is not None:
                         for index in range(len(words)):
@@ -969,6 +976,7 @@ def _build_ass_karaoke_for_clip(
                                 subtitle_margin=subtitle_margin,
                                 pad_y=pill_padding_y,
                                 effective_line_width=effective_line_width,
+                                caption_anchor=caption_anchor,
                             )
                             if layout is None:
                                 pill_wrap_fallback_count += (len(words) - index)
@@ -1057,6 +1065,8 @@ def _build_ass_karaoke_for_clip(
     else:
         back_color = _hex_to_ass_color_with_alpha("#000000", 0, "#000000", 0)
 
+    normalized_anchor = normalize_caption_anchor(caption_anchor)
+    alignment = {"top": 8, "center": 5, "bottom": 2}[normalized_anchor]
     lines = [
         "[Script Info]",
         "ScriptType: v4.00+",
@@ -1076,7 +1086,7 @@ def _build_ass_karaoke_for_clip(
         f"{_hex_to_ass_color_with_alpha(inactive_color, subtitle_text_alpha, '#FFFFFF', DEFAULT_SUBTITLE_TEXT_ALPHA)},"
         f"{_hex_to_ass_color_with_alpha(outline_color, 100, '#000000', 100)},"
         f"{back_color},"
-        f"{bold},0,0,0,100,100,0,0,{4 if show_box else border_style},{outline_width},0,2,40,40,"
+        f"{bold},0,0,0,100,100,0,0,{4 if show_box else border_style},{outline_width},0,{alignment},40,40,"
         f"{int(subtitle_margin)},1",
     ]
     if use_active_word_style:
@@ -1088,7 +1098,7 @@ def _build_ass_karaoke_for_clip(
             f"{_hex_to_ass_color_with_alpha(active_color, 100, '#111827', 100)},"
             f"{_hex_to_ass_color_with_alpha(active_box_outline_color, 100, '#FFD84D', 100)},"
             f"{_hex_to_ass_color_with_alpha(active_box_color, 100, '#FFD84D', 100)},"
-            f"{bold},0,0,0,100,100,0,0,{active_box_border_style},{active_box_outline_width},0,2,40,40,"
+            f"{bold},0,0,0,100,100,0,0,{active_box_border_style},{active_box_outline_width},0,{alignment},40,40,"
             f"{int(subtitle_margin)},1"
         )
         lines.append(
@@ -1109,7 +1119,7 @@ def _build_ass_karaoke_for_clip(
             "&HFF000000,"
             "&HFF000000,"
             "&HFF000000,"
-            f"{bold},0,0,0,100,100,0,0,{border_style},{outline_width},0,2,40,40,{int(subtitle_margin)},1"
+            f"{bold},0,0,0,100,100,0,0,{border_style},{outline_width},0,{alignment},40,40,{int(subtitle_margin)},1"
         )
         lines.append(
             "Style: PillShape,"
@@ -1128,6 +1138,12 @@ def _build_ass_karaoke_for_clip(
     ])
     for event in events:
         text = str(event["text"])
+        if normalized_anchor != "bottom" and "\\pos(" not in text:
+            anchor_y = (
+                int(subtitle_margin) if normalized_anchor == "top"
+                else (_ASS_RENDER_HEIGHT - int(subtitle_margin) if normalized_anchor == "bottom" else int(subtitle_margin))
+            )
+            text = f"{{\\an{alignment}\\pos({_ASS_RENDER_WIDTH // 2},{anchor_y})}}" + text
         if active_word_tags and not use_active_word_style:
             text = re.sub(
                 r"\{\\k(\d+)\}([^\s]+)",
@@ -1296,6 +1312,7 @@ def _layout_wrapped_caption(
     slot_widths: Optional[List[int]] = None,
     word_fonts: Optional[List[ImageFont.FreeTypeFont]] = None,
     line_height_font: Optional[ImageFont.FreeTypeFont] = None,
+    caption_anchor: str,
 ) -> Dict[str, Any]:
     lines = _wrap_words_to_lines(words, font, max_width, slot_widths=slot_widths, word_fonts=word_fonts)
     space_width = _measure_text_width(font, " ")
@@ -1303,13 +1320,11 @@ def _layout_wrapped_caption(
     line_ascent = max(_font_ascent(font), _font_ascent(line_height_font or font))
     line_gap = max(DESIGN_GEOMETRY["caption_line_gap_min"], int(round(line_height * DESIGN_GEOMETRY["caption_line_gap"])))
     total_height = (line_height * len(lines)) + (line_gap * max(0, len(lines) - 1))
-    safe_margin = clamp_design_position(
-        "sub_margin",
-        subtitle_margin,
-        target_height=canvas_height,
-        element_height=total_height,
-    )
-    block_top = max(0, min(canvas_height - total_height, canvas_height - safe_margin - total_height))
+    if normalize_caption_anchor(caption_anchor) == "center":
+        safe_margin = max(total_height / 2.0, min(canvas_height - total_height / 2.0, float(subtitle_margin)))
+    else:
+        safe_margin = max(0.0, min(canvas_height - total_height, float(subtitle_margin)))
+    block_top = int(round(caption_block_top(safe_margin, caption_anchor, total_height, canvas_height)))
 
     positioned_lines: List[Dict[str, Any]] = []
     flat_words: List[Dict[str, Any]] = []
@@ -1467,7 +1482,7 @@ def _caption_frame_layout(
     words, *, active_index, font, active_font=None, caption_language="",
     subtitle_margin, font_size, outline_width, force_uppercase=False,
     precomputed_layout=None, canvas_width=_PILLOW_CAPTION_WIDTH,
-    canvas_height=_PILLOW_CAPTION_HEIGHT,
+    canvas_height=_PILLOW_CAPTION_HEIGHT, caption_anchor="bottom",
 ):
     """Font-measured geometry shared by the renderer and live DOM preview."""
     active_font = active_font or font
@@ -1513,6 +1528,7 @@ def _caption_frame_layout(
             slot_widths=slot_widths,
             word_fonts=word_fonts,
             line_height_font=active_font,
+            caption_anchor=caption_anchor,
         )
     else:
         layout = precomputed_layout
@@ -1527,6 +1543,7 @@ def _render_word_highlight_caption_frame(
     active_font: Optional[ImageFont.FreeTypeFont] = None,
     caption_language: str = "",
     subtitle_margin: int,
+    caption_anchor: str,
     font_size: int,
     inactive_color: str,
     active_color: str,
@@ -1554,6 +1571,7 @@ def _render_word_highlight_caption_frame(
         font_size=font_size, outline_width=outline_width,
         force_uppercase=force_uppercase, precomputed_layout=precomputed_layout,
         canvas_width=canvas_width, canvas_height=canvas_height,
+        caption_anchor=caption_anchor,
     )
     pad_y = max(DESIGN_GEOMETRY["pill_padding_min_y"], int(round(float(font_size) * DESIGN_GEOMETRY["pill_padding_y"])))
     image = Image.new("RGBA", (int(canvas_width), int(canvas_height)), (0, 0, 0, 0))
@@ -1817,6 +1835,7 @@ def _build_word_highlight_caption_overlay(
     *,
     subtitle_font_size: int,
     subtitle_margin: int,
+    caption_anchor: str = "bottom",
     subtitle_preset: Optional[str],
     subtitle_font_key: Optional[str] = None,
     subtitle_text_color: Optional[str] = None,
@@ -2003,6 +2022,7 @@ def _build_word_highlight_caption_overlay(
                         max_width=safe_caption_width,
                         canvas_width=safe_target_width,
                         canvas_height=safe_target_height,
+                        caption_anchor=caption_anchor,
                     )
                     layout_cache[chunk_key] = precomputed_layout
             gradient_layers = None
@@ -2014,6 +2034,7 @@ def _build_word_highlight_caption_overlay(
                     max_width=safe_caption_width,
                     canvas_width=safe_target_width,
                     canvas_height=safe_target_height,
+                    caption_anchor=caption_anchor,
                 )
                 precomputed_layout = precomputed_layout or layout_for_gradient
                 active_strip = None
@@ -2104,6 +2125,7 @@ def _build_word_highlight_caption_overlay(
                         max_width=safe_caption_width,
                         canvas_width=safe_target_width,
                         canvas_height=safe_target_height,
+                        caption_anchor=caption_anchor,
                     )
                     shadow_region = _build_blurred_shadow_region(
                         layout_for_shadow,
@@ -2132,6 +2154,7 @@ def _build_word_highlight_caption_overlay(
                     active_font=active_font,
                     caption_language=caption_language,
                     subtitle_margin=subtitle_margin,
+                    caption_anchor=caption_anchor,
                     font_size=subtitle_font_size,
                     inactive_color=inactive_color,
                     active_color=active_color,

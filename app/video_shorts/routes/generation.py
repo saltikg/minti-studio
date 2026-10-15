@@ -423,6 +423,7 @@ SHORT_EDITOR_DEFAULT_FIELD_NAMES = (
     "title_font_size",
     "sub_font_size",
     "sub_margin",
+    "caption_anchor",
     "subtitle_style",
     "subtitle_preset",
     "title_margin",
@@ -896,6 +897,7 @@ def _short_editor_config_defaults() -> Dict[str, Any]:
         "title_font_size": DEFAULT_EDITOR_TITLE_FONT_SIZE,
         "sub_font_size": DEFAULT_SUB_FONT_SIZE,
         "sub_margin": SUB_MARGIN_DEFAULT,
+        "caption_anchor": "top",
         "subtitle_style": "plain",
         "subtitle_preset": DEFAULT_SUBTITLE_PRESET,
         "title_margin": DEFAULT_TITLE_MARGIN,
@@ -939,8 +941,15 @@ def _values_equal_for_editor_default(value: Any, fallback: Any) -> bool:
     return str(value).strip().lower() == str(fallback).strip().lower()
 
 
-def _load_short_editor_defaults(user_id: Optional[str]) -> Dict[str, Any]:
-    raw = load_user_preference(user_id, SHORT_EDITOR_DEFAULTS_PREFERENCE_KEY)
+def _short_editor_defaults_preference_key(brand_id: Optional[str] = None) -> str:
+    normalized_brand = str(brand_id or "").strip()
+    return f"{SHORT_EDITOR_DEFAULTS_PREFERENCE_KEY}:{normalized_brand}" if normalized_brand else SHORT_EDITOR_DEFAULTS_PREFERENCE_KEY
+
+
+def _load_short_editor_defaults(user_id: Optional[str], brand_id: Optional[str] = None) -> Dict[str, Any]:
+    raw = load_user_preference(user_id, _short_editor_defaults_preference_key(brand_id))
+    if not raw and brand_id:
+        raw = load_user_preference(user_id, SHORT_EDITOR_DEFAULTS_PREFERENCE_KEY)
     if not raw:
         return {}
     try:
@@ -979,6 +988,8 @@ def _clean_short_editor_default_payload(source: Any) -> Dict[str, Any]:
 
     subtitle_style = str(source.get("subtitle_style") or defaults["subtitle_style"]).strip().lower()
     payload["subtitle_style"] = subtitle_style if subtitle_style in {"plain", "karaoke"} else "plain"
+    caption_anchor = str(source.get("caption_anchor") or defaults["caption_anchor"]).strip().lower()
+    payload["caption_anchor"] = caption_anchor if caption_anchor in {"top", "center", "bottom"} else defaults["caption_anchor"]
 
     subtitle_preset = str(source.get("subtitle_preset") or defaults["subtitle_preset"]).strip() or DEFAULT_SUBTITLE_PRESET
     payload["subtitle_preset"] = subtitle_preset if subtitle_preset in SUBTITLE_PRESETS else DEFAULT_SUBTITLE_PRESET
@@ -7335,6 +7346,7 @@ AUTO_RENDER_DESIGN_FIELD_MAP: Dict[str, str] = {
     "title_font_size": "title_font_size",
     "sub_font_size": "subtitle_font_size",
     "sub_margin": "subtitle_margin",
+    "caption_anchor": "caption_anchor",
     "subtitle_style": "subtitle_style",
     "subtitle_preset": "subtitle_preset",
     "title_margin": "title_margin",
@@ -7384,7 +7396,7 @@ def apply_short_editor_defaults_to_video_if_null(*, owner_user_id: str, brand_id
             for default_name, column_name in AUTO_RENDER_DESIGN_FIELD_MAP.items()
             if column_name in current_by_column
         }
-        resolved = _apply_short_editor_defaults(raw_values, _load_short_editor_defaults(owner_user_id))
+        resolved = _apply_short_editor_defaults(raw_values, _load_short_editor_defaults(owner_user_id, brand_id))
         assignments: List[str] = []
         params: List[Any] = []
         updated_fields: List[str] = []
@@ -8339,6 +8351,7 @@ def _build_render_job_options(
     subtitle_font_key: Optional[str],
     subtitle_font_size: Optional[int],
     subtitle_margin: Optional[int],
+    caption_anchor: Optional[str],
     subtitle_style: Optional[str],
     subtitle_preset: Optional[str],
     title_margin: Optional[int],
@@ -8379,6 +8392,7 @@ def _build_render_job_options(
         "subtitle_font_key": subtitle_font_key,
         "subtitle_font_size": subtitle_font_size,
         "subtitle_margin": subtitle_margin,
+        "caption_anchor": str(caption_anchor or "bottom").strip().lower(),
         "subtitle_margin_custom": bool(subtitle_margin_custom),
         "subtitle_style": (subtitle_style or "plain").strip().lower(),
         "subtitle_preset": str(subtitle_preset or DEFAULT_SUBTITLE_PRESET).strip() or DEFAULT_SUBTITLE_PRESET,
@@ -8454,6 +8468,8 @@ def canonical_render_settings(options: Dict[str, Any]) -> Dict[str, Any]:
         payload["title_line_spacing"] = -4
     if not bool(payload.get("subtitle_margin_custom")):
         payload.pop("subtitle_margin_custom", None)
+    if str(payload.get("caption_anchor") or "bottom").strip().lower() == "bottom":
+        payload.pop("caption_anchor", None)
     return payload
 
 
@@ -8627,6 +8643,7 @@ def _compute_render_settings_hash_for_plan_entry(
         subtitle_font_key=video.get("subtitle_font_key"),
         subtitle_font_size=video.get("subtitle_font_size"),
         subtitle_margin=video.get("subtitle_margin"),
+        caption_anchor=video.get("caption_anchor") or "bottom",
         subtitle_margin_custom=_normalize_optional_bool(video.get("subtitle_margin_custom"), default=False),
         subtitle_style=subtitle_style,
         subtitle_preset=subtitle_preset,
@@ -10563,6 +10580,8 @@ def generate_short(video_pk):
         video_sql += ", creator_email"
     if "subtitle_margin_custom" in video_columns:
         video_sql += ", subtitle_margin_custom"
+    if "caption_anchor" in video_columns:
+        video_sql += ", caption_anchor"
     if "original_zoom_rect" in video_columns:
         video_sql += ", original_zoom_rect"
     if "layout_mode" in video_columns:
@@ -10600,6 +10619,8 @@ def generate_short(video_pk):
         cols.append("creator_email")
     if "subtitle_margin_custom" in video_columns:
         cols.append("subtitle_margin_custom")
+    if "caption_anchor" in video_columns:
+        cols.append("caption_anchor")
     if "original_zoom_rect" in video_columns:
         cols.append("original_zoom_rect")
     if "layout_mode" in video_columns:
@@ -10918,13 +10939,14 @@ def generate_short(video_pk):
         key=lambda item: (str(item.get("label") or ""), str(item.get("key") or "")),
     )
 
-    short_editor_defaults = _load_short_editor_defaults(editor_owner_user_id)
+    short_editor_defaults = _load_short_editor_defaults(editor_owner_user_id, brand_id)
     raw_style_values = {
         "font": video.get("title_font_key"),
         "sub_font": video.get("subtitle_font_key"),
         "title_font_size": video.get("title_font_size"),
         "sub_font_size": video.get("subtitle_font_size"),
         "sub_margin": video.get("subtitle_margin"),
+        "caption_anchor": video.get("caption_anchor") or "bottom",
         "subtitle_style": video.get("subtitle_style"),
         "subtitle_preset": video.get("subtitle_preset"),
         "title_margin": video.get("title_margin"),
@@ -10951,6 +10973,9 @@ def generate_short(video_pk):
     video_sub_font_key = resolved_style_values.get("sub_font") or DEFAULT_SUB_FONT_KEY
     video_sub_font_size = resolved_style_values.get("sub_font_size") or DEFAULT_SUB_FONT_SIZE
     video_sub_margin = resolved_style_values.get("sub_margin") or SUB_MARGIN_DEFAULT
+    video_caption_anchor = str(resolved_style_values.get("caption_anchor") or "bottom").strip().lower()
+    if video_caption_anchor not in {"top", "center", "bottom"}:
+        video_caption_anchor = "bottom"
     video_sub_margin_custom = _normalize_optional_bool(video.get("subtitle_margin_custom"), default=False)
     video_subtitle_style = str(resolved_style_values.get("subtitle_style") or "plain").strip().lower()
     if video_subtitle_style not in {"plain", "karaoke"}:
@@ -11250,6 +11275,7 @@ def generate_short(video_pk):
     selected_title_font_size = video_title_font_size
     selected_sub_font_size = video_sub_font_size
     selected_sub_margin = video_sub_margin
+    selected_caption_anchor = video_caption_anchor
     selected_sub_margin_custom = video_sub_margin_custom
     selected_subtitle_style = video_subtitle_style
     selected_subtitle_preset = video_subtitle_preset
@@ -12365,6 +12391,7 @@ def generate_short(video_pk):
         sub_font_sizes=SUB_FONT_SIZES,
         selected_sub_font_size=selected_sub_font_size,
         selected_sub_margin=selected_sub_margin,
+        selected_caption_anchor=selected_caption_anchor,
         selected_sub_margin_custom=selected_sub_margin_custom,
         selected_subtitle_style=selected_subtitle_style,
         selected_subtitle_preset=selected_subtitle_preset,
@@ -14003,7 +14030,7 @@ def save_short_editor_defaults():
         payload = _clean_short_editor_default_payload(source)
         save_user_preference(
             owner_user_id,
-            SHORT_EDITOR_DEFAULTS_PREFERENCE_KEY,
+            _short_editor_defaults_preference_key(editor_context.get("brand_id")),
             json.dumps(payload, ensure_ascii=False, sort_keys=True),
         )
     except Exception as exc:
@@ -27334,6 +27361,9 @@ def save_short_settings(video_pk):
         )
     except Exception:
         subtitle_margin = SUB_MARGIN_DEFAULT
+    caption_anchor = str(request.form.get("caption_anchor") or "bottom").strip().lower()
+    if caption_anchor not in {"top", "center", "bottom"}:
+        caption_anchor = "bottom"
     if "subtitle_margin_custom" in form_fields:
         subtitle_margin_custom = _normalize_optional_bool(request.form.get("subtitle_margin_custom"), default=False)
     else:
@@ -27450,6 +27480,7 @@ def save_short_settings(video_pk):
             "subtitle_font_key": sub_font_key,
             "subtitle_font_size": subtitle_font_size,
             "subtitle_margin": subtitle_margin,
+            "caption_anchor": caption_anchor,
             "subtitle_margin_custom": subtitle_margin_custom,
             "subtitle_style": subtitle_style,
             "subtitle_preset": subtitle_preset,
@@ -27480,6 +27511,7 @@ def save_short_settings(video_pk):
             "subtitle_font_key": "sub_font",
             "subtitle_font_size": "sub_font_size",
             "subtitle_margin": "sub_margin",
+            "caption_anchor": "caption_anchor",
             "subtitle_margin_custom": "sub_margin",
             "subtitle_style": "subtitle_style",
             "subtitle_preset": "subtitle_preset",
@@ -27732,6 +27764,7 @@ def autoclip_video(video_pk):
     video_sub_font_key = None
     video_sub_font_size = None
     video_sub_margin = None
+    video_caption_anchor = "bottom"
     video_sub_margin_custom = False
     video_title_margin = None
     video_title_line_spacing = -4
@@ -27783,6 +27816,8 @@ def autoclip_video(video_pk):
             crop_sql += ", layout_mode"
         if "overlay_shapes" in crop_columns:
             crop_sql += ", overlay_shapes"
+        if "caption_anchor" in crop_columns:
+            crop_sql += ", caption_anchor"
         crop_sql += " FROM youtube_videos WHERE video_id = ?"
         crop_params: List[Any] = [vid]
         crop_sql += " AND owner_user_id = ? AND brand_id = ?"
@@ -28176,6 +28211,7 @@ def autoclip_video(video_pk):
             original_zoom_rect_index = None
             layout_mode_index = None
             overlay_shapes_index = None
+            caption_anchor_index = None
             if "crop_locked" in crop_columns:
                 crop_locked_index = optional_index
                 optional_index += 1
@@ -28190,6 +28226,9 @@ def autoclip_video(video_pk):
                 optional_index += 1
             if "overlay_shapes" in crop_columns:
                 overlay_shapes_index = optional_index
+                optional_index += 1
+            if "caption_anchor" in crop_columns:
+                caption_anchor_index = optional_index
                 optional_index += 1
             has_split_columns = len(crop_row) >= 35
             video_crop_ratios = {
@@ -28216,6 +28255,10 @@ def autoclip_video(video_pk):
                 )
             if overlay_shapes_index is not None:
                 video_overlay_shapes = _normalize_overlay_shapes(crop_row[overlay_shapes_index])
+            if caption_anchor_index is not None:
+                video_caption_anchor = str(crop_row[caption_anchor_index] or "bottom").strip().lower()
+                if video_caption_anchor not in {"top", "center", "bottom"}:
+                    video_caption_anchor = "bottom"
             video_font_key = crop_row[query_indexes["title_font_key"]]
             video_title_font_size = crop_row[query_indexes["title_font_size"]]
             video_sub_font_key = crop_row[query_indexes["subtitle_font_key"]]
@@ -28421,6 +28464,7 @@ def autoclip_video(video_pk):
                 subtitle_font_key=video_sub_font_key,
                 subtitle_font_size=video_sub_font_size,
                 subtitle_margin=video_sub_margin,
+                caption_anchor=video_caption_anchor,
                 subtitle_margin_custom=video_sub_margin_custom,
                 subtitle_style=video_subtitle_style,
                 subtitle_preset=video_subtitle_preset,
@@ -28832,6 +28876,7 @@ def autoclip_video(video_pk):
                             adj_end,
                             subtitle_font_size=sub_font_size,
                             subtitle_margin=sub_margin,
+                            caption_anchor=video_caption_anchor,
                             subtitle_preset=video_subtitle_preset,
                             subtitle_font_key=video_sub_font_key,
                             subtitle_text_color=subtitle_text_color,
@@ -28859,6 +28904,7 @@ def autoclip_video(video_pk):
                                 subtitle_font=sub_font_name,
                                 subtitle_font_size=sub_font_size,
                                 subtitle_margin=sub_margin,
+                                caption_anchor=video_caption_anchor,
                                 subtitle_text_color=subtitle_text_color,
                                 subtitle_text_alpha=subtitle_text_alpha,
                                 subtitle_bg_color=subtitle_bg_color,
@@ -28873,6 +28919,7 @@ def autoclip_video(video_pk):
                             subtitle_font=sub_font_name,
                             subtitle_font_size=sub_font_size,
                             subtitle_margin=sub_margin,
+                            caption_anchor=video_caption_anchor,
                             subtitle_text_color=subtitle_text_color,
                             subtitle_text_alpha=subtitle_text_alpha,
                             subtitle_bg_color=subtitle_bg_color,
@@ -28901,6 +28948,7 @@ def autoclip_video(video_pk):
                         adj_end,
                         subtitle_font_size=sub_font_size,
                         subtitle_margin=sub_margin,
+                        caption_anchor=video_caption_anchor,
                         subtitle_preset=video_subtitle_preset,
                         subtitle_font_key=video_sub_font_key,
                         subtitle_text_color=subtitle_text_color,
@@ -28933,6 +28981,7 @@ def autoclip_video(video_pk):
                             subtitle_font=sub_font_name,
                             subtitle_font_size=sub_font_size,
                             subtitle_margin=sub_margin,
+                            caption_anchor=video_caption_anchor,
                             subtitle_text_color=subtitle_text_color,
                             subtitle_text_alpha=subtitle_text_alpha,
                             subtitle_bg_color=subtitle_bg_color,
@@ -28947,6 +28996,7 @@ def autoclip_video(video_pk):
                         subtitle_font=sub_font_name,
                         subtitle_font_size=sub_font_size,
                         subtitle_margin=sub_margin,
+                        caption_anchor=video_caption_anchor,
                         subtitle_text_color=subtitle_text_color,
                         subtitle_text_alpha=subtitle_text_alpha,
                         subtitle_bg_color=subtitle_bg_color,
@@ -29319,6 +29369,7 @@ def autoclip_video(video_pk):
                 title_outline_width=title_template_behavior["title_outline_width"],
                 subtitle_font_size=sub_font_size,
                 subtitle_margin=sub_margin,
+                caption_anchor=video_caption_anchor,
                 subtitle_margin_custom=video_sub_margin_custom,
                 subtitle_text_color=subtitle_text_color,
                 subtitle_bg_color=subtitle_bg_color,
