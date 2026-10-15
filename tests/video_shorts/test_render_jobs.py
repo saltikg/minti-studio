@@ -1,7 +1,7 @@
 from __future__ import annotations
 
-import json
 import errno
+import json
 import logging
 import sys
 from datetime import datetime, timedelta
@@ -9,6 +9,8 @@ from pathlib import Path
 from threading import Lock, Thread
 from types import ModuleType, SimpleNamespace
 from uuid import uuid4
+
+import pytest
 
 def _ensure_module(name: str) -> ModuleType:
     module = sys.modules.get(name)
@@ -98,10 +100,17 @@ from app import create_app
 from app.video_shorts.routes import generation
 from app.video_shorts.services import db as db_service
 from app.video_shorts.services import compositor
-from app.video_shorts.services import render_jobs, usage_metering
+from app.video_shorts.services import render_jobs, usage_metering, tenant_media
 from app.video_shorts.services.media_utils import MediaSubprocessTimeoutError
 from app.video_shorts import worker as worker_module
 from app.video_shorts.worker import process_next_job
+
+
+@pytest.fixture(autouse=True)
+def isolated_media_paths(monkeypatch, tmp_path):
+    # The shared key helper owns state paths; routes also use SHORTS_DIR for previews.
+    monkeypatch.setattr(tenant_media, "SHORTS_DIR", tmp_path / "shorts")
+    monkeypatch.setattr(generation, "SHORTS_DIR", tmp_path / "shorts")
 
 
 def _configure_duckdb(monkeypatch, tmp_path, filename: str) -> None:
@@ -133,6 +142,13 @@ def _insert_user(user_id: str, plan_id: str) -> None:
             )
             """
         )
+        conn.execute("""CREATE TABLE IF NOT EXISTS shorts_generated_videos (
+            id BIGINT, source_video_id VARCHAR, user_id VARCHAR, brand_id VARCHAR,
+            clip_filename VARCHAR, output_filename VARCHAR, storage_file_key VARCHAR
+        )""")
+        conn.execute("""CREATE TABLE IF NOT EXISTS shorts_video_legacy_owners (
+            youtube_id VARCHAR PRIMARY KEY, video_pk BIGINT
+        )""")
         conn.execute(
             """
             INSERT INTO shorts_users (id, name, email, username, role, plan_id)
@@ -210,9 +226,9 @@ def _insert_video(
         conn.close()
 
 
-def _write_plan(shorts_dir: Path, source_video_id: str, *, plan_index: int = 1) -> None:
+def _write_plan(shorts_dir: Path, source_video_id: str, *, video_pk: int, plan_index: int = 1) -> None:
     shorts_dir.mkdir(parents=True, exist_ok=True)
-    plan_path = shorts_dir / f"{source_video_id}_plan.json"
+    plan_path = shorts_dir / f"{video_pk}_plan.json"
     plan_path.write_text(
         json.dumps(
             {
@@ -220,7 +236,7 @@ def _write_plan(shorts_dir: Path, source_video_id: str, *, plan_index: int = 1) 
                     {
                         "origin": "ai",
                         "plan_index": plan_index,
-                        "clip_filename": f"{plan_index}_{source_video_id}.mp4",
+                        "clip_filename": f"{plan_index}_{source_video_id}_v{video_pk}.mp4",
                         "title": f"Clip {plan_index}",
                         "start": 10.0,
                         "end": 20.0,
@@ -259,32 +275,44 @@ def _input_hash(source_video_id: str, plan_index: int = 1) -> str:
 
 
 def test_plan_entry_merge_preserves_newer_entries(monkeypatch, tmp_path):
-    shorts_dir = tmp_path / "shorts"
-    monkeypatch.setattr(generation, "SHORTS_DIR", shorts_dir)
+    _configure_duckdb(monkeypatch, tmp_path, "merge.duckdb")
+    user_a, user_b = str(uuid4()), str(uuid4())
     video_id = "merge-plan-video"
-    original_snapshot = [
+    for pk, user, brand in [(41, user_a, "brand-a"), (42, user_b, "brand-b")]:
+        _insert_user(user, "plan_10gb")
+        _insert_video(pk, video_id, user, brand_id=brand)
+    original_snapshot = [{"plan_index": 1, "title": "First", "status": "queued"}]
+    generation._write_plan_entries(video_id, original_snapshot, video_pk=41)
+    generation._write_plan_entries(video_id, [
+        {"plan_index": 1, "title": "Other tenant", "status": "queued"},
+    ], video_pk=42)
+    other_path = tmp_path / "shorts" / "42_plan.json"
+    other_before = other_path.read_bytes()
+    generation._write_plan_entries(video_id, [
+        {"plan_index": 2, "title": "Second", "status": "queued"},
         {"plan_index": 1, "title": "First", "status": "queued"},
-    ]
-    generation._write_plan_entries(video_id, original_snapshot)
-    generation._write_plan_entries(
-        video_id,
-        [
-            {"plan_index": 2, "title": "Second", "status": "queued"},
-            {"plan_index": 1, "title": "First", "status": "queued"},
-        ],
-    )
+    ], video_pk=41)
 
     merged = generation._write_merged_plan_entry(
         video_id,
-        {"plan_index": 1, "title": "First", "status": "created", "output_filename": "1_merge-plan-video.mp4"},
+        {"plan_index": 1, "title": "First", "status": "created",
+         "output_filename": "1_merge-plan-video_v41.mp4"},
         original_snapshot,
+        video_pk=41,
     )
-    entries = generation._load_plan_entries(video_id)
+    entries = generation._load_plan_entries(video_id, video_pk=41)
 
     assert merged is True
     assert [entry["plan_index"] for entry in entries] == [2, 1]
     assert entries[0]["title"] == "Second"
     assert entries[1]["status"] == "created"
+    assert entries[1]["output_filename"] == "1_merge-plan-video_v41.mp4"
+    assert [e["clip_filename"] for e in entries] == ["2_merge-plan-video_v41.mp4", "1_merge-plan-video_v41.mp4"]
+    assert other_path.read_bytes() == other_before
+    assert generation._load_plan_entries(video_id, video_pk=42)[0]["clip_filename"] == "1_merge-plan-video_v42.mp4"
+    assert not (tmp_path / "shorts" / f"{video_id}_plan.json").exists()
+    with pytest.raises(tenant_media.TenantMediaConflict, match="video_pk"):
+        generation._load_plan_entries(video_id)
 
 
 def test_preview_enqueue_is_tenant_scoped_and_idempotent(monkeypatch, tmp_path):
@@ -389,12 +417,20 @@ def test_preview_worker_processes_scoped_source(monkeypatch, tmp_path):
     preview_dir = tmp_path / "shorts"
     calls = {}
 
-    class FakeStorage:
-        backend_name = "local"
+    storage = SimpleNamespace(backend_name="s3")
 
-        def download_to_temp(self, key):
-            calls["source_key"] = key
-            return source_path
+    def fake_resolve_cached(video_id, source_key, *, storage):
+        calls["source_key"] = source_key
+        calls["source_scope"] = (video_id, storage)
+        return source_path
+
+    def fake_ensure_track(video_id, local_source_path, start, end, duration):
+        calls["track"] = (video_id, Path(local_source_path), start, end, duration)
+        return None
+
+    def fake_apply_crop(**kwargs):
+        calls["crop"] = kwargs
+        return True
 
     def fake_ensure_preview(video_id, local_source_path, duration_seconds):
         calls["ensure"] = (video_id, Path(local_source_path), duration_seconds)
@@ -408,9 +444,11 @@ def test_preview_worker_processes_scoped_source(monkeypatch, tmp_path):
 
     monkeypatch.setattr(generation, "SHORTS_DIR", preview_dir)
     monkeypatch.setattr(worker_module, "disk_guard_triggered", lambda **kwargs: False)
-    monkeypatch.setattr(worker_module, "get_media_storage", lambda: FakeStorage())
+    monkeypatch.setattr(worker_module, "get_media_storage", lambda: storage)
+    monkeypatch.setattr(worker_module, "resolve_s3_source_video_cached", fake_resolve_cached)
+    monkeypatch.setattr(generation, "_ensure_preview_face_track", fake_ensure_track)
     monkeypatch.setattr(generation, "_ensure_preview_frame", fake_ensure_preview)
-    monkeypatch.setattr(generation, "_maybe_apply_face_centered_default_crop", lambda **kwargs: None)
+    monkeypatch.setattr(generation, "_maybe_apply_face_centered_default_crop", fake_apply_crop)
 
     queued = render_jobs.enqueue_preview_frame_job(
         owner_user_id=user_id,
@@ -429,6 +467,14 @@ def test_preview_worker_processes_scoped_source(monkeypatch, tmp_path):
     assert job["status"] == "done"
     assert calls["source_key"] == "videos/preview-worker.mp4"
     assert calls["ensure"] == ("preview-worker", source_path, 180)
+    assert calls["source_scope"] == ("preview-worker", storage)
+    assert calls["track"] == ("preview-worker", source_path, None, None, 180)
+    assert calls["crop"] == {
+        "video_row_id": 31, "video_id": "preview-worker", "owner_user_id": user_id,
+        "brand_id": "brand-a", "preview_metadata": {"selected_by": "detail"},
+    }
+    assert job["result"]["video_pk"] == 31
+    assert job["result"]["crop_applied"] is True
     assert generation._preview_frame_cache_path("preview-worker").exists()
 
 
@@ -448,19 +494,22 @@ def test_preview_frame_extraction_scales_to_720_and_uses_scaled_face_ratios(monk
         def var(self):
             return 42.0
 
+    detector_calls = []
+
     class FakeDetector:
-        def __init__(self, path):
-            self.path = path
+        def detect(self, image):
+            assert isinstance(image, FakeImage)
+            return None, [[72, 40, 144, 80, 0.99]]
 
-        def empty(self):
-            return False
+    def create_detector(model, config, size, score_threshold, nms_threshold, top_k):
+        detector_calls.append((model, size, score_threshold))
+        return FakeDetector()
 
-        def detectMultiScale(self, gray, **kwargs):
-            return [(72, 40, 144, 80)]
-
+    model_path = tmp_path / "yunet.onnx"
+    model_path.write_bytes(b"test model")
+    monkeypatch.setattr(generation, "_YUNET_FACE_MODEL_PATH", model_path)
     fake_cv2 = ModuleType("cv2")
-    fake_cv2.data = SimpleNamespace(haarcascades=str(tmp_path))
-    fake_cv2.CascadeClassifier = FakeDetector
+    fake_cv2.FaceDetectorYN_create = create_detector
     fake_cv2.imread = lambda path: FakeImage()
     fake_cv2.cvtColor = lambda image, code: FakeGray()
     fake_cv2.Laplacian = lambda gray, code: FakeLaplacian()
@@ -485,6 +534,8 @@ def test_preview_frame_extraction_scales_to_720_and_uses_scaled_face_ratios(monk
         metadata = generation._load_preview_frame_metadata("scaled-preview")
 
     assert preview_path == generation._preview_frame_cache_path("scaled-preview")
+    assert commands
+    assert detector_calls == [(str(model_path), (720, 405), generation._YUNET_FACE_SCORE_THRESHOLD)] * len(commands)
     assert all("-vf" in command and "scale=720:-1" in command for command in commands)
     assert metadata["frame_width"] == 720
     assert metadata["frame_height"] == 405
@@ -684,13 +735,29 @@ def test_worker_loop_uses_stale_job_timeout_config(monkeypatch):
 
     monkeypatch.setattr(worker_module, "STALE_JOB_TIMEOUT_SECONDS", 5400)
     monkeypatch.setattr(worker_module, "WORKER_CONCURRENCY", 1)
+    monkeypatch.setattr(worker_module, "_worker_mode", lambda: "customer")
+    monkeypatch.setattr(worker_module, "requeue_dead_local_worker_jobs", lambda: 0)
+    monkeypatch.setattr(worker_module, "recover_stuck_render_jobs", lambda app, *, stale_seconds: {})
+    monkeypatch.setattr(worker_module, "process_due_scheduled_outreach_email", lambda: False)
+    for name in (
+        "process_new_lead_autodownload", "process_downloaded_lead_autoplan",
+        "process_planned_lead_autogenerate", "process_awaiting_approval_lead_autoapprove",
+        "process_approved_lead_autoschedule", "process_due_youtube_publish_reconcile",
+    ):
+        monkeypatch.setattr(generation, name, lambda: False)
+    processed_scopes = []
+
+    def fake_process(app, worker_id, *, customer_only, discovery_only):
+        processed_scopes.append((customer_only, discovery_only))
+        return False
+
     monkeypatch.setattr(worker_module, "create_app", lambda: create_app())
     monkeypatch.setattr(
         worker_module,
         "requeue_timed_out_jobs",
         lambda *, timeout_seconds: calls.append(timeout_seconds),
     )
-    monkeypatch.setattr(worker_module, "process_next_job", lambda app, worker_id: False)
+    monkeypatch.setattr(worker_module, "process_next_job", fake_process)
 
     def _stop(_seconds):
         raise RuntimeError("stop-loop")
@@ -703,6 +770,7 @@ def test_worker_loop_uses_stale_job_timeout_config(monkeypatch):
         assert str(exc) == "stop-loop"
 
     assert calls == [5400]
+    assert processed_scopes == [(True, False)]
 
 
 def test_timed_out_processing_job_requeues_then_fails_and_releases_quota(monkeypatch, tmp_path):
@@ -810,8 +878,31 @@ def test_discovery_startup_recovery_fails_second_processing_attempt(monkeypatch,
 
 def test_done_job_cache_returns_existing_result_without_new_job(monkeypatch, tmp_path):
     _configure_duckdb(monkeypatch, tmp_path, "idempotent_cache.duckdb")
+    # DuckDB cannot mix read_only=True and writable connections to one file.
+    # Cache validation opens a nested reader while enqueue holds a writer.
+    monkeypatch.setattr(tenant_media, "get_db_readonly", db_service.get_db)
+
     user_id = str(uuid4())
     _insert_user(user_id, "plan_10gb")
+    _insert_video(1, "cache-video", user_id, brand_id="brand-1")
+    _write_plan(tmp_path / "shorts", "cache-video", video_pk=1)
+    plan_path = tmp_path / "shorts" / "1_plan.json"
+    plan = json.loads(plan_path.read_text())
+    plan["plan"][0].update(status="created", output_filename="1_cache-video_v1.mp4")
+    plan_path.write_text(json.dumps(plan))
+    (tmp_path / "shorts" / "1_cache-video_v1.mp4").write_bytes(b"rendered output")
+    monkeypatch.setattr(generation, "get_media_storage", lambda: SimpleNamespace(backend_name="local"))
+    other_user = str(uuid4())
+    _insert_user(other_user, "plan_10gb")
+    _insert_video(2, "cache-video", other_user, brand_id="brand-2")
+    _write_plan(tmp_path / "shorts", "cache-video", video_pk=2)
+    other_path = tmp_path / "shorts" / "2_plan.json"
+    other_plan = json.loads(other_path.read_text())
+    other_plan["plan"][0].update(status="created", output_filename="1_cache-video_v2.mp4")
+    other_path.write_text(json.dumps(other_plan))
+    other_before = other_path.read_bytes()
+    other_output = tmp_path / "shorts" / "1_cache-video_v2.mp4"
+    other_output.write_bytes(b"other tenant output")
 
     queued = render_jobs.enqueue_render_job(
         user_id=user_id,
@@ -820,7 +911,7 @@ def test_done_job_cache_returns_existing_result_without_new_job(monkeypatch, tmp
     )
     job_id = queued["job"]["id"]
     usage_metering.reserve_export(user_id)
-    render_jobs.mark_job_done(job_id, {"clip_filename": "1_cache-video.mp4", "status": "created"})
+    render_jobs.mark_job_done(job_id, {"clip_filename": "1_cache-video_v1.mp4", "status": "created"})
     render_jobs.finalize_job_success(job_id)
 
     cached = render_jobs.enqueue_render_job(
@@ -832,8 +923,27 @@ def test_done_job_cache_returns_existing_result_without_new_job(monkeypatch, tmp
 
     assert cached["kind"] == "cached"
     assert cached["job"]["id"] == job_id
-    assert cached["job"]["result"]["clip_filename"] == "1_cache-video.mp4"
+    assert cached["job"]["result"]["clip_filename"] == "1_cache-video_v1.mp4"
     assert snapshot["exports"]["used"] == 1
+
+    conn = db_service.get_db_readonly()
+    try:
+        assert conn.execute("SELECT COUNT(*) FROM shorts_render_jobs").fetchone()[0] == 1
+    finally:
+        conn.close()
+
+    # A valid output for the same YouTube ID in another tenant is not a cache hit.
+    (tmp_path / "shorts" / "1_cache-video_v1.mp4").unlink()
+    uncached = render_jobs.enqueue_render_job(
+        user_id=user_id,
+        payload=_payload(1, "cache-video"),
+        input_hash=_input_hash("cache-video"),
+    )
+    assert uncached["kind"] == "queued"
+    assert uncached["job"]["id"] != job_id
+    assert uncached["job"]["payload"]["video_pk"] == 1
+    assert other_path.read_bytes() == other_before
+    assert other_output.read_bytes() == b"other tenant output"
 
 
 def test_job_status_endpoint_is_owner_scoped(monkeypatch, tmp_path):
@@ -1154,7 +1264,7 @@ def test_autoclip_refuses_over_export_quota_before_source_resolution(monkeypatch
 
     _insert_user(user_id, "plan_free")
     _insert_video(video_pk, source_video_id, user_id)
-    _write_plan(shorts_dir, source_video_id, plan_index=1)
+    _write_plan(shorts_dir, source_video_id, video_pk=video_pk, plan_index=1)
     for _ in range(10):
         result = usage_metering.reserve_export(user_id)
         assert result["allowed"] is True
@@ -1202,7 +1312,7 @@ def test_worker_marks_render_job_failed_when_media_timeout_raises(monkeypatch, t
 
     _insert_user(user_id, "plan_free")
     _insert_video(video_pk, source_video_id, user_id)
-    _write_plan(shorts_dir, source_video_id, plan_index=plan_index)
+    _write_plan(shorts_dir, source_video_id, video_pk=video_pk, plan_index=plan_index)
 
     monkeypatch.setattr(generation, "SHORTS_DIR", shorts_dir)
     monkeypatch.setattr(generation, "_get_user_storage_usage", lambda conn, current_user_id: {"used_bytes": 0, "limit_bytes": 10 * 1024**3})
@@ -1218,13 +1328,13 @@ def test_worker_marks_render_job_failed_when_media_timeout_raises(monkeypatch, t
 
     def _raise_timeout(*args, **kwargs):
         logging.getLogger("app.video_shorts.services.media_utils").error(
-            "Media subprocess timeout binary=ffmpeg timeout=3600s operation=compose_with_background context=output=1_timeout-video.mp4"
+            "Media subprocess timeout binary=ffmpeg timeout=3600s operation=compose_with_background context=output=1_timeout-video_v101.mp4"
         )
         raise MediaSubprocessTimeoutError(
             binary="ffmpeg",
             timeout_seconds=3600,
             operation="compose_with_background",
-            context="output=1_timeout-video.mp4",
+            context="output=1_timeout-video_v101.mp4",
         )
 
     monkeypatch.setattr(generation, "_compose_trimmed_with_background", _raise_timeout)
@@ -1257,7 +1367,7 @@ def test_worker_marks_render_job_failed_when_media_timeout_raises(monkeypatch, t
 
     failed_job = render_jobs.get_job(job_id, user_id=user_id)
     after_snapshot = usage_metering.get_usage_snapshot(user_id)
-    plan_entries = generation._load_plan_entries(source_video_id)
+    plan_entries = generation._load_plan_entries(source_video_id, video_pk=video_pk)
     expected_error = (
         "This video took too long to process. Please try again. "
         "If it keeps happening, contact support."
@@ -1267,6 +1377,9 @@ def test_worker_marks_render_job_failed_when_media_timeout_raises(monkeypatch, t
     assert failed_job["error"] == expected_error
     assert failed_job["attempts"] == 1
     assert after_snapshot["exports"]["used"] == before_snapshot["exports"]["used"]
+    assert plan_entries[0]["clip_filename"] == f"1_{source_video_id}_v{video_pk}.mp4"
+    assert (shorts_dir / f"{video_pk}_plan.json").exists()
+    assert not (shorts_dir / f"{source_video_id}_plan.json").exists()
     assert plan_entries[0]["status"] == "failed"
     assert plan_entries[0]["render_error"] == expected_error
     assert any(
@@ -1289,7 +1402,7 @@ def test_worker_marks_render_job_failed_without_retry_when_disk_is_full(monkeypa
 
     _insert_user(user_id, "plan_free")
     _insert_video(video_pk, source_video_id, user_id)
-    _write_plan(shorts_dir, source_video_id, plan_index=plan_index)
+    _write_plan(shorts_dir, source_video_id, video_pk=video_pk, plan_index=plan_index)
 
     monkeypatch.setattr(generation, "SHORTS_DIR", shorts_dir)
     monkeypatch.setattr(generation, "_get_user_storage_usage", lambda conn, current_user_id: {"used_bytes": 0, "limit_bytes": 10 * 1024**3})
@@ -1334,13 +1447,16 @@ def test_worker_marks_render_job_failed_without_retry_when_disk_is_full(monkeypa
 
     failed_job = render_jobs.get_job(job_id, user_id=user_id)
     after_snapshot = usage_metering.get_usage_snapshot(user_id)
-    plan_entries = generation._load_plan_entries(source_video_id)
+    plan_entries = generation._load_plan_entries(source_video_id, video_pk=video_pk)
     expected_error = "The system is busy right now. Please try again in a few minutes."
 
     assert failed_job["status"] == "failed"
     assert failed_job["error"] == expected_error
     assert failed_job["attempts"] == 1
     assert after_snapshot["exports"]["used"] == before_snapshot["exports"]["used"]
+    assert plan_entries[0]["clip_filename"] == f"1_{source_video_id}_v{video_pk}.mp4"
+    assert (shorts_dir / f"{video_pk}_plan.json").exists()
+    assert not (shorts_dir / f"{source_video_id}_plan.json").exists()
     assert plan_entries[0]["status"] == "failed"
     assert plan_entries[0]["render_error"] == expected_error
     assert any(
