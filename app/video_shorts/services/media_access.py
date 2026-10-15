@@ -9,6 +9,7 @@ from itsdangerous import URLSafeTimedSerializer
 
 from app.video_shorts.services import tenant_media
 from app.video_shorts.services.db import get_db_readonly, table_columns
+from app.video_shorts.services.storage import get_media_storage
 
 MEDIA_TOKEN_MAX_AGE = 600
 
@@ -150,6 +151,15 @@ def media_url(filename, *, poster_filename=None, share_token=None):
                         if entry.get("poster_filename"):
                             info["posters"].add(tenant_media.safe_filename(entry["poster_filename"]))
             if poster_filename not in info["posters"]:
+                return ""
+        if poster_filename:
+            poster_key = tenant_media.poster_key(tenant_media.safe_filename(poster_filename))
+            poster_location = tenant_media.storage_location(poster_key)
+            poster_exists = poster_location["local_path"].is_file()
+            if not poster_exists:
+                storage = get_media_storage()
+                poster_exists = storage.backend_name == "s3" and storage.exists(poster_key)
+            if not poster_exists:
                 return ""
         grant = {"filename": filename, "owner": owner, "brand": brand, "poster": poster_filename}
         if share_token:
