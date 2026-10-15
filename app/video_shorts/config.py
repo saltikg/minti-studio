@@ -1351,6 +1351,9 @@ DESIGN_GEOMETRY = {
     "pill_padding_min_x": 10, "pill_padding_min_y": 4,
     "pill_min_aspect": 2.0, "box_radius": 0.18, "box_radius_min": 6,
     "subscribe_bottom": 30, "subscribe_scale": 1,
+    # Shapes persist in the public 1080 x 1920 design coordinate space.
+    "shape_coordinate_min": -1920, "shape_coordinate_max": 3840,
+    "shape_size_max": 3840,
     "fit_top": 330, "fit_caption_gap": 24,
     "original_width": 1280, "original_height": 720,
     "original_hd_width": 1920, "original_hd_height": 1080,

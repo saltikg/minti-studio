@@ -5564,7 +5564,7 @@
   .shape-editor-empty { color: rgba(255,255,255,.52); font-size: .82rem; padding: 18px 4px; }
   .shape-editor-controls { display: grid; gap: 14px; }
   .shape-editor-actions { display: flex; flex-wrap: wrap; gap: 8px; }
-  .preview-shapes-layer { position: absolute; inset: 0; z-index: 2; pointer-events: none; }
+  .preview-shapes-layer { position: absolute; inset: 0; z-index: 2; overflow: hidden; pointer-events: none; }
   .preview-shape { position: absolute; pointer-events: auto; touch-action: none; cursor: grab; }
   body.is-shape-moving .preview-shape { cursor: grabbing; }
   .preview-shape.is-selected { outline: 2px solid #50cdb5; outline-offset: 1px; }
@@ -8466,8 +8466,8 @@
                       <button type="button" class="design-panel-more-toggle" id="shape-more-toggle" aria-expanded="false">▸ More options</button>
                       <div class="design-panel-more-options" id="shape-more-options">
                         <div class="design-panel-more-grid">
-                          {% for label, key, max_value in [('X','x',1080),('Y','y',1920),('Width','w',1080),('Height','h',1920)] %}
-                          <label class="design-more-label" for="shape-{{ key }}">{{ label }}</label><span class="design-more-input"><input type="number" class="form-control form-control-sm" id="shape-{{ key }}" min="0" max="{{ max_value }}"><span class="design-more-unit">px</span></span>
+                          {% for label, key, min_value in [('X','x',design_geometry.shape_coordinate_min),('Y','y',design_geometry.shape_coordinate_min),('Width','w',1),('Height','h',1)] %}
+                          <label class="design-more-label" for="shape-{{ key }}">{{ label }}</label><span class="design-more-input"><input type="number" class="form-control form-control-sm" id="shape-{{ key }}" min="{{ min_value }}" max="{{ design_geometry.shape_coordinate_max if key in ['x','y'] else design_geometry.shape_size_max }}"><span class="design-more-unit">px</span></span>
                           {% endfor %}
                         </div>
                       </div>
@@ -17947,6 +17947,7 @@ document.addEventListener("DOMContentLoaded", () => {
   let cropDirty = false;
   let cropSaveInFlight = false;
   let cropperProgrammaticUpdateDepth = 0;
+  const userEditedCropBoxes = new Set();
   let splitDefaultsPrimed = false;
   let backgroundPreferenceSyncInFlight = false;
   let backgroundPickerImagesHydrated = false;
@@ -18100,17 +18101,7 @@ document.addEventListener("DOMContentLoaded", () => {
     return canonicalizeDesignValue(fields);
   };
   const roundedRatio = (value) => Number(clampRatio(value).toFixed(6));
-  const readCropRatios = (boxKey, fallback) => {
-    const instance = cropperInstances[boxKey];
-    const data = instance?.getData?.(true);
-    if (data && naturalSize.width && naturalSize.height) {
-      return canonicalizeDesignValue({
-        x: roundedRatio(data.x / naturalSize.width),
-        y: roundedRatio(data.y / naturalSize.height),
-        w: roundedRatio(data.width / naturalSize.width),
-        h: roundedRatio(data.height / naturalSize.height),
-      });
-    }
+  const readCropRatios = (_boxKey, fallback) => {
     const source = fallback || { x: 0, y: 0, w: 1, h: 1 };
     return canonicalizeDesignValue({
       x: roundedRatio(source.x), y: roundedRatio(source.y),
@@ -18854,7 +18845,7 @@ document.addEventListener("DOMContentLoaded", () => {
         : "Full frame";
     }
   };
-  const markCropDirtyFromCropperEvent = (event) => {
+  const markCropDirtyFromCropperEvent = (event, boxKey) => {
     if (cropperProgrammaticUpdateDepth > 0) {
       return;
     }
@@ -18867,6 +18858,7 @@ document.addEventListener("DOMContentLoaded", () => {
       originalEvent.isTrusted === true ||
       /^(pointer|mouse|touch|wheel)/.test(type)
     ) {
+      userEditedCropBoxes.add(boxKey);
       markCropDirty();
     }
   };
@@ -19470,6 +19462,7 @@ document.addEventListener("DOMContentLoaded", () => {
     destroyAllCroppers();
     dragState = null;
     cropDirty = false;
+    userEditedCropBoxes.clear();
     setSelectedPreviewElement("");
     previewFrame?.classList.remove("is-dragging");
     naturalSize = { width: 0, height: 0 };
@@ -19797,6 +19790,9 @@ document.addEventListener("DOMContentLoaded", () => {
       return;
     }
     const updateRatiosForBox = (boxKey) => {
+      if (!userEditedCropBoxes.has(boxKey)) {
+        return;
+      }
       const instance = cropperInstances[boxKey];
       if (!instance) {
         return;
@@ -19853,16 +19849,29 @@ document.addEventListener("DOMContentLoaded", () => {
     const canvasHeight = previewCanvas.height || dims.height;
     previewCtx.clearRect(0, 0, canvasWidth, canvasHeight);
     const effectiveSplit = getEffectiveSplitEnabled();
-    const topSnapshot = topCropper.getCroppedCanvas({
-      width: canvasWidth,
-      height: effectiveSplit ? Math.floor(canvasHeight * previewConfig.geometry.split_ratio) : canvasHeight,
-    });
-    if (!topSnapshot || !topSnapshot.width || !topSnapshot.height) {
+    const drawSavedCrop = (boxKey, ratios, destinationY, destinationHeight) => {
+      const source = cropperImages[boxKey];
+      const normalized = normalizePresetRatios(ratios);
+      if (!source?.naturalWidth || !source?.naturalHeight) return false;
+      previewCtx.drawImage(
+        source,
+        normalized.x * source.naturalWidth,
+        normalized.y * source.naturalHeight,
+        normalized.w * source.naturalWidth,
+        normalized.h * source.naturalHeight,
+        0,
+        destinationY,
+        canvasWidth,
+        destinationHeight,
+      );
+      return true;
+    };
+    if (!cropperImages.top?.naturalWidth || !cropperImages.top?.naturalHeight) {
       return;
     }
     try {
       if (!effectiveSplit) {
-        previewCtx.drawImage(topSnapshot, 0, 0, canvasWidth, canvasHeight);
+        drawSavedCrop("top", isOriginalCropAspect() ? (originalZoomRect || { x: 0, y: 0, w: 1, h: 1 }) : currentPresetRatios, 0, canvasHeight);
         return;
       }
       const bottomCropper = cropperInstances.bottom;
@@ -19871,10 +19880,6 @@ document.addEventListener("DOMContentLoaded", () => {
       }
       const dividerThickness = previewConfig.geometry.split_divider;
       const dividerOutlineThickness = previewConfig.geometry.split_outline;
-      const bottomSnapshot = bottomCropper?.getCroppedCanvas({
-        width: canvasWidth,
-        height: Math.floor(canvasHeight * previewConfig.geometry.split_ratio),
-      });
       const halfHeight = Math.floor(canvasHeight * previewConfig.geometry.split_ratio);
       const bottomHeight = canvasHeight - halfHeight;
       previewCtx.save();
@@ -19883,10 +19888,8 @@ document.addEventListener("DOMContentLoaded", () => {
       previewCtx.clip();
       previewCtx.fillStyle = "#1f1f1f";
       previewCtx.fillRect(0, 0, canvasWidth, canvasHeight);
-      previewCtx.drawImage(topSnapshot, 0, 0, canvasWidth, halfHeight);
-      if (bottomSnapshot && bottomSnapshot.width && bottomSnapshot.height) {
-        previewCtx.drawImage(bottomSnapshot, 0, halfHeight, canvasWidth, bottomHeight);
-      }
+      drawSavedCrop("top", currentPresetRatios, 0, halfHeight);
+      drawSavedCrop("bottom", currentPresetRatiosBottom, halfHeight, bottomHeight);
       previewCtx.fillStyle = "#000000";
       previewCtx.fillRect(0, halfHeight - (dividerThickness / 2) - dividerOutlineThickness, canvasWidth, dividerOutlineThickness);
       previewCtx.fillStyle = "#ffffff";
@@ -19896,6 +19899,7 @@ document.addEventListener("DOMContentLoaded", () => {
       previewCtx.restore();
     } catch (_) {}
   };
+  window.redrawCropEditorFinalPreview = drawPreviewFromCropper;
 
   const updateStaticVisualDescription = (visual) => {
     if (!staticVisualDescription) {
@@ -20352,16 +20356,16 @@ document.addEventListener("DOMContentLoaded", () => {
         cropDirty = false;
       },
       cropstart(event) {
-        markCropDirtyFromCropperEvent(event);
+        markCropDirtyFromCropperEvent(event, boxKey);
       },
       cropmove(event) {
-        markCropDirtyFromCropperEvent(event);
+        markCropDirtyFromCropperEvent(event, boxKey);
       },
       cropend(event) {
-        markCropDirtyFromCropperEvent(event);
+        markCropDirtyFromCropperEvent(event, boxKey);
       },
       zoom(event) {
-        markCropDirtyFromCropperEvent(event);
+        markCropDirtyFromCropperEvent(event, boxKey);
       },
       crop() {
         updateCropInfo();
@@ -20726,15 +20730,7 @@ document.addEventListener("DOMContentLoaded", () => {
       window.setGenerateV2EditorStatus?.("Couldn't save. Try again.", "error");
       return;
     }
-    const data = cropperInstances.top?.getData(true);
-    const activeTopRatios = data && naturalSize.width && naturalSize.height
-      ? {
-          x: clampRatio(data.x / naturalSize.width),
-          y: clampRatio(data.y / naturalSize.height),
-          w: clampRatio(data.width / naturalSize.width),
-          h: clampRatio(data.height / naturalSize.height),
-        }
-      : normalizePresetRatios(currentPresetRatios);
+    const activeTopRatios = normalizePresetRatios(currentPresetRatios);
     if (isOriginalCropAspect()) {
       originalZoomRect = normalizeOriginalZoomRect(activeTopRatios);
       syncOriginalZoomUi();
@@ -20744,15 +20740,7 @@ document.addEventListener("DOMContentLoaded", () => {
     const wRatio = isOriginalCropAspect() ? 1 : activeTopRatios.w;
     const hRatio = isOriginalCropAspect() ? 1 : activeTopRatios.h;
     const effectiveSplit = getEffectiveSplitEnabled();
-    const bottomData = effectiveSplit ? cropperInstances.bottom?.getData(true) : null;
-    const crop2Ratios = bottomData && naturalSize.width && naturalSize.height
-      ? {
-          x: clampRatio(bottomData.x / naturalSize.width),
-          y: clampRatio(bottomData.y / naturalSize.height),
-          w: clampRatio(bottomData.width / naturalSize.width),
-          h: clampRatio(bottomData.height / naturalSize.height),
-        }
-      : (effectiveSplit ? normalizePresetRatios(currentPresetRatiosBottom) : null);
+    const crop2Ratios = effectiveSplit ? normalizePresetRatios(currentPresetRatiosBottom) : null;
     const saveUrl = modalEl.dataset.saveUrl || chooseBtn?.dataset.saveUrl;
     if (!saveUrl) {
       cropSaveInFlight = false;
@@ -20810,6 +20798,7 @@ document.addEventListener("DOMContentLoaded", () => {
       );
 	      setSaveStatus("Saved", "success");
 	      cropDirty = false;
+      userEditedCropBoxes.clear();
       window.rememberCropEditorSavedDesignState?.();
       if (statusText) {
         if (cropStatusTimer) {
@@ -22034,14 +22023,17 @@ document.addEventListener("DOMContentLoaded", function () {
   let shapePointerState = null;
   const shapeValidationErrors = new Map();
   const shapeHandles = ["nw", "n", "ne", "e", "se", "s", "sw", "w"];
+  const shapeCoordinateMin = Number(DESIGN_GEOMETRY.shape_coordinate_min);
+  const shapeCoordinateMax = Number(DESIGN_GEOMETRY.shape_coordinate_max);
+  const shapeSizeMax = Number(DESIGN_GEOMETRY.shape_size_max);
   const validateShape = (shape) => {
     const errors = [];
     const numeric = Object.fromEntries(["x", "y", "w", "h", "alpha", "radius"].map((key) => [key, Number(shape[key])]));
     if (![numeric.x, numeric.y, numeric.w, numeric.h].every(Number.isFinite)) errors.push("Position and size must be numbers.");
-    if (Number.isFinite(numeric.w) && (numeric.w < 1 || numeric.w > 1080)) errors.push("Width must be between 1 and 1080.");
-    if (Number.isFinite(numeric.h) && (numeric.h < 1 || numeric.h > 1920)) errors.push("Height must be between 1 and 1920.");
-    if (Number.isFinite(numeric.x) && Number.isFinite(numeric.w) && (numeric.x < 0 || numeric.x + numeric.w > 1080)) errors.push("Horizontal position must stay inside the canvas.");
-    if (Number.isFinite(numeric.y) && Number.isFinite(numeric.h) && (numeric.y < 0 || numeric.y + numeric.h > 1920)) errors.push("Vertical position must stay inside the canvas.");
+    if (Number.isFinite(numeric.w) && (numeric.w < 1 || numeric.w > shapeSizeMax)) errors.push(`Width must be between 1 and ${shapeSizeMax}.`);
+    if (Number.isFinite(numeric.h) && (numeric.h < 1 || numeric.h > shapeSizeMax)) errors.push(`Height must be between 1 and ${shapeSizeMax}.`);
+    if (Number.isFinite(numeric.x) && (numeric.x < shapeCoordinateMin || numeric.x > shapeCoordinateMax)) errors.push(`X must be between ${shapeCoordinateMin} and ${shapeCoordinateMax}.`);
+    if (Number.isFinite(numeric.y) && (numeric.y < shapeCoordinateMin || numeric.y > shapeCoordinateMax)) errors.push(`Y must be between ${shapeCoordinateMin} and ${shapeCoordinateMax}.`);
     if (!Number.isFinite(numeric.alpha) || numeric.alpha < 0 || numeric.alpha > 100) errors.push("Opacity must be between 0 and 100%.");
     if (!Number.isFinite(numeric.radius) || numeric.radius < 0) errors.push("Corner radius must be zero or greater.");
     if (!/^#[0-9a-f]{6}$/i.test(String(shape.color || ""))) errors.push("Color must be a six-digit hex value.");
@@ -22051,10 +22043,10 @@ document.addEventListener("DOMContentLoaded", function () {
     const error = validateShape(shape);
     if (shape.id && error) shapeValidationErrors.set(String(shape.id), error);
     else if (shape.id) shapeValidationErrors.delete(String(shape.id));
-    shape.w = Math.max(1, Math.min(1080, Math.round(Number(shape.w) || 1)));
-    shape.h = Math.max(1, Math.min(1920, Math.round(Number(shape.h) || 1)));
-    shape.x = Math.max(0, Math.min(1080 - shape.w, Math.round(Number(shape.x) || 0)));
-    shape.y = Math.max(0, Math.min(1920 - shape.h, Math.round(Number(shape.y) || 0)));
+    shape.w = Math.max(1, Math.min(shapeSizeMax, Math.round(Number(shape.w) || 1)));
+    shape.h = Math.max(1, Math.min(shapeSizeMax, Math.round(Number(shape.h) || 1)));
+    shape.x = Math.max(shapeCoordinateMin, Math.min(shapeCoordinateMax, Math.round(Number(shape.x) || 0)));
+    shape.y = Math.max(shapeCoordinateMin, Math.min(shapeCoordinateMax, Math.round(Number(shape.y) || 0)));
     shape.alpha = Math.max(0, Math.min(100, Math.round(Number(shape.alpha) || 0)));
     shape.radius = Math.max(0, Math.min(Math.floor(Math.min(shape.w, shape.h) / 2), Math.round(Number(shape.radius) || 0)));
     shape.color = normalize(shape.color || "#000000") || "#000000";
@@ -22208,8 +22200,18 @@ document.addEventListener("DOMContentLoaded", function () {
   }));
   window.syncOverlayShapesFromField();
   if (window.ResizeObserver) {
-    const shapeResizeObserver = new ResizeObserver(() => renderShapeLayers());
-    shapeLayerElements().forEach((layer) => shapeResizeObserver.observe(layer));
+    let previewResizeFrame = 0;
+    const previewResizeObserver = new ResizeObserver(() => {
+      window.cancelAnimationFrame(previewResizeFrame);
+      previewResizeFrame = window.requestAnimationFrame(() => {
+        window.syncCropEditorFinalPreviewLayout?.();
+        renderShapeLayers();
+        window.redrawCropEditorFinalPreview?.();
+      });
+    });
+    [document.getElementById("shorts-preview-frame"), document.getElementById("orig-preview-frame")]
+      .filter(Boolean)
+      .forEach((frame) => previewResizeObserver.observe(frame));
   }
 
   bindColorPicker({

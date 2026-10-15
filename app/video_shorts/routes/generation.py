@@ -8533,10 +8533,13 @@ def _normalize_overlay_shapes(raw_value: Any) -> List[Dict[str, Any]]:
             radius = max(0, int(round(float(item.get("radius", 0)))))
         except Exception:
             continue
-        w = max(1, min(1080, w))
-        h = max(1, min(1920, h))
-        x = max(0, min(1080 - w, x))
-        y = max(0, min(1920 - h, y))
+        coordinate_min = int(DESIGN_GEOMETRY["shape_coordinate_min"])
+        coordinate_max = int(DESIGN_GEOMETRY["shape_coordinate_max"])
+        size_max = int(DESIGN_GEOMETRY["shape_size_max"])
+        w = max(1, min(size_max, w))
+        h = max(1, min(size_max, h))
+        x = max(coordinate_min, min(coordinate_max, x))
+        y = max(coordinate_min, min(coordinate_max, y))
         radius = min(radius, w // 2, h // 2)
         color = _normalize_hex_color(item.get("color"), "#000000")
         shape_id = re.sub(r"[^A-Za-z0-9_-]", "", str(item.get("id") or f"shape-{index + 1}"))[:64]

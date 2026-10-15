@@ -95,10 +95,13 @@ def _render_overlay_shapes(
         if not isinstance(shape, dict):
             continue
         try:
-            x = max(0.0, min(1080.0, float(shape.get("x", 0))))
-            y = max(0.0, min(1920.0, float(shape.get("y", 0))))
-            w = max(1.0, min(1080.0 - x, float(shape.get("w", 1))))
-            h = max(1.0, min(1920.0 - y, float(shape.get("h", 1))))
+            coordinate_min = float(DESIGN_GEOMETRY["shape_coordinate_min"])
+            coordinate_max = float(DESIGN_GEOMETRY["shape_coordinate_max"])
+            size_max = float(DESIGN_GEOMETRY["shape_size_max"])
+            x = max(coordinate_min, min(coordinate_max, float(shape.get("x", 0))))
+            y = max(coordinate_min, min(coordinate_max, float(shape.get("y", 0))))
+            w = max(1.0, min(size_max, float(shape.get("w", 1))))
+            h = max(1.0, min(size_max, float(shape.get("h", 1))))
             alpha = max(0, min(100, int(round(float(shape.get("alpha", 100))))))
             radius = max(0.0, float(shape.get("radius", 0)))
         except Exception:
