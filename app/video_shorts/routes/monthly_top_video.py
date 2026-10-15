@@ -1,4 +1,5 @@
 from __future__ import annotations
+from app.video_shorts.services import tenant_media
 
 import json
 import re
@@ -108,7 +109,7 @@ def _list_generated_monthly_videos(limit: int = 12) -> List[Dict[str, object]]:
     for path in candidates[: max(1, int(limit))]:
         item = {
             "filename": path.name,
-            "url": url_for("video_shorts_bp.static", filename=f"shorts/{path.name}"),
+            "url": url_for("video_shorts_bp.static", filename=tenant_media.short_key(path.name)),
             "month": _extract_month_from_filename(path.name) or "-",
             "video_count": None,
             "videos": [],
@@ -363,7 +364,7 @@ def _resolve_short_clip_file(clip_filename: str) -> tuple[Optional[Path], bool]:
     storage = get_media_storage()
     if getattr(storage, "backend_name", "local") != "s3":
         return None, False
-    key = f"shorts/{name}"
+    key = tenant_media.short_key(name)
     try:
         if storage.exists(key):
             return storage.download_to_temp(key), True
@@ -388,14 +389,14 @@ def _build_short_id_to_clip_map() -> Dict[str, str]:
             allowed_source_ids = {str(row[0]) for row in allowed_rows if row and row[0]}
         finally:
             conn.close()
-    for plan_path in SHORTS_DIR.glob("*_plan.json"):
+    for plan_video, plan_path in tenant_media.iter_plans():
         if not plan_path.is_file():
             continue
-        source_video_id = plan_path.name[: -len("_plan.json")]
+        source_video_id = plan_video.youtube_id
         if allowed_source_ids is not None and source_video_id not in allowed_source_ids:
             continue
         try:
-            plan_payload = json.loads(plan_path.read_text(encoding="utf-8"))
+            plan_payload = tenant_media.load_state(plan_video)
         except Exception:
             continue
         entries = plan_payload.get("plan") or plan_payload.get("clips") or []
@@ -847,7 +848,7 @@ def _build_monthly_compilation(
         ts = datetime.utcnow().strftime("%Y%m%d_%H%M%S")
         safe_channel = re.sub(r"[^a-z0-9_]+", "_", (channel_type or "all").lower())
         output_filename = f"monthly_top_{month_value}_{safe_channel}_{ts}.mp4"
-        output_path = SHORTS_DIR / output_filename
+        output_path = tenant_media.short_path(output_filename)
         transition_d = 0.40
         cmd_concat: List[str] = [ffmpeg_bin, "-y"]
         for seg in prepared_segments:
@@ -968,7 +969,7 @@ def _build_monthly_compilation(
         return {
             "ok": output_path.exists(),
             "output_filename": output_filename,
-            "output_url": url_for("video_shorts_bp.static", filename=f"shorts/{output_filename}"),
+            "output_url": url_for("video_shorts_bp.static", filename=tenant_media.short_key(output_filename)),
             "created_count": len(prepared_segments),
             "skipped": skipped,
             "error_reason": None,
@@ -1121,7 +1122,7 @@ def workflow_monthly_top_video_delete():
     if not _is_safe_monthly_output_name(filename):
         return jsonify({"ok": False, "message": "Invalid filename."}), 400
 
-    target = SHORTS_DIR / filename
+    target = tenant_media.short_path(filename)
     meta = _monthly_output_meta_path(target)
     removed = False
     try:
@@ -1156,7 +1157,7 @@ def workflow_monthly_top_video_publish():
     filename = str(data.get("filename") or "").strip()
     if not _is_safe_monthly_output_name(filename):
         return jsonify({"ok": False, "message": "Invalid filename."}), 400
-    media_path = SHORTS_DIR / filename
+    media_path = tenant_media.short_path(filename)
     if not media_path.exists():
         return jsonify({"ok": False, "message": "Video file not found."}), 404
 

@@ -6,6 +6,7 @@ Intended for cron, for example:
     30 03 * * * /path/to/venv/bin/python /path/to/app/video_shorts/tasks/daily_video_metrics_snapshot.py
 """
 from __future__ import annotations
+from app.video_shorts.services import tenant_media
 
 import argparse
 import json
@@ -101,14 +102,14 @@ def _collect_published_entries(target_date: Optional[date] = None) -> List[Dict[
     entries: List[Dict[str, Any]] = []
     if not SHORTS_DIR.exists():
         return entries
-    for plan_path in SHORTS_DIR.glob(f"*{plan_suffix}"):
+    for plan_video, plan_path in tenant_media.iter_plans():
         if not plan_path.is_file():
             continue
-        video_id = plan_path.name[: -len(plan_suffix)]
+        video_id = plan_video.youtube_id
         if not video_id:
             continue
         try:
-            raw = json.loads(plan_path.read_text())
+            raw = tenant_media.load_state(plan_video)
         except Exception:
             continue
         plan_entries = raw.get("plan") or raw.get("clips") or []

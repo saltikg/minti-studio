@@ -1,4 +1,5 @@
 import json
+from app.video_shorts.services import tenant_media
 import errno
 import math
 import os
@@ -1117,43 +1118,11 @@ def _upsert_storage_asset(
 ) -> None:
     if not file_key or not file_path:
         return
-    conn = get_db_readonly()
-    ensure_storage_user_schema(conn)
+    conn = get_db()
     try:
-        asset_columns = table_columns(conn, "shorts_storage_assets")
-        if "brand_id" in asset_columns:
-            conn.execute(
-                """
-                INSERT INTO shorts_storage_assets (file_key, file_path, file_type, size_bytes, user_id, brand_id, status, updated_at)
-                VALUES (?, ?, ?, ?, ?, ?, 'active', now())
-                ON CONFLICT(file_key)
-                DO UPDATE SET
-                  file_path = excluded.file_path,
-                  file_type = excluded.file_type,
-                  size_bytes = excluded.size_bytes,
-                  user_id = COALESCE(excluded.user_id, shorts_storage_assets.user_id),
-                  brand_id = COALESCE(excluded.brand_id, shorts_storage_assets.brand_id),
-                  status = 'active',
-                  updated_at = now()
-                """,
-                [file_key, file_path, file_type, size_bytes, user_id, brand_id],
-            )
-        else:
-            conn.execute(
-                """
-                INSERT INTO shorts_storage_assets (file_key, file_path, file_type, size_bytes, user_id, status, updated_at)
-                VALUES (?, ?, ?, ?, ?, 'active', now())
-                ON CONFLICT(file_key)
-                DO UPDATE SET
-                  file_path = excluded.file_path,
-                  file_type = excluded.file_type,
-                  size_bytes = excluded.size_bytes,
-                  user_id = COALESCE(excluded.user_id, shorts_storage_assets.user_id),
-                  status = 'active',
-                  updated_at = now()
-                """,
-                [file_key, file_path, file_type, size_bytes, user_id],
-            )
+        tenant_media.upsert_asset(conn, file_key=file_key, file_path=file_path,
+                                 file_type=file_type, size_bytes=size_bytes,
+                                 user_id=user_id, brand_id=brand_id)
         conn.commit()
     finally:
         conn.close()
@@ -1452,12 +1421,12 @@ def _legacy_image_to_video_path(job_id: str) -> Path:
 
 def _short_storage_key(filename: str) -> str:
     safe_name = Path(filename or "").name
-    return f"shorts/{safe_name}" if safe_name else ""
+    return tenant_media.short_key(safe_name) if safe_name else ""
 
 
 def _short_local_path(filename: str) -> Path:
     safe_name = Path(filename or "").name
-    return (SHORTS_DIR / safe_name).resolve()
+    return tenant_media.short_path(safe_name).resolve()
 
 
 def _download_filename_for_short(title: str, fallback_filename: str) -> str:
@@ -1542,7 +1511,7 @@ def _short_poster_storage_key(filename: str) -> str:
     safe_name = Path(filename or "").name
     if not safe_name:
         return ""
-    return f"shorts/posters/{safe_name}.jpg"
+    return tenant_media.poster_key(f"{safe_name}.jpg")
 
 
 def _short_poster_storage_key_for_poster(poster_filename: str) -> str:
@@ -1551,7 +1520,7 @@ def _short_poster_storage_key_for_poster(poster_filename: str) -> str:
         return ""
     if not safe_name.lower().endswith((".jpg", ".jpeg")):
         safe_name = f"{safe_name}.jpg"
-    return f"shorts/posters/{safe_name}"
+    return tenant_media.poster_key(safe_name)
 
 
 def _short_poster_filename_for_render(clip_filename: str, version: Optional[str] = None) -> str:
@@ -1719,10 +1688,21 @@ def _resolve_short_path_for_processing(filename: str) -> Optional[Path]:
         return None
 
 
-def _delete_short_media(filename: str) -> bool:
+def _delete_short_media(filename: str, *, video_pk=None, owner_user_id=None, brand_id=None) -> bool:
     safe_name = Path(filename or "").name
     if not safe_name:
         return False
+    if owner_user_id is None:
+        scope = _active_editor_context()
+        owner_user_id, brand_id = scope["owner_user_id"], scope["brand_id"]
+    if video_pk is None:
+        video_pk = (request.view_args or {}).get("video_pk")
+    check = get_db_readonly()
+    try:
+        video = tenant_media.authorize_clip_delete(check, safe_name, video_pk=video_pk,
+                                                  owner_user_id=owner_user_id, brand_id=brand_id)
+    finally:
+        check.close()
     deleted = False
     key = _short_storage_key(safe_name)
     storage = get_media_storage()
@@ -1742,22 +1722,23 @@ def _delete_short_media(filename: str) -> bool:
         deleted = True
     conn = get_db()
     try:
-        file_key = f"short:{safe_name}"
+        file_key = tenant_media.asset_key(safe_name)
         conn.execute(
             """
             UPDATE shorts_storage_assets
             SET status = 'deleted', updated_at = now()
-            WHERE file_key = ?
+            WHERE file_key = ? AND user_id = ? AND brand_id IS NOT DISTINCT FROM ?
             """,
-            [file_key],
+            [file_key, owner_user_id, brand_id],
         )
         conn.execute(
             """
             UPDATE shorts_generated_videos
             SET storage_file_key = NULL
-            WHERE clip_filename = ? OR output_filename = ?
+            WHERE (clip_filename = ? OR output_filename = ?)
+              AND user_id = ? AND brand_id IS NOT DISTINCT FROM ? AND source_video_id = ?
             """,
-            [safe_name, safe_name],
+            [safe_name, safe_name, owner_user_id, brand_id, video.youtube_id],
         )
         conn.commit()
     except Exception:
@@ -1956,7 +1937,7 @@ def _build_video_meta_map_for_storage(conn) -> Dict[str, Dict[str, Any]]:
     ).fetchall()
     video_meta: Dict[str, Dict[str, Any]] = {}
     for db_id, video_id, title, channel_id, channel_name, download_status in rows:
-        plan_stats = _load_short_plan_stats(video_id)
+        plan_stats = _load_short_plan_stats(video_id, video_pk=db_id)
         meta = {
             "youtube_title": title or "",
             "db_id": str(db_id),
@@ -2486,17 +2467,17 @@ def _storage_status_label(plan_count: int, created_count: int, desc_ready: int) 
     return "processing"
 
 
-def _load_short_plan_stats(video_id: str) -> Dict[str, int]:
+def _load_short_plan_stats(video_id: str, *, video_pk=None) -> Dict[str, int]:
     if not video_id:
         return {"plan_count": 0, "created_count": 0, "desc_ready": 0}
-    plan_path = SHORTS_DIR / f"{video_id}_plan.json"
+    plan_path = tenant_media.state_path(video_id, "plan", read=True, video_pk=video_pk)
     plan_count = 0
     created = 0
     desc_ready = 0
     plan_entries = []
     if plan_path.exists():
         try:
-            plan_data = json.loads(plan_path.read_text())
+            plan_data = tenant_media.load_state(video_id, 'plan', video_pk=video_pk)
             plan_entries = plan_data.get("plan") or plan_data.get("clips") or []
         except Exception:
             plan_entries = []
@@ -2517,11 +2498,11 @@ def _build_short_clip_meta(video_meta: Dict[str, Dict[str, Any]]) -> Dict[str, D
     if not SHORTS_DIR.exists():
         return meta
     plan_suffix = "_plan.json"
-    for plan_path in SHORTS_DIR.glob(f"*{plan_suffix}"):
-        video_id = plan_path.name[: -len(plan_suffix)]
+    for plan_video, plan_path in tenant_media.iter_plans():
+        video_id = plan_video.youtube_id
         base_meta = video_meta.get(video_id) or {}
         try:
-            plan_data = json.loads(plan_path.read_text())
+            plan_data = tenant_media.load_state(plan_video)
         except Exception:
             continue
         plan_entries = plan_data.get("plan") or plan_data.get("clips") or []
@@ -2742,7 +2723,7 @@ def _collect_short_storage_entries(
             except Exception:
                 modified_ts = None
         meta = video_meta.get(name) or video_meta.get(Path(name).stem) or {}
-        file_key = f"short:{name}"
+        file_key = tenant_media.asset_key(name)
         asset = assets_map.get(file_key) or {}
         entries.append(
             {
@@ -2810,26 +2791,11 @@ def _sync_storage_assets(
         existing_user_id = current_assets.get(file_key, {}).get("user_id")
         owner_user_id = existing_user_id or default_user_id
         entry["owner_user_id"] = owner_user_id
-        conn.execute(
-            """
-            INSERT INTO shorts_storage_assets (file_key, file_path, file_type, size_bytes, user_id, status, updated_at)
-            VALUES (?, ?, ?, ?, ?, 'active', now())
-            ON CONFLICT(file_key)
-            DO UPDATE SET
-              file_path = excluded.file_path,
-              file_type = excluded.file_type,
-              size_bytes = excluded.size_bytes,
-              user_id = COALESCE(shorts_storage_assets.user_id, excluded.user_id),
-              status = COALESCE(shorts_storage_assets.status, 'active'),
-              updated_at = now()
-            """,
-            [
-                file_key,
-                entry["file_path"],
-                entry["file_type"],
-                entry["size_bytes"],
-                owner_user_id,
-            ],
+        asset_row = conn.execute("SELECT user_id, brand_id FROM shorts_storage_assets WHERE file_key = ?", [file_key]).fetchone()
+        tenant_media.upsert_asset(
+            conn, file_key=file_key, file_path=entry["file_path"], file_type=entry["file_type"],
+            size_bytes=entry["size_bytes"], user_id=owner_user_id,
+            brand_id=asset_row[1] if asset_row else None,
         )
     stale_keys = set(current_assets.keys()) - seen_keys
     if stale_keys:
@@ -4454,7 +4420,7 @@ def _write_long_comp_meta(
 def _update_long_comp_publish_state(filename: str, updates: Dict[str, Any]) -> None:
     if not _safe_long_comp_name(filename):
         return
-    meta_path = _long_comp_meta_path(SHORTS_DIR / filename)
+    meta_path = _long_comp_meta_path(tenant_media.short_path(filename))
     if not meta_path.exists():
         return
     try:
@@ -4494,7 +4460,7 @@ def _list_generated_long_compilations(video_id: str, limit: int = 12) -> List[Di
         mtime_ts = path.stat().st_mtime
         item = {
             "filename": path.name,
-            "url": url_for("video_shorts_bp.static", filename=f"shorts/{path.name}"),
+            "url": url_for("video_shorts_bp.static", filename=tenant_media.short_key(path.name)),
             "created_at": _format_long_created_at_pst(None, mtime_ts),
             "clip_count": None,
             "source_titles": [],
@@ -4789,7 +4755,7 @@ def _build_long_compilation_from_published(
         safe_video_id = re.sub(r"[^A-Za-z0-9_-]+", "_", (video_id or "").strip())[:72]
         ts = datetime.utcnow().strftime("%Y%m%d_%H%M%S")
         output_filename = f"long_from_shorts_{safe_video_id}_{ts}.mp4"
-        output_path = SHORTS_DIR / output_filename
+        output_path = tenant_media.short_path(output_filename)
 
         transition_d = 0.40
         cmd_concat: List[str] = [ffmpeg_bin, "-y"]
@@ -4909,7 +4875,7 @@ def _build_long_compilation_from_published(
             "ok": True,
             "message": "Long video created.",
             "output_filename": output_filename,
-            "output_url": url_for("video_shorts_bp.static", filename=f"shorts/{output_filename}"),
+            "output_url": url_for("video_shorts_bp.static", filename=tenant_media.short_key(output_filename)),
             "skipped": skipped,
         }
     except Exception as exc:
@@ -4932,111 +4898,60 @@ def _build_long_compilation_from_published(
             pass
 
 
-def _plan_path(video_id: str) -> Path:
-    return SHORTS_DIR / f"{video_id}_plan.json"
+def _plan_path(video_id: str, *, video_pk=None, read=False) -> Path:
+    return tenant_media.state_path(video_id, "plan", video_pk=video_pk, read=read)
 
 
-def _plan_path_v2(video_id: str) -> Path:
-    return SHORTS_DIR / f"{video_id}_plan_v2.json"
+def _load_plan_entries(video_id: str, *, video_pk=None) -> List[Dict[str, Any]]:
+    data = tenant_media.load_state(video_id, "plan", video_pk=video_pk)
+    entries = data.get("plan") or data.get("clips") or []
+    return [dict(entry) for entry in entries if isinstance(entry, dict)] if isinstance(entries, list) else []
 
 
-def _plan_path_v3(video_id: str) -> Path:
-    return SHORTS_DIR / f"{video_id}_plan_v3.json"
+def _plan_path_v2(video_id: str, *, video_pk=None, read=False) -> Path:
+    return tenant_media.state_path(video_id, "plan_v2", video_pk=video_pk, read=read)
 
 
-def _plan_path_v4(video_id: str) -> Path:
-    return SHORTS_DIR / f"{video_id}_plan_v4.json"
+def _load_plan_entries_v2(video_id: str, *, video_pk=None) -> List[Dict[str, Any]]:
+    data = tenant_media.load_state(video_id, "plan_v2", video_pk=video_pk)
+    entries = data.get("plan") or data.get("clips") or []
+    return [dict(entry) for entry in entries if isinstance(entry, dict)] if isinstance(entries, list) else []
 
 
-def _load_plan_entries(video_id: str) -> List[Dict[str, Any]]:
-    path = _plan_path(video_id)
-    if not path.exists():
-        return []
-    try:
-        data = json.loads(path.read_text())
-        entries = data.get("plan") or data.get("clips") or []
-        if not isinstance(entries, list):
-            return []
-        normalized: List[Dict[str, Any]] = []
-        for entry in entries:
-            if not isinstance(entry, dict):
-                continue
-            item = dict(entry)
-            origin = str(item.get("origin") or "").strip().lower()
-            item["origin"] = origin if origin in {"manual", "ai"} else "manual"
-            normalized.append(item)
-        return normalized
-    except Exception:
-        return []
+def _plan_path_v3(video_id: str, *, video_pk=None, read=False) -> Path:
+    return tenant_media.state_path(video_id, "plan_v3", video_pk=video_pk, read=read)
 
 
-def _load_plan_entries_v2(video_id: str) -> List[Dict[str, Any]]:
-    path = _plan_path_v2(video_id)
-    if not path.exists():
-        return []
-    try:
-        data = json.loads(path.read_text())
-        return data.get("plan") or data.get("clips") or []
-    except Exception:
-        return []
+def _load_plan_entries_v3(video_id: str, *, video_pk=None) -> List[Dict[str, Any]]:
+    data = tenant_media.load_state(video_id, "plan_v3", video_pk=video_pk)
+    entries = data.get("plan") or data.get("clips") or []
+    return [dict(entry) for entry in entries if isinstance(entry, dict)] if isinstance(entries, list) else []
 
 
-def _load_plan_entries_v3(video_id: str) -> List[Dict[str, Any]]:
-    path = _plan_path_v3(video_id)
-    if not path.exists():
-        return []
-    try:
-        data = json.loads(path.read_text())
-        return data.get("plan") or data.get("clips") or []
-    except Exception:
-        return []
+def _plan_path_v4(video_id: str, *, video_pk=None, read=False) -> Path:
+    return tenant_media.state_path(video_id, "plan_v4", video_pk=video_pk, read=read)
 
 
-def _load_plan_entries_v4(video_id: str) -> List[Dict[str, Any]]:
-    path = _plan_path_v4(video_id)
-    if not path.exists():
-        return []
-    try:
-        data = json.loads(path.read_text())
-        return data.get("plan") or data.get("clips") or []
-    except Exception:
-        return []
+def _load_plan_entries_v4(video_id: str, *, video_pk=None) -> List[Dict[str, Any]]:
+    data = tenant_media.load_state(video_id, "plan_v4", video_pk=video_pk)
+    entries = data.get("plan") or data.get("clips") or []
+    return [dict(entry) for entry in entries if isinstance(entry, dict)] if isinstance(entries, list) else []
 
 
-def _write_plan_entries(video_id: str, entries: List[Dict[str, Any]]) -> None:
-    path = _plan_path(video_id)
-    path.parent.mkdir(parents=True, exist_ok=True)
-    prepared_entries: List[Dict[str, Any]] = []
-    for entry in entries or []:
-        if not isinstance(entry, dict):
-            continue
-        item = dict(entry)
-        origin = str(item.get("origin") or "").strip().lower()
-        item["origin"] = origin if origin in {"manual", "ai"} else "manual"
-        prepared_entries.append(item)
-    payload = {"plan": prepared_entries}
-    path.write_text(json.dumps(payload, ensure_ascii=False, indent=2))
+def _write_plan_entries(video_id: str, entries: List[Dict[str, Any]], *, video_pk=None) -> None:
+    tenant_media.write_state(video_id, {"plan": entries}, video_pk=video_pk)
 
 
-def _auto_suggest_render_meta_path(video_id: str) -> Path:
-    return SHORTS_DIR / f"{video_id}_auto_suggest_render.json"
+def _auto_suggest_render_meta_path(video_id: str, *, video_pk=None, read=False) -> Path:
+    return tenant_media.state_path(video_id, "auto_suggest_render", video_pk=video_pk, read=read)
 
 
-def _load_auto_suggest_render_meta(video_id: str) -> Dict[str, Any]:
-    path = _auto_suggest_render_meta_path(video_id)
-    if not path.exists():
-        return {}
-    try:
-        payload = json.loads(path.read_text())
-    except Exception:
-        return {}
-    return payload if isinstance(payload, dict) else {}
+def _load_auto_suggest_render_meta(video_id: str, *, video_pk=None) -> Dict[str, Any]:
+    return tenant_media.load_state(video_id, "auto_suggest_render", video_pk=video_pk)
 
 
-def _write_auto_suggest_render_meta(video_id: str, payload: Dict[str, Any]) -> None:
-    path = _auto_suggest_render_meta_path(video_id)
-    path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text(json.dumps(payload or {}, ensure_ascii=False, indent=2, sort_keys=True))
+def _write_auto_suggest_render_meta(video_id: str, payload: Dict[str, Any], *, video_pk=None) -> None:
+    tenant_media.write_state(video_id, payload, "auto_suggest_render", video_pk=video_pk)
 
 
 def _auto_suggest_render_gate_matches(owner_user_id: Any) -> bool:
@@ -5139,7 +5054,7 @@ def _auto_suggest_render_state_for_video(
     video_pk: Any,
     video_id: Any,
 ) -> Dict[str, Any]:
-    meta = _load_auto_suggest_render_meta(str(video_id or "").strip())
+    meta = _load_auto_suggest_render_meta(str(video_id or "").strip(), video_pk=video_pk)
     state: Dict[str, Any] = {
         "active": False,
         "status": str(meta.get("status") or "").strip(),
@@ -5233,7 +5148,7 @@ def build_auto_suggest_render_status_payload(video_pk: int, current_user: Option
         )
     finally:
         conn.close()
-    plan_entries = _load_plan_entries(video_id) or []
+    plan_entries = _load_plan_entries(video_id, video_pk=video_pk) or []
     clip_count = len(plan_entries)
     rendered_entries: list[tuple[float, int, str]] = []
     active_render_count = sum(
@@ -5478,14 +5393,14 @@ def _mark_plan_entry_user_title_edit(plan_entry: Dict[str, Any], new_title: str)
     plan_entry["title_user_edited_at"] = _utc_now_iso()
 
 
-def _write_merged_plan_entry(video_id: str, updated_entry: Dict[str, Any], fallback_entries: List[Dict[str, Any]]) -> bool:
+def _write_merged_plan_entry(video_id: str, updated_entry: Dict[str, Any], fallback_entries: List[Dict[str, Any]], *, video_pk=None) -> bool:
     target_index = _coerce_positive_plan_index(updated_entry.get("plan_index"))
     if target_index is None:
-        _write_plan_entries(video_id, fallback_entries)
+        _write_plan_entries(video_id, fallback_entries, video_pk=video_pk)
         return True
-    latest_entries = _load_plan_entries(video_id)
+    latest_entries = _load_plan_entries(video_id, video_pk=video_pk)
     if not latest_entries:
-        _write_plan_entries(video_id, fallback_entries)
+        _write_plan_entries(video_id, fallback_entries, video_pk=video_pk)
         return True
 
     merged_entries: List[Dict[str, Any]] = []
@@ -5499,7 +5414,7 @@ def _write_merged_plan_entry(video_id: str, updated_entry: Dict[str, Any], fallb
             merged_entries.append(entry)
     if not replaced:
         return False
-    _write_plan_entries(video_id, merged_entries)
+    _write_plan_entries(video_id, merged_entries, video_pk=video_pk)
     return True
 
 
@@ -5522,22 +5437,20 @@ def _extract_plan_index_from_filename(value: Any) -> Optional[int]:
 
 
 def _resolve_clip_plan_identity(filename: str) -> Tuple[Optional[str], Optional[int]]:
-    safe_name = Path(filename or "").name
-    if not safe_name:
-        return None, None
-    plan_index = _extract_plan_index_from_filename(safe_name)
-    stem = Path(safe_name).stem
-    match = re.match(r"^\d+_(.+)$", stem)
-    if not match:
-        return None, plan_index
-    video_id = str(match.group(1) or "").strip()
-    return (video_id or None), plan_index
+    safe_name = tenant_media.safe_filename(filename)
+    scope = _active_editor_context()
+    conn = get_db_readonly()
+    try:
+        video = tenant_media.authorize_clip_delete(conn, safe_name, owner_user_id=scope["owner_user_id"], brand_id=scope["brand_id"])
+        return video.youtube_id, _extract_plan_index_from_filename(safe_name)
+    finally:
+        conn.close()
 
 
-def _reset_deleted_clip_plan_entry(video_id: str, filename: str, *, plan_index: Optional[int] = None) -> Optional[int]:
+def _reset_deleted_clip_plan_entry(video_id: str, filename: str, *, plan_index: Optional[int] = None, video_pk=None) -> Optional[int]:
     if not video_id:
         return None
-    plan_entries = _load_plan_entries(video_id)
+    plan_entries = _load_plan_entries(video_id, video_pk=video_pk)
     if not plan_entries:
         return None
     match_entry = None
@@ -5562,7 +5475,7 @@ def _reset_deleted_clip_plan_entry(video_id: str, filename: str, *, plan_index: 
     match_entry["audio_end"] = None
     match_entry.pop("render_job_id", None)
     match_entry.pop("render_error", None)
-    _write_plan_entries(video_id, plan_entries)
+    _write_plan_entries(video_id, plan_entries, video_pk=video_pk)
     try:
         return int(match_entry.get("plan_index") or 0)
     except Exception:
@@ -6072,7 +5985,14 @@ def _cancel_pending_social_queue_rows(
     table_name: str,
     video_id: str,
     plan_index: int,
+    video_pk: int,
+    clip_filename: str,
 ) -> int:
+    if table_name not in {"shorts_instagram_queue", "shorts_facebook_queue", "shorts_tiktok_queue"}:
+        raise ValueError("Invalid queue table")
+    scope = _active_editor_context()
+    video = tenant_media.resolve_video(video_id, video_pk=video_pk,
+                                       owner_user_id=scope["owner_user_id"], brand_id=scope["brand_id"])
     try:
         result = conn.execute(
             f"""
@@ -6082,9 +6002,11 @@ def _cancel_pending_social_queue_rows(
                    updated_at = ?
              WHERE video_id = ?
                AND plan_index = ?
+               AND user_id = ? AND brand_id IS NOT DISTINCT FROM ?
+               AND clip_filename = ?
                AND lower(coalesce(status, '')) IN ('pending', 'retry', 'uploading', 'queued', 'scheduled')
             """,
-            [_utc_now_iso(), video_id, str(plan_index)],
+            [_utc_now_iso(), video_id, str(plan_index), video.owner_user_id, video.brand_id, clip_filename],
         )
         try:
             return int(getattr(result, "rowcount", 0) or 0)
@@ -6112,7 +6034,7 @@ def _choose_plan_index(preferred: Optional[int], used: set[int], next_candidate:
     return candidate, candidate + 1
 
 
-def _reindex_v1_plan_entries(video_id: str, entries: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+def _reindex_v1_plan_entries(video_id: str, entries: List[Dict[str, Any]], *, video_pk=None) -> List[Dict[str, Any]]:
     reindexed: List[Dict[str, Any]] = []
     mutable_positions: List[int] = []
     used_indexes: set[int] = set()
@@ -6135,7 +6057,7 @@ def _reindex_v1_plan_entries(video_id: str, entries: List[Dict[str, Any]]) -> Li
             assigned_index, next_candidate = _choose_plan_index(preferred_index, used_indexes, next_candidate)
             item["plan_index"] = assigned_index
             if not str(item.get("clip_filename") or "").strip():
-                item["clip_filename"] = f"{assigned_index}_{video_id}.mp4"
+                item["clip_filename"] = tenant_media.clip_filename(video_id, assigned_index, video_pk=video_pk)
         else:
             mutable_positions.append(len(reindexed))
         reindexed.append(item)
@@ -6145,7 +6067,7 @@ def _reindex_v1_plan_entries(video_id: str, entries: List[Dict[str, Any]]) -> Li
         preferred_index = _coerce_positive_plan_index(item.get("plan_index"))
         assigned_index, next_candidate = _choose_plan_index(preferred_index, used_indexes, next_candidate)
         item["plan_index"] = assigned_index
-        item["clip_filename"] = f"{assigned_index}_{video_id}.mp4"
+        item["clip_filename"] = tenant_media.clip_filename(video_id, assigned_index, video_pk=video_pk)
 
     return reindexed
 
@@ -6163,31 +6085,23 @@ def _resolve_saved_focus_categories(entries: List[Dict[str, Any]]) -> List[str]:
     return list(ALL_FOCUS_CATEGORIES)
 
 
-def _write_plan_entries_v2(video_id: str, entries: List[Dict[str, Any]]) -> None:
-    path = _plan_path_v2(video_id)
-    path.parent.mkdir(parents=True, exist_ok=True)
-    payload = {"plan": entries}
-    path.write_text(json.dumps(payload, ensure_ascii=False, indent=2))
+def _write_plan_entries_v2(video_id: str, entries: List[Dict[str, Any]], *, video_pk=None) -> None:
+    tenant_media.write_state(video_id, {"plan": entries}, "plan_v2", video_pk=video_pk)
 
 
-def _write_plan_entries_v3(video_id: str, entries: List[Dict[str, Any]]) -> None:
-    path = _plan_path_v3(video_id)
-    path.parent.mkdir(parents=True, exist_ok=True)
-    payload = {"plan": entries}
-    path.write_text(json.dumps(payload, ensure_ascii=False, indent=2))
+def _write_plan_entries_v3(video_id: str, entries: List[Dict[str, Any]], *, video_pk=None) -> None:
+    tenant_media.write_state(video_id, {"plan": entries}, "plan_v3", video_pk=video_pk)
 
 
-def _write_plan_entries_v4(video_id: str, entries: List[Dict[str, Any]]) -> None:
-    path = _plan_path_v4(video_id)
-    path.parent.mkdir(parents=True, exist_ok=True)
-    payload = {"plan": entries}
-    path.write_text(json.dumps(payload, ensure_ascii=False, indent=2))
+def _write_plan_entries_v4(video_id: str, entries: List[Dict[str, Any]], *, video_pk=None) -> None:
+    tenant_media.write_state(video_id, {"plan": entries}, "plan_v4", video_pk=video_pk)
 
 
 def _update_plan_entry_job_state(
     video_id: str,
     entries: List[Dict[str, Any]],
     *,
+    video_pk=None,
     plan_index: int,
     status: str,
     render_job_id: Optional[str] = None,
@@ -6213,7 +6127,7 @@ def _update_plan_entry_job_state(
         changed = True
         break
     if changed:
-        _write_plan_entries(video_id, entries)
+        _write_plan_entries(video_id, entries, video_pk=video_pk)
 
 
 def _coerce_plan_score(entry: Dict[str, Any]) -> Optional[float]:
@@ -6287,7 +6201,7 @@ def _evaluate_lead_generation_approval_gate(
         if not lead:
             conn.commit()
             return None
-        entries = _load_plan_entries(video_id) or []
+        entries = _load_plan_entries(video_id, video_pk=video_pk) or []
         selected = [entry for entry in entries if isinstance(entry, dict) and entry.get("selected_for_generation")]
         if not selected:
             conn.commit()
@@ -6536,7 +6450,7 @@ def render_job_media_payload(job: Dict[str, Any]) -> Dict[str, Any]:
     if not source_video_id:
         return {}
     target_entry = None
-    for entry in _load_plan_entries(source_video_id) or []:
+    for entry in _load_plan_entries(source_video_id, video_pk=payload.get("video_pk")) or []:
         if not isinstance(entry, dict):
             continue
         try:
@@ -6717,11 +6631,11 @@ def _invalid_autopilot_entry_email_reason(email: str) -> Optional[str]:
     return None
 
 
-def _plan_entries_with_selection(video_id: str) -> Tuple[List[Dict[str, Any]], List[Dict[str, Any]]]:
-    entries = _load_plan_entries(video_id) or []
+def _plan_entries_with_selection(video_id: str, *, video_pk=None) -> Tuple[List[Dict[str, Any]], List[Dict[str, Any]]]:
+    entries = _load_plan_entries(video_id, video_pk=video_pk) or []
     if entries:
         selected = _select_lead_generation_entries(entries, min_score=DISCOVERY_LEAD_GENERATION_MIN_SCORE, limit=5)
-        _write_plan_entries(video_id, entries)
+        _write_plan_entries(video_id, entries, video_pk=video_pk)
         return entries, selected
     return entries, []
 
@@ -7210,7 +7124,7 @@ def process_downloaded_lead_autoplan(*, limit: int = 1, timeout_seconds: int = A
                     conn_timeout.close()
             continue
 
-        entries, selected = _plan_entries_with_selection(video_id)
+        entries, selected = _plan_entries_with_selection(video_id, video_pk=video_pk)
         if entries:
             conn_existing = get_db()
             try:
@@ -7617,7 +7531,7 @@ def execute_auto_suggest_render_job(payload: Dict[str, Any]) -> Dict[str, Any]:
             "duration_ms": result.get("duration_ms"),
         }
         if video_id:
-            _write_auto_suggest_render_meta(video_id, meta)
+            _write_auto_suggest_render_meta(video_id, meta, video_pk=video_pk)
         current_app.logger.info(
             "auto_suggest_render video_id=%s planner=%s entries_generated=%s selected=%s enqueued_job_ids=%s duration_ms=%s skip_reason=%s",
             video_id,
@@ -7656,8 +7570,8 @@ def execute_auto_suggest_render_job(payload: Dict[str, Any]) -> Dict[str, Any]:
         return finish("video_not_found")
     if str(video_row[4] or "").strip().lower() != "done":
         return finish("transcript_not_ready")
-    meta = _load_auto_suggest_render_meta(video_id)
-    entries = _load_plan_entries(video_id) or []
+    meta = _load_auto_suggest_render_meta(video_id, video_pk=video_pk)
+    entries = _load_plan_entries(video_id, video_pk=video_pk) or []
     if meta.get("auto_run_at"):
         return finish("already_ran")
     if any(isinstance(entry, dict) and str(entry.get("origin") or "").strip().lower() == "ai" for entry in entries):
@@ -7670,7 +7584,7 @@ def execute_auto_suggest_render_job(payload: Dict[str, Any]) -> Dict[str, Any]:
                 "selected": [],
                 "enqueued": [],
             },
-        )
+         video_pk=video_pk)
         return finish("ai_entries_exist")
 
     cached_plan_used = False
@@ -7679,9 +7593,9 @@ def execute_auto_suggest_render_job(payload: Dict[str, Any]) -> Dict[str, Any]:
         text_cache = load_text_cache(video_id)
         cached_entries = list((text_cache or {}).get("plan_entries") or [])
         if cached_entries:
-            prepared_entries = _reindex_v1_plan_entries(video_id, cached_entries)
-            _write_plan_entries(video_id, prepared_entries)
-            entries = _load_plan_entries(video_id) or []
+            prepared_entries = _reindex_v1_plan_entries(video_id, cached_entries, video_pk=video_pk)
+            _write_plan_entries(video_id, prepared_entries, video_pk=video_pk)
+            entries = _load_plan_entries(video_id, video_pk=video_pk) or []
             generated_entries = [
                 entry for entry in entries
                 if isinstance(entry, dict) and str(entry.get("origin") or "").strip().lower() == "ai"
@@ -7703,7 +7617,7 @@ def execute_auto_suggest_render_job(payload: Dict[str, Any]) -> Dict[str, Any]:
             owner_user_id=owner_user_id,
             brand_id=brand_id,
         )
-        entries = _load_plan_entries(video_id) or []
+        entries = _load_plan_entries(video_id, video_pk=video_pk) or []
         generated_entries = [
             entry for entry in entries
             if isinstance(entry, dict) and str(entry.get("origin") or "").strip().lower() == "ai"
@@ -7893,7 +7807,7 @@ def process_planned_lead_autogenerate(
         video_pk = int(row[3])
         pipeline_state = str(row[4] or "new").strip().lower()
         video_id = str(row[5] or "").strip()
-        entries = _load_plan_entries(video_id) or []
+        entries = _load_plan_entries(video_id, video_pk=video_pk) or []
         selected = [entry for entry in entries if isinstance(entry, dict) and entry.get("selected_for_generation")]
         if not selected:
             if pipeline_state == "planned":
@@ -8890,7 +8804,7 @@ def _load_user_title_style_examples(
         video_id = str(row[0] or "").strip()
         if not video_id or video_id == str(current_video_id or "").strip():
             continue
-        for entry in _load_plan_entries(video_id):
+        for entry in _load_plan_entries(video_id, video_pk=row[1]):
             example = _clip_title_example_from_entry(entry)
             if not example:
                 continue
@@ -9093,10 +9007,12 @@ def _schedule_async_clip_title_suggestion(
     if not safe_video_id or not safe_excerpt:
         return
 
+    title_video = tenant_media.resolve_video(safe_video_id)
+
     def _worker() -> None:
         with app_obj.app_context():
             try:
-                entries = _load_plan_entries(safe_video_id)
+                entries = _load_plan_entries(title_video)
                 plan_entry = _find_plan_entry(entries, plan_index)
                 if not plan_entry:
                     return
@@ -9121,7 +9037,7 @@ def _schedule_async_clip_title_suggestion(
                     return
                 plan_entry["title"] = new_title
                 _mark_plan_entry_ai_title(plan_entry)
-                _write_plan_entries(safe_video_id, entries)
+                _write_plan_entries(title_video, entries)
             except Exception:
                 current_app.logger.exception(
                     "Async clip title suggestion failed for %s plan %s",
@@ -9831,7 +9747,7 @@ def _update_plan_entry_publish_state(
     if not video_id:
         return False
 
-    entries = _load_plan_entries(video_id)
+    entries = _load_plan_entries(video_id, video_pk=video_pk)
     if not entries:
         return False
 
@@ -9867,7 +9783,7 @@ def _update_plan_entry_publish_state(
     target_entry["yt_status"] = publish_status
 
     try:
-        _write_plan_entries(video_id, entries)
+        _write_plan_entries(video_id, entries, video_pk=video_pk)
     except Exception as exc:
         current_app.logger.warning("Could not update publish state for %s: %s", video_id, exc)
         return False
@@ -9898,7 +9814,7 @@ def _update_plan_entry_publish_state(
                 source_channel_type="youtube",
                 clip_filename=clip_name,
                 output_filename=str(target_entry.get("output_filename") or clip_name),
-                storage_file_key=f"short:{clip_name}",
+                storage_file_key=tenant_media.asset_key(clip_name),
                 generation_status=str(target_entry.get("status") or "").strip().lower() or "created",
                 publish_status=publish_status,
                 youtube_video_id=youtube_id or target_entry.get("yt_video_id"),
@@ -9981,6 +9897,12 @@ def _sync_generated_video_from_plan_entry(
 ) -> None:
     if not source_video_id or not clip_filename:
         return
+    if owner_user_id is None:
+        scoped_owner, scoped_brand = tenant_media.current_scope()
+        owner_user_id = scoped_owner
+        brand_id = brand_id or scoped_brand
+    if not owner_user_id:
+        raise tenant_media.TenantMediaConflict("Lifecycle write requires an explicit tenant owner")
     entry = dict(plan_entry or {})
     effective_publish_status = publish_status or entry.get("publish_status")
     effective_generation_status = generation_status or entry.get("status")
@@ -10012,7 +9934,7 @@ def _sync_generated_video_from_plan_entry(
         source_channel_type="youtube",
         clip_filename=clip_filename,
         output_filename=str(entry.get("output_filename") or clip_filename),
-        storage_file_key=f"short:{clip_filename}",
+        storage_file_key=tenant_media.asset_key(clip_filename),
         generation_status=effective_generation_status,
         publish_status=effective_publish_status,
         youtube_video_id=entry.get("yt_video_id"),
@@ -10043,7 +9965,7 @@ def _record_successful_short_render(
 ) -> None:
     if not clip_filename or int(size_bytes or 0) <= 0:
         raise RuntimeError(f"Rendered Short has no file data: {clip_filename or 'unknown'}")
-    file_key = f"short:{clip_filename}"
+    file_key = tenant_media.asset_key(clip_filename)
     current_app.logger.info(
         "short success record begin clip_filename=%s file_key=%s size_bytes=%s",
         clip_filename,
@@ -10145,7 +10067,7 @@ def _refresh_plan_publish_status_from_youtube_for_owner(
                 )
     if updated:
         try:
-            _write_plan_entries(video_id, entries)
+            _write_plan_entries(tenant_media.resolve_video(video_id, owner_user_id=user_id, brand_id=brand_id), entries)
         except Exception as exc:
                 current_app.logger.warning(
                     "Failed to refresh plan publish status from YouTube for %s: %s",
@@ -10201,8 +10123,12 @@ def _mark_generated_youtube_video_published(
 
     if not source_video_id:
         return True
+    tenant_row = conn.execute("SELECT user_id, brand_id FROM shorts_generated_videos WHERE id = ?", [generated_video_id]).fetchone()
+    if not tenant_row:
+        return
+    plan_video = tenant_media.resolve_video(source_video_id, owner_user_id=tenant_row[0], brand_id=tenant_row[1])
     try:
-        entries = _load_plan_entries(source_video_id)
+        entries = _load_plan_entries(plan_video)
     except Exception:
         current_app.logger.exception(
             "YouTube publish reconcile could not load plan source_video_id=%s",
@@ -10227,7 +10153,7 @@ def _mark_generated_youtube_video_published(
             break
     if changed:
         try:
-            _write_plan_entries(source_video_id, entries)
+            _write_plan_entries(plan_video, entries)
         except Exception:
             current_app.logger.exception(
                 "YouTube publish reconcile could not write plan source_video_id=%s",
@@ -10837,7 +10763,7 @@ def generate_short(video_pk):
     transcript_text_ar = _joined_transcript_ar(segments) or transcript_text_tr
     transcript_language = _resolve_video_language(segments, transcript_text_tr or transcript_text or "")
 
-    non_speech_overrides = load_non_speech_overrides(video["video_id"])
+    non_speech_overrides = load_non_speech_overrides(video["video_id"], video_pk=video_pk)
     segments_view = []
     for idx, seg in enumerate(segments):
         start = seg.get("start")
@@ -11338,10 +11264,10 @@ def generate_short(video_pk):
         selected_video_overlay_offset = int(selected_video_overlay_offset)
     except Exception:
         selected_video_overlay_offset = video_overlay_offset
-    plan_entries = _load_plan_entries(video["video_id"])
+    plan_entries = _load_plan_entries(video["video_id"], video_pk=video_pk)
     selected_focus_categories = _resolve_saved_focus_categories(plan_entries)
-    v2_plan_entries = _load_plan_entries_v2(video["video_id"])
-    v3_plan_entries = _load_plan_entries_v3(video["video_id"])
+    v2_plan_entries = _load_plan_entries_v2(video["video_id"], video_pk=video_pk)
+    v3_plan_entries = _load_plan_entries_v3(video["video_id"], video_pk=video_pk)
     v2_plan_exists = bool(v2_plan_entries)
     v2_plan_clip_count = len(v2_plan_entries)
     v3_plan_exists = bool(v3_plan_entries)
@@ -11435,7 +11361,7 @@ def generate_short(video_pk):
         clip_filename = entry.get("clip_filename")
         if not clip_filename:
             continue
-        clip_path = SHORTS_DIR / clip_filename
+        clip_path = tenant_media.short_path(clip_filename)
         if not clip_path.exists():
             continue
         generated_clip_entries.append(
@@ -12171,12 +12097,12 @@ def generate_short(video_pk):
             conn_sources.close()
     channel_latest_schedule_iso = None
     channel_latest_schedule_dt = None
-    for plan_path in SHORTS_DIR.glob("*_plan.json"):
+    for plan_video, plan_path in tenant_media.iter_plans():
         try:
-            source_video_id = plan_path.name[: -len("_plan.json")]
+            source_video_id = plan_video.youtube_id
             if allowed_source_ids is not None and source_video_id not in allowed_source_ids:
                 continue
-            data = json.loads(plan_path.read_text())
+            data = tenant_media.load_state(plan_video)
         except Exception:
             continue
         entries = data.get("plan") or data.get("clips") or []
@@ -14078,7 +14004,7 @@ def create_long_from_shorts(video_pk: int):
     if not video_id:
         return jsonify({"ok": False, "message": "Video id not found."}), 400
 
-    entries = _load_plan_entries(video_id)
+    entries = _load_plan_entries(video_id, video_pk=video_pk)
     instagram_queue_map = load_instagram_queue_map([video_id])
     tiktok_queue_map = load_tiktok_queue_map([video_id])
     facebook_queue_map = load_facebook_queue_map([video_id])
@@ -14166,7 +14092,7 @@ def publish_long_video_from_generate(video_pk: int):
     filename = str(request.form.get("filename") or "").strip()
     if not _safe_long_comp_name(filename):
         return jsonify({"success": False, "message": "Invalid long video filename."}), 400
-    media_path = SHORTS_DIR / filename
+    media_path = tenant_media.short_path(filename)
     if not media_path.exists():
         return jsonify({"success": False, "message": "Long video file not found."}), 404
 
@@ -14372,7 +14298,7 @@ def delete_long_video_from_generate(video_pk: int):
     if not _safe_long_comp_name(filename):
         return jsonify({"ok": False, "message": "Invalid filename."}), 400
 
-    target = SHORTS_DIR / filename
+    target = tenant_media.short_path(filename)
     meta = _long_comp_meta_path(target)
     removed = False
     try:
@@ -14428,7 +14354,7 @@ def download_generated_clip(video_pk: int, plan_index: int):
             metadata={"video_pk": int(video_pk), "plan_index": int(plan_index)},
         )
     target_entry = None
-    for entry in _load_plan_entries(video_id):
+    for entry in _load_plan_entries(video_id, video_pk=video_pk):
         if not isinstance(entry, dict):
             continue
         try:
@@ -14903,7 +14829,7 @@ def shorts_storage():
     rows = conn.execute(video_sql, video_params).fetchall()
     video_meta: Dict[str, Dict[str, str]] = {}
     for db_id, video_id, title, channel_id, channel_name, download_status in rows:
-        plan_stats = _load_short_plan_stats(video_id)
+        plan_stats = _load_short_plan_stats(video_id, video_pk=db_id)
         meta = {
             "youtube_title": title or "",
             "db_id": str(db_id),
@@ -19108,12 +19034,12 @@ def shorts_scripts():
     plan_suffix = "_plan.json"
     grouped: Dict[str, Dict[str, Any]] = {}
     conn = get_db_readonly()
-    for plan_path in SHORTS_DIR.glob(f"*{plan_suffix}"):
+    for plan_video, plan_path in tenant_media.iter_plans():
         if plan_path.name.endswith("_plan_v2.json"):
             continue
-        video_id = plan_path.name[: -len(plan_suffix)]
+        video_id = plan_video.youtube_id
         try:
-            data = json.loads(plan_path.read_text())
+            data = tenant_media.load_state(plan_video)
         except Exception:
             continue
         entries = data.get("plan") or data.get("clips") or []
@@ -19130,7 +19056,7 @@ def shorts_scripts():
         group = grouped[video_id]
         for entry in entries:
             clip_filename = entry.get("clip_filename") or entry.get("output_filename")
-            clip_path = SHORTS_DIR / clip_filename if clip_filename else None
+            clip_path = tenant_media.short_path(clip_filename) if clip_filename else None
             clip_exists = clip_path.exists() if clip_path else False
             status = (entry.get("status") or "").lower()
             if status != "created" and not clip_exists:
@@ -19249,101 +19175,41 @@ def delete_storage_video():
     current_user = getattr(g, "vs_current_user", None)
     if not current_user:
         return jsonify(success=False, message="Authentication required"), 403
-    is_admin = current_user.get("role") == "admin"
+    scope = _active_editor_context()
     target_dir = (request.form.get("target_dir") or "shorts").strip()
     filename = (request.form.get("filename") or "").strip()
     video_id = (request.form.get("video_id") or "").strip()
-    base_dir = SHORTS_DIR if target_dir != "videos" else VIDEOS_DIR
-
-    if filename:
-        file_path = base_dir / filename
-    elif video_id:
-        file_path = base_dir / f"{video_id}.mp4"
-    else:
-        return jsonify(success=False, message="Video ID or filename missing"), 400
-    try:
-        real_path = file_path.resolve()
-        if not str(real_path).startswith(str(base_dir.resolve())):
-            raise ValueError("Invalid path")
-    except Exception:
-        return jsonify(success=False, message="Invalid file path"), 400
-    if target_dir != "videos" and filename:
-        if not _short_exists(filename):
-            return jsonify(success=False, message="Dosya bulunamadı"), 404
-    elif not real_path.exists():
-        return jsonify(success=False, message="Dosya bulunamadı"), 404
-    asset_key = f"{'videos' if target_dir == 'videos' else 'shorts'}:{filename or file_path.name}"
-    conn_check = get_db_readonly()
-    owner_row = conn_check.execute(
-        "SELECT user_id FROM shorts_storage_assets WHERE file_key = ?",
-        [asset_key],
-    ).fetchone()
-    conn_check.close()
-    owner_id = owner_row[0] if owner_row else None
-    if not is_admin and owner_id != current_user["id"]:
-        return jsonify(success=False, message="You do not have permission to delete this file."), 403
+    conn = get_db()
     try:
         if target_dir == "videos":
-            real_path.unlink()
-        else:
-            _delete_short_media(filename or file_path.name)
-    except Exception as exc:
-        current_app.logger.exception("Failed to delete storage video %s: %s", real_path, exc)
-        return jsonify(success=False, message="Dosya silinemedi"), 500
-    conn_assets = get_db()
-    ensure_storage_user_schema(conn_assets)
-    try:
-        conn_assets.execute(
-            "DELETE FROM shorts_storage_assets WHERE file_key = ?",
-            [asset_key],
-        )
-        conn_assets.commit()
-    finally:
-        conn_assets.close()
-
-    if target_dir != "videos":
-        clip_name = filename or file_path.name
-        source_video_id, plan_index = _resolve_clip_plan_identity(clip_name)
-        if source_video_id and plan_index is not None:
-            try:
-                resolved_plan_index = _reset_deleted_clip_plan_entry(
-                    source_video_id,
-                    clip_name,
-                    plan_index=plan_index,
-                )
-            except Exception as exc:
-                current_app.logger.warning("Failed to update plan file after storage delete: %s", exc)
-                resolved_plan_index = None
-            try:
-                if resolved_plan_index is not None:
-                    clear_done_job_cache_for_plan(
-                        user_id=str(current_user.get("id") or ""),
-                        source_video_id=str(source_video_id or ""),
-                        plan_index=int(resolved_plan_index),
-                    )
-            except Exception as exc:
-                current_app.logger.warning("Failed to clear render cache after storage delete: %s", exc)
-
-    if video_id and target_dir == "videos":
-        conn = get_db()
-        _ensure_video_crop_schema(conn)
-        try:
-            conn.execute(
-                """
-                UPDATE youtube_videos
-                SET download_status = 'downloaded_deleted',
-                    downloaded_at = NULL
-                WHERE video_id = ?
-                """,
-                [video_id],
-            )
+            if filename:
+                tenant_media.safe_filename(filename)
+                filename_video_id = Path(filename).stem
+                if video_id and filename_video_id != video_id:
+                    return jsonify(success=False, message="Source identity mismatch"), 400
+                video_id = filename_video_id
+            video = tenant_media.resolve_video(video_id, owner_user_id=scope["owner_user_id"], brand_id=scope["brand_id"])
+            removed = tenant_media.delete_source_media(conn, video.youtube_id, excluding_pks=[video.video_pk])
+            conn.execute("UPDATE youtube_videos SET download_status = 'downloaded_deleted', downloaded_at = NULL WHERE id = ?", [video.video_pk])
+            if removed:
+                for suffix in tenant_media.SOURCE_VIDEO_SUFFIXES:
+                    conn.execute("DELETE FROM shorts_storage_assets WHERE file_key = ? AND user_id = ? AND brand_id IS NOT DISTINCT FROM ?",
+                                 [f"downloaded:{video.youtube_id}{suffix}", video.owner_user_id, video.brand_id])
             conn.commit()
-        except Exception:
-            current_app.logger.exception("Failed to update download_status for %s", video_id)
-            return jsonify(success=False, message="Veritabanı güncellenemedi"), 500
-        finally:
-            conn.close()
-    return jsonify(success=True)
+        else:
+            video = tenant_media.authorize_clip_delete(conn, filename, owner_user_id=scope["owner_user_id"], brand_id=scope["brand_id"])
+            _delete_short_media(filename, video_pk=video.video_pk, owner_user_id=video.owner_user_id, brand_id=video.brand_id)
+            _reset_deleted_clip_plan_entry(video.youtube_id, filename, video_pk=video.video_pk)
+        return jsonify(success=True)
+    except (tenant_media.TenantMediaConflict, ValueError) as exc:
+        conn.rollback()
+        return jsonify(success=False, message=str(exc)), 403
+    except Exception:
+        conn.rollback()
+        current_app.logger.exception("Failed to delete tenant storage media")
+        return jsonify(success=False, message="Delete failed"), 500
+    finally:
+        conn.close()
 
 
 @video_shorts_bp.route("/shorts/storage/plans", methods=["GET", "POST"])
@@ -21957,7 +21823,7 @@ def admin_operation_lead_workspace(brand_id: str):
     selected_plan_entries: List[Dict[str, Any]] = []
     first_video = next((video for video in videos if video["id"] == first_video_id), None)
     if first_video and first_video.get("video_id"):
-        selected_plan_entries = _summarize_selected_plan_entries(_load_plan_entries(first_video["video_id"]))
+        selected_plan_entries = _summarize_selected_plan_entries(_load_plan_entries(first_video["video_id"], video_pk=first_video["id"]))
     lead["brand_id"] = scope["brand_id"]
     return render_template(
         "shorts_admin_lead_workspace.html",
@@ -22464,7 +22330,7 @@ def admin_refresh_user_youtube_status(user_id: str):
     source_errors = 0
     for source_video_id in source_video_ids:
         try:
-            plan_entries = _load_plan_entries(source_video_id)
+            plan_entries = _load_plan_entries(tenant_media.resolve_video(source_video_id, owner_user_id=user_id, brand_id=brand_id))
             if not plan_entries:
                 continue
             result = _refresh_plan_publish_status_from_youtube_for_owner(
@@ -22528,14 +22394,14 @@ def delete_clip(video_pk):
 
     message = "Clip not found."
     success = False
-    target = (SHORTS_DIR / filename).resolve()
+    target = (tenant_media.short_path(filename)).resolve()
     try:
         # safety: ensure path is under shorts dir
         if not str(target).startswith(str(SHORTS_DIR.resolve())):
             message = "Invalid path."
         elif _short_exists(filename):
             _delete_short_media(filename)
-            plan_entries = _load_plan_entries(row[0])
+            plan_entries = _load_plan_entries(row[0], video_pk=video_pk)
             if plan_entries:
                 match_entry = None
                 plan_index = None
@@ -22565,7 +22431,7 @@ def delete_clip(video_pk):
                     match_entry.pop("render_job_id", None)
                     match_entry.pop("render_error", None)
                     try:
-                        _write_plan_entries(row[0], plan_entries)
+                        _write_plan_entries(row[0], plan_entries, video_pk=video_pk)
                     except Exception as exc:
                         current_app.logger.warning("Failed to update plan file after delete: %s", exc)
                     try:
@@ -22612,7 +22478,7 @@ def remove_plan_entry(video_pk):
         flash(message, "danger")
         return redirect(url_for("video_shorts_bp.channels_page"))
 
-    plan_entries = _load_plan_entries(video_id)
+    plan_entries = _load_plan_entries(video_id, video_pk=video_pk)
     if not plan_entries:
         message = "Plan data not found."
         if ajax_request:
@@ -22630,7 +22496,7 @@ def remove_plan_entry(video_pk):
         return redirect(url_for("video_shorts_bp.generate_short", video_pk=video_pk))
 
     try:
-        removed_entry = _remove_plan_entry_and_media(video_id, plan_entries, target_entry)
+        removed_entry = _remove_plan_entry_and_media(video_id, plan_entries, target_entry, video_pk=video_pk)
     except Exception as exc:
         current_app.logger.warning("Failed to remove plan entry for %s: %s", video_id, exc)
         message = "Unable to remove the plan section."
@@ -22683,6 +22549,8 @@ def _remove_plan_entry_and_media(
     video_id: str,
     plan_entries: List[Dict[str, Any]],
     target_entry: Dict[str, Any],
+    *,
+    video_pk=None,
 ) -> Dict[str, Any]:
     target_plan_index = None
     try:
@@ -22697,7 +22565,7 @@ def _remove_plan_entry_and_media(
             clip_names.add(val)
 
     plan_entries.remove(target_entry)
-    _write_plan_entries(video_id, plan_entries)
+    _write_plan_entries(video_id, plan_entries, video_pk=video_pk)
 
     for clip_name in clip_names:
         try:
@@ -22722,7 +22590,7 @@ def delete_clip_plan_entry(video_pk, plan_index):
     if not video_id:
         return jsonify(success=False, message="Video not found."), 404
 
-    plan_entries = _load_plan_entries(video_id)
+    plan_entries = _load_plan_entries(video_id, video_pk=video_pk)
     if not plan_entries:
         return jsonify(success=False, message="Plan data not found."), 404
 
@@ -22737,7 +22605,7 @@ def delete_clip_plan_entry(video_pk, plan_index):
         ), 409
 
     try:
-        removed_entry = _remove_plan_entry_and_media(video_id, plan_entries, target_entry)
+        removed_entry = _remove_plan_entry_and_media(video_id, plan_entries, target_entry, video_pk=video_pk)
     except Exception as exc:
         current_app.logger.warning("Failed to delete clip plan entry for %s plan %s: %s", video_id, plan_index, exc)
         return jsonify(success=False, message="Unable to delete the clip."), 500
@@ -22752,7 +22620,7 @@ def delete_ai_suggestions(video_pk):
         flash("Video not found.", "danger")
         return redirect(url_for("video_shorts_bp.channels_page"))
 
-    plan_entries = _load_plan_entries(video_id)
+    plan_entries = _load_plan_entries(video_id, video_pk=video_pk)
     if not plan_entries:
         flash("Plan data not found.", "warning")
         return redirect(url_for("video_shorts_bp.generate_short", video_pk=video_pk))
@@ -22763,9 +22631,9 @@ def delete_ai_suggestions(video_pk):
         return redirect(url_for("video_shorts_bp.generate_short", video_pk=video_pk))
 
     remaining_entries = [entry for entry in plan_entries if not _is_removable_ai_suggestion(entry)]
-    remaining_entries = _reindex_v1_plan_entries(video_id, remaining_entries)
+    remaining_entries = _reindex_v1_plan_entries(video_id, remaining_entries, video_pk=video_pk)
     try:
-        _write_plan_entries(video_id, remaining_entries)
+        _write_plan_entries(video_id, remaining_entries, video_pk=video_pk)
     except Exception as exc:
         current_app.logger.warning("Failed to remove AI suggestions for %s: %s", video_id, exc)
         flash("Unable to remove AI suggestions.", "danger")
@@ -22881,7 +22749,7 @@ def add_clip_section(video_pk):
         if total_keep_duration > 90.0:
             return _respond("Clip must be 90 seconds or shorter.", status=400, category="warning")
 
-    plan_entries = _load_plan_entries(video_id) or []
+    plan_entries = _load_plan_entries(video_id, video_pk=video_pk) or []
 
     next_plan_index = 1
     existing_indexes = []
@@ -22947,7 +22815,7 @@ def add_clip_section(video_pk):
         "title_source": title_source,
         "start": round(start_time, 3),
         "end": round(end_time, 3),
-        "clip_filename": f"{next_plan_index}_{video_id}.mp4",
+        "clip_filename": tenant_media.clip_filename(video_id, next_plan_index, video_pk=video_pk),
         "status": "pending",
         "transcript_full": transcript_full,
         "excerpt": transcript_full,
@@ -22962,7 +22830,7 @@ def add_clip_section(video_pk):
         new_entry["language"] = inferred_language
     plan_entries.insert(0, new_entry)
     try:
-        _write_plan_entries(video_id, plan_entries)
+        _write_plan_entries(video_id, plan_entries, video_pk=video_pk)
     except Exception as exc:
         current_app.logger.warning("Failed to add manual plan entry for %s: %s", video_id, exc)
         return _respond("The new clip section could not be saved.", status=500, category="danger")
@@ -23066,12 +22934,12 @@ def adjust_clip_timing(video_pk):
     video_id, duration_seconds = row
     duration = _to_float(duration_seconds) if duration_seconds is not None else None
 
-    plan_path = SHORTS_DIR / f"{video_id}_plan.json"
+    plan_path = tenant_media.state_path(video_id, "plan", read=True, video_pk=video_pk)
     if not plan_path.exists():
         return _respond("Clip plan file not found; regenerate the plan first.", status=404, category="warning")
 
     try:
-        plan_data = json.loads(plan_path.read_text())
+        plan_data = tenant_media.load_state(video_id, 'plan', video_pk=video_pk)
     except Exception as exc:
         current_app.logger.warning("Failed to read plan file %s: %s", plan_path, exc)
         return _respond("Could not read the clip plan file.", status=500, category="danger")
@@ -23171,7 +23039,7 @@ def adjust_clip_timing(video_pk):
         _mark_plan_entry_user_title_edit(plan_entry, title_candidate)
 
     try:
-        _write_plan_entries(video_id, plan_entries)
+        _write_plan_entries(video_id, plan_entries, video_pk=video_pk)
     except Exception as exc:
         current_app.logger.warning("Failed to write plan file %s: %s", plan_path, exc)
         return _respond("Could not save the adjusted clip timings.", status=500, category="danger")
@@ -23218,7 +23086,7 @@ def edit_clip_title_time(video_pk: int, plan_index: int):
     if not row:
         return jsonify(success=False, message="Video not found."), 404
     video_id, duration_seconds = row
-    plan_entries = _load_plan_entries(video_id) or []
+    plan_entries = _load_plan_entries(video_id, video_pk=video_pk) or []
     plan_entry = None
     for entry in plan_entries:
         try:
@@ -23347,7 +23215,7 @@ def edit_clip_title_time(video_pk: int, plan_index: int):
             plan_entry["excerpt"] = transcript_full
     except Exception as exc:
         current_app.logger.warning("Failed to rebuild transcript for edited clip video_pk=%s plan_index=%s: %s", video_pk, plan_index, exc)
-    _write_plan_entries(video_id, plan_entries)
+    _write_plan_entries(video_id, plan_entries, video_pk=video_pk)
 
     response_payload = {
         "success": True,
@@ -23434,13 +23302,13 @@ def update_clip_title(video_pk):
         return redirect(url_for("video_shorts_bp.channels_page"))
 
     video_id = row[0]
-    plan_path = SHORTS_DIR / f"{video_id}_plan.json"
+    plan_path = tenant_media.state_path(video_id, "plan", read=True, video_pk=video_pk)
     if not plan_path.exists():
         flash("Clip plan file not found; regenerate the plan first.", "warning")
         return redirect(url_for("video_shorts_bp.generate_short", video_pk=video_pk))
 
     try:
-        plan_data = json.loads(plan_path.read_text())
+        plan_data = tenant_media.load_state(video_id, 'plan', video_pk=video_pk)
     except Exception as exc:
         current_app.logger.warning("Failed to read plan file %s: %s", plan_path, exc)
         flash("Could not read the clip plan file.", "danger")
@@ -23464,7 +23332,7 @@ def update_clip_title(video_pk):
 
     _mark_plan_entry_user_title_edit(plan_entry, new_title)
     try:
-        _write_plan_entries(video_id, plan_entries)
+        _write_plan_entries(video_id, plan_entries, video_pk=video_pk)
     except Exception as exc:
         current_app.logger.warning("Failed to write plan file %s: %s", plan_path, exc)
         flash("Could not save the updated clip title.", "danger")
@@ -23512,12 +23380,12 @@ def update_clip_category(video_pk):
         return redirect(url_for("video_shorts_bp.channels_page"))
 
     video_id = row[0]
-    plan_path = SHORTS_DIR / f"{video_id}_plan.json"
+    plan_path = tenant_media.state_path(video_id, "plan", read=True, video_pk=video_pk)
     if not plan_path.exists():
         return _respond("Clip plan file not found; regenerate the plan first.", status=404, category_level="warning")
 
     try:
-        plan_data = json.loads(plan_path.read_text())
+        plan_data = tenant_media.load_state(video_id, 'plan', video_pk=video_pk)
     except Exception as exc:
         current_app.logger.warning("Failed to read plan file %s: %s", plan_path, exc)
         return _respond("Could not read the clip plan file.", status=500, category_level="danger")
@@ -23542,7 +23410,7 @@ def update_clip_category(video_pk):
     else:
         plan_entry.pop("category", None)
     try:
-        _write_plan_entries(video_id, plan_entries)
+        _write_plan_entries(video_id, plan_entries, video_pk=video_pk)
     except Exception as exc:
         current_app.logger.warning("Failed to write plan file %s: %s", plan_path, exc)
         return _respond("Kategori kaydedilemedi.", status=500, category_level="danger")
@@ -23562,7 +23430,7 @@ def suggest_clip_title(video_pk):
     video_id = _resolve_video_id_from_pk(video_pk)
     if not video_id:
         return jsonify(success=False, message="Video not found"), 404
-    entries = _load_plan_entries(video_id)
+    entries = _load_plan_entries(video_id, video_pk=video_pk)
     plan_entry = _find_plan_entry(entries, plan_index)
     if not plan_entry:
         return jsonify(success=False, message="Clip not found"), 404
@@ -23607,7 +23475,7 @@ def suggest_clip_title(video_pk):
     plan_entry["title"] = new_title
     _mark_plan_entry_ai_title(plan_entry)
     try:
-        _write_plan_entries(video_id, entries)
+        _write_plan_entries(video_id, entries, video_pk=video_pk)
     except Exception as exc:
         current_app.logger.warning("Failed to write plan for title suggestion: %s", exc)
         return jsonify(success=False, message="Başlık kaydedilemedi"), 500
@@ -23662,13 +23530,13 @@ KURALLAR:
         return redirect(url_for("video_shorts_bp.channels_page"))
 
     video_id = row[0]
-    plan_path = SHORTS_DIR / f"{video_id}_plan.json"
+    plan_path = tenant_media.state_path(video_id, "plan", read=True, video_pk=video_pk)
     if not plan_path.exists():
         flash("Clip plan file not found; regenerate the plan first.", "warning")
         return redirect(url_for("video_shorts_bp.generate_short", video_pk=video_pk))
 
     try:
-        plan_data = json.loads(plan_path.read_text())
+        plan_data = tenant_media.load_state(video_id, 'plan', video_pk=video_pk)
     except Exception as exc:
         current_app.logger.warning("Failed to read plan file %s: %s", plan_path, exc)
         flash("Could not read the clip plan file.", "danger")
@@ -23722,7 +23590,7 @@ KURALLAR:
     plan_entry["transcript_full"] = new_subtitle
     plan_entry["transcript_full_custom"] = new_subtitle
     try:
-        _write_plan_entries(video_id, plan_entries)
+        _write_plan_entries(video_id, plan_entries, video_pk=video_pk)
     except Exception as exc:
         current_app.logger.warning("Failed to write plan file %s: %s", plan_path, exc)
         flash("Could not save the updated clip subtitle.", "danger")
@@ -25005,7 +24873,7 @@ def unschedule_clip_posts(video_pk: int, plan_index: int):
     if not source_video_id:
         return jsonify(success=False, message="Video id not found."), 400
 
-    entries = _load_plan_entries(source_video_id)
+    entries = _load_plan_entries(source_video_id, video_pk=video_pk)
     target_entry = None
     for entry in entries:
         try:
@@ -25087,7 +24955,7 @@ def unschedule_clip_posts(video_pk: int, plan_index: int):
         elif youtube_id:
             target_entry["yt_video_id"] = youtube_id
         canceled_counts["youtube"] = 1
-        _write_plan_entries(source_video_id, entries)
+        _write_plan_entries(source_video_id, entries, video_pk=video_pk)
 
     conn = get_db()
     try:
@@ -25100,6 +24968,8 @@ def unschedule_clip_posts(video_pk: int, plan_index: int):
                 table_name="shorts_instagram_queue",
                 video_id=source_video_id,
                 plan_index=plan_index,
+                video_pk=video_pk,
+                clip_filename=clip_filename,
             )
         if cancel_all_platforms:
             canceled_counts["tiktok"] = _cancel_pending_social_queue_rows(
@@ -25107,6 +24977,8 @@ def unschedule_clip_posts(video_pk: int, plan_index: int):
                 table_name="shorts_tiktok_queue",
                 video_id=source_video_id,
                 plan_index=plan_index,
+                video_pk=video_pk,
+                clip_filename=clip_filename,
             )
         if cancel_all_platforms or requested_platform == "facebook":
             canceled_counts["facebook"] = _cancel_pending_social_queue_rows(
@@ -25114,6 +24986,8 @@ def unschedule_clip_posts(video_pk: int, plan_index: int):
                 table_name="shorts_facebook_queue",
                 video_id=source_video_id,
                 plan_index=plan_index,
+                video_pk=video_pk,
+                clip_filename=clip_filename,
             )
         if clip_filename and (cancel_all_platforms or requested_platform == "youtube"):
             generated_columns = table_columns(conn, "shorts_generated_videos")
@@ -25137,9 +25011,8 @@ def unschedule_clip_posts(video_pk: int, plan_index: int):
                          WHERE CAST(source_video_id AS VARCHAR) = ?
                            AND clip_filename = ?
                     """
-                    if brand_id:
-                        sql += " AND brand_id = ?"
-                        params.append(brand_id)
+                    sql += " AND user_id = ? AND brand_id IS NOT DISTINCT FROM ?"
+                    params.extend([current_user["id"], brand_id])
                     conn.execute(sql, params)
         conn.commit()
     finally:
@@ -25276,7 +25149,7 @@ def upload_clip_to_youtube():
         _notify(message, "warning")
         return redirect(url_for("video_shorts_bp.generate_short", video_pk=request.form.get("video_pk")))
 
-    out_path = SHORTS_DIR / filename
+    out_path = tenant_media.short_path(filename)
     publish_at_value = (request.form.get("publish_at") or "").strip()
     publish_at = None
     if publish_at_value:
@@ -25292,13 +25165,13 @@ def upload_clip_to_youtube():
             _notify(message, "warning")
             return redirect(url_for("video_shorts_bp.generate_short", video_pk=request.form.get("video_pk")))
 
-    out_path = SHORTS_DIR / filename
+    out_path = tenant_media.short_path(filename)
     source_video_id = _resolve_video_id_from_pk(video_pk)
     plan_entries = []
     target_entry = None
     plan_index = None
     if source_video_id:
-        plan_entries = _load_plan_entries(source_video_id)
+        plan_entries = _load_plan_entries(source_video_id, video_pk=video_pk)
         if plan_entries:
             if plan_index_raw:
                 try:
@@ -26331,7 +26204,7 @@ def edit_segment_text(video_pk):
         try:
             user_id = str(_active_editor_context()["owner_user_id"] or "")
             if user_id:
-                plan_entries = _load_plan_entries(video_id)
+                plan_entries = _load_plan_entries(video_id, video_pk=video_pk)
                 for entry in plan_entries:
                     try:
                         plan_index = int(entry.get("plan_index"))
@@ -26390,12 +26263,12 @@ def update_segment_non_speech(video_pk):
         return jsonify({"success": False, "message": "No transcript segments available."}), 400
     if segment_index < 0 or segment_index >= len(segments):
         return jsonify({"success": False, "message": "Segment index out of range."}), 400
-    overrides = load_non_speech_overrides(video_id)
+    overrides = load_non_speech_overrides(video_id, video_pk=video_pk)
     if non_speech_type == "speech":
         overrides.pop(str(segment_index), None)
     else:
         overrides[str(segment_index)] = non_speech_type
-    save_non_speech_overrides(video_id, overrides)
+    save_non_speech_overrides(video_id, overrides, video_pk=video_pk)
     return jsonify({"success": True, "non_speech_type": non_speech_type})
 
 
@@ -26444,7 +26317,7 @@ def _generate_clip_plan_for_video(
         raise RuntimeError("OPENAI_API_KEY is missing; cannot create clip plan.")
 
     vid, _video_title, duration_seconds, transcript_text, segments = video_info
-    non_speech_overrides = load_non_speech_overrides(vid)
+    non_speech_overrides = load_non_speech_overrides(vid, video_pk=video_pk)
     if non_speech_overrides:
         for idx_str, override in non_speech_overrides.items():
             try:
@@ -26478,8 +26351,8 @@ def _generate_clip_plan_for_video(
     focus_categories = normalize_focus_categories(form_data.get("focus_categories"), default_to_all=True)
     clip_plan: List[Dict[str, Any]] = []
     debug_info: Dict[str, Any] = {}
-    plan_path = SHORTS_DIR / f"{vid}_plan.json"
-    existing_plan_entries = _load_plan_entries(vid)
+    plan_path = tenant_media.state_path(vid, "plan", read=True, video_pk=video_pk)
+    existing_plan_entries = _load_plan_entries(vid, video_pk=video_pk)
     used_fallback_plan = False
     planner_used = "v1"
     planner_fallback = False
@@ -26606,7 +26479,7 @@ def _generate_clip_plan_for_video(
             plan_entry["score_source"] = clip.get("score_source")
         plan_entry["focus_categories"] = list(focus_categories)
         plan_entry["status"] = "pending"
-        plan_entry["clip_filename"] = plan_entry.get("clip_filename") or f"{idx + 1}_{vid}.mp4"
+        plan_entry["clip_filename"] = plan_entry.get("clip_filename") or tenant_media.clip_filename(vid, idx + 1, video_pk=video_pk)
         plan_entry["publish_status"] = "not_ready"
         plan_entry.setdefault("yt_description", None)
         plan_entry.setdefault("yt_status", None)
@@ -26614,7 +26487,7 @@ def _generate_clip_plan_for_video(
         plan_entry.setdefault("audio_end", None)
         timestamped_plan.append(plan_entry)
 
-    combined_plan = _reindex_v1_plan_entries(vid, [*existing_plan_entries, *timestamped_plan])
+    combined_plan = _reindex_v1_plan_entries(vid, [*existing_plan_entries, *timestamped_plan], video_pk=video_pk)
 
     selected_for_generation: List[Dict[str, Any]] = []
     if owner_user_id and brand_id:
@@ -26627,7 +26500,7 @@ def _generate_clip_plan_for_video(
     SHORTS_DIR.mkdir(parents=True, exist_ok=True)
     _emit("save_plan", "Saving plan to disk.", clip_count=len(combined_plan))
     try:
-        _write_plan_entries(vid, combined_plan)
+        _write_plan_entries(vid, combined_plan, video_pk=video_pk)
         try:
             write_suggestions_cache(vid, entries=timestamped_plan)
         except Exception:
@@ -26990,8 +26863,8 @@ def create_clip_plan_v2(video_pk):
     debug_flag = request.args.get("debug") == "1"
     clip_plan = []
     debug_info = {}
-    plan_path = SHORTS_DIR / f"{vid}_plan_v2.json"
-    v1_entries = _load_plan_entries(vid)
+    plan_path = tenant_media.state_path(vid, "plan_v2", read=True, video_pk=video_pk)
+    v1_entries = _load_plan_entries(vid, video_pk=video_pk)
     used_fallback_plan = False
     if v1_entries:
         target_clip_count = len(v1_entries)
@@ -27064,7 +26937,7 @@ def create_clip_plan_v2(video_pk):
         else:
             _mark_plan_entry_ai_title(plan_entry)
         plan_entry["status"] = "pending"
-        plan_entry["clip_filename"] = plan_entry.get("clip_filename") or f"{idx + 1}_{vid}.mp4"
+        plan_entry["clip_filename"] = plan_entry.get("clip_filename") or tenant_media.clip_filename(vid, idx + 1, video_pk=video_pk)
         plan_entry["publish_status"] = "not_ready"
         plan_entry.setdefault("yt_description", None)
         plan_entry.setdefault("yt_status", None)
@@ -27074,7 +26947,7 @@ def create_clip_plan_v2(video_pk):
 
     SHORTS_DIR.mkdir(parents=True, exist_ok=True)
     try:
-        _write_plan_entries_v2(vid, timestamped_plan)
+        _write_plan_entries_v2(vid, timestamped_plan, video_pk=video_pk)
     except Exception as pe:
         current_app.logger.warning("Failed to write plan file %s: %s", plan_path, pe)
         flash("Could not save the clip plan.", "danger")
@@ -27100,7 +26973,7 @@ def create_clip_plan_v3(video_pk):
         flash("OPENAI_API_KEY is missing; cannot create clip plan.", "danger")
         return redirect(url_for("video_shorts_bp.generate_short", video_pk=video_pk))
     vid, video_title, duration_seconds, transcript_text, segments = video_info
-    non_speech_overrides = load_non_speech_overrides(vid)
+    non_speech_overrides = load_non_speech_overrides(vid, video_pk=video_pk)
     if non_speech_overrides:
         for idx_str, override in non_speech_overrides.items():
             try:
@@ -27129,7 +27002,7 @@ def create_clip_plan_v3(video_pk):
     debug_flag = request.args.get("debug") == "1"
     clip_plan = []
     debug_info = {}
-    plan_path = SHORTS_DIR / f"{vid}_plan_v3.json"
+    plan_path = tenant_media.state_path(vid, "plan_v3", read=True, video_pk=video_pk)
     used_fallback_plan = False
     try:
         clip_plan, debug_info = propose_clips_with_agents_v3(
@@ -27181,7 +27054,7 @@ def create_clip_plan_v3(video_pk):
         else:
             _mark_plan_entry_ai_title(plan_entry)
         plan_entry["status"] = "pending"
-        plan_entry["clip_filename"] = plan_entry.get("clip_filename") or f"{idx + 1}_{vid}.mp4"
+        plan_entry["clip_filename"] = plan_entry.get("clip_filename") or tenant_media.clip_filename(vid, idx + 1, video_pk=video_pk)
         plan_entry["publish_status"] = "not_ready"
         plan_entry.setdefault("yt_description", None)
         plan_entry.setdefault("yt_status", None)
@@ -27191,7 +27064,7 @@ def create_clip_plan_v3(video_pk):
 
     SHORTS_DIR.mkdir(parents=True, exist_ok=True)
     try:
-        _write_plan_entries_v3(vid, timestamped_plan)
+        _write_plan_entries_v3(vid, timestamped_plan, video_pk=video_pk)
     except Exception as pe:
         current_app.logger.warning("Failed to write plan file %s: %s", plan_path, pe)
         flash("Could not save the clip plan.", "danger")
@@ -27217,7 +27090,7 @@ def create_clip_plan_v4(video_pk):
         flash("OPENAI_API_KEY is missing; cannot create clip plan.", "danger")
         return redirect(url_for("video_shorts_bp.generate_short", video_pk=video_pk))
     vid, video_title, duration_seconds, transcript_text, segments = video_info
-    non_speech_overrides = load_non_speech_overrides(vid)
+    non_speech_overrides = load_non_speech_overrides(vid, video_pk=video_pk)
     if non_speech_overrides:
         for idx_str, override in non_speech_overrides.items():
             try:
@@ -27246,7 +27119,7 @@ def create_clip_plan_v4(video_pk):
     debug_flag = request.args.get("debug") == "1"
     clip_plan = []
     debug_info = {}
-    plan_path = SHORTS_DIR / f"{vid}_plan_v4.json"
+    plan_path = tenant_media.state_path(vid, "plan_v4", read=True, video_pk=video_pk)
     used_fallback_plan = False
     try:
         clip_plan, debug_info = propose_clips_with_agents_v4(
@@ -27298,7 +27171,7 @@ def create_clip_plan_v4(video_pk):
         else:
             _mark_plan_entry_ai_title(plan_entry)
         plan_entry["status"] = "pending"
-        plan_entry["clip_filename"] = plan_entry.get("clip_filename") or f"{idx + 1}_{vid}.mp4"
+        plan_entry["clip_filename"] = plan_entry.get("clip_filename") or tenant_media.clip_filename(vid, idx + 1, video_pk=video_pk)
         plan_entry["publish_status"] = "not_ready"
         plan_entry.setdefault("yt_description", None)
         plan_entry.setdefault("yt_status", None)
@@ -27308,7 +27181,7 @@ def create_clip_plan_v4(video_pk):
 
     SHORTS_DIR.mkdir(parents=True, exist_ok=True)
     try:
-        _write_plan_entries_v4(vid, timestamped_plan)
+        _write_plan_entries_v4(vid, timestamped_plan, video_pk=video_pk)
     except Exception as pe:
         current_app.logger.warning("Failed to write plan file %s: %s", plan_path, pe)
         flash("Could not save the clip plan.", "danger")
@@ -27324,12 +27197,12 @@ def delete_clip_plan_v2(video_pk):
         flash("Video not found", "danger")
         return redirect(url_for("video_shorts_bp.channels_page"))
     vid, _, _, _, _ = video_info
-    plan_path = SHORTS_DIR / f"{vid}_plan_v2.json"
+    plan_path = tenant_media.state_path(vid, "plan_v2", read=True, video_pk=video_pk)
     debug_path = SHORTS_DIR / f"{vid}_debug_v2.json"
     deleted_any = False
     try:
         if plan_path.exists():
-            plan_path.unlink()
+            tenant_media.write_state(vid, {"plan": []}, "plan_v2", video_pk=video_pk)
             deleted_any = True
     except Exception:
         current_app.logger.warning("Failed to delete v2 plan file %s", plan_path)
@@ -27493,7 +27366,7 @@ def save_short_settings(video_pk):
     if editor_owner_user_id and podcast_overlay_short_ids:
         try:
             allowed_paths = _resolve_user_short_clip_source_paths(editor_owner_user_id, podcast_overlay_short_ids, max_items=2)
-            allowed_keys = {f"short:{path.name}" for path in allowed_paths}
+            allowed_keys = {tenant_media.asset_key(path.name) for path in allowed_paths}
             podcast_overlay_short_ids = [key for key in podcast_overlay_short_ids if key in allowed_keys][:2]
         except Exception as exc:
             current_app.logger.warning("Podcast overlay short validation skipped for %s: %s", video_pk, exc)
@@ -27766,7 +27639,7 @@ def autoclip_video(video_pk):
             status=409,
             category="warning",
         )
-    plan_entries = _load_plan_entries(vid)
+    plan_entries = _load_plan_entries(vid, video_pk=video_pk)
     video_crop_ratios = {}
     video_static_visual_key = None
     video_background_visual_key = None
@@ -28377,7 +28250,7 @@ def autoclip_video(video_pk):
     if title_override:
         _mark_plan_entry_user_title_edit(plan_entry, title_override)
         try:
-            _write_plan_entries(vid, plan_entries)
+            _write_plan_entries(vid, plan_entries, video_pk=video_pk)
         except Exception as exc:
             current_app.logger.warning(
                 "Failed to persist clip title update for %s plan %s: %s",
@@ -28568,7 +28441,7 @@ def autoclip_video(video_pk):
                     plan_index=plan_index,
                     status=str(job.get("status") or "queued"),
                     render_job_id=job.get("id"),
-                )
+                 video_pk=video_pk)
                 return _respond(
                     "Matching render job is already in progress.",
                     success=True,
@@ -28621,7 +28494,7 @@ def autoclip_video(video_pk):
                 plan_index=plan_index,
                 status="queued",
                 render_job_id=job.get("id"),
-            )
+             video_pk=video_pk)
             reserve_result = {"allowed": True, "remaining": None}
             if (not guest_reserve_result.get("guest")) and ((not auto_render_job) or AUTO_RENDER_COUNTS_QUOTA):
                 reserve_result = reserve_export(target_owner_user_id)
@@ -28640,7 +28513,7 @@ def autoclip_video(video_pk):
                     plan_index=plan_index,
                     status="pending",
                     render_job_id=None,
-                )
+                 video_pk=video_pk)
                 return _respond(
                     "Monthly export limit reached for your plan.",
                     success=False,
@@ -28825,8 +28698,9 @@ def autoclip_video(video_pk):
     multi_range_source_path: Optional[Path] = None
     made = 0
     missing_outputs = 0
-    clip_filename = plan_entry.get("clip_filename") or f"{plan_index}_{vid}.mp4"
-    output_path = SHORTS_DIR / clip_filename
+    clip_filename = tenant_media.render_filename(vid, plan_entry, plan_index, video_pk=video_pk)
+    plan_entry["clip_filename"] = clip_filename
+    output_path = tenant_media.short_path(clip_filename)
     error_message = None
     try:
         START_PAD = 0.25
@@ -29548,7 +29422,7 @@ def autoclip_video(video_pk):
                     clip_filename,
                     vid,
                 )
-                merged = _write_merged_plan_entry(vid, plan_entry, plan_entries)
+                merged = _write_merged_plan_entry(vid, plan_entry, plan_entries, video_pk=video_pk)
                 if not merged:
                     current_app.logger.warning(
                         "Skipped stale plan update because plan index %s is no longer present video_id=%s",
@@ -29884,7 +29758,7 @@ def regenerate_clip_video(video_pk: int, plan_index: int):
         video_cols.append("overlay_shapes")
     video = dict(zip(video_cols, video_row))
     video["layout_mode"] = _effective_layout_mode_for_owner(video.get("owner_user_id"), video.get("layout_mode"))
-    plan_entries = _load_plan_entries(source_video_id)
+    plan_entries = _load_plan_entries(source_video_id, video_pk=video_pk)
     plan_entry = None
     for entry in plan_entries:
         if not isinstance(entry, dict):
@@ -30035,7 +29909,7 @@ def regenerate_clip_video(video_pk: int, plan_index: int):
         plan_entry["render_job_id"] = job.get("id")
         plan_entry["regenerate_started_at"] = datetime.utcnow().replace(microsecond=0).isoformat()
         plan_entry.pop("render_error", None)
-        _write_plan_entries(source_video_id, plan_entries)
+        _write_plan_entries(source_video_id, plan_entries, video_pk=video_pk)
     return jsonify(
         success=True,
         message="Regenerate job queued.",
@@ -30368,11 +30242,11 @@ def prepare_description(video_pk):
     video_date_text = (row[3] or "").strip()
     duration_seconds = row[4]
 
-    plan_path = SHORTS_DIR / f"{vid}_plan.json"
+    plan_path = tenant_media.state_path(vid, "plan", read=True, video_pk=video_pk)
     if not plan_path.exists():
         return _respond(False, "Clip plan not found; regenerate first.", category="warning", status=404)
     try:
-        plan_data = json.loads(plan_path.read_text())
+        plan_data = tenant_media.load_state(vid, 'plan', video_pk=video_pk)
     except Exception as e:
         return _respond(False, f"Could not read plan file: {e}", category="danger", status=500)
 
@@ -30435,7 +30309,7 @@ def prepare_description(video_pk):
     try:
         plan_entry["yt_description"] = description_text
         plan_entry["yt_status"] = "ready"
-        _write_plan_entries(vid, plan_entries)
+        _write_plan_entries(vid, plan_entries, video_pk=video_pk)
     except Exception as e:
         return _respond(
             False,

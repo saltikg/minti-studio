@@ -419,7 +419,7 @@ def is_render_job_cache_valid(job: Dict[str, Any]) -> bool:
     try:
         from app.video_shorts.routes import generation
 
-        plan_entries = generation._load_plan_entries(source_video_id) or []
+        plan_entries = generation._load_plan_entries(source_video_id, video_pk=payload.get("video_pk")) or []
         target_entry = None
         for entry in plan_entries:
             try:

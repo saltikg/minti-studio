@@ -1,3 +1,4 @@
+from app.video_shorts.services import tenant_media
 import json
 from copy import deepcopy
 from datetime import datetime, timezone
@@ -95,11 +96,11 @@ def _load_matching_plan_entry(source_entry: dict) -> dict:
     video_id = str(source_entry.get("video_id") or "").strip()
     if not video_id:
         return {}
-    plan_path = SHORTS_DIR / f"{video_id}_plan.json"
+    plan_path = tenant_media.state_path(video_id, read=True)
     if not plan_path.exists():
         return {}
     try:
-        payload = json.loads(plan_path.read_text())
+        payload = tenant_media.load_state(video_id)
     except Exception:
         return {}
     entries = payload.get("plan") or payload.get("clips") or []

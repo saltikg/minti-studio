@@ -509,14 +509,14 @@ def _mark_plan_failure(job: Dict[str, Any], error_message: str) -> None:
     if not source_video_id or plan_index is None:
         return
     try:
-        entries = generation._load_plan_entries(source_video_id)
+        entries = generation._load_plan_entries(source_video_id, video_pk=payload.get("video_pk"))
         generation._update_plan_entry_job_state(
             source_video_id,
             entries,
             plan_index=int(plan_index),
             status="failed",
             error_message=error_message,
-        )
+         video_pk=payload.get("video_pk"))
         generation._evaluate_lead_generation_approval_gate(
             owner_user_id=job.get("user_id"),
             brand_id=payload.get("brand_id"),
@@ -536,14 +536,14 @@ def _update_plan_status(job: Dict[str, Any], status: str) -> None:
     if not source_video_id or plan_index is None:
         return
     try:
-        entries = generation._load_plan_entries(source_video_id)
+        entries = generation._load_plan_entries(source_video_id, video_pk=payload.get("video_pk"))
         generation._update_plan_entry_job_state(
             source_video_id,
             entries,
             plan_index=int(plan_index),
             status=status,
             render_job_id=job.get("id"),
-        )
+         video_pk=payload.get("video_pk"))
     except Exception:
         pass
 
@@ -1707,7 +1707,7 @@ def _replace_pending_youtube_upload_after_render(app, job: Dict[str, Any], resul
     user, brand = _load_user_context(job["user_id"], payload.get("brand_id"))
     brand_id = (brand or {}).get("id")
     with app.app_context():
-        entries = generation._load_plan_entries(source_video_id) or []
+        entries = generation._load_plan_entries(source_video_id, video_pk=payload.get("video_pk")) or []
         target_entry = None
         for entry in entries:
             try:
@@ -1772,7 +1772,7 @@ def _replace_pending_youtube_upload_after_render(app, job: Dict[str, Any], resul
             )
             target_entry["schedule_update_warning"] = "Schedule kept with the previous version."
             try:
-                generation._write_plan_entries(source_video_id, entries)
+                generation._write_plan_entries(source_video_id, entries, video_pk=payload.get("video_pk"))
             except Exception:
                 app.logger.exception("Failed to persist schedule replacement warning job_id=%s", job.get("id"))
             return result
@@ -1902,7 +1902,7 @@ def _execute_publish_job(app, job: Dict[str, Any]) -> Dict[str, Any]:
         if not instagram_creds or not generation._validate_instagram_connection(instagram_creds):
             raise PermanentRenderJobError("Connect Instagram first.")
         _set_job_progress(job["id"], stage="queueing", message="Queueing Instagram publish.", status="processing")
-        plan_entries = generation._load_plan_entries(video_id) or []
+        plan_entries = generation._load_plan_entries(video_id, video_pk=payload.get("video_pk")) or []
         target_entry = plan_entries[0] if plan_entries else {}
         queue_id = enqueue_instagram_clip(
             user_id=user.get("id"),
@@ -2064,7 +2064,7 @@ def _render_job_completion_from_plan(job: Dict[str, Any]) -> Optional[Dict[str, 
     except Exception:
         return None
     try:
-        entries = generation._load_plan_entries(source_video_id) or []
+        entries = generation._load_plan_entries(source_video_id, video_pk=payload.get("video_pk")) or []
     except Exception:
         logger.exception("Could not load plan entries for stuck render recovery job_id=%s", job.get("id"))
         return None

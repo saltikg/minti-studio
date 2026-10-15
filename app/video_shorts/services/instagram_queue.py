@@ -1,3 +1,4 @@
+from app.video_shorts.services import tenant_media
 import json
 import json
 import time
@@ -209,7 +210,7 @@ def enqueue_instagram_clip(
             source_channel_type="youtube",
             clip_filename=clip_filename,
             output_filename=clip_filename,
-            storage_file_key=f"short:{clip_filename}",
+            storage_file_key=tenant_media.asset_key(clip_filename),
             generation_status="created",
             publish_status="queued",
             youtube_video_id=youtube_short_id,
@@ -441,7 +442,7 @@ def update_instagram_job_status(
             source_channel_type="youtube",
             clip_filename=clip_filename,
             output_filename=clip_filename,
-            storage_file_key=f"short:{clip_filename}",
+            storage_file_key=tenant_media.asset_key(clip_filename),
             generation_status="created",
             publish_status=publish_status,
             youtube_video_id=lifecycle_row[3],
@@ -1005,9 +1006,13 @@ def fetch_instagram_media_jobs(limit: Optional[int] = None) -> List[Dict[str, Op
         conn.close()
 
 
-def load_instagram_queue_map(video_ids: List[str]) -> Dict[Tuple[str, str], List[Dict[str, Optional[str]]]]:
+def load_instagram_queue_map(video_ids: List[str], *, owner_user_id=None, brand_id=None) -> Dict[Tuple[str, str], List[Dict[str, Optional[str]]]]:
     if not video_ids:
         return {}
+    if owner_user_id is None:
+        owner_user_id, brand_id = tenant_media.current_scope()
+    scope_sql = " AND user_id = ? AND brand_id IS NOT DISTINCT FROM ?" if owner_user_id else ""
+    scope_params = [owner_user_id, brand_id] if owner_user_id else []
     conn = get_db_readonly()
     try:
         ensure_instagram_queue_schema(conn)
@@ -1043,10 +1048,10 @@ def load_instagram_queue_map(video_ids: List[str]) -> Dict[Tuple[str, str], List
                     media_type,
                     created_at
                 FROM shorts_instagram_queue
-                WHERE video_id IN ({placeholders})
+                WHERE video_id IN ({placeholders}) {scope_sql}
                 ORDER BY COALESCE(publish_at, created_at)
                 """,
-                video_ids,
+                [*video_ids, *scope_params],
             ).fetchall()
         except Exception as exc:
             if "shorts_instagram_queue" in str(exc).lower():

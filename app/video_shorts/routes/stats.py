@@ -1,4 +1,5 @@
 from __future__ import annotations
+from app.video_shorts.services import tenant_media
 
 import json
 from datetime import date, datetime, timedelta, timezone
@@ -426,14 +427,10 @@ def _load_published_youtube_short_ids(
     if not SHORTS_DIR.exists():
         return []
     plan_suffix = "_plan.json"
-    plan_paths = [path for path in SHORTS_DIR.glob(f"*{plan_suffix}") if path.is_file()]
+    plan_paths = list(tenant_media.iter_plans(brand_id=brand_id))
     if not plan_paths:
         return []
-    source_video_ids = [
-        path.name[: -len(plan_suffix)]
-        for path in plan_paths
-        if path.name.endswith(plan_suffix)
-    ]
+    source_video_ids = [video.youtube_id for video, path in plan_paths]
     if not source_video_ids:
         return []
     placeholders = ", ".join("?" for _ in source_video_ids)
@@ -451,12 +448,12 @@ def _load_published_youtube_short_ids(
     if not allowed_source_ids:
         return []
     published_ids: List[str] = []
-    for plan_path in plan_paths:
-        source_video_id = plan_path.name[: -len(plan_suffix)]
+    for plan_video, plan_path in plan_paths:
+        source_video_id = plan_video.youtube_id
         if source_video_id not in allowed_source_ids:
             continue
         try:
-            raw = json.loads(plan_path.read_text())
+            raw = tenant_media.load_state(plan_video)
         except Exception:
             continue
         entries = raw.get("plan") or raw.get("clips") or []
@@ -495,14 +492,10 @@ def _load_published_youtube_short_schedule(
     if not SHORTS_DIR.exists():
         return {}
     plan_suffix = "_plan.json"
-    plan_paths = [path for path in SHORTS_DIR.glob(f"*{plan_suffix}") if path.is_file()]
+    plan_paths = list(tenant_media.iter_plans(brand_id=brand_id))
     if not plan_paths:
         return {}
-    source_video_ids = [
-        path.name[: -len(plan_suffix)]
-        for path in plan_paths
-        if path.name.endswith(plan_suffix)
-    ]
+    source_video_ids = [video.youtube_id for video, path in plan_paths]
     if not source_video_ids:
         return {}
     placeholders = ", ".join("?" for _ in source_video_ids)
@@ -520,12 +513,12 @@ def _load_published_youtube_short_schedule(
     if not allowed_source_ids:
         return {}
     published_schedule: Dict[str, date] = {}
-    for plan_path in plan_paths:
-        source_video_id = plan_path.name[: -len(plan_suffix)]
+    for plan_video, plan_path in plan_paths:
+        source_video_id = plan_video.youtube_id
         if source_video_id not in allowed_source_ids:
             continue
         try:
-            raw = json.loads(plan_path.read_text())
+            raw = tenant_media.load_state(plan_video)
         except Exception:
             continue
         entries = raw.get("plan") or raw.get("clips") or []

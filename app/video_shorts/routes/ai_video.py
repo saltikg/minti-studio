@@ -1,4 +1,5 @@
 from __future__ import annotations
+from app.video_shorts.services import tenant_media
 
 import shutil
 import uuid
@@ -237,14 +238,14 @@ def ai_video_create():
         storage = get_media_storage()
         clip_key = _short_storage_key(clip_filename)
         SHORTS_DIR.mkdir(parents=True, exist_ok=True)
-        local_clip_path = SHORTS_DIR / clip_filename
+        local_clip_path = tenant_media.short_path(clip_filename)
         temp_size = temp_clip_path.stat().st_size
         shutil.copyfile(temp_clip_path, local_clip_path)
         storage.put_file(temp_clip_path, clip_key)
         clip_url = storage.public_url(clip_key)
         try:
             _upsert_storage_asset(
-                f"short:{clip_filename}",
+                tenant_media.asset_key(clip_filename),
                 str(local_clip_path),
                 "short",
                 temp_size,
@@ -477,7 +478,7 @@ def ai_video_delete(ai_video_id: str):
             current_app.logger.exception("Failed to delete AI video from storage key=%s", storage_key)
     if clip_filename:
         try:
-            clip_path = SHORTS_DIR / clip_filename
+            clip_path = tenant_media.short_path(clip_filename)
             if clip_path.exists():
                 clip_path.unlink()
         except Exception:
@@ -490,16 +491,16 @@ def ai_video_delete(ai_video_id: str):
         if "brand_id" in asset_columns:
             conn.execute(
                 "DELETE FROM shorts_storage_assets WHERE file_key = ? AND user_id = ? AND (brand_id = ? OR (? IS NULL AND brand_id IS NULL))",
-                [f"short:{clip_filename}", user_id, brand_id, brand_id],
+                [tenant_media.asset_key(clip_filename), user_id, brand_id, brand_id],
             )
         else:
             conn.execute(
                 "DELETE FROM shorts_storage_assets WHERE file_key = ? AND user_id = ?",
-                [f"short:{clip_filename}", user_id],
+                [tenant_media.asset_key(clip_filename), user_id],
             )
-        conn.execute("DELETE FROM shorts_instagram_queue WHERE video_id = ?", [video_id])
-        conn.execute("DELETE FROM shorts_facebook_queue WHERE video_id = ?", [video_id])
-        conn.execute("DELETE FROM shorts_tiktok_queue WHERE video_id = ?", [video_id])
+        conn.execute("DELETE FROM shorts_instagram_queue WHERE video_id = ? AND user_id = ? AND brand_id IS NOT DISTINCT FROM ? AND clip_filename = ?", [video_id, user_id, brand_id, clip_filename])
+        conn.execute("DELETE FROM shorts_facebook_queue WHERE video_id = ? AND user_id = ? AND brand_id IS NOT DISTINCT FROM ? AND clip_filename = ?", [video_id, user_id, brand_id, clip_filename])
+        conn.execute("DELETE FROM shorts_tiktok_queue WHERE video_id = ? AND user_id = ? AND brand_id IS NOT DISTINCT FROM ? AND clip_filename = ?", [video_id, user_id, brand_id, clip_filename])
         conn.commit()
     finally:
         conn.close()

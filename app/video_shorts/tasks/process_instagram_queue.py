@@ -1,3 +1,4 @@
+from app.video_shorts.services import tenant_media
 import argparse
 import os
 import time
@@ -21,8 +22,8 @@ from app.video_shorts.tasks.process_facebook_queue import process_queue as proce
 
 
 def _resolve_clip(filename: str):
-    key = f"shorts/{filename}"
-    local_path = SHORTS_DIR / filename
+    key = tenant_media.short_key(filename)
+    local_path = tenant_media.short_path(filename)
     return get_media_storage().resolve_local_or_s3(key, fallback_local_paths=[local_path])
 
 
@@ -110,7 +111,7 @@ def _upload_reel(job: dict) -> Optional[str]:
     clip_filename = job.get("clip_filename") or ""
     resolved = _resolve_clip(clip_filename)
     if not resolved.exists:
-        raise RuntimeError(f"Clip dosyası bulunamadı: {SHORTS_DIR / clip_filename}")
+        raise RuntimeError(f"Clip dosyası bulunamadı: {tenant_media.short_path(clip_filename)}")
     user_id = job.get("user_id")
     creds = get_instagram_credentials(user_id)
     if not creds:

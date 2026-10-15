@@ -544,23 +544,10 @@ def _upsert_storage_asset(file_key: str, file_path: str, size_bytes: int, user_i
     if not file_key or not file_path:
         return
     conn = get_db()
-    ensure_storage_user_schema(conn)
     try:
-        conn.execute(
-            """
-            INSERT INTO shorts_storage_assets (file_key, file_path, file_type, size_bytes, user_id, status, updated_at)
-            VALUES (?, ?, 'downloaded', ?, ?, 'active', now())
-            ON CONFLICT(file_key)
-            DO UPDATE SET
-              file_path = excluded.file_path,
-              file_type = excluded.file_type,
-              size_bytes = excluded.size_bytes,
-              user_id = COALESCE(shorts_storage_assets.user_id, excluded.user_id),
-              status = COALESCE(shorts_storage_assets.status, 'active'),
-              updated_at = now()
-            """,
-            [file_key, file_path, size_bytes, user_id],
-        )
+        tenant_media.upsert_asset(conn, file_key=file_key, file_path=file_path,
+                                 file_type="downloaded", size_bytes=size_bytes,
+                                 user_id=user_id)
         conn.commit()
     finally:
         conn.close()
@@ -1704,7 +1691,7 @@ def _sync_quick_plan_entry(video_id: str, *, title: str, start: float, end: floa
             "title": title,
             "start": round(start, 3),
             "end": round(end, 3),
-            "clip_filename": f"1_{video_id}.mp4",
+            "clip_filename": tenant_media.clip_filename(video_id, 1),
             "status": "pending",
             "transcript_full": transcript_full,
             "excerpt": transcript_full,

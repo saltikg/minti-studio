@@ -1,3 +1,4 @@
+from app.video_shorts.services import tenant_media
 from datetime import datetime, timedelta, timezone, time as dt_time
 from collections import deque
 import base64
@@ -118,7 +119,7 @@ def _creator_name_looks_urlish(value: str) -> bool:
 
 def _short_storage_key(filename: str) -> str:
     safe_name = Path(filename or "").name
-    return f"shorts/{safe_name}" if safe_name else ""
+    return tenant_media.short_key(safe_name) if safe_name else ""
 
 
 def _short_s3_index() -> Optional[set[str]]:
@@ -142,50 +143,13 @@ def _short_s3_index() -> Optional[set[str]]:
     return keys
 
 
-def _delete_source_video_media(video_id: str) -> None:
-    clean_video_id = str(video_id or "").strip()
-    if not clean_video_id:
-        return
-    purge_source_cache_for_video(clean_video_id)
-    storage = get_media_storage()
-    local_storage = get_media_storage("local")
-    for suffix in SOURCE_VIDEO_SUFFIXES:
-        key = f"videos/{clean_video_id}{suffix}"
-        if getattr(storage, "backend_name", "local") == "s3":
-            try:
-                if storage.exists(key):
-                    storage.delete(key)
-            except Exception:
-                current_app.logger.warning("Failed to delete source video from storage key=%s", key)
-        try:
-            local_storage.delete(key)
-        except Exception:
-            current_app.logger.warning("Failed to delete local source video key=%s", key)
+def _delete_source_video_media(video_id: str, *, conn, excluding_pks=()) -> bool:
+    return tenant_media.delete_source_media(conn, video_id, excluding_pks=excluding_pks)
 
 
-def _delete_short_media(filename: str) -> None:
-    safe_name = Path(filename or "").name
-    if not safe_name:
-        return
-    key = f"shorts/{safe_name}"
-    storage = get_media_storage()
-    local_storage = get_media_storage("local")
-    if getattr(storage, "backend_name", "local") == "s3":
-        try:
-            if storage.exists(key):
-                storage.delete(key)
-        except Exception:
-            current_app.logger.warning("Failed to delete short from storage key=%s", key)
-    try:
-        local_storage.delete(key)
-    except Exception:
-        current_app.logger.warning("Failed to delete local short key=%s", key)
-    local_path = SHORTS_DIR / safe_name
-    if local_path.exists() and local_path.is_file():
-        try:
-            local_path.unlink()
-        except Exception:
-            current_app.logger.warning("Failed to unlink local short path=%s", local_path)
+def _delete_short_media(filename: str, *, video_pk=None, owner_user_id=None, brand_id=None) -> None:
+    from app.video_shorts.routes.generation import _delete_short_media as delete_media
+    delete_media(filename, video_pk=video_pk, owner_user_id=owner_user_id, brand_id=brand_id)
 
 
 def _short_public_url(filename: str) -> Optional[str]:
@@ -201,7 +165,7 @@ def _short_public_url(filename: str) -> Optional[str]:
                 return storage.public_url(key)
         except Exception:
             current_app.logger.exception("Failed to resolve overview short url filename=%s key=%s", safe_name, key)
-    clip_path = SHORTS_DIR / safe_name
+    clip_path = tenant_media.short_path(safe_name)
     if clip_path.exists() and clip_path.is_file():
         return get_media_storage("local").public_url(key)
     return None
@@ -2841,26 +2805,17 @@ def _collect_short_broadcast_entries(
                 }
             )
         return entries
-    plan_paths = [path for path in SHORTS_DIR.glob(f"*{plan_suffix}") if path.is_file()]
-    allowed_source_ids = _brand_allowed_source_video_ids(
-        brand_id,
-        owner_user_id=effective_owner_user_id,
-    )
-    if allowed_source_ids is not None:
-        plan_paths = [
-            path for path in plan_paths
-            if path.name.endswith(plan_suffix) and path.name[: -len(plan_suffix)] in allowed_source_ids
-        ]
-    video_ids = [path.name[: -len(plan_suffix)] for path in plan_paths if path.name.endswith(plan_suffix)]
+    plan_paths = list(tenant_media.iter_plans(owner_user_id=effective_owner_user_id, brand_id=brand_id))
+    video_ids = [video.youtube_id for video, path in plan_paths]
     instagram_queue_map = load_instagram_queue_map(video_ids)
     tiktok_queue_map = load_tiktok_queue_map(video_ids)
     facebook_queue_map = load_facebook_queue_map(video_ids)
-    for plan_path in plan_paths:
-        video_id = plan_path.name[: -len(plan_suffix)]
+    for plan_video, plan_path in plan_paths:
+        video_id = plan_video.youtube_id
         if not video_id:
             continue
         try:
-            plan_data = json.loads(plan_path.read_text())
+            plan_data = tenant_media.load_state(plan_video)
         except Exception:
             continue
         plan_entries = plan_data.get("plan") or plan_data.get("clips") or []
@@ -2969,7 +2924,7 @@ def _collect_short_broadcast_entries(
             youtube_publish_iso = None
             youtube_video_id = None
             if clip_filename:
-                clip_path = SHORTS_DIR / clip_filename
+                clip_path = tenant_media.short_path(clip_filename)
                 meta_path = clip_path.with_suffix(".long.meta.json")
                 if meta_path.exists():
                     try:
@@ -3623,11 +3578,11 @@ def videos_page(channel_id):
     ).fetchall():
         vid_id = row[1]
         row_download_status = (row[2] or "").lower()
-        plan_path = short_dir / f"{vid_id}_plan.json"
+        plan_path = tenant_media.state_path(vid_id, video_pk=row[0], read=True)
         plan_count = 0
         if plan_path.exists():
             try:
-                data = json.loads(plan_path.read_text())
+                data = tenant_media.load_state(vid_id, video_pk=row[0])
                 plan_count = len(data.get("plan") or data.get("clips") or [])
             except Exception:
                 plan_count = 0
@@ -3636,7 +3591,7 @@ def videos_page(channel_id):
         plan_entries = []
         if plan_path.exists():
             try:
-                plan_data = json.loads(plan_path.read_text())
+                plan_data = tenant_media.load_state(vid_id, video_pk=row[0])
                 plan_entries = plan_data.get("plan") or plan_data.get("clips") or []
             except Exception:
                 plan_entries = []
@@ -5416,9 +5371,9 @@ def delete_video_row(video_pk: int):
                     SELECT id, clip_filename, output_filename
                     FROM shorts_generated_videos
                     WHERE CAST(source_video_id AS VARCHAR) = ?
-                      AND brand_id = ?
+                      AND brand_id = ? AND user_id = ?
                     """,
-                    [source_video_id, record_brand_id],
+                    [source_video_id, record_brand_id, owner_user_id],
                 ).fetchall()
             else:
                 generated_rows = conn.execute(
@@ -5426,9 +5381,9 @@ def delete_video_row(video_pk: int):
                     SELECT id, clip_filename, output_filename
                     FROM shorts_generated_videos
                     WHERE CAST(source_video_id AS VARCHAR) = ?
-                      AND brand_id IS NULL
+                      AND brand_id IS NULL AND user_id = ?
                     """,
-                    [source_video_id],
+                    [source_video_id, owner_user_id],
                 ).fetchall()
             for generated_row in generated_rows:
                 generated_id = str(generated_row[0] or "").strip()
@@ -5439,13 +5394,15 @@ def delete_video_row(video_pk: int):
                     if safe_name:
                         clip_filenames.add(safe_name)
 
+        tenant_media.lock_source_references(conn)
+        keep_shared_source = tenant_media.other_source_references(conn, source_video_id, excluding_pks=[video_pk])
         for clip_filename in clip_filenames:
-            _delete_short_media(clip_filename)
+            _delete_short_media(clip_filename, video_pk=video_pk, owner_user_id=owner_user_id, brand_id=record_brand_id)
         if source_video_id:
-            _delete_source_video_media(source_video_id)
+            _delete_source_video_media(source_video_id, conn=conn, excluding_pks=[video_pk])
 
-        clip_asset_keys = [f"short:{name}" for name in clip_filenames]
-        source_asset_keys = [f"downloaded:{source_video_id}{suffix}" for suffix in SOURCE_VIDEO_SUFFIXES if source_video_id]
+        clip_asset_keys = [tenant_media.asset_key(name) for name in clip_filenames]
+        source_asset_keys = [f"downloaded:{source_video_id}{suffix}" for suffix in SOURCE_VIDEO_SUFFIXES if source_video_id and not keep_shared_source]
         if clip_asset_keys:
             placeholders = ", ".join("?" for _ in clip_asset_keys)
             conn.execute(
@@ -5487,21 +5444,21 @@ def delete_video_row(video_pk: int):
                     """
                     DELETE FROM shorts_generated_videos
                     WHERE CAST(source_video_id AS VARCHAR) = ?
-                      AND brand_id = ?
+                      AND brand_id = ? AND user_id = ?
                     """,
-                    [source_video_id, record_brand_id],
+                    [source_video_id, record_brand_id, owner_user_id],
                 )
             else:
                 conn.execute(
                     """
                     DELETE FROM shorts_generated_videos
                     WHERE CAST(source_video_id AS VARCHAR) = ?
-                      AND brand_id IS NULL
+                      AND brand_id IS NULL AND user_id = ?
                     """,
-                    [source_video_id],
+                    [source_video_id, owner_user_id],
                 )
 
-        if source_video_id:
+        if source_video_id and not keep_shared_source:
             conn.execute("DELETE FROM youtube_transcripts WHERE video_id = ?", [source_video_id])
 
         conn.execute("DELETE FROM youtube_videos WHERE id = ?", [video_pk])

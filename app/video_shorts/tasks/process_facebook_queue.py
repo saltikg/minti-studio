@@ -1,3 +1,4 @@
+from app.video_shorts.services import tenant_media
 import argparse
 import os
 import tempfile
@@ -20,8 +21,8 @@ def _utc_now_iso() -> str:
 
 
 def _resolve_clip_url(filename: str) -> str:
-    key = f"shorts/{filename}"
-    local_path = SHORTS_DIR / filename
+    key = tenant_media.short_key(filename)
+    local_path = tenant_media.short_path(filename)
     resolved = get_media_storage().resolve_local_or_s3(key, fallback_local_paths=[local_path])
     if resolved.public_url:
         return resolved.public_url

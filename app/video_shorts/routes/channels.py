@@ -1,3 +1,4 @@
+from app.video_shorts.services import tenant_media
 import hashlib
 from datetime import datetime, timezone
 from pathlib import Path
@@ -266,9 +267,9 @@ def _short_card_media_urls(filename: str, storage_file_key: str = "") -> tuple[s
     if not safe_name:
         return "", ""
     storage = get_media_storage()
-    short_key = f"shorts/{safe_name}"
+    short_key = tenant_media.short_key(safe_name)
     if not stored_key:
-        local_short_path = SHORTS_DIR / safe_name
+        local_short_path = tenant_media.short_path(safe_name)
         try:
             resolved = storage.resolve_local_or_s3(short_key, fallback_local_paths=[local_short_path])
         except Exception:
@@ -278,7 +279,7 @@ def _short_card_media_urls(filename: str, storage_file_key: str = "") -> tuple[s
             return "", ""
         poster_url = ""
         try:
-            poster = storage.resolve_local_or_s3(f"shorts/posters/{safe_name}.jpg")
+            poster = storage.resolve_local_or_s3(tenant_media.poster_key(f'{safe_name}.jpg'))
             if poster.exists and poster.public_url:
                 poster_url = poster.public_url
         except Exception:
@@ -393,50 +394,13 @@ def _load_recent_short_cards(conn, user_id: str, brand_id: str | None, user_tz: 
     return cards, has_more
 
 
-def _delete_source_video_media(video_id: str) -> None:
-    clean_video_id = str(video_id or "").strip()
-    if not clean_video_id:
-        return
-    purge_source_cache_for_video(clean_video_id)
-    storage = get_media_storage()
-    local_storage = get_media_storage("local")
-    for suffix in SOURCE_VIDEO_SUFFIXES:
-        key = f"videos/{clean_video_id}{suffix}"
-        if getattr(storage, "backend_name", "local") == "s3":
-            try:
-                if storage.exists(key):
-                    storage.delete(key)
-            except Exception:
-                current_app.logger.warning("Failed to delete source video from storage key=%s", key)
-        try:
-            local_storage.delete(key)
-        except Exception:
-            current_app.logger.warning("Failed to delete local source video key=%s", key)
+def _delete_source_video_media(video_id: str, *, conn, excluding_pks=()) -> bool:
+    return tenant_media.delete_source_media(conn, video_id, excluding_pks=excluding_pks)
 
 
-def _delete_short_media(filename: str) -> None:
-    safe_name = Path(filename or "").name
-    if not safe_name:
-        return
-    key = f"shorts/{safe_name}"
-    storage = get_media_storage()
-    local_storage = get_media_storage("local")
-    if getattr(storage, "backend_name", "local") == "s3":
-        try:
-            if storage.exists(key):
-                storage.delete(key)
-        except Exception:
-            current_app.logger.warning("Failed to delete short from storage key=%s", key)
-    try:
-        local_storage.delete(key)
-    except Exception:
-        current_app.logger.warning("Failed to delete local short key=%s", key)
-    local_path = SHORTS_DIR / safe_name
-    if local_path.exists() and local_path.is_file():
-        try:
-            local_path.unlink()
-        except Exception:
-            current_app.logger.warning("Failed to unlink local short path=%s", local_path)
+def _delete_short_media(filename: str, *, video_pk=None, owner_user_id=None, brand_id=None) -> None:
+    from app.video_shorts.routes.generation import _delete_short_media as delete_media
+    delete_media(filename, video_pk=video_pk, owner_user_id=owner_user_id, brand_id=brand_id)
 
 
 def _video_status_payload(download_status: str | None, transcript_status: str | None, short_count: int) -> dict:
@@ -1492,7 +1456,7 @@ def delete_channel(channel_id):
         if brand_id:
             video_rows = conn.execute(
                 """
-                SELECT video_id
+                SELECT video_id, id
                 FROM youtube_videos
                 WHERE channel_id = ?
                   AND owner_user_id = ?
@@ -1503,7 +1467,7 @@ def delete_channel(channel_id):
         else:
             video_rows = conn.execute(
                 """
-                SELECT video_id
+                SELECT video_id, id
                 FROM youtube_videos
                 WHERE channel_id = ?
                   AND owner_user_id = ?
@@ -1512,6 +1476,9 @@ def delete_channel(channel_id):
                 [channel_id, current_user["id"]],
             ).fetchall()
         video_ids = [str(row[0] or "").strip() for row in video_rows if str(row[0] or "").strip()]
+        video_pks = [row[1] for row in video_rows]
+        tenant_media.lock_source_references(conn)
+        unshared_video_ids = [vid for vid in video_ids if not tenant_media.other_source_references(conn, vid, excluding_pks=video_pks)]
 
         clip_filenames: set[str] = set()
         if video_ids:
@@ -1522,9 +1489,9 @@ def delete_channel(channel_id):
                     SELECT clip_filename, output_filename
                     FROM shorts_generated_videos
                     WHERE source_video_id IN ({placeholders})
-                      AND brand_id = ?
+                      AND brand_id = ? AND user_id = ?
                     """,
-                    [*video_ids, brand_id],
+                    [*video_ids, brand_id, current_user["id"]],
                 ).fetchall()
             else:
                 generated_rows = conn.execute(
@@ -1532,9 +1499,9 @@ def delete_channel(channel_id):
                     SELECT clip_filename, output_filename
                     FROM shorts_generated_videos
                     WHERE source_video_id IN ({placeholders})
-                      AND brand_id IS NULL
+                      AND brand_id IS NULL AND user_id = ?
                     """,
-                    video_ids,
+                    [*video_ids, current_user["id"]],
                 ).fetchall()
             for row in generated_rows:
                 for value in row:
@@ -1543,10 +1510,10 @@ def delete_channel(channel_id):
                         clip_filenames.add(safe_name)
 
         for clip_filename in clip_filenames:
-            _delete_short_media(clip_filename)
+            _delete_short_media(clip_filename, owner_user_id=current_user["id"], brand_id=brand_id)
 
         for video_id in video_ids:
-            _delete_source_video_media(video_id)
+            _delete_source_video_media(video_id, conn=conn, excluding_pks=video_pks)
 
         if video_ids:
             try:
@@ -1561,10 +1528,10 @@ def delete_channel(channel_id):
             clip_placeholders = ", ".join("?" for _ in clip_filenames)
             conn.execute(
                 f"DELETE FROM shorts_storage_assets WHERE file_key IN ({clip_placeholders})",
-                [*(f"short:{name}" for name in clip_filenames)],
+                [*(tenant_media.asset_key(name) for name in clip_filenames)],
             )
         source_asset_keys = []
-        for video_id in video_ids:
+        for video_id in unshared_video_ids:
             for suffix in SOURCE_VIDEO_SUFFIXES:
                 source_asset_keys.append(f"downloaded:{video_id}{suffix}")
         if source_asset_keys:
@@ -1576,18 +1543,16 @@ def delete_channel(channel_id):
 
         if video_ids:
             transcript_placeholders = ", ".join("?" for _ in video_ids)
-            conn.execute(
-                f"DELETE FROM youtube_transcripts WHERE video_id IN ({transcript_placeholders})",
-                video_ids,
-            )
+            for unshared_video_id in unshared_video_ids:
+                conn.execute("DELETE FROM youtube_transcripts WHERE video_id = ?", [unshared_video_id])
             if brand_id:
                 conn.execute(
                     f"""
                     DELETE FROM shorts_generated_videos
                     WHERE source_video_id IN ({transcript_placeholders})
-                      AND brand_id = ?
+                      AND brand_id = ? AND user_id = ?
                     """,
-                    [*video_ids, brand_id],
+                    [*video_ids, brand_id, current_user["id"]],
                 )
                 conn.execute(
                     """
@@ -1612,9 +1577,9 @@ def delete_channel(channel_id):
                     f"""
                     DELETE FROM shorts_generated_videos
                     WHERE source_video_id IN ({transcript_placeholders})
-                      AND brand_id IS NULL
+                      AND brand_id IS NULL AND user_id = ?
                     """,
-                    video_ids,
+                    [*video_ids, current_user["id"]],
                 )
                 conn.execute(
                     """

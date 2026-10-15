@@ -1,3 +1,4 @@
+from app.video_shorts.services import tenant_media
 import logging
 import mimetypes
 from pathlib import Path
@@ -51,8 +52,8 @@ def _resolve_instagram_proxy_clip(queue_id: str):
     clip_filename = str(entry.get("clip_filename") or "").strip()
     if not clip_filename:
         return entry, None
-    key = f"shorts/{clip_filename}"
-    local_path = SHORTS_DIR / clip_filename
+    key = tenant_media.short_key(clip_filename)
+    local_path = tenant_media.short_path(clip_filename)
     storage = get_media_storage()
     resolved = storage.resolve_local_or_s3(key, fallback_local_paths=[local_path])
     if not resolved.exists:

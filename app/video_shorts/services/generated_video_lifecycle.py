@@ -1,5 +1,8 @@
 from __future__ import annotations
 
+import logging
+from app.video_shorts.services.tenant_media import TenantMediaConflict
+
 import json
 from typing import Any, Dict, Optional
 
@@ -515,7 +518,7 @@ def upsert_generated_video_record(
                 "tiktok_published_at": tiktok_published_at,
             },
         )
-        conn.execute(
+        saved = conn.execute(
             f"""
             INSERT INTO {TABLE_NAME} (
                 user_id,
@@ -576,6 +579,9 @@ def upsert_generated_video_record(
                 primary_publish_platform = COALESCE(EXCLUDED.primary_publish_platform, {TABLE_NAME}.primary_publish_platform),
                 raw_plan_entry_json = COALESCE(EXCLUDED.raw_plan_entry_json, {TABLE_NAME}.raw_plan_entry_json),
                 updated_at = CURRENT_TIMESTAMP
+            WHERE {TABLE_NAME}.user_id IS NOT DISTINCT FROM EXCLUDED.user_id
+              AND {TABLE_NAME}.brand_id IS NOT DISTINCT FROM EXCLUDED.brand_id
+            RETURNING id
             """,
             [
                 resolved_user_id,
@@ -607,6 +613,9 @@ def upsert_generated_video_record(
                 raw_plan_entry_json,
             ],
         )
+        if not saved.fetchone():
+            logging.getLogger(__name__).error("Tenant lifecycle collision filename=%s user=%s brand=%s", clip_filename, resolved_user_id, resolved_brand_id)
+            raise TenantMediaConflict("Generated clip belongs to another tenant")
         conn.commit()
     finally:
         conn.close()

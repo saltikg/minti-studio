@@ -1,3 +1,4 @@
+from app.video_shorts.services import tenant_media
 import json
 import logging
 from pathlib import Path
@@ -113,7 +114,7 @@ def _update_plan_category_label(old_name: str, new_name: str | None, owner_id: s
     try:
         conn = get_db()
         rows = conn.execute(
-            "SELECT video_id FROM youtube_videos WHERE owner_user_id = ?",
+            "SELECT id, video_id FROM youtube_videos WHERE owner_user_id = ?",
             [owner_id],
         ).fetchall()
     except Exception:
@@ -121,13 +122,13 @@ def _update_plan_category_label(old_name: str, new_name: str | None, owner_id: s
     finally:
         if conn:
             conn.close()
-    video_ids = {row[0] for row in rows if row and row[0]}
-    for video_id in video_ids:
-        plan_path = SHORTS_DIR / f"{video_id}_plan.json"
+    video_ids = {(row[0], row[1]) for row in rows if row and row[0]}
+    for video_pk, video_id in video_ids:
+        plan_path = tenant_media.state_path(video_id, video_pk=video_pk, read=True)
         if not plan_path.exists():
             continue
         try:
-            plan_data = json.loads(plan_path.read_text())
+            plan_data = tenant_media.load_state(video_id, video_pk=video_pk)
         except Exception:
             continue
         plan_entries = plan_data.get("plan") or plan_data.get("clips") or []
@@ -143,7 +144,7 @@ def _update_plan_category_label(old_name: str, new_name: str | None, owner_id: s
         if not changed:
             continue
         try:
-            plan_path.write_text(json.dumps({"plan": plan_entries}, ensure_ascii=False, indent=2))
+            tenant_media.write_state(video_id, {"plan": plan_entries}, video_pk=video_pk)
         except Exception:
             continue
 
