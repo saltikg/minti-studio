@@ -17,7 +17,12 @@ if str(ROOT) not in sys.path:
 from PIL import Image
 
 from app import create_app
-from app.video_shorts.config import DEFAULT_SUBTITLE_PRESET, STYLE_TEMPLATES
+from app.video_shorts.config import (
+    DEFAULT_SUBTITLE_PRESET,
+    STYLE_TEMPLATES,
+    clamp_design_position,
+    design_position_limits,
+)
 from app.video_shorts.routes import generation
 from app.video_shorts.services import compositor
 from app.video_shorts.services.compositor import SUBSCRIBE_OVERLAY_PATH
@@ -174,6 +179,38 @@ def _append_custom_caption_position_checks(rows: list[tuple[str, str, str]]) -> 
         rows.append(("default_caption_margin_auto_places", "PASS", f"auto margin={auto['caption_margin_v']:.2f}"))
     else:
         rows.append(("default_caption_margin_auto_places", "FAIL", f"auto metrics={auto}"))
+
+    expected_top = 1280.0 - 520.0 - 96.0
+    custom_modes = []
+    for mode in ("fill", "fit", "split"):
+        actual_top = compositor._face_aware_caption_top_for_block(
+            {"start": 0.0, "end": 4.0, "mode": mode},
+            block_height=96.0,
+            target_width=720,
+            target_height=1280,
+            subtitle_margin=520,
+            subtitle_margin_custom=True,
+        )
+        custom_modes.append((mode, actual_top))
+    if all(abs(actual - expected_top) < 0.01 for _, actual in custom_modes):
+        rows.append(("custom_caption_all_layouts", "PASS", f"top={expected_top:.2f} fill/fit/split"))
+    else:
+        rows.append(("custom_caption_all_layouts", "FAIL", f"positions={custom_modes}"))
+
+    title_limits = design_position_limits("title_margin", target_height=1280, element_height=112)
+    subtitle_limits = design_position_limits("sub_margin", target_height=1280, element_height=126)
+    date_limits = design_position_limits("video_date_top", target_height=1280, element_height=80)
+    limits_ok = (
+        title_limits == (0, 1168)
+        and subtitle_limits == (0, 1154)
+        and date_limits == (0, 1200)
+        and clamp_design_position("title_margin", 9999, target_height=1280, element_height=112) == 1168
+    )
+    rows.append((
+        "shared_position_limits",
+        "PASS" if limits_ok else "FAIL",
+        f"title={title_limits} subtitle={subtitle_limits} date={date_limits}",
+    ))
 
 
 def _append_face_track_expression_check(rows: list[tuple[str, str, str]]) -> None:

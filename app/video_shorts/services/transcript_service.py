@@ -23,6 +23,7 @@ from app.video_shorts.config import (
     SUBTITLE_PRESETS,
     SUBTITLE_HIGHLIGHT_COLOR,
     WHISPER_MODEL,
+    clamp_design_position,
     _openai_client,
 )
 from app.video_shorts.services.db import _ensure_transcript_schema
@@ -1301,7 +1302,13 @@ def _layout_wrapped_caption(
     line_ascent = max(_font_ascent(font), _font_ascent(line_height_font or font))
     line_gap = max(4, int(round(line_height * 0.18)))
     total_height = (line_height * len(lines)) + (line_gap * max(0, len(lines) - 1))
-    block_top = max(0, canvas_height - int(subtitle_margin) - total_height)
+    safe_margin = clamp_design_position(
+        "sub_margin",
+        subtitle_margin,
+        target_height=canvas_height,
+        element_height=total_height,
+    )
+    block_top = max(0, min(canvas_height - total_height, canvas_height - safe_margin - total_height))
 
     positioned_lines: List[Dict[str, Any]] = []
     flat_words: List[Dict[str, Any]] = []

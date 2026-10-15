@@ -56,6 +56,8 @@ from app.video_shorts.config import (
     DEFAULT_TITLE_FONT_KEY,
     DEFAULT_TITLE_FONT_SIZE,
     DEFAULT_TITLE_MARGIN,
+    DESIGN_POSITION_LIMITS,
+    clamp_design_position,
     DEFAULT_SUBTITLE_TEXT_COLOR,
     DEFAULT_VIDEO_OVERLAY_OFFSET,
     DEFAULT_USER_STORAGE_LIMIT,
@@ -12326,6 +12328,7 @@ def generate_short(video_pk):
         generated_clip_entries=generated_clip_entries,
         title_font_options=title_font_options,
         preview_font_faces=preview_font_faces,
+        design_position_limits=DESIGN_POSITION_LIMITS,
         selected_title_font_key=selected_title_font_key,
         selected_title_font_css=selected_title_font_css,
         sub_fonts=sub_fonts,
@@ -27302,7 +27305,10 @@ def save_short_settings(video_pk):
     except Exception:
         subtitle_font_size = DEFAULT_SUB_FONT_SIZE
     try:
-        subtitle_margin = int(request.form.get("sub_margin") or SUB_MARGIN_DEFAULT)
+        subtitle_margin = clamp_design_position(
+            "sub_margin",
+            int(request.form.get("sub_margin") or SUB_MARGIN_DEFAULT),
+        )
     except Exception:
         subtitle_margin = SUB_MARGIN_DEFAULT
     if "subtitle_margin_custom" in form_fields:
@@ -27310,7 +27316,10 @@ def save_short_settings(video_pk):
     else:
         subtitle_margin_custom = "sub_margin" in form_fields
     try:
-        title_margin = int(request.form.get("title_margin") or DEFAULT_TITLE_MARGIN)
+        title_margin = clamp_design_position(
+            "title_margin",
+            int(request.form.get("title_margin") or DEFAULT_TITLE_MARGIN),
+        )
     except Exception:
         title_margin = DEFAULT_TITLE_MARGIN
     try:
@@ -27322,7 +27331,10 @@ def save_short_settings(video_pk):
     except Exception:
         video_overlay_offset = DEFAULT_VIDEO_OVERLAY_OFFSET
     try:
-        video_date_top = int(request.form.get("video_date_top") or DEFAULT_VIDEO_DATE_TOP)
+        video_date_top = clamp_design_position(
+            "video_date_top",
+            int(request.form.get("video_date_top") or DEFAULT_VIDEO_DATE_TOP),
+        )
     except Exception:
         video_date_top = DEFAULT_VIDEO_DATE_TOP
     title_bg_color = _normalize_hex_color(request.form.get("title_bg_color") or DEFAULT_EDITOR_TITLE_BG_COLOR, DEFAULT_TITLE_BG_COLOR)
@@ -28677,7 +28689,8 @@ def autoclip_video(video_pk):
             stored_title_margin = float(video_title_margin if video_title_margin is not None else DEFAULT_TITLE_MARGIN)
         except Exception:
             stored_title_margin = float(DEFAULT_TITLE_MARGIN)
-        if abs(stored_title_margin - float(DEFAULT_TITLE_MARGIN)) > 0.001:
+        title_margin_custom = abs(stored_title_margin - float(DEFAULT_TITLE_MARGIN)) > 0.001
+        if title_margin_custom:
             title_margin = int(round(float(render_target_height) * max(0.0, min(1.0, stored_title_margin / 1280.0))))
         else:
             title_margin = max(0, int(round(float(render_target_height) * 0.08)))
@@ -28691,17 +28704,33 @@ def autoclip_video(video_pk):
             caption_center_y = float(render_target_height) * 0.72
             caption_top = caption_center_y - (float(caption_block_height) / 2.0)
             sub_margin = int(round(float(render_target_height) - caption_top - float(caption_block_height)))
-        min_margin = safe_margin
-        max_margin = max(min_margin, render_target_height - safe_margin - caption_block_height)
-        sub_margin = max(min_margin, min(max_margin, int(round(float(sub_margin)))))
+        if video_sub_margin_custom:
+            sub_margin = clamp_design_position(
+                "sub_margin",
+                sub_margin,
+                target_height=render_target_height,
+                element_height=caption_block_height,
+            )
+        else:
+            min_margin = safe_margin
+            max_margin = max(min_margin, render_target_height - safe_margin - caption_block_height)
+            sub_margin = max(min_margin, min(max_margin, int(round(float(sub_margin)))))
         caption_top = float(render_target_height) - float(sub_margin) - float(caption_block_height)
-        title_margin = max(
-            safe_margin,
-            min(
-                max(safe_margin, int(round(caption_top - title_block_height - max(8, render_target_height * 0.025)))),
-                int(round(float(title_margin))),
-            ),
-        )
+        if title_margin_custom:
+            title_margin = clamp_design_position(
+                "title_margin",
+                title_margin,
+                target_height=render_target_height,
+                element_height=title_block_height,
+            )
+        else:
+            title_margin = max(
+                safe_margin,
+                min(
+                    max(safe_margin, int(round(caption_top - title_block_height - max(8, render_target_height * 0.025)))),
+                    int(round(float(title_margin))),
+                ),
+            )
         video_title_line_spacing = int(round(float(video_title_line_spacing or -4) * original_scale))
         current_app.logger.info(
             "Original layout render metrics video_id=%s plan_index=%s target=%sx%s title_size=%s sub_size=%s title_margin=%s sub_margin=%s",

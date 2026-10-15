@@ -25,6 +25,8 @@ from app.video_shorts.config import (
     DEFAULT_TITLE_BG_ALPHA,
     DEFAULT_TITLE_MARGIN,
     DEFAULT_VIDEO_OVERLAY_OFFSET,
+    DESIGN_POSITION_LIMITS,
+    clamp_design_position,
     FFMPEG_RENDER_TIMEOUT,
     FFMPEG_SHORT_TIMEOUT,
     FFPROBE_TIMEOUT,
@@ -756,6 +758,7 @@ def _fit_title_text(
     font_path: Optional[str],
     font_size: int,
     target_width: int,
+    target_height: int,
     base_y: int,
     line_spacing: int,
     max_lines: int = TITLE_WRAP_MAX_LINES,
@@ -841,10 +844,18 @@ def _fit_title_text(
             line_spacing=line_spacing,
         )
 
+    block_height = int(chosen_layout.get("block_height") or max(1, chosen_font_size))
+    draw_y = clamp_design_position(
+        "title_margin",
+        chosen_layout["draw_y"],
+        target_height=target_height,
+        element_height=block_height,
+    )
     return {
         "text": "\n".join(chosen_lines),
         "font_size": chosen_font_size,
-        "draw_y": chosen_layout["draw_y"],
+        "draw_y": draw_y,
+        "block_height": block_height,
         "line_count": len(chosen_lines),
         "side_margin": side_margin,
     }
@@ -1025,7 +1036,12 @@ def _render_title_overlay(
         chosen_line_height * len(chosen_lines)
         + safe_line_spacing * max(0, len(chosen_lines) - 1)
     )
-    draw_y = max(0, int(base_y))
+    draw_y = clamp_design_position(
+        "title_margin",
+        base_y,
+        target_height=target_height,
+        element_height=block_height,
+    )
     if video_top_limit is not None and block_height > 0 and draw_y + block_height > int(video_top_limit):
         draw_y = max(0, int(video_top_limit) - block_height)
 
@@ -1344,6 +1360,14 @@ def _face_aware_caption_top_for_block(
 ) -> float:
     mode = str(segment.get("mode") or "fill").strip().lower()
     safe_block_height = max(1.0, float(block_height or _face_aware_caption_block_height(None)))
+    if subtitle_margin_custom:
+        margin = clamp_design_position(
+            "sub_margin",
+            subtitle_margin,
+            target_height=target_height,
+            element_height=safe_block_height,
+        )
+        return max(0.0, float(target_height) - float(margin) - safe_block_height)
     if mode == "split":
         return max(0.0, min(float(target_height) - safe_block_height, (float(target_height) / 2.0) - (safe_block_height / 2.0)))
     if mode == "fit":
@@ -2136,6 +2160,7 @@ def _compose_with_background(
         font_path=font_path or "/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf",
         font_size=title_font_size,
         target_width=VIDEO_TARGET_WIDTH,
+        target_height=VIDEO_TARGET_HEIGHT,
         base_y=max(80, min(title_margin, 250)),
         line_spacing=5,
     )
@@ -2472,6 +2497,7 @@ def _compose_trimmed_with_background(
                     font_path=test_font_file,
                     font_size=safe_title_font_size,
                     target_width=target_width,
+                    target_height=target_height,
                     base_y=safe_title_margin,
                     line_spacing=safe_title_line_spacing,
                 )
@@ -2535,7 +2561,12 @@ def _compose_trimmed_with_background(
                     date_top = int(video_date_top if video_date_top is not None else DEFAULT_VIDEO_DATE_TOP)
                 except (TypeError, ValueError):
                     date_top = DEFAULT_VIDEO_DATE_TOP
-                date_top = max(0, min(target_height - 80, date_top))
+                date_top = clamp_design_position(
+                    "video_date_top",
+                    date_top,
+                    target_height=target_height,
+                    element_height=DESIGN_POSITION_LIMITS["video_date_top"]["fallback_element_height"],
+                )
                 filter_parts.append(
                     f"{final_label}drawtext="
                     f"fontfile='{_escape_ass_path(Path(date_font_file))}':"
@@ -3563,8 +3594,9 @@ def _compose_trimmed_with_background(
                 requested_video_top = int(video_overlay_offset if video_overlay_offset is not None else VIDEO_OVERLAY_TOP_OFFSET)
             except (TypeError, ValueError):
                 requested_video_top = VIDEO_OVERLAY_TOP_OFFSET
+            title_margin_custom = int(title_margin or DEFAULT_TITLE_MARGIN) != int(DEFAULT_TITLE_MARGIN)
             video_top_limit = None
-            if str(crop_aspect or "landscape").strip().lower() != "portrait":
+            if not title_margin_custom and str(crop_aspect or "landscape").strip().lower() != "portrait":
                 video_top_limit = max(0, min(target_height, requested_video_top))
             title_overlay_path, title_overlay_meta = _render_title_overlay(
                 title_txt,
@@ -3593,7 +3625,7 @@ def _compose_trimmed_with_background(
                 title_overlay_meta["draw_y"],
                 title_overlay_meta["shadow"],
             )
-            if face_aware_layout_active:
+            if face_aware_layout_active and not title_margin_custom:
                 fill_segment_indices = [
                     idx for idx, segment in enumerate(layout_segments)
                     if str(segment.get("mode") or "fill") != "fit"
@@ -3687,6 +3719,7 @@ def _compose_trimmed_with_background(
                 font_path=test_font_file,
                 font_size=title_font_size,
                 target_width=target_width,
+                target_height=target_height,
                 base_y=title_margin,
                 line_spacing=safe_title_line_spacing_main,
             )
@@ -3697,7 +3730,8 @@ def _compose_trimmed_with_background(
                 title_bg_alpha=title_bg_alpha,
             )
 
-            if face_aware_layout_active:
+            title_margin_custom = int(title_margin or DEFAULT_TITLE_MARGIN) != int(DEFAULT_TITLE_MARGIN)
+            if face_aware_layout_active and not title_margin_custom:
                 current_title_label = final_label
                 for idx, segment in enumerate(layout_segments):
                     seg_start = float(segment.get("start") or 0.0)
@@ -3742,7 +3776,7 @@ def _compose_trimmed_with_background(
     if effective_subtitle_path:
         subtitle_path_for_filter = effective_subtitle_path
         subtitle_margin_for_filter = subtitle_margin
-        if face_aware_layout_active:
+        if face_aware_layout_active and not subtitle_margin_custom:
             try:
                 face_aware_subtitle_path = _build_face_aware_subtitle_path(
                     effective_subtitle_path,
@@ -3796,7 +3830,7 @@ def _compose_trimmed_with_background(
     elif effective_subtitle_overlay_path:
         filter_parts.append(f"[{next_video_input_index}:v]format=rgba[caption_src]")
         caption_overlay_y_expr = "0"
-        if face_aware_layout_active:
+        if face_aware_layout_active and not subtitle_margin_custom:
             caption_overlay_y_expr = "0"
             if effective_subtitle_overlay_events:
                 fallback_height = _face_aware_caption_block_height(subtitle_font_size)
@@ -3874,7 +3908,12 @@ def _compose_trimmed_with_background(
                 date_top = int(video_date_top if video_date_top is not None else DEFAULT_VIDEO_DATE_TOP)
             except (TypeError, ValueError):
                 date_top = DEFAULT_VIDEO_DATE_TOP
-            date_top = max(0, min(target_height - 80, date_top))
+            date_top = clamp_design_position(
+                "video_date_top",
+                date_top,
+                target_height=target_height,
+                element_height=DESIGN_POSITION_LIMITS["video_date_top"]["fallback_element_height"],
+            )
             date_y_expr = str(date_top)
             date_box_color = "black@0.6"
             date_textfile = _write_debug_textfile(date_txt)

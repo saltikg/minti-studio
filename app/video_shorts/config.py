@@ -700,6 +700,54 @@ DEFAULT_SUB_FONT_SIZE = 45
 DEFAULT_TITLE_MARGIN = 40
 DEFAULT_TITLE_BG_COLOR = "#FFD600"
 DEFAULT_VIDEO_OVERLAY_OFFSET = int(os.getenv("VIDEO_OVERLAY_OFFSET_DEFAULT", "350"))
+
+# Design positions are stored in the legacy 720x1280 render coordinate space.
+# The fallback element heights keep numeric inputs useful before text is measured;
+# preview and render paths replace them with the real block height when available.
+DESIGN_POSITION_FRAME_HEIGHT = 1280
+DESIGN_POSITION_LIMITS = {
+    "sub_margin": {"min": 0, "max": 1190, "fallback_element_height": 90},
+    "title_margin": {"min": 0, "max": 1210, "fallback_element_height": 70},
+    "video_date_top": {"min": 0, "max": 1200, "fallback_element_height": 80},
+}
+
+
+def design_position_limits(
+    field_name: str,
+    *,
+    target_height: int = DESIGN_POSITION_FRAME_HEIGHT,
+    element_height: int | float | None = None,
+) -> tuple[int, int]:
+    spec = DESIGN_POSITION_LIMITS[field_name]
+    safe_target_height = max(1, int(round(float(target_height))))
+    scale = float(safe_target_height) / float(DESIGN_POSITION_FRAME_HEIGHT)
+    minimum = int(round(float(spec["min"]) * scale))
+    if element_height is None:
+        maximum = int(round(float(spec["max"]) * scale))
+    else:
+        maximum = safe_target_height - max(1, int(round(float(element_height))))
+    return minimum, max(minimum, maximum)
+
+
+def clamp_design_position(
+    field_name: str,
+    value: int | float,
+    *,
+    target_height: int = DESIGN_POSITION_FRAME_HEIGHT,
+    element_height: int | float | None = None,
+) -> int:
+    minimum, maximum = design_position_limits(
+        field_name,
+        target_height=target_height,
+        element_height=element_height,
+    )
+    try:
+        numeric = int(round(float(value)))
+    except (TypeError, ValueError):
+        numeric = minimum
+    return max(minimum, min(maximum, numeric))
+
+
 STYLE_TEMPLATES = [
     {
         "key": "green_pop",

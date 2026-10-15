@@ -16,8 +16,8 @@
 {% set VIDEO_OVERLAY_X = 0 %}
 {% set VIDEO_OVERLAY_Y = (selected_video_overlay_offset if selected_video_overlay_offset is not none else 350) %}
 {% set TITLE_BAND_Y = 40 %}
-{% set TITLE_BAND_HEIGHT = 70 %}
-{% set SUBTITLE_BAND_HEIGHT = 90 %}
+{% set TITLE_BAND_HEIGHT = design_position_limits.title_margin.fallback_element_height %}
+{% set SUBTITLE_BAND_HEIGHT = design_position_limits.sub_margin.fallback_element_height %}
 {% set SUBTITLE_BAND_Y = OVERLAY_HEIGHT - SUBTITLE_BAND_HEIGHT - (selected_sub_margin if selected_sub_margin is not none else 320) %}
 {% set PREVIEW_CONFIG = {
   "frameWidth": PREVIEW_BG_WIDTH,
@@ -39,7 +39,8 @@
   "originalOverlayWidth": 1280,
   "originalOverlayHeight": 720,
   "subtitleY": SUBTITLE_BAND_Y,
-  "subtitleHeight": SUBTITLE_BAND_HEIGHT
+  "subtitleHeight": SUBTITLE_BAND_HEIGHT,
+  "positionLimits": design_position_limits
 } %}
 {% set has_transcript = transcript_text or (segments_view|length > 0) %}
 {% set video_download_status = (video.download_status or '')|lower %}
@@ -5834,7 +5835,7 @@
     align-items: center;
     justify-content: center;
     text-align: center;
-    padding: 0 12px;
+    box-sizing: border-box;
     font-weight: 700;
     line-height: 1.1;
     border-radius: 16px;
@@ -5860,9 +5861,12 @@
   }
   .shorts-preview-title-band {
     z-index: 2;
+    padding: 0 12px;
   }
   .shorts-preview-subtitle-band {
     z-index: 3;
+    min-height: 0;
+    padding: 4px 6px;
   }
   .shorts-preview-subtitle-band.is-word-highlight,
   .short-font-preview.is-word-highlight {
@@ -5906,6 +5910,45 @@
     align-content: center;
     align-items: center;
     line-height: 1.18;
+  }
+  .preview-ui-safe-guides {
+    position: absolute;
+    inset: 0;
+    z-index: 8;
+    pointer-events: none;
+    opacity: 0;
+    transition: opacity 120ms ease;
+  }
+  .shorts-preview-frame.show-ui-safe-guides:not(.is-original-layout) .preview-ui-safe-guides {
+    opacity: 1;
+  }
+  .preview-ui-safe-zone {
+    position: absolute;
+    border: 1px dashed rgba(255, 255, 255, 0.45);
+    background: rgba(15, 23, 42, 0.16);
+  }
+  .preview-ui-safe-zone--top {
+    inset: 0 0 auto;
+    height: 6.25%;
+  }
+  .preview-ui-safe-zone--bottom {
+    inset: auto 0 0;
+    height: 21.875%;
+  }
+  .preview-ui-safe-zone--right {
+    top: 46.875%;
+    right: 0;
+    width: 12.963%;
+    height: 36.458%;
+  }
+  .preview-ui-safe-zone__label {
+    position: absolute;
+    left: 8px;
+    bottom: 8px;
+    color: rgba(255, 255, 255, 0.64);
+    font-size: 10px;
+    line-height: 1.2;
+    letter-spacing: 0;
   }
   .short-font-preview.is-word-highlight {
     display: flex;
@@ -8609,7 +8652,7 @@
                         <div class="design-panel-more-grid">
                           <div class="input-group-inline compact" data-preview-control="subtitle">
                             <span class="design-more-label">Distance from bottom</span>
-                            <span class="design-more-input"><input type="number" name="sub_margin" class="form-control form-control-sm short-input-small" value="{{ selected_sub_margin or 520 }}" min="0" max="2000"><span class="design-more-unit">px</span></span>
+                            <span class="design-more-input"><input type="number" name="sub_margin" class="form-control form-control-sm short-input-small" value="{{ selected_sub_margin or 520 }}" min="{{ design_position_limits.sub_margin.min }}" max="{{ design_position_limits.sub_margin.max }}"><span class="design-more-unit">px</span></span>
                           </div>
                         </div>
                       </div>
@@ -8729,7 +8772,7 @@
                         <div class="design-panel-more-grid">
                           <div class="input-group-inline compact" data-preview-control="title">
                             <span class="design-more-label">Distance from top</span>
-                            <span class="design-more-input"><input type="number" name="title_margin" class="form-control form-control-sm short-input-small" value="{{ selected_title_margin or 40 }}" min="0" max="2000"><span class="design-more-unit">px</span></span>
+                            <span class="design-more-input"><input type="number" name="title_margin" class="form-control form-control-sm short-input-small" value="{{ selected_title_margin or 40 }}" min="{{ design_position_limits.title_margin.min }}" max="{{ design_position_limits.title_margin.max }}"><span class="design-more-unit">px</span></span>
                           </div>
                           <div class="input-group-inline compact">
                             <span class="design-more-label">Line spacing</span>
@@ -8744,7 +8787,7 @@
                           </div>
                           <div class="input-group-inline compact">
                             <span class="design-more-label">Distance from top</span>
-                            <span class="design-more-input"><input type="number" name="video_date_top" class="form-control form-control-sm short-input-small" value="{{ selected_video_date_top if selected_video_date_top is not none else 1006 }}" min="0" max="2000"><span class="design-more-unit">px</span></span>
+                            <span class="design-more-input"><input type="number" name="video_date_top" class="form-control form-control-sm short-input-small" value="{{ selected_video_date_top if selected_video_date_top is not none else 1006 }}" min="{{ design_position_limits.video_date_top.min }}" max="{{ design_position_limits.video_date_top.max }}"><span class="design-more-unit">px</span></span>
                           </div>
                         </div>
                       </div>
@@ -8763,6 +8806,11 @@
               <div class="orig-preview__caption" id="orig-preview-caption" data-preview-element="subtitle">Sample subtitle line</div>
             </div>
             <div class="shorts-preview-frame" id="shorts-preview-frame" tabindex="0" aria-label="Shorts preview editor">
+              <div class="preview-ui-safe-guides" aria-hidden="true">
+                <div class="preview-ui-safe-zone preview-ui-safe-zone--top"></div>
+                <div class="preview-ui-safe-zone preview-ui-safe-zone--bottom"><span class="preview-ui-safe-zone__label">YouTube UI may cover this</span></div>
+                <div class="preview-ui-safe-zone preview-ui-safe-zone--right"></div>
+              </div>
               <div class="preview-shapes-layer" id="shorts-preview-shapes"></div>
               <div class="shorts-preview-title-band crop-preview-selectable" id="shorts-preview-title-band" data-preview-element="title">Life is full of fun</div>
               <div class="shorts-preview-video crop-preview-selectable" id="shorts-preview-video" data-preview-element="video">
@@ -18508,16 +18556,40 @@ document.addEventListener("DOMContentLoaded", () => {
   );
   const getActivePreviewScaleX = () => getActivePreviewFrameWidth() / Math.max(1, getActiveRenderFrameWidth());
   const getActivePreviewScaleY = () => getActivePreviewFrameHeight() / Math.max(1, getActiveRenderFrameHeight());
-  const getActiveTitleHeight = () => (
+  const getMeasuredRenderHeight = (element, fallback) => {
+    if (!element) return fallback;
+    const scaleY = Math.max(0.001, getActivePreviewScaleY());
+    const measured = element.getBoundingClientRect?.().height || element.scrollHeight || 0;
+    return measured > 0 ? Math.max(1, measured / scaleY) : fallback;
+  };
+  const getActiveTitleHeight = () => getMeasuredRenderHeight(
+    isOriginalCropAspect() ? origPreviewTitle : previewTitle,
     isOriginalCropAspect()
       ? Math.max(42, getNumericFieldValue(titleFontSizeInput, getActiveRenderFrameHeight() * 0.055) * 1.4)
-      : previewConfig.titleHeight
+      : previewConfig.titleHeight,
   );
-  const getActiveSubtitleHeight = () => (
+  const getActiveSubtitleHeight = () => getMeasuredRenderHeight(
+    isOriginalCropAspect() ? origPreviewCaption : previewSubtitle,
     isOriginalCropAspect()
       ? Math.max(52, getNumericFieldValue(subtitleFontSizeInput, getActiveRenderFrameHeight() * 0.06) * 2.0)
-      : previewConfig.subtitleHeight
+      : previewConfig.subtitleHeight,
   );
+  const getPositionBounds = (fieldName, elementHeight, activeHeight = getActiveRenderFrameHeight()) => {
+    const spec = previewConfig.positionLimits?.[fieldName] || { min: 0, max: activeHeight };
+    const scale = activeHeight / Math.max(1, renderFrameHeight);
+    const minimum = Number(spec.min || 0) * scale;
+    const maximum = Number.isFinite(Number(elementHeight))
+      ? activeHeight - Math.max(1, Number(elementHeight))
+      : Number(spec.max || activeHeight) * scale;
+    return { min: minimum, max: Math.max(minimum, maximum) };
+  };
+  const syncPositionInputLimit = (field, fieldName, elementHeight, activeHeight) => {
+    if (!field) return;
+    const bounds = getPositionBounds(fieldName, elementHeight, activeHeight);
+    const storedMaximum = bounds.max / Math.max(1, activeHeight) * renderFrameHeight;
+    field.min = String(previewConfig.positionLimits?.[fieldName]?.min ?? 0);
+    field.max = String(Math.max(0, Math.floor(storedMaximum)));
+  };
   const rememberLoadedOverlayFieldValues = () => {
     if (!settingsContainer) {
       return;
@@ -18552,17 +18624,19 @@ document.addEventListener("DOMContentLoaded", () => {
     const titleHeight = getActiveTitleHeight();
     const subtitleHeight = getActiveSubtitleHeight();
     if (kind === "title") {
+      const bounds = getPositionBounds("title_margin", titleHeight, activeHeight);
       return {
         size: titleHeight,
-        min: 0,
-        max: Math.max(0, activeHeight - titleHeight),
+        min: bounds.min,
+        max: bounds.max,
       };
     }
     if (kind === "subtitle") {
+      const bounds = getPositionBounds("sub_margin", subtitleHeight, activeHeight);
       return {
         size: subtitleHeight,
-        min: 0,
-        max: Math.max(0, activeHeight - subtitleHeight),
+        min: bounds.min,
+        max: bounds.max,
       };
     }
     if (kind === "video") {
@@ -18572,11 +18646,8 @@ document.addEventListener("DOMContentLoaded", () => {
         max: Math.max(0, activeHeight - dims.height),
       };
     }
-    return {
-      size: 52,
-      min: 0,
-      max: Math.max(0, activeHeight - 52),
-    };
+    const dateBounds = getPositionBounds("video_date_top", 80 * activeHeight / Math.max(1, renderFrameHeight), activeHeight);
+    return { size: 80, min: dateBounds.min, max: dateBounds.max };
   };
   const isPortraitCropAspect = () => activeCropAspect === "portrait";
   const isOriginalCropAspect = () => activeCropAspect === "original";
@@ -18867,12 +18938,14 @@ document.addEventListener("DOMContentLoaded", () => {
     }
     if (kind === "date") {
       const bounds = getPreviewElementBounds("date");
+      const activeHeight = getActiveRenderFrameHeight();
+      const currentActiveTop = getNumericFieldValue(videoDateTopInput, 1006) / Math.max(1, renderFrameHeight) * activeHeight;
       const nextValue = clampRenderValue(
-        getNumericFieldValue(videoDateTopInput, 1006) + deltaRenderY,
+        currentActiveTop + deltaRenderY,
         bounds.min,
         bounds.max,
       );
-      updateFieldValue(videoDateTopInput, nextValue);
+      updateFieldValue(videoDateTopInput, nextValue / Math.max(1, activeHeight) * renderFrameHeight);
     }
   };
   function drawOriginalResultPreview() {
@@ -18920,17 +18993,38 @@ document.addEventListener("DOMContentLoaded", () => {
     const scaleX = getActivePreviewScaleX();
     const scaleY = getActivePreviewScaleY();
     const elementScale = Math.min(scaleX, scaleY);
-    const baseTitleHeight = getActiveTitleHeight();
-    const subtitleHeight = getActiveSubtitleHeight();
     const titleTemplatePreset = getActiveTitleTemplatePreset();
     const titleUsesPillowLayout = titleTemplatePreset?.engine === "pillow";
     const titleSideMargin = Number.isFinite(Number(titleTemplatePreset?.sideMargin))
       ? Number(titleTemplatePreset.sideMargin)
       : 32;
+    const titleFontSize = originalPreview
+      ? Math.max(18, activeRenderHeight * 0.055)
+      : Math.max(14, getNumericFieldValue(titleFontSizeInput, previewConfig.titleHeight * 0.75));
+    const subtitleFontSize = originalPreview
+      ? Math.max(20, activeRenderHeight * 0.06)
+      : Math.max(10, getNumericFieldValue(subtitleFontSizeInput, previewConfig.subtitleHeight * 0.4));
+    if (previewTitle) {
+      previewTitle.style.fontSize = titleFontSize * elementScale + "px";
+      previewTitle.style.left = titleSideMargin * scaleX + "px";
+      previewTitle.style.right = titleSideMargin * scaleX + "px";
+      previewTitle.style.padding = titleUsesPillowLayout ? "0" : "0 12px";
+      previewTitle.style.height = "auto";
+    }
+    if (previewSubtitle) {
+      previewSubtitle.style.fontSize = subtitleFontSize * elementScale + "px";
+      previewSubtitle.style.height = "auto";
+    }
+    const baseTitleHeight = getActiveTitleHeight();
+    const subtitleHeight = getActiveSubtitleHeight();
+    const rawTitleMargin = getNumericFieldValue(titleMarginInput, previewConfig.titleY);
+    const titleMarginCustom = dirtyOverlayFields.has("title_margin") || rawTitleMargin !== previewConfig.titleY;
     let titleTop = clampRenderValue(
-      originalPreview ? (activeRenderHeight * 0.08) : getNumericFieldValue(titleMarginInput, previewConfig.titleY),
-      0,
-      Math.max(0, activeRenderHeight - baseTitleHeight),
+      originalPreview && !titleMarginCustom
+        ? (activeRenderHeight * 0.08)
+        : (originalPreview ? rawTitleMargin / Math.max(1, renderFrameHeight) * activeRenderHeight : rawTitleMargin),
+      getPositionBounds("title_margin", baseTitleHeight, activeRenderHeight).min,
+      getPositionBounds("title_margin", baseTitleHeight, activeRenderHeight).max,
     );
     const videoTop = clampRenderValue(
       getNumericFieldValue(videoOverlayOffsetInput, dims.y),
@@ -18938,47 +19032,42 @@ document.addEventListener("DOMContentLoaded", () => {
       Math.max(0, activeRenderHeight - dims.height),
     );
     const rawSubtitleMargin = getNumericFieldValue(subtitleMarginInput, renderFrameHeight - previewConfig.subtitleY - previewConfig.subtitleHeight);
-    const subtitleMargin = originalPreview && !dirtyOverlayFields.has("sub_margin") && !initialSubtitleMarginCustom
+    const subtitleMarginCustom = dirtyOverlayFields.has("sub_margin") || initialSubtitleMarginCustom;
+    const subtitleBounds = getPositionBounds("sub_margin", subtitleHeight, activeRenderHeight);
+    const subtitleMargin = originalPreview && !subtitleMarginCustom
       ? Math.max(0, activeRenderHeight - (activeRenderHeight * 0.72) - (subtitleHeight / 2))
       : clampRenderValue(
           originalPreview ? (rawSubtitleMargin / Math.max(1, renderFrameHeight) * activeRenderHeight) : rawSubtitleMargin,
-          0,
-          Math.max(0, activeRenderHeight - subtitleHeight),
+          subtitleBounds.min,
+          subtitleBounds.max,
         );
     const safeMargin = activeRenderHeight * 0.05;
-    const subtitleSafeMargin = originalPreview ? safeMargin : 0;
+    const subtitleSafeMargin = originalPreview && !subtitleMarginCustom ? safeMargin : 0;
     const subtitleTop = clampRenderValue(
       activeRenderHeight - subtitleMargin - subtitleHeight,
       subtitleSafeMargin,
       Math.max(subtitleSafeMargin, activeRenderHeight - subtitleSafeMargin - subtitleHeight),
     );
-    if (originalPreview) {
+    if (originalPreview && !titleMarginCustom) {
       const minGap = Math.max(8, activeRenderHeight * 0.025);
       titleTop = Math.min(titleTop, Math.max(safeMargin, subtitleTop - baseTitleHeight - minGap));
     }
-    const titleFontSize = originalPreview
-      ? Math.max(18, activeRenderHeight * 0.055)
-      : Math.max(14, getNumericFieldValue(titleFontSizeInput, previewConfig.titleHeight * 0.75));
-    const subtitleFontSize = originalPreview
-      ? Math.max(20, activeRenderHeight * 0.06)
-      : Math.max(10, getNumericFieldValue(subtitleFontSizeInput, previewConfig.subtitleHeight * 0.4));
     const dateText = (videoDateTextInput?.value || "").trim();
+    const dateBounds = getPositionBounds("video_date_top", 80 * activeRenderHeight / Math.max(1, renderFrameHeight), activeRenderHeight);
     const dateTop = clampRenderValue(
-      getNumericFieldValue(videoDateTopInput, 1006),
-      0,
-      Math.max(0, renderFrameHeight - 52),
+      getNumericFieldValue(videoDateTopInput, 1006) / Math.max(1, renderFrameHeight) * activeRenderHeight,
+      dateBounds.min,
+      dateBounds.max,
     );
+    syncPositionInputLimit(titleMarginInput, "title_margin", baseTitleHeight, activeRenderHeight);
+    syncPositionInputLimit(subtitleMarginInput, "sub_margin", subtitleHeight, activeRenderHeight);
+    syncPositionInputLimit(videoDateTopInput, "video_date_top", 80 * activeRenderHeight / Math.max(1, renderFrameHeight), activeRenderHeight);
     if (previewFrame) {
       const bgUrl = getActiveBackgroundUrl();
       previewFrame.style.backgroundImage = originalPreview ? "none" : (bgUrl ? `url('${bgUrl}')` : "none");
     }
     if (previewTitle) {
       previewTitle.classList.toggle("is-hidden", !isTitleVisible());
-      previewTitle.style.fontSize = titleFontSize * elementScale + "px";
-      previewTitle.style.left = titleSideMargin * scaleX + "px";
-      previewTitle.style.right = titleSideMargin * scaleX + "px";
-      previewTitle.style.padding = titleUsesPillowLayout ? "0" : "0 12px";
-      previewTitle.style.height = "auto";
       const minTitleHeightPx = baseTitleHeight * scaleY;
       const contentHeightPx = previewTitle.scrollHeight || minTitleHeightPx;
       const effectiveTitleHeightPx = Math.max(minTitleHeightPx, contentHeightPx);
@@ -19007,8 +19096,7 @@ document.addEventListener("DOMContentLoaded", () => {
     if (previewSubtitle) {
       previewSubtitle.classList.toggle("is-hidden", !isSubtitleVisible());
       previewSubtitle.style.top = subtitleTop * scaleY + "px";
-      previewSubtitle.style.height = subtitleHeight * scaleY + "px";
-      previewSubtitle.style.fontSize = subtitleFontSize * elementScale + "px";
+      previewSubtitle.style.height = "auto";
     }
     if (origPreviewTitle) {
       origPreviewTitle.textContent = previewTitle?.textContent || "Life is full of fun";
@@ -19694,6 +19782,7 @@ document.addEventListener("DOMContentLoaded", () => {
       };
       element.classList.add("is-dragging");
       (isOriginalCropAspect() ? origPreviewFrame : previewFrame)?.classList.add("is-dragging");
+      previewFrame?.classList.add("show-ui-safe-guides");
       element.setPointerCapture?.(event.pointerId);
     });
   });
@@ -19723,6 +19812,7 @@ document.addEventListener("DOMContentLoaded", () => {
       element?.classList.remove("is-dragging");
     });
     previewFrame?.classList.remove("is-dragging");
+    previewFrame?.classList.remove("show-ui-safe-guides");
     origPreviewFrame?.classList.remove("is-dragging");
     dragState = null;
     if (completedDragState && !completedDragState.moved) {
@@ -19771,6 +19861,10 @@ document.addEventListener("DOMContentLoaded", () => {
   };
   previewFrame?.addEventListener("keydown", handlePreviewKeydown);
   origPreviewFrame?.addEventListener("keydown", handlePreviewKeydown);
+  [titleMarginInput, subtitleMarginInput, videoDateTopInput].forEach((field) => {
+    field?.addEventListener("focus", () => previewFrame?.classList.add("show-ui-safe-guides"));
+    field?.addEventListener("blur", () => previewFrame?.classList.remove("show-ui-safe-guides"));
+  });
   window.addEventListener("resize", () => {
     if (isOriginalCropAspect()) {
       applyPreviewLayout();
