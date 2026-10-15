@@ -5559,6 +5559,8 @@
   .shape-editor-list { display: grid; gap: 8px; }
   .shape-editor-row { display: flex; align-items: center; justify-content: space-between; min-height: 44px; padding: 8px 10px; border: 1px solid rgba(255,255,255,.12); border-radius: 8px; background: rgba(15,23,42,.45); color: #fff; }
   .shape-editor-row.is-selected { border-color: #50cdb5; box-shadow: 0 0 0 1px rgba(80,205,181,.28); }
+  .shape-editor-row-copy { display: grid; gap: 2px; text-align: left; }
+  .shape-editor-error { color: #ff9b9b; font-size: .72rem; line-height: 1.25; }
   .shape-editor-empty { color: rgba(255,255,255,.52); font-size: .82rem; padding: 18px 4px; }
   .shape-editor-controls { display: grid; gap: 14px; }
   .shape-editor-actions { display: flex; flex-wrap: wrap; gap: 8px; }
@@ -8825,7 +8827,7 @@
       <div class="modal-footer border-0 d-flex justify-content-between align-items-center">
         <div class="d-flex align-items-center gap-2">
           <button type="button" class="btn btn-outline-secondary" data-bs-dismiss="modal">Cancel</button>
-          <button type="button" class="btn btn-primary" id="crop-save-btn" disabled data-saving-text="Saving…">
+          <button type="button" class="btn btn-primary" id="crop-save-btn" data-saving-text="Saving…">
             <i class="bi bi-check-lg me-1"></i>Save and continue
           </button>
           <button type="button" class="btn btn-outline-primary" id="crop-save-default-btn">
@@ -11459,50 +11461,8 @@ const restoreGenerateV2EditorNodes = () => {
   generateV2EditState.moved = [];
 };
 
-const snapshotGenerateV2EditorFields = () => {
-  const fields = Array.from(document.querySelectorAll(
-    "#generate-v2-editor input, #generate-v2-editor select, #generate-v2-editor textarea, #generate-v2-preview-mount input, #generate-v2-preview-mount select, #generate-v2-preview-mount textarea, #crop-area-modal input, #crop-area-modal select, #crop-area-modal textarea"
-  ));
-  return fields.map((field) => ({
-    field,
-    value: field.value,
-    checked: field.checked,
-    selectedIndex: field.selectedIndex,
-  }));
-};
-
-const restoreGenerateV2EditorFields = (snapshot) => {
-  (snapshot || []).forEach(({ field, value, checked, selectedIndex }) => {
-    if (!field) {
-      return;
-    }
-    if (field.type === "checkbox" || field.type === "radio") {
-      field.checked = !!checked;
-    } else {
-      field.value = value;
-      if (field.tagName === "SELECT" && Number.isInteger(selectedIndex)) {
-        field.selectedIndex = selectedIndex;
-      }
-    }
-    field.dispatchEvent(new Event("input", { bubbles: true }));
-    field.dispatchEvent(new Event("change", { bubbles: true }));
-  });
-};
-
 const isGenerateV2EditorDirty = () => {
-  const snapshot = generateV2EditState.snapshot || [];
-  return snapshot.some(({ field, value, checked, selectedIndex }) => {
-    if (!field) {
-      return false;
-    }
-    if (field.type === "checkbox" || field.type === "radio") {
-      return field.checked !== !!checked;
-    }
-    if (field.tagName === "SELECT" && Number.isInteger(selectedIndex) && field.selectedIndex !== selectedIndex) {
-      return true;
-    }
-    return String(field.value ?? "") !== String(value ?? "");
-  });
+  return !!window.isCropEditorDesignDirty?.();
 };
 
 const setGenerateV2EditorStatus = (message = "", variant = "") => {
@@ -11527,6 +11487,7 @@ const setGenerateV2EditorBusy = (busy, { message = "", saveLabel = "" } = {}) =>
     }
   });
   if (save) {
+    save.dataset.busy = busy ? "1" : "0";
     if (!save.dataset.defaultHtml) {
       save.dataset.defaultHtml = save.innerHTML;
     }
@@ -11535,6 +11496,7 @@ const setGenerateV2EditorBusy = (busy, { message = "", saveLabel = "" } = {}) =>
       : save.dataset.defaultHtml || saveLabel;
   }
   setGenerateV2EditorStatus(message, "");
+  window.syncCropEditorDirtyUi?.();
 };
 
 window.setGenerateV2EditorBusy = setGenerateV2EditorBusy;
@@ -11743,7 +11705,8 @@ const enterGenerateV2EditMode = ({ section = "style" } = {}) => {
   previewMount?.setAttribute("aria-hidden", "false");
   mountGenerateV2EditorNodes();
   window.prepareCropEditor?.(chooseBtn);
-  generateV2EditState.snapshot = snapshotGenerateV2EditorFields();
+  window.rememberCropEditorSavedDesignState?.();
+  generateV2EditState.snapshot = window.serializeCropEditorDesignState?.() || null;
   setGenerateV2EditorTitleLabels(true);
   setGenerateV2EditorSection(section);
   window.requestAnimationFrame(() => {
@@ -11761,7 +11724,7 @@ window.exitGenerateV2EditMode = ({ saved = false } = {}) => {
   }
   pauseGenerateV2WorkbenchVideos({ pauseSourcePlayer: true });
   if (!saved) {
-    restoreGenerateV2EditorFields(generateV2EditState.snapshot);
+    window.restoreCropEditorDesignState?.();
   }
   document.getElementById("generate-v2-discard-dialog")?.classList.add("d-none");
   setGenerateV2EditorTitleLabels(false);
@@ -17982,6 +17945,7 @@ document.addEventListener("DOMContentLoaded", () => {
   let lastSinglePresetRatios = { x: 0, y: 0, w: 1, h: 1 };
   let activeSplitEnabled = false;
   let cropDirty = false;
+  let cropSaveInFlight = false;
   let cropperProgrammaticUpdateDepth = 0;
   let splitDefaultsPrimed = false;
   let backgroundPreferenceSyncInFlight = false;
@@ -18094,6 +18058,153 @@ document.addEventListener("DOMContentLoaded", () => {
     });
     return results;
   };
+  let savedDesignSnapshot = null;
+  let designStateSyncQueued = false;
+  let suppressDesignStateSync = 0;
+  const canonicalizeDesignValue = (value) => {
+    if (Array.isArray(value)) return value.map(canonicalizeDesignValue);
+    if (value && typeof value === "object") {
+      return Object.keys(value).sort().reduce((result, key) => {
+        result[key] = canonicalizeDesignValue(value[key]);
+        return result;
+      }, {});
+    }
+    return value;
+  };
+  const parseDesignJson = (value, fallback) => {
+    try {
+      return canonicalizeDesignValue(JSON.parse(String(value || "")));
+    } catch (_) {
+      return fallback;
+    }
+  };
+  const collectNamedDesignFields = () => {
+    const fields = {};
+    queryEditorFields("input[name], select[name], textarea[name]").forEach((field) => {
+      if (!field.name || field.type === "file" || field.type === "button" || field.type === "submit") return;
+      if (field.type === "radio") {
+        if (field.checked || !Object.prototype.hasOwnProperty.call(fields, field.name)) {
+          fields[field.name] = field.checked ? String(field.value || "") : "";
+        }
+        return;
+      }
+      if (field.type === "checkbox") {
+        fields[field.name] = field.checked;
+        return;
+      }
+      fields[field.name] = String(field.value ?? "");
+    });
+    if (Object.prototype.hasOwnProperty.call(fields, "overlay_shapes")) {
+      fields.overlay_shapes = parseDesignJson(fields.overlay_shapes, []);
+    }
+    return canonicalizeDesignValue(fields);
+  };
+  const roundedRatio = (value) => Number(clampRatio(value).toFixed(6));
+  const readCropRatios = (boxKey, fallback) => {
+    const instance = cropperInstances[boxKey];
+    const data = instance?.getData?.(true);
+    if (data && naturalSize.width && naturalSize.height) {
+      return canonicalizeDesignValue({
+        x: roundedRatio(data.x / naturalSize.width),
+        y: roundedRatio(data.y / naturalSize.height),
+        w: roundedRatio(data.width / naturalSize.width),
+        h: roundedRatio(data.height / naturalSize.height),
+      });
+    }
+    const source = fallback || { x: 0, y: 0, w: 1, h: 1 };
+    return canonicalizeDesignValue({
+      x: roundedRatio(source.x), y: roundedRatio(source.y),
+      w: roundedRatio(source.w), h: roundedRatio(source.h),
+    });
+  };
+  const collectSerializedDesignState = () => canonicalizeDesignValue({
+    fields: collectNamedDesignFields(),
+    layout_mode: activeLayoutMode || "manual",
+    crop_aspect: activeCropAspect || "landscape",
+    split_enabled: !!activeSplitEnabled,
+    visual_mode: activeVisualMode || "video",
+    static_visual_key: activeStaticVisualKey || "",
+    background_visual_key: activeBackgroundKey || "",
+    subscribe_overlay_image: activeSubscribeKey || "",
+    original_zoom_rect: canonicalizeDesignValue(normalizeOriginalZoomRect(originalZoomRect)),
+    crop: readCropRatios("top", currentPresetRatios),
+    crop2: readCropRatios("bottom", currentPresetRatiosBottom),
+    podcast_overlay_short_ids: [...(podcastShortClipState.selectedIds || [])],
+  });
+  const serializeCropEditorDesignState = () => JSON.stringify(collectSerializedDesignState());
+  const isCropEditorDesignDirty = () => !!savedDesignSnapshot
+    && serializeCropEditorDesignState() !== JSON.stringify(savedDesignSnapshot);
+  const syncCropEditorDirtyUi = () => {
+    const dirty = isCropEditorDesignDirty();
+    if (saveBtn) saveBtn.disabled = false;
+    const v2Save = document.getElementById("generate-v2-editor-save");
+    if (v2Save) v2Save.disabled = v2Save.dataset.busy === "1" || !dirty;
+    if (dirty) {
+      if (saveStatusEl?.classList.contains("text-success")) setSaveStatus("", "");
+      const v2Status = document.getElementById("generate-v2-editor-status");
+      if (v2Status?.classList.contains("is-success")) setGenerateV2EditorStatus("", "");
+    }
+    return dirty;
+  };
+  const notifyCropEditorDesignChanged = () => {
+    if (suppressDesignStateSync || designStateSyncQueued) return;
+    designStateSyncQueued = true;
+    queueMicrotask(() => {
+      designStateSyncQueued = false;
+      syncCropEditorDirtyUi();
+    });
+  };
+  const restoreCropEditorDesignState = () => {
+    if (!savedDesignSnapshot) return;
+    const snapshot = canonicalizeDesignValue(savedDesignSnapshot);
+    suppressDesignStateSync += 1;
+    try {
+      window.applyCropEditorFieldState?.(snapshot.fields || {});
+      activeLayoutMode = snapshot.layout_mode === "auto" ? "auto" : "manual";
+      activeCropAspect = snapshot.crop_aspect || "landscape";
+      activeSplitEnabled = !!snapshot.split_enabled;
+      activeVisualMode = snapshot.visual_mode || "video";
+      activeStaticVisualKey = snapshot.static_visual_key || "";
+      activeBackgroundKey = snapshot.background_visual_key || "";
+      activeSubscribeKey = snapshot.subscribe_overlay_image || "";
+      originalZoomRect = normalizeOriginalZoomRect(snapshot.original_zoom_rect);
+      currentPresetRatios = normalizePresetRatios(snapshot.crop);
+      currentPresetRatiosBottom = normalizePresetRatios(snapshot.crop2);
+      podcastShortClipState.selectedIds = [...(snapshot.podcast_overlay_short_ids || [])];
+      syncPodcastShortClipHiddenField();
+      setLayoutMode(activeLayoutMode);
+      setActiveStaticVisual(activeStaticVisualKey);
+      setActiveBackground(activeBackgroundKey);
+      setActiveSubscribe(activeSubscribeKey);
+      setVisualMode(activeVisualMode);
+      setCropFormat(activeCropAspect, activeSplitEnabled);
+      syncOriginalZoomUi();
+      window.syncOverlayShapesFromField?.();
+      applyPreviewLayout();
+    } finally {
+      suppressDesignStateSync = Math.max(0, suppressDesignStateSync - 1);
+    }
+    syncCropEditorDirtyUi();
+  };
+  window.serializeCropEditorDesignState = serializeCropEditorDesignState;
+  window.isCropEditorDesignDirty = isCropEditorDesignDirty;
+  window.syncCropEditorDirtyUi = syncCropEditorDirtyUi;
+  window.notifyCropEditorDesignChanged = notifyCropEditorDesignChanged;
+  window.rememberCropEditorSavedDesignState = () => {
+    savedDesignSnapshot = collectSerializedDesignState();
+    syncCropEditorDirtyUi();
+  };
+  window.restoreCropEditorDesignState = restoreCropEditorDesignState;
+  document.addEventListener("input", (event) => {
+    if (event.target?.name && getEditorRoots().some((root) => root.contains(event.target))) {
+      notifyCropEditorDesignChanged();
+    }
+  }, true);
+  document.addEventListener("change", (event) => {
+    if (event.target?.name && getEditorRoots().some((root) => root.contains(event.target))) {
+      notifyCropEditorDesignChanged();
+    }
+  }, true);
   const subtitlePresetField = getEditorField("subtitle_preset");
   const subtitleStyleField = getEditorField("subtitle_style");
   const subtitlePresetCards = queryEditorFields("[data-subtitle-preset-card]");
@@ -18468,6 +18579,7 @@ document.addEventListener("DOMContentLoaded", () => {
     if (closePicker) {
       setSubscribePickerOpen(false);
     }
+    notifyCropEditorDesignChanged();
   };
   const persistBackgroundPreference = async (key) => {
     if (!backgroundSelectionUrl) return;
@@ -18662,6 +18774,7 @@ document.addEventListener("DOMContentLoaded", () => {
   const isAutoLayoutMode = () => activeLayoutMode === "auto";
   const setLayoutMode = (mode) => {
     activeLayoutMode = mode === "auto" ? "auto" : "manual";
+    notifyCropEditorDesignChanged();
   };
   const getEffectiveSplitEnabled = () => !!(activeSplitEnabled && isPortraitCropAspect() && activeVisualMode === "video");
   const isTitleVisible = () => !!showTitleToggle?.checked;
@@ -18693,6 +18806,7 @@ document.addEventListener("DOMContentLoaded", () => {
   };
   const markCropDirty = () => {
     cropDirty = true;
+    notifyCropEditorDesignChanged();
   };
   const normalizeOriginalZoomRect = (rect) => {
     if (!rect || typeof rect !== "object") {
@@ -19363,7 +19477,7 @@ document.addEventListener("DOMContentLoaded", () => {
     previewImgBottom?.removeAttribute("src");
     clearPreviewCanvas();
     if (saveBtn) {
-      saveBtn.disabled = true;
+      saveBtn.disabled = false;
     }
     setSaveStatus("", "");
     updateInfo("Waiting for preview…");
@@ -19423,7 +19537,7 @@ document.addEventListener("DOMContentLoaded", () => {
     naturalSize = { width: 0, height: 0 };
     clearPreviewCanvas();
     if (saveBtn) {
-      saveBtn.disabled = true;
+      saveBtn.disabled = false;
     }
   };
 
@@ -19532,7 +19646,7 @@ document.addEventListener("DOMContentLoaded", () => {
       .catch((error) => {
         setPreviewFrameRetryState(error.message || "Preview image could not be loaded.");
         if (saveBtn) {
-          saveBtn.disabled = true;
+          saveBtn.disabled = false;
         }
       });
     if (!boxesToLoad.includes("bottom")) {
@@ -19640,7 +19754,7 @@ document.addEventListener("DOMContentLoaded", () => {
       }
       updateInfo("Preview not available.");
       if (saveBtn) {
-        saveBtn.disabled = true;
+        saveBtn.disabled = false;
       }
       clearPreviewCanvas();
       return;
@@ -19656,7 +19770,7 @@ document.addEventListener("DOMContentLoaded", () => {
       } catch (error) {
         updateInfo(error.message || "Created video preview could not be loaded.");
         if (saveBtn) {
-          saveBtn.disabled = true;
+          saveBtn.disabled = false;
         }
         clearPreviewCanvas();
       }
@@ -19816,6 +19930,7 @@ document.addEventListener("DOMContentLoaded", () => {
     });
     const selected = staticVisualMap.get(normalizedKey) || createdVisualMap.get(normalizedKey);
     updateStaticVisualDescription(selected);
+    notifyCropEditorDesignChanged();
   };
   const setVisualMode = (mode) => {
     const normalized = mode === "static"
@@ -19865,6 +19980,7 @@ document.addEventListener("DOMContentLoaded", () => {
       }
     }
     updateSplitUiState();
+    notifyCropEditorDesignChanged();
   };
   const setActiveBackground = (key, options = {}) => {
     const { persistPreference = false, closePicker = false } = options;
@@ -19886,6 +20002,7 @@ document.addEventListener("DOMContentLoaded", () => {
     if (persistPreference && !backgroundPreferenceSyncInFlight) {
       void persistBackgroundPreference(normalizedKey);
     }
+    notifyCropEditorDesignChanged();
   };
   const setCropFormat = (value, splitEnabled = false) => {
     const wasEffectiveSplit = getEffectiveSplitEnabled();
@@ -19919,6 +20036,7 @@ document.addEventListener("DOMContentLoaded", () => {
       maybePrimeSplitDefaults();
     }
     if (getEffectiveSplitEnabled() && (!previewImgBottom?.getAttribute("src") || !previewImgBottom?.naturalWidth)) {
+      notifyCropEditorDesignChanged();
       loadActivePreviewImage();
       return;
     }
@@ -19929,6 +20047,7 @@ document.addEventListener("DOMContentLoaded", () => {
     } else {
       drawPreviewFromCropper();
     }
+    notifyCropEditorDesignChanged();
   };
   const setActiveCropAspect = (value) => {
     setCropFormat(value, activeSplitEnabled);
@@ -20348,6 +20467,7 @@ document.addEventListener("DOMContentLoaded", () => {
     syncPreviewTitleText();
     applyPreviewLayout();
     loadActivePreviewImage();
+    window.rememberCropEditorSavedDesignState?.();
     return true;
   };
 
@@ -20392,6 +20512,7 @@ document.addEventListener("DOMContentLoaded", () => {
   });
 
   modalEl.addEventListener("hidden.bs.modal", () => {
+    window.restoreCropEditorDesignState?.();
     teardownCropEditor();
   });
   document.addEventListener("clip-title-preview-sync", (event) => {
@@ -20538,7 +20659,6 @@ document.addEventListener("DOMContentLoaded", () => {
     if (!response.ok || !payload.success) {
       throw new Error(payload.message || "Settings could not be saved.");
     }
-    window.rememberCropEditorSavedDesignState?.();
     if (settingsContainer) {
       settingsContainer.dataset.selectedVisualMode = activeVisualMode || "video";
     }
@@ -20581,14 +20701,25 @@ document.addEventListener("DOMContentLoaded", () => {
   });
 
   saveBtn?.addEventListener("click", async () => {
-    if ((!isOriginalCropAspect() && !cropperInstances.top) || !naturalSize.width || !naturalSize.height) {
+    if (cropSaveInFlight) {
+      return;
+    }
+    const hasUnsavedChanges = isCropEditorDesignDirty();
+    const continueAfterSave = () => {
+      if (getGenerateV2Root()) return;
+      bootstrap.Modal.getInstance(modalEl)?.hide();
+    };
+    if (!hasUnsavedChanges) {
+      continueAfterSave();
       return;
     }
     setSaveStatus("", "");
+    cropSaveInFlight = true;
     try {
       setSaveStatus("Saving settings…", "");
       await saveShortSettings();
     } catch (err) {
+      cropSaveInFlight = false;
       updateInfo(err.message || "Settings could not be saved.");
       setSaveStatus(err.message || "Settings save failed", "danger");
       window.setGenerateV2EditorBusy?.(false);
@@ -20603,7 +20734,7 @@ document.addEventListener("DOMContentLoaded", () => {
           w: clampRatio(data.width / naturalSize.width),
           h: clampRatio(data.height / naturalSize.height),
         }
-      : { x: 0, y: 0, w: 1, h: 1 };
+      : normalizePresetRatios(currentPresetRatios);
     if (isOriginalCropAspect()) {
       originalZoomRect = normalizeOriginalZoomRect(activeTopRatios);
       syncOriginalZoomUi();
@@ -20621,9 +20752,10 @@ document.addEventListener("DOMContentLoaded", () => {
           w: clampRatio(bottomData.width / naturalSize.width),
           h: clampRatio(bottomData.height / naturalSize.height),
         }
-      : null;
+      : (effectiveSplit ? normalizePresetRatios(currentPresetRatiosBottom) : null);
     const saveUrl = modalEl.dataset.saveUrl || chooseBtn?.dataset.saveUrl;
     if (!saveUrl) {
+      cropSaveInFlight = false;
       updateInfo("Save endpoint not configured.");
       window.setGenerateV2EditorBusy?.(false);
       window.setGenerateV2EditorStatus?.("Couldn't save. Try again.", "error");
@@ -20658,7 +20790,7 @@ document.addEventListener("DOMContentLoaded", () => {
     }
     const originalText = saveBtn.textContent;
     const savingText = saveBtn.dataset.savingText || "Saving…";
-    saveBtn.disabled = true;
+    saveBtn.setAttribute("aria-busy", "true");
     saveBtn.textContent = savingText;
     try {
       const response = await fetch(saveUrl, {
@@ -20678,6 +20810,7 @@ document.addEventListener("DOMContentLoaded", () => {
       );
 	      setSaveStatus("Saved", "success");
 	      cropDirty = false;
+      window.rememberCropEditorSavedDesignState?.();
       if (statusText) {
         if (cropStatusTimer) {
           window.clearTimeout(cropStatusTimer);
@@ -20747,14 +20880,18 @@ document.addEventListener("DOMContentLoaded", () => {
         }
         return;
       }
+      continueAfterSave();
     } catch (err) {
       updateInfo(err.message || "Crop could not be saved.");
       setSaveStatus(err.message || "Save failed", "danger");
       window.setGenerateV2EditorBusy?.(false);
       window.setGenerateV2EditorStatus?.("Couldn't save. Try again.", "error");
     } finally {
+      cropSaveInFlight = false;
       saveBtn.disabled = false;
+      saveBtn.removeAttribute("aria-busy");
       saveBtn.textContent = originalText;
+      syncCropEditorDirtyUi();
     }
   });
 });
@@ -21333,33 +21470,6 @@ document.addEventListener("DOMContentLoaded", function () {
   const styleTemplateCarouselNext = cropAreaModalEl?.querySelector("[data-style-template-carousel-next]") || null;
   const cropModalTabs = Array.from(document.querySelectorAll("[data-crop-modal-tab]"));
   const cropModalPanels = Array.from(document.querySelectorAll("[data-crop-modal-panel]"));
-  const designStateFieldNames = [
-    "font",
-    "sub_font",
-    "title_font_size",
-    "sub_font_size",
-    "sub_margin",
-    "subtitle_style",
-    "subtitle_preset",
-    "title_margin",
-    "title_line_spacing",
-    "title_bg_color",
-    "title_bg_alpha",
-    "title_text_color",
-    "subtitle_text_color",
-    "subtitle_text_alpha",
-    "subtitle_bg_color",
-    "subtitle_bg_alpha",
-    "video_date_text",
-    "video_date_top",
-    "video_overlay_offset",
-    "show_title",
-    "show_subtitle",
-    "enable_subscribe_overlay",
-    "is_music_only",
-    "visual_mode",
-    "overlay_shapes",
-  ];
   const getDesignRoots = () => {
     const roots = [
       document.getElementById("generate-v2-editor"),
@@ -21376,36 +21486,18 @@ document.addEventListener("DOMContentLoaded", function () {
     }
     return null;
   };
-  const getDesignFieldValue = (field) => {
-    if (!field) return "";
-    if (field.type === "checkbox") {
-      return field.checked ? "1" : "0";
-    }
-    return field.value || "";
-  };
   const setDesignFieldValue = (field, value, dispatch = true) => {
     if (!field) return;
     if (field.type === "checkbox") {
       field.checked = String(value || "").toLowerCase() === "1" || String(value || "").toLowerCase() === "true";
     } else {
-      field.value = value ?? "";
+      field.value = value && typeof value === "object" ? JSON.stringify(value) : (value ?? "");
     }
     if (dispatch) {
       field.dispatchEvent(new Event("input", { bubbles: true }));
       field.dispatchEvent(new Event("change", { bubbles: true }));
     }
   };
-  const collectDesignState = () => {
-    const state = {};
-    designStateFieldNames.forEach((name) => {
-      const field = getDesignField(name);
-      if (field) {
-        state[name] = getDesignFieldValue(field);
-      }
-    });
-    return state;
-  };
-  let savedDesignState = collectDesignState();
   const applyDesignState = (state) => {
     Object.entries(state || {}).forEach(([name, value]) => {
       setDesignFieldValue(getDesignField(name), value, false);
@@ -21420,12 +21512,7 @@ document.addEventListener("DOMContentLoaded", function () {
     syncFinalPreviewLayout();
     window.syncOverlayShapesFromField?.();
   };
-  window.rememberCropEditorSavedDesignState = () => {
-    savedDesignState = collectDesignState();
-  };
-  window.restoreCropEditorDesignState = () => {
-    applyDesignState(savedDesignState);
-  };
+  window.applyCropEditorFieldState = applyDesignState;
   const syncFinalPreviewLayout = () => {
     if (typeof window.syncCropEditorFinalPreviewLayout === "function") {
       window.syncCropEditorFinalPreviewLayout();
@@ -21945,8 +22032,25 @@ document.addEventListener("DOMContentLoaded", function () {
   let overlayShapes = [];
   let selectedShapeId = null;
   let shapePointerState = null;
+  const shapeValidationErrors = new Map();
   const shapeHandles = ["nw", "n", "ne", "e", "se", "s", "sw", "w"];
+  const validateShape = (shape) => {
+    const errors = [];
+    const numeric = Object.fromEntries(["x", "y", "w", "h", "alpha", "radius"].map((key) => [key, Number(shape[key])]));
+    if (![numeric.x, numeric.y, numeric.w, numeric.h].every(Number.isFinite)) errors.push("Position and size must be numbers.");
+    if (Number.isFinite(numeric.w) && (numeric.w < 1 || numeric.w > 1080)) errors.push("Width must be between 1 and 1080.");
+    if (Number.isFinite(numeric.h) && (numeric.h < 1 || numeric.h > 1920)) errors.push("Height must be between 1 and 1920.");
+    if (Number.isFinite(numeric.x) && Number.isFinite(numeric.w) && (numeric.x < 0 || numeric.x + numeric.w > 1080)) errors.push("Horizontal position must stay inside the canvas.");
+    if (Number.isFinite(numeric.y) && Number.isFinite(numeric.h) && (numeric.y < 0 || numeric.y + numeric.h > 1920)) errors.push("Vertical position must stay inside the canvas.");
+    if (!Number.isFinite(numeric.alpha) || numeric.alpha < 0 || numeric.alpha > 100) errors.push("Opacity must be between 0 and 100%.");
+    if (!Number.isFinite(numeric.radius) || numeric.radius < 0) errors.push("Corner radius must be zero or greater.");
+    if (!/^#[0-9a-f]{6}$/i.test(String(shape.color || ""))) errors.push("Color must be a six-digit hex value.");
+    return errors.join(" ");
+  };
   const clampShape = (shape) => {
+    const error = validateShape(shape);
+    if (shape.id && error) shapeValidationErrors.set(String(shape.id), error);
+    else if (shape.id) shapeValidationErrors.delete(String(shape.id));
     shape.w = Math.max(1, Math.min(1080, Math.round(Number(shape.w) || 1)));
     shape.h = Math.max(1, Math.min(1920, Math.round(Number(shape.h) || 1)));
     shape.x = Math.max(0, Math.min(1080 - shape.w, Math.round(Number(shape.x) || 0)));
@@ -21959,7 +22063,10 @@ document.addEventListener("DOMContentLoaded", function () {
   const selectedShape = () => overlayShapes.find((shape) => shape.id === selectedShapeId) || null;
   const persistShapes = () => {
     overlayShapes = overlayShapes.slice(0, 5).map(clampShape);
-    if (overlayShapesField) overlayShapesField.value = JSON.stringify(overlayShapes);
+    if (overlayShapesField) {
+      overlayShapesField.value = JSON.stringify(overlayShapes);
+      overlayShapesField.dispatchEvent(new Event("input", { bubbles: true }));
+    }
   };
   const shapeLayerElements = () => [document.getElementById("shorts-preview-shapes"), document.getElementById("orig-preview-shapes")].filter(Boolean);
   const renderShapeLayers = () => {
@@ -22010,7 +22117,8 @@ document.addEventListener("DOMContentLoaded", function () {
       const row = document.createElement("button");
       row.type = "button";
       row.className = `shape-editor-row${shape.id === selectedShapeId ? " is-selected" : ""}`;
-      row.innerHTML = `<span>Shape ${index + 1}</span><span class="short-bg-swatch" style="background:${hexToRgba(shape.color, shape.alpha / 100)}"></span>`;
+      const error = shapeValidationErrors.get(String(shape.id)) || "";
+      row.innerHTML = `<span class="shape-editor-row-copy"><span>Shape ${index + 1}</span>${error ? `<span class="shape-editor-error" role="alert">${error}</span>` : ""}</span><span class="short-bg-swatch" style="background:${hexToRgba(shape.color, shape.alpha / 100)}"></span>`;
       row.addEventListener("click", () => { selectedShapeId = shape.id; syncShapesUi(); });
       shapeList.appendChild(row);
     });
@@ -22020,6 +22128,7 @@ document.addEventListener("DOMContentLoaded", function () {
     renderShapeList();
     syncShapeControls();
     renderShapeLayers();
+    window.notifyCropEditorDesignChanged?.();
   };
   window.syncOverlayShapesFromField = () => {
     try { overlayShapes = JSON.parse(overlayShapesField?.value || "[]"); } catch (_) { overlayShapes = []; }
