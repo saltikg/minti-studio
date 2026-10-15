@@ -18946,10 +18946,11 @@ document.addEventListener("DOMContentLoaded", () => {
           Math.max(0, activeRenderHeight - subtitleHeight),
         );
     const safeMargin = activeRenderHeight * 0.05;
+    const subtitleSafeMargin = originalPreview ? safeMargin : 0;
     const subtitleTop = clampRenderValue(
       activeRenderHeight - subtitleMargin - subtitleHeight,
-      safeMargin,
-      Math.max(safeMargin, activeRenderHeight - safeMargin - subtitleHeight),
+      subtitleSafeMargin,
+      Math.max(subtitleSafeMargin, activeRenderHeight - subtitleSafeMargin - subtitleHeight),
     );
     if (originalPreview) {
       const minGap = Math.max(8, activeRenderHeight * 0.025);
