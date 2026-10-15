@@ -125,6 +125,8 @@ def enqueue_tiktok_clip(
         conn.close()
     try:
         upsert_generated_video_record(
+            user_id=queue_owner,
+            brand_id=queue_brand,
             source_video_id=str(video_id or "").strip(),
             source_channel_type="youtube",
             clip_filename=clip_filename,
@@ -284,7 +286,7 @@ def update_tiktok_job_status(
         )
         lifecycle_row = conn.execute(
             """
-            SELECT video_id, clip_filename, publish_at, tiktok_video_id
+            SELECT video_id, clip_filename, publish_at, tiktok_video_id, user_id, brand_id
             FROM shorts_tiktok_queue
             WHERE id = ?
             """,
@@ -303,6 +305,8 @@ def update_tiktok_job_status(
             else ("failed" if status == "failed" else "queued")
         )
         upsert_generated_video_record(
+            user_id=lifecycle_row[4],
+            brand_id=lifecycle_row[5],
             source_video_id=str(lifecycle_row[0] or "").strip(),
             source_channel_type="youtube",
             clip_filename=clip_filename,
