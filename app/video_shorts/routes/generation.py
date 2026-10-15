@@ -14052,9 +14052,9 @@ def publish_long_video_from_generate(video_pk: int):
         FROM youtube_videos
         WHERE id = ?
           AND owner_user_id = ?
-          AND ((? IS NULL AND brand_id IS NULL) OR brand_id = ?)
+          AND brand_id IS NOT DISTINCT FROM ?
         """,
-        [video_pk, user_id, brand_id, brand_id],
+        [video_pk, user_id, brand_id],
     ).fetchone()
     conn.close()
     if not row:
@@ -14262,9 +14262,9 @@ def delete_long_video_from_generate(video_pk: int):
         FROM youtube_videos
         WHERE id = ?
           AND owner_user_id = ?
-          AND ((? IS NULL AND brand_id IS NULL) OR brand_id = ?)
+          AND brand_id IS NOT DISTINCT FROM ?
         """,
-        [video_pk, owner_user_id, brand_id, brand_id],
+        [video_pk, owner_user_id, brand_id],
     ).fetchone()
     conn.close()
     if not row:
