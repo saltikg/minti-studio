@@ -84,7 +84,9 @@ def main() -> int:
         CREATE TABLE shorts_storage_assets (
             file_key VARCHAR,
             status VARCHAR,
-            size_bytes BIGINT
+            size_bytes BIGINT,
+            user_id VARCHAR,
+            brand_id VARCHAR
         );
         CREATE TABLE youtube_videos (
             id BIGINT,
@@ -102,6 +104,7 @@ def main() -> int:
         ("plan-only.mp4", "Plan only", "pending", "not_ready", None, None),
         ("deleted.mp4", "Deleted", "created", "ready", None, "short:deleted.mp4"),
         ("published-missing.mp4", "Published missing", "created", "published", "yt1", "short:published-missing.mp4"),
+        ("wrong-owner.mp4", "Wrong owner", "created", "ready", None, "short:wrong-owner.mp4"),
     ]
     for filename, title, generation_status, publish_status, youtube_id, storage_key in rows:
         conn.execute(
@@ -114,9 +117,10 @@ def main() -> int:
             """,
             [filename, title, generation_status, publish_status, youtube_id, filename, storage_key],
         )
-    conn.execute("INSERT INTO shorts_storage_assets VALUES ('short:rendered.mp4', 'active', 1024)")
-    conn.execute("INSERT INTO shorts_storage_assets VALUES ('short:deleted.mp4', 'deleted', 1024)")
-    conn.execute("INSERT INTO shorts_storage_assets VALUES ('short:published-missing.mp4', 'missing', 1024)")
+    conn.execute("INSERT INTO shorts_storage_assets VALUES ('short:rendered.mp4', 'active', 1024, 'test-user', 'test-brand')")
+    conn.execute("INSERT INTO shorts_storage_assets VALUES ('short:deleted.mp4', 'deleted', 1024, 'test-user', 'test-brand')")
+    conn.execute("INSERT INTO shorts_storage_assets VALUES ('short:published-missing.mp4', 'missing', 1024, 'test-user', 'test-brand')")
+    conn.execute("INSERT INTO shorts_storage_assets VALUES ('short:wrong-owner.mp4', 'active', 1024, 'other-user', 'other-brand')")
 
     original_media_helper = channels._short_card_media_urls
     channels._short_card_media_urls = lambda filename, storage_key="": (f"/shorts/{filename}", "")
@@ -140,8 +144,8 @@ def main() -> int:
     assert cards[0]["video_url"] == "/shorts/rendered.mp4"
     assert "thumbnail_url" not in cards[0]
     _test_successful_render_record(app)
-    print("PASS before_cards=4 after_cards=1 visible=Rendered")
-    print("PASS plan-only/deleted/published-missing hidden")
+    print("PASS before_cards=5 after_cards=1 visible=Rendered")
+    print("PASS plan-only/deleted/published-missing/wrong-owner hidden")
     return 0
 
 

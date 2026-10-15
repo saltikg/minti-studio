@@ -1131,8 +1131,8 @@ def _upsert_storage_asset(
                   file_path = excluded.file_path,
                   file_type = excluded.file_type,
                   size_bytes = excluded.size_bytes,
-                  user_id = COALESCE(shorts_storage_assets.user_id, excluded.user_id),
-                  brand_id = COALESCE(shorts_storage_assets.brand_id, excluded.brand_id),
+                  user_id = COALESCE(excluded.user_id, shorts_storage_assets.user_id),
+                  brand_id = COALESCE(excluded.brand_id, shorts_storage_assets.brand_id),
                   status = 'active',
                   updated_at = now()
                 """,
@@ -1148,7 +1148,7 @@ def _upsert_storage_asset(
                   file_path = excluded.file_path,
                   file_type = excluded.file_type,
                   size_bytes = excluded.size_bytes,
-                  user_id = COALESCE(shorts_storage_assets.user_id, excluded.user_id),
+                  user_id = COALESCE(excluded.user_id, shorts_storage_assets.user_id),
                   status = 'active',
                   updated_at = now()
                 """,

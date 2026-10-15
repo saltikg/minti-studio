@@ -357,7 +357,9 @@ def _resolve_brand_id(
     prefer_publish_brand: bool,
 ) -> Optional[str]:
     clean_brand_id = str(brand_id or "").strip() or None
-    if prefer_publish_brand and clean_brand_id:
+    # An explicit render/publish owner is authoritative. Falling back to the
+    # newest matching source row is only safe when no scoped owner was supplied.
+    if clean_brand_id:
         return clean_brand_id
     source_brand_id = _resolve_source_brand_id(conn, source_video_id)
     if source_brand_id:
@@ -374,7 +376,7 @@ def _resolve_user_id(
     prefer_publish_user: bool,
 ) -> Optional[str]:
     clean_user_id = str(user_id or "").strip() or None
-    if prefer_publish_user and clean_user_id:
+    if clean_user_id:
         return clean_user_id
     clean_brand_id = str(brand_id or "").strip() or None
     if clean_brand_id:

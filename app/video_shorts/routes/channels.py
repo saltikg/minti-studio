@@ -321,6 +321,8 @@ def _load_recent_short_cards(conn, user_id: str, brand_id: str | None, user_tz: 
         FROM shorts_generated_videos gv
         JOIN shorts_storage_assets render_asset
           ON render_asset.file_key = gv.storage_file_key
+         AND CAST(render_asset.user_id AS VARCHAR) = CAST(gv.user_id AS VARCHAR)
+         AND CAST(render_asset.brand_id AS VARCHAR) = CAST(gv.brand_id AS VARCHAR)
          AND lower(coalesce(render_asset.status, 'active')) = 'active'
          AND render_asset.size_bytes > 0
         LEFT JOIN youtube_videos published_video
