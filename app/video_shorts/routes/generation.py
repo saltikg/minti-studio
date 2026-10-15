@@ -9976,6 +9976,8 @@ def _sync_generated_video_from_plan_entry(
     generation_status: Optional[str] = None,
     publish_status: Optional[str] = None,
     render_settings_hash: Optional[str] = None,
+    owner_user_id: Optional[str] = None,
+    brand_id: Optional[str] = None,
 ) -> None:
     if not source_video_id or not clip_filename:
         return
@@ -9987,13 +9989,22 @@ def _sync_generated_video_from_plan_entry(
     if str(effective_publish_status or "").strip().lower() == "published":
         published_at = datetime.utcnow().replace(microsecond=0).isoformat()
         youtube_published_at = published_at
-    publish_owner_user_id = None
-    publish_brand_id = None
-    if youtube_published_at or entry.get("yt_video_id") or str(effective_publish_status or "").strip().lower() in {"queued", "scheduled", "uploaded", "published"}:
-        publish_owner_user_id, publish_brand_id = resolve_stored_token_owner_brand(
+    publish_owner_user_id = str(owner_user_id or "").strip() or None
+    publish_brand_id = str(brand_id or "").strip() or None
+    if (
+        not publish_owner_user_id
+        and (
+            youtube_published_at
+            or entry.get("yt_video_id")
+            or str(effective_publish_status or "").strip().lower()
+            in {"queued", "scheduled", "uploaded", "published"}
+        )
+    ):
+        publish_owner_user_id, resolved_brand_id = resolve_stored_token_owner_brand(
             getattr(g, "vs_current_user", {}).get("id"),
             current_brand_id(),
         )
+        publish_brand_id = publish_brand_id or resolved_brand_id
     upsert_generated_video_record(
         user_id=publish_owner_user_id,
         brand_id=publish_brand_id,
@@ -10016,6 +10027,51 @@ def _sync_generated_video_from_plan_entry(
         primary_publish_platform="youtube" if youtube_published_at else None,
         render_settings_hash=render_settings_hash,
         raw_plan_entry=entry or None,
+    )
+
+
+def _record_successful_short_render(
+    *,
+    source_video_id: str,
+    clip_filename: str,
+    file_path: Path,
+    size_bytes: int,
+    owner_user_id: str,
+    brand_id: Optional[str],
+    plan_entry: Dict[str, Any],
+    render_settings_hash: Optional[str],
+) -> None:
+    if not clip_filename or int(size_bytes or 0) <= 0:
+        raise RuntimeError(f"Rendered Short has no file data: {clip_filename or 'unknown'}")
+    file_key = f"short:{clip_filename}"
+    current_app.logger.info(
+        "short success record begin clip_filename=%s file_key=%s size_bytes=%s",
+        clip_filename,
+        file_key,
+        size_bytes,
+    )
+    _upsert_storage_asset(
+        file_key,
+        str(file_path),
+        "short",
+        int(size_bytes),
+        owner_user_id,
+        brand_id=brand_id,
+    )
+    _sync_generated_video_from_plan_entry(
+        source_video_id=source_video_id,
+        clip_filename=clip_filename,
+        plan_entry=plan_entry,
+        generation_status="created",
+        render_settings_hash=render_settings_hash,
+        owner_user_id=owner_user_id,
+        brand_id=brand_id,
+    )
+    current_app.logger.info(
+        "short success record complete clip_filename=%s file_key=%s size_bytes=%s",
+        clip_filename,
+        file_key,
+        size_bytes,
     )
 
 
@@ -29388,8 +29444,8 @@ def autoclip_video(video_pk):
                     short_output_key,
                 )
                 invalidate_short_cdn_cache(clip_filename)
+            size_bytes = final_file.stat().st_size if final_file.exists() else 0
             if current_user:
-                size_bytes = final_file.stat().st_size if final_file.exists() else 0
                 usage = usage or {"used_bytes": 0, "limit_bytes": DEFAULT_USER_STORAGE_LIMIT}
                 if usage["used_bytes"] + size_bytes > usage["limit_bytes"]:
                     try:
@@ -29409,24 +29465,6 @@ def autoclip_video(video_pk):
                         category="danger",
                         redirect_to=url_for("video_shorts_bp.shorts_storage_plans"),
                     )
-                current_app.logger.info(
-                    "short db update begin clip_filename=%s file_key=%s",
-                    clip_filename,
-                    f"short:{clip_filename}",
-                )
-                _upsert_storage_asset(
-                    f"short:{clip_filename}",
-                    str(final_file),
-                    "short",
-                    size_bytes,
-                    target_owner_user_id,
-                    brand_id=brand_id,
-                )
-                current_app.logger.info(
-                    "short db update success clip_filename=%s file_key=%s",
-                    clip_filename,
-                    f"short:{clip_filename}",
-                )
             try:
                 poster_filename = _short_poster_filename_for_render(
                     clip_filename,
@@ -29524,21 +29562,16 @@ def autoclip_video(video_pk):
                 )
             except Exception as exc:
                 current_app.logger.warning("Failed to update plan file %s: %s", _plan_path(vid), exc)
-            try:
-                _sync_generated_video_from_plan_entry(
-                    source_video_id=vid,
-                    clip_filename=clip_filename,
-                    plan_entry=plan_entry,
-                    generation_status="created",
-                    render_settings_hash=queued_render_settings_hash,
-                )
-            except Exception as exc:
-                current_app.logger.warning(
-                    "Failed to sync generated lifecycle row for %s clip=%s: %s",
-                    vid,
-                    clip_filename,
-                    exc,
-                )
+            _record_successful_short_render(
+                source_video_id=vid,
+                clip_filename=clip_filename,
+                file_path=final_file,
+                size_bytes=size_bytes,
+                owner_user_id=target_owner_user_id,
+                brand_id=brand_id,
+                plan_entry=plan_entry,
+                render_settings_hash=queued_render_settings_hash,
+            )
             owner_event_user_id = str(video_owner_user_id or (current_user or {}).get("id") or "").strip()
             if owner_event_user_id:
                 track_event(

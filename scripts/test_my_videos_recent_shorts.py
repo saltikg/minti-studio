@@ -11,7 +11,56 @@ ROOT = Path(__file__).resolve().parents[1]
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
-from app.video_shorts.routes import channels  # noqa: E402
+from app.video_shorts.routes import channels, generation  # noqa: E402
+
+
+def _test_successful_render_record(app: Flask) -> None:
+    calls = []
+    original_asset_upsert = generation._upsert_storage_asset
+    original_lifecycle_sync = generation._sync_generated_video_from_plan_entry
+    generation._upsert_storage_asset = lambda *args, **kwargs: calls.append(("asset", args, kwargs))
+    generation._sync_generated_video_from_plan_entry = lambda **kwargs: calls.append(("lifecycle", (), kwargs))
+    try:
+        with app.app_context():
+            generation._record_successful_short_render(
+                source_video_id="source-1",
+                clip_filename="rendered.mp4",
+                file_path=Path("/tmp/rendered.mp4"),
+                size_bytes=1024,
+                owner_user_id="test-user",
+                brand_id="test-brand",
+                plan_entry={"status": "created"},
+                render_settings_hash="hash-1",
+            )
+        assert [call[0] for call in calls] == ["asset", "lifecycle"]
+        assert calls[0][1][3] == 1024
+        assert calls[1][2]["owner_user_id"] == "test-user"
+        assert calls[1][2]["brand_id"] == "test-brand"
+
+        generation._sync_generated_video_from_plan_entry = lambda **kwargs: (_ for _ in ()).throw(
+            RuntimeError("lifecycle write failed")
+        )
+        try:
+            with app.app_context():
+                generation._record_successful_short_render(
+                    source_video_id="source-1",
+                    clip_filename="rendered.mp4",
+                    file_path=Path("/tmp/rendered.mp4"),
+                    size_bytes=1024,
+                    owner_user_id="test-user",
+                    brand_id="test-brand",
+                    plan_entry={"status": "created"},
+                    render_settings_hash="hash-1",
+                )
+        except RuntimeError as exc:
+            assert str(exc) == "lifecycle write failed"
+        else:
+            raise AssertionError("Lifecycle write failure must fail the render response")
+    finally:
+        generation._upsert_storage_asset = original_asset_upsert
+        generation._sync_generated_video_from_plan_entry = original_lifecycle_sync
+    print("PASS successful render records asset then lifecycle before completion")
+    print("PASS lifecycle write failure propagates to the render job")
 
 
 def main() -> int:
@@ -90,6 +139,7 @@ def main() -> int:
     assert [card["title"] for card in cards] == ["Rendered"]
     assert cards[0]["video_url"] == "/shorts/rendered.mp4"
     assert "thumbnail_url" not in cards[0]
+    _test_successful_render_record(app)
     print("PASS before_cards=4 after_cards=1 visible=Rendered")
     print("PASS plan-only/deleted/published-missing hidden")
     return 0
