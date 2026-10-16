@@ -94,6 +94,8 @@ from app.video_shorts.services.autopilot_leads import (
 )
 from app.video_shorts.services.youtube_oauth import (
     build_oauth_flow,
+    granted_scopes_from_flow,
+    YouTubeTokenStoreError,
     has_refresh_token,
     is_reauth_required,
     store_refresh_token,
@@ -2913,7 +2915,7 @@ def google_oauth_callback():
         try:
             flow.fetch_token(authorization_response=request.url)
         except Exception as exc:
-            current_app.logger.exception("Failed to fetch YouTube OAuth token: %s", exc)
+            current_app.logger.warning("Failed to fetch YouTube OAuth token.")
             flash("YouTube OAuth sonucu alınamadı.", "danger")
             return redirect(url_for("video_shorts_bp.channels_page"))
 
@@ -2923,7 +2925,11 @@ def google_oauth_callback():
             flash("YouTube OAuth işleminden refresh token elde edilemedi.", "warning")
             return redirect(url_for("video_shorts_bp.channels_page"))
 
-        store_refresh_token(refresh_token, user_id=effective_user_id)
+        try:
+            store_refresh_token(refresh_token, scopes=granted_scopes_from_flow(flow), user_id=effective_user_id)
+        except YouTubeTokenStoreError as exc:
+            flash(str(exc), "danger")
+            return redirect(url_for("video_shorts_bp.social_connect"))
         flash("YouTube connection saved; you can upload videos to YouTube later.", "success")
         return redirect(url_for("video_shorts_bp.social_connect"))
 

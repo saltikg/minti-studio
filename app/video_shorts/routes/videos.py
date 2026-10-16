@@ -5084,23 +5084,12 @@ def shorts_comment_delete(comment_id):
     data = request.get_json(silent=True) or {}
     previous_status = (data.get("previous_status") or "").strip()
     video_id = (data.get("video_id") or "").strip()
-    thread_id = (data.get("thread_id") or "").strip()
     is_reply = bool(data.get("is_reply"))
-
-    def _is_processing_failure(exc: Exception) -> bool:
-        return "processingFailure" in str(exc)
 
     try:
         youtube = _require_youtube_client()
-        try:
-            youtube.comments().delete(id=comment_id).execute()
-            record_youtube_data_api_call(feature="comments", method="comments.delete")
-        except Exception as exc:
-            if thread_id and not is_reply and _is_processing_failure(exc):
-                youtube.commentThreads().delete(id=thread_id).execute()
-                record_youtube_data_api_call(feature="comments", method="comments.delete")
-            else:
-                raise
+        youtube.comments().delete(id=comment_id).execute()
+        record_youtube_data_api_call(feature="comments", method="comments.delete")
         delete_comment_record("youtube", comment_id)
         counts = None
         if video_id and not is_reply:

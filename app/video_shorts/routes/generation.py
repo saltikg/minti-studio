@@ -344,8 +344,10 @@ from app.video_shorts.services.discovery_promote_queue import (
 )
 from app.video_shorts.services.youtube_oauth import (
     build_oauth_flow,
-    clear_refresh_token,
-    delete_youtube_video_if_safe,
+    disconnect_youtube,
+    granted_scopes_from_flow,
+    unschedule_youtube_video_if_safe,
+    YouTubeTokenStoreError,
     fetch_video_statuses,
     get_connected_channel_info,
     has_refresh_token,
@@ -24985,7 +24987,7 @@ def youtube_oauth_callback():
     try:
         flow.fetch_token(authorization_response=request.url)
     except Exception as exc:
-        current_app.logger.exception("Failed to fetch YouTube OAuth token: %s", exc)
+        current_app.logger.warning("Failed to fetch YouTube OAuth token.")
         flash("Could not get the YouTube OAuth result.", "danger")
         return redirect(next_url)
 
@@ -24995,7 +24997,11 @@ def youtube_oauth_callback():
         flash("No refresh token was returned from YouTube OAuth.", "warning")
         return redirect(next_url)
 
-    store_refresh_token(refresh_token, user_id=current_user["id"])
+    try:
+        store_refresh_token(refresh_token, scopes=granted_scopes_from_flow(flow), user_id=current_user["id"])
+    except YouTubeTokenStoreError as exc:
+        flash(str(exc), "danger")
+        return redirect(next_url)
     track_event(current_user["id"], "channel_connected", platform="youtube")
     flash("YouTube connection saved; you can upload videos to YouTube later.", "success")
     return redirect(next_url)
@@ -25007,8 +25013,11 @@ def youtube_disconnect():
     if not current_user:
         flash("Sign in to disconnect YouTube.", "danger")
         return redirect(url_for("video_shorts_bp.login", next=request.url))
-    clear_refresh_token(current_user["id"])
-    flash("YouTube disconnected.", "info")
+    revoked = disconnect_youtube(current_user["id"], brand_id=current_brand_id())
+    if revoked:
+        flash("YouTube disconnected.", "info")
+    else:
+        flash("YouTube disconnected locally, but Google access could not be revoked. Remove access at https://myaccount.google.com/permissions.", "warning")
     return redirect(url_for("video_shorts_bp.youtube_connect"))
 
 
@@ -25071,15 +25080,17 @@ def unschedule_clip_posts(video_pk: int, plan_index: int):
     youtube_published = entry_publish_status in PUBLISHED_PUBLISH_STATUSES or generated_publish_status in PUBLISHED_PUBLISH_STATUSES
     youtube_id = str(target_entry.get("yt_video_id") or (generated_guard_row or {}).get("youtube_video_id") or "").strip()
     if (cancel_all_platforms or requested_platform == "youtube") and youtube_published:
-        return jsonify(success=False, message="Already published."), 409
+        return jsonify(success=False, message="Already published. Manage this video in YouTube Studio."), 409
 
     canceled_counts = {"youtube": 0, "instagram": 0, "tiktok": 0, "facebook": 0}
     youtube_deleted = False
     youtube_delete_result: Dict[str, Any] = {}
     if (cancel_all_platforms or requested_platform == "youtube") and youtube_pending:
         if youtube_id:
-            youtube_delete_result = delete_youtube_video_if_safe(
+            youtube_delete_result = unschedule_youtube_video_if_safe(
                 video_id=youtube_id,
+                title=str(target_entry.get("yt_title") or target_entry.get("title") or video_title or "Short").strip(),
+                description=str(target_entry.get("yt_description") or target_entry.get("description") or "").strip(),
                 expected_video_ids=[target_entry.get("yt_video_id"), (generated_guard_row or {}).get("youtube_video_id")],
                 scheduled_publish_at=target_entry.get("publish_at_iso") or (generated_guard_row or {}).get("planned_publish_at") or target_entry.get("publish_at"),
                 user_id=current_user.get("id"),
@@ -25087,32 +25098,34 @@ def unschedule_clip_posts(video_pk: int, plan_index: int):
                 reason=f"unschedule video_pk={video_pk} plan_index={plan_index}",
             )
             youtube_deleted = bool(youtube_delete_result.get("deleted"))
-            if not youtube_deleted:
-                current_app.logger.warning(
-                    "YouTube unschedule delete skipped video_pk=%s plan_index=%s youtube_id=%s reason=%s; falling back to private update",
-                    video_pk,
-                    plan_index,
-                    youtube_id,
-                    youtube_delete_result.get("reason"),
-                )
-                try:
-                    update_video_with_refresh_token(
-                        video_id=youtube_id,
-                        title=str(target_entry.get("yt_title") or target_entry.get("title") or video_title or "Short").strip(),
-                        description=str(target_entry.get("yt_description") or target_entry.get("description") or "").strip(),
-                        publish_at=None,
-                        privacy_status="private",
-                        user_id=current_user.get("id"),
-                        brand_id=brand_id,
+            if not youtube_delete_result.get("unscheduled"):
+                message = "YouTube schedule was not canceled. Manage this video in YouTube Studio."
+                target_entry["schedule_update_warning"] = message
+                target_entry["youtube_unschedule_blocked_reason"] = youtube_delete_result.get("reason")
+                live_privacy = youtube_delete_result.get("privacy_status")
+                # Reconcile only what the live check established. Unknown or failed
+                # checks retain the existing schedule; never claim cancellation.
+                confirmed_status = None
+                if live_privacy in {"public", "unlisted"}:
+                    confirmed_status = "published"
+                elif live_privacy == "private" and not youtube_delete_result.get("publish_at"):
+                    confirmed_status = "uploaded"
+                if confirmed_status:
+                    target_entry["publish_status"] = confirmed_status
+                    target_entry["yt_status"] = confirmed_status
+                    target_entry.pop("publish_at", None)
+                    target_entry.pop("publish_at_iso", None)
+                _write_plan_entries(source_video_id, entries, video_pk=video_pk)
+                if confirmed_status and clip_filename:
+                    _sync_generated_video_from_plan_entry(
+                        source_video_id=source_video_id, clip_filename=clip_filename,
+                        plan_entry=target_entry, publish_status=confirmed_status,
                     )
-                except Exception as exc:
-                    current_app.logger.exception(
-                        "Failed to unschedule YouTube clip video_pk=%s plan_index=%s youtube_id=%s",
-                        video_pk,
-                        plan_index,
-                        youtube_id,
-                    )
-                    return jsonify(success=False, message=f"YouTube schedule could not be canceled: {exc}"), 502
+                return jsonify(
+                    success=False, message=message, youtube_delete_result=youtube_delete_result,
+                ), 409
+        target_entry.pop("schedule_update_warning", None)
+        target_entry.pop("youtube_unschedule_blocked_reason", None)
         target_entry.pop("publish_at", None)
         target_entry.pop("publish_at_iso", None)
         target_entry["publish_status"] = "not_ready" if youtube_deleted else ("uploaded" if youtube_id else "not_ready")

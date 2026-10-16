@@ -1,8 +1,9 @@
 import datetime
 import logging
+import requests
 from typing import Any, Dict, List, Optional, Tuple
 
-from flask import current_app, g, has_app_context, has_request_context
+from flask import current_app, has_app_context
 from google.auth.exceptions import RefreshError
 from google.auth.transport.requests import Request
 from google.oauth2.credentials import Credentials
@@ -16,8 +17,6 @@ from app.video_shorts.config import (
     YOUTUBE_OAUTH_SCOPES,
     YOUTUBE_REDIRECT_URI,
 )
-from app.video_shorts.services.brands import brand_scoped_user_id, current_brand_id
-from app.video_shorts.services.db import get_db, get_db_readonly, table_columns
 from app.video_shorts.services.youtube_quota import record_youtube_data_api_call
 
 DEFAULT_SCOPES = [
@@ -41,467 +40,58 @@ for scope in DEFAULT_SCOPES:
 for identity_scope in IDENTITY_SCOPES:
     if identity_scope not in SCOPES:
         SCOPES.append(identity_scope)
-LEGACY_TOKEN_TABLE = "youtube_oauth_tokens"
-TOKEN_TABLE = "youtube_oauth_tokens_v2"
-TOKEN_TABLE_SQL = f"""
-CREATE TABLE IF NOT EXISTS {TOKEN_TABLE} (
-    user_id VARCHAR PRIMARY KEY,
-    refresh_token TEXT NOT NULL,
-    scopes TEXT,
-    updated_at TEXT,
-    reauth_required INTEGER DEFAULT 0
+# Re-export the shared store API for existing callers (routes, jobs and tasks).
+from app.video_shorts.services.youtube_token_store import (
+    YouTubeTokenStoreError,
+    clear_refresh_token,
+    get_stored_refresh_token,
+    has_refresh_token,
+    is_reauth_required,
+    list_stored_refresh_tokens,
+    mark_refresh_token_invalid,
+    resolve_stored_token_owner_brand,
+    resolve_token_lookup_user_id,
+    split_scoped_user_id,
+    store_refresh_token,
+    get_refresh_token_for_revocation,
 )
-"""
-LEGACY_TOKEN_TABLE_SQL = f"""
-CREATE TABLE IF NOT EXISTS {LEGACY_TOKEN_TABLE} (
-    id INTEGER PRIMARY KEY,
-    refresh_token TEXT NOT NULL,
-    scopes TEXT,
-    updated_at TEXT,
-    reauth_required INTEGER DEFAULT 0
-)
-"""
 
 logger = logging.getLogger(__name__)
 
 
-def _normalize_user_id(user_id: Optional[str] = None, brand_id: Optional[str] = None) -> Optional[str]:
-    value = user_id
-    if value is None and has_request_context():
-        current_user = getattr(g, "vs_current_user", None) or {}
-        value = current_user.get("id")
-    if value is None:
-        return None
-    text = str(value).strip()
-    if not text:
-        return None
-    scoped_brand_id = brand_id or current_brand_id()
-    if scoped_brand_id and "::" not in text:
-        return f"{text}::{scoped_brand_id}"
-    return text
+def granted_scopes_from_flow(flow) -> List[str]:
+    """Record only Google's returned grant, never the requested/default scopes."""
+    scopes = getattr(flow.credentials, "granted_scopes", None)
+    if scopes is None:
+        scopes = (flow.oauth2session.token or {}).get("scope")
+    if isinstance(scopes, str):
+        scopes = scopes.split()
+    return sorted({str(scope).strip() for scope in (scopes or []) if str(scope).strip()})
 
 
-def split_scoped_user_id(value: Optional[str]) -> Tuple[Optional[str], Optional[str]]:
-    text = str(value or "").strip()
-    if not text:
-        return None, None
-    if "::" not in text:
-        return text, None
-    user_id, brand_id = text.split("::", 1)
-    return (str(user_id or "").strip() or None, str(brand_id or "").strip() or None)
-
-
-def resolve_stored_token_owner_brand(
-    user_id: Optional[str] = None,
-    brand_id: Optional[str] = None,
-) -> Tuple[Optional[str], Optional[str]]:
-    clean_user_id = str(user_id or "").strip() or None
-    clean_brand_id = str(brand_id or "").strip() or None
-    normalized_user_id = _normalize_user_id(clean_user_id, clean_brand_id)
+def disconnect_youtube(user_id: str, brand_id: Optional[str] = None) -> bool:
+    """Revoke first, then forget locally even when Google cannot be reached."""
+    revoked = False
     try:
-        conn = get_db_readonly()
-    except Exception as exc:
-        if "lock" in str(exc).lower():
-            return clean_user_id, clean_brand_id
-        raise
-    try:
-        try:
-            _ensure_token_tables(conn)
-        except Exception as exc:
-            if "read-only" in str(exc).lower():
-                return clean_user_id, clean_brand_id
-            raise
-        token_row = None
-        if normalized_user_id:
-            token_row = conn.execute(
-                f"""
-                SELECT user_id
-                FROM {TOKEN_TABLE}
-                WHERE user_id = ?
-                LIMIT 1
-                """,
-                [normalized_user_id],
-            ).fetchone()
-        if not token_row and clean_user_id:
-            token_row = conn.execute(
-                f"""
-                SELECT user_id
-                FROM {TOKEN_TABLE}
-                WHERE user_id = ?
-                   OR user_id LIKE ?
-                ORDER BY
-                    CASE
-                        WHEN user_id = ? THEN 0
-                        WHEN user_id LIKE ? THEN 1
-                        ELSE 2
-                    END,
-                    updated_at DESC
-                LIMIT 1
-                """,
-                [
-                    clean_user_id,
-                    f"{clean_user_id}::%",
-                    normalized_user_id or clean_user_id,
-                    f"{clean_user_id}::%",
-                ],
-            ).fetchone()
-    except Exception as exc:
-        if TOKEN_TABLE in str(exc).lower():
-            return clean_user_id, clean_brand_id
-        raise
-    finally:
-        conn.close()
-    if not token_row or not token_row[0]:
-        return clean_user_id, clean_brand_id
-    token_owner_user_id, token_brand_id = split_scoped_user_id(token_row[0])
-    return token_owner_user_id or clean_user_id, token_brand_id or clean_brand_id
-
-
-def _ensure_token_tables(conn):
-    if getattr(conn, "backend_name", "") == "postgres":
-        return
-    try:
-        conn.execute(TOKEN_TABLE_SQL)
-        columns = list(table_columns(conn, TOKEN_TABLE))
-        if "reauth_required" not in columns:
-            conn.execute(
-                f"ALTER TABLE {TOKEN_TABLE} ADD COLUMN reauth_required INTEGER DEFAULT 0"
+        token = get_refresh_token_for_revocation(user_id, brand_id=brand_id)
+        if token:
+            response = requests.post(
+                "https://oauth2.googleapis.com/revoke",
+                data={"token": token},
+                timeout=15,
+                allow_redirects=False,
             )
-        conn.execute(LEGACY_TOKEN_TABLE_SQL)
-        columns = list(table_columns(conn, LEGACY_TOKEN_TABLE))
-        if "reauth_required" not in columns:
-            conn.execute(
-                f"ALTER TABLE {LEGACY_TOKEN_TABLE} ADD COLUMN reauth_required INTEGER DEFAULT 0"
-            )
-        legacy_count = conn.execute(
-            f"SELECT COUNT(*) FROM {LEGACY_TOKEN_TABLE} WHERE id = 1"
-        ).fetchone()[0]
-        v2_count = conn.execute(
-            f"SELECT COUNT(*) FROM {TOKEN_TABLE}"
-        ).fetchone()[0]
-        if legacy_count and not v2_count:
-            legacy_row = conn.execute(
-                f"""
-                SELECT refresh_token, scopes, updated_at, COALESCE(reauth_required, 0)
-                FROM {LEGACY_TOKEN_TABLE}
-                WHERE id = 1
-                LIMIT 1
-                """
-            ).fetchone()
-            if legacy_row and legacy_row[0]:
-                try:
-                    admin_row = conn.execute(
-                        """
-                        SELECT CAST(id AS VARCHAR)
-                        FROM shorts_users
-                        WHERE lower(COALESCE(role, '')) = 'admin'
-                        LIMIT 1
-                        """
-                    ).fetchone()
-                except Exception:
-                    admin_row = None
-                if admin_row and admin_row[0]:
-                    conn.execute(
-                        f"""
-                        INSERT INTO {TOKEN_TABLE} (user_id, refresh_token, scopes, updated_at, reauth_required)
-                        VALUES (?, ?, ?, ?, ?)
-                        ON CONFLICT (user_id) DO UPDATE SET
-                            refresh_token = excluded.refresh_token,
-                            scopes = excluded.scopes,
-                            updated_at = excluded.updated_at,
-                            reauth_required = excluded.reauth_required
-                        """,
-                        [
-                            str(admin_row[0]),
-                            legacy_row[0],
-                            legacy_row[1] or ",".join(SCOPES),
-                            legacy_row[2] or datetime.datetime.utcnow().isoformat(),
-                            int(legacy_row[3] or 0),
-                        ],
-                    )
-    except Exception as exc:
-        if "read-only" in str(exc).lower():
-            return
-        raise
-
-
-def store_refresh_token(
-    refresh_token: str,
-    scopes: Optional[List[str]] = None,
-    user_id: Optional[str] = None,
-    brand_id: Optional[str] = None,
-):
-    conn = get_db()
-    try:
-        _ensure_token_tables(conn)
-        normalized_user_id = _normalize_user_id(user_id, brand_id)
-        if normalized_user_id:
-            conn.execute(
-                f"""
-                INSERT INTO {TOKEN_TABLE} (user_id, refresh_token, scopes, updated_at, reauth_required)
-                VALUES (?, ?, ?, ?, 0)
-                ON CONFLICT (user_id) DO UPDATE SET
-                    refresh_token = excluded.refresh_token,
-                    scopes = excluded.scopes,
-                    updated_at = excluded.updated_at,
-                    reauth_required = 0
-                """,
-                [
-                    normalized_user_id,
-                    refresh_token,
-                    ",".join(scopes or SCOPES),
-                    datetime.datetime.utcnow().isoformat(),
-                ],
-            )
+            revoked = response.status_code == 200
+            if not revoked:
+                logger.warning("YouTube revoke failed (HTTP %s); removing local connection.", response.status_code)
         else:
-            conn.execute(
-                f"""
-                INSERT OR REPLACE INTO {LEGACY_TOKEN_TABLE} (id, refresh_token, scopes, updated_at, reauth_required)
-                VALUES (1, ?, ?, ?, 0)
-                """,
-                [refresh_token, ",".join(scopes or SCOPES), datetime.datetime.utcnow().isoformat()],
-            )
-        conn.commit()
-    finally:
-        conn.close()
-
-
-def _get_default_token_row(conn) -> Optional[Tuple[str, int]]:
-    try:
-        row = conn.execute(
-            f"""
-            SELECT
-              t.refresh_token,
-              COALESCE(t.reauth_required, 0)
-            FROM {TOKEN_TABLE} t
-            LEFT JOIN shorts_users u
-              ON CAST(u.id AS VARCHAR) = t.user_id
-            ORDER BY
-              CASE WHEN lower(COALESCE(u.role, '')) = 'admin' THEN 0 ELSE 1 END,
-              t.updated_at DESC
-            LIMIT 1
-            """
-        ).fetchone()
+            revoked = True
     except Exception:
-        row = conn.execute(
-            f"""
-            SELECT refresh_token, COALESCE(reauth_required, 0)
-            FROM {TOKEN_TABLE}
-            ORDER BY updated_at DESC
-            LIMIT 1
-            """
-        ).fetchone()
-    if row and row[0]:
-        return row[0], int(row[1] or 0)
-    return None
-
-
-def _get_token_row(user_id: Optional[str] = None, brand_id: Optional[str] = None) -> Tuple[Optional[str], int]:
-    try:
-        conn = get_db_readonly()
-    except Exception as exc:
-        if "lock" in str(exc).lower():
-            return None, 0
-        raise
-    try:
-        try:
-            _ensure_token_tables(conn)
-        except Exception as exc:
-            if "read-only" in str(exc).lower():
-                return None, 0
-            raise
-        normalized_user_id = _normalize_user_id(user_id, brand_id)
-        try:
-            if normalized_user_id:
-                row = conn.execute(
-                    f"""
-                    SELECT refresh_token, COALESCE(reauth_required, 0)
-                    FROM {TOKEN_TABLE}
-                    WHERE user_id = ?
-                    LIMIT 1
-                    """,
-                    [normalized_user_id],
-                ).fetchone()
-            else:
-                row = _get_default_token_row(conn)
-        except Exception as exc:
-            if TOKEN_TABLE in str(exc).lower():
-                row = None
-            elif LEGACY_TOKEN_TABLE in str(exc).lower():
-                row = None
-            else:
-                raise
-        if normalized_user_id and row:
-            return row[0], int(row[1] or 0)
-        if not normalized_user_id and row:
-            return row[0], int(row[1] or 0)
-        if normalized_user_id:
-            return None, 0
-        if not row or not row[0]:
-            try:
-                legacy_row = conn.execute(
-                    f"""
-                    SELECT refresh_token, COALESCE(reauth_required, 0)
-                    FROM {LEGACY_TOKEN_TABLE}
-                    WHERE id = 1
-                    """
-                ).fetchone()
-            except Exception as exc:
-                if LEGACY_TOKEN_TABLE in str(exc).lower():
-                    return None, 0
-                raise
-            if not legacy_row:
-                return None, 0
-            return legacy_row[0], int(legacy_row[1] or 0)
-        return None, 0
+        # Provider exceptions may contain request bodies. Never log their text/traceback.
+        logger.warning("YouTube revoke failed; removing local connection. Manual Google revocation is required.")
     finally:
-        conn.close()
-
-
-def get_stored_refresh_token(user_id: Optional[str] = None, brand_id: Optional[str] = None) -> Optional[str]:
-    token, reauth_required = _get_token_row(user_id=user_id, brand_id=brand_id)
-    if reauth_required:
-        return None
-    return token
-
-
-def list_stored_refresh_tokens() -> List[Dict[str, object]]:
-    try:
-        conn = get_db_readonly()
-    except Exception as exc:
-        if "lock" in str(exc).lower():
-            return []
-        raise
-    try:
-        try:
-            _ensure_token_tables(conn)
-        except Exception as exc:
-            if "read-only" in str(exc).lower():
-                return []
-            raise
-        rows = conn.execute(
-            f"""
-            SELECT user_id, refresh_token, scopes, updated_at, COALESCE(reauth_required, 0)
-            FROM {TOKEN_TABLE}
-            ORDER BY updated_at DESC
-            """
-        ).fetchall()
-    except Exception as exc:
-        if TOKEN_TABLE in str(exc).lower():
-            return []
-        raise
-    finally:
-        conn.close()
-    return [
-        {
-            "user_id": row[0],
-            "refresh_token": row[1],
-            "scopes": row[2],
-            "updated_at": row[3],
-            "reauth_required": bool(row[4]),
-        }
-        for row in rows
-        if row and row[0] and row[1]
-    ]
-
-
-def resolve_token_lookup_user_id(
-    user_id: Optional[str],
-    brand_id: Optional[str] = None,
-) -> Tuple[Optional[str], Optional[str]]:
-    normalized_user_id = _normalize_user_id(user_id, brand_id)
-    if normalized_user_id:
-        return normalized_user_id, "brand_scoped" if "::" in normalized_user_id else "plain"
-    plain_user_id = str(user_id or "").strip()
-    if not plain_user_id:
-        return None, "missing_user_id"
-    conn = get_db_readonly()
-    try:
-        try:
-            _ensure_token_tables(conn)
-        except Exception as exc:
-            if "read-only" in str(exc).lower():
-                return None, "token_table_unavailable"
-            raise
-        try:
-            rows = conn.execute(
-                f"""
-                SELECT user_id
-                FROM {TOKEN_TABLE}
-                WHERE user_id = ?
-                   OR user_id LIKE ?
-                ORDER BY updated_at DESC
-                """,
-                [plain_user_id, f"{plain_user_id}::%"],
-            ).fetchall()
-        except Exception as exc:
-            if TOKEN_TABLE in str(exc).lower():
-                return None, "token_table_missing"
-            raise
-    finally:
-        conn.close()
-    keys = [str(row[0]).strip() for row in rows if row and row[0]]
-    exact_keys = [key for key in keys if key == plain_user_id]
-    scoped_keys = [key for key in keys if key.startswith(f"{plain_user_id}::")]
-    if exact_keys:
-        return exact_keys[0], "plain_exact"
-    unique_keys = list(dict.fromkeys(scoped_keys))
-    if len(unique_keys) == 1:
-        return unique_keys[0], "single_scoped_fallback"
-    if len(unique_keys) > 1:
-        return None, "ambiguous_scoped_tokens"
-    return None, "no_token"
-
-
-def is_reauth_required(user_id: Optional[str] = None, brand_id: Optional[str] = None) -> bool:
-    _, reauth_required = _get_token_row(user_id=user_id, brand_id=brand_id)
-    return bool(reauth_required)
-
-
-def mark_refresh_token_invalid(user_id: Optional[str] = None, brand_id: Optional[str] = None) -> None:
-    conn = get_db()
-    try:
-        _ensure_token_tables(conn)
-        normalized_user_id = _normalize_user_id(user_id, brand_id)
-        target_user_id = normalized_user_id
-        if not target_user_id:
-            default_row = conn.execute(
-                f"""
-                SELECT user_id
-                FROM {TOKEN_TABLE}
-                ORDER BY updated_at DESC
-                LIMIT 1
-                """
-            ).fetchone()
-            if default_row and default_row[0]:
-                target_user_id = str(default_row[0])
-        if target_user_id:
-            conn.execute(
-                f"""
-                UPDATE {TOKEN_TABLE}
-                   SET reauth_required = 1,
-                       updated_at = ?
-                 WHERE user_id = ?
-                """,
-                [datetime.datetime.utcnow().isoformat(), target_user_id],
-            )
-        else:
-            conn.execute(
-                f"""
-                UPDATE {LEGACY_TOKEN_TABLE}
-                   SET reauth_required = 1,
-                       updated_at = ?
-                 WHERE id = 1
-                """,
-                [datetime.datetime.utcnow().isoformat()],
-            )
-        conn.commit()
-    finally:
-        conn.close()
-
-
-def has_refresh_token(user_id: Optional[str] = None, brand_id: Optional[str] = None) -> bool:
-    return bool(get_stored_refresh_token(user_id=user_id, brand_id=brand_id))
+        clear_refresh_token(user_id=user_id, brand_id=brand_id)
+    return revoked
 
 
 def build_oauth_flow(state: Optional[str] = None) -> Flow:
@@ -625,7 +215,9 @@ def _refresh_credentials(
             )
             mark_refresh_token_invalid(user_id=user_id, brand_id=brand_id)
             return None
-        raise
+        raise RefreshError("YouTube credentials could not be refreshed.") from None
+    except Exception:
+        raise RuntimeError("YouTube token refresh failed.") from None
     return creds
 
 
@@ -683,6 +275,7 @@ def delete_youtube_video_if_safe(
     expected_video_ids: List[str],
     scheduled_publish_at: Optional[str] = None,
     allow_unpublished_private: bool = False,
+    require_live_schedule: bool = False,
     user_id: Optional[str] = None,
     brand_id: Optional[str] = None,
     reason: str = "",
@@ -699,7 +292,10 @@ def delete_youtube_video_if_safe(
         )
         return {"deleted": False, "blocked": True, "reason": "id_not_in_db"}
 
-    youtube = build_authenticated_youtube(user_id=user_id, brand_id=brand_id)
+    try:
+        youtube = build_authenticated_youtube(user_id=user_id, brand_id=brand_id)
+    except Exception:
+        return {"deleted": False, "blocked": True, "reason": "credentials_error"}
     if not youtube:
         current_app.logger.warning("YouTube safe delete blocked reason=no_token video_id=%s context=%s", clean_video_id, reason)
         return {"deleted": False, "blocked": True, "reason": "no_token"}
@@ -709,12 +305,11 @@ def delete_youtube_video_if_safe(
         record_youtube_data_api_call(feature="publish", method="videos.list")
     except Exception as exc:
         current_app.logger.warning(
-            "YouTube safe delete blocked reason=list_error video_id=%s context=%s error=%s",
+            "YouTube safe delete blocked reason=list_error video_id=%s context=%s",
             clean_video_id,
             reason,
-            exc,
         )
-        return {"deleted": False, "blocked": True, "reason": "list_error", "error": str(exc)}
+        return {"deleted": False, "blocked": True, "reason": "list_error"}
 
     items = response.get("items") or []
     if not items:
@@ -723,6 +318,7 @@ def delete_youtube_video_if_safe(
 
     status = (items[0] or {}).get("status") or {}
     privacy_status = str(status.get("privacyStatus") or "").strip().lower()
+    live_status = {"privacy_status": privacy_status, "publish_at": status.get("publishAt")}
     if privacy_status != "private":
         current_app.logger.warning(
             "YouTube safe delete blocked reason=not_private video_id=%s privacy=%s context=%s",
@@ -730,14 +326,14 @@ def delete_youtube_video_if_safe(
             privacy_status,
             reason,
         )
-        return {"deleted": False, "blocked": True, "reason": "not_private", "privacy_status": privacy_status}
+        return {"deleted": False, "blocked": True, "reason": "not_private", **live_status}
 
     now_utc = datetime.datetime.now(datetime.timezone.utc)
     api_publish_at = _parse_youtube_publish_at(status.get("publishAt"))
     db_publish_at = _parse_youtube_publish_at(scheduled_publish_at)
-    future_publish_at = api_publish_at or db_publish_at
+    future_publish_at = api_publish_at if require_live_schedule else (api_publish_at or db_publish_at)
     is_future_scheduled = bool(future_publish_at and future_publish_at > now_utc)
-    if not is_future_scheduled and not allow_unpublished_private:
+    if not is_future_scheduled and (require_live_schedule or not allow_unpublished_private):
         current_app.logger.warning(
             "YouTube safe delete blocked reason=not_future_scheduled video_id=%s api_publish_at=%s db_publish_at=%s context=%s",
             clean_video_id,
@@ -745,22 +341,58 @@ def delete_youtube_video_if_safe(
             scheduled_publish_at,
             reason,
         )
-        return {"deleted": False, "blocked": True, "reason": "not_future_scheduled"}
+        return {"deleted": False, "blocked": True, "reason": "not_future_scheduled", **live_status}
 
     try:
         youtube.videos().delete(id=clean_video_id).execute()
         record_youtube_data_api_call(feature="publish", method="videos.delete")
     except Exception as exc:
         current_app.logger.warning(
-            "YouTube safe delete failed video_id=%s context=%s error=%s",
+            "YouTube safe delete failed video_id=%s context=%s",
             clean_video_id,
             reason,
-            exc,
         )
-        return {"deleted": False, "blocked": True, "reason": "delete_error", "error": str(exc)}
+        status_code = getattr(getattr(exc, "resp", None), "status", None)
+        transient = status_code in {408, 429, 500, 502, 503, 504} or isinstance(
+            exc, (TimeoutError, ConnectionError, requests.Timeout, requests.ConnectionError)
+        )
+        return {
+            "deleted": False, "blocked": True, "reason": "delete_error",
+            "transient_delete_failure": transient, **live_status,
+        }
 
     current_app.logger.info("YouTube safe delete success video_id=%s context=%s", clean_video_id, reason)
     return {"deleted": True, "blocked": False, "reason": "deleted", "privacy_status": privacy_status}
+
+
+def unschedule_youtube_video_if_safe(*, title: str, description: str, **kwargs) -> Dict[str, Any]:
+    """Fail closed; only a transient delete failure can permit a private update."""
+    result = delete_youtube_video_if_safe(require_live_schedule=True, **kwargs)
+    result["unscheduled"] = bool(result.get("deleted"))
+    if result["unscheduled"] or not result.get("transient_delete_failure"):
+        return result
+    # A lost delete response or elapsed schedule can invalidate the first check.
+    try:
+        statuses = fetch_video_statuses(
+            [kwargs["video_id"]], user_id=kwargs.get("user_id"), brand_id=kwargs.get("brand_id"),
+        )
+        status = statuses.get(kwargs["video_id"]) or {}
+        result.update(privacy_status=status.get("privacyStatus"), publish_at=status.get("publishAt"))
+        publish_at = _parse_youtube_publish_at(status.get("publishAt"))
+        if status.get("privacyStatus") != "private" or not publish_at or publish_at <= datetime.datetime.now(datetime.timezone.utc):
+            result["reason"] = "fallback_live_check_failed"
+            return result
+        update_video_with_refresh_token(
+            video_id=kwargs["video_id"], title=title, description=description,
+            publish_at=None, privacy_status="private",
+            user_id=kwargs.get("user_id"), brand_id=kwargs.get("brand_id"),
+        )
+    except Exception:
+        logger.warning("YouTube unschedule fallback failed; manage the video in YouTube Studio.")
+        result["reason"] = "fallback_failed"
+        return result
+    result.update(unscheduled=True, blocked=False, reason="private_update")
+    return result
 
 
 def fetch_video_statuses(
@@ -786,32 +418,6 @@ def fetch_video_statuses(
     except Exception:
         current_app.logger.exception("Failed to fetch YouTube video statuses")
     return statuses
-
-def clear_refresh_token(user_id: Optional[str] = None, brand_id: Optional[str] = None) -> None:
-    conn = get_db()
-    try:
-        _ensure_token_tables(conn)
-        normalized_user_id = _normalize_user_id(user_id, brand_id)
-        target_user_id = normalized_user_id
-        if not target_user_id and not normalized_user_id:
-            default_row = conn.execute(
-                f"""
-                SELECT user_id
-                FROM {TOKEN_TABLE}
-                ORDER BY updated_at DESC
-                LIMIT 1
-                """
-            ).fetchone()
-            if default_row and default_row[0]:
-                target_user_id = str(default_row[0])
-        if target_user_id:
-            conn.execute(f"DELETE FROM {TOKEN_TABLE} WHERE user_id = ?", [target_user_id])
-        else:
-            conn.execute(f"DELETE FROM {LEGACY_TOKEN_TABLE} WHERE id = 1")
-        conn.commit()
-    finally:
-        conn.close()
-
 
 def get_connected_channel_info(
     user_id: Optional[str] = None,
@@ -849,8 +455,8 @@ def get_connected_channel_info(
             "subscriber_count": subscriber_count,
         }, None
     except RefreshError as exc:
-        current_app.logger.warning("YouTube channel info fetch failed due to refresh error: %s", exc)
+        current_app.logger.warning("YouTube channel info fetch failed due to refresh error.")
         return None, "invalid_grant"
     except Exception as exc:  # pragma: no cover - network failures
-        current_app.logger.exception("YouTube channel info fetch failed: %s", exc)
+        current_app.logger.warning("YouTube channel info fetch failed.")
         return None, "general_error"
