@@ -185,3 +185,19 @@ def test_queued_render_blocks_due_upload_until_finished(db):
     with duckdb.connect(db) as conn:
         conn.execute("UPDATE shorts_render_jobs SET status='done' WHERE id='render'")
     assert scheduling.scheduler_tick(now=due)
+
+
+def test_generated_video_guard_uses_authenticated_owner_and_returns_record(monkeypatch):
+    from types import SimpleNamespace
+    from app.video_shorts.routes import generation
+    closed=[];checks=[]
+    conn=SimpleNamespace(execute=lambda *a,**kw:SimpleNamespace(fetchone=lambda:('record','remote','scheduled',None,'description')),close=lambda:closed.append(True))
+    monkeypatch.setattr(generation,'get_db_readonly',lambda:conn)
+    monkeypatch.setattr(generation,'table_columns',lambda *a:{'generated_description'})
+    monkeypatch.setattr(generation,'_active_editor_context',lambda:{'owner_user_id':'owner'})
+    monkeypatch.setattr(generation.tenant_media,'assert_clip_write_owner',lambda *a,**kw:checks.append((a,kw)))
+    result=generation._load_generated_video_publish_guard_row(source_video_id='source',clip_filename='1_source_v1.mp4',brand_id='brand')
+    assert result['youtube_video_id']=='remote'
+    assert checks[0][0][2:] == ('owner','brand')
+    assert checks[0][1] == {'source_id':'source'}
+    assert closed==[True]

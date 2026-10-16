@@ -9934,11 +9934,11 @@ def _load_generated_video_publish_guard_row(
         return None
     conn = get_db_readonly()
     try:
-        tenant_media.assert_clip_write_owner(conn, clip_filename, target_owner_user_id, brand_id,
-                                            video_pk=video_pk, source_id=source_video_id)
+        tenant_media.assert_clip_write_owner(conn, clip_filename, _active_editor_context()["owner_user_id"], brand_id,
+                                            source_id=source_video_id)
     except tenant_media.TenantMediaConflict as exc:
         conn.close()
-        return jsonify(success=False, message=str(exc)), 403
+        abort(403, description=str(exc))
     try:
         generated_columns = table_columns(conn, "shorts_generated_videos")
         if not generated_columns:
