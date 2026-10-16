@@ -136,7 +136,7 @@ def share_scope(token, filename):
         conn.close()
 
 
-def media_url(filename, *, poster_filename=None, share_token=None):
+def media_url(filename, *, poster_filename=None, share_token=None, stored_poster=False):
     if not filename or not has_request_context():
         return ""
     try:
@@ -152,7 +152,7 @@ def media_url(filename, *, poster_filename=None, share_token=None):
                             info["posters"].add(tenant_media.safe_filename(entry["poster_filename"]))
             if poster_filename not in info["posters"]:
                 return ""
-        if poster_filename:
+        if poster_filename and not stored_poster:
             poster_key = tenant_media.poster_key(tenant_media.safe_filename(poster_filename))
             poster_location = tenant_media.storage_location(poster_key)
             poster_exists = poster_location["local_path"].is_file()

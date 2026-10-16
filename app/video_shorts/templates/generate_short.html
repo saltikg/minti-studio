@@ -17754,7 +17754,7 @@ const initSendToYoutubeButtons = () => {
         ctx.ytVideoIdInput.value = btn.dataset.ytVideoId || "";
       }
       const actionLabel = btn.dataset.buttonLabel || "Schedule & publish";
-      landscapeScheduleNote?.classList.toggle("d-none", btn.dataset.originalLayout !== "1");
+      document.getElementById("landscape-schedule-note")?.classList.toggle("d-none", btn.dataset.originalLayout !== "1");
       const descriptionEnabled = btn.dataset.descriptionDisabled !== "1";
       if (ctx.setDescriptionGeneratorEnabled) {
         ctx.setDescriptionGeneratorEnabled(descriptionEnabled);

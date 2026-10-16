@@ -1536,9 +1536,20 @@ def _short_poster_filename_for_render(clip_filename: str, version: Optional[str]
     return f"{stem}-{clean_version}.jpg"
 
 
-def _short_poster_public_url(filename: str, poster_filename: Optional[str] = None, *, share_token=None) -> str:
+def _short_poster_public_url(
+    filename: str,
+    poster_filename: Optional[str] = None,
+    *,
+    share_token=None,
+    stored_poster: bool = False,
+) -> str:
     from app.video_shorts.services.media_access import media_url
-    return media_url(filename, poster_filename=poster_filename or f"{filename}.jpg", share_token=share_token)
+    return media_url(
+        filename,
+        poster_filename=poster_filename or f"{filename}.jpg",
+        share_token=share_token,
+        stored_poster=stored_poster,
+    )
 
 
 def _cleanup_managed_temp_path(path_obj: Any) -> None:
@@ -11452,6 +11463,34 @@ def generate_short(video_pk):
         plan_by_index[pi] = entry
     plan_exists = bool(plan_by_index)
     plan_clip_count = len(plan_by_index)
+    # Asset rows are the authoritative page-load inventory. Do one DB lookup for
+    # every planned clip instead of issuing an S3 HEAD for each clip (and then
+    # another HEAD for each poster) while rendering the page.
+    planned_asset_keys = {
+        tenant_media.asset_key(clip_name): clip_name
+        for entry in plan_entries
+        for clip_name in [str(entry.get("clip_filename") or entry.get("output_filename") or "").strip()]
+        if clip_name
+    }
+    active_clip_assets: set[str] = set()
+    if planned_asset_keys:
+        placeholders = ", ".join("?" for _ in planned_asset_keys)
+        asset_rows = conn.execute(
+            f"""
+            SELECT file_key
+              FROM shorts_storage_assets
+             WHERE file_key IN ({placeholders})
+               AND CAST(user_id AS VARCHAR) = ?
+               AND brand_id IS NOT DISTINCT FROM ?
+               AND (status = 'active' OR status IS NULL)
+            """,
+            [*planned_asset_keys, str(editor_owner_user_id), brand_id],
+        ).fetchall()
+        active_clip_assets = {
+            planned_asset_keys[str(asset_row[0])]
+            for asset_row in asset_rows
+            if str(asset_row[0]) in planned_asset_keys
+        }
     ai_suggested_clip_count = sum(1 for entry in plan_entries if _is_removable_ai_suggestion(entry))
     plan_job_state = _current_plan_job_state(video_pk)
     request_is_admin = str((current_user or {}).get("role") or "").strip().lower() == "admin"
@@ -11496,8 +11535,7 @@ def generate_short(video_pk):
         clip_filename = entry.get("clip_filename")
         if not clip_filename:
             continue
-        clip_path = tenant_media.short_path(clip_filename)
-        if not clip_path.exists():
+        if clip_filename not in active_clip_assets:
             continue
         generated_clip_entries.append(
             {
@@ -11710,11 +11748,15 @@ def generate_short(video_pk):
         subtitle_source = entry.get("excerpt") or ""
         editable_subtitle = transcript_full or subtitle_source
         clip_filename = entry.get("clip_filename") or entry.get("output_filename")
-        clip_exists = _short_exists(clip_filename) if clip_filename else False
+        clip_exists = bool(clip_filename and clip_filename in active_clip_assets)
         video_url = _short_public_url(clip_filename) if clip_exists and clip_filename else ""
         poster_filename = str(entry.get("poster_filename") or "").strip()
         poster_url = (
-            _short_poster_public_url(clip_filename, poster_filename=poster_filename)
+            _short_poster_public_url(
+                clip_filename,
+                poster_filename=poster_filename,
+                stored_poster=True,
+            )
             if clip_exists and clip_filename and poster_filename
             else ""
         )
