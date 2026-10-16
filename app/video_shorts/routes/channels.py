@@ -10,7 +10,7 @@ from flask import current_app, flash, g, jsonify, redirect, render_template, req
 
 from app.video_shorts import video_shorts_bp
 from app.video_shorts.services.auth_protection import RateLimitRule, check_rate_limits
-from app.video_shorts.services.brands import current_brand_id, ensure_brand_schema
+from app.video_shorts.services.brands import current_brand_id
 from app.video_shorts.services.billing import STRIPE_PUBLISHABLE_KEY, stripe_is_configured
 from app.video_shorts.services.db import (
     _ensure_video_crop_schema,
@@ -18,7 +18,6 @@ from app.video_shorts.services.db import (
     get_db_readonly,
     ensure_channel_owner_schema,
 )
-from app.video_shorts.services.generated_video_lifecycle import ensure_generated_videos_schema
 from app.video_shorts.services.media_utils import purge_source_cache_for_video
 from app.video_shorts.services.render_jobs import clear_done_job_cache_for_videos
 from app.video_shorts.services.storage import get_media_storage
@@ -262,12 +261,11 @@ def _cached_preview_frame_url(video_id: str) -> str:
     return preview_url(video_id, preview_path.name)
 
 
-def _short_card_media_urls(filename: str, storage_file_key: str = "") -> tuple[str, str]:
-    from app.video_shorts.services.media_access import media_url
-    # Cards render the signed video at t=1. Legacy clips generally have no
-    # poster object, so do not issue an S3 lookup for a URL the template will
-    # not use while the video is available.
-    return media_url(filename), ""
+def _short_card_media_urls(filename: str, owner_user_id: str, brand_id: str | None) -> tuple[str, str]:
+    from app.video_shorts.services.media_access import media_url_for_authorized_asset
+    # The caller's query has already joined the lifecycle row to a tenant-owned,
+    # active asset. Signing that fact must not repeat ownership queries or touch S3.
+    return media_url_for_authorized_asset(filename, owner_user_id, brand_id), ""
 
 
 def _visible_short_rows(conn, user_id, brand_id):
@@ -316,28 +314,16 @@ def _visible_short_rows(conn, user_id, brand_id):
         """,
         [user_id, brand_id],
     ).fetchall()
-    storage = get_media_storage()
-    locations = []
-    for row in rows:
-        try:
-            locations.append((row, tenant_media.storage_location(row[12])))
-        except ValueError:
-            current_app.logger.warning("Invalid stored clip location: %s", row[0])
-    # One listing avoids hundreds of serial HEAD calls; unusual stored keys use HEAD.
-    remote_keys = ({item.key for item in storage.list_prefix("shorts/")}
-                   if storage.backend_name == "s3" and any(not loc["local_path"].is_file() for _, loc in locations) else set())
     visible = []
-    for row, loc in locations:
+    for row in rows:
         scoped = re.search(r"_v(\d+)\.mp4$", str(row[0]))
         if scoped and (row[10] is None or int(scoped[1]) != int(row[10])):
             continue
         if str(row[2] or "").lower() in {"pending", "queued", "processing", "rendering"}:
             continue
-        exists = loc["local_path"].is_file() or loc["storage_key"] in remote_keys
-        if not exists and storage.backend_name == "s3" and not loc["storage_key"].startswith("shorts/"):
-            exists = storage.exists(loc["storage_key"])
-        if exists:
-            visible.append(row)
+        # The active asset row and positive recorded size are the durable media
+        # inventory. Request paths must not verify that inventory over S3.
+        visible.append(row)
     if has_request_context():
         cache[scope] = visible
         g.vs_visible_short_rows = cache
@@ -345,14 +331,38 @@ def _visible_short_rows(conn, user_id, brand_id):
 
 
 def _short_counts_by_video(conn, user_id, brand_id):
-    counts = {}
-    for row in _visible_short_rows(conn, user_id, brand_id):
-        if row[10] is None:
-            continue
-        count = counts.setdefault(int(row[10]), [0, 0])
-        count[0] += 1
-        count[1] += int(str(row[3] or "").lower() == "published" or bool(row[6]))
-    return counts
+    rows = conn.execute(
+        """
+        SELECT
+            source_video.id,
+            COUNT(*),
+            COUNT(*) FILTER (
+                WHERE lower(coalesce(gv.publish_status, '')) = 'published'
+                   OR gv.youtube_published_at IS NOT NULL
+                   OR gv.published_at IS NOT NULL
+            )
+        FROM shorts_generated_videos gv
+        JOIN shorts_storage_assets render_asset
+          ON render_asset.file_key = gv.storage_file_key
+         AND CAST(render_asset.user_id AS VARCHAR) = CAST(gv.user_id AS VARCHAR)
+         AND render_asset.brand_id IS NOT DISTINCT FROM gv.brand_id
+         AND lower(coalesce(render_asset.status, 'active')) = 'active'
+         AND render_asset.size_bytes > 0
+        JOIN youtube_videos source_video
+          ON source_video.video_id = gv.source_video_id
+         AND source_video.owner_user_id = gv.user_id
+         AND source_video.brand_id IS NOT DISTINCT FROM gv.brand_id
+        WHERE gv.user_id = ?
+          AND gv.brand_id IS NOT DISTINCT FROM ?
+          AND NULLIF(trim(coalesce(gv.clip_filename, '')), '') IS NOT NULL
+          AND NULLIF(trim(coalesce(gv.storage_file_key, '')), '') IS NOT NULL
+          AND lower(coalesce(gv.generation_status, '')) NOT IN
+              ('pending', 'queued', 'processing', 'rendering')
+        GROUP BY source_video.id
+        """,
+        [user_id, brand_id],
+    ).fetchall()
+    return {int(row[0]): [int(row[1] or 0), int(row[2] or 0)] for row in rows}
 
 
 def _load_recent_short_cards(conn, user_id: str, brand_id: str | None, user_tz: str, *, limit: int, offset: int = 0) -> tuple[list[dict], bool]:
@@ -388,7 +398,7 @@ def _load_recent_short_cards(conn, user_id: str, brand_id: str | None, user_tz: 
 
         metric_values = [row[7], row[8], row[9]]
         has_real_metrics = is_published and bool(youtube_video_id) and any(value is not None for value in metric_values)
-        video_url, poster_url = _short_card_media_urls(clip_filename, str(row[11] or ""))
+        video_url, poster_url = _short_card_media_urls(clip_filename, str(user_id), brand_id)
         if has_real_metrics:
             meta_label = "Published " + _format_video_timestamp(published_at, user_tz)
         elif is_preparing:
@@ -719,13 +729,6 @@ def my_videos_page():
     user_tz = current_user.get("time_zone") or DEFAULT_TIME_ZONE
     search_query = (request.args.get("q") or "").strip()
 
-    schema_conn = get_db()
-    ensure_brand_schema(schema_conn)
-    ensure_channel_owner_schema(schema_conn)
-    _ensure_video_crop_schema(schema_conn)
-    ensure_generated_videos_schema(schema_conn)
-    schema_conn.close()
-
     conn = get_db_readonly()
     params = [current_user["id"]]
     where_clauses = [
@@ -891,14 +894,10 @@ def my_videos_page():
             [current_user["id"], brand_id],
         ).fetchone()
         prepared_short_count = int(prepared_short_count_row[0] or 0) if prepared_short_count_row else 0
-    short_counts = _short_counts_by_video(conn, current_user["id"], brand_id)
-    recent_shorts, recent_shorts_has_more = _load_recent_short_cards(
-        conn,
-        current_user["id"],
-        brand_id,
-        user_tz,
-        limit=RECENT_SHORTS_PAGE_SIZE,
-    )
+    short_counts = {}
+    # The carousel is non-critical first-paint content. Its existing JSON route
+    # loads it after the library HTML is delivered.
+    recent_shorts_has_more = bool(brand_id)
     conn.close()
 
     videos = []
@@ -908,7 +907,9 @@ def my_videos_page():
             "video_id": row[1],
             "title": row[2] or "Untitled video",
             "thumbnail_url": row[3] or "",
-            "preview_image_url": _cached_preview_frame_url(row[1]),
+            # Source thumbnails are DB URLs. Uploaded sources without one use
+            # the stable placeholder instead of filesystem/DB probes per row.
+            "preview_image_url": "",
             "duration_label": _format_duration_label(row[4]),
             "download_status": row[5] or "",
             "transcript_status": row[6] or "",
@@ -1026,6 +1027,28 @@ def my_videos_recent_shorts():
             "shorts": shorts,
             "has_more": has_more,
             "next_offset": offset + len(shorts),
+        }
+    )
+
+
+@video_shorts_bp.route("/my-videos/short-counts", methods=["GET"])
+def my_videos_short_counts():
+    current_user = getattr(g, "vs_current_user", None)
+    if not current_user:
+        return jsonify({"ok": False, "error": "Authentication required."}), 401
+
+    conn = get_db_readonly()
+    try:
+        counts = _short_counts_by_video(conn, current_user["id"], current_brand_id())
+    finally:
+        conn.close()
+    return jsonify(
+        {
+            "ok": True,
+            "counts": {
+                str(video_pk): {"shorts": values[0], "published": values[1]}
+                for video_pk, values in counts.items()
+            },
         }
     )
 

@@ -1,4 +1,5 @@
 import logging
+import re
 import time
 from uuid import uuid4
 
@@ -88,6 +89,25 @@ class _PostgresResult:
         return self._cursor.rowcount
 
 
+class _EmptyPostgresResult:
+    """Result returned when legacy schema DDL is suppressed in a web request."""
+
+    description = None
+    rowcount = 0
+
+    def fetchall(self):
+        return []
+
+    def fetchone(self):
+        return None
+
+
+_REQUEST_DDL_RE = re.compile(
+    r"^\s*(?:create|alter|drop|truncate|reindex|cluster)\b",
+    re.IGNORECASE,
+)
+
+
 class PostgresCompatConnection:
     backend_name = "postgres"
 
@@ -96,6 +116,15 @@ class PostgresCompatConnection:
         self.description = None
 
     def execute(self, sql, params=None):
+        if has_request_context() and _REQUEST_DDL_RE.match(str(sql or "")):
+            # Production schema changes belong to deployment migrations. A
+            # request must never queue an ACCESS EXCLUSIVE lock behind traffic.
+            logger.warning(
+                "Suppressed request-time PostgreSQL DDL: %s",
+                " ".join(str(sql).split())[:160],
+            )
+            self.description = None
+            return _EmptyPostgresResult()
         cursor = self._conn.cursor()
         cursor.execute(_rewrite_qmark_sql(sql), list(params) if params is not None else None)
         self.description = cursor.description

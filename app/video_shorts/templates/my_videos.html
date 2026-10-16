@@ -1207,7 +1207,8 @@
   id="mv-shell"
   data-coachmark-hidden="{{ 'true' if hide_my_videos_coachmark else 'false' }}"
   data-coachmark-scope="{{ coachmark_user_scope }}"
-  data-autopilot-conversion="{{ 'true' if is_pending_autopilot_lead and recent_shorts else 'false' }}"
+  data-autopilot-conversion="{{ 'true' if is_pending_autopilot_lead and recent_shorts_has_more else 'false' }}"
+  data-counts-endpoint="{{ url_for('video_shorts_bp.my_videos_short_counts') }}"
 >
   <section class="mv-hero{% if show_autopilot_framing %} mv-hero--autopilot{% endif %}">
     {% if show_autopilot_framing %}
@@ -1314,7 +1315,7 @@
 	            </article>
 	            {% endfor %}
 	          {% else %}
-	            <div class="mv-shorts-empty-state"><i class="bi bi-stars" aria-hidden="true"></i>Your first Shorts are being prepared — check back soon.</div>
+	            <div class="mv-shorts-empty-state"><i class="bi bi-stars" aria-hidden="true"></i>Loading Shorts…</div>
 	          {% endif %}
 	        </div>
 	      </div>
@@ -1364,6 +1365,7 @@
         <div
           class="mv-row mv-coachmark-anchor"
           data-video-row
+          data-video-id="{{ item.id }}"
           data-status="{{ item.status_filter }}"
           data-added-at="{{ item.added_at_iso }}"
           {% if loop.first %}id="mv-first-video-row" data-first-video-row="true"{% endif %}
@@ -1403,13 +1405,11 @@
           <div class="mv-table-muted text-center">{{ item.duration_label or "—" }}</div>
           <div class="mv-table-muted">{{ item.added_at_label or "—" }}</div>
           <div class="mv-count-cell">
-            <div class="mv-table-number{% if item.short_count == 0 %} is-zero{% endif %}">{{ item.short_count }}</div>
+            <div class="mv-table-number is-zero" data-short-count>—</div>
           </div>
           <div class="mv-count-cell">
-            <div class="mv-table-number{% if item.published_count == 0 %} is-zero{% endif %}">{{ item.published_count }}</div>
-            {% if item.short_count > 0 %}
-              <div class="mv-table-sub">of {{ item.short_count }}</div>
-            {% endif %}
+            <div class="mv-table-number is-zero" data-published-count>—</div>
+            <div class="mv-table-sub" data-published-total hidden></div>
           </div>
           <div class="mv-status-cell">
             {% if item.is_ready_for_editing %}
@@ -1447,7 +1447,7 @@
   </section>
 </div>
 
-{% if is_pending_autopilot_lead and recent_shorts %}
+{% if is_pending_autopilot_lead and recent_shorts_has_more %}
   <div class="modal fade" id="mvAutopilotConversionModal" tabindex="-1" aria-hidden="true">
     <div class="modal-dialog modal-dialog-centered modal-lg">
       <div class="modal-content vs-modal">
@@ -1477,7 +1477,7 @@
 {% endblock %}
 
 {% block scripts %}
-{% if is_pending_autopilot_lead and recent_shorts %}
+{% if is_pending_autopilot_lead and recent_shorts_has_more %}
   {% include "_billing_embedded_checkout_script.html" %}
 {% endif %}
 <script>
@@ -1755,6 +1755,43 @@
   });
 
 	  document.querySelectorAll('.mv-short-card').forEach(bindShortPreviewCard);
+	  if (recentShortsOffset === 0 && recentShortsHasMore) {
+	    void loadMoreRecentShorts();
+	  }
+
+	  const loadShortCounts = async () => {
+	    const endpoint = coachmarkShell?.dataset.countsEndpoint;
+	    if (!endpoint) return;
+	    try {
+	      const response = await fetch(endpoint, {
+	        credentials: 'same-origin',
+	        headers: { 'X-Requested-With': 'XMLHttpRequest' },
+	      });
+	      const payload = await response.json().catch(() => null);
+	      if (!response.ok || !payload?.ok) return;
+	      videoRows.forEach((row) => {
+	        const count = payload.counts?.[String(row.dataset.videoId || '')] || { shorts: 0, published: 0 };
+	        const shorts = Number(count.shorts || 0);
+	        const published = Number(count.published || 0);
+	        const shortsNode = row.querySelector('[data-short-count]');
+	        const publishedNode = row.querySelector('[data-published-count]');
+	        const totalNode = row.querySelector('[data-published-total]');
+	        if (shortsNode) {
+	          shortsNode.textContent = String(shorts);
+	          shortsNode.classList.toggle('is-zero', shorts === 0);
+	        }
+	        if (publishedNode) {
+	          publishedNode.textContent = String(published);
+	          publishedNode.classList.toggle('is-zero', published === 0);
+	        }
+	        if (totalNode) {
+	          totalNode.textContent = `of ${shorts}`;
+	          totalNode.hidden = shorts === 0;
+	        }
+	      });
+	    } catch (_) {}
+	  };
+	  void loadShortCounts();
 	  shortsStrip?.addEventListener('scroll', updateShortNavState, { passive: true });
 	  window.addEventListener('resize', updateShortNavState, { passive: true });
 	  shortsPrevButton?.addEventListener('click', () => {

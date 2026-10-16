@@ -169,6 +169,27 @@ def media_url(filename, *, poster_filename=None, share_token=None, stored_poster
         return ""
 
 
+def media_url_for_authorized_asset(filename, owner_user_id, brand_id):
+    """Create a media grant after a tenant-scoped asset query authorized the row."""
+    if not filename or not owner_user_id or not has_request_context():
+        return ""
+    try:
+        name = tenant_media.safe_filename(filename)
+        grant = {
+            "filename": name,
+            "owner": str(owner_user_id),
+            "brand": str(brand_id) if brand_id else None,
+            "poster": None,
+        }
+        return url_for(
+            "video_shorts_bp.serve_short_media",
+            filename=name,
+            grant=_serializer().dumps(grant),
+        )
+    except (ValueError, TypeError):
+        return ""
+
+
 def read_media_grant(filename, grant):
     data = _serializer().loads(grant, max_age=MEDIA_TOKEN_MAX_AGE)
     if data.get("filename") != filename:
