@@ -1,5 +1,7 @@
 from app.video_shorts.services import compilation_media
 from app.video_shorts.services.social_queue_identity import queue_identity_filter
+from app.video_shorts.services import youtube_scheduling
+
 import json
 from app.video_shorts.services import tenant_media
 import errno
@@ -346,7 +348,6 @@ from app.video_shorts.services.youtube_oauth import (
     build_oauth_flow,
     disconnect_youtube,
     granted_scopes_from_flow,
-    unschedule_youtube_video_if_safe,
     YouTubeTokenStoreError,
     fetch_video_statuses,
     get_connected_channel_info,
@@ -354,8 +355,6 @@ from app.video_shorts.services.youtube_oauth import (
     is_reauth_required,
     resolve_stored_token_owner_brand,
     store_refresh_token,
-    update_video_with_refresh_token,
-    upload_video_with_refresh_token,
 )
 from app.video_shorts.services.shorts_overview_quota import get_shorts_overview_quota_state
 from app.video_shorts.services.timezones import DEFAULT_TIME_ZONE, TIMEZONE_LABELS, TIMEZONE_OPTIONS
@@ -4502,6 +4501,9 @@ def _list_generated_long_compilations(video_id: str, limit: int = 12) -> List[Di
                     item["publish_state"] = publish_state
             except Exception:
                 pass
+        schedule = youtube_scheduling.file_schedule_state(user_id=video.owner_user_id,brand_id=video.brand_id,filename=path.name)
+        if schedule:
+            item["publish_state"]["youtube"] = {"status":schedule["status"],"yt_video_id":schedule.get("id"),"publish_at":schedule.get("publish_at")}
         rows.append(item)
     return rows
 
@@ -4892,7 +4894,9 @@ def _plan_path(video_id: str, *, video_pk=None, read=False) -> Path:
 def _load_plan_entries(video_id: str, *, video_pk=None) -> List[Dict[str, Any]]:
     data = tenant_media.load_state(video_id, "plan", video_pk=video_pk)
     entries = data.get("plan") or data.get("clips") or []
-    return [dict(entry) for entry in entries if isinstance(entry, dict)] if isinstance(entries, list) else []
+    entries = [dict(entry) for entry in entries if isinstance(entry, dict)] if isinstance(entries, list) else []
+    context = _active_editor_context()
+    return youtube_scheduling.overlay_plan(entries, user_id=context["owner_user_id"], brand_id=context["brand_id"], video_pk=video_pk)
 
 
 def _plan_path_v2(video_id: str, *, video_pk=None, read=False) -> Path:
@@ -4926,6 +4930,8 @@ def _load_plan_entries_v4(video_id: str, *, video_pk=None) -> List[Dict[str, Any
 
 
 def _write_plan_entries(video_id: str, entries: List[Dict[str, Any]], *, video_pk=None) -> None:
+    context = _active_editor_context()
+    youtube_scheduling.sync_plan_metadata(entries, user_id=context["owner_user_id"], brand_id=context["brand_id"], video_pk=video_pk)
     tenant_media.write_state(video_id, {"plan": entries}, video_pk=video_pk)
 
 
@@ -5873,6 +5879,9 @@ def validate_clip_title_time_edit(
 
 
 def clip_entry_publish_lock_reason(entry: Dict[str, Any], generated_row: Optional[Any] = None, social_statuses: Optional[set[str]] = None) -> str:
+    youtube_id = (entry or {}).get("yt_video_id") or (generated_row[2] if generated_row else None)
+    if youtube_id:
+        return youtube_scheduling.studio_message(youtube_id)
     publish_statuses = {
         str((entry or {}).get("publish_status") or "").strip().lower(),
     }
@@ -9590,9 +9599,9 @@ def _activate_admin_operation_editor_context() -> None:
     if not requested_brand_id or not requested_workspace_kind:
         _deny("incomplete_request_context")
     route_rule = str(getattr(request.url_rule, "rule", "") or "")
-    if not route_rule.startswith(ADMIN_OPERATION_EDITOR_ROUTE_PREFIX):
+    if not route_rule.startswith(ADMIN_OPERATION_EDITOR_ROUTE_PREFIX) and request.endpoint != "video_shorts_bp.upload_clip_to_youtube":
         _deny("route_not_allowed")
-    video_pk = (request.view_args or {}).get("video_pk")
+    video_pk = (request.view_args or {}).get("video_pk") or request.form.get("video_pk")
     try:
         video_pk = int(video_pk)
     except (TypeError, ValueError):
@@ -9631,6 +9640,87 @@ def _activate_admin_operation_editor_context() -> None:
             target_brand_id=scope["brand_id"],
         )
     set_request_admin_operation_scope(scope)
+
+
+def _guard_youtube_clip_mutation(video_pk, plan_index):
+    """Lock the schedule through local edits so the worker cannot claim stale media."""
+    context = _active_editor_context()
+    conn = get_db()
+    g.youtube_schedule_connection = conn
+    g.youtube_schedule_request_id = id(request._get_current_object())
+    lock = " FOR UPDATE" if getattr(conn, "backend_name", "") == "postgres" else ""
+    row = conn.execute(
+        f"SELECT status,youtube_video_id,resumable_uri FROM shorts_youtube_schedules WHERE user_id=? AND brand_id=? AND asset_key=?{lock}",
+        [str(context["owner_user_id"]),str(context["brand_id"]),youtube_scheduling.asset_key(video_pk=video_pk,plan_index=plan_index)],
+    ).fetchone()
+    if row and row[1]:
+        return jsonify(success=False, message=youtube_scheduling.studio_message(row[1])), 409
+    if row and (row[0] in {"queued", "uploading", "uncertain"} or row[2]):
+        return jsonify(success=False, message="YouTube upload is in progress; editing is locked. Check YouTube Studio."), 409
+    source = _fetch_scoped_video_row(conn, int(video_pk), "video_id")
+    if not source:
+        return jsonify(success=False, message="Video not found."), 404
+    entries = _load_plan_entries(source[0], video_pk=video_pk)
+    entry = next((item for item in entries if str(item.get("plan_index")) == str(plan_index)), {})
+    youtube_id = entry.get("yt_video_id")
+    filename = entry.get("clip_filename") or entry.get("output_filename")
+    if filename:
+        stored = _load_generated_video_publish_guard_row(source_video_id=source[0],clip_filename=filename,brand_id=context["brand_id"])
+        youtube_id = youtube_id or (stored or {}).get("youtube_video_id")
+    if youtube_id:
+        return jsonify(success=False, message=youtube_scheduling.studio_message(youtube_id), studio_url=f"https://studio.youtube.com/video/{youtube_id}/edit"), 409
+
+
+@video_shorts_bp.before_request
+def _lock_uploaded_youtube_clip():
+    if request.method != "POST":
+        return
+    endpoint = (request.endpoint or "").rsplit(".",1)[-1]
+    if endpoint not in {
+        "upload_clip_to_youtube", "unschedule_clip_posts", "regenerate_clip_video",
+        "edit_clip_title_time", "update_clip_title", "update_clip_category",
+        "suggest_clip_title", "update_clip_subtitle", "adjust_clip_timing",
+        "prepare_description", "autoclip_video", "delete_clip", "remove_plan_entry", "delete_clip_plan_entry",
+    }:
+        return
+    data = request.get_json(silent=True) or {}
+    video_pk = (request.view_args or {}).get("video_pk") or request.form.get("video_pk") or data.get("video_pk")
+    plan_index = (request.view_args or {}).get("plan_index") or request.form.get("plan_index") or data.get("plan_index")
+    if video_pk and not plan_index and getattr(g,"vs_current_user",None):
+        filename = request.form.get("filename") or data.get("filename")
+        conn = get_db_readonly()
+        try:
+            source = _fetch_scoped_video_row(conn, int(video_pk), "video_id")
+        finally:
+            conn.close()
+        if source and filename:
+            entry = next((item for item in _load_plan_entries(source[0],video_pk=video_pk) if filename in {item.get("clip_filename"),item.get("output_filename")}), {})
+            plan_index = entry.get("plan_index")
+    if video_pk and plan_index and getattr(g,"vs_current_user",None):
+        return _guard_youtube_clip_mutation(video_pk,plan_index)
+
+
+@video_shorts_bp.after_request
+def _commit_youtube_schedule_edits(response):
+    if g.get("youtube_schedule_request_id") != id(request._get_current_object()):
+        return response
+    conn = g.pop("youtube_schedule_connection", None)
+    if conn is not None:
+        try:
+            conn.rollback() if response.status_code >= 400 else conn.commit()
+        finally:
+            conn.close()
+    return response
+
+
+@video_shorts_bp.teardown_request
+def _release_youtube_schedule_edits(error=None):
+    if g.get("youtube_schedule_request_id") != id(request._get_current_object()):
+        return
+    conn = g.pop("youtube_schedule_connection", None)
+    if conn is not None:
+        conn.rollback()
+        conn.close()
 
 
 @video_shorts_bp.after_request
@@ -11630,8 +11720,8 @@ def generate_short(video_pk):
         )
         status = "created" if clip_exists else (entry.get("status") or "pending")
         video_filename = clip_filename if clip_exists else None
-        yt_id = entry.get("yt_video_id")
         generated_record = generated_video_map.get((source_video_id, str(clip_filename or "").strip())) or {}
+        yt_id = entry.get("yt_video_id") or generated_record.get("youtube_video_id")
         try:
             active_render_job = active_render_jobs_by_plan.get(int(pi)) or {}
         except Exception:
@@ -11653,7 +11743,8 @@ def generate_short(video_pk):
         )
         youtube_schedule_date = _format_schedule_date(publish_value) if publish_value else None
         db_publish_status = (
-            str(generated_record.get("publish_status") or "").strip().lower()
+            (str(entry.get("publish_status") or "").strip().lower() if entry.get("upload_due_at") else "")
+            or str(generated_record.get("publish_status") or "").strip().lower()
             or (str(entry.get("publish_status") or "").strip().lower() if entry.get("publish_status") else "")
             or ("ready" if yt_description else "not_ready")
         )
@@ -11963,7 +12054,7 @@ def generate_short(video_pk):
             facebook_publish_at=fb_publish_at,
         )
         any_platform_pending = bool(pending_publish_items)
-        publishing_soon = _pending_publish_items_within_lock_window(pending_publish_items)
+        publishing_soon = _pending_publish_items_within_lock_window([item for item in pending_publish_items if item.get("platform") != "youtube"])
         any_platform_scheduled = (
             str(entry.get("publish_status") or "").strip().lower() in {"scheduled", "uploaded", "published"}
             or db_publish_status in {"scheduled", "uploaded", "published"}
@@ -12070,9 +12161,11 @@ def generate_short(video_pk):
             "render_settings_hash": stored_render_settings_hash,
             "current_render_settings_hash": current_render_settings_hash,
             "render_settings_outdated": render_settings_outdated,
-            "regenerate_locked": any_platform_published or publishing_soon,
-            "regenerate_lock_reason": "Already published" if any_platform_published else ("Publishing soon — editing is locked." if publishing_soon else ""),
-            "edit_locked": any_platform_published or publishing_soon,
+            "regenerate_locked": bool(yt_id) or any_platform_published or publishing_soon,
+            "regenerate_lock_reason": youtube_scheduling.studio_message(yt_id) if yt_id else "Already published" if any_platform_published else ("Publishing soon — editing is locked." if publishing_soon else ""),
+            "edit_locked": bool(yt_id) or any_platform_published or publishing_soon,
+            "youtube_pending_label": youtube_scheduling.pending_label(),
+            "youtube_schedule_warning": entry.get("schedule_update_warning") or "",
             "edit_locked_soon": publishing_soon,
             "edit_has_pending_posts": any_platform_pending,
             "edit_lock_platforms": [item["platform"] for item in pending_publish_items],
@@ -12304,7 +12397,8 @@ def generate_short(video_pk):
         else:
             yt_label = None
             yt_icon = "text-warning"
-        item["youtube_label"] = yt_label
+        item["youtube_video_id"] = yt_state.get("yt_video_id")
+        item["youtube_label"] = youtube_scheduling.pending_label() if yt_status == "pending" else yt_label
         item["youtube_display"] = _format_publish_display(yt_publish_val, user_tz) if yt_publish_val else None
         item["youtube_icon_class"] = yt_icon
 
@@ -14200,6 +14294,12 @@ def publish_long_video_from_generate(video_pk: int):
     elif tt_mode == "now":
         tt_publish_at = None
 
+    meta_path = _long_comp_meta_path(media_path)
+    meta = json.loads(meta_path.read_text()) if meta_path.exists() else {}
+    existing_id = ((meta.get("publish_state") or {}).get("youtube") or {}).get("yt_video_id")
+    if existing_id:
+        return jsonify(success=False, message=youtube_scheduling.studio_message(existing_id)), 409
+
     results: Dict[str, Any] = {"youtube": None, "instagram": [], "facebook": [], "tiktok": None}
     youtube_video_id = None
 
@@ -14207,7 +14307,7 @@ def publish_long_video_from_generate(video_pk: int):
         if not has_refresh_token(user_id, brand_id=brand_id):
             return jsonify({"success": False, "message": "YouTube account not connected."}), 403
         try:
-            resp = upload_video_with_refresh_token(
+            resp = youtube_scheduling.schedule_youtube_upload(
                 video_path=str(media_path),
                 title=title,
                 description=description,
@@ -14215,11 +14315,14 @@ def publish_long_video_from_generate(video_pk: int):
                 privacy_status="private",
                 user_id=user_id,
                 brand_id=brand_id,
+                kind="long",
             )
             youtube_video_id = (resp or {}).get("id")
             results["youtube"] = {"id": youtube_video_id, "scheduled_at": yt_publish_at}
-        except Exception as exc:
-            return jsonify({"success": False, "message": f"YouTube publish failed: {exc}"}), 500
+        except youtube_scheduling.YouTubeScheduleLocked as exc:
+            return jsonify(success=False, message=str(exc)), 409
+        except Exception:
+            return jsonify(success=False, message="YouTube scheduling failed."), 500
 
     plan_index = "longcomp"
     if instagram_reel or instagram_feed:
@@ -14298,7 +14401,7 @@ def publish_long_video_from_generate(video_pk: int):
 
     state_updates: Dict[str, Any] = {}
     if youtube_enabled:
-        yt_status = "scheduled" if yt_publish_at else "published"
+        yt_status = (resp or {}).get("status") or ("scheduled" if yt_publish_at else "published")
         state_updates["youtube"] = {
             "status": yt_status,
             "publish_at": yt_publish_at,
@@ -23304,7 +23407,7 @@ def edit_clip_title_time(video_pk: int, plan_index: int):
     lock_reason = clip_entry_publish_lock_reason(plan_entry, generated_row, social_statuses)
     if lock_reason:
         return jsonify(success=False, message=lock_reason), 409
-    pending_times = [plan_entry.get("publish_at_iso") or plan_entry.get("publish_at")]
+    pending_times = []  # Local YouTube schedules remain editable until upload is claimed.
     for item in social_queue_entries:
         item_status = str(item.get("status") or "").strip().lower()
         if item_status in PENDING_PUBLISH_STATUSES:
@@ -25079,62 +25182,26 @@ def unschedule_clip_posts(video_pk: int, plan_index: int):
     )
     youtube_published = entry_publish_status in PUBLISHED_PUBLISH_STATUSES or generated_publish_status in PUBLISHED_PUBLISH_STATUSES
     youtube_id = str(target_entry.get("yt_video_id") or (generated_guard_row or {}).get("youtube_video_id") or "").strip()
-    if (cancel_all_platforms or requested_platform == "youtube") and youtube_published:
-        return jsonify(success=False, message="Already published. Manage this video in YouTube Studio."), 409
-
+    if youtube_id:
+        return jsonify(success=False, message=youtube_scheduling.studio_message(youtube_id)), 409
     canceled_counts = {"youtube": 0, "instagram": 0, "tiktok": 0, "facebook": 0}
     youtube_deleted = False
     youtube_delete_result: Dict[str, Any] = {}
-    if (cancel_all_platforms or requested_platform == "youtube") and youtube_pending:
-        if youtube_id:
-            youtube_delete_result = unschedule_youtube_video_if_safe(
-                video_id=youtube_id,
-                title=str(target_entry.get("yt_title") or target_entry.get("title") or video_title or "Short").strip(),
-                description=str(target_entry.get("yt_description") or target_entry.get("description") or "").strip(),
-                expected_video_ids=[target_entry.get("yt_video_id"), (generated_guard_row or {}).get("youtube_video_id")],
-                scheduled_publish_at=target_entry.get("publish_at_iso") or (generated_guard_row or {}).get("planned_publish_at") or target_entry.get("publish_at"),
-                user_id=current_user.get("id"),
-                brand_id=brand_id,
-                reason=f"unschedule video_pk={video_pk} plan_index={plan_index}",
+    if cancel_all_platforms or requested_platform == "youtube":
+        try:
+            youtube_scheduling.cancel_schedule(
+                user_id=editor_context["owner_user_id"], brand_id=brand_id,
+                video_pk=video_pk, plan_index=plan_index,
             )
-            youtube_deleted = bool(youtube_delete_result.get("deleted"))
-            if not youtube_delete_result.get("unscheduled"):
-                message = "YouTube schedule was not canceled. Manage this video in YouTube Studio."
-                target_entry["schedule_update_warning"] = message
-                target_entry["youtube_unschedule_blocked_reason"] = youtube_delete_result.get("reason")
-                live_privacy = youtube_delete_result.get("privacy_status")
-                # Reconcile only what the live check established. Unknown or failed
-                # checks retain the existing schedule; never claim cancellation.
-                confirmed_status = None
-                if live_privacy in {"public", "unlisted"}:
-                    confirmed_status = "published"
-                elif live_privacy == "private" and not youtube_delete_result.get("publish_at"):
-                    confirmed_status = "uploaded"
-                if confirmed_status:
-                    target_entry["publish_status"] = confirmed_status
-                    target_entry["yt_status"] = confirmed_status
-                    target_entry.pop("publish_at", None)
-                    target_entry.pop("publish_at_iso", None)
-                _write_plan_entries(source_video_id, entries, video_pk=video_pk)
-                if confirmed_status and clip_filename:
-                    _sync_generated_video_from_plan_entry(
-                        source_video_id=source_video_id, clip_filename=clip_filename,
-                        plan_entry=target_entry, publish_status=confirmed_status,
-                    )
-                return jsonify(
-                    success=False, message=message, youtube_delete_result=youtube_delete_result,
-                ), 409
+        except youtube_scheduling.YouTubeScheduleLocked as exc:
+            return jsonify(success=False, message=str(exc)), 409
         target_entry.pop("schedule_update_warning", None)
-        target_entry.pop("youtube_unschedule_blocked_reason", None)
         target_entry.pop("publish_at", None)
         target_entry.pop("publish_at_iso", None)
-        target_entry["publish_status"] = "not_ready" if youtube_deleted else ("uploaded" if youtube_id else "not_ready")
-        target_entry["yt_status"] = target_entry["publish_status"]
-        if youtube_deleted:
-            target_entry.pop("yt_video_id", None)
-        elif youtube_id:
-            target_entry["yt_video_id"] = youtube_id
-        canceled_counts["youtube"] = 1
+        target_entry.pop("upload_due_at", None)
+        target_entry["publish_status"] = "cancelled"
+        target_entry["yt_status"] = "cancelled"
+        canceled_counts["youtube"] = 1 if youtube_pending else 0
         _write_plan_entries(source_video_id, entries, video_pk=video_pk)
 
     conn = get_db()
@@ -25192,7 +25259,7 @@ def unschedule_clip_posts(video_pk: int, plan_index: int):
                            AND clip_filename = ?
                     """
                     sql += " AND user_id = ? AND brand_id IS NOT DISTINCT FROM ?"
-                    params.extend([current_user["id"], brand_id])
+                    params.extend([editor_context["owner_user_id"], brand_id])
                     conn.execute(sql, params)
         conn.commit()
     finally:
@@ -25314,8 +25381,8 @@ def upload_clip_to_youtube():
             _notify(message, "warning")
             return redirect(url_for("video_shorts_bp.generate_short", video_pk=request.form.get("video_pk")))
     video_pk = request.form.get("video_pk")
-    brand_id = current_brand_id()
-    if youtube_enabled and not has_refresh_token((current_user or {}).get("id"), brand_id=brand_id):
+    brand_id = _active_editor_context()["brand_id"]
+    if youtube_enabled and not has_refresh_token(_active_editor_context()["owner_user_id"], brand_id=brand_id):
         message = "YouTube bağlantısı yok; önce bağlantı kurun."
         if is_ajax:
             return _ajax_fail(message, status=403)
@@ -25380,6 +25447,7 @@ def upload_clip_to_youtube():
                         break
     if target_entry is None or (target_entry.get("output_filename") or target_entry.get("clip_filename")) != filename:
         return _ajax_fail("Clip does not belong to this plan entry.", status=403)
+    plan_index_raw = str(target_entry["plan_index"])
     if not _short_exists(filename):
         message = "Klip dosyası sunucuda bulunamadı."
         if is_ajax:
@@ -25418,160 +25486,34 @@ def upload_clip_to_youtube():
             target_entry.get("description") if target_entry else None,
             generated_guard_row.get("generated_description") if generated_guard_row else None,
         ) or ""
-    skip_youtube_upload = False
-    should_update_youtube = False
-    if youtube_enabled and existing_yt_id and existing_publish_status in {"scheduled", "published", "uploaded"}:
-        skip_youtube_upload = True
-        youtube_short_id = existing_yt_id
-        instagram_queue_allowed = True
-        facebook_queue_allowed = True
-        if existing_publish_at_iso and not publish_at_value:
-            publish_at = existing_publish_at_iso
-            if existing_publish_at_local:
-                publish_at_value = existing_publish_at_local
-        existing_title = (target_entry.get("yt_title") or target_entry.get("title") or "").strip() if target_entry else ""
-        existing_description = (
-            (target_entry.get("yt_description") or target_entry.get("description") or "").strip()
-            if target_entry
-            else ""
-        )
-        if existing_publish_status != "published":
-            if publish_at and publish_at != existing_publish_at_iso:
-                should_update_youtube = True
-            if title and title != existing_title:
-                should_update_youtube = True
-            if description and description != existing_description:
-                should_update_youtube = True
-        elif publish_at and existing_publish_at_iso and existing_publish_at_iso != publish_at:
-            _notify("YouTube zaten yayınlandı; yayın zamanını güncelleyemezsiniz.", "warning")
-            publish_at = existing_publish_at_iso
-            if existing_publish_at_local:
-                publish_at_value = existing_publish_at_local
-    if youtube_enabled and not skip_youtube_upload:
-        upload_path = _resolve_short_path_for_processing(filename)
-        if not upload_path or not upload_path.exists():
-            message = "Klip dosyası YouTube yüklemesi için çözülemedi."
-            if is_ajax:
-                return _ajax_fail(message, status=404)
-            _notify(message, "warning")
-            return redirect(url_for("video_shorts_bp.generate_short", video_pk=request.form.get("video_pk")))
+    if normalized_existing_yt_id:
+        return _ajax_fail(youtube_scheduling.studio_message(normalized_existing_yt_id), status=409)
+    if youtube_enabled:
         try:
-            response = upload_video_with_refresh_token(
-                video_path=str(upload_path),
-                title=title,
-                description=description,
-                publish_at=publish_at,
-                privacy_status="private",
-                user_id=(current_user or {}).get("id"),
-                brand_id=brand_id,
-            )
-            youtube_short_id = response.get("id") if response else None
-            message_label = "YouTube'a yükleme başladı"
-            _notify(f"{message_label} (ID: {youtube_short_id}).", "success")
-            publish_status_key = "scheduled" if publish_at else "uploaded"
-            _update_plan_entry_publish_state(
-                video_pk=video_pk,
-                plan_index=plan_index_raw,
-                filename=filename,
-                publish_status=publish_status_key,
+            # Far-future schedules must not download media or contact YouTube.
+            response = youtube_scheduling.schedule_youtube_upload(
+                video_path=str(out_path), title=title, description=description,
+                publish_at=publish_at, privacy_status="private",
+                user_id=_active_editor_context()["owner_user_id"], brand_id=brand_id,
+                video_pk=video_pk, plan_index=plan_index_raw,
                 publish_at_local=publish_at_value or None,
-                publish_at_iso=publish_at,
-                title=title,
-                description=description,
+            )
+            youtube_short_id = response.get("id")
+            publish_status_key = response["status"]
+            _update_plan_entry_publish_state(
+                video_pk=video_pk, plan_index=plan_index_raw, filename=filename,
+                publish_status=publish_status_key, publish_at_local=publish_at_value or None,
+                publish_at_iso=publish_at, title=title, description=description,
                 youtube_id=youtube_short_id,
             )
+            _notify(youtube_scheduling.pending_label() if publish_status_key == "pending" else "YouTube publish submitted.", "success")
             instagram_queue_allowed = True
             facebook_queue_allowed = True
-        except RefreshError as exc:
-            current_app.logger.warning("Invalid YouTube refresh token during upload: %s", exc)
-            error_message = (
-                "YouTube bağlantısı geçersiz; yeniden bağlanın."
-                if "invalid_grant" in str(exc)
-                else "YouTube bağlantısında sorun var; yeniden bağlanın."
-            )
-            if is_ajax:
-                return _ajax_fail(error_message, status=403)
-            _notify(error_message, "danger")
-            instagram_queue_allowed = False
-            facebook_queue_allowed = False
-        except Exception as exc:
-            current_app.logger.exception("YouTube upload failed: %s", exc)
-            message = f"YouTube yüklemesi başarısız: {exc}"
-            if is_ajax:
-                return _ajax_fail(message, status=500)
-            _notify(message, "danger")
-            instagram_queue_allowed = False
-            facebook_queue_allowed = False
-        finally:
-            try:
-                if upload_path and upload_path.resolve() != out_path.resolve() and upload_path.exists():
-                    upload_path.unlink()
-            except Exception:
-                current_app.logger.exception("Failed to cleanup temporary short upload path filename=%s path=%s", filename, upload_path)
-    elif youtube_enabled and should_update_youtube:
-        try:
-            response = update_video_with_refresh_token(
-                video_id=existing_yt_id,
-                title=title,
-                description=description,
-                publish_at=publish_at,
-                privacy_status="private",
-                user_id=(current_user or {}).get("id"),
-                brand_id=brand_id,
-            )
-            if response:
-                youtube_short_id = existing_yt_id
-            update_ok = True
-            if publish_at:
-                status_map = fetch_video_statuses([existing_yt_id], user_id=(current_user or {}).get("id"), brand_id=brand_id)
-                status = status_map.get(existing_yt_id, {}) if status_map else {}
-                current_publish_at = status.get("publishAt")
-                if current_publish_at:
-                    current_dt = _parse_to_utc(current_publish_at)
-                    target_dt = _parse_to_utc(publish_at)
-                    if current_dt and target_dt and abs((current_dt - target_dt).total_seconds()) > 60:
-                        update_ok = False
-                else:
-                    update_ok = False
-            if not update_ok:
-                message = "YouTube plan güncellemesi uygulanmadı; yayın zamanı değişmedi."
-                if is_ajax:
-                    return _ajax_fail(message, status=409)
-                _notify(message, "warning")
-            publish_status_key = "scheduled" if publish_at else "uploaded"
-            _update_plan_entry_publish_state(
-                video_pk=video_pk,
-                plan_index=plan_index_raw,
-                filename=filename,
-                publish_status=publish_status_key,
-                publish_at_local=publish_at_value or None,
-                publish_at_iso=publish_at,
-                title=title,
-                description=description,
-                youtube_id=existing_yt_id,
-            )
-            if update_ok:
-                _notify("YouTube yayın zamanı güncellendi.", "success")
-        except RefreshError as exc:
-            current_app.logger.warning("Invalid YouTube refresh token during update: %s", exc)
-            error_message = (
-                "YouTube bağlantısı geçersiz; yeniden bağlanın."
-                if "invalid_grant" in str(exc)
-                else "YouTube bağlantısında sorun var; yeniden bağlanın."
-            )
-            if is_ajax:
-                return _ajax_fail(error_message, status=403)
-            _notify(error_message, "danger")
-            instagram_queue_allowed = False
-            facebook_queue_allowed = False
-        except Exception as exc:
-            current_app.logger.exception("YouTube update failed: %s", exc)
-            message = f"YouTube güncellemesi başarısız: {exc}"
-            if is_ajax:
-                return _ajax_fail(message, status=500)
-            _notify(message, "danger")
-            instagram_queue_allowed = False
-            facebook_queue_allowed = False
+        except youtube_scheduling.YouTubeScheduleLocked as exc:
+            return _ajax_fail(str(exc), status=409)
+        except Exception:
+            current_app.logger.warning("YouTube scheduling failed video_pk=%s", video_pk)
+            return _ajax_fail("YouTube scheduling failed. Please try again.", status=500)
     elif not youtube_enabled:
         _notify("YouTube paylaşımı kapalı; sadece Instagram kuyruğu kullanılacak.", "info")
         if facebook_targets:
@@ -25770,9 +25712,11 @@ def upload_clip_to_youtube():
 
     if is_ajax:
         return _ajax_ok(
+            message=youtube_scheduling.pending_label() if youtube_enabled and publish_status_key == "pending" else "Publish submitted.",
             youtube_video_id=youtube_short_id,
             yt_video_id=youtube_short_id,
-            publish_status="scheduled" if publish_at else ("uploaded" if youtube_short_id else None),
+            publish_status=publish_status_key if youtube_enabled else None,
+            upload_due_at=response.get("upload_due_at") if youtube_enabled else None,
             publish_at=publish_at,
             publish_at_local=publish_at_value or None,
         )
@@ -30052,7 +29996,7 @@ def regenerate_clip_video(video_pk: int, plan_index: int):
     }
     if "published" in social_statuses:
         return jsonify(success=False, message="Already published."), 409
-    pending_times = [plan_entry.get("publish_at_iso") or plan_entry.get("publish_at")]
+    pending_times = []  # Local YouTube schedules remain editable until upload is claimed.
     for item in social_queue_entries:
         item_status = str(item.get("status") or "").strip().lower()
         if item_status in PENDING_PUBLISH_STATUSES:
@@ -30103,7 +30047,6 @@ def regenerate_clip_video(video_pk: int, plan_index: int):
         "end": end,
         "regenerate": True,
         "render_settings_hash": current_hash,
-        "scheduled_replace": bool(publish_statuses.intersection(PENDING_PUBLISH_STATUSES) or social_statuses.intersection(PENDING_PUBLISH_STATUSES)),
         "previous_youtube_video_id": str((generated_row[2] if generated_row else "") or plan_entry.get("yt_video_id") or "").strip(),
         "previous_publish_at_iso": str(plan_entry.get("publish_at_iso") or plan_entry.get("publish_at") or "").strip(),
     }

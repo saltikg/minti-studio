@@ -279,9 +279,10 @@
               <div>
                 <div class="fw-semibold fs-5 ai-video-title">{{ item.title }}</div>
                 <div class="ai-video-meta mt-1">AI Video ID: {{ item.video_id }}</div>
+                <div class="ai-video-meta">{{ item.youtube_status_label }}</div>
                 <div class="ai-video-meta">Duration: {{ item.duration_seconds or 0 }}s</div>
                 {% if item.youtube_video_id %}
-                  <div class="ai-video-meta">YouTube ID: {{ item.youtube_video_id }}</div>
+                  <div class="ai-video-meta"><a href="https://studio.youtube.com/video/{{ item.youtube_video_id }}/edit" target="_blank" rel="noopener">Manage in YouTube Studio</a></div>
                 {% endif %}
               </div>
             </div>
@@ -289,7 +290,7 @@
             <div class="ai-video-actions">
               <button
                 type="button"
-                class="btn btn-sm btn-outline-light js-open-ai-publish"
+                class="btn btn-sm btn-outline-light js-open-ai-publish" {% if item.youtube_video_id %}disabled{% endif %}
                 data-bs-toggle="modal"
                 data-bs-target="#aiVideoPublishModal"
                 data-ai-id="{{ item.id }}"

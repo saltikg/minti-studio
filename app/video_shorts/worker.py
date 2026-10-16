@@ -110,7 +110,8 @@ from app.video_shorts.services.transcript_service import _transcribe_with_whispe
 from app.video_shorts.services.usage_metering import add_transcription_minutes
 from app.video_shorts.services.usage_metering import check_transcription_quota
 from app.video_shorts.services.user_events import prepare_transcript_completed_transition, track_event
-from app.video_shorts.services.youtube_oauth import delete_youtube_video_if_safe, has_refresh_token, upload_video_with_refresh_token
+from app.video_shorts.services.youtube_oauth import has_refresh_token
+from app.video_shorts.services import youtube_scheduling
 from app.video_shorts.services.instagram_queue import enqueue_instagram_clip
 from app.video_shorts.services.db import (
     _ensure_transcript_schema,
@@ -1697,7 +1698,16 @@ def _execute_render_job(app, job: Dict[str, Any]) -> Dict[str, Any]:
             g.vs_current_user = user
             if brand:
                 g.vs_current_brand = brand
-            result = generation.autoclip_video(video_pk)
+            try:
+                guarded = generation._guard_youtube_clip_mutation(video_pk, plan_index)
+                result = guarded if guarded is not None else generation.autoclip_video(video_pk)
+                response_status, _ = _normalize_response(result)
+                held = g.pop("youtube_schedule_connection", None)
+                if held is not None:
+                    held.rollback() if response_status >= 400 else held.commit()
+                    held.close()
+            finally:
+                generation._release_youtube_schedule_edits()
             status_code, response_payload = _normalize_response(result)
     if status_code >= 500:
         raise RuntimeError(response_payload.get("message") or "Render job failed.")
@@ -1708,144 +1718,14 @@ def _execute_render_job(app, job: Dict[str, Any]) -> Dict[str, Any]:
     return response_payload
 
 
-def _replace_pending_youtube_upload_after_render(app, job: Dict[str, Any], result: Dict[str, Any]) -> Dict[str, Any]:
-    payload = job.get("payload") or {}
-    if not payload.get("scheduled_replace"):
-        return result
-    video_pk = payload.get("video_pk")
-    source_video_id = str(payload.get("source_video_id") or "").strip()
-    try:
-        plan_index = int(payload.get("plan_index"))
-    except Exception:
-        return result
-    user, brand = _load_user_context(job["user_id"], payload.get("brand_id"))
-    brand_id = (brand or {}).get("id")
-    with app.app_context():
-        entries = generation._load_plan_entries(source_video_id, video_pk=payload.get("video_pk")) or []
-        target_entry = None
-        for entry in entries:
-            try:
-                if int(entry.get("plan_index") or 0) == plan_index:
-                    target_entry = entry
-                    break
-            except Exception:
-                continue
-        if not target_entry:
-            return result
-        old_youtube_id = str(payload.get("previous_youtube_video_id") or target_entry.get("yt_video_id") or "").strip()
-        publish_status = str(target_entry.get("publish_status") or "").strip().lower()
-        publish_at_iso = str(target_entry.get("publish_at_iso") or payload.get("previous_publish_at_iso") or "").strip()
-        publish_at_local = str(target_entry.get("publish_at") or "").strip()
-        if not old_youtube_id or publish_status not in {"scheduled", "queued", "pending"} or not publish_at_iso:
-            return result
-        clip_filename = str(
-            result.get("clip_filename")
-            or target_entry.get("clip_filename")
-            or target_entry.get("output_filename")
-            or ""
-        ).strip()
-        clip_path = generation._resolve_short_path_for_processing(clip_filename)
-        if not clip_path or not clip_path.exists():
-            result["schedule_update_warning"] = "Schedule kept with the previous version."
-            app.logger.warning(
-                "Scheduled YouTube replacement skipped; rendered file missing job_id=%s clip=%s old_youtube_id=%s",
-                job.get("id"),
-                clip_filename,
-                old_youtube_id,
-            )
-            return result
-        title = str(target_entry.get("yt_title") or target_entry.get("title") or payload.get("title") or "Short").strip()[:100] or "Short"
-        description = str(target_entry.get("yt_description") or target_entry.get("description") or title).strip()[:5000]
-        raw_tags = target_entry.get("yt_tags") or target_entry.get("tags") or []
-        if isinstance(raw_tags, str):
-            try:
-                parsed_tags = json.loads(raw_tags)
-            except Exception:
-                parsed_tags = [part.strip() for part in raw_tags.split(",")]
-            raw_tags = parsed_tags
-        tags = [str(tag or "").strip() for tag in (raw_tags if isinstance(raw_tags, list) else []) if str(tag or "").strip()]
-        try:
-            response = upload_video_with_refresh_token(
-                video_path=str(clip_path),
-                title=title,
-                description=description,
-                publish_at=publish_at_iso,
-                privacy_status="private",
-                user_id=user.get("id"),
-                brand_id=brand_id,
-                tags=tags,
-            ) or {}
-        except Exception as exc:
-            result["schedule_update_warning"] = "Schedule kept with the previous version."
-            app.logger.exception(
-                "Scheduled YouTube replacement upload failed job_id=%s video_pk=%s plan_index=%s old_youtube_id=%s",
-                job.get("id"),
-                video_pk,
-                plan_index,
-                old_youtube_id,
-            )
-            target_entry["schedule_update_warning"] = "Schedule kept with the previous version."
-            try:
-                generation._write_plan_entries(source_video_id, entries, video_pk=payload.get("video_pk"))
-            except Exception:
-                app.logger.exception("Failed to persist schedule replacement warning job_id=%s", job.get("id"))
-            return result
-        new_youtube_id = str(response.get("id") or "").strip()
-        if not new_youtube_id:
-            result["schedule_update_warning"] = "Schedule kept with the previous version."
-            app.logger.warning(
-                "Scheduled YouTube replacement upload returned no id job_id=%s old_youtube_id=%s",
-                job.get("id"),
-                old_youtube_id,
-            )
-            return result
-        with app.test_request_context("/video_shorts/scheduled-replace", method="POST"):
-            g.vs_current_user = user
-            if brand:
-                g.vs_current_brand = brand
-            generation._update_plan_entry_publish_state(
-                video_pk=video_pk,
-                plan_index=str(plan_index),
-                filename=clip_filename,
-                publish_status="scheduled",
-                publish_at_local=publish_at_local or None,
-                publish_at_iso=publish_at_iso,
-                title=title,
-                description=description,
-                youtube_id=new_youtube_id,
-            )
-        delete_result = delete_youtube_video_if_safe(
-            video_id=old_youtube_id,
-            expected_video_ids=[old_youtube_id],
-            scheduled_publish_at=publish_at_iso,
-            user_id=user.get("id"),
-            brand_id=brand_id,
-            reason=f"scheduled_replace job_id={job.get('id')} video_pk={video_pk} plan_index={plan_index}",
-        )
-        result["schedule_update"] = {
-            "youtube_old_id": old_youtube_id,
-            "youtube_new_id": new_youtube_id,
-            "old_delete": delete_result,
-        }
-        if not delete_result.get("deleted"):
-            app.logger.warning(
-                "Scheduled YouTube replacement kept old private upload job_id=%s old_youtube_id=%s reason=%s",
-                job.get("id"),
-                old_youtube_id,
-                delete_result.get("reason"),
-            )
-        app.logger.info(
-            "Scheduled YouTube replacement complete job_id=%s old_youtube_id=%s new_youtube_id=%s old_deleted=%s",
-            job.get("id"),
-            old_youtube_id,
-            new_youtube_id,
-            bool(delete_result.get("deleted")),
-        )
-    return result
-
-
 def _execute_publish_job(app, job: Dict[str, Any]) -> Dict[str, Any]:
     payload = job.get("payload") or {}
+    if payload.get("youtube_schedule_id"):
+        user, brand = _load_user_context(job["user_id"], payload.get("brand_id"))
+        with app.test_request_context("/video_shorts/youtube/deferred", method="POST"):
+            g.vs_current_user = user
+            g.vs_current_brand = brand
+            return youtube_scheduling.execute_scheduled_upload(payload["youtube_schedule_id"])
     session_id = str(payload.get("quick_session_id") or "").strip()
     video_pk = int(payload.get("video_pk"))
     video_id = str(payload.get("video_id") or "").strip()
@@ -1872,7 +1752,7 @@ def _execute_publish_job(app, job: Dict[str, Any]) -> Dict[str, Any]:
             raise PermanentRenderJobError("Connect YouTube first.")
         _set_job_progress(job["id"], stage="uploading", message="Uploading to YouTube.", status="processing")
         try:
-            response = upload_video_with_refresh_token(
+            response = youtube_scheduling.schedule_youtube_upload(
                 video_path=str(clip_path),
                 title=title,
                 description=description,
@@ -1880,13 +1760,14 @@ def _execute_publish_job(app, job: Dict[str, Any]) -> Dict[str, Any]:
                 privacy_status="private",
                 user_id=user.get("id"),
                 brand_id=brand_id,
+                video_pk=video_pk, plan_index="1", publish_at_local=publish_at_local, clip_filename=clip_filename,
             ) or {}
         except Exception as exc:
             if "invalid_grant" in str(exc):
                 raise PermanentRenderJobError("YouTube connection is invalid. Reconnect and try again.") from exc
             raise
         youtube_id = response.get("id")
-        publish_status = "scheduled" if publish_at_iso else "uploaded"
+        publish_status = response["status"]
         with app.app_context():
             with app.test_request_context("/video_shorts/shorts/quick", method="POST"):
                 g.vs_current_user = user
@@ -1989,8 +1870,6 @@ def process_next_job(
             result = enrich_autopilot_discovery_email_batch(job.get("payload") or {})
         else:
             result = _execute_render_job(app, job)
-        if job.get("type") == JOB_TYPE_RENDER_SHORT:
-            result = _replace_pending_youtube_upload_after_render(app, job, result)
         try:
             mark_job_done(job["id"], result)
         except Exception:
@@ -2203,6 +2082,11 @@ def run_worker_loop() -> None:
             requeue_timed_out_jobs(timeout_seconds=STALE_JOB_TIMEOUT_SECONDS)
             processed_any = False
             if mode in {"all", "customer"}:
+                try:
+                    if youtube_scheduling.scheduler_tick():
+                        processed_any = True
+                except Exception:
+                    app.logger.exception("Deferred YouTube scheduler tick failed")
                 try:
                     if process_due_scheduled_outreach_email():
                         processed_any = True

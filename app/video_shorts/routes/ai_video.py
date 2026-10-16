@@ -48,7 +48,8 @@ from app.video_shorts.services.heygen import HeyGenClient, HeyGenError, get_heyg
 from app.video_shorts.services.instagram_queue import enqueue_instagram_clip, load_instagram_queue_map
 from app.video_shorts.services.storage import get_media_storage
 from app.video_shorts.services.tiktok_queue import enqueue_tiktok_clip, load_tiktok_queue_map
-from app.video_shorts.services.youtube_oauth import has_refresh_token, upload_video_with_refresh_token
+from app.video_shorts.services.youtube_oauth import has_refresh_token
+from app.video_shorts.services.youtube_scheduling import schedule_youtube_upload, studio_message, YouTubeScheduleLocked, pending_label, file_schedule_state
 from src.trends.facebook_page_tokens import get_facebook_page_data
 from src.trends.instagram_tokens import get_instagram_credentials
 from src.trends.tiktok_tokens import get_tiktok_data
@@ -82,6 +83,9 @@ def _normalize_ai_video_items(
 ) -> List[Dict[str, Any]]:
     normalized: List[Dict[str, Any]] = []
     for item in items:
+        state = file_schedule_state(user_id=item.get("user_id"),brand_id=item.get("brand_id"),filename=item.get("clip_filename"))
+        if state:
+            item = {**item,"youtube_status":state["status"],"youtube_video_id":state.get("id") or item.get("youtube_video_id")}
         video_id = item.get("video_id") or ""
         queue_key = (video_id, "1")
         ig_records = instagram_queue_map.get(queue_key) or []
@@ -91,7 +95,7 @@ def _normalize_ai_video_items(
             {
                 **item,
                 "clip_url": _short_public_url(item.get("clip_filename") or ""),
-                "youtube_status_label": (item.get("youtube_status") or "draft").replace("_", " ").title(),
+                "youtube_status_label": pending_label() if item.get("youtube_status") == "pending" else (item.get("youtube_status") or "draft").replace("_", " ").title(),
                 "instagram_published": _queue_has_published(ig_records),
                 "facebook_published": _queue_has_published(fb_records),
                 "tiktok_published": _queue_has_published(tt_records),
@@ -329,6 +333,9 @@ def ai_video_publish(ai_video_id: str):
     if not item:
         return jsonify({"success": False, "message": "AI video not found."}), 404
 
+    if item.get("youtube_video_id"):
+        return jsonify(success=False, message=studio_message(item["youtube_video_id"])), 409
+
     from app.video_shorts.services.media_access import authorize_file
     try:
         authorize_file(item.get("clip_filename"), owner_user_id=user_id, brand_id=brand_id)
@@ -349,13 +356,7 @@ def ai_video_publish(ai_video_id: str):
     title = (request.form.get("title") or item.get("title") or "").strip()[:100]
     description = (request.form.get("description") or item.get("description") or "").strip()[:5000]
     caption_text = (description or title)[:2200]
-    update_ai_video_content(
-        user_id=user_id,
-        brand_id=brand_id,
-        ai_video_id=ai_video_id,
-        title=title,
-        description=description,
-    )
+
 
     try:
         yt_publish_at = _parse_local_schedule("publish_at", user_tz)
@@ -375,7 +376,7 @@ def ai_video_publish(ai_video_id: str):
     youtube_video_id = item.get("youtube_video_id") or ""
     if youtube_enabled:
         try:
-            resp = upload_video_with_refresh_token(
+            resp = schedule_youtube_upload(
                 video_path=str(media_path),
                 title=title,
                 description=description,
@@ -383,20 +384,31 @@ def ai_video_publish(ai_video_id: str):
                 privacy_status="private",
                 user_id=user_id,
                 brand_id=brand_id,
+                kind="ai", ai_video_id=ai_video_id,
             )
             youtube_video_id = str((resp or {}).get("id") or "").strip()
             update_ai_video_youtube_state(
                 user_id=user_id,
                 brand_id=brand_id,
                 ai_video_id=ai_video_id,
-                youtube_status="scheduled" if yt_publish_at else "published",
+                youtube_status=resp["status"],
                 youtube_video_id=youtube_video_id,
                 youtube_publish_at=yt_publish_at,
                 youtube_published_at=None if yt_publish_at else (datetime.utcnow().replace(microsecond=0).isoformat() + "Z"),
             )
+        except YouTubeScheduleLocked as exc:
+            return jsonify(success=False, message=str(exc)), 409
         except Exception as exc:
             current_app.logger.exception("AI video YouTube publish failed ai_video_id=%s", ai_video_id)
             return jsonify({"success": False, "message": f"YouTube publish failed: {exc}"}), 500
+
+    update_ai_video_content(
+        user_id=user_id,
+        brand_id=brand_id,
+        ai_video_id=ai_video_id,
+        title=title,
+        description=description,
+    )
 
     broadcast_video_id = item.get("video_id") or ""
     plan_index = "1"

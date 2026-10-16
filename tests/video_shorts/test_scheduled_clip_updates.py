@@ -93,136 +93,21 @@ def test_youtube_safe_delete_blocks_unsafe_cases(monkeypatch):
         assert result["reason"] == "list_error"
 
 
-def _scoped_plan_store(monkeypatch, entries):
-    other_entries = [dict(entries[0], clip_filename="2_src_v8.mp4", yt_video_id="other-tenant-yt")]
-    plans = {7: entries, 8: other_entries}
-    reads, writes = [], []
-
-    def load(video_id, *, video_pk):
-        assert video_id == "src"
-        reads.append((video_id, video_pk))
-        return plans[video_pk]
-
-    def write(video_id, updated_entries, *, video_pk):
-        assert video_id == "src"
-        writes.append((video_id, video_pk))
-        plans[video_pk] = updated_entries
-
-    monkeypatch.setattr(worker.generation, "_load_plan_entries", load)
-    monkeypatch.setattr(worker.generation, "_write_plan_entries", write)
-    return plans, reads, writes, deepcopy(other_entries)
+def test_no_runtime_callers_of_remote_edit_delete_helpers():
+    import ast
+    root = Path(__file__).resolve().parents[2] / "app"
+    banned = {"update_video_with_refresh_token", "delete_youtube_video_if_safe", "unschedule_youtube_video_if_safe"}
+    for path in root.rglob("*.py"):
+        tree = ast.parse(path.read_text())
+        for node in ast.walk(tree):
+            if isinstance(node, ast.Call):
+                name = node.func.id if isinstance(node.func,ast.Name) else node.func.attr if isinstance(node.func,ast.Attribute) else ""
+                assert name not in banned, f"{path}:{node.lineno}: {name}"
 
 
-def test_scheduled_regenerate_uploads_new_youtube_before_old_delete(monkeypatch, tmp_path):
-    app = Flask(__name__)
-    clip = tmp_path / "2_src_v7.mp4"
-    clip.write_bytes(b"video")
-    future = (datetime.now(timezone.utc) + timedelta(hours=1)).isoformat().replace("+00:00", "Z")
-    calls = []
-    entries = [
-        {
-            "plan_index": 2,
-            "clip_filename": "2_src_v7.mp4",
-            "publish_status": "scheduled",
-            "publish_at_iso": future,
-            "publish_at": "local",
-            "yt_video_id": "old-yt",
-            "yt_title": "Title",
-            "yt_description": "Description",
-        }
-    ]
-
-    monkeypatch.setattr(worker, "_load_user_context", lambda user_id, brand_id: ({"id": user_id}, {"id": brand_id}))
-    plans, reads, writes, other_before = _scoped_plan_store(monkeypatch, entries)
-    monkeypatch.setattr(worker.generation, "_resolve_short_path_for_processing", lambda filename: clip)
-    monkeypatch.setattr(worker, "upload_video_with_refresh_token", lambda **kwargs: calls.append(("upload", kwargs)) or {"id": "new-yt"})
-    monkeypatch.setattr(worker, "delete_youtube_video_if_safe", lambda **kwargs: calls.append(("delete", kwargs)) or {"deleted": True})
-
-    def fake_update(**kwargs):
-        calls.append(("store", kwargs))
-        entries[0]["yt_video_id"] = kwargs["youtube_id"]
-
-    monkeypatch.setattr(worker.generation, "_update_plan_entry_publish_state", fake_update)
-
-    result = worker._replace_pending_youtube_upload_after_render(
-        app,
-        {
-            "id": "job-1",
-            "user_id": "user-1",
-            "payload": {
-                "scheduled_replace": True,
-                "video_pk": 7,
-                "source_video_id": "src",
-                "brand_id": "brand-1",
-                "plan_index": 2,
-                "previous_youtube_video_id": "old-yt",
-                "previous_publish_at_iso": future,
-            },
-        },
-        {"clip_filename": "2_src_v7.mp4"},
-    )
-
-    assert [name for name, _ in calls] == ["upload", "store", "delete"]
-    assert reads == [("src", 7)]
-    assert plans[8] == other_before
-    assert writes == []
-    assert calls[0][1]["video_path"] == str(clip)
-    assert calls[0][1]["user_id"] == "user-1"
-    assert calls[0][1]["brand_id"] == "brand-1"
-    assert calls[1][1]["video_pk"] == 7
-    assert calls[1][1]["filename"] == "2_src_v7.mp4"
-    assert calls[0][1]["publish_at"] == future
-    assert calls[1][1]["youtube_id"] == "new-yt"
-    assert calls[2][1]["video_id"] == "old-yt"
-    assert calls[2][1]["user_id"] == "user-1"
-    assert calls[2][1]["brand_id"] == "brand-1"
-    assert result["schedule_update"]["youtube_new_id"] == "new-yt"
-
-
-def test_scheduled_regenerate_keeps_old_youtube_when_new_upload_fails(monkeypatch, tmp_path):
-    app = Flask(__name__)
-    clip = tmp_path / "2_src_v7.mp4"
-    clip.write_bytes(b"video")
-    future = (datetime.now(timezone.utc) + timedelta(hours=1)).isoformat().replace("+00:00", "Z")
-    calls = []
-    entries = [
-        {
-            "plan_index": 2,
-            "clip_filename": "2_src_v7.mp4",
-            "publish_status": "scheduled",
-            "publish_at_iso": future,
-            "yt_video_id": "old-yt",
-        }
-    ]
-
-    monkeypatch.setattr(worker, "_load_user_context", lambda user_id, brand_id: ({"id": user_id}, {"id": brand_id}))
-    plans, reads, writes, other_before = _scoped_plan_store(monkeypatch, entries)
-    monkeypatch.setattr(worker.generation, "_resolve_short_path_for_processing", lambda filename: clip)
-    monkeypatch.setattr(worker, "upload_video_with_refresh_token", lambda **kwargs: (_ for _ in ()).throw(RuntimeError("upload failed")))
-    monkeypatch.setattr(worker, "delete_youtube_video_if_safe", lambda **kwargs: calls.append(("delete", kwargs)) or {"deleted": True})
-
-    result = worker._replace_pending_youtube_upload_after_render(
-        app,
-        {
-            "id": "job-2",
-            "user_id": "user-1",
-            "payload": {
-                "scheduled_replace": True,
-                "video_pk": 7,
-                "source_video_id": "src",
-                "brand_id": "brand-1",
-                "plan_index": 2,
-                "previous_youtube_video_id": "old-yt",
-                "previous_publish_at_iso": future,
-            },
-        },
-        {"clip_filename": "2_src_v7.mp4"},
-    )
-
-    assert reads == [("src", 7)]
-    assert writes == [("src", 7)]
-    assert plans[8] == other_before
-    assert plans[7][0]["schedule_update_warning"] == "Schedule kept with the previous version."
-    assert calls == []
-    assert entries[0]["yt_video_id"] == "old-yt"
-    assert result["schedule_update_warning"] == "Schedule kept with the previous version."
+def test_uploaded_clip_locks_regardless_of_status():
+    from app.video_shorts.routes.generation import clip_entry_publish_lock_reason
+    for status in ["scheduled", "uploaded", "published", "", "pending"]:
+        message = clip_entry_publish_lock_reason({"yt_video_id":"remote-id", "publish_status":status})
+        assert "https://studio.youtube.com/video/remote-id/edit" in message
+    assert "YouTube Studio" in clip_entry_publish_lock_reason({}, [None,"scheduled","remote-id",None,None,None])

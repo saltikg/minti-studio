@@ -1668,17 +1668,17 @@ def quick_short_upload_direct():
             pass
 
 
-def _sync_quick_plan_entry(video_id: str, *, title: str, start: float, end: float) -> int:
-    entries = generation._load_plan_entries(video_id) or []
+def _sync_quick_plan_entry(video_id: str, *, title: str, start: float, end: float, video_pk=None) -> int:
+    entries = generation._load_plan_entries(video_id,video_pk=video_pk) or []
     if entries:
         entry = entries[0]
-        entry["title"] = title
+        entry["title"] = entry["yt_title"] = title
         entry["start"] = round(start, 3)
         entry["end"] = round(end, 3)
         entry["status"] = "pending"
         entry["excerpt"] = entry.get("excerpt") or ""
         entry["transcript_full"] = entry.get("transcript_full") or ""
-        generation._write_plan_entries(video_id, entries)
+        generation._write_plan_entries(video_id, entries,video_pk=video_pk)
         return int(entry.get("plan_index") or 1)
     conn_transcript = get_db_readonly()
     try:
@@ -1698,7 +1698,7 @@ def _sync_quick_plan_entry(video_id: str, *, title: str, start: float, end: floa
             "excerpt": transcript_full,
         }
     ]
-    generation._write_plan_entries(video_id, entries)
+    generation._write_plan_entries(video_id, entries,video_pk=video_pk)
     return 1
 
 
@@ -1713,10 +1713,13 @@ def quick_short_render():
     session = get_session(session_id, user_id=current_user["id"])
     if not session or not session.get("video_pk") or not session.get("video_id"):
         return _json_error("Quick short session not found.", 404)
+    guarded = generation._guard_youtube_clip_mutation(session["video_pk"], 1)
+    if guarded is not None:
+        return guarded
     start = float(data.get("clip_start_seconds") or session.get("clip_start_seconds") or 0.0)
     end = float(data.get("clip_end_seconds") or session.get("clip_end_seconds") or 0.0)
     title = str(data.get("clip_title") or session.get("clip_title") or "First short").strip()[:80] or "First short"
-    plan_index = _sync_quick_plan_entry(session["video_id"], title=title, start=start, end=end)
+    plan_index = _sync_quick_plan_entry(session["video_id"], title=title, start=start, end=end, video_pk=session["video_pk"])
     app_obj = current_app._get_current_object()
     with app_obj.test_request_context(
         f"/video_shorts/generate/{int(session['video_pk'])}/autoclip",
@@ -1820,6 +1823,28 @@ def quick_short_publish():
         "publish_at_local": publish_at_value or None,
         "publish_at_iso": publish_at_iso,
     }
+    if target == "youtube":
+        from app.video_shorts.services.youtube_scheduling import schedule_youtube_upload, YouTubeScheduleLocked
+        entries = generation._load_plan_entries(session["video_id"], video_pk=session["video_pk"])
+        entry = next((item for item in entries if str(item.get("plan_index")) == "1"), {})
+        try:
+            scheduled = schedule_youtube_upload(
+                video_path=clip_filename, title=title, description=description,
+                publish_at=publish_at_iso, user_id=current_user["id"], brand_id=brand_id,
+                video_pk=session["video_pk"], plan_index="1", publish_at_local=publish_at_value or None,
+                async_immediate=True, quick_session_id=session["id"], existing_video_id=entry.get("yt_video_id"),
+            )
+        except YouTubeScheduleLocked as exc:
+            return _json_error(str(exc), 409)
+        generation._update_plan_entry_publish_state(
+            video_pk=session["video_pk"], plan_index="1", filename=clip_filename,
+            publish_status=scheduled["status"], publish_at_local=publish_at_value or None,
+            publish_at_iso=publish_at_iso, title=title, description=description,
+        )
+        session = update_session(session["id"], status=STATUS_DONE if scheduled["status"] == "pending" else STATUS_PUBLISHING,
+            publish_job_id=scheduled.get("job_id"), result={**result, "publish": {**scheduled, "target": target}})
+        return jsonify(ok=True, session=_build_session_payload(session), job_id=scheduled.get("job_id"), cached=False)
+
     job_input_hash = sha256(
         (
             f"quick-publish:{current_user['id']}:{session['id']}:{clip_filename}:{target}:{mode}:{publish_at_iso or ''}"

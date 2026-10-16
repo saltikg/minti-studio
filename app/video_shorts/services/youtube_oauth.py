@@ -4,7 +4,7 @@ import requests
 from typing import Any, Dict, List, Optional, Tuple
 
 from flask import current_app, has_app_context
-from google.auth.exceptions import RefreshError
+from google.auth.exceptions import RefreshError, TransportError
 from google.auth.transport.requests import Request
 from google.oauth2.credentials import Credentials
 from google_auth_oauthlib.flow import Flow
@@ -57,6 +57,11 @@ from app.video_shorts.services.youtube_token_store import (
 )
 
 logger = logging.getLogger(__name__)
+
+
+class YouTubeTransientError(RuntimeError):
+    """Sanitized temporary provider failure, safe to retry using the stored session."""
+
 
 
 def granted_scopes_from_flow(flow) -> List[str]:
@@ -124,6 +129,8 @@ def upload_video_with_refresh_token(
     user_id: Optional[str] = None,
     brand_id: Optional[str] = None,
     tags: Optional[List[str]] = None,
+    resumable_uri: Optional[str] = None,
+    save_resumable_uri=None,
 ):
     youtube = build_authenticated_youtube(refresh_token, user_id=user_id, brand_id=brand_id)
     if not youtube:
@@ -146,7 +153,23 @@ def upload_video_with_refresh_token(
 
     media = MediaFileUpload(video_path, chunksize=-1, resumable=True)
     request = youtube.videos().insert(part="snippet,status", body=body, media_body=media)
-    response = request.execute()
+    if resumable_uri:
+        request.resumable_uri = resumable_uri
+        request._in_error_state = True  # Query the existing session before sending more media.
+    if save_resumable_uri:
+        original_http = request.http
+
+        class PersistSessionHttp:
+            def request(self, uri, method="GET", *args, **kwargs):
+                response, content = original_http.request(uri, method, *args, **kwargs)
+                if uri == request.uri and method == "POST" and response.status == 200 and response.get("location"):
+                    # Commit the session before next_chunk can transmit the media.
+                    save_resumable_uri(response["location"])
+                return response, content
+
+        response = request.execute(http=PersistSessionHttp())
+    else:
+        response = request.execute()
     record_youtube_data_api_call(feature="publish", method="videos.insert")
     return response
 
@@ -215,7 +238,11 @@ def _refresh_credentials(
             )
             mark_refresh_token_invalid(user_id=user_id, brand_id=brand_id)
             return None
+        if getattr(exc, "retryable", False):
+            raise YouTubeTransientError("YouTube token refresh is temporarily unavailable.") from None
         raise RefreshError("YouTube credentials could not be refreshed.") from None
+    except (TransportError, TimeoutError, ConnectionError, OSError):
+        raise YouTubeTransientError("YouTube token refresh is temporarily unavailable.") from None
     except Exception:
         raise RuntimeError("YouTube token refresh failed.") from None
     return creds
@@ -366,33 +393,8 @@ def delete_youtube_video_if_safe(
 
 
 def unschedule_youtube_video_if_safe(*, title: str, description: str, **kwargs) -> Dict[str, Any]:
-    """Fail closed; only a transient delete failure can permit a private update."""
-    result = delete_youtube_video_if_safe(require_live_schedule=True, **kwargs)
-    result["unscheduled"] = bool(result.get("deleted"))
-    if result["unscheduled"] or not result.get("transient_delete_failure"):
-        return result
-    # A lost delete response or elapsed schedule can invalidate the first check.
-    try:
-        statuses = fetch_video_statuses(
-            [kwargs["video_id"]], user_id=kwargs.get("user_id"), brand_id=kwargs.get("brand_id"),
-        )
-        status = statuses.get(kwargs["video_id"]) or {}
-        result.update(privacy_status=status.get("privacyStatus"), publish_at=status.get("publishAt"))
-        publish_at = _parse_youtube_publish_at(status.get("publishAt"))
-        if status.get("privacyStatus") != "private" or not publish_at or publish_at <= datetime.datetime.now(datetime.timezone.utc):
-            result["reason"] = "fallback_live_check_failed"
-            return result
-        update_video_with_refresh_token(
-            video_id=kwargs["video_id"], title=title, description=description,
-            publish_at=None, privacy_status="private",
-            user_id=kwargs.get("user_id"), brand_id=kwargs.get("brand_id"),
-        )
-    except Exception:
-        logger.warning("YouTube unschedule fallback failed; manage the video in YouTube Studio.")
-        result["reason"] = "fallback_failed"
-        return result
-    result.update(unscheduled=True, blocked=False, reason="private_update")
-    return result
+    """Retained compatibility guard; uploaded videos are managed in YouTube Studio."""
+    return {"unscheduled": False, "deleted": False, "blocked": True, "reason": "uploaded_locked"}
 
 
 def fetch_video_statuses(

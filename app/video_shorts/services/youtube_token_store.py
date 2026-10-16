@@ -8,7 +8,7 @@ import logging
 import os
 from typing import Dict, List, Optional, Tuple
 
-from cryptography.fernet import Fernet, InvalidToken
+from cryptography.fernet import Fernet, InvalidToken, MultiFernet
 from flask import g, has_request_context
 
 from app.video_shorts.services.brands import current_brand_id
@@ -22,12 +22,14 @@ class YouTubeTokenStoreError(RuntimeError):
     pass
 
 
-def _cipher() -> Fernet:
+def _cipher():
     key = os.environ.get("YOUTUBE_TOKEN_ENC_KEY", "").strip()
     if not key:
         raise YouTubeTokenStoreError("YOUTUBE_TOKEN_ENC_KEY is required to save or decrypt YouTube tokens.")
     try:
-        return Fernet(key.encode("ascii"))
+        primary = Fernet(key.encode("ascii"))
+        previous = os.environ.get("YOUTUBE_TOKEN_ENC_PREVIOUS_KEY", "").strip()
+        return MultiFernet([primary, Fernet(previous.encode("ascii"))]) if previous else primary
     except (ValueError, UnicodeError):
         raise YouTubeTokenStoreError("YOUTUBE_TOKEN_ENC_KEY must be a valid Fernet key.") from None
 
@@ -588,3 +590,48 @@ def migrate_plaintext_refresh_tokens() -> Dict[str, int]:
     finally:
         conn.close()
 
+
+
+def rotate_refresh_token_encryption() -> Dict[str, int]:
+    """Rotate both tables atomically; verify every row with ONLY the new key.
+
+    Deploy with the new primary and previous fallback before running this.
+    Concurrent writers already use the new primary. No credential values escape.
+    """
+    cipher = _cipher()
+    primary = Fernet(os.environ["YOUTUBE_TOKEN_ENC_KEY"].strip().encode("ascii"))
+    conn = get_db()
+    counts = {TOKEN_TABLE: 0, LEGACY_TOKEN_TABLE: 0}
+    try:
+        if getattr(conn, "backend_name", "") != "postgres":
+            conn.execute("BEGIN TRANSACTION")
+        for table, key in ((TOKEN_TABLE,"user_id"),(LEGACY_TOKEN_TABLE,"id")):
+            lock = " FOR UPDATE" if getattr(conn,"backend_name","") == "postgres" else ""
+            rows = conn.execute(f"SELECT {key},refresh_token FROM {table}{lock}").fetchall()
+            for row_id, stored in rows:
+                if stored.startswith(TOKEN_PREFIX):
+                    encrypted = stored[len(TOKEN_PREFIX):].encode("ascii")
+                    try:
+                        primary.decrypt(encrypted)
+                        continue  # Idempotent on a completed or partially retried rotation.
+                    except InvalidToken:
+                        pass
+                    if not isinstance(cipher, MultiFernet):
+                        raise YouTubeTokenStoreError("Previous key is required for rotation.")
+                    rotated = cipher.rotate(encrypted)
+                else:
+                    rotated = primary.encrypt(_decode_refresh_token(stored).encode("utf-8"))
+                primary.decrypt(rotated)
+                conn.execute(f"UPDATE {table} SET refresh_token=? WHERE {key}=?", [TOKEN_PREFIX+rotated.decode("ascii"),row_id])
+                counts[table] += 1
+            for (stored,) in conn.execute(f"SELECT refresh_token FROM {table}").fetchall():
+                if not stored.startswith(TOKEN_PREFIX):
+                    raise YouTubeTokenStoreError("Plaintext remains after rotation.")
+                primary.decrypt(stored[len(TOKEN_PREFIX):].encode("ascii"))
+        conn.commit()
+        return counts
+    except Exception:
+        conn.rollback()
+        raise YouTubeTokenStoreError("YouTube token rotation failed; transaction rolled back.") from None
+    finally:
+        conn.close()

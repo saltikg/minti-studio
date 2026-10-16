@@ -207,48 +207,33 @@ def test_unsafe_unschedule_never_mutates_youtube(monkeypatch, state):
     with Flask(__name__).app_context():
         result = oauth.unschedule_youtube_video_if_safe(video_id='video', expected_video_ids=['video'], scheduled_publish_at=future_status()['publishAt'], title='Title', description='Description')
     assert not result['unscheduled']
-    assert api.calls == ['list']  # A future local timestamp never overrides live uncertainty.
+    assert api.calls == []  # Compatibility helper is inert for all uploaded clips.
 
 
-@pytest.mark.parametrize('code,should_update', [(400, False), (401, False), (403, False), (404, False), (429, True), (503, True)])
-def test_only_transient_delete_error_allows_rechecked_private_update(monkeypatch, code, should_update):
-    api = VideoAPI([future_status(), future_status()], HttpError(httplib2.Response({'status': code}), b'{}'))
-    monkeypatch.setattr(oauth, 'build_authenticated_youtube', lambda *args, **kwargs: api)
-    monkeypatch.setattr(oauth, 'record_youtube_data_api_call', lambda **kwargs: None)
-    with Flask(__name__).app_context():
-        result = oauth.unschedule_youtube_video_if_safe(video_id='video', expected_video_ids=['video'], title='Title', description='Description')
-    assert result['unscheduled'] is should_update
-    assert api.calls == (['list', 'delete', 'list', 'update'] if should_update else ['list', 'delete'])
+def test_unschedule_compatibility_helper_never_calls_youtube(monkeypatch):
+    monkeypatch.setattr(oauth, "build_authenticated_youtube", lambda *a, **k: pytest.fail("YouTube called"))
+    result = oauth.unschedule_youtube_video_if_safe(video_id="video",title="Title",description="Description")
+    assert result == {"unscheduled": False, "deleted": False, "blocked": True, "reason": "uploaded_locked"}
 
 
-@pytest.mark.parametrize('second_state', [None, {'privacyStatus': 'public'}, {'privacyStatus': 'private'}, {'privacyStatus': 'private', 'publishAt': '2000-01-01T00:00:00Z'}])
-def test_fallback_rechecks_after_delete_response_is_lost(monkeypatch, second_state):
-    api = VideoAPI([future_status(), second_state], TimeoutError('lost response'))
-    monkeypatch.setattr(oauth, 'build_authenticated_youtube', lambda *args, **kwargs: api)
-    monkeypatch.setattr(oauth, 'record_youtube_data_api_call', lambda **kwargs: None)
-    with Flask(__name__).app_context():
-        result = oauth.unschedule_youtube_video_if_safe(video_id='video', expected_video_ids=['video'], title='Title', description='Description')
-    assert not result['unscheduled'] and api.calls == ['list', 'delete', 'list']
-
-
-@pytest.mark.parametrize('privacy,expected_status', [('public', 'published'), (None, 'scheduled')])
-def test_unschedule_route_reconciles_confirmed_state_and_preserves_uncertainty(monkeypatch, privacy, expected_status):
-    app = Flask(__name__)
-    entry = dict(plan_index=1, yt_video_id='video', publish_status='scheduled', publish_at_iso=future_status()['publishAt'])
-    monkeypatch.setattr(generation, '_active_editor_context', lambda: {'brand_id': 'brand'})
-    monkeypatch.setattr(generation, 'get_db_readonly', lambda: SimpleNamespace(close=lambda: None))
-    monkeypatch.setattr(generation, '_fetch_scoped_video_row', lambda *args: ('source', 'Title'))
-    monkeypatch.setattr(generation, '_load_plan_entries', lambda *args, **kwargs: [entry])
-    writes = []
-    monkeypatch.setattr(generation, '_write_plan_entries', lambda *args, **kwargs: writes.append(args))
-    monkeypatch.setattr(generation, 'unschedule_youtube_video_if_safe', lambda **kwargs: {'deleted': False, 'unscheduled': False, 'reason': 'not_private' if privacy else 'list_error', 'privacy_status': privacy})
-    with app.test_request_context('/unschedule', method='POST', data={'platform': 'youtube'}):
-        g.vs_current_user = {'id': 'owner'}
-        response, status = generation.unschedule_clip_posts(1, 1)
-    assert status == 409 and 'YouTube Studio' in response.json['message']
-    assert entry['publish_status'] == expected_status
-    assert ('publish_at_iso' in entry) is (privacy is None)
-    assert entry['yt_video_id'] == 'video' and writes
+def test_key_rotation_both_tables_new_key_only_and_idempotent(token_db, monkeypatch, caplog):
+    import os
+    old = os.environ["YOUTUBE_TOKEN_ENC_KEY"]
+    store.store_refresh_token("v2-token", ["actual-grant"], user_id="owner", brand_id="brand")
+    store.store_refresh_token("legacy-token", ["legacy-grant"])
+    new = Fernet.generate_key().decode()
+    monkeypatch.setenv("YOUTUBE_TOKEN_ENC_PREVIOUS_KEY", old)
+    monkeypatch.setenv("YOUTUBE_TOKEN_ENC_KEY", new)
+    assert store.get_stored_refresh_token("owner", "brand") == "v2-token"
+    assert store.rotate_refresh_token_encryption() == {store.TOKEN_TABLE: 1, store.LEGACY_TOKEN_TABLE: 1}
+    assert store.rotate_refresh_token_encryption() == {store.TOKEN_TABLE: 0, store.LEGACY_TOKEN_TABLE: 0}
+    monkeypatch.delenv("YOUTUBE_TOKEN_ENC_PREVIOUS_KEY")
+    assert store.get_stored_refresh_token("owner", "brand") == "v2-token"
+    with duckdb.connect(token_db) as conn:
+        for table in [store.TOKEN_TABLE,store.LEGACY_TOKEN_TABLE]:
+            for (stored,) in conn.execute(f"SELECT refresh_token FROM {table}").fetchall():
+                assert Fernet(new.encode()).decrypt(stored[7:].encode())
+    assert new not in caplog.text and old not in caplog.text
 
 
 def test_refresh_provider_error_does_not_leak_token(monkeypatch, caplog):

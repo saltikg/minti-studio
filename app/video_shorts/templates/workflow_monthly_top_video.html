@@ -239,7 +239,7 @@
               </button>
               <button
                 type="button"
-                class="btn btn-sm btn-outline-info mt-2 monthly-publish-btn"
+                class="btn btn-sm btn-outline-info mt-2 monthly-publish-btn" {% if item.youtube_video_id %}disabled{% endif %}
                 data-filename="{{ item.filename }}"
                 data-month="{{ item.month }}"
                 data-video-count="{{ item.video_count if item.video_count is not none else '' }}"
@@ -247,6 +247,8 @@
               >
                 Schedule & Publish
               </button>
+              {% if item.youtube_video_id %}<a href="https://studio.youtube.com/video/{{ item.youtube_video_id }}/edit" target="_blank" rel="noopener">Manage in YouTube Studio</a>{% endif %}
+              {% if item.youtube_status_label %}<div class="small text-info">{{ item.youtube_status_label }}</div>{% endif %}
             </div>
           </div>
         {% endfor %}
@@ -541,7 +543,7 @@
             </button>
             <button
               type="button"
-              class="btn btn-sm btn-outline-info mt-2 monthly-publish-btn"
+              class="btn btn-sm btn-outline-info mt-2 monthly-publish-btn" ${item.youtube_video_id ? "disabled" : ""}
               data-filename="${item.filename || ""}"
               data-month="${item.month || ""}"
               data-video-count="${item.video_count ?? ""}"

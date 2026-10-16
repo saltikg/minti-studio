@@ -31,7 +31,8 @@ from app.video_shorts.services.media_utils import (
 from app.video_shorts.services.storage import get_media_storage
 from app.video_shorts.services.tiktok_queue import enqueue_tiktok_clip
 from app.video_shorts.services.video_metrics import SNAPSHOT_TABLE, ensure_snapshot_table
-from app.video_shorts.services.youtube_oauth import has_refresh_token, upload_video_with_refresh_token
+from app.video_shorts.services.youtube_oauth import has_refresh_token
+from app.video_shorts.services.youtube_scheduling import schedule_youtube_upload, YouTubeScheduleLocked, file_schedule_state
 from src.trends.facebook_page_tokens import FacebookTokenStoreError, get_facebook_page_data
 from src.trends.instagram_tokens import InstagramTokenStoreError, get_instagram_credentials
 from src.trends.tiktok_tokens import TikTokTokenStoreError, get_tiktok_data
@@ -160,6 +161,9 @@ def _list_generated_monthly_videos(limit: int = 12) -> List[Dict[str, object]]:
         else:
             # Legacy files without metadata are hidden to avoid cross-brand leakage.
             continue
+        state = file_schedule_state(user_id=(getattr(g,"vs_current_user",None) or {}).get("id"),brand_id=brand_id,filename=path.name)
+        item["youtube_video_id"] = state.get("id")
+        item["youtube_status_label"] = state.get("message") or ""
         rows.append(item)
     return rows
 
@@ -1238,15 +1242,18 @@ def workflow_monthly_top_video_publish():
         if not has_refresh_token(user_id):
             return jsonify({"ok": False, "message": "YouTube account not connected."}), 403
         try:
-            resp = upload_video_with_refresh_token(
+            resp = schedule_youtube_upload(
                 video_path=str(media_path),
                 title=title,
                 description=description,
                 publish_at=yt_publish_at,
                 privacy_status="private",
                 user_id=user_id,
+                kind="monthly",
             )
-            results["youtube"] = {"id": (resp or {}).get("id"), "scheduled_at": yt_publish_at}
+            results["youtube"] = {"id": (resp or {}).get("id"), "scheduled_at": yt_publish_at, "status": resp["status"]}
+        except YouTubeScheduleLocked as exc:
+            return jsonify(success=False, message=str(exc)), 409
         except Exception as exc:
             return jsonify({"ok": False, "message": f"YouTube publish failed: {exc}"}), 500
 

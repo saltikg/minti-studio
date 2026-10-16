@@ -715,6 +715,19 @@
     instagramScheduleWrap?.classList.toggle("qs-hidden", !instagramConnected);
     youtubeCopy.textContent = youtubeConnected ? "Upload this short now or schedule it." : "Connect YouTube when you're ready.";
     instagramCopy.textContent = instagramConnected ? "Queue this short for Instagram now or later." : "Connect Instagram when you're ready.";
+    const uploadedId = publish.youtube_id || publish.id || "";
+    if (youtubeNowBtn) youtubeNowBtn.disabled = Boolean(uploadedId);
+    if (renderSubmit) renderSubmit.disabled = Boolean(uploadedId);
+    youtubeScheduleWrap?.classList.toggle("qs-hidden", !youtubeConnected || Boolean(uploadedId));
+    if (uploadedId) {
+      youtubeCopy.textContent = "Uploaded — manage changes in YouTube Studio.";
+      const studio = document.createElement("a");
+      studio.href = `https://studio.youtube.com/video/${encodeURIComponent(uploadedId)}/edit`;
+      studio.textContent = " Open YouTube Studio";
+      studio.target = "_blank";
+      studio.rel = "noopener";
+      youtubeCopy.appendChild(studio);
+    }
     const publishBusy = ["queued", "processing"].includes(String(publishJob.status || ""));
     if (publishBusy) {
       doneBadge.textContent = "Publishing…";
@@ -726,6 +739,11 @@
       doneBadge.textContent = "Publish failed";
       doneBadge.classList.remove("is-live");
       doneFeedback.textContent = publish.message || "Couldn't publish this short. Please try again.";
+      return;
+    }
+    if (publish.status === "pending") {
+      doneBadge.textContent = "Scheduled in Minti";
+      doneFeedback.textContent = publish.message;
       return;
     }
     if (publish.target) {
