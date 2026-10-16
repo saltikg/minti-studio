@@ -432,17 +432,22 @@ def load_state(video_id, kind="plan", *, video_pk=None, migrate=True):
     if kind.startswith("plan"):
         # Old shared plans may contain another tenant's completed clips. Never
         # expose those entries through the legacy-owner fallback.
-        conn = get_db_readonly()
-        try:
-            foreign = conn.execute(
-                """SELECT clip_filename, output_filename FROM shorts_generated_videos
-                   WHERE source_video_id = ? AND
-                   (user_id IS DISTINCT FROM ? OR brand_id IS DISTINCT FROM ?)""",
-                [video.youtube_id, video.owner_user_id, video.brand_id],
-            ).fetchall()
-            foreign_names = {str(name) for row in foreign for name in row if name}
-        finally:
-            conn.close()
+        cache_key = (video.youtube_id, video.owner_user_id, video.brand_id)
+        request_cache = g.setdefault("_tenant_foreign_plan_names", {}) if has_request_context() else {}
+        foreign_names = request_cache.get(cache_key)
+        if foreign_names is None:
+            conn = get_db_readonly()
+            try:
+                foreign = conn.execute(
+                    """SELECT clip_filename, output_filename FROM shorts_generated_videos
+                       WHERE source_video_id = ? AND
+                       (user_id IS DISTINCT FROM ? OR brand_id IS DISTINCT FROM ?)""",
+                    [video.youtube_id, video.owner_user_id, video.brand_id],
+                ).fetchall()
+                foreign_names = {str(name) for row in foreign for name in row if name}
+            finally:
+                conn.close()
+            request_cache[cache_key] = foreign_names
         for key in ("plan", "clips"):
             if isinstance(data.get(key), list):
                 data[key] = [e for e in data[key] if isinstance(e, dict) and not any(e.get(k) in foreign_names for k in ("clip_filename", "output_filename"))]

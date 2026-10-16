@@ -214,19 +214,20 @@ def ensure_generated_videos_schema(conn) -> None:
                 $$ LANGUAGE plpgsql
                 """
             )
-            conn.execute(
-                f"""
-                DROP TRIGGER IF EXISTS trg_{TABLE_NAME}_updated_at ON {TABLE_NAME}
-                """
-            )
-            conn.execute(
-                f"""
-                CREATE TRIGGER trg_{TABLE_NAME}_updated_at
-                BEFORE UPDATE ON {TABLE_NAME}
-                FOR EACH ROW
-                EXECUTE FUNCTION set_{TABLE_NAME}_updated_at()
-                """
-            )
+            trigger_exists = conn.execute(
+                """SELECT 1 FROM pg_trigger
+                   WHERE tgname = ? AND tgrelid = ?::regclass AND NOT tgisinternal""",
+                [f"trg_{TABLE_NAME}_updated_at", TABLE_NAME],
+            ).fetchone()
+            if not trigger_exists:
+                conn.execute(
+                    f"""
+                    CREATE TRIGGER trg_{TABLE_NAME}_updated_at
+                    BEFORE UPDATE ON {TABLE_NAME}
+                    FOR EACH ROW
+                    EXECUTE FUNCTION set_{TABLE_NAME}_updated_at()
+                    """
+                )
         except Exception:
             pass
     try:

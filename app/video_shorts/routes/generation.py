@@ -1199,8 +1199,11 @@ def _user_image_public_url(user_id: str, filename: str) -> str:
     key = _user_media_storage_key("image", user_id, filename)
     storage = get_media_storage()
     local_path = STATIC_USER_IMAGES_DIR / user_id / Path(filename).name
-    resolved = storage.resolve_local_or_s3(key, fallback_local_paths=[local_path])
-    return resolved.public_url or get_media_storage("local").public_url(key)
+    if local_path.is_file():
+        return get_media_storage("local").public_url(key)
+    # The active DB row is the inventory. Signing a URL is local CPU work;
+    # checking S3 for each image turns editor first paint into dozens of HEADs.
+    return storage.public_url(key)
 
 
 def _humanize_visual_asset_label(raw_label: Any, fallback_name: Any, default_label: str) -> str:
@@ -11440,7 +11443,8 @@ def generate_short(video_pk):
                     "excerpt": entry.get("excerpt") or "",
                 }
             )
-    _refresh_plan_publish_status_from_youtube(video["video_id"], plan_entries)
+    # YouTube reconciliation runs in the background. Page loads must use the
+    # stored publish state and never wait on third-party APIs.
     if is_reauth_required((current_user or {}).get("id")):
         flash(
             "YouTube bağlantısının süresi dolmuş. Lütfen Social Connect üzerinden yeniden bağlayın.",
@@ -11452,7 +11456,9 @@ def generate_short(video_pk):
         if entry.get("publish_status") == "published" and entry.get("yt_video_id")
     ]
     published_video_ids = list(dict.fromkeys(published_video_ids))
-    published_stats_map = fetch_video_stats(published_video_ids)
+    # Stats are refreshed by the analytics/reconciliation jobs. Fetching them
+    # synchronously adds external network latency to every editor page load.
+    published_stats_map = {}
     plan_by_index = {}
     for entry in plan_entries:
         pi = entry.get("plan_index")

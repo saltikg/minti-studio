@@ -38,6 +38,13 @@ def _resolve_python() -> Path:
 
 
 def main() -> int:
+    js_result = subprocess.run(
+        [str(_resolve_python()), str(ROOT / "scripts" / "verify_js.py")],
+        cwd=str(ROOT),
+        text=True,
+    )
+    if js_result.returncode != 0:
+        return js_result.returncode
     python_bin = _resolve_python()
     result = subprocess.run(
         [str(python_bin), "-c", "import wsgi"],

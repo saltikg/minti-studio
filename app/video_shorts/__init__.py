@@ -11,6 +11,13 @@ video_shorts_bp = Blueprint(
 )
 
 
+@video_shorts_bp.teardown_request
+def close_video_shorts_request_connections(error=None):
+    from app.video_shorts.services.db import close_request_db_connections
+
+    close_request_db_connections(error)
+
+
 @video_shorts_bp.app_context_processor
 def inject_video_shorts_db_backend():
     return {"video_shorts_db_backend": (VIDEO_SHORTS_DB_BACKEND or "duckdb")}

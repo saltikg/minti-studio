@@ -3,6 +3,7 @@ import time
 from uuid import uuid4
 
 import duckdb
+from flask import g, has_request_context
 
 try:
     import psycopg
@@ -116,6 +117,26 @@ class PostgresCompatConnection:
         self._conn.close()
 
 
+class _RequestScopedReadonlyConnection:
+    """Keep one autocommit read connection for the lifetime of a request."""
+
+    backend_name = "postgres"
+
+    def __init__(self, connection):
+        self._connection = connection
+
+    def close(self):
+        # Callers historically own their connection. For the request-scoped
+        # read handle, teardown owns the real close instead.
+        return None
+
+    def close_at_request_end(self):
+        self._connection.close()
+
+    def __getattr__(self, name):
+        return getattr(self._connection, name)
+
+
 def _connect_postgres(*, read_only: bool = False):
     if not VIDEO_SHORTS_DATABASE_URL:
         raise RuntimeError("VIDEO_SHORTS_DATABASE_URL environment variable is not set")
@@ -124,11 +145,11 @@ def _connect_postgres(*, read_only: bool = False):
     conn = psycopg.connect(
         VIDEO_SHORTS_DATABASE_URL,
         options="-c search_path=main,public",
-        autocommit=False,
+        # Read helpers do not need a transaction snapshot. Autocommit prevents
+        # interrupted page requests from becoming idle transaction blockers.
+        autocommit=read_only,
         connect_timeout=max(1, int(VIDEO_SHORTS_POSTGRES_CONNECT_TIMEOUT or 3)),
     )
-    if read_only:
-        conn.execute("SET default_transaction_read_only = on")
     return PostgresCompatConnection(conn)
 
 
@@ -152,6 +173,12 @@ def get_db():
 
 def get_db_readonly():
     if _is_postgres_backend():
+        if has_request_context():
+            cached = g.get("_video_shorts_readonly_db")
+            if cached is None:
+                cached = _RequestScopedReadonlyConnection(_connect_postgres(read_only=True))
+                g._video_shorts_readonly_db = cached
+            return cached
         return _connect_postgres(read_only=True)
     if not VIDEO_SHORTS_DB:
         raise RuntimeError("VIDEO_SHORTS_DB environment variable is not set")
@@ -176,6 +203,9 @@ def _schema_management_enabled() -> bool:
 
 def table_columns(conn, table_name: str) -> set:
     if getattr(conn, "backend_name", "") == "postgres":
+        cache = g.setdefault("_video_shorts_table_columns", {}) if has_request_context() else None
+        if cache is not None and table_name in cache:
+            return set(cache[table_name])
         try:
             rows = conn.execute(
                 """
@@ -188,12 +218,24 @@ def table_columns(conn, table_name: str) -> set:
             ).fetchall()
         except Exception:
             return set()
-        return {row[0] for row in rows}
+        columns = {row[0] for row in rows}
+        if cache is not None:
+            cache[table_name] = frozenset(columns)
+        return columns
     try:
         rows = conn.execute(f"PRAGMA table_info('{table_name}')").fetchall()
     except Exception:
         return set()
     return {row[1] for row in rows}
+
+
+def close_request_db_connections(_error=None) -> None:
+    """Release request-scoped database handles, including on exceptions."""
+    if not has_request_context():
+        return
+    connection = g.pop("_video_shorts_readonly_db", None)
+    if connection is not None:
+        connection.close_at_request_end()
 
 
 def ensure_short_share_links_schema(conn) -> None:
