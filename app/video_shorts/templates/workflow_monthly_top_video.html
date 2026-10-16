@@ -299,7 +299,7 @@
                       <input class="form-check-input" type="checkbox" id="youtubeEnableToggle" name="youtube_enabled" {% if youtube_connected %}checked{% endif %} {% if not youtube_connected %}disabled{% endif %}>
                       <label class="form-check-label small" for="youtubeEnableToggle">Enabled</label>
                     </div>
-                    <span class="badge text-white {{ 'bg-success' if youtube_connected else 'bg-secondary' }}" id="youtubeStatusBadge">Now</span>
+                    <span class="badge text-white {{ 'bg-success' if youtube_connected else 'bg-secondary' }}" id="youtubeStatusBadge">Publish now (public)</span>
                   </div>
                 </div>
                 <div class="card-body pt-0">
@@ -698,7 +698,7 @@
       } else if (publishAt) {
         setBadge(youtubeStatusBadge, "Scheduled", "bg-primary");
       } else {
-        setBadge(youtubeStatusBadge, "Now", "bg-success");
+        setBadge(youtubeStatusBadge, "Publish now (public)", "bg-success");
       }
     }
 

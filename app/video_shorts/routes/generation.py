@@ -12491,6 +12491,7 @@ def generate_short(video_pk):
             "regenerate_lock_reason": youtube_scheduling.studio_message(yt_id) if yt_id else "Already published" if any_platform_published else ("Publishing soon — editing is locked." if publishing_soon else ""),
             "edit_locked": bool(yt_id) or any_platform_published or publishing_soon,
             "youtube_pending_label": youtube_scheduling.pending_label(),
+            "youtube_publish_now_eligible": bool(entry.get("youtube_publish_now_eligible")),
             "youtube_schedule_warning": entry.get("schedule_update_warning") or "",
             "edit_locked_soon": publishing_soon,
             "edit_has_pending_posts": any_platform_pending,
@@ -25621,6 +25622,9 @@ def upload_clip_to_youtube():
         return _ajax_fail("Clip does not belong to this plan and tenant.", status=403)
 
     youtube_enabled = (request.form.get("youtube_enabled") or "0").strip().lower() in {"1", "true", "yes", "on"}
+    publish_now = (request.form.get("publish_now") or "").strip().lower() in {"1", "true", "yes", "on"}
+    if publish_now and not youtube_enabled:
+        return _ajax_fail("Publish now requires YouTube to be enabled.")
     schedule_instagram_reel = (request.form.get("schedule_instagram_reel") or "").strip().lower() in {"1", "true", "yes", "on"}
     schedule_instagram_feed = (request.form.get("schedule_instagram_feed") or "").strip().lower() in {"1", "true", "yes", "on"}
     schedule_facebook_reel = (request.form.get("schedule_facebook_reel") or "").strip().lower() in {"1", "true", "yes", "on"}
@@ -25811,12 +25815,20 @@ def upload_clip_to_youtube():
     if youtube_enabled:
         try:
             # Far-future schedules must not download media or contact YouTube.
-            response = youtube_scheduling.schedule_youtube_upload(
+            schedule_callable = (
+                youtube_scheduling.publish_pending_now
+                if publish_now
+                else youtube_scheduling.schedule_youtube_upload
+            )
+            response = schedule_callable(
                 video_path=str(out_path), title=title, description=description,
-                publish_at=publish_at, privacy_status="private",
                 user_id=_active_editor_context()["owner_user_id"], brand_id=brand_id,
                 video_pk=video_pk, plan_index=plan_index_raw,
-                publish_at_local=publish_at_value or None,
+                **({} if publish_now else {
+                    "publish_at": publish_at,
+                    "privacy_status": "private",
+                    "publish_at_local": publish_at_value or None,
+                }),
             )
             youtube_short_id = response.get("id")
             publish_status_key = response["status"]

@@ -17,6 +17,7 @@ def db(monkeypatch, tmp_path):
     path = str(tmp_path / 'schedules.duckdb')
     with duckdb.connect(path) as conn:
         conn.execute(scheduling.SCHEMA_SQL)
+        conn.execute(scheduling.MUTATION_LEASE_SCHEMA_SQL)
         conn.execute('''CREATE TABLE shorts_render_jobs (
             id VARCHAR,user_id VARCHAR,type VARCHAR,status VARCHAR,priority INTEGER,
             payload_json TEXT,attempts INTEGER,max_attempts INTEGER)''')
@@ -92,6 +93,62 @@ def test_success_replayed_job_never_uploads_twice(db, monkeypatch, tmp_path):
         schedule()
 
 
+def test_immediate_upload_is_public_without_publish_at(db, monkeypatch, tmp_path):
+    media = tmp_path / 'clip.mp4'; media.write_bytes(b'fake')
+    calls = []
+    monkeypatch.setattr(oauth, 'upload_video_with_refresh_token', lambda **kw: calls.append(kw) or {'id': 'public-now'})
+    first = schedule(video_path=str(media), publish_at=None, async_immediate=True)
+    scheduling.execute_scheduled_upload(first['schedule_id'], video_path=media)
+    assert len(calls) == 1
+    assert calls[0]['privacy_status'] == 'public'
+    assert calls[0]['publish_at'] is None
+
+
+def test_pending_publish_now_reuses_shared_path_and_rejects_uploaded(db, monkeypatch, tmp_path):
+    media = tmp_path / 'clip.mp4'; media.write_bytes(b'fake')
+    calls = []
+    monkeypatch.setattr(oauth, 'upload_video_with_refresh_token', lambda **kw: calls.append(kw) or {'id': 'public-pending'})
+    schedule(video_path=str(media))
+    immediate = scheduling.publish_pending_now(
+        video_path=str(media), title='title', description='description',
+        user_id='owner', brand_id='brand', video_pk=1, plan_index='2',
+        async_immediate=True,
+    )
+    assert immediate['status'] == 'queued'
+    scheduling.execute_scheduled_upload(immediate['schedule_id'], video_path=media)
+    assert calls[0]['privacy_status'] == 'public' and calls[0]['publish_at'] is None
+    with pytest.raises(scheduling.YouTubeScheduleLocked, match='studio.youtube.com/video/public-pending/edit'):
+        scheduling.publish_pending_now(
+            video_path=str(media), title='title', description='description',
+            user_id='owner', brand_id='brand', video_pk=1, plan_index='2',
+            async_immediate=True,
+        )
+    assert len(calls) == 1
+
+
+@pytest.mark.parametrize(
+    'status,resumable_uri',
+    [('queued', None), ('uploading', None), ('uncertain', 'https://upload.example/session'), ('pending', 'https://upload.example/session')],
+)
+def test_pending_publish_now_refuses_started_upload_states(db, monkeypatch, tmp_path, status, resumable_uri):
+    media = tmp_path / 'clip.mp4'; media.write_bytes(b'fake')
+    calls = []
+    monkeypatch.setattr(oauth, 'upload_video_with_refresh_token', lambda **kw: calls.append(kw) or {'id': 'unexpected'})
+    schedule(video_path=str(media))
+    with duckdb.connect(db) as conn:
+        conn.execute(
+            'UPDATE shorts_youtube_schedules SET status=?,resumable_uri=?',
+            [status, resumable_uri],
+        )
+    with pytest.raises(scheduling.YouTubeScheduleLocked, match='already queued or in progress'):
+        scheduling.publish_pending_now(
+            video_path=str(media), title='title', description='description',
+            user_id='owner', brand_id='brand', video_pk=1, plan_index='2',
+            async_immediate=True,
+        )
+    assert calls == []
+
+
 @pytest.mark.parametrize('hours,status',[(1,'uploaded'),(7,'missed')])
 def test_lateness_boundary_and_notification(db,monkeypatch,tmp_path,hours,status):
     media = tmp_path / 'clip.mp4'; media.write_bytes(b'fake')
@@ -148,6 +205,11 @@ def test_metadata_regenerate_sync_only_pending(db):
     assert (payload['title'],payload['description'],payload['filename'])==('edited','new','new.mp4')
     entries=scheduling.overlay_plan([{'plan_index':2}],user_id='owner',brand_id='brand',video_pk=1)
     assert entries[0]['publish_status']=='pending' and entries[0]['upload_due_at']
+    assert entries[0]['youtube_publish_now_eligible'] is True
+    with duckdb.connect(db) as conn:
+        conn.execute("UPDATE shorts_youtube_schedules SET resumable_uri='https://upload.example/session'")
+    entries=scheduling.overlay_plan([{'plan_index':2}],user_id='owner',brand_id='brand',video_pk=1)
+    assert entries[0]['youtube_publish_now_eligible'] is False
 
 
 def test_shared_upload_persists_session_before_media_and_resumes_without_new_insert(monkeypatch,tmp_path):

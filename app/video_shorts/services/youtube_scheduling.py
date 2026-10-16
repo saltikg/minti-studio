@@ -281,7 +281,10 @@ def schedule_youtube_upload(*, video_path, title, description, publish_at=None,
     publish_dt = utc(publish_at) if publish_at else None
     due = publish_dt - timedelta(minutes=lead_minutes()) if publish_dt else now
     deferred = bool(publish_dt and due > now)
-    payload = dict(title=title, description=description, privacy_status=privacy_status,
+    # Keep timing/privacy semantics identical for every caller: an immediate
+    # upload is public, while a future YouTube schedule is private + publishAt.
+    effective_privacy_status = "private" if publish_dt else "public"
+    payload = dict(title=title, description=description, privacy_status=effective_privacy_status,
                    filename=filename, video_pk=video_pk, plan_index=plan_index,
                    publish_at_local=publish_at_local, kind=kind, ai_video_id=ai_video_id,
                    tags=tags or [], quick_session_id=quick_session_id)
@@ -317,6 +320,72 @@ def schedule_youtube_upload(*, video_path, title, description, publish_at=None,
     if not deferred and not async_immediate:
         result = execute_scheduled_upload(schedule_id, video_path=video_path)
     return result
+
+
+def publish_pending_now(*, video_path, title, description, user_id, brand_id,
+                        video_pk, plan_index, kind="clip", ai_video_id=None,
+                        tags=None, async_immediate=False, quick_session_id=None,
+                        existing_video_id=None, clip_filename=None):
+    """Reset a never-started pending schedule, then use the normal public-now path."""
+    filename = clip_filename or Path(video_path).name
+    key = asset_key(video_pk=video_pk, plan_index=plan_index, filename=filename)
+    now = utc()
+    with connection() as conn:
+        _lock_mutation_key(conn, user_id=user_id, brand_id=brand_id, key=key)
+        active_lease = _active_mutation_lease(
+            conn, user_id=user_id, brand_id=brand_id, key=key, now=now
+        )
+        request_lease_token = current_mutation_lease_token(
+            user_id=user_id, brand_id=brand_id, key=key
+        )
+        if active_lease and active_lease["lease_token"] != request_lease_token:
+            raise YouTubeScheduleLocked("This clip is being edited; publish it when rendering finishes.")
+        row = conn.execute(
+            f"""
+            SELECT id,status,youtube_video_id,resumable_uri
+            FROM {TABLE}
+            WHERE user_id=? AND brand_id=? AND asset_key=?
+            """,
+            [str(user_id), str(brand_id), key],
+        ).fetchone()
+        if not row:
+            raise YouTubeScheduleLocked("Only a pending YouTube schedule can be published now.")
+        if row[2]:
+            raise YouTubeScheduleLocked(studio_message(row[2]))
+        if row[1] != "pending" or row[3]:
+            raise YouTubeScheduleLocked("YouTube upload is already queued or in progress.")
+        changed = conn.execute(
+            f"""
+            UPDATE {TABLE}
+            SET status='cancelled',publish_at=NULL,upload_due_at=?,job_id=NULL,
+                attempts=0,error=NULL,notification=NULL,notified_at=NULL,updated_at=now()
+            WHERE id=? AND status='pending'
+              AND youtube_video_id IS NULL AND resumable_uri IS NULL
+            RETURNING id
+            """,
+            [now, row[0]],
+        ).fetchone()
+        if not changed:
+            raise YouTubeScheduleLocked("YouTube upload is already queued or in progress.")
+    return schedule_youtube_upload(
+        video_path=video_path,
+        title=title,
+        description=description,
+        publish_at=None,
+        privacy_status="public",
+        user_id=user_id,
+        brand_id=brand_id,
+        video_pk=video_pk,
+        plan_index=plan_index,
+        publish_at_local=None,
+        kind=kind,
+        ai_video_id=ai_video_id,
+        tags=tags,
+        async_immediate=async_immediate,
+        quick_session_id=quick_session_id,
+        existing_video_id=existing_video_id,
+        clip_filename=clip_filename,
+    )
 
 
 def cancel_schedule(*, user_id, brand_id, video_pk, plan_index):
@@ -551,6 +620,11 @@ def overlay_plan(entries, *, user_id, brand_id, video_pk):
             entry["publish_at"] = json.loads(row["payload_json"]).get("publish_at_local")
         if row.get("youtube_video_id"):
             entry["yt_video_id"] = row["youtube_video_id"]
+        entry["youtube_publish_now_eligible"] = bool(
+            row["status"] == "pending"
+            and not row.get("youtube_video_id")
+            and not row.get("resumable_uri")
+        )
         if row.get("error"):
             entry["schedule_update_warning"] = row["error"]
     return entries

@@ -6962,7 +6962,7 @@
                   {% if generate_v2 %}
                   {% if row.publish_status == 'pending' %}<div class="small text-info">{{ row.youtube_pending_label }}</div>{% endif %}
                   {% if row.publish_status == 'missed' %}<div class="small text-warning">Missed — more than 6 hours late. Nothing was uploaded.</div>{% endif %}
-                  <form class="clip-rail-edit-form" data-edit-title-time-form data-plan-index="{{ row.plan_index }}" data-edit-url="{{ editor_url('edit_clip_title_time', video_pk=video.id, plan_index=row.plan_index) }}" data-unschedule-url="{{ editor_url('unschedule_clip_posts', video_pk=video.id, plan_index=row.plan_index) }}" data-youtube-id="{{ row.yt_video_id or '' }}" data-readonly="{{ '1' if row.edit_locked else '0' }}" data-initial-start="{{ row.start or 0 }}" data-initial-end="{{ row.end or 0 }}" data-initial-keep-ranges='{{ (row.edit_keep_ranges or [])|tojson }}'>
+                  <form class="clip-rail-edit-form" data-edit-title-time-form data-plan-index="{{ row.plan_index }}" data-edit-url="{{ editor_url('edit_clip_title_time', video_pk=video.id, plan_index=row.plan_index) }}" data-unschedule-url="{{ editor_url('unschedule_clip_posts', video_pk=video.id, plan_index=row.plan_index) }}" data-youtube-id="{{ row.yt_video_id or '' }}" data-youtube-publish-now-eligible="{{ '1' if row.youtube_publish_now_eligible else '0' }}" data-readonly="{{ '1' if row.edit_locked else '0' }}" data-initial-start="{{ row.start or 0 }}" data-initial-end="{{ row.end or 0 }}" data-initial-keep-ranges='{{ (row.edit_keep_ranges or [])|tojson }}'>
                     <div class="clip-rail-edit-grid">
                       <div class="clip-rail-edit-field">
                         <label for="clip-edit-title-{{ row.plan_index }}">Title</label>
@@ -7785,7 +7785,7 @@
                       <input class="form-check-input" type="checkbox" id="youtubeEnableToggle" name="youtube_enabled" {% if youtube_connected %}checked{% else %}disabled{% endif %}>
                       <label class="form-check-label small" for="youtubeEnableToggle">Enabled</label>
                     </div>
-                    <span class="badge text-white bg-success" id="youtubeStatusBadge">Now</span>
+                    <span class="badge text-white bg-success" id="youtubeStatusBadge">Publish now (public)</span>
                   </div>
                 </div>
                 <div class="card-body pt-0">
@@ -12291,6 +12291,55 @@ const postGenerateV2Unschedule = async (form, planIndex = "", platform = "", but
   }
 };
 
+const postGenerateV2PublishNow = async (form, planIndex = "", button = null) => {
+  const row = form?.closest(".clip-rail-row");
+  const railItem = row?.querySelector(".clip-rail-item");
+  const filename = String(railItem?.dataset.filename || "").trim();
+  if (!form || !filename || form.dataset.youtubePublishNowEligible !== "1") {
+    setClipEditError(form, "Only a pending YouTube schedule can be published now.");
+    return false;
+  }
+  const originalText = button?.textContent;
+  if (button) {
+    button.disabled = true;
+    button.textContent = "Publishing...";
+  }
+  setClipEditError(form, "");
+  try {
+    const body = new URLSearchParams();
+    body.set("video_pk", "{{ video.id }}");
+    body.set("plan_index", planIndex || form.dataset.planIndex || "");
+    body.set("filename", filename);
+    body.set("title", form.querySelector("input[name='title']")?.value || railItem?.dataset.title || "");
+    body.set("description", railItem?.dataset.description || "");
+    body.set("youtube_enabled", "1");
+    body.set("publish_now", "1");
+    const response = await fetch("{{ url_for('video_shorts_bp.upload_clip_to_youtube') }}", {
+      method: "POST",
+      credentials: "same-origin",
+      headers: {
+        "X-Requested-With": "XMLHttpRequest",
+        "Content-Type": "application/x-www-form-urlencoded;charset=UTF-8",
+      },
+      body: body.toString(),
+    });
+    const payload = await response.json().catch(() => ({}));
+    if (!response.ok || payload.success === false) {
+      throw new Error(payload.message || "Could not publish this clip now.");
+    }
+    hideGenerateV2PlatformPopover();
+    await refreshClipList(planIndex || form.dataset.planIndex || "", "list");
+    return true;
+  } catch (error) {
+    setClipEditError(form, error?.message || "Could not publish this clip now.");
+    if (button) {
+      button.disabled = false;
+      button.textContent = originalText;
+    }
+    return false;
+  }
+};
+
 const showGenerateV2PlatformPopover = (button, form, planIndex = "") => {
   const popover = document.getElementById("generate-v2-platform-popover");
   if (!popover || !button || !form) {
@@ -12309,7 +12358,10 @@ const showGenerateV2PlatformPopover = (button, form, planIndex = "") => {
     copy = "Uploaded — manage changes in YouTube Studio";
     actions = `<a class="btn btn-sm btn-outline-light" href="https://studio.youtube.com/video/${encodeURIComponent(form.dataset.youtubeId)}/edit" target="_blank" rel="noopener">YouTube Studio</a>`;
   } else if (status === "scheduled" || status === "pending") {
-    actions = `<button type="button" class="btn btn-sm btn-outline-light" data-popover-unschedule="${escapeHtml(platform)}">Unschedule</button>`;
+    const publishNow = platform === "youtube" && form.dataset.youtubePublishNowEligible === "1"
+      ? `<button type="button" class="btn btn-sm btn-primary" data-popover-publish-now>Publish now (public)</button>`
+      : "";
+    actions = `<button type="button" class="btn btn-sm btn-outline-light" data-popover-unschedule="${escapeHtml(platform)}">Unschedule</button>${publishNow}`;
   } else if (status === "published") {
     copy = display ? `${display} · Published` : "Published";
     if (openUrl) {
@@ -12332,6 +12384,9 @@ const showGenerateV2PlatformPopover = (button, form, planIndex = "") => {
   popover.style.top = `${top}px`;
   popover.querySelector("[data-popover-unschedule]")?.addEventListener("click", () => {
     postGenerateV2Unschedule(form, planIndex, platform, popover.querySelector("[data-popover-unschedule]"));
+  });
+  popover.querySelector("[data-popover-publish-now]")?.addEventListener("click", () => {
+    postGenerateV2PublishNow(form, planIndex, popover.querySelector("[data-popover-publish-now]"));
   });
 };
 
@@ -17153,7 +17208,7 @@ const youtubeModalContext = (() => {
       return;
     }
     const scheduled = Boolean(publishInput?.value);
-    youtubeStatusBadge.textContent = scheduled ? "Planned" : "Now";
+    youtubeStatusBadge.textContent = scheduled ? "Planned" : "Publish now (public)";
     youtubeStatusBadge.className = `badge text-white ${scheduled ? "bg-primary" : "bg-success"}`;
   };
   const updateYoutubeHint = () => {

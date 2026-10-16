@@ -352,7 +352,7 @@
                       <input class="form-check-input" type="checkbox" id="aiYoutubeEnableToggle" name="youtube_enabled" {% if youtube_connected %}checked{% endif %} {% if not youtube_connected %}disabled{% endif %}>
                       <label class="form-check-label small" for="aiYoutubeEnableToggle">Enabled</label>
                     </div>
-                    <span class="badge text-white bg-success" id="aiYoutubeStatusBadge">Now</span>
+                    <span class="badge text-white bg-success" id="aiYoutubeStatusBadge">Publish now (public)</span>
                   </div>
                 </div>
                 <div class="card-body pt-0">
@@ -585,7 +585,7 @@
     function updateYoutubeUi() {
       const enabled = !!youtubeEnableToggle?.checked;
       const scheduled = !!youtubePublishInput?.value;
-      youtubeStatusBadge.textContent = !enabled ? 'Off' : (scheduled ? 'Planned' : 'Now');
+      youtubeStatusBadge.textContent = !enabled ? 'Off' : (scheduled ? 'Planned' : 'Publish now (public)');
       youtubeStatusBadge.className = `badge text-white ${!enabled ? 'bg-secondary' : (scheduled ? 'bg-primary' : 'bg-success')}`;
       if (youtubeDisabledHint) youtubeDisabledHint.classList.toggle('d-none', enabled);
     }
