@@ -20,6 +20,8 @@ from app.video_shorts.services.db import get_db, get_db_readonly
 
 logger = logging.getLogger(__name__)
 TABLE = "shorts_youtube_schedules"
+MUTATION_LEASE_TABLE = "shorts_clip_mutation_leases"
+MUTATION_LEASE_MINUTES = 30
 SCHEMA_SQL = """
 CREATE TABLE IF NOT EXISTS shorts_youtube_schedules (
     id VARCHAR PRIMARY KEY,
@@ -39,6 +41,18 @@ CREATE TABLE IF NOT EXISTS shorts_youtube_schedules (
     notified_at TIMESTAMP,
     updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
     UNIQUE(user_id, brand_id, asset_key)
+)
+"""
+MUTATION_LEASE_SCHEMA_SQL = """
+CREATE TABLE IF NOT EXISTS shorts_clip_mutation_leases (
+    user_id VARCHAR NOT NULL,
+    brand_id VARCHAR NOT NULL,
+    asset_key VARCHAR NOT NULL,
+    state VARCHAR NOT NULL,
+    lease_token VARCHAR NOT NULL,
+    lease_until TIMESTAMP NOT NULL,
+    updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    PRIMARY KEY (user_id, brand_id, asset_key)
 )
 """
 
@@ -78,21 +92,134 @@ def asset_key(*, video_pk=None, plan_index=None, filename=None):
 
 @contextmanager
 def connection():
-    existing = getattr(g, "youtube_schedule_connection", None) if has_app_context() else None
-    conn = existing or get_db()
+    conn = get_db()
     try:
-        if existing is None and getattr(conn, "backend_name", "") != "postgres":
+        if getattr(conn, "backend_name", "") != "postgres":
             conn.execute("BEGIN TRANSACTION")
         yield conn
-        if existing is None:
-            conn.commit()
+        conn.commit()
     except Exception:
-        if existing is None:
-            conn.rollback()
+        conn.rollback()
         raise
     finally:
-        if existing is None:
-            conn.close()
+        conn.close()
+
+
+def _mutation_lock_id(user_id, brand_id, key):
+    value = f"{user_id}:{brand_id}:{key}".encode("utf-8")
+    return int.from_bytes(hashlib.sha256(value).digest()[:8], "big", signed=True)
+
+
+def _lock_mutation_key(conn, *, user_id, brand_id, key):
+    """Serialize lease and schedule transitions without a long transaction."""
+    if getattr(conn, "backend_name", "") == "postgres":
+        conn.execute(
+            "SELECT pg_advisory_xact_lock(?)",
+            [_mutation_lock_id(user_id, brand_id, key)],
+        )
+
+
+def current_mutation_lease_token(*, user_id, brand_id, key):
+    if not has_app_context():
+        return None
+    lease = getattr(g, "youtube_clip_mutation_lease", None) or {}
+    if (
+        str(lease.get("user_id") or "") == str(user_id or "")
+        and str(lease.get("brand_id") or "") == str(brand_id or "")
+        and str(lease.get("asset_key") or "") == str(key or "")
+    ):
+        return str(lease.get("lease_token") or "") or None
+    return None
+
+
+def _active_mutation_lease(conn, *, user_id, brand_id, key, now):
+    row = conn.execute(
+        f"""
+        SELECT state, lease_token, lease_until
+        FROM {MUTATION_LEASE_TABLE}
+        WHERE user_id=? AND brand_id=? AND asset_key=?
+        """,
+        [str(user_id), str(brand_id), key],
+    ).fetchone()
+    if not row:
+        return None
+    if utc(row[2]) <= utc(now):
+        conn.execute(
+            f"DELETE FROM {MUTATION_LEASE_TABLE} WHERE user_id=? AND brand_id=? AND asset_key=? AND lease_until<=?",
+            [str(user_id), str(brand_id), key, utc(now)],
+        )
+        return None
+    return {"state": row[0], "lease_token": row[1], "lease_until": row[2]}
+
+
+def acquire_clip_mutation_lease(*, user_id, brand_id, video_pk, plan_index, state="editing"):
+    """Verify the upload lock and persist a bounded lease in one short transaction."""
+    key = asset_key(video_pk=video_pk, plan_index=plan_index)
+    now = utc()
+    lease_until = now + timedelta(minutes=MUTATION_LEASE_MINUTES)
+    existing_token = current_mutation_lease_token(
+        user_id=user_id, brand_id=brand_id, key=key
+    )
+    lease_token = existing_token or str(uuid4())
+    with connection() as conn:
+        _lock_mutation_key(conn, user_id=user_id, brand_id=brand_id, key=key)
+        schedule = conn.execute(
+            f"SELECT status,youtube_video_id,resumable_uri FROM {TABLE} WHERE user_id=? AND brand_id=? AND asset_key=?",
+            [str(user_id), str(brand_id), key],
+        ).fetchone()
+        if schedule and schedule[1]:
+            raise YouTubeScheduleLocked(studio_message(schedule[1]))
+        if schedule and (schedule[0] in {"queued", "uploading", "uncertain"} or schedule[2]):
+            raise YouTubeScheduleLocked(
+                "YouTube upload is in progress; editing is locked. Check YouTube Studio."
+            )
+        active = _active_mutation_lease(
+            conn, user_id=user_id, brand_id=brand_id, key=key, now=now
+        )
+        if active and active["lease_token"] != lease_token:
+            raise YouTubeScheduleLocked("This clip is already being edited. Please try again shortly.")
+        conn.execute(
+            f"""
+            INSERT INTO {MUTATION_LEASE_TABLE}
+                (user_id,brand_id,asset_key,state,lease_token,lease_until,updated_at)
+            VALUES (?,?,?,?,?,?,now())
+            ON CONFLICT (user_id,brand_id,asset_key) DO UPDATE SET
+                state=excluded.state,
+                lease_token=excluded.lease_token,
+                lease_until=excluded.lease_until,
+                updated_at=now()
+            """,
+            [str(user_id), str(brand_id), key, str(state), lease_token, lease_until],
+        )
+    return {
+        "user_id": str(user_id),
+        "brand_id": str(brand_id),
+        "asset_key": key,
+        "state": str(state),
+        "lease_token": lease_token,
+        "lease_until": lease_until,
+    }
+
+
+def release_clip_mutation_lease(lease):
+    """Clear only the caller's lease; stale workers cannot clear a newer lease."""
+    value = lease or {}
+    if not value.get("lease_token"):
+        return False
+    with connection() as conn:
+        key = str(value.get("asset_key") or "")
+        user_id = str(value.get("user_id") or "")
+        brand_id = str(value.get("brand_id") or "")
+        _lock_mutation_key(conn, user_id=user_id, brand_id=brand_id, key=key)
+        row = conn.execute(
+            f"""
+            DELETE FROM {MUTATION_LEASE_TABLE}
+            WHERE user_id=? AND brand_id=? AND asset_key=? AND lease_token=?
+            RETURNING lease_token
+            """,
+            [user_id, brand_id, key, str(value["lease_token"])],
+        ).fetchone()
+        return bool(row)
 
 
 def _row(conn, schedule_id):
@@ -159,6 +286,15 @@ def schedule_youtube_upload(*, video_path, title, description, publish_at=None,
                    publish_at_local=publish_at_local, kind=kind, ai_video_id=ai_video_id,
                    tags=tags or [], quick_session_id=quick_session_id)
     with connection() as conn:
+        _lock_mutation_key(conn, user_id=user_id, brand_id=brand_id, key=key)
+        active_lease = _active_mutation_lease(
+            conn, user_id=user_id, brand_id=brand_id, key=key, now=now
+        )
+        request_lease_token = current_mutation_lease_token(
+            user_id=user_id, brand_id=brand_id, key=key
+        )
+        if active_lease and active_lease["lease_token"] != request_lease_token:
+            raise YouTubeScheduleLocked("This clip is being edited; schedule it when rendering finishes.")
         schedule_id = str(uuid4())
         row = conn.execute(f"""
             INSERT INTO {TABLE} (id,user_id,brand_id,asset_key,payload_json,status,publish_at,upload_due_at)
@@ -179,10 +315,6 @@ def schedule_youtube_upload(*, video_path, title, description, publish_at=None,
             _enqueue(conn, schedule_id, now)
         result = _result(_row(conn, schedule_id))
     if not deferred and not async_immediate:
-        # Release the route's edit lock before the executor opens its connection.
-        held = getattr(g, "youtube_schedule_connection", None) if has_app_context() else None
-        if held is not None:
-            held.commit()
         result = execute_scheduled_upload(schedule_id, video_path=video_path)
     return result
 
@@ -205,7 +337,29 @@ def cancel_schedule(*, user_id, brand_id, video_pk, plan_index):
 def _enqueue(conn, schedule_id, now):
     """Claim and enqueue in ONE transaction; no crash gap between claim and job creation."""
     candidate = _row(conn, schedule_id)
-    candidate_payload = json.loads(candidate["payload_json"]) if candidate else {}
+    if not candidate:
+        return False
+    candidate_payload = json.loads(candidate["payload_json"])
+    _lock_mutation_key(
+        conn,
+        user_id=candidate["user_id"],
+        brand_id=candidate["brand_id"],
+        key=candidate["asset_key"],
+    )
+    active_lease = _active_mutation_lease(
+        conn,
+        user_id=candidate["user_id"],
+        brand_id=candidate["brand_id"],
+        key=candidate["asset_key"],
+        now=now,
+    )
+    request_lease_token = current_mutation_lease_token(
+        user_id=candidate["user_id"],
+        brand_id=candidate["brand_id"],
+        key=candidate["asset_key"],
+    )
+    if active_lease and active_lease["lease_token"] != request_lease_token:
+        return False
     publish_dt = utc(candidate["publish_at"]) if candidate and candidate["publish_at"] else None
     expired = bool(publish_dt and now - publish_dt > timedelta(hours=6))
     if not expired and candidate_payload.get("render_pending"):
@@ -253,9 +407,6 @@ def execute_scheduled_upload(schedule_id, *, video_path=None):
     """
     from app.video_shorts.services.youtube_oauth import upload_video_with_refresh_token, YouTubeTransientError
     from app.video_shorts.routes import generation
-    held = g.pop("youtube_schedule_connection", None) if has_app_context() else None
-    if held is not None:
-        held.commit()
     lock_conn = get_db()
     lock_id = int.from_bytes(hashlib.sha256(schedule_id.encode()).digest()[:8], "big", signed=True)
     locked = False
@@ -337,8 +488,6 @@ def execute_scheduled_upload(schedule_id, *, video_path=None):
             lock_conn.execute("SELECT pg_advisory_unlock(?)", [lock_id])
             lock_conn.commit()
         lock_conn.close()
-        if held is not None:
-            g.youtube_schedule_connection = held
 
 
 def _project_upload(row, payload):

@@ -9657,22 +9657,14 @@ def _activate_admin_operation_editor_context() -> None:
     set_request_admin_operation_scope(scope)
 
 
-def _guard_youtube_clip_mutation(video_pk, plan_index):
-    """Lock the schedule through local edits so the worker cannot claim stale media."""
+def _guard_youtube_clip_mutation(video_pk, plan_index, *, state=None):
+    """Validate upload ownership and acquire a bounded, committed mutation lease."""
     context = _active_editor_context()
-    conn = get_db()
-    g.youtube_schedule_connection = conn
-    g.youtube_schedule_request_id = id(request._get_current_object())
-    lock = " FOR UPDATE" if getattr(conn, "backend_name", "") == "postgres" else ""
-    row = conn.execute(
-        f"SELECT status,youtube_video_id,resumable_uri FROM shorts_youtube_schedules WHERE user_id=? AND brand_id=? AND asset_key=?{lock}",
-        [str(context["owner_user_id"]),str(context["brand_id"]),youtube_scheduling.asset_key(video_pk=video_pk,plan_index=plan_index)],
-    ).fetchone()
-    if row and row[1]:
-        return jsonify(success=False, message=youtube_scheduling.studio_message(row[1])), 409
-    if row and (row[0] in {"queued", "uploading", "uncertain"} or row[2]):
-        return jsonify(success=False, message="YouTube upload is in progress; editing is locked. Check YouTube Studio."), 409
-    source = _fetch_scoped_video_row(conn, int(video_pk), "video_id")
+    conn = get_db_readonly()
+    try:
+        source = _fetch_scoped_video_row(conn, int(video_pk), "video_id")
+    finally:
+        conn.close()
     if not source:
         return jsonify(success=False, message="Video not found."), 404
     entries = _load_plan_entries(source[0], video_pk=video_pk)
@@ -9684,6 +9676,24 @@ def _guard_youtube_clip_mutation(video_pk, plan_index):
         youtube_id = youtube_id or (stored or {}).get("youtube_video_id")
     if youtube_id:
         return jsonify(success=False, message=youtube_scheduling.studio_message(youtube_id), studio_url=f"https://studio.youtube.com/video/{youtube_id}/edit"), 409
+    endpoint = (request.endpoint or "").rsplit(".", 1)[-1]
+    lease_state = state or (
+        "rendering"
+        if endpoint in {"autoclip_video", "regenerate_clip_video", "quick_short_render"}
+        else "editing"
+    )
+    try:
+        lease = youtube_scheduling.acquire_clip_mutation_lease(
+            user_id=context["owner_user_id"],
+            brand_id=context["brand_id"],
+            video_pk=video_pk,
+            plan_index=plan_index,
+            state=lease_state,
+        )
+    except youtube_scheduling.YouTubeScheduleLocked as exc:
+        return jsonify(success=False, message=str(exc)), 409
+    g.youtube_clip_mutation_lease = lease
+    g.youtube_clip_mutation_request_id = id(request._get_current_object())
 
 
 @video_shorts_bp.before_request
@@ -9715,27 +9725,31 @@ def _lock_uploaded_youtube_clip():
         return _guard_youtube_clip_mutation(video_pk,plan_index)
 
 
-@video_shorts_bp.after_request
-def _commit_youtube_schedule_edits(response):
-    if g.get("youtube_schedule_request_id") != id(request._get_current_object()):
-        return response
-    conn = g.pop("youtube_schedule_connection", None)
-    if conn is not None:
+def _release_youtube_clip_mutation_lease():
+    lease = g.pop("youtube_clip_mutation_lease", None)
+    if lease is not None:
         try:
-            conn.rollback() if response.status_code >= 400 else conn.commit()
-        finally:
-            conn.close()
+            youtube_scheduling.release_clip_mutation_lease(lease)
+        except Exception:
+            current_app.logger.exception(
+                "Failed to clear clip mutation lease asset_key=%s",
+                lease.get("asset_key"),
+            )
+
+
+@video_shorts_bp.after_request
+def _finish_youtube_clip_mutation(response):
+    if g.get("youtube_clip_mutation_request_id") != id(request._get_current_object()):
+        return response
+    _release_youtube_clip_mutation_lease()
     return response
 
 
 @video_shorts_bp.teardown_request
 def _release_youtube_schedule_edits(error=None):
-    if g.get("youtube_schedule_request_id") != id(request._get_current_object()):
+    if g.get("youtube_clip_mutation_request_id") != id(request._get_current_object()):
         return
-    conn = g.pop("youtube_schedule_connection", None)
-    if conn is not None:
-        conn.rollback()
-        conn.close()
+    _release_youtube_clip_mutation_lease()
 
 
 @video_shorts_bp.after_request
@@ -29006,6 +29020,9 @@ def autoclip_video(video_pk):
                 )
             except Exception as exc:
                 current_app.logger.warning("Failed to record lead generate event video_pk=%s plan_index=%s: %s", video_pk, plan_index, exc)
+            # The durable queued job now protects this clip. Release the
+            # request lease before a worker can claim it.
+            _release_youtube_clip_mutation_lease()
             return _respond(
                 "Render job queued.",
                 success=True,
@@ -30394,6 +30411,8 @@ def regenerate_clip_video(video_pk: int, plan_index: int):
         plan_entry["regenerate_started_at"] = datetime.utcnow().replace(microsecond=0).isoformat()
         plan_entry.pop("render_error", None)
         _write_plan_entries(source_video_id, plan_entries, video_pk=video_pk)
+    # Avoid racing the worker against the request lease after enqueue.
+    _release_youtube_clip_mutation_lease()
     return jsonify(
         success=True,
         message="Regenerate job queued.",

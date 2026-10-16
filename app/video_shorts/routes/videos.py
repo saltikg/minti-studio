@@ -169,7 +169,7 @@ def _channel_video_scope_params(channel_id: Any, *, include_local_bucket_attachm
     return [channel_id]
 
 
-def _get_or_create_real_youtube_channel(conn, meta, owner_id, brand_id):
+def _enrich_real_youtube_channel_meta(meta):
     enriched_meta = dict(meta or {})
     if not str(enriched_meta.get("channel_description") or "").strip():
         channel_key = str(enriched_meta.get("channel_id") or "").strip()
@@ -182,9 +182,13 @@ def _get_or_create_real_youtube_channel(conn, meta, owner_id, brand_id):
                     enriched_meta["channel_title"] = subscriber_info.get("channel_title")
             except Exception:
                 current_app.logger.exception("Best-effort channel description fetch failed for channel=%s", channel_key)
+    return enriched_meta
+
+
+def _get_or_create_real_youtube_channel(conn, meta, owner_id, brand_id):
     return get_or_create_scoped_youtube_channel(
         conn,
-        meta=enriched_meta,
+        meta=meta,
         owner_user_id=str(owner_id or "").strip(),
         brand_id=str(brand_id or "").strip(),
         notes="Add by URL import",
@@ -3916,6 +3920,10 @@ def add_video_by_url(channel_id):
             flash("This video is already visible in Local uploads.", "info")
             return redirect(url_for("video_shorts_bp.videos_page", channel_id=channel_id))
 
+        # Do not keep a writable transaction open while calling YouTube.
+        conn.close()
+        conn = None
+
         title = canonical_url
         thumbnail_url = None
         resolved_channel_id = None
@@ -3955,6 +3963,10 @@ def add_video_by_url(channel_id):
         if meta:
             title = str(meta.get("title") or "").strip() or title
             thumbnail_url = str(meta.get("thumbnail_url") or "").strip() or thumbnail_url
+            meta = _enrich_real_youtube_channel_meta(meta)
+
+        conn = get_db()
+        if meta:
             try:
                 resolved_channel_id = _get_or_create_real_youtube_channel(
                     conn,
@@ -4046,7 +4058,8 @@ def add_video_by_url(channel_id):
         flash("Video added and visible in Local uploads.", "success")
         return redirect(url_for("video_shorts_bp.videos_page", channel_id=channel_id))
     finally:
-        conn.close()
+        if conn is not None:
+            conn.close()
 
 
 @video_shorts_bp.route("/shorts/overview")

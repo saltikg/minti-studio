@@ -1699,15 +1699,15 @@ def _execute_render_job(app, job: Dict[str, Any]) -> Dict[str, Any]:
             if brand:
                 g.vs_current_brand = brand
             try:
-                guarded = generation._guard_youtube_clip_mutation(video_pk, plan_index)
+                completed = _render_job_completion_from_assets(job)
+                if completed:
+                    return completed
+                guarded = generation._guard_youtube_clip_mutation(
+                    video_pk, plan_index, state="rendering"
+                )
                 result = guarded if guarded is not None else generation.autoclip_video(video_pk)
-                response_status, _ = _normalize_response(result)
-                held = g.pop("youtube_schedule_connection", None)
-                if held is not None:
-                    held.rollback() if response_status >= 400 else held.commit()
-                    held.close()
             finally:
-                generation._release_youtube_schedule_edits()
+                generation._release_youtube_clip_mutation_lease()
             status_code, response_payload = _normalize_response(result)
     if status_code >= 500:
         raise RuntimeError(response_payload.get("message") or "Render job failed.")
@@ -1950,6 +1950,116 @@ def process_next_job(
         return True
 
 
+def _render_job_completion_from_assets(job: Dict[str, Any]) -> Optional[Dict[str, Any]]:
+    """Recover a render only when this exact job wrote both lifecycle and asset rows."""
+    payload = job.get("payload") or {}
+    source_video_id = str(payload.get("source_video_id") or "").strip()
+    brand_id = str(payload.get("brand_id") or "").strip()
+    try:
+        plan_index = int(payload.get("plan_index"))
+    except (TypeError, ValueError):
+        return None
+    if not source_video_id or not brand_id or not job.get("user_id"):
+        return None
+    conn = get_db_readonly()
+    try:
+        rows = conn.execute(
+            """
+            SELECT gv.clip_filename,
+                   gv.output_filename,
+                   gv.raw_plan_entry_json,
+                   gv.generation_status,
+                   a.file_key,
+                   a.size_bytes,
+                   a.status
+            FROM shorts_generated_videos gv
+            LEFT JOIN shorts_storage_assets a
+              ON a.file_key = gv.storage_file_key
+             AND CAST(a.user_id AS VARCHAR) = CAST(gv.user_id AS VARCHAR)
+             AND a.brand_id IS NOT DISTINCT FROM gv.brand_id
+            WHERE CAST(gv.user_id AS VARCHAR) = ?
+              AND gv.brand_id = ?
+              AND CAST(gv.source_video_id AS VARCHAR) = ?
+            ORDER BY gv.updated_at DESC
+            """,
+            [str(job["user_id"]), brand_id, source_video_id],
+        ).fetchall()
+    finally:
+        conn.close()
+    recovered_entry = None
+    clip_filename = ""
+    for row in rows:
+        raw = row[2]
+        if isinstance(raw, str):
+            try:
+                raw = json.loads(raw)
+            except (TypeError, ValueError):
+                raw = {}
+        raw = raw if isinstance(raw, dict) else {}
+        try:
+            raw_plan_index = int(raw.get("plan_index"))
+        except (TypeError, ValueError):
+            continue
+        if raw_plan_index != plan_index or str(raw.get("render_job_id") or "") != str(job.get("id") or ""):
+            continue
+        if str(row[3] or "").strip().lower() not in {"created", "done"}:
+            continue
+        if not row[4] or int(row[5] or 0) <= 0 or str(row[6] or "active").lower() != "active":
+            continue
+        clip_filename = str(row[1] or row[0] or "").strip()
+        if not clip_filename or not generation._short_exists(clip_filename):
+            continue
+        recovered_entry = raw
+        break
+    if not recovered_entry:
+        return None
+
+    entries = generation._load_plan_entries(source_video_id, video_pk=payload.get("video_pk")) or []
+    target = next(
+        (
+            entry
+            for entry in entries
+            if str((entry or {}).get("plan_index") or "") == str(plan_index)
+        ),
+        None,
+    )
+    if target is None:
+        return None
+    target.update(recovered_entry)
+    target["status"] = "created"
+    target["render_job_id"] = str(job.get("id") or "")
+    target.pop("render_error", None)
+    generation._write_plan_entries(
+        source_video_id, entries, video_pk=payload.get("video_pk")
+    )
+    logger.warning(
+        "Recovered completed render from lifecycle asset job_id=%s clip=%s",
+        job.get("id"),
+        clip_filename,
+    )
+    return {
+        "success": True,
+        "message": f"Recovered completed render for plan index {plan_index}.",
+        "plan_index": plan_index,
+        "clip_filename": clip_filename,
+        "status": "created",
+        "recovered_completed_asset": True,
+    }
+
+
+def recover_completed_render_job(job_id: str) -> Optional[Dict[str, Any]]:
+    """Finalize a previously failed job whose exact output was already persisted."""
+    job = get_job(job_id)
+    if not job or job.get("type") != JOB_TYPE_RENDER_SHORT:
+        return None
+    completion = _render_job_completion_from_assets(job)
+    if not completion:
+        return None
+    mark_job_done(job_id, completion)
+    finalize_job_success(job_id)
+    return completion
+
+
 def _render_job_completion_from_plan(job: Dict[str, Any]) -> Optional[Dict[str, Any]]:
     payload = job.get("payload") or {}
     source_video_id = str(payload.get("source_video_id") or "").strip()
@@ -2028,7 +2138,7 @@ def recover_stuck_render_jobs(app, *, stale_seconds: int = 15 * 60) -> Dict[str,
         job = get_job(job_id)
         if not job or str(job.get("status") or "").strip().lower() != "processing":
             continue
-        completion = _render_job_completion_from_plan(job)
+        completion = _render_job_completion_from_assets(job) or _render_job_completion_from_plan(job)
         if completion:
             try:
                 mark_job_done(job_id, completion)
