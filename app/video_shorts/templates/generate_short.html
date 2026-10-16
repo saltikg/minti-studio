@@ -7466,6 +7466,19 @@
                                 <i class="bi bi-youtube"></i>
                                 Schedule
                               </button>
+                              {% if row.youtube_publish_now_eligible %}
+                              <button
+                                type="button"
+                                class="btn btn-primary clip-card-mini-btn publish-pending-youtube-now-btn"
+                                data-filename="{{ row.video_filename }}"
+                                data-plan-index="{{ row.plan_index }}"
+                                data-title="{{ (row.yt_title or row.title or video.title) | e }}"
+                                data-description="{{ (row.yt_description or '') | replace('\\', '\\\\') | replace('\n', '\\n') | replace('\r', '\\r') | e }}"
+                                data-video-pk="{{ video.id }}">
+                                <i class="bi bi-broadcast" aria-hidden="true"></i>
+                                Publish now (public)
+                              </button>
+                              {% endif %}
                               {% if not guest_mode and not (youtube_connected or instagram_connected or facebook_connected) %}
                                 <div class="small text-warning mt-2">
                                   Connect a publishing platform in
@@ -12291,27 +12304,19 @@ const postGenerateV2Unschedule = async (form, planIndex = "", platform = "", but
   }
 };
 
-const postGenerateV2PublishNow = async (form, planIndex = "", button = null) => {
-  const row = form?.closest(".clip-rail-row");
-  const railItem = row?.querySelector(".clip-rail-item");
-  const filename = String(railItem?.dataset.filename || "").trim();
-  if (!form || !filename || form.dataset.youtubePublishNowEligible !== "1") {
-    setClipEditError(form, "Only a pending YouTube schedule can be published now.");
-    return false;
-  }
+const postPendingYoutubeNow = async ({ filename, planIndex, videoPk, title, description, button = null }) => {
   const originalText = button?.textContent;
   if (button) {
     button.disabled = true;
     button.textContent = "Publishing...";
   }
-  setClipEditError(form, "");
   try {
     const body = new URLSearchParams();
-    body.set("video_pk", "{{ video.id }}");
-    body.set("plan_index", planIndex || form.dataset.planIndex || "");
+    body.set("video_pk", videoPk || "{{ video.id }}");
+    body.set("plan_index", planIndex || "");
     body.set("filename", filename);
-    body.set("title", form.querySelector("input[name='title']")?.value || railItem?.dataset.title || "");
-    body.set("description", railItem?.dataset.description || "");
+    body.set("title", title || "");
+    body.set("description", description || "");
     body.set("youtube_enabled", "1");
     body.set("publish_now", "1");
     const response = await fetch("{{ url_for('video_shorts_bp.upload_clip_to_youtube') }}", {
@@ -12327,15 +12332,39 @@ const postGenerateV2PublishNow = async (form, planIndex = "", button = null) => 
     if (!response.ok || payload.success === false) {
       throw new Error(payload.message || "Could not publish this clip now.");
     }
+    return payload;
+  } catch (error) {
+    if (button) {
+      button.disabled = false;
+      button.textContent = originalText;
+    }
+    throw error;
+  }
+};
+
+const postGenerateV2PublishNow = async (form, planIndex = "", button = null) => {
+  const row = form?.closest(".clip-rail-row");
+  const railItem = row?.querySelector(".clip-rail-item");
+  const filename = String(railItem?.dataset.filename || "").trim();
+  if (!form || !filename || form.dataset.youtubePublishNowEligible !== "1") {
+    setClipEditError(form, "Only a pending YouTube schedule can be published now.");
+    return false;
+  }
+  setClipEditError(form, "");
+  try {
+    await postPendingYoutubeNow({
+      filename,
+      planIndex: planIndex || form.dataset.planIndex || "",
+      videoPk: "{{ video.id }}",
+      title: form.querySelector("input[name='title']")?.value || railItem?.dataset.title || "",
+      description: railItem?.dataset.description || "",
+      button,
+    });
     hideGenerateV2PlatformPopover();
     await refreshClipList(planIndex || form.dataset.planIndex || "", "list");
     return true;
   } catch (error) {
     setClipEditError(form, error?.message || "Could not publish this clip now.");
-    if (button) {
-      button.disabled = false;
-      button.textContent = originalText;
-    }
     return false;
   }
 };
@@ -17730,6 +17759,32 @@ const initSendToYoutubeButtons = () => {
 
     return `${tr.join("\n")}\n\n${en.join("\n")}`;
   };
+  document.querySelectorAll(".publish-pending-youtube-now-btn").forEach((btn) => {
+    btn.addEventListener("click", async () => {
+      const feedback = btn.closest(".clip-card")?.querySelector(".clip-card-save-feedback");
+      if (feedback) {
+        feedback.textContent = "Publishing publicly...";
+        feedback.classList.remove("d-none", "text-danger", "text-warning", "text-success");
+      }
+      try {
+        await postPendingYoutubeNow({
+          filename: btn.dataset.filename || "",
+          planIndex: btn.dataset.planIndex || "",
+          videoPk: btn.dataset.videoPk || "{{ video.id }}",
+          title: btn.dataset.title || "",
+          description: ctx.decodeDescriptionValue(btn.dataset.description || ""),
+          button: btn,
+        });
+        window.location.reload();
+      } catch (error) {
+        if (feedback) {
+          feedback.textContent = error?.message || "Could not publish this clip now.";
+          feedback.classList.add("text-danger");
+          feedback.classList.remove("d-none");
+        }
+      }
+    });
+  });
   document.querySelectorAll(".send-to-youtube-btn").forEach((btn) => {
     btn.addEventListener("click", () => {
       if (btn.dataset.ytVideoId) {
