@@ -11475,17 +11475,21 @@ def generate_short(video_pk):
     active_clip_assets: set[str] = set()
     if planned_asset_keys:
         placeholders = ", ".join("?" for _ in planned_asset_keys)
-        asset_rows = conn.execute(
-            f"""
-            SELECT file_key
-              FROM shorts_storage_assets
-             WHERE file_key IN ({placeholders})
-               AND CAST(user_id AS VARCHAR) = ?
-               AND brand_id IS NOT DISTINCT FROM ?
-               AND (status = 'active' OR status IS NULL)
-            """,
-            [*planned_asset_keys, str(editor_owner_user_id), brand_id],
-        ).fetchall()
+        conn_assets = get_db_readonly()
+        try:
+            asset_rows = conn_assets.execute(
+                f"""
+                SELECT file_key
+                  FROM shorts_storage_assets
+                 WHERE file_key IN ({placeholders})
+                   AND CAST(user_id AS VARCHAR) = ?
+                   AND brand_id IS NOT DISTINCT FROM ?
+                   AND (status = 'active' OR status IS NULL)
+                """,
+                [*planned_asset_keys, str(editor_owner_user_id), brand_id],
+            ).fetchall()
+        finally:
+            conn_assets.close()
         active_clip_assets = {
             planned_asset_keys[str(asset_row[0])]
             for asset_row in asset_rows
