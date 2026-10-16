@@ -988,8 +988,10 @@ def _clean_short_editor_default_payload(source: Any) -> Dict[str, Any]:
 
     subtitle_style = str(source.get("subtitle_style") or defaults["subtitle_style"]).strip().lower()
     payload["subtitle_style"] = subtitle_style if subtitle_style in {"plain", "karaoke"} else "plain"
-    caption_anchor = str(source.get("caption_anchor") or defaults["caption_anchor"]).strip().lower()
-    payload["caption_anchor"] = caption_anchor if caption_anchor in {"top", "center", "bottom"} else defaults["caption_anchor"]
+    # Saved defaults created before caption anchors used sub_margin as a
+    # distance from the bottom. Keep that meaning when the anchor is absent.
+    caption_anchor = str(source.get("caption_anchor") or "bottom").strip().lower()
+    payload["caption_anchor"] = caption_anchor if caption_anchor in {"top", "center", "bottom"} else "bottom"
 
     subtitle_preset = str(source.get("subtitle_preset") or defaults["subtitle_preset"]).strip() or DEFAULT_SUBTITLE_PRESET
     payload["subtitle_preset"] = subtitle_preset if subtitle_preset in SUBTITLE_PRESETS else DEFAULT_SUBTITLE_PRESET
