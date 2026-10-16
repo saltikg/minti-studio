@@ -27,6 +27,10 @@ else:
 VIDEO_SHORTS_POSTGRES_CONNECT_TIMEOUT = int(
     os.getenv("VIDEO_SHORTS_POSTGRES_CONNECT_TIMEOUT", "3")
 )
+try:
+    DB_STATEMENT_TIMEOUT_MS = max(0, int(os.getenv("DB_STATEMENT_TIMEOUT_MS", "0") or 0))
+except (TypeError, ValueError):
+    DB_STATEMENT_TIMEOUT_MS = 0
 CAPTION_API_TOKEN = os.getenv("CAPTION_API_TOKEN", "minti_caption_8273f4ac0b")
 MEDIA_BACKEND = (os.getenv("MEDIA_BACKEND", "local") or "local").strip().lower()
 AWS_ACCESS_KEY_ID = (os.getenv("AWS_ACCESS_KEY_ID", "") or "").strip()

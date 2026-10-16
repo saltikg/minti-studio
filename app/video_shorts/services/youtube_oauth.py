@@ -417,9 +417,30 @@ def fetch_video_statuses(
             if not vid:
                 continue
             statuses[vid] = item.get("status", {})
+        # A successful videos.list response omits ids that no longer exist (or
+        # are no longer visible to the authenticated channel). Preserve that
+        # distinction from an API failure, which returns no synthetic states.
+        for video_id in video_ids:
+            clean_video_id = str(video_id or "").strip()
+            if clean_video_id and clean_video_id not in statuses:
+                statuses[clean_video_id] = {"_minti_not_found": True}
     except Exception:
         current_app.logger.exception("Failed to fetch YouTube video statuses")
     return statuses
+
+
+def youtube_reconciliation_state(status: Optional[Dict[str, Any]]) -> str:
+    """Classify a read-only videos.list result for every reconciliation caller."""
+    value = status or {}
+    if value.get("_minti_not_found") is True:
+        return "removed"
+    privacy_status = str(value.get("privacyStatus") or "").strip().lower()
+    upload_status = str(value.get("uploadStatus") or "").strip().lower()
+    if privacy_status in {"public", "unlisted"} and upload_status in {"", "processed"}:
+        return "published"
+    if value:
+        return "pending"
+    return "unknown"
 
 def get_connected_channel_info(
     user_id: Optional[str] = None,

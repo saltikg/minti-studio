@@ -4,7 +4,7 @@ import time
 from uuid import uuid4
 
 import duckdb
-from flask import g, has_request_context
+from flask import g, has_request_context, request
 
 try:
     import psycopg
@@ -37,6 +37,7 @@ from app.video_shorts.config import (
     VIDEO_SHORTS_DATABASE_URL,
     VIDEO_SHORTS_DB_BACKEND,
     VIDEO_SHORTS_POSTGRES_CONNECT_TIMEOUT,
+    DB_STATEMENT_TIMEOUT_MS,
 )
 
 logger = logging.getLogger(__name__)
@@ -120,7 +121,9 @@ class PostgresCompatConnection:
             # Production schema changes belong to deployment migrations. A
             # request must never queue an ACCESS EXCLUSIVE lock behind traffic.
             logger.warning(
-                "Suppressed request-time PostgreSQL DDL: %s",
+                "Suppressed request-time PostgreSQL DDL route=%s endpoint=%s statement=%s",
+                request.path,
+                request.endpoint or "-",
                 " ".join(str(sql).split())[:160],
             )
             self.description = None
@@ -171,9 +174,12 @@ def _connect_postgres(*, read_only: bool = False):
         raise RuntimeError("VIDEO_SHORTS_DATABASE_URL environment variable is not set")
     if psycopg is None:
         raise RuntimeError("psycopg is required for VIDEO_SHORTS_DB_BACKEND=postgres")
+    connection_options = "-c search_path=main,public"
+    if DB_STATEMENT_TIMEOUT_MS > 0:
+        connection_options += f" -c statement_timeout={DB_STATEMENT_TIMEOUT_MS}"
     conn = psycopg.connect(
         VIDEO_SHORTS_DATABASE_URL,
-        options="-c search_path=main,public",
+        options=connection_options,
         # Read helpers do not need a transaction snapshot. Autocommit prevents
         # interrupted page requests from becoming idle transaction blockers.
         autocommit=read_only,

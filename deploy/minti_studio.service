@@ -7,6 +7,7 @@ User=ubuntu
 Group=ubuntu
 WorkingDirectory=/home/ubuntu/apps/minti_studio
 EnvironmentFile=/home/ubuntu/apps/minti_studio/.env
+Environment=DB_STATEMENT_TIMEOUT_MS=30000
 ExecStart=/home/ubuntu/apps/minti_studio/.venv/bin/gunicorn --workers 2 --worker-class gthread --threads 4 --timeout 300 --bind 127.0.0.1:8000 --access-logfile /home/ubuntu/apps/minti_studio/logs/gunicorn-access.log --error-logfile /home/ubuntu/apps/minti_studio/logs/gunicorn-error.log wsgi:app
 Restart=on-failure
 RestartSec=5
