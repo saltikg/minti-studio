@@ -14404,7 +14404,7 @@ const initClipDetailModal = (preferredPlanIndex = null, preferredViewMode = null
 
 </script>
 <script>
-const refreshClipList = async (preferredPlanIndex = null, preferredViewMode = null) => {
+const refreshClipList = async (preferredPlanIndex = null, preferredViewMode = null, options = {}) => {
   const clipPanel = document.getElementById("clip-management-panel");
   if (!clipPanel) {
     return false;
@@ -14417,6 +14417,7 @@ const refreshClipList = async (preferredPlanIndex = null, preferredViewMode = nu
     ? getGenerateV2ClipRefreshSignature(document, activePlanIndex)
     : "";
   const selectedEditorDirty = isGenerateV2 && isGenerateV2ClipEditDirty();
+  const forceReplaceSelected = options.forceReplaceSelected === true;
   if (!isGenerateV2) {
     pauseGenerateV2WorkbenchVideos({ pauseSourcePlayer: true });
     restoreGenerateV2ClipEditForm();
@@ -14455,6 +14456,7 @@ const refreshClipList = async (preferredPlanIndex = null, preferredViewMode = nu
       isGenerateV2 &&
       activePlanIndex &&
       selectedSignatureBefore &&
+      !forceReplaceSelected &&
       (selectedEditorDirty || selectedSignatureBefore === selectedSignatureAfter) &&
       !window.__generateV2EditModeActive
     );
@@ -15117,7 +15119,7 @@ const stopClipJobPolling = (planIndex, { clearStored = false } = {}) => {
 const finalizeClipJobSuccess = async (planIndex, { cached = false } = {}) => {
   stopClipJobPolling(planIndex, { clearStored: true });
   for (let attempt = 0; attempt < clipJobRevealAttempts; attempt += 1) {
-    const refreshed = await refreshClipList(planIndex, "list");
+    const refreshed = await refreshClipList(planIndex, "list", { forceReplaceSelected: true });
     if (refreshed && isCreatedClipRendered(planIndex)) {
       if (cached) {
         injectClipNotice(planIndex, "You've already generated this clip.");
@@ -15287,11 +15289,12 @@ const pollClipJobUntilDone = async (
     initialQueuePosition = null,
     startedAt = Date.now(),
     mode = "",
+    forceRestart = false,
   } = {},
 ) => {
   const key = String(planIndex || "");
   const existing = clipJobPolls.get(key);
-  if (existing && existing.jobId === jobId && !existing.cancelled) {
+  if (existing && existing.jobId === jobId && !existing.cancelled && !forceRestart) {
     return;
   }
   stopClipJobPolling(key);
@@ -15319,43 +15322,44 @@ const pollClipJobUntilDone = async (
       }
     }
 
-    if (attempt > 0) {
-      try {
-        const statusUrl = clipJobStatusUrlTemplate.replace("__JOB_ID__", encodeURIComponent(jobId));
-        const response = await fetch(statusUrl, {
-          credentials: "same-origin",
-          cache: "no-store",
-        });
-        if (!response.ok) {
-          throw new Error(`HTTP ${response.status}`);
+    try {
+      const statusUrl = clipJobStatusUrlTemplate.replace("__JOB_ID__", encodeURIComponent(jobId));
+      const response = await fetch(statusUrl, {
+        credentials: "same-origin",
+        cache: "no-store",
+      });
+      if (!response.ok) {
+        throw new Error(`HTTP ${response.status}`);
+      }
+      const payload = await response.json();
+      if (state.cancelled) {
+        return;
+      }
+      status = normalizeClipJobStatus(payload?.status || status);
+      queuePosition = payload?.queue_position;
+      lastObservedStatus = status;
+      lastObservedQueuePosition = queuePosition;
+      pollErrorCount = 0;
+      if (status === "done") {
+        await finalizeClipJobSuccess(planIndex);
+        return;
+      }
+      if (status === "failed" || status === "cancelled") {
+        handleClipJobFailurePayload(planIndex, payload);
+        return;
+      }
+    } catch (error) {
+      pollErrorCount += 1;
+      if (pollErrorCount >= 5) {
+        const card = getClipCardByPlanIndex(planIndex);
+        if (card) {
+          setClipFeedbackState(card, {
+            message: "Connection is flaky — still checking…",
+            tone: "text-warning",
+            busy: true,
+          });
         }
-        const payload = await response.json();
-        status = normalizeClipJobStatus(payload?.status || status);
-        queuePosition = payload?.queue_position;
-        lastObservedStatus = status;
-        lastObservedQueuePosition = queuePosition;
         pollErrorCount = 0;
-        if (status === "done") {
-          await finalizeClipJobSuccess(planIndex);
-          return;
-        }
-        if (status === "failed" || status === "cancelled") {
-          handleClipJobFailurePayload(planIndex, payload);
-          return;
-        }
-      } catch (error) {
-        pollErrorCount += 1;
-        if (pollErrorCount >= 5) {
-          const card = getClipCardByPlanIndex(planIndex);
-          if (card) {
-            setClipFeedbackState(card, {
-              message: "Connection is flaky — still checking…",
-              tone: "text-warning",
-              busy: true,
-            });
-          }
-          pollErrorCount = 0;
-        }
       }
     }
 
@@ -16683,7 +16687,7 @@ const initGenerateClipForms = () => {
   });
 };
 
-const resumeQueuedClipJobs = () => {
+const resumeQueuedClipJobs = ({ forceRestart = false } = {}) => {
   const storedJobs = getStoredClipJobs();
   document.querySelectorAll(".clip-card").forEach((card) => {
     const planIndexInput = card.querySelector("input[name='plan_index']");
@@ -16705,14 +16709,18 @@ const resumeQueuedClipJobs = () => {
       initialStatus: status,
       startedAt: Number(storedJobs[String(planIndex)]?.startedAt || Date.now()),
       mode: card.querySelector("video") ? "regenerate" : "render",
+      forceRestart,
     });
   });
 };
 
 document.addEventListener("visibilitychange", () => {
   if (!document.hidden) {
-    resumeQueuedClipJobs();
+    resumeQueuedClipJobs({ forceRestart: true });
   }
+});
+window.addEventListener("focus", () => {
+  resumeQueuedClipJobs({ forceRestart: true });
 });
 </script>
 <script>
@@ -18029,6 +18037,7 @@ document.addEventListener("DOMContentLoaded", () => {
   let previewFramePollTimer = null;
   let previewFrameTimeoutTimer = null;
   let previewFrameJobId = "";
+  let previewGrantRefreshAttempts = 0;
   const chooseBtn = document.getElementById("choose-crop-btn");
   const saveStatusEl = modalEl.querySelector("#crop-save-status");
   const staticSelector = modalEl.querySelector(".static-visual-selector");
@@ -19879,6 +19888,13 @@ document.addEventListener("DOMContentLoaded", () => {
         initCroppers();
     })
       .catch((error) => {
+        const isCurrentVideoPreview = activeVisualMode === "video"
+          && url === (modalEl.dataset.videoPreviewUrl || "");
+        if (isCurrentVideoPreview && previewGrantRefreshAttempts < 1) {
+          previewGrantRefreshAttempts += 1;
+          requestPreviewFrame();
+          return;
+        }
         setPreviewFrameRetryState(error.message || "Preview image could not be loaded.");
         if (saveBtn) {
           saveBtn.disabled = false;
@@ -19960,6 +19976,7 @@ document.addEventListener("DOMContentLoaded", () => {
   };
 
   const loadActivePreviewImage = async () => {
+    previewGrantRefreshAttempts = 0;
     const selectedStatic = staticVisualMap.get(activeStaticVisualKey);
     const selectedCreated = createdVisualMap.get(activeStaticVisualKey);
     const videoPreviewUrl = modalEl.dataset.videoPreviewUrl || "";
