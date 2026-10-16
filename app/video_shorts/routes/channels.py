@@ -10,7 +10,7 @@ from flask import current_app, flash, g, jsonify, redirect, render_template, req
 
 from app.video_shorts import video_shorts_bp
 from app.video_shorts.services.auth_protection import RateLimitRule, check_rate_limits
-from app.video_shorts.services.brands import current_brand_id
+from app.video_shorts.services.brands import current_brand_id, ensure_brand_schema
 from app.video_shorts.services.billing import STRIPE_PUBLISHABLE_KEY, stripe_is_configured
 from app.video_shorts.services.db import (
     _ensure_video_crop_schema,
