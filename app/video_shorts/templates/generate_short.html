@@ -19318,6 +19318,7 @@ document.addEventListener("DOMContentLoaded", () => {
     svg.style.inset = "0";
     svg.style.pointerEvents = "none";
     const preset = {{ subtitle_presets|tojson }}[subtitlePresetField?.value] || {};
+    const inheritedTextColor = element.style.color || window.getComputedStyle(element).color || "#FFFFFF";
     const defs = svgNode("defs");
     svg.appendChild(defs);
     const shadow = kind === "title" ? spec.shadow : preset;
@@ -19341,7 +19342,9 @@ document.addEventListener("DOMContentLoaded", () => {
       text.style.fontSynthesis = "none";
       text.style.textTransform = "none";
       text.style.textShadow = "none";
-      text.setAttribute("fill", kind === "caption" && run.active ? (preset.active_color || "currentColor") : "currentColor");
+      let textFill = kind === "caption" && run.active
+        ? (preset.active_color || inheritedTextColor)
+        : inheritedTextColor;
       const stroke = kind === "title" ? spec.outline : (run.active && !spec.active_outline ? 0 : spec.outline);
       text.setAttribute("stroke", stroke ? (preset.outline_color || "#000000") : "none");
       text.setAttribute("stroke-width", 2*(stroke || 0));
@@ -19356,7 +19359,12 @@ document.addEventListener("DOMContentLoaded", () => {
           }
           defs.appendChild(gradient);
         }
-        text.setAttribute("fill", `url(#${gradientId})`);
+        textFill = `url(#${gradientId})`;
+      }
+      text.setAttribute("fill", textFill);
+      text.style.fill = textFill;
+      if (!textFill.startsWith("url(")) {
+        text.style.webkitTextFillColor = textFill;
       }
       text.textContent = run.text;
       svg.appendChild(text);
