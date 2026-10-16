@@ -22680,11 +22680,21 @@ def delete_clip_plan_entry(video_pk, plan_index):
 
     plan_entries = _load_plan_entries(video_id, video_pk=video_pk)
     if not plan_entries:
-        return jsonify(success=False, message="Plan data not found."), 404
+        return jsonify(
+            success=True,
+            missing=True,
+            plan_index=plan_index,
+            message="This clip no longer exists. The clip list has been refreshed.",
+        )
 
     target_entry = _find_plan_entry(plan_entries, plan_index_raw=str(plan_index))
     if not target_entry:
-        return jsonify(success=False, message="Plan entry not found."), 404
+        return jsonify(
+            success=True,
+            missing=True,
+            plan_index=plan_index,
+            message="This clip no longer exists. The clip list has been refreshed.",
+        )
 
     if _plan_entry_youtube_locked(target_entry):
         return jsonify(
@@ -22749,6 +22759,66 @@ def delete_ai_suggestions(video_pk):
     return redirect(url_for("video_shorts_bp.generate_short", video_pk=video_pk))
 
 
+MANUAL_CLIP_DURATION_TOLERANCE_SECONDS = 0.5
+
+
+def _clamp_manual_clip_selection_to_duration(
+    start_time: float,
+    end_time: float,
+    keep_ranges: List[Dict[str, float]],
+    duration: Optional[float],
+    *,
+    tolerance: float = MANUAL_CLIP_DURATION_TOLERANCE_SECONDS,
+) -> Tuple[Optional[Tuple[float, float, List[Dict[str, float]]]], Optional[str]]:
+    """Clamp transcript boundary drift while rejecting materially invalid times."""
+    if duration is None:
+        if start_time < 0:
+            return None, f"Start time must be at least 0 seconds; received {start_time:.3f}s."
+        if end_time < 0:
+            return None, f"End time must be at least 0 seconds; received {end_time:.3f}s."
+        if end_time <= start_time:
+            return None, "End time must be greater than Start."
+        return (start_time, end_time, keep_ranges), None
+
+    safe_duration = max(0.0, float(duration))
+    safe_tolerance = max(0.0, float(tolerance))
+    if start_time < -safe_tolerance:
+        return None, f"Start time must be at least 0 seconds; received {start_time:.3f}s."
+    if end_time > safe_duration + safe_tolerance:
+        return None, (
+            f"Selected end time {end_time:.3f}s exceeds the video duration "
+            f"of {safe_duration:.3f}s."
+        )
+    if start_time > safe_duration + safe_tolerance:
+        return None, (
+            f"Selected start time {start_time:.3f}s exceeds the video duration "
+            f"of {safe_duration:.3f}s."
+        )
+
+    clamped_ranges: List[Dict[str, float]] = []
+    for index, part in enumerate(keep_ranges, start=1):
+        part_start = float(part["start"])
+        part_end = float(part["end"])
+        if part_start < -safe_tolerance or part_end > safe_duration + safe_tolerance:
+            return None, (
+                f"Selected part {index} falls outside the video duration "
+                f"of {safe_duration:.3f}s."
+            )
+        clamped_part = {
+            "start": max(0.0, min(safe_duration, part_start)),
+            "end": max(0.0, min(safe_duration, part_end)),
+        }
+        if clamped_part["end"] <= clamped_part["start"]:
+            return None, f"Selected part {index} has no usable duration after clamping."
+        clamped_ranges.append(clamped_part)
+
+    clamped_start = max(0.0, min(safe_duration, float(start_time)))
+    clamped_end = max(0.0, min(safe_duration, float(end_time)))
+    if clamped_end <= clamped_start:
+        return None, "End time must be greater than Start after applying the video boundaries."
+    return (clamped_start, clamped_end, clamped_ranges), None
+
+
 @video_shorts_bp.route("/generate/<int:video_pk>/add_clip_section", methods=["POST"])
 def add_clip_section(video_pk):
     is_ajax = request.headers.get("X-Requested-With") == "XMLHttpRequest"
@@ -22796,22 +22866,19 @@ def add_clip_section(video_pk):
         return _respond("Start and End are required.", status=400, category="warning")
 
     start_time = _parse_time_input(start_time_raw)
-    if start_time is None or start_time < 0:
+    if start_time is None:
         return _respond(
             "Start format is invalid. Use MM:SS.mmm or seconds.",
             status=400,
             category="warning",
         )
     end_time = _parse_time_input(end_time_raw)
-    if end_time is None or end_time < 0:
+    if end_time is None:
         return _respond(
             "End format is invalid. Use MM:SS.mmm or seconds.",
             status=400,
             category="warning",
         )
-    if end_time <= start_time:
-        return _respond("End time must be greater than Start.", status=400, category="warning")
-
     conn = get_db_readonly()
     row = _fetch_scoped_video_row(conn, video_pk, "video_id, duration_seconds")
     conn.close()
@@ -22824,14 +22891,24 @@ def add_clip_section(video_pk):
         )
     video_id, duration_seconds = row
     duration = _to_float(duration_seconds) if duration_seconds is not None else None
-    if duration is not None:
-        if start_time > duration:
-            return _respond("Start time exceeds video duration.", status=400, category="warning")
-        if end_time > duration:
-            return _respond("End time exceeds video duration.", status=400, category="warning")
-        for part in requested_keep_ranges:
-            if part["start"] < 0 or part["end"] > duration:
-                return _respond("Selected parts exceed video duration.", status=400, category="warning")
+    clamped_selection, boundary_error = _clamp_manual_clip_selection_to_duration(
+        start_time,
+        end_time,
+        requested_keep_ranges,
+        duration,
+    )
+    if boundary_error or not clamped_selection:
+        return _respond(
+            boundary_error or "The selected clip times are invalid.",
+            status=400,
+            category="warning",
+            extras={
+                "requested_start": start_time,
+                "requested_end": end_time,
+                "video_duration": duration,
+            },
+        )
+    start_time, end_time, requested_keep_ranges = clamped_selection
     if requested_keep_ranges:
         total_keep_duration = _edit_keep_ranges_duration(requested_keep_ranges) or 0.0
         if total_keep_duration < 5.0:

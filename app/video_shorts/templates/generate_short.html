@@ -9424,7 +9424,9 @@ document.addEventListener("DOMContentLoaded", () => {
       });
       const payload = await response.json().catch(() => ({}));
       if (!response.ok || !payload.success) {
-        throw new Error(payload.message || "Could not create clip.");
+        const message = payload.message || "Could not create clip.";
+        window.__trsClipSelectorController?.showCreateError?.(message);
+        throw new Error(message);
       }
       if (typeof refreshClipList === "function") {
         const ok = await refreshClipList(payload.plan_index || "", "list");
@@ -10248,6 +10250,7 @@ document.addEventListener("DOMContentLoaded", () => {
       selectionStart: null,
       selectionEnd: null,
       creating: false,
+      createError: "",
       anchorIndex: null,
       lastTranscriptInteractionAt: 0,
       coachmarkDismissedSession: false,
@@ -10646,6 +10649,7 @@ document.addEventListener("DOMContentLoaded", () => {
         if (event.target.closest("button, textarea, input, form, a, label")) {
           return;
         }
+        state.createError = "";
         if (state.anchorIndex === null) {
           state.anchorIndex = segment.index;
           state.selectionStart = segment.index;
@@ -10793,8 +10797,13 @@ document.addEventListener("DOMContentLoaded", () => {
     const renderSelectionSummary = () => {
       const range = getSelectedRange();
       selectionSummary.classList.toggle("is-empty", !range);
+      selectionSummary.classList.toggle("text-danger", Boolean(state.createError));
       clearSelectionBtn.disabled = !range;
       createClipBtn.disabled = !range || state.creating;
+      if (state.createError) {
+        selectionSummary.textContent = state.createError;
+        return;
+      }
       if (!range) {
         selectionSummary.textContent = "No selection.";
         return;
@@ -10893,6 +10902,7 @@ document.addEventListener("DOMContentLoaded", () => {
       state.anchorIndex = null;
       state.selectionStart = null;
       state.selectionEnd = null;
+      state.createError = "";
       renderSelection();
     });
     coachmarkCloseBtn?.addEventListener("click", () => {
@@ -10908,6 +10918,7 @@ document.addEventListener("DOMContentLoaded", () => {
         return;
       }
       state.creating = true;
+      state.createError = "";
       renderSelectionSummary();
       try {
         await onCreateClip({
@@ -10917,7 +10928,7 @@ document.addEventListener("DOMContentLoaded", () => {
           endSeconds: range.end.end,
         });
       } catch (error) {
-        alert(error?.message || "Could not create clip.");
+        state.createError = error?.message || "Could not create clip.";
       } finally {
         state.creating = false;
         renderSelectionSummary();
@@ -10937,9 +10948,14 @@ document.addEventListener("DOMContentLoaded", () => {
         state.anchorIndex = null;
         state.selectionStart = null;
         state.selectionEnd = null;
+        state.createError = "";
         state.coachmarkStepOverride = null;
         state.coachmarkTargetPlanIndex = null;
         renderSelection();
+      },
+      showCreateError: (message) => {
+        state.createError = String(message || "Could not create clip.");
+        renderSelectionSummary();
       },
       showPublishCoachmark: (planIndex = "") => {
         clearCoachmarkModalTimer();
@@ -16455,10 +16471,13 @@ const initClipDeleteButtons = () => {
         if (!response.ok || payload.success === false) {
           throw new Error(payload.message || "Clip could not be deleted.");
         }
-        const row = button.closest(".clip-rail-row");
-        row?.remove();
-        const card = getClipCardByPlanIndex(planIndex);
-        card?.remove();
+        const refreshed = await refreshClipList("", "list");
+        if (!refreshed) {
+          const row = button.closest(".clip-rail-row");
+          row?.remove();
+          const card = getClipCardByPlanIndex(planIndex);
+          card?.remove();
+        }
         if (getGenerateV2Root() && String(document.getElementById("clip-management-panel")?.dataset.activePlanIndex || "") === planIndex) {
           restoreGenerateV2ClipEditForm();
           selectGenerateV2Clip(getGenerateV2FallbackPlanIndex());
@@ -20218,7 +20237,7 @@ document.addEventListener("DOMContentLoaded", () => {
     origPreviewFrame?.classList.remove("is-dragging");
     dragState = null;
     if (completedDragState && !completedDragState.moved) {
-      focusCropModalTabForPreviewKind(completedDragState.kind);
+      window.focusCropModalTabForPreviewKind?.(completedDragState.kind);
     }
   };
 
@@ -22432,7 +22451,7 @@ document.addEventListener("DOMContentLoaded", function () {
     }, 80);
   };
   cropAreaModalEl?.addEventListener("shown.bs.modal", focusGenerateV2DesignShortcut);
-  function focusCropModalTabForPreviewKind(kind) {
+  window.focusCropModalTabForPreviewKind = (kind) => {
     const normalizedKind = String(kind || "").trim().toLowerCase();
     let targetName = "";
     if (normalizedKind === "title" || normalizedKind === "date") {
@@ -22449,7 +22468,7 @@ document.addEventListener("DOMContentLoaded", function () {
     if (targetTab) {
       setActiveCropModalTab(targetTab);
     }
-  }
+  };
   cropModalTabs.forEach((tab) => {
     tab.addEventListener("click", () => {
       setActiveCropModalTab(tab);
