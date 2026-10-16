@@ -11,3 +11,12 @@ CREATE TABLE IF NOT EXISTS main.shorts_clip_mutation_leases (
 
 CREATE INDEX IF NOT EXISTS idx_shorts_clip_mutation_leases_until
     ON main.shorts_clip_mutation_leases (lease_until);
+
+DO $$
+BEGIN
+    IF EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'minti_user') THEN
+        GRANT SELECT, INSERT, UPDATE, DELETE
+            ON TABLE main.shorts_clip_mutation_leases TO minti_user;
+    END IF;
+END
+$$;
