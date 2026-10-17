@@ -27,7 +27,9 @@ LEAD_PIPELINE_ALLOWED_TRANSITIONS = {
     "downloading": {"downloaded", "planning"},
     "downloaded": {"planning", "planned"},
     "planning": {"planned"},
-    "planned": {"generating"},
+    # A recovered legacy lead may already have all selected clips rendered.
+    # In that case the approval gate can safely skip a redundant render pass.
+    "planned": {"generating", "awaiting_approval"},
     "generating": {"awaiting_approval"},
     "awaiting_approval": {"approved"},
     "approved": {"scheduling", "scheduled"},

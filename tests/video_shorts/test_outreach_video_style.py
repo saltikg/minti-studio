@@ -9,6 +9,7 @@ from app.video_shorts.services.autopilot_leads import (
     _bold_pop_short_editor_defaults,
     _bold_pop_video_style_values,
 )
+from app.video_shorts.services.lead_pipeline import is_valid_lead_pipeline_transition
 
 
 def test_outreach_video_style_is_fixed_and_isolated_from_product_defaults():
@@ -172,3 +173,7 @@ def test_outreach_clip_selection_recovers_existing_completed_clips_without_score
 
     assert [entry["plan_index"] for entry in selected] == [3, 2, 1]
     assert all(entry["selected_for_generation_reason"] == "existing_completed_fallback" for entry in selected)
+
+
+def test_recovered_completed_plan_can_skip_redundant_generation():
+    assert is_valid_lead_pipeline_transition("planned", "awaiting_approval")
