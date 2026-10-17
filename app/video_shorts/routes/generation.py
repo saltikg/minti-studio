@@ -1665,8 +1665,32 @@ def _ensure_shared_short_poster(
                 if output_path.exists() and output_path.stat().st_size > 0:
                     break
             except Exception:
-                if attempt_index + 1 >= len(seek_attempts):
-                    raise
+                continue
+        if not output_path.exists() or output_path.stat().st_size <= 0:
+            run_media_subprocess(
+                [
+                    ffmpeg_bin,
+                    "-y",
+                    "-f",
+                    "lavfi",
+                    "-i",
+                    "color=c=#172033:s=360x640:d=0.1",
+                    "-frames:v",
+                    "1",
+                    "-threads",
+                    "1",
+                    "-q:v",
+                    "3",
+                    str(output_path),
+                ],
+                timeout=30,
+                operation="short_poster_placeholder",
+                context=f"clip_filename={safe_name}",
+                output_paths=[output_path],
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+                text=True,
+            )
         if output_path.exists() and output_path.stat().st_size > 0:
             poster_size = output_path.stat().st_size
             put_file_for_owner(output_path, poster_key, owner_user_id=owner_user_id)
