@@ -302,8 +302,7 @@ def _visible_short_rows(conn, user_id, brand_id, *, limit: int, offset: int = 0)
             source_video.id,
             render_asset.file_key,
             render_asset.file_path,
-            NULLIF(trim(gv.raw_plan_entry_json->>'poster_filename'), '') AS poster_filename,
-            poster_asset.file_path AS poster_file_path
+            NULLIF(trim(gv.raw_plan_entry_json->>'poster_filename'), '') AS poster_filename
         FROM shorts_generated_videos gv
         JOIN shorts_storage_assets render_asset
           ON render_asset.file_key = gv.storage_file_key
@@ -311,12 +310,6 @@ def _visible_short_rows(conn, user_id, brand_id, *, limit: int, offset: int = 0)
          AND render_asset.brand_id IS NOT DISTINCT FROM gv.brand_id
          AND lower(coalesce(render_asset.status, 'active')) = 'active'
          AND render_asset.size_bytes > 0
-        LEFT JOIN shorts_storage_assets poster_asset
-          ON poster_asset.file_key = 'shorts/posters/' || NULLIF(trim(gv.raw_plan_entry_json->>'poster_filename'), '')
-         AND CAST(poster_asset.user_id AS VARCHAR) = CAST(gv.user_id AS VARCHAR)
-         AND poster_asset.brand_id IS NOT DISTINCT FROM gv.brand_id
-         AND lower(coalesce(poster_asset.status, 'active')) = 'active'
-         AND poster_asset.size_bytes > 0
         LEFT JOIN youtube_videos published_video
           ON published_video.video_id = gv.youtube_video_id
          AND published_video.owner_user_id = gv.user_id
@@ -411,6 +404,24 @@ def _load_recent_short_cards(conn, user_id: str, brand_id: str | None, user_tz: 
         limit=safe_limit + 1,
         offset=safe_offset,
     )
+    poster_names = {str(row[13] or "").strip() for row in rows if row[13]}
+    stored_posters = set()
+    if poster_names:
+        poster_keys = [tenant_media.poster_key(name) for name in sorted(poster_names)]
+        placeholders = ", ".join("?" for _ in poster_keys)
+        poster_rows = conn.execute(
+            f"""
+            SELECT file_key
+            FROM shorts_storage_assets
+            WHERE CAST(user_id AS VARCHAR) = ?
+              AND brand_id IS NOT DISTINCT FROM ?
+              AND lower(coalesce(status, 'active')) = 'active'
+              AND size_bytes > 0
+              AND file_key IN ({placeholders})
+            """,
+            [str(user_id), brand_id, *poster_keys],
+        ).fetchall()
+        stored_posters = {str(row[0]) for row in poster_rows}
     has_more = len(rows) > safe_limit
     cards = []
     for row in rows[:safe_limit]:
@@ -432,7 +443,9 @@ def _load_recent_short_cards(conn, user_id: str, brand_id: str | None, user_tz: 
 
         metric_values = [row[7], row[8], row[9]]
         has_real_metrics = is_published and bool(youtube_video_id) and any(value is not None for value in metric_values)
-        poster_filename = str(row[13] or "").strip() if row[14] else ""
+        poster_filename = str(row[13] or "").strip()
+        if not poster_filename or tenant_media.poster_key(poster_filename) not in stored_posters:
+            poster_filename = ""
         video_url, poster_url = _short_card_media_urls(
             clip_filename,
             str(user_id),
