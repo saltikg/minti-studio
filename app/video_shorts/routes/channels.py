@@ -288,6 +288,14 @@ def _visible_short_rows(conn, user_id, brand_id):
         return cache[scope]
     rows = conn.execute(
         """
+        WITH scoped_generated AS MATERIALIZED (
+            SELECT *
+            FROM shorts_generated_videos
+            WHERE user_id = ?
+              AND brand_id IS NOT DISTINCT FROM ?
+              AND NULLIF(trim(coalesce(clip_filename, '')), '') IS NOT NULL
+              AND NULLIF(trim(coalesce(storage_file_key, '')), '') IS NOT NULL
+        )
         SELECT
             gv.clip_filename,
             gv.generated_title,
@@ -302,7 +310,7 @@ def _visible_short_rows(conn, user_id, brand_id):
             source_video.id,
             render_asset.file_key,
             render_asset.file_path
-        FROM shorts_generated_videos gv
+        FROM scoped_generated gv
         JOIN shorts_storage_assets render_asset
           ON render_asset.file_key = gv.storage_file_key
          AND CAST(render_asset.user_id AS VARCHAR) = CAST(gv.user_id AS VARCHAR)
@@ -317,10 +325,6 @@ def _visible_short_rows(conn, user_id, brand_id):
           ON source_video.video_id = gv.source_video_id
          AND source_video.owner_user_id = gv.user_id
          AND source_video.brand_id = gv.brand_id
-        WHERE gv.user_id = ?
-          AND gv.brand_id IS NOT DISTINCT FROM ?
-          AND NULLIF(trim(coalesce(gv.clip_filename, '')), '') IS NOT NULL
-          AND NULLIF(trim(coalesce(gv.storage_file_key, '')), '') IS NOT NULL
         ORDER BY gv.created_at DESC
         """,
         [user_id, brand_id],
