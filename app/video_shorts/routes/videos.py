@@ -2749,6 +2749,10 @@ def _collect_short_broadcast_entries(
     entries: List[Dict[str, Any]] = []
     plan_suffix = "_plan.json"
     effective_owner_user_id = _effective_non_admin_owner_user_id(owner_user_id)
+    cache_key = (str(effective_owner_user_id or ""), str(brand_id or ""))
+    request_cache = getattr(g, "vs_short_broadcast_entries", {})
+    if cache_key in request_cache:
+        return [dict(item) for item in request_cache[cache_key]]
     ai_items = list_ai_broadcast_entries(
         brand_id=brand_id,
         user_id=effective_owner_user_id,
@@ -2794,6 +2798,8 @@ def _collect_short_broadcast_entries(
                     "description": item.get("description"),
                 }
             )
+        request_cache[cache_key] = tuple(dict(item) for item in entries)
+        g.vs_short_broadcast_entries = request_cache
         return entries
     plan_paths = list(tenant_media.iter_plans(owner_user_id=effective_owner_user_id, brand_id=brand_id))
     video_ids = [video.youtube_id for video, path in plan_paths]
@@ -3006,6 +3012,8 @@ def _collect_short_broadcast_entries(
                 "description": item.get("description"),
             }
         )
+    request_cache[cache_key] = tuple(dict(item) for item in entries)
+    g.vs_short_broadcast_entries = request_cache
     return entries
 
 
@@ -4097,10 +4105,6 @@ def shorts_overview():
     channel_rows: List[Any] = []
     channel_map: Dict[Any, str] = {}
     video_map: Dict[str, Dict[str, Any]] = {}
-    schema_conn = get_db()
-    ensure_brand_schema(schema_conn)
-    ensure_channel_owner_schema(schema_conn)
-    schema_conn.close()
     conn = get_db_readonly()
     try:
         channel_sql = """

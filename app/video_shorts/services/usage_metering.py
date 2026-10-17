@@ -721,11 +721,14 @@ def finalize_export(user_id: str) -> Dict[str, Any]:
 
 
 def get_usage_snapshot(user_id: str) -> Dict[str, Any]:
-    conn = get_db()
+    return get_usage_snapshot_readonly(user_id)
+
+
+def get_usage_snapshot_readonly(user_id: str) -> Dict[str, Any]:
+    """Build the template snapshot without schema DDL or request-time backfills."""
+    conn = get_db_readonly()
     period_start = _month_start()
     try:
-        ensure_usage_metering_schema(conn)
-        _ensure_usage_row(conn, user_id, period_start)
         usage = _fetch_plan_and_usage(conn, user_id, period_start)
         usage_history = _fetch_usage_history(conn, user_id, period_start)
         for item in usage_history:
@@ -733,15 +736,11 @@ def get_usage_snapshot(user_id: str) -> Dict[str, Any]:
                 item_period_start = date.fromisoformat(str(item["period_start"]))
             except Exception:
                 item_period_start = period_start
-            item_events = _fetch_transcription_events(conn, user_id, item_period_start)
-            if not item_events:
-                item_events = _backfill_transcription_events(conn, user_id, item_period_start)
-            item["transcription_events"] = item_events
+            item["transcription_events"] = _fetch_transcription_events(
+                conn, user_id, item_period_start
+            )
         current_events = _fetch_transcription_events(conn, user_id, period_start)
-        if not current_events:
-            current_events = _backfill_transcription_events(conn, user_id, period_start)
         storage = _storage_snapshot(conn, user_id)
-        conn.commit()
     finally:
         conn.close()
 
@@ -752,10 +751,7 @@ def get_usage_snapshot(user_id: str) -> Dict[str, Any]:
             "name": usage["plan_name"],
             "price_monthly": usage["price_monthly"],
         },
-        "period": {
-            "start": period_start.isoformat(),
-            "reset_at": reset_at.isoformat(),
-        },
+        "period": {"start": period_start.isoformat(), "reset_at": reset_at.isoformat()},
         "storage": {
             "used_bytes": storage["used_bytes"],
             "quota_bytes": storage["quota_bytes"],

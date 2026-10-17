@@ -1,171 +1,163 @@
 #!/usr/bin/env python3
+"""Sequentially create posters for lifecycle rows whose DB asset is missing."""
 from __future__ import annotations
 
 import argparse
-import os
 import sys
 from pathlib import Path
 from typing import Any
 
 from dotenv import load_dotenv
 
-
 ROOT = Path(__file__).resolve().parents[1]
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
-
 load_dotenv(ROOT / ".env")
 
 from app import create_app
 from app.video_shorts.routes import generation
-from app.video_shorts.services.db import get_db_readonly, table_columns
-from app.video_shorts.services.storage import get_media_storage
+from app.video_shorts.services import tenant_media
+from app.video_shorts.services.db import get_db, get_db_readonly
 
 
 def _fetch_candidates(video_pk: int | None = None, user_id: str = "") -> list[dict[str, Any]]:
     conn = get_db_readonly()
     try:
-        generated_cols = table_columns(conn, "shorts_generated_videos")
-        if not generated_cols:
-            return []
-        fields = [
-            "gv.source_video_id",
-            "gv.clip_filename",
-            "gv.generation_status" if "generation_status" in generated_cols else "NULL AS generation_status",
-            "yv.id AS video_pk",
-            "CAST(yv.owner_user_id AS VARCHAR) AS owner_user_id",
-        ]
-        sql = f"""
-            SELECT {", ".join(fields)}
+        sql = """
+            SELECT gv.id, gv.source_video_id, gv.clip_filename, yv.id,
+                   CAST(gv.user_id AS VARCHAR), gv.brand_id
             FROM shorts_generated_videos gv
             JOIN youtube_videos yv
               ON CAST(yv.video_id AS VARCHAR) = CAST(gv.source_video_id AS VARCHAR)
+             AND CAST(yv.owner_user_id AS VARCHAR) = CAST(gv.user_id AS VARCHAR)
+             AND yv.brand_id IS NOT DISTINCT FROM gv.brand_id
+            JOIN shorts_storage_assets clip_asset
+              ON clip_asset.file_key = gv.storage_file_key
+             AND CAST(clip_asset.user_id AS VARCHAR) = CAST(gv.user_id AS VARCHAR)
+             AND clip_asset.brand_id IS NOT DISTINCT FROM gv.brand_id
+             AND lower(coalesce(clip_asset.status, 'active')) = 'active'
+             AND clip_asset.size_bytes > 0
+            LEFT JOIN shorts_storage_assets poster_asset
+              ON poster_asset.file_key = 'shorts/posters/' ||
+                   NULLIF(trim(gv.raw_plan_entry_json->>'poster_filename'), '')
+             AND CAST(poster_asset.user_id AS VARCHAR) = CAST(gv.user_id AS VARCHAR)
+             AND poster_asset.brand_id IS NOT DISTINCT FROM gv.brand_id
+             AND lower(coalesce(poster_asset.status, 'active')) = 'active'
+             AND poster_asset.size_bytes > 0
             WHERE NULLIF(trim(coalesce(gv.clip_filename, '')), '') IS NOT NULL
+              AND lower(coalesce(gv.generation_status, 'created')) NOT IN
+                  ('pending', 'queued', 'processing', 'rendering', 'failed')
+              AND poster_asset.file_key IS NULL
         """
         params: list[Any] = []
         if video_pk:
             sql += " AND yv.id = ?"
             params.append(video_pk)
         if user_id:
-            sql += " AND CAST(yv.owner_user_id AS VARCHAR) = ?"
+            sql += " AND CAST(gv.user_id AS VARCHAR) = ?"
             params.append(user_id)
-        sql += " ORDER BY yv.id, gv.clip_filename"
+        sql += " ORDER BY gv.created_at, gv.id"
         rows = conn.execute(sql, params).fetchall()
     finally:
         conn.close()
+    return [
+        {
+            "generated_id": row[0],
+            "source_video_id": str(row[1] or ""),
+            "clip_filename": Path(str(row[2] or "")).name,
+            "video_pk": int(row[3]),
+            "owner_user_id": str(row[4] or ""),
+            "brand_id": str(row[5]) if row[5] else None,
+        }
+        for row in rows
+        if row[2] and row[4]
+    ]
 
-    candidates: list[dict[str, Any]] = []
-    seen: set[str] = set()
-    for row in rows:
-        clip_filename = Path(str(row[1] or "").strip()).name
-        if not clip_filename or clip_filename in seen:
-            continue
-        status = str(row[2] or "").strip().lower()
-        if status and status not in {"created", "done", "completed", "ready"}:
-            continue
-        seen.add(clip_filename)
-        candidates.append(
-            {
-                "source_video_id": str(row[0] or "").strip(),
-                "clip_filename": clip_filename,
-                "generation_status": status,
-                "video_pk": row[3],
-                "owner_user_id": str(row[4] or "").strip(),
-            }
+
+def _record_poster(candidate: dict[str, Any], poster_filename: str) -> None:
+    conn = get_db()
+    try:
+        conn.execute(
+            """
+            UPDATE shorts_generated_videos
+            SET raw_plan_entry_json = jsonb_set(
+                    COALESCE(raw_plan_entry_json, '{}'::jsonb),
+                    '{poster_filename}',
+                    to_jsonb(CAST(? AS TEXT)),
+                    true
+                ),
+                updated_at = now()
+            WHERE id = ?
+              AND CAST(user_id AS VARCHAR) = ?
+              AND brand_id IS NOT DISTINCT FROM ?
+            """,
+            [poster_filename, candidate["generated_id"],
+             candidate["owner_user_id"], candidate["brand_id"]],
         )
-    return candidates
+        conn.commit()
+    finally:
+        conn.close()
 
-
-def _list_existing_keys(prefix: str) -> set[str]:
-    storage = get_media_storage()
-    client = getattr(storage, "client", None)
-    bucket_name = getattr(storage, "bucket_name", "")
-    if client is not None and bucket_name:
-        keys: set[str] = set()
-        paginator = client.get_paginator("list_objects_v2")
-        for page in paginator.paginate(Bucket=bucket_name, Prefix=prefix):
-            for item in page.get("Contents", []):
-                key = str(item.get("Key") or "")
-                if key and not key.endswith("/"):
-                    keys.add(key)
-        return keys
-    return {entry.key for entry in storage.list_prefix(prefix)}
-
-
-def _poster_exists(filename: str, poster_keys: set[str] | None = None) -> bool:
-    key = generation._short_poster_storage_key(filename)
-    if poster_keys is not None:
-        return key in poster_keys
-    return bool(key and get_media_storage().exists(key))
+    video = tenant_media.resolve_video(
+        video_pk=candidate["video_pk"],
+        owner_user_id=candidate["owner_user_id"],
+        brand_id=candidate["brand_id"],
+    )
+    state = tenant_media.load_state(video)
+    changed = False
+    for field in ("plan", "clips"):
+        for entry in state.get(field) or []:
+            if candidate["clip_filename"] in (
+                entry.get("clip_filename"), entry.get("output_filename")
+            ):
+                entry["poster_filename"] = poster_filename
+                changed = True
+    if changed:
+        tenant_media.write_state(video, state)
 
 
 def main() -> int:
-    parser = argparse.ArgumentParser(description="Backfill generated Short poster JPGs.")
-    parser.add_argument("--video-pk", type=int, default=0, help="Only process Shorts for this youtube_videos.id.")
-    parser.add_argument("--user-id", default="", help="Only process Shorts owned by this user id.")
-    parser.add_argument("--dry-run", action="store_true", help="Report work without creating posters.")
-    parser.add_argument("--limit", type=int, default=0, help="Maximum missing posters to process.")
+    parser = argparse.ArgumentParser(
+        description="Backfill generated Short poster JPGs sequentially."
+    )
+    parser.add_argument("--video-pk", type=int, default=0)
+    parser.add_argument("--user-id", default="")
+    parser.add_argument("--dry-run", action="store_true")
+    parser.add_argument("--limit", type=int, default=0)
     args = parser.parse_args()
 
     app = create_app()
-    missing: list[dict[str, Any]] = []
-    skipped_missing_short = 0
-    skipped_existing_poster = 0
     created = 0
     errors = 0
-
     with app.app_context():
-        candidates = _fetch_candidates(video_pk=args.video_pk or None, user_id=args.user_id.strip())
-        poster_keys: set[str] | None = None
-        short_keys: set[str] | None = None
-        if args.dry_run:
-            poster_keys = _list_existing_keys("shorts/posters/")
-            short_keys = {
-                key
-                for key in _list_existing_keys("shorts/")
-                if key.startswith("shorts/") and not key.startswith("shorts/posters/") and Path(key).suffix.lower() in {".mp4", ".mov", ".mkv"}
-            }
-        for candidate in candidates:
-            filename = candidate["clip_filename"]
-            short_key = generation._short_storage_key(filename)
-            if short_keys is not None:
-                short_exists = short_key in short_keys
-            else:
-                short_exists = generation._short_exists(filename)
-            if not short_exists:
-                skipped_missing_short += 1
-                continue
-            try:
-                if _poster_exists(filename, poster_keys=poster_keys):
-                    skipped_existing_poster += 1
-                    continue
-            except Exception as exc:
-                errors += 1
-                print(f"ERROR poster_check filename={filename} error={exc}")
-                continue
-            missing.append(candidate)
-
-        selected = missing[: args.limit] if args.limit and args.limit > 0 else missing
+        candidates = _fetch_candidates(args.video_pk or None, args.user_id.strip())
+        selected = candidates[: args.limit] if args.limit > 0 else candidates
         for candidate in selected:
             filename = candidate["clip_filename"]
+            poster_filename = f"{Path(filename).stem}-poster.jpg"
             if args.dry_run:
-                print(f"DRYRUN create filename={filename} video_pk={candidate['video_pk']}")
+                print(f"DRYRUN filename={filename} video_pk={candidate['video_pk']}")
                 continue
             try:
-                if generation._ensure_shared_short_poster(filename):
-                    created += 1
-                    print(f"CREATED filename={filename} video_pk={candidate['video_pk']}")
-                else:
-                    print(f"SKIP filename={filename} reason=poster_exists_or_unavailable")
+                made = generation._ensure_shared_short_poster(
+                    filename,
+                    overwrite=True,
+                    poster_filename=poster_filename,
+                    owner_user_id=candidate["owner_user_id"],
+                    brand_id=candidate["brand_id"],
+                    register_asset=True,
+                )
+                if not made:
+                    raise RuntimeError("poster extraction returned no output")
+                _record_poster(candidate, poster_filename)
+                created += 1
+                print(f"CREATED filename={filename} video_pk={candidate['video_pk']}")
             except Exception as exc:
                 errors += 1
-                print(f"ERROR create filename={filename} error={exc}")
+                print(f"ERROR filename={filename} error={exc}")
 
-    print(f"candidate_rows={len(candidates)}")
-    print(f"missing_posters={len(missing)}")
+    print(f"missing_posters={len(candidates)}")
     print(f"selected={len(selected)}")
-    print(f"skipped_existing_poster={skipped_existing_poster}")
-    print(f"skipped_missing_short={skipped_missing_short}")
     print(f"created={created}")
     print(f"errors={errors}")
     return 1 if errors else 0

@@ -511,14 +511,21 @@ def iter_plans(*, owner_user_id=None, brand_id=None, migrate=True):
         rows = conn.execute(sql, params).fetchall()
     finally:
         conn.close()
+    def _plan_names(root):
+        try:
+            return {entry.name for entry in root.iterdir() if entry.name.endswith("_plan.json")}
+        except (FileNotFoundError, OSError):
+            return set()
+
+    primary_names = _plan_names(PRIVATE_STATE_DIR)
+    legacy_names = _plan_names(PRIVATE_STATE_DIR / "legacy") | _plan_names(SHORTS_DIR)
     for row in rows:
         video = VideoIdentity(int(row[0]), str(row[1]), str(row[2] or ""), str(row[3]) if row[3] else None)
-        path = PRIVATE_STATE_DIR / f"{video.video_pk}_plan.json"
-        if not path.exists():
-            candidates = [root / name for root in (PRIVATE_STATE_DIR / "legacy", SHORTS_DIR)
-                          for name in (f"{video.video_pk}_plan.json", f"{video.youtube_id}_plan.json")]
-            if not any(p.is_file() for p in candidates):
+        primary_name = f"{video.video_pk}_plan.json"
+        path = PRIVATE_STATE_DIR / primary_name
+        if primary_name not in primary_names:
+            if not ({primary_name, f"{video.youtube_id}_plan.json"} & legacy_names):
                 continue
             path = state_path(video, read=True, migrate=migrate)
-        if path.exists():
+        if path.name in primary_names or path.is_file():
             yield video, path

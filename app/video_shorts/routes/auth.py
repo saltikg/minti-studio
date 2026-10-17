@@ -55,7 +55,12 @@ from app.video_shorts.services.brands import (
 from app.video_shorts.services.guest_objects import guest_storage_keys_for_user
 from app.video_shorts.services.storage import remove_guest_tag_from_keys
 from app.video_shorts.services.shorts_overview_quota import get_shorts_overview_quota_state
-from app.video_shorts.services.usage_metering import USAGE_TABLE, ensure_usage_metering_schema, get_usage_snapshot
+from app.video_shorts.services.usage_metering import (
+    USAGE_TABLE,
+    ensure_usage_metering_schema,
+    get_usage_snapshot,
+    get_usage_snapshot_readonly,
+)
 from app.video_shorts.services.email_verification import (
     build_password_reset_url,
     can_resend_verification,
@@ -1144,9 +1149,7 @@ def _count_unseen_signup_events_for_admin(admin_user_id: str) -> int:
         return 0
     conn = None
     try:
-        conn = get_db()
-        ensure_auth_user_schema(conn)
-        ensure_user_events_schema(conn)
+        conn = get_db_readonly()
         last_seen_row = conn.execute(
             """
             SELECT admin_users_last_seen_at
@@ -1187,7 +1190,6 @@ def _mark_admin_users_seen(admin_user_id: str) -> None:
     conn = None
     try:
         conn = get_db()
-        ensure_auth_user_schema(conn)
         conn.execute(
             """
             UPDATE shorts_users
@@ -1265,7 +1267,7 @@ def _build_onboarding_context() -> dict:
     except Exception:
         instagram_connected = False
     try:
-        usage_snapshot = get_usage_snapshot(user["id"])
+        usage_snapshot = get_usage_snapshot_readonly(user["id"])
         exports_used = int(usage_snapshot.get("exports", {}).get("used") or 0)
     except Exception:
         exports_used = 0

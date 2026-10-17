@@ -308,19 +308,29 @@ def load_brand_context(
 ) -> Tuple[Optional[Dict[str, object]], List[Dict[str, object]]]:
     if not user_id:
         return None, []
-    conn = get_db()
+    conn = get_db_readonly()
     try:
-        current_brand = ensure_brand_for_user(conn, user_id=user_id, user_name=user_name)
         brands = list_user_brands(conn, user_id)
+        if not brands:
+            return None, []
+        row = conn.execute(
+            "SELECT last_brand_id FROM shorts_users WHERE id = ?",
+            [user_id],
+        ).fetchone()
+        last_brand_id = row[0] if row else None
+        current_brand = next(
+            (brand for brand in brands if brand["id"] == last_brand_id),
+            None,
+        )
+        if not current_brand:
+            current_brand = next(
+                (brand for brand in brands if brand.get("is_default")),
+                None,
+            ) or brands[0]
         if requested_brand_id:
             chosen = get_brand_for_user(conn, user_id, requested_brand_id)
             if chosen:
                 current_brand = chosen
-                conn.execute(
-                    "UPDATE shorts_users SET last_brand_id = ?, updated_at = now() WHERE id = ?",
-                    [current_brand["id"], user_id],
-                )
-                conn.commit()
         return current_brand, brands
     finally:
         conn.close()

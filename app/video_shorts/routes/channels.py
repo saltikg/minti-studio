@@ -261,11 +261,22 @@ def _cached_preview_frame_url(video_id: str) -> str:
     return preview_url(video_id, preview_path.name)
 
 
-def _short_card_media_urls(filename: str, owner_user_id: str, brand_id: str | None) -> tuple[str, str]:
-    from app.video_shorts.services.media_access import media_url_for_authorized_asset
+def _short_card_media_urls(
+    filename: str,
+    owner_user_id: str,
+    brand_id: str | None,
+    poster_filename: str = "",
+) -> tuple[str, str]:
+    from app.video_shorts.services.media_access import (
+        media_url_for_authorized_asset,
+        poster_url_for_authorized_asset,
+    )
     # The caller's query has already joined the lifecycle row to a tenant-owned,
     # active asset. Signing that fact must not repeat ownership queries or touch S3.
-    return media_url_for_authorized_asset(filename, owner_user_id, brand_id), ""
+    return (
+        media_url_for_authorized_asset(filename, owner_user_id, brand_id),
+        poster_url_for_authorized_asset(filename, poster_filename, owner_user_id, brand_id),
+    )
 
 
 def _visible_short_rows(conn, user_id, brand_id):
@@ -290,7 +301,9 @@ def _visible_short_rows(conn, user_id, brand_id):
             published_video.comment_count,
             source_video.id,
             render_asset.file_key,
-            render_asset.file_path
+            render_asset.file_path,
+            NULLIF(trim(gv.raw_plan_entry_json->>'poster_filename'), '') AS poster_filename,
+            poster_asset.file_path AS poster_file_path
         FROM shorts_generated_videos gv
         JOIN shorts_storage_assets render_asset
           ON render_asset.file_key = gv.storage_file_key
@@ -298,6 +311,12 @@ def _visible_short_rows(conn, user_id, brand_id):
          AND render_asset.brand_id IS NOT DISTINCT FROM gv.brand_id
          AND lower(coalesce(render_asset.status, 'active')) = 'active'
          AND render_asset.size_bytes > 0
+        LEFT JOIN shorts_storage_assets poster_asset
+          ON poster_asset.file_key = 'shorts/posters/' || NULLIF(trim(gv.raw_plan_entry_json->>'poster_filename'), '')
+         AND CAST(poster_asset.user_id AS VARCHAR) = CAST(gv.user_id AS VARCHAR)
+         AND poster_asset.brand_id IS NOT DISTINCT FROM gv.brand_id
+         AND lower(coalesce(poster_asset.status, 'active')) = 'active'
+         AND poster_asset.size_bytes > 0
         LEFT JOIN youtube_videos published_video
           ON published_video.video_id = gv.youtube_video_id
          AND published_video.owner_user_id = gv.user_id
@@ -398,7 +417,13 @@ def _load_recent_short_cards(conn, user_id: str, brand_id: str | None, user_tz: 
 
         metric_values = [row[7], row[8], row[9]]
         has_real_metrics = is_published and bool(youtube_video_id) and any(value is not None for value in metric_values)
-        video_url, poster_url = _short_card_media_urls(clip_filename, str(user_id), brand_id)
+        poster_filename = str(row[13] or "").strip() if row[14] else ""
+        video_url, poster_url = _short_card_media_urls(
+            clip_filename,
+            str(user_id),
+            brand_id,
+            poster_filename,
+        )
         if has_real_metrics:
             meta_label = "Published " + _format_video_timestamp(published_at, user_tz)
         elif is_preparing:
@@ -757,13 +782,7 @@ def my_videos_page():
             COALESCE(
                 v.downloaded_at,
                 v.created_at,
-                (
-                    SELECT qs.created_at
-                    FROM shorts_quick_sessions qs
-                    WHERE qs.video_pk = v.id
-                    ORDER BY qs.created_at DESC
-                    LIMIT 1
-                ),
+                latest_session.created_at,
                 v.published_at
             ) AS added_at,
             c.channel_name,
@@ -777,85 +796,42 @@ def my_videos_page():
                 FROM youtube_transcripts t
                 WHERE t.video_id = v.video_id
             ) AS transcript_exists,
-            COALESCE((
-                SELECT qs.status
-                FROM shorts_quick_sessions qs
-                WHERE qs.video_pk = v.id
-                ORDER BY qs.created_at DESC
-                LIMIT 1
-            ), '') AS latest_session_status,
-            EXISTS (
-                SELECT 1
-                FROM shorts_render_jobs j
-                WHERE j.type IN ('normalize_upload', 'transcribe_upload', 'ingest_youtube')
-                  AND j.status IN ('queued', 'processing', 'running')
-                  AND j.payload_json ->> 'video_pk' = CAST(v.id AS VARCHAR)
-            ) AS has_active_source_job,
-            (
-                SELECT j.started_at
-                FROM shorts_render_jobs j
-                WHERE j.type IN ('normalize_upload', 'transcribe_upload', 'ingest_youtube')
-                  AND j.status IN ('queued', 'processing', 'running')
-                  AND j.payload_json ->> 'video_pk' = CAST(v.id AS VARCHAR)
-                ORDER BY j.created_at DESC
-                LIMIT 1
-            ) AS active_source_job_started_at,
-            (
-                SELECT j.attempts
-                FROM shorts_render_jobs j
-                WHERE j.type IN ('normalize_upload', 'transcribe_upload', 'ingest_youtube')
-                  AND j.status IN ('queued', 'processing', 'running')
-                  AND j.payload_json ->> 'video_pk' = CAST(v.id AS VARCHAR)
-                ORDER BY j.created_at DESC
-                LIMIT 1
-            ) AS active_source_job_attempts,
-            (
-                SELECT j.max_attempts
-                FROM shorts_render_jobs j
-                WHERE j.type IN ('normalize_upload', 'transcribe_upload', 'ingest_youtube')
-                  AND j.status IN ('queued', 'processing', 'running')
-                  AND j.payload_json ->> 'video_pk' = CAST(v.id AS VARCHAR)
-                ORDER BY j.created_at DESC
-                LIMIT 1
-            ) AS active_source_job_max_attempts,
-            (
-                SELECT j.started_at
-                FROM shorts_render_jobs j
-                WHERE j.type IN ('normalize_upload', 'transcribe_upload', 'ingest_youtube')
-                  AND j.status = 'done'
-                  AND j.payload_json ->> 'video_pk' = CAST(v.id AS VARCHAR)
-                ORDER BY j.finished_at DESC NULLS LAST, j.created_at DESC
-                LIMIT 1
-            ) AS completed_source_job_started_at,
-            (
-                SELECT j.finished_at
-                FROM shorts_render_jobs j
-                WHERE j.type IN ('normalize_upload', 'transcribe_upload', 'ingest_youtube')
-                  AND j.status = 'done'
-                  AND j.payload_json ->> 'video_pk' = CAST(v.id AS VARCHAR)
-                ORDER BY j.finished_at DESC NULLS LAST, j.created_at DESC
-                LIMIT 1
-            ) AS completed_source_job_finished_at,
-            (
-                SELECT j.attempts
-                FROM shorts_render_jobs j
-                WHERE j.type IN ('normalize_upload', 'transcribe_upload', 'ingest_youtube')
-                  AND j.status = 'done'
-                  AND j.payload_json ->> 'video_pk' = CAST(v.id AS VARCHAR)
-                ORDER BY j.finished_at DESC NULLS LAST, j.created_at DESC
-                LIMIT 1
-            ) AS completed_source_job_attempts,
-            (
-                SELECT j.max_attempts
-                FROM shorts_render_jobs j
-                WHERE j.type IN ('normalize_upload', 'transcribe_upload', 'ingest_youtube')
-                  AND j.status = 'done'
-                  AND j.payload_json ->> 'video_pk' = CAST(v.id AS VARCHAR)
-                ORDER BY j.finished_at DESC NULLS LAST, j.created_at DESC
-                LIMIT 1
-            ) AS completed_source_job_max_attempts
+            COALESCE(latest_session.status, '') AS latest_session_status,
+            (active_job.id IS NOT NULL) AS has_active_source_job,
+            active_job.started_at AS active_source_job_started_at,
+            active_job.attempts AS active_source_job_attempts,
+            active_job.max_attempts AS active_source_job_max_attempts,
+            completed_job.started_at AS completed_source_job_started_at,
+            completed_job.finished_at AS completed_source_job_finished_at,
+            completed_job.attempts AS completed_source_job_attempts,
+            completed_job.max_attempts AS completed_source_job_max_attempts
         FROM youtube_videos v
         LEFT JOIN youtube_channels c ON c.channel_id = v.channel_id
+        LEFT JOIN LATERAL (
+            SELECT qs.created_at, qs.status
+            FROM shorts_quick_sessions qs
+            WHERE qs.video_pk = v.id
+            ORDER BY qs.created_at DESC
+            LIMIT 1
+        ) latest_session ON TRUE
+        LEFT JOIN LATERAL (
+            SELECT j.id, j.started_at, j.attempts, j.max_attempts
+            FROM shorts_render_jobs j
+            WHERE j.type IN ('normalize_upload', 'transcribe_upload', 'ingest_youtube')
+              AND j.status IN ('queued', 'processing', 'running')
+              AND j.payload_json ->> 'video_pk' = CAST(v.id AS VARCHAR)
+            ORDER BY j.created_at DESC
+            LIMIT 1
+        ) active_job ON TRUE
+        LEFT JOIN LATERAL (
+            SELECT j.started_at, j.finished_at, j.attempts, j.max_attempts
+            FROM shorts_render_jobs j
+            WHERE j.type IN ('normalize_upload', 'transcribe_upload', 'ingest_youtube')
+              AND j.status = 'done'
+              AND j.payload_json ->> 'video_pk' = CAST(v.id AS VARCHAR)
+            ORDER BY j.finished_at DESC NULLS LAST, j.created_at DESC
+            LIMIT 1
+        ) completed_job ON TRUE
         WHERE {where_sql}
         ORDER BY added_at DESC NULLS LAST, v.id DESC
         """,

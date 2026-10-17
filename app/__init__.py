@@ -85,6 +85,9 @@ def create_app():
     # 1) Video Shorts only
     from app.video_shorts import video_shorts_bp
     app.register_blueprint(video_shorts_bp)
+    from app.video_shorts.services.startup_schema import initialize_runtime_schema
+    with app.app_context():
+        initialize_runtime_schema()
     from app.video_shorts.routes.webhooks import register_instagram_webhook_routes
     from app.video_shorts.routes.auth import _current_user
     from app.video_shorts.routes.api import render_job_status_api, usage_api
