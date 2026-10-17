@@ -5874,32 +5874,32 @@
   .short-font-preview.is-word-highlight {
     box-shadow: none;
   }
-  .shorts-preview-subtitle-band.is-gradient-fill .word-highlight-preview-word,
-  .short-font-preview.is-gradient-fill .word-highlight-preview-word {
+  .shorts-preview-subtitle-band.is-gradient-fill > span.word-highlight-preview-word,
+  .short-font-preview.is-gradient-fill > span.word-highlight-preview-word {
     background: var(--word-highlight-text-background, none);
     -webkit-background-clip: text;
     background-clip: text;
     -webkit-text-fill-color: transparent;
     color: transparent;
   }
-  .shorts-preview-subtitle-band.is-gradient-fill .word-highlight-preview-word.is-active,
-  .short-font-preview.is-gradient-fill .word-highlight-preview-word.is-active {
+  .shorts-preview-subtitle-band.is-gradient-fill > span.word-highlight-preview-word.is-active,
+  .short-font-preview.is-gradient-fill > span.word-highlight-preview-word.is-active {
     background: var(--word-highlight-active-background, none);
     -webkit-background-clip: text;
     background-clip: text;
     -webkit-text-fill-color: transparent;
     color: transparent;
   }
-  .shorts-preview-subtitle-band.is-active-gradient-fill .word-highlight-preview-word,
-  .short-font-preview.is-active-gradient-fill .word-highlight-preview-word {
+  .shorts-preview-subtitle-band.is-active-gradient-fill > span.word-highlight-preview-word,
+  .short-font-preview.is-active-gradient-fill > span.word-highlight-preview-word {
     background: none;
     -webkit-background-clip: border-box;
     background-clip: border-box;
     -webkit-text-fill-color: initial;
     color: var(--word-highlight-inactive-color, #ffffff);
   }
-  .shorts-preview-subtitle-band.is-active-gradient-fill .word-highlight-preview-word.is-active,
-  .short-font-preview.is-active-gradient-fill .word-highlight-preview-word.is-active {
+  .shorts-preview-subtitle-band.is-active-gradient-fill > span.word-highlight-preview-word.is-active,
+  .short-font-preview.is-active-gradient-fill > span.word-highlight-preview-word.is-active {
     background: var(--word-highlight-active-background, none);
     -webkit-background-clip: text;
     background-clip: text;
@@ -11700,6 +11700,7 @@ const setGenerateV2EditorSection = (section = "style") => {
   window.requestAnimationFrame(() => {
     window.activateCropEditor?.();
     syncGenerateV2InlinePreviewScale();
+    window.refreshMeasuredDesignPreview?.({ force: true });
     if (normalized === "style") {
       window.updateStyleTemplateCarouselNav?.();
     }
@@ -19297,6 +19298,28 @@ document.addEventListener("DOMContentLoaded", () => {
   let measuredDesignKey = "";
   let pendingDesignKey = "";
   let designMeasureTimer = null;
+  let designMeasureVersion = 0;
+  let designRefreshFrame = null;
+  let designNeedsVisibleRefresh = false;
+  const getMeasuredPreviewFrame = () => isOriginalCropAspect() ? origPreviewFrame : previewFrame;
+  const isMeasuredPreviewVisible = () => {
+    const frame = getMeasuredPreviewFrame();
+    if (!frame?.isConnected || !frame.offsetParent) return false;
+    const rect = frame.getBoundingClientRect();
+    const style = window.getComputedStyle(frame);
+    return rect.width > 0 && rect.height > 0
+      && style.display !== "none" && style.visibility !== "hidden";
+  };
+  const waitForMeasuredCaptionFont = async (captionText = "") => {
+    if (!document.fonts?.load) return;
+    const captionElement = isOriginalCropAspect() ? origPreviewCaption : previewSubtitle;
+    const computed = window.getComputedStyle(captionElement || previewSubtitle || subtitlePreview);
+    const family = computed.fontFamily || "sans-serif";
+    const size = Math.max(1, Number(subtitleFontSizeInput?.value || 40));
+    try {
+      await document.fonts.load(`${size}px ${family}`, captionText || "Sample subtitle line");
+    } catch (_) {}
+  };
   const svgNode = (tag, attrs = {}) => {
     const node = document.createElementNS("http://www.w3.org/2000/svg", tag);
     Object.entries(attrs).forEach(([key, value]) => node.setAttribute(key, String(value)));
@@ -19311,7 +19334,7 @@ document.addEventListener("DOMContentLoaded", () => {
       borderRadius: `${Math.max(DESIGN_GEOMETRY.box_radius_min, Math.round(spec.font_size*DESIGN_GEOMETRY.box_radius))*scaleX}px`});
     element.dataset.renderBbox = JSON.stringify(spec.box);
     element.dataset.lineCount = String(spec.lines);
-    const svg = svgNode("svg", {viewBox: `${left} ${top} ${right-left} ${bottom-top}`, width: "100%", height: "100%"});
+    const svg = svgNode("svg", {viewBox: `${left} ${top} ${right-left} ${bottom-top}`, width: "100%", height: "100%", "aria-hidden": "true"});
     svg.style.overflow = "visible";
     svg.style.display = "block";
     svg.style.position = "absolute";
@@ -19363,20 +19386,24 @@ document.addEventListener("DOMContentLoaded", () => {
       }
       text.setAttribute("fill", textFill);
       text.style.fill = textFill;
-      if (!textFill.startsWith("url(")) {
-        text.style.webkitTextFillColor = textFill;
-      }
       text.textContent = run.text;
       svg.appendChild(text);
     }
     element.replaceChildren(svg);
+    element.dataset.captionDomOwner = "measured-svg";
   };
-  const repaintMeasuredDesign = () => {
-    if (!measuredDesign) return;
+  const repaintMeasuredDesign = (force = false) => {
+    if (!measuredDesign) return false;
+    if (!isMeasuredPreviewVisible()) {
+      designNeedsVisibleRefresh = true;
+      return false;
+    }
     const titleEl = isOriginalCropAspect() ? origPreviewTitle : previewTitle;
     const captionEl = isOriginalCropAspect() ? origPreviewCaption : previewSubtitle;
     paintMeasuredText(titleEl, measuredDesign.title, "title", getActivePreviewScaleX(), getActivePreviewScaleY());
     paintMeasuredText(captionEl, measuredDesign.caption, "caption", getActivePreviewScaleX(), getActivePreviewScaleY());
+    designNeedsVisibleRefresh = false;
+    return true;
   };
   const getActiveClipCard = () => {
     const activeIndex = document.getElementById("clip-management-panel")?.dataset.activePlanIndex;
@@ -19423,7 +19450,11 @@ document.addEventListener("DOMContentLoaded", () => {
   };
   window.getHonestCaptionPreviewText = longestRenderedCaptionGroup;
   window.buildCaptionPreviewMarkup = captionPreviewMarkup;
-  const requestMeasuredDesign = () => {
+  const requestMeasuredDesign = ({ force = false } = {}) => {
+    if (!isMeasuredPreviewVisible()) {
+      designNeedsVisibleRefresh = true;
+      return;
+    }
     const original = isOriginalCropAspect();
     const height = getActiveRenderFrameHeight();
     const captionText = longestRenderedCaptionGroup();
@@ -19447,27 +19478,58 @@ document.addEventListener("DOMContentLoaded", () => {
       data.caption_margin = Math.round(height-height*DESIGN_GEOMETRY.original_caption_center-data.caption_size);
     }
     const key = JSON.stringify(data);
-    if (key === measuredDesignKey) { repaintMeasuredDesign(); return; }
-    if (key === pendingDesignKey) return;
+    if (!force && key === pendingDesignKey) return;
+    const requestVersion = ++designMeasureVersion;
     pendingDesignKey = key;
     clearTimeout(designMeasureTimer);
     designMeasureTimer = setTimeout(async () => {
       try {
+        await waitForMeasuredCaptionFont(captionText);
+        if (requestVersion !== designMeasureVersion || !isMeasuredPreviewVisible()) {
+          designNeedsVisibleRefresh = true;
+          return;
+        }
+        if (key === measuredDesignKey && measuredDesign) {
+          pendingDesignKey = "";
+          repaintMeasuredDesign(true);
+          return;
+        }
         const response = await fetch(previewConfig.metricsUrl, {method: "POST", credentials: "same-origin",
           headers: {"Content-Type": "application/json"}, body: key});
         if (!response.ok) throw new Error(`Design metrics ${response.status}`);
         const result = await response.json();
-        if (pendingDesignKey !== key) return;
+        if (requestVersion !== designMeasureVersion || pendingDesignKey !== key || !isMeasuredPreviewVisible()) {
+          designNeedsVisibleRefresh = true;
+          return;
+        }
         measuredDesign = result;
         measuredDesignKey = key;
         pendingDesignKey = "";
-        repaintMeasuredDesign();
+        repaintMeasuredDesign(true);
       } catch (error) {
-        if (pendingDesignKey === key) pendingDesignKey = "";
+        if (requestVersion === designMeasureVersion && pendingDesignKey === key) pendingDesignKey = "";
         console.warn("Unable to measure Final Preview", error);
       }
-    }, 80);
+    }, force ? 0 : 80);
   };
+  const scheduleMeasuredDesignRefresh = ({ force = true } = {}) => {
+    if (designRefreshFrame) window.cancelAnimationFrame(designRefreshFrame);
+    designRefreshFrame = window.requestAnimationFrame(() => {
+      designRefreshFrame = window.requestAnimationFrame(() => {
+        designRefreshFrame = null;
+        requestMeasuredDesign({ force });
+      });
+    });
+  };
+  window.refreshMeasuredDesignPreview = scheduleMeasuredDesignRefresh;
+  window.hasMeasuredDesignPreview = () => !!measuredDesign;
+  if (typeof ResizeObserver !== "undefined") {
+    const measuredPreviewResizeObserver = new ResizeObserver(() => {
+      if (isMeasuredPreviewVisible()) scheduleMeasuredDesignRefresh({ force: designNeedsVisibleRefresh });
+    });
+    if (previewFrame) measuredPreviewResizeObserver.observe(previewFrame);
+    if (origPreviewFrame) measuredPreviewResizeObserver.observe(origPreviewFrame);
+  }
   let subscribeStillKey = "";
   let subscribeStill = null;
   const subscribeCanvas = document.createElement("canvas");
@@ -22100,8 +22162,13 @@ document.addEventListener("DOMContentLoaded", function () {
       previewSubtitle.classList.toggle("is-word-highlight", isWordHighlight);
       previewSubtitle.classList.toggle("is-gradient-fill", wordHighlightPreset?.fillMode === "gradient");
       previewSubtitle.classList.toggle("is-active-gradient-fill", wordHighlightPreset?.fillMode === "active_gradient_only");
-      previewSubtitle.replaceChildren(window.buildCaptionPreviewMarkup(window.getHonestCaptionPreviewText(), isWordHighlight));
       previewSubtitle.dataset.captionText = window.getHonestCaptionPreviewText();
+      if (window.hasMeasuredDesignPreview?.()) {
+        window.refreshMeasuredDesignPreview?.({ force: true });
+      } else {
+        previewSubtitle.replaceChildren(window.buildCaptionPreviewMarkup(window.getHonestCaptionPreviewText(), isWordHighlight));
+        previewSubtitle.dataset.captionDomOwner = "html-fallback";
+      }
     }
     applyPresetEffectVars(subtitlePreview);
     applyPresetEffectVars(previewSubtitle);
@@ -22567,6 +22634,7 @@ document.addEventListener("DOMContentLoaded", function () {
       panel.hidden = keepMeasurable ? false : !isActive;
       panel.classList.toggle("generate-v2-editor-pane-hidden", keepMeasurable && !isActive);
     });
+    window.requestAnimationFrame(() => window.refreshMeasuredDesignPreview?.({ force: true }));
   };
   window.setCropEditorModalTab = (targetName) => {
     const target = String(targetName || "").trim().toLowerCase();
