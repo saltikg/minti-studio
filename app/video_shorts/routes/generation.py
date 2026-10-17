@@ -1631,32 +1631,42 @@ def _ensure_shared_short_poster(
                     seek_seconds = max(0.05, duration_float / 2.0)
             except (TypeError, ValueError):
                 seek_seconds = 1.0
-        run_media_subprocess(
-            [
-                ffmpeg_bin,
-                "-y",
-                "-ss",
-                f"{seek_seconds:.3f}",
-                "-i",
-                resolved_input,
-                "-frames:v",
-                "1",
-                "-threads",
-                "1",
-                "-vf",
-                "scale=360:-2",
-                "-q:v",
-                "3",
-                str(output_path),
-            ],
-            timeout=max(30, min(int(FFMPEG_SHORT_TIMEOUT or 120), 180)),
-            operation="share_poster_extract",
-            context=f"clip_filename={safe_name}",
-            output_paths=[output_path],
-            stdout=subprocess.PIPE,
-            stderr=subprocess.PIPE,
-            text=True,
-        )
+        seek_attempts = [seek_seconds]
+        if seek_seconds > 0.05:
+            seek_attempts.append(0.05)
+        for attempt_index, attempt_seek in enumerate(seek_attempts):
+            try:
+                run_media_subprocess(
+                    [
+                        ffmpeg_bin,
+                        "-y",
+                        "-ss",
+                        f"{attempt_seek:.3f}",
+                        "-i",
+                        resolved_input,
+                        "-frames:v",
+                        "1",
+                        "-threads",
+                        "1",
+                        "-vf",
+                        "scale=360:-2",
+                        "-q:v",
+                        "3",
+                        str(output_path),
+                    ],
+                    timeout=max(30, min(int(FFMPEG_SHORT_TIMEOUT or 120), 180)),
+                    operation="share_poster_extract",
+                    context=f"clip_filename={safe_name}",
+                    output_paths=[output_path],
+                    stdout=subprocess.PIPE,
+                    stderr=subprocess.PIPE,
+                    text=True,
+                )
+                if output_path.exists() and output_path.stat().st_size > 0:
+                    break
+            except Exception:
+                if attempt_index + 1 >= len(seek_attempts):
+                    raise
         if output_path.exists() and output_path.stat().st_size > 0:
             poster_size = output_path.stat().st_size
             put_file_for_owner(output_path, poster_key, owner_user_id=owner_user_id)
