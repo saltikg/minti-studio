@@ -1606,11 +1606,19 @@ def _ensure_shared_short_poster(
     output_path = None
     try:
         if input_path is None:
-            input_path_obj = storage.download_to_temp(short_key)
-            resolved_input_path = Path(str(input_path_obj))
+            if getattr(storage, "backend_name", "local") == "s3":
+                # ffmpeg range-reads the first seconds directly; a backfill must
+                # not download every complete Short to extract one frame.
+                resolved_input = storage.public_url(short_key)
+            else:
+                input_path_obj = storage.download_to_temp(short_key)
+                resolved_input = str(input_path_obj)
         else:
-            resolved_input_path = Path(input_path)
-        if not resolved_input_path.exists():
+            resolved_input = str(Path(input_path))
+        if not resolved_input or (
+            not str(resolved_input).startswith(("http://", "https://"))
+            and not Path(resolved_input).exists()
+        ):
             return False
         with tempfile.NamedTemporaryFile(prefix="short_poster_", suffix=".jpg", delete=False) as handle:
             output_path = Path(handle.name)
@@ -1630,8 +1638,10 @@ def _ensure_shared_short_poster(
                 "-ss",
                 f"{seek_seconds:.3f}",
                 "-i",
-                str(resolved_input_path),
+                resolved_input,
                 "-frames:v",
+                "1",
+                "-threads",
                 "1",
                 "-vf",
                 "scale=360:-2",
