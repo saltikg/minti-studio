@@ -649,7 +649,11 @@ def lead_feed_page():
     shorts = []
     for row in rows:
         clip_filename = str(row[1] or "").strip()
-        video_url, poster_url = _short_card_media_urls(clip_filename)
+        video_url, poster_url = _short_card_media_urls(
+            clip_filename,
+            str(current_user["id"]),
+            brand_id,
+        )
         if not video_url:
             continue
         shorts.append(
