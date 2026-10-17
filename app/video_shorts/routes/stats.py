@@ -1,27 +1,24 @@
 from __future__ import annotations
-from app.video_shorts.services import tenant_media
-
 import json
-import threading
-import time
+from bisect import bisect_right
 from datetime import date, datetime, timedelta, timezone
 from pathlib import Path
 from typing import Dict, List, Mapping, Optional, Sequence, Tuple
 
-from flask import g, jsonify, render_template, request, session
+from flask import current_app, g, jsonify, render_template, request, session
+from markupsafe import Markup, escape
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 from app.video_shorts import video_shorts_bp
-from app.video_shorts.config import SHORTS_DIR
+from app.video_shorts.config import PRIVATE_STATE_DIR, SHORTS_DIR
 from app.video_shorts.services.brands import current_brand_id
-from app.video_shorts.services.db import get_db_readonly, table_columns
+from app.video_shorts.services.db import get_db_readonly
 from app.video_shorts.services.video_metrics import (
     SNAPSHOT_TABLE,
 )
 from app.video_shorts.services.subscriber_metrics import (
     SUBSCRIBER_SNAPSHOT_TABLE,
 )
-from app.video_shorts.services.youtube_oauth import is_reauth_required
 from app.video_shorts.services.timezones import DEFAULT_TIME_ZONE, TIMEZONE_OPTIONS
 
 
@@ -35,14 +32,45 @@ CHANNEL_OPTIONS: Sequence[Mapping[str, str]] = [
 
 DEFAULT_WINDOW_DAYS = 30
 VIDEO_LIST_PAGE_SIZE = 20
-STATS_WIDGET_CACHE_TTL_SECONDS = 600
-_stats_widget_cache: Dict[Tuple[str, ...], Tuple[float, Dict[str, object]]] = {}
-_stats_widget_cache_lock = threading.Lock()
+VIDEO_DAILY_DELTAS_TABLE = "analytics.fct_video_daily_deltas"
 
 
 def _rows_to_dict(cursor) -> List[Mapping[str, object]]:
     cols = [desc[0] for desc in cursor.description]
     return [dict(zip(cols, row)) for row in cursor.fetchall()]
+
+
+def _fragment_format_stat(value: object) -> str:
+    return "0" if value is None else f"{value:,}"
+
+
+def _fragment_top_video_rows(videos, show_facebook: bool = False) -> Markup:
+    if not videos:
+        colspan = 5 if show_facebook else 4
+        return Markup(f'<tr><td colspan="{colspan}" class="text-center text-muted py-4">No videos found for this range.</td></tr>')
+    parts: List[str] = []
+    for video in videos:
+        thumbnail_url = video.get("thumbnail_url")
+        video_url = video.get("video_url")
+        if thumbnail_url and video_url:
+            thumbnail = f'<a href="{escape(video_url)}" target="_blank" rel="noopener noreferrer" title="Open video"><img src="{escape(thumbnail_url)}" alt="Video thumbnail"></a>'
+        elif thumbnail_url:
+            thumbnail = f'<img src="{escape(thumbnail_url)}" alt="Video thumbnail">'
+        else:
+            thumbnail = '<div class="video-thumb-placeholder"></div>'
+        facebook_cell = ""
+        if show_facebook:
+            facebook_value = _fragment_format_stat(video.get("views")) if str(video.get("channel_type") or "").lower() == "facebook" else "—"
+            facebook_cell = f'<td class="text-end">{facebook_value}</td>'
+        parts.append(
+            '<tr>'
+            f'<td class="p-0 pe-3 video-thumb-cell">{thumbnail}</td>'
+            f'<td><strong>{escape(video.get("video_title") or video.get("video_id") or "")}</strong></td>'
+            f'<td class="text-end">{_fragment_format_stat(video.get("views"))}</td>'
+            f'<td class="text-end">{_fragment_format_stat(video.get("comments"))}</td>'
+            f'{facebook_cell}</tr>'
+        )
+    return Markup("".join(parts))
 
 
 def _row_to_brand_dict(row: Optional[Sequence[object]]) -> Optional[Dict[str, object]]:
@@ -256,6 +284,153 @@ def _fetch_period_summary_totals(
     return totals_by_channel
 
 
+def _fetch_dashboard_deltas(
+    conn,
+    *,
+    previous_start: date,
+    current_start: date,
+    current_end: date,
+    brand_id: Optional[str],
+) -> Tuple[Dict[str, Dict[str, int]], Dict[str, Dict[str, int]], Dict[str, Dict[str, Dict[str, int]]]]:
+    if not brand_id:
+        return {}, {}, {}
+    live_end = current_end == date.today()
+    fact_end = current_end - timedelta(days=1) if live_end else current_end
+    rows = _rows_to_dict(
+        conn.execute(
+            f"""
+            WITH metric_keys AS MATERIALIZED (
+                SELECT DISTINCT brand_id, channel_type, video_id
+                FROM {VIDEO_DAILY_DELTAS_TABLE}
+                WHERE brand_id = ?
+                  AND snapshot_date BETWEEN ? AND ?
+            ), first_seen AS MATERIALIZED (
+                SELECT
+                    metric_keys.*,
+                    (
+                        SELECT MIN(prior.snapshot_date)
+                        FROM {SNAPSHOT_TABLE} prior
+                        WHERE prior.brand_id = metric_keys.brand_id
+                          AND prior.channel_type = metric_keys.channel_type
+                          AND prior.video_id = metric_keys.video_id
+                    ) AS first_snapshot_date
+                FROM metric_keys
+            ), fact_daily AS (
+                SELECT
+                    snapshot_date,
+                    deltas.channel_type,
+                    SUM(GREATEST(COALESCE(CASE WHEN deltas.channel_type = 'instagram' THEN reach ELSE views END, 0), 0)) AS views,
+                    SUM(GREATEST(COALESCE(comments, 0), 0)) AS comments,
+                    SUM(GREATEST(COALESCE(likes, 0), 0)) AS likes
+                FROM {VIDEO_DAILY_DELTAS_TABLE} deltas
+                JOIN first_seen
+                  ON first_seen.brand_id = deltas.brand_id
+                 AND first_seen.channel_type = deltas.channel_type
+                 AND first_seen.video_id = deltas.video_id
+                 AND deltas.snapshot_date > first_seen.first_snapshot_date
+                WHERE deltas.brand_id = ?
+                  AND deltas.snapshot_date BETWEEN ? AND ?
+                GROUP BY snapshot_date, deltas.channel_type
+            ), live_keys AS MATERIALIZED (
+                SELECT DISTINCT channel_type, video_id
+                FROM {SNAPSHOT_TABLE}
+                WHERE ?
+                  AND brand_id = ?
+                  AND snapshot_date = ?
+            ), live_rows AS (
+                SELECT snapshots.*
+                FROM {SNAPSHOT_TABLE} snapshots
+                JOIN live_keys USING (channel_type, video_id)
+                WHERE snapshots.brand_id = ?
+                  AND snapshots.snapshot_date = ?
+                UNION ALL
+                SELECT prior.*
+                FROM live_keys
+                JOIN LATERAL (
+                    SELECT snapshots.*
+                    FROM {SNAPSHOT_TABLE} snapshots
+                    WHERE snapshots.brand_id = ?
+                      AND snapshots.channel_type = live_keys.channel_type
+                      AND snapshots.video_id = live_keys.video_id
+                      AND snapshots.snapshot_date < ?
+                    ORDER BY snapshots.snapshot_date DESC, snapshots.effective_at DESC
+                    LIMIT 1
+                ) prior ON TRUE
+            ), live_ordered AS (
+                SELECT
+                    snapshot_date,
+                    channel_type,
+                    video_id,
+                    CASE WHEN channel_type = 'instagram' THEN COALESCE(reach, 0) ELSE COALESCE(views, 0) END AS current_views,
+                    COALESCE(comments, 0) AS current_comments,
+                    COALESCE(likes, 0) AS current_likes,
+                    LAG(CASE WHEN channel_type = 'instagram' THEN COALESCE(reach, 0) ELSE COALESCE(views, 0) END)
+                        OVER (PARTITION BY channel_type, video_id ORDER BY snapshot_date, effective_at) AS prev_views,
+                    LAG(COALESCE(comments, 0))
+                        OVER (PARTITION BY channel_type, video_id ORDER BY snapshot_date, effective_at) AS prev_comments,
+                    LAG(COALESCE(likes, 0))
+                        OVER (PARTITION BY channel_type, video_id ORDER BY snapshot_date, effective_at) AS prev_likes
+                FROM live_rows
+            ), live_daily AS (
+                SELECT
+                    snapshot_date,
+                    channel_type,
+                    SUM(CASE WHEN prev_views IS NULL THEN 0 ELSE GREATEST(current_views - prev_views, 0) END) AS views,
+                    SUM(CASE WHEN prev_comments IS NULL THEN 0 ELSE GREATEST(current_comments - prev_comments, 0) END) AS comments,
+                    SUM(CASE WHEN prev_likes IS NULL THEN 0 ELSE GREATEST(current_likes - prev_likes, 0) END) AS likes
+                FROM live_ordered
+                WHERE snapshot_date = ?
+                GROUP BY snapshot_date, channel_type
+            ), combined AS (
+                SELECT * FROM fact_daily
+                UNION ALL
+                SELECT * FROM live_daily
+            )
+            SELECT
+                snapshot_date,
+                channel_type,
+                SUM(views) AS views,
+                SUM(comments) AS comments,
+                SUM(likes) AS likes
+            FROM combined
+            GROUP BY snapshot_date, channel_type
+            ORDER BY snapshot_date, channel_type
+            """,
+            [
+                brand_id, previous_start.isoformat(), fact_end.isoformat(),
+                brand_id, previous_start.isoformat(), fact_end.isoformat(),
+                live_end, brand_id, current_end.isoformat(),
+                brand_id, current_end.isoformat(),
+                brand_id, current_end.isoformat(),
+                current_end.isoformat(),
+            ],
+        )
+    )
+    current: Dict[str, Dict[str, int]] = {}
+    previous: Dict[str, Dict[str, int]] = {}
+    daily: Dict[str, Dict[str, Dict[str, int]]] = {}
+    for row in rows:
+        channel = str(row.get("channel_type") or "").lower()
+        snapshot_date = row.get("snapshot_date")
+        if not channel or not isinstance(snapshot_date, date):
+            continue
+        values = {key: row.get(key) or 0 for key in ("views", "comments", "likes")}
+        target = current if snapshot_date >= current_start else previous
+        channel_totals = target.setdefault(channel, {"views": 0, "comments": 0, "likes": 0})
+        for key, value in values.items():
+            channel_totals[key] += int(value)
+        if snapshot_date >= current_start:
+            daily.setdefault(channel, {})[snapshot_date.isoformat()] = values
+    for target in (current, previous):
+        for option in CHANNEL_OPTIONS:
+            target.setdefault(option["value"], {"views": 0, "comments": 0, "likes": 0})
+        target["all"] = {
+            key: sum(values[key] for channel, values in target.items() if channel != "all")
+            for key in ("views", "comments", "likes")
+        }
+    return current, previous, daily
+
+
 def _brand_scope_clause(
     conn,
     table_name: str,
@@ -265,29 +440,6 @@ def _brand_scope_clause(
 ) -> Tuple[str, List[object]]:
     scoped_brand_id = brand_id if brand_id is not None else current_brand_id()
     if not scoped_brand_id:
-        return " AND 1 = 0", []
-    normalized_table_name = str(table_name or "").strip()
-    schema_name: Optional[str] = None
-    relation_name = normalized_table_name
-    if "." in normalized_table_name:
-        schema_name, relation_name = normalized_table_name.split(".", 1)
-    brand_id_exists = False
-    if schema_name:
-        row = conn.execute(
-            """
-            SELECT 1
-            FROM information_schema.columns
-            WHERE table_schema = ?
-              AND table_name = ?
-              AND column_name = 'brand_id'
-            LIMIT 1
-            """,
-            [schema_name, relation_name],
-        ).fetchone()
-        brand_id_exists = row is not None
-    else:
-        brand_id_exists = "brand_id" in table_columns(conn, relation_name)
-    if not brand_id_exists:
         return " AND 1 = 0", []
     prefix = f"{alias}." if alias else ""
     return f" AND {prefix}brand_id = ?", [scoped_brand_id]
@@ -422,53 +574,6 @@ def _build_filters(
     return clause, params
 
 
-def _load_published_youtube_short_ids(
-    conn,
-    *,
-    brand_id: Optional[str] = None,
-) -> List[str]:
-    if not SHORTS_DIR.exists():
-        return []
-    plan_suffix = "_plan.json"
-    plan_paths = list(tenant_media.iter_plans(brand_id=brand_id))
-    if not plan_paths:
-        return []
-    source_video_ids = [video.youtube_id for video, path in plan_paths]
-    if not source_video_ids:
-        return []
-    placeholders = ", ".join("?" for _ in source_video_ids)
-    params: List[object] = list(source_video_ids)
-    query = f"""
-        SELECT DISTINCT video_id
-        FROM youtube_videos
-        WHERE video_id IN ({placeholders})
-    """
-    if brand_id and "brand_id" in table_columns(conn, "youtube_videos"):
-        query += " AND brand_id = ?"
-        params.append(brand_id)
-    rows = conn.execute(query, params).fetchall()
-    allowed_source_ids = {str(row[0]) for row in rows if row and row[0]}
-    if not allowed_source_ids:
-        return []
-    published_ids: List[str] = []
-    for plan_video, plan_path in plan_paths:
-        source_video_id = plan_video.youtube_id
-        if source_video_id not in allowed_source_ids:
-            continue
-        try:
-            raw = tenant_media.load_state(plan_video)
-        except Exception:
-            continue
-        entries = raw.get("plan") or raw.get("clips") or []
-        for entry in entries:
-            if str(entry.get("publish_status") or "").lower() != "published":
-                continue
-            short_id = str(entry.get("yt_video_id") or entry.get("short_video_id") or "").strip()
-            if short_id:
-                published_ids.append(short_id)
-    return list(dict.fromkeys(published_ids))
-
-
 def _parse_publish_date(value: object) -> Optional[date]:
     if value is None:
         return None
@@ -492,47 +597,35 @@ def _load_published_youtube_short_schedule(
     *,
     brand_id: Optional[str] = None,
 ) -> Dict[str, date]:
-    if not SHORTS_DIR.exists():
+    if not brand_id:
         return {}
-    plan_suffix = "_plan.json"
-    plan_paths = list(tenant_media.iter_plans(brand_id=brand_id))
-    if not plan_paths:
-        return {}
-    source_video_ids = [video.youtube_id for video, path in plan_paths]
-    if not source_video_ids:
-        return {}
-    placeholders = ", ".join("?" for _ in source_video_ids)
-    params: List[object] = list(source_video_ids)
-    query = f"""
-        SELECT DISTINCT video_id
-        FROM youtube_videos
-        WHERE video_id IN ({placeholders})
-    """
-    if brand_id and "brand_id" in table_columns(conn, "youtube_videos"):
-        query += " AND brand_id = ?"
-        params.append(brand_id)
-    rows = conn.execute(query, params).fetchall()
-    allowed_source_ids = {str(row[0]) for row in rows if row and row[0]}
-    if not allowed_source_ids:
-        return {}
+    rows = conn.execute(
+        "SELECT id, video_id FROM youtube_videos WHERE brand_id = ?",
+        [brand_id],
+    ).fetchall()
+    plan_files: Dict[str, Path] = {}
+    for root in (PRIVATE_STATE_DIR, PRIVATE_STATE_DIR / "legacy", SHORTS_DIR):
+        try:
+            for entry in root.iterdir():
+                if entry.name.endswith("_plan.json"):
+                    plan_files.setdefault(entry.name, entry)
+        except OSError:
+            continue
     published_schedule: Dict[str, date] = {}
-    for plan_video, plan_path in plan_paths:
-        source_video_id = plan_video.youtube_id
-        if source_video_id not in allowed_source_ids:
+    for video_pk, source_video_id in rows:
+        plan_path = plan_files.get(f"{video_pk}_plan.json") or plan_files.get(f"{source_video_id}_plan.json")
+        if plan_path is None:
             continue
         try:
-            raw = tenant_media.load_state(plan_video)
-        except Exception:
+            raw = json.loads(plan_path.read_text())
+        except (OSError, ValueError, TypeError):
             continue
-        entries = raw.get("plan") or raw.get("clips") or []
-        for entry in entries:
-            if str(entry.get("publish_status") or "").lower() != "published":
+        for entry in raw.get("plan") or raw.get("clips") or []:
+            if not isinstance(entry, dict) or str(entry.get("publish_status") or "").lower() != "published":
                 continue
             short_id = str(entry.get("yt_video_id") or entry.get("short_video_id") or "").strip()
-            if not short_id:
-                continue
             publish_date = _parse_publish_date(entry.get("publish_at_iso") or entry.get("publish_at"))
-            if publish_date is None:
+            if not short_id or publish_date is None:
                 continue
             existing = published_schedule.get(short_id)
             if existing is None or publish_date < existing:
@@ -852,49 +945,84 @@ def _fetch_youtube_published_daily_metrics(
     if published_schedule is not None and not published_schedule:
         return {}, {}, {}, {}, {}
     published_video_ids = list((published_schedule or {}).keys())
-    if not published_video_ids:
+    if not published_video_ids or not brand_id:
         return {}, {}, {}, {}, {}
-    placeholders = ", ".join("?" for _ in published_video_ids)
-    brand_clause, brand_params = _brand_scope_clause(
-        conn,
-        SNAPSHOT_TABLE,
-        brand_id=brand_id,
-    )
+    values_sql = ", ".join("(?, CAST(? AS DATE))" for _ in published_video_ids)
+    published_params: List[object] = []
+    for video_id, publish_date in (published_schedule or {}).items():
+        published_params.extend([video_id, publish_date.isoformat()])
     cursor = conn.execute(
         f"""
-        SELECT snapshot_date, video_id, COALESCE(views, 0) AS views, COALESCE(likes, 0) AS likes
-        FROM {SNAPSHOT_TABLE}
-        WHERE channel_type = 'youtube'
-          {brand_clause}
-          AND COALESCE(stats_source, '') NOT LIKE ?
-          AND snapshot_date <= ?
-          AND video_id IN ({placeholders})
-        ORDER BY snapshot_date, video_id
+        WITH published(video_id, publish_date) AS (
+            VALUES {values_sql}
+        ), seed_snapshots AS (
+            SELECT
+                seed.snapshot_date,
+                published.video_id,
+                seed.views,
+                seed.likes,
+                seed.effective_at
+            FROM published
+            JOIN LATERAL (
+                SELECT snapshot_date, views, likes, effective_at
+                FROM {SNAPSHOT_TABLE} s
+                WHERE s.brand_id = ?
+                  AND s.channel_type = 'youtube'
+                  AND s.video_id = published.video_id
+                  AND COALESCE(s.stats_source, '') NOT LIKE ?
+                  AND s.snapshot_date < ?
+                ORDER BY s.snapshot_date DESC, s.effective_at DESC
+                LIMIT 1
+            ) seed ON TRUE
+        ), range_snapshots AS (
+            SELECT
+                s.snapshot_date,
+                s.video_id,
+                s.views,
+                s.likes,
+                s.effective_at
+            FROM {SNAPSHOT_TABLE} s
+            JOIN published ON published.video_id = s.video_id
+            WHERE s.brand_id = ?
+              AND s.channel_type = 'youtube'
+              AND COALESCE(s.stats_source, '') NOT LIKE ?
+              AND s.snapshot_date BETWEEN ? AND ?
+        ), selected AS (
+            SELECT * FROM seed_snapshots
+            UNION ALL
+            SELECT * FROM range_snapshots
+        )
+        SELECT
+            snapshot_date,
+            video_id,
+            COALESCE(views, 0) AS views,
+            COALESCE(likes, 0) AS likes
+        FROM selected
+        ORDER BY snapshot_date, video_id, effective_at
         """,
         [
-            *brand_params,
+            *published_params,
+            brand_id,
             "estimated_gap_fill_from_%",
+            start.isoformat(),
+            brand_id,
+            "estimated_gap_fill_from_%",
+            start.isoformat(),
             end.isoformat(),
-            *published_video_ids,
         ],
     )
-    rows = _rows_to_dict(cursor)
     snapshots_by_video: Dict[str, List[Tuple[date, int, int]]] = {}
-    for row in rows:
-        snapshot_date_value = row.get("snapshot_date")
-        snapshot_date = snapshot_date_value if isinstance(snapshot_date_value, date) else _parse_date_param(str(snapshot_date_value))
-        if snapshot_date is None:
-            continue
+    for row in _rows_to_dict(cursor):
+        snapshot_date = row.get("snapshot_date")
         video_id = str(row.get("video_id") or "").strip()
-        if not video_id:
-            continue
-        snapshots_by_video.setdefault(video_id, []).append(
-            (
-                snapshot_date,
-                int(row.get("views") or 0),
-                int(row.get("likes") or 0),
+        if isinstance(snapshot_date, date) and video_id:
+            snapshots_by_video.setdefault(video_id, []).append(
+                (snapshot_date, int(row.get("views") or 0), int(row.get("likes") or 0))
             )
-        )
+    snapshot_dates_by_video = {
+        video_id: [snapshot[0] for snapshot in snapshots]
+        for video_id, snapshots in snapshots_by_video.items()
+    }
     total_views: Dict[str, int] = {}
     total_likes: Dict[str, int] = {}
     delta_views: Dict[str, int] = {}
@@ -903,33 +1031,24 @@ def _fetch_youtube_published_daily_metrics(
     current = start
     while current <= end:
         date_key = current.isoformat()
-        day_total_views = 0
-        day_total_likes = 0
-        day_delta_views = 0
-        day_delta_likes = 0
-        day_video_count = 0
-        prev_day = current - timedelta(days=1)
+        previous_day = current - timedelta(days=1)
+        day_total_views = day_total_likes = day_delta_views = day_delta_likes = day_video_count = 0
         for video_id, publish_date in (published_schedule or {}).items():
             if publish_date > current:
                 continue
             day_video_count += 1
-            snapshots = snapshots_by_video.get(video_id) or []
-            current_snapshot: Optional[Tuple[date, int, int]] = None
-            prev_snapshot: Optional[Tuple[date, int, int]] = None
-            for snapshot in snapshots:
-                snapshot_day = snapshot[0]
-                if snapshot_day <= current:
-                    current_snapshot = snapshot
-                if snapshot_day <= prev_day:
-                    prev_snapshot = snapshot
-                if snapshot_day > current:
-                    break
+            snapshots = snapshots_by_video.get(video_id, [])
+            snapshot_dates = snapshot_dates_by_video.get(video_id, [])
+            current_index = bisect_right(snapshot_dates, current) - 1
+            previous_index = bisect_right(snapshot_dates, previous_day) - 1
+            current_snapshot = snapshots[current_index] if current_index >= 0 else None
+            previous_snapshot = snapshots[previous_index] if previous_index >= 0 else None
             if current_snapshot is not None:
                 day_total_views += current_snapshot[1]
                 day_total_likes += current_snapshot[2]
-            if current_snapshot is not None and prev_snapshot is not None:
-                day_delta_views += max(current_snapshot[1] - prev_snapshot[1], 0)
-                day_delta_likes += max(current_snapshot[2] - prev_snapshot[2], 0)
+            if current_snapshot is not None and previous_snapshot is not None:
+                day_delta_views += max(current_snapshot[1] - previous_snapshot[1], 0)
+                day_delta_likes += max(current_snapshot[2] - previous_snapshot[2], 0)
         total_views[date_key] = day_total_views
         total_likes[date_key] = day_total_likes
         delta_views[date_key] = day_delta_views
@@ -1004,107 +1123,68 @@ def _fetch_stats_video_rows(
     page: int,
     page_size: int = VIDEO_LIST_PAGE_SIZE,
 ) -> Tuple[List[Mapping[str, object]], int]:
-    base_brand_clause, base_brand_params = _brand_scope_clause(
-        conn,
-        "analytics.dim_generated_videos",
-        alias="gv",
-        brand_id=brand_id,
-    )
-    snapshot_brand_clause, snapshot_brand_params = _brand_scope_clause(
-        conn,
-        SNAPSHOT_TABLE,
-        alias="s",
-        brand_id=brand_id,
-    )
+    if not brand_id:
+        return [], 0
     offset = (page - 1) * page_size
-
-    count_row = conn.execute(
-        f"""
-        SELECT COUNT(*)
-        FROM analytics.dim_generated_videos gv
-        WHERE gv.publish_status = 'published'
-          AND COALESCE(gv.youtube_published_at, gv.published_at, gv.planned_publish_at)::date BETWEEN ? AND ?
-          {base_brand_clause}
-        """,
-        [
-            start_date.isoformat(),
-            end_date.isoformat(),
-            *base_brand_params,
-        ],
-    ).fetchone()
-    total_count = int((count_row or [0])[0] or 0)
-
     rows = conn.execute(
-        f"""
+        """
         WITH base AS (
             SELECT
                 gv.generated_video_id,
                 gv.generated_title,
                 gv.youtube_video_id,
                 gv.instagram_media_id,
-                COALESCE(gv.youtube_published_at, gv.published_at, gv.planned_publish_at) AS publish_at
+                COALESCE(gv.youtube_published_at, gv.published_at, gv.planned_publish_at) AS publish_at,
+                COUNT(*) OVER () AS total_count
             FROM analytics.dim_generated_videos gv
             WHERE gv.publish_status = 'published'
               AND COALESCE(gv.youtube_published_at, gv.published_at, gv.planned_publish_at)::date BETWEEN ? AND ?
-              {base_brand_clause}
-        ),
-        latest_youtube AS (
-            SELECT
-                s.video_id,
-                s.views,
-                ROW_NUMBER() OVER (
-                    PARTITION BY s.video_id
-                    ORDER BY s.snapshot_date DESC, s.effective_at DESC
-                ) AS rn
-            FROM main.shorts_video_daily_snapshots s
-            JOIN base b
-              ON b.youtube_video_id = s.video_id
-            WHERE s.channel_type = 'youtube'
-              {snapshot_brand_clause}
-        ),
-        latest_instagram AS (
-            SELECT
-                s.video_id,
-                COALESCE(s.reach, s.views, 0) AS instagram_views,
-                ROW_NUMBER() OVER (
-                    PARTITION BY s.video_id
-                    ORDER BY s.snapshot_date DESC, s.effective_at DESC
-                ) AS rn
-            FROM main.shorts_video_daily_snapshots s
-            JOIN base b
-              ON b.instagram_media_id = s.video_id
-            WHERE s.channel_type = 'instagram'
-              {snapshot_brand_clause}
+              AND gv.brand_id = ?
+            ORDER BY publish_at DESC NULLS LAST, gv.generated_video_id DESC
+            LIMIT ? OFFSET ?
         )
         SELECT
             b.generated_title,
             b.publish_at,
             b.youtube_video_id,
             COALESCE(yt.views, 0) AS youtube_views,
-            COALESCE(ig.instagram_views, 0) AS instagram_views
+            COALESCE(ig.instagram_views, 0) AS instagram_views,
+            b.total_count
         FROM base b
-        LEFT JOIN latest_youtube yt
-          ON yt.video_id = b.youtube_video_id
-         AND yt.rn = 1
-        LEFT JOIN latest_instagram ig
-          ON ig.video_id = b.instagram_media_id
-         AND ig.rn = 1
+        LEFT JOIN LATERAL (
+            SELECT s.views
+            FROM main.shorts_video_daily_snapshots s
+            WHERE s.brand_id = ?
+              AND s.channel_type = 'youtube'
+              AND s.video_id = b.youtube_video_id
+            ORDER BY s.snapshot_date DESC, s.effective_at DESC
+            LIMIT 1
+        ) yt ON TRUE
+        LEFT JOIN LATERAL (
+            SELECT COALESCE(s.reach, s.views, 0) AS instagram_views
+            FROM main.shorts_video_daily_snapshots s
+            WHERE s.brand_id = ?
+              AND s.channel_type = 'instagram'
+              AND s.video_id = b.instagram_media_id
+            ORDER BY s.snapshot_date DESC, s.effective_at DESC
+            LIMIT 1
+        ) ig ON TRUE
         ORDER BY b.publish_at DESC NULLS LAST, b.generated_video_id DESC
-        LIMIT ? OFFSET ?
         """,
         [
             start_date.isoformat(),
             end_date.isoformat(),
-            *base_brand_params,
-            *snapshot_brand_params,
-            *snapshot_brand_params,
+            brand_id,
             page_size,
             offset,
+            brand_id,
+            brand_id,
         ],
     ).fetchall()
 
     items: List[Mapping[str, object]] = []
-    for title, publish_at, youtube_video_id, youtube_views, instagram_views in rows:
+    total_count = int(rows[0][5] or 0) if rows else 0
+    for title, publish_at, youtube_video_id, youtube_views, instagram_views, _total_count in rows:
         youtube_video_id_text = str(youtube_video_id or "").strip()
         youtube_views_value = int(youtube_views or 0)
         instagram_views_value = int(instagram_views or 0)
@@ -1125,30 +1205,9 @@ def _fetch_stats_video_rows(
     return items, total_count
 
 
-def _stats_widget_cache_key() -> Tuple[str, ...]:
-    current_user = getattr(g, "vs_current_user", None) or {}
-    return (
-        str(current_user.get("id") or ""),
-        str(current_brand_id() or ""),
-        str(request.args.get("start") or ""),
-        str(request.args.get("end") or ""),
-        str(request.args.get("channel") or "all"),
-        str(request.args.get("metric") or "views"),
-        str(request.args.get("videos_page") or "1"),
-    )
-
-
 @video_shorts_bp.route("/stats/widgets", methods=["GET"])
 def video_stats_widgets():
-    cache_key = _stats_widget_cache_key()
-    now = time.monotonic()
-    with _stats_widget_cache_lock:
-        cached = _stats_widget_cache.get(cache_key)
-        if cached and now - cached[0] < STATS_WIDGET_CACHE_TTL_SECONDS:
-            return jsonify(cached[1])
-        payload = _render_video_stats(load_widgets=True)
-        _stats_widget_cache[cache_key] = (time.monotonic(), payload)
-        return jsonify(payload)
+    return jsonify(_render_video_stats(load_widgets=True))
 
 
 @video_shorts_bp.route("/stats", methods=["GET"])
@@ -1197,51 +1256,31 @@ def _render_video_stats(*, load_widgets: bool):
 
     user_time_zone = _get_user_timezone()
     user_time_zone_label = _timezone_label(user_time_zone)
+    current_user = getattr(g, "vs_current_user", None) or {}
+    oauth_reauth_required = False
     conn = get_db_readonly()
     try:
-        current_user = getattr(g, "vs_current_user", None) or {}
-        resolved_brand = _resolve_owned_brand_for_stats(conn, user_id=current_user.get("id"))
-        active_brand_id = str((resolved_brand or {}).get("id") or "").strip() or None
+        active_brand_id = str(current_brand_id() or "").strip() or None
         snapshot_brand_clause, snapshot_brand_params = _brand_scope_clause(
             conn,
             SNAPSHOT_TABLE,
             brand_id=active_brand_id,
         )
-        subscriber_brand_clause, subscriber_brand_params = _brand_scope_clause(
+        period_totals_by_channel, previous_period_totals_by_channel, dashboard_deltas = _fetch_dashboard_deltas(
             conn,
-            SUBSCRIBER_SNAPSHOT_TABLE,
+            previous_start=previous_period_start,
+            current_start=start_date,
+            current_end=end_date,
             brand_id=active_brand_id,
         )
-        period_totals_by_channel = _fetch_period_summary_totals(
-            conn,
-            start_date=start_date,
-            end_date=end_date,
-            brand_id=active_brand_id,
-        )
-        previous_period_totals_by_channel = _fetch_period_summary_totals(
-            conn,
-            start_date=previous_period_start,
-            end_date=previous_period_end,
-            brand_id=active_brand_id,
-        )
-        youtube_channels_brand_clause, youtube_channels_brand_params = _brand_scope_clause(
-            conn,
-            "youtube_channels",
-            brand_id=active_brand_id,
-        )
-
-        analytics_daily_views, analytics_baseline = _fetch_daily_analytics_views(
-            conn,
-            start_date,
-            end_date,
-            brand_id=active_brand_id,
-        )
-        analytics_daily_likes = _fetch_daily_analytics_likes(
-            conn,
-            start_date,
-            end_date,
-            brand_id=active_brand_id,
-        )
+        analytics_daily_views = {
+            channel: {day: values["views"] for day, values in days.items()}
+            for channel, days in dashboard_deltas.items()
+        }
+        analytics_daily_likes = {
+            channel: {day: values["likes"] for day, values in days.items()}
+            for channel, days in dashboard_deltas.items()
+        }
         published_youtube_short_schedule = _load_published_youtube_short_schedule(
             conn,
             brand_id=active_brand_id,
@@ -1284,6 +1323,7 @@ def _render_video_stats(*, load_widgets: bool):
             f"""
             SELECT
                 snapshot_date,
+                channel_type,
                 SUM(COALESCE(views, 0)) AS views,
                 SUM(COALESCE(comments, 0)) AS comments,
                 SUM(COALESCE(likes, 0)) AS likes,
@@ -1293,24 +1333,51 @@ def _render_video_stats(*, load_widgets: bool):
                 SUM(CASE WHEN channel_type = 'youtube' THEN COALESCE(views, 0) ELSE 0 END) AS youtube_views_total,
                 SUM(CASE WHEN channel_type = 'youtube' THEN COALESCE(likes, 0) ELSE 0 END) AS youtube_likes_total,
                 SUM(CASE WHEN channel_type = 'youtube' AND views IS NOT NULL THEN 1 ELSE 0 END) AS youtube_views_rows,
-                MAX(effective_at) AS last_updated
+                MAX(effective_at) AS last_updated,
+                (SELECT MIN(all_rows.snapshot_date) FROM {SNAPSHOT_TABLE} all_rows WHERE all_rows.brand_id = ?) AS earliest_snapshot
             FROM {SNAPSHOT_TABLE}
             WHERE snapshot_date BETWEEN ? AND ?{chart_clause}
-            GROUP BY snapshot_date
-            ORDER BY snapshot_date ASC
+            GROUP BY snapshot_date, channel_type
+            ORDER BY snapshot_date ASC, channel_type ASC
             """,
-            chart_params,
+            [active_brand_id, *chart_params],
         )
-        daily_totals = _rows_to_dict(daily_cursor)
-        last_api_row = conn.execute(
-            f"""
-            SELECT MAX(effective_at) AS last_api_at
-            FROM {SNAPSHOT_TABLE}
-            WHERE snapshot_date BETWEEN ? AND ?{chart_clause}
-            """,
-            chart_params,
-        ).fetchone()
-        last_api_at = last_api_row[0] if last_api_row else None
+        channel_rows = _rows_to_dict(daily_cursor)
+        earliest_snapshot = (
+            channel_rows[0].get("earliest_snapshot") if channel_rows else None
+        ) or start_date
+        daily_by_date: Dict[str, Dict[str, object]] = {}
+        for channel_row in channel_rows:
+            date_key = _normalize_date(channel_row.get("snapshot_date"))
+            aggregate = daily_by_date.setdefault(
+                date_key,
+                {
+                    "snapshot_date": channel_row.get("snapshot_date"),
+                    "views": 0,
+                    "comments": 0,
+                    "likes": 0,
+                    "impressions": 0,
+                    "reach": 0,
+                    "saved": 0,
+                    "youtube_views_total": 0,
+                    "youtube_likes_total": 0,
+                    "youtube_views_rows": 0,
+                    "last_updated": None,
+                },
+            )
+            for metric in (
+                "views", "comments", "likes", "impressions", "reach", "saved",
+                "youtube_views_total", "youtube_likes_total", "youtube_views_rows",
+            ):
+                aggregate[metric] = (aggregate.get(metric) or 0) + (channel_row.get(metric) or 0)
+            row_updated = channel_row.get("last_updated")
+            if row_updated is not None and (aggregate["last_updated"] is None or row_updated > aggregate["last_updated"]):
+                aggregate["last_updated"] = row_updated
+        daily_totals = list(daily_by_date.values())
+        last_api_at = max(
+            (row.get("last_updated") for row in daily_totals if row.get("last_updated") is not None),
+            default=None,
+        )
         prev_views = None
         prev_comments = None
         prev_impressions = None
@@ -1372,37 +1439,64 @@ def _render_video_stats(*, load_widgets: bool):
         # Expose newest first for the table.
         daily_totals = list(reversed(daily_totals))
 
-        total_cursor = conn.execute(
+        prev_date = start_date - timedelta(days=1)
+        scoped_channel_clause, scoped_channel_params = _channel_filter_clause(channel_type)
+        totals_cursor = conn.execute(
             f"""
             WITH latest AS (
                 SELECT channel_type, MAX(snapshot_date) AS snapshot_date
                 FROM {SNAPSHOT_TABLE}
-                WHERE snapshot_date BETWEEN ? AND ?{chart_clause}
+                WHERE snapshot_date BETWEEN ? AND ?
+                  AND brand_id = ?
+                  {scoped_channel_clause}
                 GROUP BY channel_type
+            ), selected AS (
+                SELECT 'current' AS period_name, s.*
+                FROM {SNAPSHOT_TABLE} s
+                JOIN latest l
+                  ON s.channel_type = l.channel_type
+                 AND s.snapshot_date = l.snapshot_date
+                WHERE s.brand_id = ?
+                  {scoped_channel_clause}
+                UNION ALL
+                SELECT 'previous' AS period_name, s.*
+                FROM {SNAPSHOT_TABLE} s
+                WHERE s.snapshot_date = ?
+                  AND s.brand_id = ?
+                  {scoped_channel_clause}
             )
             SELECT
-                s.channel_type,
-                SUM(COALESCE(s.views, 0)) AS views,
-                SUM(COALESCE(s.comments, 0)) AS comments,
-                SUM(COALESCE(s.likes, 0)) AS likes,
-                SUM(COALESCE(s.impressions, 0)) AS impressions,
-                SUM(COALESCE(s.reach, 0)) AS reach,
-                SUM(COALESCE(s.saved, 0)) AS saved
-            FROM {SNAPSHOT_TABLE} s
-            JOIN latest l
-              ON s.channel_type = l.channel_type
-             AND s.snapshot_date = l.snapshot_date
-            WHERE 1 = 1{chart_clause}
-            GROUP BY s.channel_type
+                period_name,
+                channel_type,
+                SUM(COALESCE(views, 0)) AS views,
+                SUM(COALESCE(comments, 0)) AS comments,
+                SUM(COALESCE(likes, 0)) AS likes,
+                SUM(COALESCE(impressions, 0)) AS impressions,
+                SUM(COALESCE(reach, 0)) AS reach,
+                SUM(COALESCE(saved, 0)) AS saved
+            FROM selected
+            GROUP BY period_name, channel_type
             """,
-            [*chart_params, *chart_params[2:]],
+            [
+                start_date.isoformat(),
+                end_date.isoformat(),
+                active_brand_id,
+                *scoped_channel_params,
+                active_brand_id,
+                *scoped_channel_params,
+                prev_date.isoformat(),
+                active_brand_id,
+                *scoped_channel_params,
+            ],
         )
-        totals_list = _rows_to_dict(total_cursor)
+        totals_rows = _rows_to_dict(totals_cursor)
         channel_totals: Dict[str, Mapping[str, int]] = {}
-        for row in totals_list:
+        prev_totals: Dict[str, Mapping[str, int]] = {}
+        for row in totals_rows:
             key = row.get("channel_type") or "all"
             effective_views = (row.get("reach") or 0) if key == "instagram" else (row.get("views") or 0)
-            channel_totals[key] = {
+            target_totals = channel_totals if row.get("period_name") == "current" else prev_totals
+            target_totals[key] = {
                 "views": effective_views,
                 "comments": row.get("comments") or 0,
                 "likes": row.get("likes") or 0,
@@ -1410,15 +1504,6 @@ def _render_video_stats(*, load_widgets: bool):
                 "reach": row.get("reach") or 0,
                 "saved": row.get("saved") or 0,
             }
-        aggregated = {
-            "views": sum(entry["views"] for entry in channel_totals.values()),
-            "comments": sum(entry["comments"] for entry in channel_totals.values()),
-            "likes": sum(entry["likes"] for entry in channel_totals.values()),
-            "impressions": sum(entry["impressions"] for entry in channel_totals.values()),
-            "reach": sum(entry["reach"] for entry in channel_totals.values()),
-            "saved": sum(entry["saved"] for entry in channel_totals.values()),
-        }
-        channel_totals.setdefault("all", aggregated)
         def _empty_totals() -> Dict[str, int]:
             return {
                 "views": 0,
@@ -1428,153 +1513,20 @@ def _render_video_stats(*, load_widgets: bool):
                 "reach": 0,
                 "saved": 0,
             }
+        for totals in (channel_totals, prev_totals):
+            totals.setdefault(
+                "all",
+                {
+                    metric: sum(entry[metric] for entry in totals.values())
+                    for metric in ("views", "comments", "likes", "impressions", "reach", "saved")
+                },
+            )
         for option in CHANNEL_OPTIONS:
             channel_totals.setdefault(option["value"], _empty_totals())
-
-        prev_date = start_date - timedelta(days=1)
-        prev_params = [prev_date.isoformat()]
-        if channel_type and channel_type != "all":
-            prev_params.append(channel_type)
-        prev_params.extend(snapshot_brand_params)
-        prev_totals_cursor = conn.execute(
-            f"""
-            SELECT
-                channel_type,
-                SUM(COALESCE(views, 0)) AS views,
-                SUM(COALESCE(comments, 0)) AS comments,
-                SUM(COALESCE(likes, 0)) AS likes,
-                SUM(COALESCE(impressions, 0)) AS impressions,
-                SUM(COALESCE(reach, 0)) AS reach,
-                SUM(COALESCE(saved, 0)) AS saved
-            FROM {SNAPSHOT_TABLE}
-            WHERE snapshot_date = ?{filter_clause}
-            GROUP BY channel_type
-            """,
-            prev_params,
-        )
-        prev_totals_list = _rows_to_dict(prev_totals_cursor)
-        prev_totals: Dict[str, Mapping[str, int]] = {}
-        for row in prev_totals_list:
-            key = row.get("channel_type") or "all"
-            effective_views = (row.get("reach") or 0) if key == "instagram" else (row.get("views") or 0)
-            prev_totals[key] = {
-                "views": effective_views,
-                "comments": row.get("comments") or 0,
-                "likes": row.get("likes") or 0,
-                "impressions": row.get("impressions") or 0,
-                "reach": row.get("reach") or 0,
-                "saved": row.get("saved") or 0,
-            }
-        aggregated_prev = {
-            "views": sum(entry["views"] for entry in prev_totals.values()),
-            "comments": sum(entry["comments"] for entry in prev_totals.values()),
-            "likes": sum(entry["likes"] for entry in prev_totals.values()),
-            "impressions": sum(entry["impressions"] for entry in prev_totals.values()),
-            "reach": sum(entry["reach"] for entry in prev_totals.values()),
-            "saved": sum(entry["saved"] for entry in prev_totals.values()),
-        }
-        prev_totals.setdefault("all", aggregated_prev)
-        top_views_cursor = conn.execute(
-            f"""
-            WITH target AS (
-                SELECT
-                    video_id,
-                    channel_type,
-                    channel_name,
-                    video_title,
-                    SUM(COALESCE(views, 0)) AS views,
-                    SUM(COALESCE(comments, 0)) AS comments,
-                    SUM(COALESCE(likes, 0)) AS likes,
-                    SUM(COALESCE(impressions, 0)) AS impressions,
-                    SUM(COALESCE(reach, 0)) AS reach,
-                    SUM(COALESCE(saved, 0)) AS saved,
-                    MAX(stats_source) AS stats_source
-                FROM {SNAPSHOT_TABLE}
-                WHERE snapshot_date BETWEEN ? AND ?{filter_clause}
-                GROUP BY video_id, channel_type, channel_name, video_title
-            ),
-            prev_values AS (
-                SELECT
-                    video_id,
-                    channel_type,
-                    SUM(COALESCE(views, 0)) AS views,
-                    SUM(COALESCE(comments, 0)) AS comments,
-                    SUM(COALESCE(likes, 0)) AS likes
-                FROM {SNAPSHOT_TABLE}
-                WHERE snapshot_date = ?{filter_clause}
-                GROUP BY video_id, channel_type
-            )
-            SELECT
-                t.video_id,
-                t.channel_type,
-                t.channel_name,
-                t.video_title,
-                t.views,
-                t.comments,
-                t.likes,
-                t.impressions,
-                t.reach,
-                t.saved,
-                COALESCE(t.views, 0) - COALESCE(p.views, 0) AS views_delta,
-                COALESCE(t.comments, 0) - COALESCE(p.comments, 0) AS comments_delta,
-                COALESCE(t.likes, 0) - COALESCE(p.likes, 0) AS likes_delta,
-                t.stats_source
-            FROM target t
-            LEFT JOIN prev_values p
-              ON t.video_id = p.video_id AND t.channel_type = p.channel_type
-            ORDER BY views_delta DESC NULLS LAST, t.views DESC
-            LIMIT 10
-            """,
-            params + prev_params,
-        )
-        top_videos = _rows_to_dict(top_views_cursor)
-
-        top_comments_cursor = conn.execute(
-            f"""
-            SELECT
-                video_id,
-                channel_type,
-                channel_name,
-                video_title,
-                SUM(COALESCE(views, 0)) AS views,
-                SUM(COALESCE(comments, 0)) AS comments
-                ,SUM(COALESCE(likes, 0)) AS likes
-                ,SUM(COALESCE(impressions, 0)) AS impressions
-                ,SUM(COALESCE(reach, 0)) AS reach
-                ,SUM(COALESCE(saved, 0)) AS saved
-                ,MAX(stats_source) AS stats_source
-            FROM {SNAPSHOT_TABLE}
-            WHERE snapshot_date BETWEEN ? AND ?{filter_clause}
-            GROUP BY video_id, channel_type, channel_name, video_title
-            ORDER BY comments DESC
-            LIMIT 1
-            """,
-            params,
-        )
-        top_comment_video = _rows_to_dict(top_comments_cursor)
-
-        top_table_cursor = conn.execute(
-            f"""
-            SELECT
-                video_id,
-                channel_type,
-                channel_name,
-                video_title,
-                SUM(COALESCE(views, 0)) AS views,
-                SUM(COALESCE(comments, 0)) AS comments,
-                SUM(COALESCE(likes, 0)) AS likes,
-                SUM(COALESCE(impressions, 0)) AS impressions,
-                SUM(COALESCE(reach, 0)) AS reach,
-                SUM(COALESCE(saved, 0)) AS saved
-            FROM {SNAPSHOT_TABLE}
-            WHERE snapshot_date BETWEEN ? AND ?{chart_clause}
-            GROUP BY video_id, channel_type, channel_name, video_title
-            ORDER BY views DESC
-            LIMIT 40
-            """,
-            chart_params,
-        )
-        top_table_rows = _rows_to_dict(top_table_cursor)
+        # These legacy collections are no longer rendered by video_metrics.html.
+        top_videos: List[Mapping[str, object]] = []
+        top_comment_video: List[Mapping[str, object]] = []
+        top_table_rows: List[Mapping[str, object]] = []
         channel_clause, channel_params = _channel_filter_clause(channel_type)
         channel_scope_clause = f"{channel_clause}{snapshot_brand_clause}"
         channel_scope_params = [*channel_params, *snapshot_brand_params]
@@ -1709,28 +1661,13 @@ def _render_video_stats(*, load_widgets: bool):
             date_sequence.append(current.isoformat())
             current += timedelta(days=1)
         daily_map = {_normalize_date(row["snapshot_date"]): row for row in daily_totals}
-        channel_cursor = conn.execute(
-            f"""
-            SELECT
-                snapshot_date,
-                channel_type,
-                SUM(COALESCE(views, 0)) AS views,
-                SUM(COALESCE(comments, 0)) AS comments,
-                SUM(COALESCE(likes, 0)) AS likes
-            FROM {SNAPSHOT_TABLE}
-            WHERE snapshot_date BETWEEN ? AND ?{chart_clause}
-            GROUP BY snapshot_date, channel_type
-            """,
-            chart_params,
-        )
-        channel_rows = _rows_to_dict(channel_cursor)
         channel_map: Dict[str, Dict[str, Mapping[str, object]]] = {}
         for row in channel_rows:
             key = row.get("channel_type") or "all"
             date_key = _normalize_date(row["snapshot_date"])
             channel_map.setdefault(key, {})[date_key] = row
         instagram_total_reach_map = {
-            date_key: int((row or {}).get("reach") or 0)
+            date_key: 0
             for date_key, row in channel_map.get("instagram", {}).items()
         }
 
@@ -1802,13 +1739,6 @@ def _render_video_stats(*, load_widgets: bool):
                 prev_values["comments"] = comments
                 prev_values["likes"] = likes
 
-        earliest_cursor = conn.execute(
-            f"SELECT MIN(snapshot_date) FROM {SNAPSHOT_TABLE} WHERE 1 = 1{snapshot_brand_clause}",
-            snapshot_brand_params,
-        )
-        earliest_row = earliest_cursor.fetchone()
-        earliest_snapshot = earliest_row[0] if earliest_row and earliest_row[0] else start_date
-
         selected_channel = channel_type if channel_type in chart_series else "all"
         chart_points = chart_series.get(selected_channel, chart_series["all"])
         summary_card_specs = [
@@ -1845,50 +1775,13 @@ def _render_video_stats(*, load_widgets: bool):
             "facebook": 0,
             "tiktok": 0,
         }
-        try:
-            subscriber_totals_cursor = conn.execute(
-                f"""
-                WITH latest AS (
-                    SELECT channel_type, MAX(snapshot_date) AS snapshot_date
-                    FROM {SUBSCRIBER_SNAPSHOT_TABLE}
-                    WHERE 1 = 1{subscriber_brand_clause}
-                    GROUP BY channel_type
-                )
-                SELECT
-                    s.channel_type,
-                    SUM(
-                        CASE
-                            WHEN s.channel_type = 'youtube' THEN COALESCE(s.subscriber_count_exact, 0)
-                            ELSE COALESCE(s.subscriber_count_exact, s.subscriber_count, 0)
-                        END
-                    ) AS subscribers
-                FROM {SUBSCRIBER_SNAPSHOT_TABLE} s
-                JOIN latest l
-                  ON s.channel_type = l.channel_type
-                 AND s.snapshot_date = l.snapshot_date
-                WHERE 1 = 1{subscriber_brand_clause}
-                GROUP BY s.channel_type
-                """,
-                [*subscriber_brand_params, *subscriber_brand_params],
-            )
-            for row in _rows_to_dict(subscriber_totals_cursor):
-                key = (row.get("channel_type") or "").lower()
-                if key in subscriber_totals:
-                    subscriber_totals[key] = row.get("subscribers") or 0
-        except Exception:
-            subscriber_totals = {
-                "youtube": 0,
-                "instagram": 0,
-                "facebook": 0,
-                "tiktok": 0,
-            }
-
         subscriber_series: List[Mapping[str, object]] = []
         youtube_subscriber_data_missing = False
         try:
             subscriber_cursor = conn.execute(
                 f"""
-                SELECT
+                WITH series AS (
+                    SELECT
                     snapshot_date,
                     channel_type,
                     SUM(
@@ -1903,15 +1796,105 @@ def _render_video_stats(*, load_widgets: bool):
                     SUM(CASE WHEN subscribers_gained IS NOT NULL THEN 1 ELSE 0 END) AS subscribers_gained_count,
                     SUM(CASE WHEN subscribers_lost IS NOT NULL THEN 1 ELSE 0 END) AS subscribers_lost_count,
                     SUM(CASE WHEN subscribers_net IS NOT NULL THEN 1 ELSE 0 END) AS subscribers_net_count
-                FROM {SUBSCRIBER_SNAPSHOT_TABLE}
-                WHERE snapshot_date BETWEEN ? AND ?
-                  {subscriber_brand_clause}
-                GROUP BY snapshot_date, channel_type
-                ORDER BY snapshot_date ASC
+                    FROM {SUBSCRIBER_SNAPSHOT_TABLE}
+                    WHERE snapshot_date BETWEEN ? AND ?
+                      AND brand_id = ?
+                    GROUP BY snapshot_date, channel_type
+                ), latest_dates AS (
+                    SELECT channel_type, MAX(snapshot_date) AS snapshot_date
+                    FROM {SUBSCRIBER_SNAPSHOT_TABLE}
+                    WHERE brand_id = ?
+                    GROUP BY channel_type
+                ), latest_totals AS (
+                    SELECT
+                        COALESCE(SUM(CASE WHEN s.channel_type = 'youtube' THEN COALESCE(s.subscriber_count_exact, 0) ELSE 0 END), 0) AS latest_youtube,
+                        COALESCE(SUM(CASE WHEN s.channel_type = 'instagram' THEN COALESCE(s.subscriber_count_exact, s.subscriber_count, 0) ELSE 0 END), 0) AS latest_instagram,
+                        COALESCE(SUM(CASE WHEN s.channel_type = 'facebook' THEN COALESCE(s.subscriber_count_exact, s.subscriber_count, 0) ELSE 0 END), 0) AS latest_facebook,
+                        COALESCE(SUM(CASE WHEN s.channel_type = 'tiktok' THEN COALESCE(s.subscriber_count_exact, s.subscriber_count, 0) ELSE 0 END), 0) AS latest_tiktok
+                    FROM {SUBSCRIBER_SNAPSHOT_TABLE} s
+                    JOIN latest_dates l
+                      ON l.channel_type = s.channel_type
+                     AND l.snapshot_date = s.snapshot_date
+                    WHERE s.brand_id = ?
+                ), baseline_candidates AS (
+                    SELECT baseline_date, baseline_subscribers_exact, 0 AS priority
+                    FROM youtube_channels
+                    WHERE baseline_date IS NOT NULL
+                      AND baseline_subscribers_exact IS NOT NULL
+                      AND brand_id = ?
+                    ORDER BY baseline_date DESC
+                    LIMIT 1
+                ), fallback_candidate AS (
+                    SELECT snapshot_date AS baseline_date, subscriber_count_exact AS baseline_subscribers_exact, 1 AS priority
+                    FROM {SUBSCRIBER_SNAPSHOT_TABLE}
+                    WHERE channel_type = 'youtube'
+                      AND subscriber_count_exact IS NOT NULL
+                      AND brand_id = ?
+                    ORDER BY snapshot_date ASC
+                    LIMIT 1
+                ), baseline AS (
+                    SELECT baseline_date, baseline_subscribers_exact
+                    FROM (
+                        SELECT * FROM baseline_candidates
+                        UNION ALL
+                        SELECT * FROM fallback_candidate
+                    ) candidates
+                    ORDER BY priority
+                    LIMIT 1
+                ), baseline_meta AS (
+                    SELECT
+                        b.baseline_date,
+                        b.baseline_subscribers_exact,
+                        COALESCE(SUM(s.subscribers_net) FILTER (
+                            WHERE s.snapshot_date > b.baseline_date AND s.snapshot_date < ?
+                        ), 0) AS seed_sum
+                    FROM baseline b
+                    LEFT JOIN {SUBSCRIBER_SNAPSHOT_TABLE} s
+                      ON s.brand_id = ?
+                     AND s.channel_type = 'youtube'
+                     AND s.subscribers_net IS NOT NULL
+                    GROUP BY b.baseline_date, b.baseline_subscribers_exact
+                )
+                SELECT
+                    series.*,
+                    latest_totals.*,
+                    baseline_meta.*,
+                    EXISTS (
+                        SELECT 1
+                        FROM youtube_oauth_tokens_v2 oauth
+                        WHERE oauth.user_id = ?
+                          AND COALESCE(oauth.reauth_required, 0) <> 0
+                    ) AS oauth_reauth_required
+                FROM latest_totals
+                LEFT JOIN baseline_meta ON TRUE
+                LEFT JOIN series ON TRUE
+                ORDER BY series.snapshot_date ASC, series.channel_type ASC
                 """,
-                [start_date.isoformat(), end_date.isoformat(), *subscriber_brand_params],
+                [
+                    start_date.isoformat(), end_date.isoformat(), active_brand_id,
+                    active_brand_id, active_brand_id,
+                    active_brand_id, active_brand_id, start_date.isoformat(), active_brand_id,
+                    current_user.get("id"),
+                ],
             )
             subscriber_rows = _rows_to_dict(subscriber_cursor)
+            if subscriber_rows:
+                first_subscriber_row = subscriber_rows[0]
+                oauth_reauth_required = bool(first_subscriber_row.get("oauth_reauth_required"))
+                for platform in subscriber_totals:
+                    subscriber_totals[platform] = int(first_subscriber_row.get(f"latest_{platform}") or 0)
+                baseline_date_obj = first_subscriber_row.get("baseline_date")
+                baseline_total = (
+                    int(first_subscriber_row.get("baseline_subscribers_exact"))
+                    if first_subscriber_row.get("baseline_subscribers_exact") is not None
+                    else None
+                )
+                seed_sum = int(first_subscriber_row.get("seed_sum") or 0)
+            else:
+                baseline_date_obj = None
+                baseline_total = None
+                seed_sum = 0
+            subscriber_rows = [row for row in subscriber_rows if row.get("snapshot_date") is not None]
             youtube_subscriber_data_missing = not any(
                 (row.get("channel_type") or "").lower() == "youtube"
                 for row in subscriber_rows
@@ -1932,69 +1915,6 @@ def _render_video_stats(*, load_widgets: bool):
                     "lost": row.get("subscribers_lost") if lost_count else None,
                     "has_data": True,
                 }
-            baseline_total = None
-            baseline_date_obj: Optional[date] = None
-            seed_sum = 0
-            try:
-                baseline_row = conn.execute(
-                    f"""
-                    SELECT baseline_date, baseline_subscribers_exact
-                    FROM youtube_channels
-                    WHERE baseline_date IS NOT NULL
-                      AND baseline_subscribers_exact IS NOT NULL
-                      {youtube_channels_brand_clause}
-                    ORDER BY baseline_date DESC
-                    LIMIT 1
-                    """,
-                    youtube_channels_brand_params,
-                ).fetchone()
-                if baseline_row and baseline_row[1] is not None:
-                    baseline_date_obj = baseline_row[0]
-                    baseline_total = int(baseline_row[1])
-            except Exception:
-                baseline_total = None
-                baseline_date_obj = None
-            if baseline_total is None or baseline_date_obj is None:
-                try:
-                    baseline_row = conn.execute(
-                        f"""
-                        SELECT snapshot_date, subscriber_count_exact
-                        FROM shorts_channel_subscriber_daily
-                        WHERE channel_type = 'youtube'
-                          AND subscriber_count_exact IS NOT NULL
-                          {subscriber_brand_clause}
-                        ORDER BY snapshot_date ASC
-                        LIMIT 1
-                        """,
-                        subscriber_brand_params,
-                    ).fetchone()
-                    if baseline_row and baseline_row[1] is not None:
-                        baseline_date_obj = baseline_row[0]
-                        baseline_total = int(baseline_row[1])
-                except Exception:
-                    baseline_total = None
-                    baseline_date_obj = None
-            if baseline_total is not None and baseline_date_obj is not None and start_date > baseline_date_obj:
-                try:
-                    seed_row = conn.execute(
-                        f"""
-                        SELECT COALESCE(SUM(subscribers_net), 0)
-                        FROM shorts_channel_subscriber_daily
-                        WHERE channel_type = 'youtube'
-                          AND subscribers_net IS NOT NULL
-                          {subscriber_brand_clause}
-                          AND snapshot_date > ?
-                          AND snapshot_date < ?
-                        """,
-                        [
-                            *subscriber_brand_params,
-                            baseline_date_obj.isoformat(),
-                            start_date.isoformat(),
-                        ],
-                    ).fetchone()
-                    seed_sum = int(seed_row[0] or 0) if seed_row else 0
-                except Exception:
-                    seed_sum = 0
             prev_youtube_total: Optional[int] = None
             prev_youtube_has_data = False
             prev_instagram_total: Optional[int] = None
@@ -2165,24 +2085,23 @@ def _render_video_stats(*, load_widgets: bool):
         subscriber_totals=subscriber_totals,
         subscriber_series=subscriber_series,
         youtube_subscriber_data_missing=(
-            youtube_subscriber_data_missing or _safe_reauth_required()
+            youtube_subscriber_data_missing or oauth_reauth_required
         ),
         last_api_at=last_api_at,
     )
-    rendered_page = render_template(
-        "video_metrics.html",
-        dashboard_shell=False,
-        **template_context,
+    template = current_app.jinja_env.get_template("video_metrics.html")
+    fragment_context = template.new_context(
+        {
+            "dashboard_shell": False,
+            "dashboard_fragment": True,
+            "format_stat": _fragment_format_stat,
+            "render_top_video_rows": _fragment_top_video_rows,
+            **template_context,
+        }
     )
-    return {"html": rendered_page, "cached_for_seconds": STATS_WIDGET_CACHE_TTL_SECONDS}
-
-
-def _safe_reauth_required() -> bool:
-    try:
-        current_user = getattr(g, "vs_current_user", None) or {}
-        return is_reauth_required(current_user.get("id"))
-    except Exception:
-        return False
+    rendered_page = "".join(template.blocks["content"](fragment_context))
+    rendered_page += "".join(template.blocks["scripts"](fragment_context))
+    return {"html": rendered_page, "cached_for_seconds": 0}
 
 
 @video_shorts_bp.route("/stats/top_videos", methods=["GET"])

@@ -179,6 +179,8 @@ def _current_user():
     if not user_id:
         g.vs_current_user = None
         return None
+    # These columns are runtime prerequisites initialized by
+    # initialize_runtime_schema() before the app starts serving requests.
     select_sql = """
         SELECT
           CAST(id AS VARCHAR),
@@ -189,13 +191,20 @@ def _current_user():
           custom_limit_bytes,
           role,
           time_zone,
-          COALESCE(email_verified, FALSE)
+          COALESCE(email_verified, FALSE),
+          COALESCE(onboarding_dismissed, FALSE),
+          service_mode,
+          service_tier,
+          pending_service_intent,
+          pending_service_tier,
+          COALESCE(is_guest, FALSE),
+          guest_created_at,
+          guest_ip_hash,
+          COALESCE(guest_render_count, 0),
+          COALESCE(guest_video_count, 0)
         FROM shorts_users
         WHERE id = ?
         """
-    user_columns = set()
-    has_guest_columns = False
-    has_onboarding_columns = False
     try:
         conn = get_db_readonly()
     except Exception as exc:
@@ -203,89 +212,19 @@ def _current_user():
         g.vs_current_user = None
         return None
     try:
-        user_columns = table_columns(conn, "shorts_users")
-        has_guest_columns = "is_guest" in user_columns
-        has_onboarding_columns = "onboarding_dismissed" in user_columns
-        if has_onboarding_columns:
-            select_sql = """
-                SELECT
-                  CAST(id AS VARCHAR),
-                  username,
-                  name,
-                  email,
-                  plan_id,
-                  custom_limit_bytes,
-                  role,
-                  time_zone,
-                  COALESCE(email_verified, FALSE),
-                  COALESCE(onboarding_dismissed, FALSE),
-                  service_mode,
-                  service_tier,
-                  pending_service_intent,
-                  pending_service_tier{guest_select}
-                FROM shorts_users
-                WHERE id = ?
-            """.format(
-                guest_select=""", COALESCE(is_guest, FALSE),
-                  guest_created_at,
-                  guest_ip_hash,
-                  COALESCE(guest_render_count, 0),
-                  COALESCE(guest_video_count, 0)
-                """
-                if has_guest_columns
-                else ""
-            )
-        elif has_guest_columns:
-            select_sql = """
-                SELECT
-                  CAST(id AS VARCHAR),
-                  username,
-                  name,
-                  email,
-                  plan_id,
-                  custom_limit_bytes,
-                  role,
-                  time_zone,
-                  COALESCE(email_verified, FALSE),
-                  COALESCE(is_guest, FALSE),
-                  guest_created_at,
-                  guest_ip_hash,
-                  COALESCE(guest_render_count, 0),
-                  COALESCE(guest_video_count, 0)
-                FROM shorts_users
-                WHERE id = ?
-            """
         row = conn.execute(select_sql, [user_id]).fetchone()
     except Exception as exc:
         conn.close()
-        try:
-            conn = get_db()
-            try:
-                ensure_storage_user_schema(conn)
-                ensure_auth_user_schema(conn)
-                row = conn.execute(select_sql, [user_id]).fetchone()
-            finally:
-                conn.close()
-        except Exception as inner_exc:
-            logger.warning(
-                "Video shorts auth lookup failed while loading session user: %s (fallback: %s)",
-                exc,
-                inner_exc,
-            )
-            g.vs_current_user = None
-            return None
+        logger.warning("Video shorts auth lookup failed while loading session user: %s", exc)
+        g.vs_current_user = None
+        return None
     else:
         conn.close()
     if not row:
         session.pop("vs_user_id", None)
         g.vs_current_user = None
         return None
-    if has_onboarding_columns and len(row) >= 19:
-        guest_values = row[14:19]
-    elif not has_onboarding_columns and len(row) >= 14:
-        guest_values = row[9:14]
-    else:
-        guest_values = (False, None, None, 0, 0)
+    guest_values = row[14:19]
     g.vs_current_user = {
         "id": row[0],
         "username": row[1],
@@ -296,11 +235,11 @@ def _current_user():
         "role": row[6] or "member",
         "time_zone": row[7] or DEFAULT_TIME_ZONE,
         "email_verified": bool(row[8]) if len(row) > 8 else False,
-        "onboarding_dismissed": bool(row[9]) if has_onboarding_columns and len(row) > 9 else False,
-        "service_mode": str(row[10] or "").strip().lower() if has_onboarding_columns and len(row) > 10 and row[10] else "",
-        "service_tier": int(row[11]) if has_onboarding_columns and len(row) > 11 and row[11] is not None else None,
-        "pending_service_intent": str(row[12] or "").strip().lower() if has_onboarding_columns and len(row) > 12 and row[12] else "",
-        "pending_service_tier": int(row[13]) if has_onboarding_columns and len(row) > 13 and row[13] is not None else None,
+        "onboarding_dismissed": bool(row[9]),
+        "service_mode": str(row[10] or "").strip().lower() if row[10] else "",
+        "service_tier": int(row[11]) if row[11] is not None else None,
+        "pending_service_intent": str(row[12] or "").strip().lower() if row[12] else "",
+        "pending_service_tier": int(row[13]) if row[13] is not None else None,
         "is_guest": bool(guest_values[0]),
         "guest_created_at": guest_values[1],
         "guest_ip_hash": guest_values[2],
