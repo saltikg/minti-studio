@@ -1,4 +1,6 @@
 -- Run with psql outside a transaction.
+SET search_path TO main, public;
+
 CREATE INDEX CONCURRENTLY IF NOT EXISTS idx_youtube_videos_owner_brand
     ON youtube_videos(owner_user_id, brand_id);
 
