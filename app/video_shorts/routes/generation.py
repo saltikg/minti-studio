@@ -6247,22 +6247,44 @@ def _is_ai_plan_entry(entry: Dict[str, Any]) -> bool:
     return _is_ai_origin((entry or {}).get("origin"))
 
 
-def _select_lead_generation_entries(entries: List[Dict[str, Any]], *, min_score: float = 85.0, limit: int = 5) -> List[Dict[str, Any]]:
+def _select_lead_generation_entries(
+    entries: List[Dict[str, Any]],
+    *,
+    min_score: float = 85.0,
+    limit: int = 5,
+    fallback_limit: int = 0,
+) -> List[Dict[str, Any]]:
     candidates: List[Tuple[float, int, Dict[str, Any]]] = []
+    scored_candidates: List[Tuple[float, int, Dict[str, Any]]] = []
+    completed_candidates: List[Tuple[int, Dict[str, Any]]] = []
     for position, entry in enumerate(entries or []):
         if not isinstance(entry, dict):
             continue
         entry["selected_for_generation"] = False
         entry.pop("selected_for_generation_rank", None)
+        entry.pop("selected_for_generation_reason", None)
         score = _coerce_plan_score(entry)
+        if score is not None:
+            scored_candidates.append((score, position, entry))
+        if str(entry.get("status") or "").strip().lower() in {"created", "done"}:
+            completed_candidates.append((position, entry))
         if score is None or score < min_score:
             continue
         candidates.append((score, position, entry))
     candidates.sort(key=lambda item: (-item[0], item[1]))
+    selection_reason = "score_threshold"
+    if not candidates and int(fallback_limit or 0) > 0:
+        scored_candidates.sort(key=lambda item: (-item[0], item[1]))
+        candidates = scored_candidates[: int(fallback_limit)]
+        selection_reason = "top_score_fallback"
+        if not candidates:
+            candidates = [(0.0, position, entry) for position, entry in completed_candidates[: int(fallback_limit)]]
+            selection_reason = "existing_completed_fallback"
     selected: List[Dict[str, Any]] = []
     for rank, (_score, _position, entry) in enumerate(candidates[: max(0, int(limit))], 1):
         entry["selected_for_generation"] = True
         entry["selected_for_generation_rank"] = rank
+        entry["selected_for_generation_reason"] = selection_reason
         selected.append(entry)
     return selected
 
@@ -6754,7 +6776,12 @@ def _invalid_autopilot_entry_email_reason(email: str) -> Optional[str]:
 def _plan_entries_with_selection(video_id: str, *, video_pk=None) -> Tuple[List[Dict[str, Any]], List[Dict[str, Any]]]:
     entries = _load_plan_entries(video_id, video_pk=video_pk) or []
     if entries:
-        selected = _select_lead_generation_entries(entries, min_score=DISCOVERY_LEAD_GENERATION_MIN_SCORE, limit=5)
+        selected = _select_lead_generation_entries(
+            entries,
+            min_score=DISCOVERY_LEAD_GENERATION_MIN_SCORE,
+            limit=5,
+            fallback_limit=3,
+        )
         _write_plan_entries(video_id, entries, video_pk=video_pk)
         return entries, selected
     return entries, []
@@ -7296,7 +7323,11 @@ def process_downloaded_lead_autoplan(*, limit: int = 1, timeout_seconds: int = A
                     "combined_clip_count": len(entries),
                     "selected_count": len(selected),
                     "selected": _summarize_selected_plan_entries(selected),
-                    "selection_rule": {"min_score": DISCOVERY_LEAD_GENERATION_MIN_SCORE, "limit": 5},
+                    "selection_rule": {
+                        "min_score": DISCOVERY_LEAD_GENERATION_MIN_SCORE,
+                        "limit": 5,
+                        "fallback_limit": 3,
+                    },
                 }
                 if selected:
                     record_lead_pipeline_event(
@@ -7995,19 +8026,20 @@ def process_planned_lead_autogenerate(
                     conn_fail.close()
             continue
 
+        try:
+            gate_result = _evaluate_lead_generation_approval_gate(
+                owner_user_id=owner_user_id,
+                brand_id=brand_id,
+                video_pk=video_pk,
+                video_id=video_id,
+            )
+            if gate_result and gate_result.get("to_state") in {"awaiting_approval", "failed"}:
+                processed_any = True
+                continue
+        except Exception as exc:
+            current_app.logger.warning("Autopilot gate evaluation failed lead_id=%s: %s", lead_id, exc)
+
         if pipeline_state == "generating":
-            try:
-                gate_result = _evaluate_lead_generation_approval_gate(
-                    owner_user_id=owner_user_id,
-                    brand_id=brand_id,
-                    video_pk=video_pk,
-                    video_id=video_id,
-                )
-                if gate_result and gate_result.get("to_state") in {"awaiting_approval", "failed"}:
-                    processed_any = True
-                    continue
-            except Exception as exc:
-                current_app.logger.warning("Autopilot gate evaluation failed lead_id=%s: %s", lead_id, exc)
             incomplete = [
                 entry
                 for entry in selected
@@ -27125,6 +27157,7 @@ def _generate_clip_plan_for_video(
             combined_plan,
             min_score=DISCOVERY_LEAD_GENERATION_MIN_SCORE,
             limit=5,
+            fallback_limit=3,
         )
 
     SHORTS_DIR.mkdir(parents=True, exist_ok=True)
@@ -27147,7 +27180,11 @@ def _generate_clip_plan_for_video(
                 "combined_clip_count": len(combined_plan),
                 "selected_count": len(selected_for_generation),
                 "selected": _summarize_selected_plan_entries(selected_for_generation),
-                "selection_rule": {"min_score": DISCOVERY_LEAD_GENERATION_MIN_SCORE, "limit": 5},
+                "selection_rule": {
+                    "min_score": DISCOVERY_LEAD_GENERATION_MIN_SCORE,
+                    "limit": 5,
+                    "fallback_limit": 3,
+                },
                 "plan_focus": plan_focus,
                 "focus_categories": list(focus_categories),
             }

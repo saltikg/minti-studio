@@ -134,3 +134,41 @@ def test_transcript_grace_period_does_not_fail_active_ingest():
         now - timedelta(minutes=30),
         now=now,
     )
+
+
+def test_outreach_clip_selection_uses_top_scores_when_threshold_has_no_matches():
+    entries = [
+        {"plan_index": 1, "score": 70, "status": "pending"},
+        {"plan_index": 2, "score": 78, "status": "pending"},
+        {"plan_index": 3, "score": 75, "status": "pending"},
+        {"plan_index": 4, "score": 55, "status": "pending"},
+    ]
+
+    selected = generation._select_lead_generation_entries(
+        entries,
+        min_score=80,
+        limit=5,
+        fallback_limit=3,
+    )
+
+    assert [entry["plan_index"] for entry in selected] == [2, 3, 1]
+    assert all(entry["selected_for_generation_reason"] == "top_score_fallback" for entry in selected)
+    assert not entries[3]["selected_for_generation"]
+
+
+def test_outreach_clip_selection_recovers_existing_completed_clips_without_scores():
+    entries = [
+        {"plan_index": 3, "score": None, "status": "created"},
+        {"plan_index": 2, "score": None, "status": "created"},
+        {"plan_index": 1, "score": None, "status": "created"},
+    ]
+
+    selected = generation._select_lead_generation_entries(
+        entries,
+        min_score=80,
+        limit=5,
+        fallback_limit=3,
+    )
+
+    assert [entry["plan_index"] for entry in selected] == [3, 2, 1]
+    assert all(entry["selected_for_generation_reason"] == "existing_completed_fallback" for entry in selected)
