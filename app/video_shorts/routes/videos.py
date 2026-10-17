@@ -2803,6 +2803,29 @@ def _collect_short_broadcast_entries(
         return entries
     plan_paths = list(tenant_media.iter_plans(owner_user_id=effective_owner_user_id, brand_id=brand_id))
     video_ids = [video.youtube_id for video, path in plan_paths]
+    foreign_plan_names: Dict[str, set[str]] = {}
+    if video_ids:
+        conn = get_db_readonly()
+        try:
+            placeholders = ", ".join("?" for _ in video_ids)
+            foreign_rows = conn.execute(
+                f"""
+                SELECT source_video_id, clip_filename, output_filename
+                FROM shorts_generated_videos
+                WHERE source_video_id IN ({placeholders})
+                  AND (user_id IS DISTINCT FROM ? OR brand_id IS DISTINCT FROM ?)
+                """,
+                [*video_ids, effective_owner_user_id, brand_id],
+            ).fetchall()
+        finally:
+            conn.close()
+        for source_video_id, clip_filename, output_filename in foreign_rows:
+            names = foreign_plan_names.setdefault(str(source_video_id), set())
+            names.update(
+                str(name)
+                for name in (clip_filename, output_filename)
+                if name
+            )
     instagram_queue_map = load_instagram_queue_map(video_ids)
     tiktok_queue_map = load_tiktok_queue_map(video_ids)
     facebook_queue_map = load_facebook_queue_map(video_ids)
@@ -2811,10 +2834,23 @@ def _collect_short_broadcast_entries(
         if not video_id:
             continue
         try:
-            plan_data = tenant_media.load_state(plan_video)
+            plan_data = json.loads(plan_path.read_text())
         except Exception:
             continue
+        if not isinstance(plan_data, dict):
+            continue
         plan_entries = plan_data.get("plan") or plan_data.get("clips") or []
+        foreign_names = foreign_plan_names.get(video_id, set())
+        if foreign_names:
+            plan_entries = [
+                entry
+                for entry in plan_entries
+                if isinstance(entry, dict)
+                and not any(
+                    entry.get(key) in foreign_names
+                    for key in ("clip_filename", "output_filename")
+                )
+            ]
         seen_plan_keys = set()
         for plan_entry in plan_entries:
             publish_status = (plan_entry.get("publish_status") or "").lower()
