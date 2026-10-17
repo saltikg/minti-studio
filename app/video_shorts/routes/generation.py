@@ -7004,7 +7004,16 @@ def _lead_source_video_readiness(video_pk: int, video_id: str) -> Dict[str, Any]
         conn.close()
 
 
-def _recent_source_not_ready_bounce_count(conn, lead_id: str, *, video_pk: int, window_minutes: int = 30) -> int:
+AUTOPILOT_SOURCE_READY_GRACE_SECONDS = 10 * 60
+
+
+def _recent_source_not_ready_bounce_status(
+    conn,
+    lead_id: str,
+    *,
+    video_pk: int,
+    window_minutes: int = 30,
+) -> tuple[int, Optional[datetime]]:
     cutoff = datetime.now(timezone.utc) - timedelta(minutes=int(window_minutes))
     baseline = conn.execute(
         """
@@ -7025,7 +7034,7 @@ def _recent_source_not_ready_bounce_count(conn, lead_id: str, *, video_pk: int, 
     ).fetchone()
     baseline_at = baseline[0] if baseline else None
     if not baseline_at:
-        return 0
+        return 0, None
     row = conn.execute(
         """
         SELECT COUNT(*)
@@ -7037,14 +7046,43 @@ def _recent_source_not_ready_bounce_count(conn, lead_id: str, *, video_pk: int, 
         """,
         [lead_id, baseline_at, f'%"video_pk": {int(video_pk)}%'],
     ).fetchone()
-    return int((row[0] if row else 0) or 0)
+    return int((row[0] if row else 0) or 0), baseline_at
+
+
+def _source_not_ready_is_stuck(
+    bounce_count: int,
+    last_progress_at: Optional[datetime],
+    *,
+    now: Optional[datetime] = None,
+) -> bool:
+    if int(bounce_count or 0) < 5 or last_progress_at is None:
+        return False
+    progress_at = last_progress_at
+    if progress_at.tzinfo is None:
+        progress_at = progress_at.replace(tzinfo=timezone.utc)
+    current_time = now or datetime.now(timezone.utc)
+    if current_time.tzinfo is None:
+        current_time = current_time.replace(tzinfo=timezone.utc)
+    return (current_time - progress_at).total_seconds() >= AUTOPILOT_SOURCE_READY_GRACE_SECONDS
 
 
 def _route_lead_back_to_download(lead_id: str, *, video_pk: int, video_id: str, from_state: str, reason: str) -> None:
     conn = get_db()
     try:
-        bounce_count = _recent_source_not_ready_bounce_count(conn, lead_id, video_pk=video_pk)
-        if bounce_count >= 5:
+        bounce_count, last_progress_at = _recent_source_not_ready_bounce_status(
+            conn,
+            lead_id,
+            video_pk=video_pk,
+        )
+        if _source_not_ready_is_stuck(bounce_count, last_progress_at):
+            progress_age_seconds = max(
+                0,
+                int((datetime.now(timezone.utc) - (
+                    last_progress_at.replace(tzinfo=timezone.utc)
+                    if last_progress_at and last_progress_at.tzinfo is None
+                    else last_progress_at
+                )).total_seconds()),
+            )
             record_lead_pipeline_event(
                 conn,
                 lead_id=lead_id,
@@ -7056,6 +7094,8 @@ def _route_lead_back_to_download(lead_id: str, *, video_pk: int, video_id: str, 
                     "last_reason": reason,
                     "bounce_count": bounce_count,
                     "window_minutes": 30,
+                    "progress_age_seconds": progress_age_seconds,
+                    "grace_seconds": AUTOPILOT_SOURCE_READY_GRACE_SECONDS,
                     "video_pk": video_pk,
                     "video_id": video_id,
                 },

@@ -1,3 +1,5 @@
+from datetime import datetime, timedelta, timezone
+
 from flask import Flask
 
 from app.video_shorts.config import SUBTITLE_PRESETS
@@ -112,3 +114,23 @@ def test_auto_layout_builds_face_track_during_render(monkeypatch, tmp_path):
         "h_ratio": 0.25,
         "found": True,
     }
+
+
+def test_transcript_grace_period_does_not_fail_active_ingest():
+    now = datetime(2026, 10, 17, 8, 0, tzinfo=timezone.utc)
+
+    assert not generation._source_not_ready_is_stuck(
+        5,
+        now - timedelta(seconds=50),
+        now=now,
+    )
+    assert generation._source_not_ready_is_stuck(
+        5,
+        now - timedelta(minutes=11),
+        now=now,
+    )
+    assert not generation._source_not_ready_is_stuck(
+        4,
+        now - timedelta(minutes=30),
+        now=now,
+    )
