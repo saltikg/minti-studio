@@ -27,6 +27,7 @@ from app.video_shorts.services.lead_pipeline import source_video_ready_for_plann
 AUTOPILOT_LEADS_TABLE = "autopilot_leads"
 LOCAL_UPLOADS_CHANNEL_NAME = "Local uploads"
 SHORT_EDITOR_DEFAULTS_PREFERENCE_KEY = "short_editor_defaults"
+FACE_AWARE_DEFAULT_PREFERENCE_KEY = "face_aware_layout_default"
 BOLD_POP_STYLE_TEMPLATE_KEY = "opus"
 OUTREACH_SUBTITLE_PRESET = "outreach_opus"
 OUTREACH_SUBTITLE_FONT_KEY = "arimo"
@@ -131,6 +132,7 @@ def _bold_pop_video_style_values() -> Dict[str, Any]:
         "subtitle_font_key": OUTREACH_SUBTITLE_FONT_KEY,
         "subtitle_font_size": OUTREACH_SUBTITLE_FONT_SIZE,
         "subtitle_margin": OUTREACH_SUBTITLE_MARGIN,
+        "subtitle_margin_custom": False,
         "caption_anchor": OUTREACH_CAPTION_ANCHOR,
         "subtitle_style": "karaoke",
         "subtitle_preset": OUTREACH_SUBTITLE_PRESET,
@@ -147,6 +149,8 @@ def _bold_pop_video_style_values() -> Dict[str, Any]:
         "show_subtitle": True,
         "subscribe_overlay_enabled": True,
         "visual_mode": "video",
+        "crop_aspect": "portrait",
+        "layout_mode": "auto",
         "video_overlay_offset": DEFAULT_VIDEO_OVERLAY_OFFSET,
     }
 
@@ -205,6 +209,29 @@ def _stamp_bold_pop_video_style(conn, video_pk: Any) -> None:
 def apply_outreach_video_style(conn, video_pk: Any) -> None:
     """Reapply the fixed outreach style immediately before automated rendering."""
     _stamp_bold_pop_video_style(conn, video_pk)
+    row = conn.execute(
+        "SELECT CAST(owner_user_id AS VARCHAR) FROM youtube_videos WHERE id = ? LIMIT 1",
+        [video_pk],
+    ).fetchone()
+    if row and row[0]:
+        _enable_outreach_face_aware_layout(conn, str(row[0]))
+
+
+def _enable_outreach_face_aware_layout(conn, owner_user_id: str) -> None:
+    clean_owner = str(owner_user_id or "").strip()
+    if not clean_owner:
+        return
+    conn.execute(
+        "DELETE FROM shorts_user_preferences WHERE user_id = ? AND preference_key = ?",
+        [clean_owner, FACE_AWARE_DEFAULT_PREFERENCE_KEY],
+    )
+    conn.execute(
+        """
+        INSERT INTO shorts_user_preferences (id, user_id, preference_key, preference_value, updated_at)
+        VALUES (?, ?, ?, 'true', now())
+        """,
+        [str(uuid4()), clean_owner, FACE_AWARE_DEFAULT_PREFERENCE_KEY],
+    )
 
 
 def _save_bold_pop_short_editor_defaults(conn, owner_user_id: str) -> None:
@@ -230,6 +257,7 @@ def _save_bold_pop_short_editor_defaults(conn, owner_user_id: str) -> None:
             json.dumps(_bold_pop_short_editor_defaults(), ensure_ascii=False, sort_keys=True),
         ],
     )
+    _enable_outreach_face_aware_layout(conn, clean_owner)
 
 
 def autopilot_leads_table_ready(conn) -> bool:

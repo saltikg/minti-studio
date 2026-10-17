@@ -4086,6 +4086,35 @@ def _compute_face_aware_layout_segments(
         start_seconds=start_seconds,
         end_seconds=end_seconds,
     )
+    if not face_track_smooth_path and samples:
+        track_rows = []
+        for sample in samples:
+            faces = sample.get("faces") if isinstance(sample.get("faces"), list) else []
+            face = faces[0] if len(faces) == 1 and isinstance(faces[0], dict) else {}
+            track_rows.append(
+                {
+                    "t": float(start_seconds) + float(sample.get("t") or 0.0),
+                    "cx_ratio": face.get("cx_ratio"),
+                    "cy_ratio": face.get("cy_ratio"),
+                    "w_ratio": face.get("w_ratio"),
+                    "h_ratio": face.get("h_ratio"),
+                    "found": bool(face),
+                }
+            )
+        try:
+            face_track_smooth_path = _write_preview_face_track_smooth(
+                video_id,
+                track_rows,
+                start_seconds,
+                end_seconds,
+            )
+        except Exception:
+            current_app.logger.warning(
+                "Could not persist render-time face track video_id=%s plan_index=%s",
+                video_id,
+                plan_index,
+                exc_info=True,
+            )
     duration = max(0.0, float(end_seconds) - float(start_seconds))
     segments = _build_face_aware_layout_segments_from_samples(samples, duration_seconds=duration)
     snapped_boundaries: List[Dict[str, Any]] = []
@@ -4138,6 +4167,7 @@ def _compute_face_aware_layout_segments(
         "segments": segments,
         "snapped_boundaries": snapped_boundaries,
         "elapsed_ms": elapsed_ms,
+        "face_track_smooth_path": str(face_track_smooth_path) if face_track_smooth_path else "",
     }
 
 
@@ -29761,6 +29791,9 @@ def autoclip_video(video_pk):
                     static_visual_key=video_static_visual_key,
                     face_track_smooth_path=face_track_smooth_path,
                 )
+                generated_face_track = str(face_aware_layout_result.get("face_track_smooth_path") or "").strip()
+                if generated_face_track and Path(generated_face_track).exists():
+                    face_track_smooth_path = Path(generated_face_track)
                 layout_segments = list(face_aware_layout_result.get("segments") or [])
                 if face_aware_layout_result.get("enabled") and layout_segments:
                     compose_crop_settings["layout_segments"] = layout_segments
