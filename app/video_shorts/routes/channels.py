@@ -279,11 +279,11 @@ def _short_card_media_urls(
     )
 
 
-def _visible_short_rows(conn, user_id, brand_id, *, limit: int, offset: int = 0):
+def _visible_short_rows(conn, user_id, brand_id):
     """Single rendered-media rule for the strip and per-source table counts."""
     from flask import has_request_context
     cache = getattr(g, "vs_visible_short_rows", {}) if has_request_context() else {}
-    scope = (user_id, brand_id, int(limit), int(offset))
+    scope = (user_id, brand_id)
     if scope in cache:
         return cache[scope]
     rows = conn.execute(
@@ -322,18 +322,9 @@ def _visible_short_rows(conn, user_id, brand_id, *, limit: int, offset: int = 0)
           AND gv.brand_id IS NOT DISTINCT FROM ?
           AND NULLIF(trim(coalesce(gv.clip_filename, '')), '') IS NOT NULL
           AND NULLIF(trim(coalesce(gv.storage_file_key, '')), '') IS NOT NULL
-          AND lower(coalesce(gv.generation_status, '')) NOT IN
-              ('pending', 'queued', 'processing', 'rendering')
-          AND (
-              substring(gv.clip_filename from '_v([0-9]+)\\.mp4$') IS NULL
-              OR source_video.id = CAST(
-                  substring(gv.clip_filename from '_v([0-9]+)\\.mp4$') AS BIGINT
-              )
-          )
         ORDER BY gv.created_at DESC
-        LIMIT ? OFFSET ?
         """,
-        [user_id, brand_id, int(limit), int(offset)],
+        [user_id, brand_id],
     ).fetchall()
     visible = []
     for row in rows:
@@ -397,13 +388,9 @@ def _load_recent_short_cards(conn, user_id: str, brand_id: str | None, user_tz: 
         safe_offset = max(0, int(offset or 0))
     except Exception:
         safe_offset = 0
-    rows = _visible_short_rows(
-        conn,
-        user_id,
-        brand_id,
-        limit=safe_limit + 1,
-        offset=safe_offset,
-    )
+    rows = _visible_short_rows(conn, user_id, brand_id)[
+        safe_offset:safe_offset + safe_limit + 1
+    ]
     poster_names = {str(row[13] or "").strip() for row in rows if row[13]}
     stored_posters = set()
     if poster_names:
