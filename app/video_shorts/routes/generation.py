@@ -1540,6 +1540,15 @@ def _short_poster_filename_for_render(clip_filename: str, version: Optional[str]
     return f"{stem}-{clean_version}.jpg"
 
 
+def _stored_asset_public_url(file_path: Any) -> str:
+    """Sign a DB-authorized asset reference without probing object storage."""
+    try:
+        location = tenant_media.storage_location(file_path)
+        return get_media_storage().public_url(location["storage_key"])
+    except (TypeError, ValueError):
+        return ""
+
+
 def _short_poster_public_url(
     filename: str,
     poster_filename: Optional[str] = None,
@@ -1573,6 +1582,8 @@ def _ensure_shared_short_poster(
     overwrite: bool = False,
     poster_filename: Optional[str] = None,
     owner_user_id: Any = None,
+    brand_id: Any = None,
+    register_asset: bool = False,
 ) -> bool:
     safe_name = Path(filename or "").name
     if not safe_name:
@@ -1637,7 +1648,28 @@ def _ensure_shared_short_poster(
             text=True,
         )
         if output_path.exists() and output_path.stat().st_size > 0:
+            poster_size = output_path.stat().st_size
             put_file_for_owner(output_path, poster_key, owner_user_id=owner_user_id)
+            if register_asset:
+                conn = get_db()
+                try:
+                    poster_reference = (
+                        f"s3://{poster_key}"
+                        if getattr(storage, "backend_name", "local") == "s3"
+                        else str(get_media_storage("local").root_dir / poster_key)
+                    )
+                    tenant_media.upsert_asset(
+                        conn,
+                        file_key=poster_key,
+                        file_path=poster_reference,
+                        file_type="short_poster",
+                        size_bytes=poster_size,
+                        user_id=owner_user_id,
+                        brand_id=brand_id,
+                    )
+                    conn.commit()
+                finally:
+                    conn.close()
             return True
     except Exception:
         current_app.logger.warning("Failed to generate short poster filename=%s", safe_name, exc_info=True)
@@ -11746,35 +11778,53 @@ def generate_short(video_pk):
     # Asset rows are the authoritative page-load inventory. Do one DB lookup for
     # every planned clip instead of issuing an S3 HEAD for each clip (and then
     # another HEAD for each poster) while rendering the page.
-    planned_asset_keys = {
+    planned_clip_asset_keys = {
         tenant_media.asset_key(clip_name): clip_name
         for entry in plan_entries
         for clip_name in [str(entry.get("clip_filename") or entry.get("output_filename") or "").strip()]
         if clip_name
     }
-    active_clip_assets: set[str] = set()
+    planned_poster_asset_keys = {
+        tenant_media.poster_key(poster_name): poster_name
+        for entry in plan_entries
+        for poster_name in [str(entry.get("poster_filename") or "").strip()]
+        if poster_name
+    }
+    planned_asset_keys = {**planned_clip_asset_keys, **planned_poster_asset_keys}
+    active_asset_paths: Dict[str, str] = {}
     if planned_asset_keys:
         placeholders = ", ".join("?" for _ in planned_asset_keys)
         conn_assets = get_db_readonly()
         try:
             asset_rows = conn_assets.execute(
                 f"""
-                SELECT file_key
+                SELECT file_key, file_path
                   FROM shorts_storage_assets
                  WHERE file_key IN ({placeholders})
                    AND CAST(user_id AS VARCHAR) = ?
                    AND brand_id IS NOT DISTINCT FROM ?
                    AND (status = 'active' OR status IS NULL)
+                   AND size_bytes > 0
                 """,
                 [*planned_asset_keys, str(editor_owner_user_id), brand_id],
             ).fetchall()
         finally:
             conn_assets.close()
-        active_clip_assets = {
-            planned_asset_keys[str(asset_row[0])]
+        active_asset_paths = {
+            str(asset_row[0]): str(asset_row[1])
             for asset_row in asset_rows
             if str(asset_row[0]) in planned_asset_keys
         }
+    active_clip_assets = {
+        clip_name: active_asset_paths[file_key]
+        for file_key, clip_name in planned_clip_asset_keys.items()
+        if file_key in active_asset_paths
+    }
+    active_poster_assets = {
+        poster_name: active_asset_paths[file_key]
+        for file_key, poster_name in planned_poster_asset_keys.items()
+        if file_key in active_asset_paths
+    }
     ai_suggested_clip_count = sum(1 for entry in plan_entries if _is_removable_ai_suggestion(entry))
     plan_job_state = _current_plan_job_state(video_pk)
     request_is_admin = str((current_user or {}).get("role") or "").strip().lower() == "admin"
@@ -12033,15 +12083,15 @@ def generate_short(video_pk):
         editable_subtitle = transcript_full or subtitle_source
         clip_filename = entry.get("clip_filename") or entry.get("output_filename")
         clip_exists = bool(clip_filename and clip_filename in active_clip_assets)
-        video_url = _short_public_url(clip_filename) if clip_exists and clip_filename else ""
+        video_url = (
+            _stored_asset_public_url(active_clip_assets.get(clip_filename))
+            if clip_exists and clip_filename
+            else ""
+        )
         poster_filename = str(entry.get("poster_filename") or "").strip()
         poster_url = (
-            _short_poster_public_url(
-                clip_filename,
-                poster_filename=poster_filename,
-                stored_poster=True,
-            )
-            if clip_exists and clip_filename and poster_filename
+            _stored_asset_public_url(active_poster_assets.get(poster_filename))
+            if clip_exists and clip_filename and poster_filename in active_poster_assets
             else ""
         )
         status = "created" if clip_exists else (entry.get("status") or "pending")
@@ -29857,6 +29907,8 @@ def autoclip_video(video_pk):
                     overwrite=True,
                     poster_filename=poster_filename,
                     owner_user_id=target_owner_user_id,
+                    brand_id=target_brand_id,
+                    register_asset=True,
                 )
                 if poster_created:
                     plan_entry["poster_filename"] = poster_filename

@@ -6816,7 +6816,7 @@
                         {% if generate_v2 and row.poster_url %}
                           <img src="{{ row.poster_url }}" alt="" loading="lazy">
                         {% elif generate_v2 %}
-                          <video muted playsinline preload="metadata" data-lazy-short-thumb="{{ row.video_url }}#t=1" aria-hidden="true"></video>
+                          <span class="clip-rail-placeholder-icon" aria-hidden="true">▶</span>
                         {% else %}
                           <video muted playsinline preload="metadata"{% if row.poster_url %} poster="{{ row.poster_url }}"{% endif %}>
                             <source src="{{ row.video_url }}" type="video/mp4">
@@ -7739,7 +7739,7 @@
         </div>
         <button type="button" class="btn-close btn-close-white" data-bs-dismiss="modal" aria-label="Close"></button>
       </div>
-            <form id="youtube-upload-form" method="post" action="{{ url_for('video_shorts_bp.upload_clip_to_youtube') }}">
+            <form id="youtube-upload-form" method="post" action="{{ editor_url('upload_clip_to_youtube', video_pk=video.id) }}">
         <input type="hidden" name="filename" value="">
         <input type="hidden" name="plan_index" value="">
         <input type="hidden" name="video_pk" value="{{ video.id }}">
