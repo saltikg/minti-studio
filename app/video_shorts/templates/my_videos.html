@@ -212,6 +212,19 @@
     opacity: 1;
     transition: opacity .16s ease;
   }
+  .mv-short-play {
+    position: absolute;
+    inset: 50% auto auto 50%;
+    transform: translate(-50%, -50%);
+    z-index: 3;
+    width: 46px;
+    height: 46px;
+    border: 0;
+    border-radius: 999px;
+    background: rgba(2, 6, 23, .78);
+    color: #fff;
+    font-size: 1.25rem;
+  }
   .mv-short-card.is-previewing .mv-short-frame video {
     opacity: 1;
   }
@@ -1291,15 +1304,16 @@
 	        <div class="mv-shorts-strip" data-shorts-strip>
 	          {% if recent_shorts %}
 	            {% for short in recent_shorts %}
-	            <article class="mv-short-card">
+	            <article class="mv-short-card" data-preview-src="{{ short.video_url or '' }}" data-short-index="{{ loop.index0 }}">
 	              <div class="mv-short-frame">
 	                <span class="mv-short-badge {{ short.status_class }}">{{ short.status_label }}</span>
-	                {% if short.video_url %}
-	                  <video src="{{ short.video_url }}#t=1" data-short-preview-video data-short-index="{{ loop.index0 }}" data-preview-src="{{ short.video_url }}" muted playsinline preload="metadata" aria-label="Preview: {{ short.title }}"></video>
-	                {% elif short.poster_url %}
+	                {% if short.poster_url %}
 	                  <img src="{{ short.poster_url }}" alt="{{ short.title }}">
 	                {% else %}
 	                  <div class="mv-short-empty" aria-hidden="true"><i class="bi bi-film"></i></div>
+	                {% endif %}
+	                {% if short.video_url %}
+	                  <button type="button" class="mv-short-play" data-short-preview-play aria-label="Play preview: {{ short.title }}"><i class="bi bi-play-fill" aria-hidden="true"></i></button>
 	                {% endif %}
 	                <div class="mv-short-title">{{ short.title }}</div>
 	              </div>
@@ -1546,33 +1560,50 @@
 	  const bindShortPreviewCard = (card) => {
 	    if (!card || card.dataset.previewBound === 'true') return;
 	    card.dataset.previewBound = 'true';
-	    const preview = card.querySelector('video[data-preview-src]');
-	    if (!preview) return;
-	    preview.addEventListener('ended', showAutopilotConversionModal, { passive: true });
-	    preview.addEventListener('play', () => {
-	      const currentIndex = String(preview.dataset.shortIndex || '');
-	      if (firstPlayedShortIndex === null) {
-	        firstPlayedShortIndex = currentIndex;
-	        return;
-	      }
-	      if (currentIndex && currentIndex !== firstPlayedShortIndex) {
-	        showAutopilotConversionModal();
-	      }
-	    }, { passive: true });
+	    const previewSrc = String(card.dataset.previewSrc || '').trim();
+	    if (!previewSrc) return;
+	    let preview = null;
+	    const activatePreview = () => {
+	      if (preview) return preview;
+	      const frame = card.querySelector('.mv-short-frame');
+	      if (!frame) return null;
+	      preview = document.createElement('video');
+	      preview.dataset.shortPreviewVideo = '';
+	      preview.dataset.shortIndex = String(card.dataset.shortIndex || '');
+	      preview.muted = true;
+	      preview.playsInline = true;
+	      preview.preload = 'auto';
+	      preview.src = `${previewSrc}#t=1`;
+	      preview.setAttribute('aria-label', 'Short preview');
+	      frame.querySelector('img, .mv-short-empty')?.remove();
+	      const title = frame.querySelector('.mv-short-title');
+	      frame.insertBefore(preview, title || null);
+	      frame.querySelector('[data-short-preview-play]')?.remove();
+	      preview.addEventListener('ended', showAutopilotConversionModal, { passive: true });
+	      preview.addEventListener('play', () => {
+	        const currentIndex = String(preview.dataset.shortIndex || '');
+	        if (firstPlayedShortIndex === null) firstPlayedShortIndex = currentIndex;
+	        else if (currentIndex && currentIndex !== firstPlayedShortIndex) showAutopilotConversionModal();
+	      }, { passive: true });
+	      preview.addEventListener('loadedmetadata', () => { try { preview.currentTime = 1; } catch (_) {} }, { once: true });
+	      return preview;
+	    };
+	    card.querySelector('[data-short-preview-play]')?.addEventListener('click', () => {
+	      const active = activatePreview();
+	      active?.play().then(() => card.classList.add('is-previewing')).catch(() => {});
+	    });
 	    if (!canHoverShortPreviews) return;
 	    const seekToStartFrame = () => {
-	      try { preview.currentTime = 1; } catch (_) {}
+	      if (preview) { try { preview.currentTime = 1; } catch (_) {} }
 	    };
 	    const resetPreview = () => {
-	      preview.pause();
+	      preview?.pause();
 	      seekToStartFrame();
 	      card.classList.remove('is-previewing');
 	    };
-	    preview.addEventListener('loadedmetadata', seekToStartFrame, { once: true });
 	    card.addEventListener('mouseenter', () => {
-	      if (!preview.getAttribute('src')) preview.src = `${preview.dataset.previewSrc || ''}#t=1`;
-	      if (!preview.src) return;
-	      preview.play().then(() => card.classList.add('is-previewing')).catch(() => {});
+	      const active = activatePreview();
+	      active?.play().then(() => card.classList.add('is-previewing')).catch(() => {});
 	    });
 	    card.addEventListener('mouseleave', resetPreview);
 	  };
@@ -1580,21 +1611,12 @@
 	  const buildShortCard = (shortData, index) => {
 	    const short = shortData || {};
 	    const card = createElement('article', 'mv-short-card');
+	    card.dataset.previewSrc = String(short.video_url || '');
+	    card.dataset.shortIndex = String(index);
 	    const frame = createElement('div', 'mv-short-frame');
 	    const badge = createElement('span', `mv-short-badge ${short.status_class || ''}`.trim(), short.status_label || '');
 	    frame.appendChild(badge);
-	    if (short.video_url) {
-	      const video = document.createElement('video');
-	      video.src = `${short.video_url}#t=1`;
-	      video.dataset.shortPreviewVideo = '';
-	      video.dataset.shortIndex = String(index);
-	      video.dataset.previewSrc = short.video_url;
-	      video.muted = true;
-	      video.playsInline = true;
-	      video.preload = 'metadata';
-	      video.setAttribute('aria-label', `Preview: ${short.title || 'Untitled short'}`);
-	      frame.appendChild(video);
-	    } else if (short.poster_url) {
+	    if (short.poster_url) {
 	      const image = document.createElement('img');
 	      image.src = short.poster_url;
 	      image.alt = short.title || 'Untitled short';
@@ -1604,6 +1626,14 @@
 	      empty.setAttribute('aria-hidden', 'true');
 	      empty.innerHTML = '<i class="bi bi-film"></i>';
 	      frame.appendChild(empty);
+	    }
+	    if (short.video_url) {
+	      const play = createElement('button', 'mv-short-play');
+	      play.type = 'button';
+	      play.dataset.shortPreviewPlay = '';
+	      play.setAttribute('aria-label', `Play preview: ${short.title || 'Untitled short'}`);
+	      play.innerHTML = '<i class="bi bi-play-fill" aria-hidden="true"></i>';
+	      frame.appendChild(play);
 	    }
 	    frame.appendChild(createElement('div', 'mv-short-title', short.title || 'Untitled short'));
 	    card.appendChild(frame);

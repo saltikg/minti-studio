@@ -249,9 +249,7 @@
           <div>
             <div class="ai-video-preview-shell">
               {% if item.clip_url %}
-                <video controls preload="metadata" playsinline>
-                  <source src="{{ item.clip_url }}" type="video/mp4">
-                </video>
+                <video controls preload="none" playsinline data-deferred-src="{{ item.clip_url }}" tabindex="0" aria-label="Play uploaded AI video"></video>
               {% else %}
                 <div class="ai-video-preview-empty">Preview unavailable</div>
               {% endif %}

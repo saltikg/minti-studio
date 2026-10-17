@@ -180,7 +180,7 @@
                     {% set bg_preview = background.public_url or background.source_url %}
                     {% if bg_preview %}
                       {% if background.background_type == 'video' %}
-                        <video src="{{ bg_preview }}" muted playsinline></video>
+                        <video data-deferred-src="{{ bg_preview }}" muted playsinline preload="none" controls tabindex="0" aria-label="Play {{ background.name }} preview"></video>
                       {% else %}
                         <img src="{{ bg_preview }}" alt="{{ background.name }}">
                       {% endif %}

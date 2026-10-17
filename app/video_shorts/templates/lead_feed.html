@@ -356,7 +356,7 @@
           {% if first_short.poster_url %}
             <img class="lead-feed-landing-poster" src="{{ first_short.poster_url }}" alt="">
           {% else %}
-            <video class="lead-feed-landing-poster" src="{{ first_short.video_url }}#t=1" muted playsinline preload="metadata"></video>
+            <div class="lead-feed-landing-poster" aria-hidden="true"></div>
           {% endif %}
           <button type="button" class="lead-feed-watch-btn" id="leadFeedWatch">Watch</button>
         </div>

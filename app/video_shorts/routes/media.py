@@ -5,7 +5,7 @@ from pathlib import Path
 from typing import Optional, Tuple
 
 from botocore.exceptions import ClientError
-from flask import Response, abort, current_app, request, send_from_directory, stream_with_context
+from flask import Response, abort, current_app, redirect, request, send_from_directory, stream_with_context
 from itsdangerous import BadSignature
 
 from app.video_shorts import video_shorts_bp
@@ -50,20 +50,23 @@ def _parse_single_range(range_header: Optional[str], total_size: int) -> Optiona
 def _resolve_instagram_proxy_clip(queue_id: str):
     entry = get_instagram_queue_entry(queue_id)
     if not entry:
-        return None, None
+        return None, None, None
     clip_filename = str(entry.get("clip_filename") or "").strip()
     if not clip_filename:
-        return entry, None
+        return entry, None, None
     try:
         key = authorize_queue_clip(entry)["storage_key"]
     except ValueError:
-        return entry, None
+        return entry, None, None
     local_path = tenant_media.short_path(clip_filename)
-    storage = get_media_storage()
-    resolved = storage.resolve_local_or_s3(key, fallback_local_paths=[local_path])
-    if not resolved.exists:
-        return entry, None
-    return entry, resolved
+    return entry, key, local_path if local_path.is_file() else None
+
+
+def _s3_redirect_response(storage: S3Storage, key: str) -> Response:
+    response = redirect(storage.presigned_get_url(key, expires_in=900), code=302)
+    response.headers["Cache-Control"] = "private, no-store"
+    response.headers["Referrer-Policy"] = "no-referrer"
+    return response
 
 
 @video_shorts_bp.route("/short-media/<filename>", methods=["GET", "HEAD"])
@@ -72,13 +75,13 @@ def serve_short_media(filename):
         info = read_media_grant(filename, request.args.get("grant") or "")
         key = info["storage_key"]
         storage = get_media_storage()
-        if isinstance(storage, S3Storage) and storage.exists(key):
-            response = _s3_proxy_response(storage, key)
-        else:
-            path = info["local_path"]
-            if not path.is_file():
-                abort(404)
+        path = info["local_path"]
+        if isinstance(storage, S3Storage):
+            response = _s3_redirect_response(storage, key)
+        elif path.is_file():
             response = _local_proxy_response(path)
+        else:
+            abort(404)
         response.headers["Cache-Control"] = "private, no-store"
         response.headers["Referrer-Policy"] = "no-referrer"
         return response
@@ -107,60 +110,6 @@ def _log_proxy_request(*, status_code: int, bytes_served: int, note: str = "", r
         bytes_served,
         note,
     )
-
-
-def _s3_proxy_response(storage: S3Storage, key: str) -> Response:
-    request_meta = _request_log_fields()
-    metadata = storage.client.head_object(Bucket=storage.bucket_name, Key=key)
-    total_size = int(metadata.get("ContentLength") or 0)
-    content_type = metadata.get("ContentType") or "video/mp4"
-    range_tuple = _parse_single_range(request.headers.get("Range"), total_size)
-    headers = {
-        "Content-Type": content_type,
-        "Accept-Ranges": "bytes",
-    }
-    status_code = 200
-    object_kwargs = {"Bucket": storage.bucket_name, "Key": key}
-    expected_bytes = total_size
-    if range_tuple:
-        start, end = range_tuple
-        expected_bytes = end - start + 1
-        headers["Content-Range"] = f"bytes {start}-{end}/{total_size}"
-        object_kwargs["Range"] = f"bytes={start}-{end}"
-        status_code = 206
-    headers["Content-Length"] = str(expected_bytes)
-
-    if request.method == "HEAD":
-        _log_proxy_request(status_code=status_code, bytes_served=0, note="s3-head", request_meta=request_meta)
-        return Response(status=status_code, headers=headers)
-
-    s3_obj = storage.client.get_object(**object_kwargs)
-    body = s3_obj["Body"]
-    counter = {"served": 0}
-
-    def generate():
-        try:
-            for chunk in body.iter_chunks(chunk_size=1024 * 1024):
-                if not chunk:
-                    continue
-                counter["served"] += len(chunk)
-                yield chunk
-        finally:
-            try:
-                body.close()
-            except Exception:
-                pass
-
-    response = Response(stream_with_context(generate()), status=status_code, headers=headers)
-    response.call_on_close(
-        lambda: _log_proxy_request(
-            status_code=status_code,
-            bytes_served=counter["served"],
-            note="s3-get",
-            request_meta=request_meta,
-        )
-    )
-    return response
 
 
 def _local_proxy_response(local_path: Path) -> Response:
@@ -239,25 +188,24 @@ def serve_instagram_media_proxy(token):
         status = 410 if "Expired token" in message else 403
         _log_proxy_request(status_code=status, bytes_served=0, note=message)
         return message, status
-    entry, resolved = _resolve_instagram_proxy_clip(token_data["queue_id"])
+    entry, key, local_path = _resolve_instagram_proxy_clip(token_data["queue_id"])
     if not entry:
         _log_proxy_request(status_code=404, bytes_served=0, note="missing-job")
         return "not found", 404
-    if not resolved:
+    if not key:
         _log_proxy_request(status_code=404, bytes_served=0, note="missing-clip")
         return "not found", 404
     try:
-        if resolved.local_path:
-            return _local_proxy_response(Path(resolved.local_path))
         storage = get_media_storage()
         if isinstance(storage, S3Storage):
-            return _s3_proxy_response(storage, resolved.key)
+            return _s3_redirect_response(storage, key)
+        if local_path:
+            return _local_proxy_response(Path(local_path))
     except ValueError as exc:
-        total_size = int(resolved.size_bytes or 0)
         _log_proxy_request(status_code=416, bytes_served=0, note=str(exc))
         return Response(
             status=416,
-            headers={"Content-Range": f"bytes */{total_size}", "Accept-Ranges": "bytes"},
+            headers={"Content-Range": "bytes */*", "Accept-Ranges": "bytes"},
         )
     except ClientError as exc:
         status = int(exc.response.get("ResponseMetadata", {}).get("HTTPStatusCode") or 502)

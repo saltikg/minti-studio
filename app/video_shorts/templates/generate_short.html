@@ -6328,9 +6328,7 @@
         {% for item in long_compilation_videos %}
         <div class="col-12 col-lg-4">
           <div class="border rounded-3 p-2 h-100">
-            <video controls style="width:100%;border-radius:10px;">
-              <source src="{{ item.url }}" type="video/mp4">
-            </video>
+            <video controls playsinline preload="none" data-deferred-src="{{ item.url }}" tabindex="0" aria-label="Play compiled video" style="width:100%;border-radius:10px;"></video>
             <div class="small text-light">Created: {{ item.created_at }}</div>
             <div class="small text-light">Clips: {{ item.clip_count if item.clip_count is not none else '?' }}</div>
             {% if item.youtube_video_id %}<a href="https://studio.youtube.com/video/{{ item.youtube_video_id }}/edit" target="_blank" rel="noopener">Manage in YouTube Studio</a>{% endif %}
@@ -6818,9 +6816,11 @@
                         {% elif generate_v2 %}
                           <span class="clip-rail-placeholder-icon" aria-hidden="true">▶</span>
                         {% else %}
-                          <video muted playsinline preload="metadata"{% if row.poster_url %} poster="{{ row.poster_url }}"{% endif %}>
-                            <source src="{{ row.video_url }}" type="video/mp4">
-                          </video>
+                          {% if row.poster_url %}
+                            <img src="{{ row.poster_url }}" alt="" loading="lazy">
+                          {% else %}
+                            <span class="clip-rail-placeholder-icon" aria-hidden="true">▶</span>
+                          {% endif %}
                         {% endif %}
                       {% else %}
                         {% if generate_v2 %}
@@ -7230,9 +7230,7 @@
                     <div class="generate-v2-media-shell">
                       <div class="generate-v2-media-column{% if row.is_original_layout %} is-original-layout{% endif %}{% if row.render_job_status in ['queued', 'processing', 'running'] %} is-rendering{% endif %}">
                     {% endif %}
-                    <video controls preload="metadata">
-                      <source src="{{ row.video_url }}" type="video/mp4">
-                    </video>
+                    <video controls playsinline preload="none" data-deferred-src="{{ row.video_url }}" poster="{{ row.poster_url or short_bg_url }}" tabindex="0" aria-label="Play {{ row.title or 'clip' }}"></video>
 	                    {% if generate_v2 %}
 	                      <div class="generate-v2-render-overlay{% if row.render_job_status not in ['queued', 'processing', 'running'] %} d-none{% endif %}" aria-live="polite">
 	                        <span class="spinner-border spinner-border-sm" role="status" aria-hidden="true"></span>
@@ -8401,7 +8399,7 @@
                             {% if visual.preview_image_url %}
                               <img src="{{ visual.preview_image_url }}" alt="Created video {{ visual.label }}">
                             {% elif visual.video_url %}
-                              <video src="{{ visual.video_url }}" muted playsinline preload="metadata"></video>
+                              <span class="clip-rail-placeholder-icon" aria-hidden="true">▶</span>
                             {% endif %}
                             {% if visual.has_music %}
                               <span class="created-music-badge" title="Has music" aria-label="Has music">

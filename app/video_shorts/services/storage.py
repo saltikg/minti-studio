@@ -334,6 +334,14 @@ class S3Storage(Storage):
                 return False
             raise
 
+    def presigned_get_url(self, key: str, *, expires_in: int = 900) -> str:
+        """Return a short-lived object URL without making an S3 request."""
+        return self.client.generate_presigned_url(
+            "get_object",
+            Params={"Bucket": self.bucket_name, "Key": str(key).lstrip("/")},
+            ExpiresIn=max(1, int(expires_in)),
+        )
+
     def public_url(self, key: str) -> str:
         domain, signer = _load_cloudfront_signer()
         expires_at = datetime.now(timezone.utc) + timedelta(seconds=3600)

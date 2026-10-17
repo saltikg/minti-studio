@@ -220,9 +220,7 @@
                     Videos: {{ item.video_count if item.video_count is not none else '?' }}
                   </span>
                 </div>
-                <video controls style="width:100%;border-radius:10px;">
-                  <source src="{{ item.url }}" type="video/mp4">
-                </video>
+                <video controls playsinline preload="none" data-deferred-src="{{ item.url }}" tabindex="0" aria-label="Play generated monthly video" style="width:100%;border-radius:10px;"></video>
               </div>
               <div class="small text-muted mt-2">
                 <code>{{ item.filename }}</code>
@@ -532,9 +530,7 @@
                 <span class="badge text-bg-info">Month: ${item.month || "-"}</span>
                 <span class="badge text-bg-secondary">Videos: ${item.video_count ?? "?"}</span>
               </div>
-              <video controls style="width:100%;border-radius:10px;">
-                <source src="${item.url}" type="video/mp4">
-              </video>
+              <video controls playsinline preload="none" data-deferred-src="${item.url}" tabindex="0" aria-label="Play generated monthly video" style="width:100%;border-radius:10px;"></video>
             </div>
             <div class="small text-muted mt-2"><code>${item.filename || ""}</code></div>
             <div class="small text-light">Created: ${item.created_at || "-"}</div>

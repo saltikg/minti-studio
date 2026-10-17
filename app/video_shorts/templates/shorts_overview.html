@@ -209,18 +209,9 @@
                       <img class="shorts-thumb"
                            src="{{ entry.short_thumbnail_url or entry.thumbnail_url }}"
                            alt="short thumbnail">
-                    {% elif entry.publish_status == 'published' and entry.clip_preview_url %}
-                      <video class="shorts-thumb-video"
-                             src="{{ entry.clip_preview_url }}"
-                             poster="{{ entry.thumbnail_url }}"
-                             muted
-                             loop
-                             autoplay
-                             playsinline
-                             preload="metadata"></video>
                     {% else %}
-                      <div class="shorts-thumb-placeholder placeholder-icon-only" title="Scheduled">
-                        <span class="material-symbols-outlined">schedule_send</span>
+                      <div class="shorts-thumb-placeholder placeholder-icon-only" title="Preview unavailable">
+                        <span class="material-symbols-outlined">movie</span>
                       </div>
                     {% endif %}
                   </div>
