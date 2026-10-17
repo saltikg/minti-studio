@@ -301,8 +301,7 @@ def _visible_short_rows(conn, user_id, brand_id):
             published_video.comment_count,
             source_video.id,
             render_asset.file_key,
-            render_asset.file_path,
-            NULLIF(trim(gv.raw_plan_entry_json->>'poster_filename'), '') AS poster_filename
+            render_asset.file_path
         FROM shorts_generated_videos gv
         JOIN shorts_storage_assets render_asset
           ON render_asset.file_key = gv.storage_file_key
@@ -391,24 +390,33 @@ def _load_recent_short_cards(conn, user_id: str, brand_id: str | None, user_tz: 
     rows = _visible_short_rows(conn, user_id, brand_id)[
         safe_offset:safe_offset + safe_limit + 1
     ]
-    poster_names = {str(row[13] or "").strip() for row in rows if row[13]}
-    stored_posters = set()
-    if poster_names:
-        poster_keys = [tenant_media.poster_key(name) for name in sorted(poster_names)]
-        placeholders = ", ".join("?" for _ in poster_keys)
+    clip_names = [str(row[0] or "").strip() for row in rows if row[0]]
+    stored_posters = {}
+    if clip_names:
+        placeholders = ", ".join("?" for _ in clip_names)
         poster_rows = conn.execute(
             f"""
-            SELECT file_key
-            FROM shorts_storage_assets
-            WHERE CAST(user_id AS VARCHAR) = ?
-              AND brand_id IS NOT DISTINCT FROM ?
-              AND lower(coalesce(status, 'active')) = 'active'
-              AND size_bytes > 0
-              AND file_key IN ({placeholders})
+            SELECT gv.clip_filename,
+                   NULLIF(trim(gv.raw_plan_entry_json->>'poster_filename'), '')
+            FROM shorts_generated_videos gv
+            JOIN shorts_storage_assets poster_asset
+              ON poster_asset.file_key = 'shorts/posters/' ||
+                   NULLIF(trim(gv.raw_plan_entry_json->>'poster_filename'), '')
+             AND CAST(poster_asset.user_id AS VARCHAR) = CAST(gv.user_id AS VARCHAR)
+             AND poster_asset.brand_id IS NOT DISTINCT FROM gv.brand_id
+             AND lower(coalesce(poster_asset.status, 'active')) = 'active'
+             AND poster_asset.size_bytes > 0
+            WHERE CAST(gv.user_id AS VARCHAR) = ?
+              AND gv.brand_id IS NOT DISTINCT FROM ?
+              AND gv.clip_filename IN ({placeholders})
             """,
-            [str(user_id), brand_id, *poster_keys],
+            [str(user_id), brand_id, *clip_names],
         ).fetchall()
-        stored_posters = {str(row[0]) for row in poster_rows}
+        stored_posters = {
+            str(row[0]): str(row[1])
+            for row in poster_rows
+            if row[0] and row[1]
+        }
     has_more = len(rows) > safe_limit
     cards = []
     for row in rows[:safe_limit]:
@@ -430,9 +438,7 @@ def _load_recent_short_cards(conn, user_id: str, brand_id: str | None, user_tz: 
 
         metric_values = [row[7], row[8], row[9]]
         has_real_metrics = is_published and bool(youtube_video_id) and any(value is not None for value in metric_values)
-        poster_filename = str(row[13] or "").strip()
-        if not poster_filename or tenant_media.poster_key(poster_filename) not in stored_posters:
-            poster_filename = ""
+        poster_filename = stored_posters.get(clip_filename, "")
         video_url, poster_url = _short_card_media_urls(
             clip_filename,
             str(user_id),
