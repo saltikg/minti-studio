@@ -186,6 +186,7 @@ from app.video_shorts.services.user_preferences import (
 )
 from app.video_shorts.services.autopilot_leads import (
     _get_or_create_local_uploads_channel,
+    apply_outreach_video_style,
     autopilot_leads_table_ready,
     provision_discovery_lead_email,
 )
@@ -7994,6 +7995,7 @@ def process_planned_lead_autogenerate(
                 continue
             conn_start = get_db()
             try:
+                apply_outreach_video_style(conn_start, video_pk)
                 record_lead_pipeline_event(
                     conn_start,
                     lead_id=lead_id,

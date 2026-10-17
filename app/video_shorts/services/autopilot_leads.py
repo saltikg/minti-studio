@@ -8,18 +8,11 @@ from typing import Any, Dict, Optional
 from uuid import uuid4
 
 from app.video_shorts.config import (
-    DEFAULT_SUB_FONT_KEY,
-    DEFAULT_SUB_FONT_SIZE,
-    DEFAULT_SUBTITLE_BG_ALPHA,
-    DEFAULT_SUBTITLE_BG_COLOR,
-    DEFAULT_SUBTITLE_TEXT_ALPHA,
-    DEFAULT_SUBTITLE_TEXT_COLOR,
     DEFAULT_TITLE_FONT_SIZE,
     DEFAULT_TITLE_MARGIN,
     DEFAULT_USER_PLAN_ID,
     DEFAULT_VIDEO_OVERLAY_OFFSET,
     STYLE_TEMPLATES,
-    SUB_MARGIN_DEFAULT,
 )
 from app.video_shorts.services.brands import create_brand, ensure_brand_schema
 from app.video_shorts.services.db import (
@@ -35,7 +28,15 @@ AUTOPILOT_LEADS_TABLE = "autopilot_leads"
 LOCAL_UPLOADS_CHANNEL_NAME = "Local uploads"
 SHORT_EDITOR_DEFAULTS_PREFERENCE_KEY = "short_editor_defaults"
 BOLD_POP_STYLE_TEMPLATE_KEY = "opus"
-BOLD_POP_SUBTITLE_PRESET = "opus"
+OUTREACH_SUBTITLE_PRESET = "outreach_opus"
+OUTREACH_SUBTITLE_FONT_KEY = "arimo"
+OUTREACH_SUBTITLE_FONT_SIZE = 45
+OUTREACH_SUBTITLE_MARGIN = 520
+OUTREACH_CAPTION_ANCHOR = "bottom"
+OUTREACH_SUBTITLE_TEXT_COLOR = "#FFFFFF"
+OUTREACH_SUBTITLE_BG_COLOR = "#000000"
+OUTREACH_SUBTITLE_BG_ALPHA = 85
+OUTREACH_SUBTITLE_TEXT_ALPHA = 100
 
 
 class AutopilotLeadSchemaUnavailable(RuntimeError):
@@ -127,21 +128,21 @@ def _bold_pop_video_style_values() -> Dict[str, Any]:
     return {
         "title_font_key": str(template.get("title_font_key") or "montserrat_black"),
         "title_font_size": int(template.get("title_font_size") or DEFAULT_TITLE_FONT_SIZE),
-        "subtitle_font_key": DEFAULT_SUB_FONT_KEY,
-        "subtitle_font_size": DEFAULT_SUB_FONT_SIZE,
-        "subtitle_margin": SUB_MARGIN_DEFAULT,
-        "caption_anchor": "bottom",
+        "subtitle_font_key": OUTREACH_SUBTITLE_FONT_KEY,
+        "subtitle_font_size": OUTREACH_SUBTITLE_FONT_SIZE,
+        "subtitle_margin": OUTREACH_SUBTITLE_MARGIN,
+        "caption_anchor": OUTREACH_CAPTION_ANCHOR,
         "subtitle_style": "karaoke",
-        "subtitle_preset": BOLD_POP_SUBTITLE_PRESET,
+        "subtitle_preset": OUTREACH_SUBTITLE_PRESET,
         "title_margin": DEFAULT_TITLE_MARGIN,
         "title_line_spacing": -4,
         "title_bg_color": str(template.get("title_bg_color") or "#14532D"),
         "title_bg_alpha": int(template.get("title_bg_alpha") if template.get("title_bg_alpha") is not None else 0),
         "title_text_color": str(template.get("title_text_color") or "#FFFFFF"),
-        "subtitle_text_color": DEFAULT_SUBTITLE_TEXT_COLOR,
-        "subtitle_bg_color": DEFAULT_SUBTITLE_BG_COLOR,
-        "subtitle_bg_alpha": DEFAULT_SUBTITLE_BG_ALPHA,
-        "subtitle_text_alpha": DEFAULT_SUBTITLE_TEXT_ALPHA,
+        "subtitle_text_color": OUTREACH_SUBTITLE_TEXT_COLOR,
+        "subtitle_bg_color": OUTREACH_SUBTITLE_BG_COLOR,
+        "subtitle_bg_alpha": OUTREACH_SUBTITLE_BG_ALPHA,
+        "subtitle_text_alpha": OUTREACH_SUBTITLE_TEXT_ALPHA,
         "show_title": True,
         "show_subtitle": True,
         "subscribe_overlay_enabled": True,
@@ -199,6 +200,11 @@ def _stamp_bold_pop_video_style(conn, video_pk: Any) -> None:
         """,
         params,
     )
+
+
+def apply_outreach_video_style(conn, video_pk: Any) -> None:
+    """Reapply the fixed outreach style immediately before automated rendering."""
+    _stamp_bold_pop_video_style(conn, video_pk)
 
 
 def _save_bold_pop_short_editor_defaults(conn, owner_user_id: str) -> None:
