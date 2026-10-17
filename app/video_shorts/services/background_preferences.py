@@ -1,7 +1,7 @@
 from typing import Optional
 from uuid import uuid4
 
-from app.video_shorts.services.db import ensure_background_preferences_schema, get_db, get_db_readonly
+from app.video_shorts.services.db import get_db, get_db_readonly
 
 
 def load_background_preference(user_id: Optional[str], brand_id: Optional[str]) -> Optional[str]:
@@ -9,7 +9,6 @@ def load_background_preference(user_id: Optional[str], brand_id: Optional[str]) 
         return None
     conn = get_db_readonly()
     try:
-        ensure_background_preferences_schema(conn)
         row = conn.execute(
             """
             SELECT background_key
@@ -28,7 +27,6 @@ def load_background_preference(user_id: Optional[str], brand_id: Optional[str]) 
 def save_background_preference(user_id: str, brand_id: Optional[str], background_key: Optional[str]) -> None:
     conn = get_db()
     try:
-        ensure_background_preferences_schema(conn)
         conn.execute(
             """
             DELETE FROM shorts_background_preferences

@@ -130,6 +130,17 @@
     .metric-change.is-neutral {
       color: #94a3b8;
     }
+    .stats-widget-skeleton {
+      min-height: 132px;
+      border-radius: 12px;
+      background: linear-gradient(100deg, rgba(30, 41, 59, 0.7) 30%, rgba(51, 65, 85, 0.78) 45%, rgba(30, 41, 59, 0.7) 60%);
+      background-size: 220% 100%;
+      animation: stats-skeleton-pulse 1.25s ease-in-out infinite;
+    }
+    .stats-widget-skeleton.is-tall { min-height: 340px; }
+    @keyframes stats-skeleton-pulse {
+      to { background-position-x: -220%; }
+    }
     .stats-video-list-date {
       color: rgba(226, 232, 240, 0.82);
       white-space: nowrap;
@@ -267,8 +278,23 @@
 {% endmacro %}
 
 {% block content %}
+  {% if dashboard_shell %}
+  <div class="stats-page" id="statsDashboardShell">
+    <div class="video-metric-header mb-4" data-dashboard-widget="header">
+      <div><h1 class="h3 mb-0">Daily Video Statistics</h1></div>
+    </div>
+    <div class="stats-widget-skeleton mb-4" data-dashboard-widget="filters" aria-label="Loading dashboard filters"></div>
+    <div class="stats-widget-skeleton mb-4" data-dashboard-widget="summary" aria-label="Loading summary"></div>
+    <div class="stats-widget-skeleton is-tall mb-4" data-dashboard-widget="performance" aria-label="Loading performance chart"></div>
+    <div class="stats-widget-skeleton mb-4" data-dashboard-widget="audience-summary" aria-label="Loading audience summary"></div>
+    <div class="stats-widget-skeleton is-tall mb-4" data-dashboard-widget="audience-chart" aria-label="Loading audience chart"></div>
+    <div class="stats-widget-skeleton mb-4" data-dashboard-widget="details-toggle" aria-label="Loading details controls"></div>
+    <div class="stats-widget-skeleton is-tall mb-4" data-dashboard-widget="details" aria-label="Loading details"></div>
+    <div class="alert alert-danger d-none" id="statsDashboardError">Dashboard data could not be loaded. Please refresh to try again.</div>
+  </div>
+  {% else %}
   <div class="stats-page">
-    <div class="video-metric-header mb-4">
+    <div class="video-metric-header mb-4" data-dashboard-widget="header">
       <div>
         <div class="d-flex align-items-center gap-3 mb-1">
           <h1 class="h3 mb-0">Daily Video Statistics</h1>
@@ -292,7 +318,7 @@
 
   {% set range_value = start_date.isoformat() ~ ' / ' ~ end_date.isoformat() %}
 
-  <div class="card chart-card shadow-sm mb-4 vs-card chart-area-card stats-filters-card">
+  <div class="card chart-card shadow-sm mb-4 vs-card chart-area-card stats-filters-card" data-dashboard-widget="filters">
     <div class="card-body">
       <form id="chartFilters" method="get" class="chart-toolbar controls-bar flex-nowrap">
         <select class="form-select form-select-sm chart-control chart-control-metric vs-select" id="metricSelector" name="metric">
@@ -328,7 +354,7 @@
     </div>
   </div>
 
-  <div class="row g-3 mb-4 stats-grid">
+  <div class="row g-3 mb-4 stats-grid" data-dashboard-widget="summary">
     {% for card in summary_cards %}
       {% set arrow = '↑' if card.direction == 'up' else ('↓' if card.direction == 'down' else '→') %}
       <div class="col-sm-6 col-md-4">
@@ -349,7 +375,7 @@
     {% endfor %}
   </div>
 
-  <div class="card chart-card shadow-sm mb-4 vs-card chart-area-card">
+  <div class="card chart-card shadow-sm mb-4 vs-card chart-area-card" data-dashboard-widget="performance">
     <div class="card-body">
       <div class="chart-row mt-3">
         <div class="chart-card chart-area-card">
@@ -387,7 +413,7 @@
     </div>
   </div>
 
-  <div class="row g-3 mb-3">
+  <div class="row g-3 mb-3" data-dashboard-widget="audience-summary">
     <div class="col-sm-6 col-md-3">
       <div class="card metric-card shadow-sm vs-card">
         <div class="card-body">
@@ -422,7 +448,7 @@
     </div>
   </div>
 
-  <div class="card shadow-sm mb-4 vs-card">
+  <div class="card shadow-sm mb-4 vs-card" data-dashboard-widget="audience-chart">
     <div class="card-header">
       Daily subscribers
     </div>
@@ -461,7 +487,7 @@
     </div>
   </div>
 
-  <div class="card shadow-sm mb-4 vs-card details-toggle-card">
+  <div class="card shadow-sm mb-4 vs-card details-toggle-card" data-dashboard-widget="details-toggle">
     <div class="card-body">
       <div class="details-toggle-copy">
         <strong>See all</strong>
@@ -480,7 +506,7 @@
     </div>
   </div>
 
-  <div class="collapse" id="dashboardDetails">
+  <div class="collapse" id="dashboardDetails" data-dashboard-widget="details">
   <div class="card shadow-sm mb-4 vs-card stats-video-list-card">
     <div class="card-header">
       Video Performance
@@ -682,6 +708,7 @@
   </div>
   </div>
 </div>
+  {% endif %}
 {% endblock %}
 
 {% block scripts %}
@@ -689,7 +716,38 @@
   <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/flatpickr/dist/flatpickr.min.css">
   <script src="https://cdn.jsdelivr.net/npm/flatpickr"></script>
   <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+  {% if dashboard_shell %}
   <script>
+    window.addEventListener("DOMContentLoaded", async () => {
+      const errorBox = document.getElementById("statsDashboardError");
+      try {
+        const endpoint = new URL("{{ url_for('video_shorts_bp.video_stats_widgets') }}", window.location.origin);
+        endpoint.search = window.location.search;
+        const response = await fetch(endpoint, { headers: { Accept: "application/json" } });
+        if (!response.ok) throw new Error(`Dashboard widgets returned ${response.status}`);
+        const payload = await response.json();
+        const parsed = new DOMParser().parseFromString(payload.html, "text/html");
+        const widgetNames = ["header", "filters", "summary", "performance", "audience-summary", "audience-chart", "details-toggle", "details"];
+        const results = await Promise.allSettled(widgetNames.map(async (name) => {
+          const target = document.querySelector(`[data-dashboard-widget="${name}"]`);
+          const source = parsed.querySelector(`[data-dashboard-widget="${name}"]`);
+          if (!target || !source) throw new Error(`Missing ${name} widget`);
+          target.replaceWith(document.importNode(source, true));
+        }));
+        if (results.every((result) => result.status === "rejected")) throw new Error("No dashboard widgets loaded");
+        parsed.querySelectorAll("script[data-stats-widget-script]").forEach((source) => {
+          const script = document.createElement("script");
+          script.textContent = source.textContent;
+          document.body.appendChild(script);
+        });
+      } catch (error) {
+        console.error("Dashboard widget load failed", error);
+        errorBox?.classList.remove("d-none");
+      }
+    });
+  </script>
+  {% else %}
+  <script data-stats-widget-script>
     (function () {
       const metricInfo = {
         views: { label: "Views", color: "#0d6efd" },
@@ -1246,7 +1304,7 @@
       resetInsights();
     })();
   </script>
-  <script>
+  <script data-stats-widget-script>
     (function () {
       const table = document.querySelector(".daily-performance-table");
       const trigger = document.querySelector(".sort-last-update");
@@ -1395,7 +1453,7 @@
       });
     })();
   </script>
-  <script>
+  <script data-stats-widget-script>
     (function () {
       const rangePicker = document.getElementById("rangePicker");
       const startField = document.getElementById("rangeStart");
@@ -1427,7 +1485,7 @@
       });
     })();
   </script>
-  <script>
+  <script data-stats-widget-script>
     (function () {
       const presetButtons = document.querySelectorAll(".preset-item");
       const rangePicker = document.getElementById("rangePicker");
@@ -1538,4 +1596,5 @@
       });
     })();
   </script>
+  {% endif %}
 {% endblock %}

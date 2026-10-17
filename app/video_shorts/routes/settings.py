@@ -16,7 +16,6 @@ from app.video_shorts.config import (
 )
 from app.video_shorts.services.brands import current_brand_id, ensure_brand_schema
 from app.video_shorts.services.db import (
-    ensure_background_preferences_schema,
     ensure_categories_schema,
     ensure_prompt_settings_schema,
     ensure_static_image_categories_schema,
@@ -422,7 +421,6 @@ def static_images_page():
     conn = get_db()
     ensure_brand_schema(conn)
     ensure_static_images_schema(conn)
-    ensure_background_preferences_schema(conn)
     ensure_static_image_categories_schema(conn, current_user.get("id"), brand_id=brand_id)
 
     if request.method == "POST":

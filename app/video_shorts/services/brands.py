@@ -6,7 +6,6 @@ from uuid import uuid4
 from flask import g, has_request_context, session
 
 from app.video_shorts.services.db import (
-    ensure_user_preferences_schema,
     get_db,
     get_db_readonly,
     table_columns,
@@ -186,7 +185,6 @@ def _ensure_face_aware_default_for_user(conn, user_id: str) -> None:
     clean_user_id = str(user_id or "").strip()
     if not clean_user_id:
         return
-    ensure_user_preferences_schema(conn)
     row = conn.execute(
         """
         SELECT 1

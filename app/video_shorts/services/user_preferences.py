@@ -1,7 +1,7 @@
 from typing import Optional
 from uuid import uuid4
 
-from app.video_shorts.services.db import ensure_user_preferences_schema, get_db, get_db_readonly
+from app.video_shorts.services.db import get_db, get_db_readonly
 
 
 def load_user_preference(user_id: Optional[str], preference_key: str) -> Optional[str]:
@@ -9,7 +9,6 @@ def load_user_preference(user_id: Optional[str], preference_key: str) -> Optiona
         return None
     conn = get_db_readonly()
     try:
-        ensure_user_preferences_schema(conn)
         row = conn.execute(
             """
             SELECT preference_value
@@ -32,7 +31,6 @@ def save_user_preference(user_id: str, preference_key: str, value: Optional[str]
         return
     conn = get_db()
     try:
-        ensure_user_preferences_schema(conn)
         conn.execute(
             """
             DELETE FROM shorts_user_preferences
@@ -59,7 +57,6 @@ def load_user_bool_preference(user_id: Optional[str], preference_key: str, defau
         return default
     conn = get_db_readonly()
     try:
-        ensure_user_preferences_schema(conn)
         row = conn.execute(
             """
             SELECT preference_value
@@ -86,7 +83,6 @@ def save_user_bool_preference(user_id: str, preference_key: str, value: bool) ->
         return
     conn = get_db()
     try:
-        ensure_user_preferences_schema(conn)
         conn.execute(
             """
             DELETE FROM shorts_user_preferences

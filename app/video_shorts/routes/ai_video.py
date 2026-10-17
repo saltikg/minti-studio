@@ -42,7 +42,7 @@ from app.video_shorts.services.ai_video_workspace import (
     update_ai_video_content,
     update_ai_video_youtube_state,
 )
-from app.video_shorts.services.db import get_db, ensure_storage_user_schema, table_columns
+from app.video_shorts.services.db import get_db, table_columns
 from app.video_shorts.services.facebook_queue import enqueue_facebook_clip, load_facebook_queue_map
 from app.video_shorts.services.heygen import HeyGenClient, HeyGenError, get_heygen_background_capabilities
 from app.video_shorts.services.instagram_queue import enqueue_instagram_clip, load_instagram_queue_map
@@ -504,7 +504,6 @@ def ai_video_delete(ai_video_id: str):
 
     conn = get_db()
     try:
-        ensure_storage_user_schema(conn)
         asset_columns = table_columns(conn, "shorts_storage_assets")
         if "brand_id" in asset_columns:
             conn.execute(

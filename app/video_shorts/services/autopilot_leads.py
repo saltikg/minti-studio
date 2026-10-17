@@ -27,7 +27,6 @@ from app.video_shorts.services.db import (
     ensure_auth_user_schema,
     ensure_channel_owner_schema,
     ensure_storage_user_schema,
-    ensure_user_preferences_schema,
     table_columns,
 )
 from app.video_shorts.services.lead_pipeline import source_video_ready_for_planning
@@ -206,7 +205,6 @@ def _save_bold_pop_short_editor_defaults(conn, owner_user_id: str) -> None:
     clean_owner = str(owner_user_id or "").strip()
     if not clean_owner:
         return
-    ensure_user_preferences_schema(conn)
     conn.execute(
         """
         DELETE FROM shorts_user_preferences

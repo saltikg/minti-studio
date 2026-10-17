@@ -2,6 +2,8 @@ from __future__ import annotations
 from app.video_shorts.services import tenant_media
 
 import json
+import threading
+import time
 from datetime import date, datetime, timedelta, timezone
 from pathlib import Path
 from typing import Dict, List, Mapping, Optional, Sequence, Tuple
@@ -15,11 +17,9 @@ from app.video_shorts.services.brands import current_brand_id
 from app.video_shorts.services.db import get_db_readonly, table_columns
 from app.video_shorts.services.video_metrics import (
     SNAPSHOT_TABLE,
-    ensure_snapshot_table,
 )
 from app.video_shorts.services.subscriber_metrics import (
     SUBSCRIBER_SNAPSHOT_TABLE,
-    ensure_subscriber_snapshot_table,
 )
 from app.video_shorts.services.youtube_oauth import is_reauth_required
 from app.video_shorts.services.timezones import DEFAULT_TIME_ZONE, TIMEZONE_OPTIONS
@@ -35,6 +35,9 @@ CHANNEL_OPTIONS: Sequence[Mapping[str, str]] = [
 
 DEFAULT_WINDOW_DAYS = 30
 VIDEO_LIST_PAGE_SIZE = 20
+STATS_WIDGET_CACHE_TTL_SECONDS = 600
+_stats_widget_cache: Dict[Tuple[str, ...], Tuple[float, Dict[str, object]]] = {}
+_stats_widget_cache_lock = threading.Lock()
 
 
 def _rows_to_dict(cursor) -> List[Mapping[str, object]]:
@@ -1122,8 +1125,38 @@ def _fetch_stats_video_rows(
     return items, total_count
 
 
+def _stats_widget_cache_key() -> Tuple[str, ...]:
+    current_user = getattr(g, "vs_current_user", None) or {}
+    return (
+        str(current_user.get("id") or ""),
+        str(current_brand_id() or ""),
+        str(request.args.get("start") or ""),
+        str(request.args.get("end") or ""),
+        str(request.args.get("channel") or "all"),
+        str(request.args.get("metric") or "views"),
+        str(request.args.get("videos_page") or "1"),
+    )
+
+
+@video_shorts_bp.route("/stats/widgets", methods=["GET"])
+def video_stats_widgets():
+    cache_key = _stats_widget_cache_key()
+    now = time.monotonic()
+    with _stats_widget_cache_lock:
+        cached = _stats_widget_cache.get(cache_key)
+        if cached and now - cached[0] < STATS_WIDGET_CACHE_TTL_SECONDS:
+            return jsonify(cached[1])
+        payload = _render_video_stats(load_widgets=True)
+        _stats_widget_cache[cache_key] = (time.monotonic(), payload)
+        return jsonify(payload)
+
+
 @video_shorts_bp.route("/stats", methods=["GET"])
 def video_stats_page():
+    return _render_video_stats(load_widgets=False)
+
+
+def _render_video_stats(*, load_widgets: bool):
     end_param = request.args.get("end")
     start_param = request.args.get("start")
     channel_type = request.args.get("channel", "all")
@@ -1152,12 +1185,20 @@ def video_stats_page():
     previous_period_end = start_date - timedelta(days=1)
     previous_period_start = previous_period_end - timedelta(days=period_days - 1)
 
+    if not load_widgets:
+        return render_template(
+            "video_metrics.html",
+            dashboard_shell=True,
+            start_date=start_date,
+            end_date=end_date,
+            channel_type=channel_type,
+            selected_metric=selected_metric,
+        )
+
     user_time_zone = _get_user_timezone()
     user_time_zone_label = _timezone_label(user_time_zone)
     conn = get_db_readonly()
     try:
-        ensure_snapshot_table(conn)
-        ensure_subscriber_snapshot_table(conn)
         current_user = getattr(g, "vs_current_user", None) or {}
         resolved_brand = _resolve_owned_brand_for_stats(conn, user_id=current_user.get("id"))
         active_brand_id = str((resolved_brand or {}).get("id") or "").strip() or None
@@ -2093,8 +2134,7 @@ def video_stats_page():
         finally:
             conn.close()
 
-    return render_template(
-        "video_metrics.html",
+    template_context = dict(
         start_date=start_date,
         end_date=end_date,
         channel_type=channel_type,
@@ -2129,6 +2169,12 @@ def video_stats_page():
         ),
         last_api_at=last_api_at,
     )
+    rendered_page = render_template(
+        "video_metrics.html",
+        dashboard_shell=False,
+        **template_context,
+    )
+    return {"html": rendered_page, "cached_for_seconds": STATS_WIDGET_CACHE_TTL_SECONDS}
 
 
 def _safe_reauth_required() -> bool:

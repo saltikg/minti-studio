@@ -30,7 +30,7 @@ from app.video_shorts.services.media_utils import (
 )
 from app.video_shorts.services.storage import get_media_storage
 from app.video_shorts.services.tiktok_queue import enqueue_tiktok_clip
-from app.video_shorts.services.video_metrics import SNAPSHOT_TABLE, ensure_snapshot_table
+from app.video_shorts.services.video_metrics import SNAPSHOT_TABLE
 from app.video_shorts.services.youtube_oauth import has_refresh_token
 from app.video_shorts.services.youtube_scheduling import schedule_youtube_upload, YouTubeScheduleLocked, file_schedule_state
 from src.trends.facebook_page_tokens import FacebookTokenStoreError, get_facebook_page_data
@@ -275,7 +275,6 @@ def _fetch_monthly_top_videos(
 
     conn = get_db_readonly()
     try:
-        ensure_snapshot_table(conn)
         if current_brand_id() and "brand_id" in table_columns(conn, SNAPSHOT_TABLE):
             filter_sql += " AND brand_id = ?"
             params.append(current_brand_id())

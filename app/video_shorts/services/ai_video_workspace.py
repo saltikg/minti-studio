@@ -122,7 +122,6 @@ def _brand_filter_clause(brand_id: Optional[str], column_name: str = "brand_id")
 
 
 def list_characters(user_id: str, brand_id: Optional[str]) -> List[Dict[str, Any]]:
-    ensure_ai_video_schema_ready()
     conn = get_db_readonly()
     try:
         brand_sql, brand_params = _brand_filter_clause(brand_id)
@@ -206,7 +205,6 @@ def save_character(
 ) -> str:
     conn = get_db()
     try:
-        ensure_ai_video_schema(conn)
         record_id = (character_id or str(uuid.uuid4())).strip()
         metadata_json = json.dumps({"source": "heygen"} if heygen_avatar else {}, ensure_ascii=False)
         if is_default:
@@ -294,7 +292,6 @@ def save_character(
 def set_default_character(user_id: str, brand_id: Optional[str], character_id: str) -> None:
     conn = get_db()
     try:
-        ensure_ai_video_schema(conn)
         _clear_default_character(conn, user_id, brand_id)
         brand_sql, brand_params = _brand_filter_clause(brand_id)
         conn.execute(
@@ -316,7 +313,6 @@ def set_default_character(user_id: str, brand_id: Optional[str], character_id: s
 def delete_character(user_id: str, brand_id: Optional[str], character_id: str) -> None:
     conn = get_db()
     try:
-        ensure_ai_video_schema(conn)
         brand_sql, brand_params = _brand_filter_clause(brand_id)
         conn.execute(
             f"""
@@ -333,7 +329,6 @@ def delete_character(user_id: str, brand_id: Optional[str], character_id: str) -
 
 
 def list_backgrounds(user_id: str, brand_id: Optional[str]) -> List[Dict[str, Any]]:
-    ensure_ai_video_schema_ready()
     conn = get_db_readonly()
     try:
         brand_sql, brand_params = _brand_filter_clause(brand_id)
@@ -425,7 +420,6 @@ def save_background(
 ) -> str:
     conn = get_db()
     try:
-        ensure_ai_video_schema(conn)
         record_id = (background_id or str(uuid.uuid4())).strip()
         cleaned_type = (background_type or "image").strip().lower()
         if cleaned_type not in {"image", "video", "color"}:
@@ -532,7 +526,6 @@ def save_background(
 def set_default_background(user_id: str, brand_id: Optional[str], background_id: str) -> None:
     conn = get_db()
     try:
-        ensure_ai_video_schema(conn)
         _clear_default_background(conn, user_id, brand_id)
         brand_sql, brand_params = _brand_filter_clause(brand_id)
         conn.execute(
@@ -554,7 +547,6 @@ def set_default_background(user_id: str, brand_id: Optional[str], background_id:
 def delete_background(user_id: str, brand_id: Optional[str], background_id: str) -> None:
     conn = get_db()
     try:
-        ensure_ai_video_schema(conn)
         brand_sql, brand_params = _brand_filter_clause(brand_id)
         row = conn.execute(
             f"""
@@ -601,7 +593,6 @@ def create_ai_video(
 ) -> Dict[str, Any]:
     conn = get_db()
     try:
-        ensure_ai_video_schema(conn)
         record_id = str(uuid.uuid4())
         video_id = f"ai_{uuid.uuid4().hex[:18]}"
         metadata_json = json.dumps(metadata or {}, ensure_ascii=False)
@@ -669,7 +660,6 @@ def create_ai_video(
 
 
 def list_ai_videos(user_id: str, brand_id: Optional[str]) -> List[Dict[str, Any]]:
-    ensure_ai_video_schema_ready()
     conn = get_db_readonly()
     try:
         brand_sql, brand_params = _brand_filter_clause(brand_id)
@@ -739,7 +729,6 @@ def get_ai_video(user_id: str, brand_id: Optional[str], ai_video_id: str) -> Opt
 def delete_ai_video(user_id: str, brand_id: Optional[str], ai_video_id: str) -> None:
     conn = get_db()
     try:
-        ensure_ai_video_schema(conn)
         brand_sql, brand_params = _brand_filter_clause(brand_id)
         conn.execute(
             f"""
@@ -765,7 +754,6 @@ def update_ai_video_content(
 ) -> None:
     conn = get_db()
     try:
-        ensure_ai_video_schema(conn)
         brand_sql, brand_params = _brand_filter_clause(brand_id)
         conn.execute(
             f"""
@@ -802,7 +790,6 @@ def update_ai_video_youtube_state(
 ) -> None:
     conn = get_db()
     try:
-        ensure_ai_video_schema(conn)
         brand_sql, brand_params = _brand_filter_clause(brand_id)
         conn.execute(
             f"""
@@ -836,7 +823,6 @@ def list_ai_broadcast_entries(
     brand_id: Optional[str],
     user_id: Optional[str] = None,
 ) -> List[Dict[str, Any]]:
-    ensure_ai_video_schema_ready()
     conn = get_db_readonly()
     try:
         brand_sql, brand_params = _brand_filter_clause(brand_id)
