@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import logging
-import json
 from typing import Any
 
 from flask import g, request, session
@@ -107,7 +106,6 @@ def capture_client_error(
     message: str | None = None,
     source: str | None = None,
     user_agent: str | None = None,
-    details: Any = None,
 ) -> None:
     metadata = {
         "message": _truncate(message, 500),
@@ -115,16 +113,6 @@ def capture_client_error(
         "error_type": _truncate(error_type, 120),
         "user_agent": _truncate(user_agent or request.headers.get("User-Agent"), 300),
     }
-    if details is not None:
-        try:
-            encoded_details = json.dumps(details, ensure_ascii=False, default=str)
-        except (TypeError, ValueError):
-            encoded_details = str(details)
-        metadata["details"] = (
-            details
-            if len(encoded_details) <= 2800
-            else {"truncated_json": _truncate(encoded_details, 2800)}
-        )
     _record_event(
         event_name="client_error",
         status=_truncate(error_type, 120) or "unknown",

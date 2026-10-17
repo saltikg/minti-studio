@@ -19301,9 +19301,6 @@ document.addEventListener("DOMContentLoaded", () => {
   let designMeasureVersion = 0;
   let designRefreshFrame = null;
   let designNeedsVisibleRefresh = false;
-  let lastCaptionPainter = "none";
-  let lastDesignMeasureStatus = "idle";
-  let lastDesignMeasureSummary = null;
   const getMeasuredPreviewFrame = () => isOriginalCropAspect() ? origPreviewFrame : previewFrame;
   const isMeasuredPreviewVisible = () => {
     const frame = getMeasuredPreviewFrame();
@@ -19328,84 +19325,8 @@ document.addEventListener("DOMContentLoaded", () => {
     Object.entries(attrs).forEach(([key, value]) => node.setAttribute(key, String(value)));
     return node;
   };
-  const captionDiagnosticRect = (element) => {
-    const rect = element?.getBoundingClientRect?.();
-    return rect ? {
-      x: Math.round(rect.x * 100) / 100,
-      y: Math.round(rect.y * 100) / 100,
-      width: Math.round(rect.width * 100) / 100,
-      height: Math.round(rect.height * 100) / 100,
-    } : null;
-  };
-  const summarizeMeasuredCaption = (spec) => spec ? {
-    box: Array.isArray(spec.box) ? spec.box.map((value) => Math.round(Number(value) * 100) / 100) : null,
-    lines: Number(spec.lines || 0),
-    font_size: Number(spec.font_size || 0),
-    runs: Array.isArray(spec.runs) ? spec.runs.slice(0, 12).map((run) => ({
-      text: String(run?.text || "").slice(0, 80),
-      x: Number(run?.x || 0),
-      y: Number(run?.y || 0),
-      size: Number(run?.size || 0),
-    })) : [],
-  } : null;
-  const auditCaptionPaint = (element, { painter = lastCaptionPainter, spec = null } = {}) => {
-    lastCaptionPainter = painter;
-    window.requestAnimationFrame(() => {
-      const captionElement = element || (isOriginalCropAspect() ? origPreviewCaption : previewSubtitle);
-      const svg = captionElement?.querySelector?.("svg");
-      const textNodes = Array.from(svg?.querySelectorAll?.("text") || []);
-      const chosenText = String(
-        captionElement?.dataset?.captionText
-        || window.getHonestCaptionPreviewText?.()
-        || ""
-      ).trim();
-      const containerRect = captionDiagnosticRect(captionElement);
-      const invalidReasons = [];
-      if (!chosenText) invalidReasons.push("empty-preview-text");
-      if (painter === "measured-svg" && textNodes.length === 0) invalidReasons.push("no-svg-text");
-      if (!containerRect || containerRect.height < 4) invalidReasons.push("caption-box-under-4px");
-      if (!invalidReasons.length) return;
-      const preview = getMeasuredPreviewFrame();
-      window.MintiErrorReporter?.report({
-        error_type: "caption_preview_invalid",
-        message: `Caption preview invalid: ${invalidReasons.join(", ")}`,
-        source: window.location.pathname,
-        details: {
-          video_pk: Number(getGenerateV2Root()?.dataset.videoId || {{ video.id|tojson }}),
-          panel: window.__generateV2EditModeActive ? "edit-shorts" : "modal",
-          section: String(generateV2EditState?.section || ""),
-          viewport: {width: window.innerWidth, height: window.innerHeight, dpr: window.devicePixelRatio},
-          preview_frame_rect: captionDiagnosticRect(preview),
-          caption_container: {
-            class_name: String(captionElement?.className || ""),
-            rect: containerRect,
-            dom_owner: String(captionElement?.dataset?.captionDomOwner || ""),
-          },
-          chosen_preview_text: chosenText.slice(0, 500),
-          measurement: {
-            request_version: designMeasureVersion,
-            status: lastDesignMeasureStatus,
-            response: spec ? summarizeMeasuredCaption(spec) : lastDesignMeasureSummary,
-          },
-          svg: svg ? {
-            rect: captionDiagnosticRect(svg),
-            view_box: svg.getAttribute("viewBox"),
-            width: svg.getAttribute("width"),
-            height: svg.getAttribute("height"),
-            text_count: textNodes.length,
-            texts: textNodes.slice(0, 12).map((node) => String(node.textContent || "").slice(0, 80)),
-          } : null,
-          last_painter: painter,
-        },
-      });
-    });
-  };
-  window.auditCaptionPreviewPaint = auditCaptionPaint;
   const paintMeasuredText = (element, spec, kind, scaleX, scaleY) => {
-    if (!element || !spec) {
-      if (kind === "caption") auditCaptionPaint(element, { painter: "measured-svg-missing", spec });
-      return;
-    }
+    if (!element || !spec) return;
     const [left, top, right, bottom] = spec.box;
     Object.assign(element.style, {left: `${left*scaleX}px`, right: "auto", top: `${top*scaleY}px`,
       width: `${(right-left)*scaleX}px`, height: `${(bottom-top)*scaleY}px`, padding: "0",
@@ -19424,13 +19345,6 @@ document.addEventListener("DOMContentLoaded", () => {
     const defs = svgNode("defs");
     svg.appendChild(defs);
     const shadow = kind === "title" ? spec.shadow : preset;
-    const shadowId = `${element.id}-shadow`;
-    if (shadow?.shadow_color && Number(shadow.shadow_opacity) > 0) {
-      const filter = svgNode("filter", {id: shadowId, x: "-100%", y: "-100%", width: "300%", height: "300%"});
-      filter.appendChild(svgNode("feDropShadow", {dx: shadow.shadow_offset_x || 0, dy: shadow.shadow_offset_y || 0,
-        stdDeviation: shadow.shadow_blur_radius || 0, "flood-color": shadow.shadow_color, "flood-opacity": shadow.shadow_opacity}));
-      defs.appendChild(filter);
-    }
     if (spec.pill) {
       const [x, y, r, b] = spec.pill;
       svg.appendChild(svgNode("rect", {x, y, width: r-x, height: b-y, rx: (b-y)/2,
@@ -19450,7 +19364,6 @@ document.addEventListener("DOMContentLoaded", () => {
       const stroke = kind === "title" ? spec.outline : (run.active && !spec.active_outline ? 0 : spec.outline);
       text.setAttribute("stroke", stroke ? (preset.outline_color || "#000000") : "none");
       text.setAttribute("stroke-width", 2*(stroke || 0));
-      if (shadow?.shadow_color && Number(shadow.shadow_opacity) > 0) text.setAttribute("filter", `url(#${shadowId})`);
       const fillKind = run.active ? "active" : "inactive";
       if (kind === "caption" && (preset[`${fillKind}_fill_mode`] || preset.fill_mode) === "gradient") {
         const gradientId = `${element.id}-${fillKind}-gradient`;
@@ -19466,11 +19379,22 @@ document.addEventListener("DOMContentLoaded", () => {
       text.setAttribute("fill", textFill);
       text.style.fill = textFill;
       text.textContent = run.text;
+      if (shadow?.shadow_color && Number(shadow.shadow_opacity) > 0) {
+        const shadowText = text.cloneNode(false);
+        shadowText.setAttribute("x", Number(run.x) + Number(shadow.shadow_offset_x || 0));
+        shadowText.setAttribute("y", Number(run.y) + Number(shadow.shadow_offset_y || 0));
+        shadowText.setAttribute("fill", shadow.shadow_color);
+        shadowText.setAttribute("fill-opacity", Number(shadow.shadow_opacity));
+        shadowText.setAttribute("stroke", "none");
+        shadowText.removeAttribute("filter");
+        shadowText.style.fill = shadow.shadow_color;
+        shadowText.textContent = run.text;
+        svg.appendChild(shadowText);
+      }
       svg.appendChild(text);
     }
     element.replaceChildren(svg);
     element.dataset.captionDomOwner = "measured-svg";
-    if (kind === "caption") auditCaptionPaint(element, { painter: "measured-svg", spec });
   };
   const repaintMeasuredDesign = (force = false) => {
     if (!measuredDesign) return false;
@@ -19560,43 +19484,33 @@ document.addEventListener("DOMContentLoaded", () => {
     const key = JSON.stringify(data);
     if (!force && key === pendingDesignKey) return;
     const requestVersion = ++designMeasureVersion;
-    lastDesignMeasureStatus = "queued";
     pendingDesignKey = key;
     clearTimeout(designMeasureTimer);
     designMeasureTimer = setTimeout(async () => {
       try {
-        lastDesignMeasureStatus = "waiting-for-font";
         await waitForMeasuredCaptionFont(captionText);
         if (requestVersion !== designMeasureVersion || !isMeasuredPreviewVisible()) {
-          lastDesignMeasureStatus = requestVersion !== designMeasureVersion ? "stale-before-fetch" : "hidden-before-fetch";
           designNeedsVisibleRefresh = true;
           return;
         }
         if (key === measuredDesignKey && measuredDesign) {
-          lastDesignMeasureStatus = "repaint-cached";
           pendingDesignKey = "";
           repaintMeasuredDesign(true);
           return;
         }
-        lastDesignMeasureStatus = "fetching";
         const response = await fetch(previewConfig.metricsUrl, {method: "POST", credentials: "same-origin",
           headers: {"Content-Type": "application/json"}, body: key});
         if (!response.ok) throw new Error(`Design metrics ${response.status}`);
         const result = await response.json();
-        lastDesignMeasureSummary = summarizeMeasuredCaption(result?.caption);
         if (requestVersion !== designMeasureVersion || pendingDesignKey !== key || !isMeasuredPreviewVisible()) {
-          lastDesignMeasureStatus = requestVersion !== designMeasureVersion || pendingDesignKey !== key
-            ? "stale-after-response" : "hidden-after-response";
           designNeedsVisibleRefresh = true;
           return;
         }
         measuredDesign = result;
         measuredDesignKey = key;
         pendingDesignKey = "";
-        lastDesignMeasureStatus = "painted";
         repaintMeasuredDesign(true);
       } catch (error) {
-        lastDesignMeasureStatus = `error:${String(error?.message || error).slice(0, 160)}`;
         if (requestVersion === designMeasureVersion && pendingDesignKey === key) pendingDesignKey = "";
         console.warn("Unable to measure Final Preview", error);
       }
@@ -22269,9 +22183,6 @@ document.addEventListener("DOMContentLoaded", function () {
     syncDesignChip("subtitleTextColorValue", textHex, Number(subtitleTextAlphaInput?.value ?? 100));
     syncDesignChip("subtitleBgColorValue", bgHex, Number(subtitleBgAlphaInput?.value ?? 85));
     syncFinalPreviewLayout();
-    window.auditCaptionPreviewPaint?.(previewSubtitle, {
-      painter: previewSubtitle?.dataset.captionDomOwner || "applySubtitlePreview",
-    });
   };
   const applySubtitlePresetValue = (nextValue) => {
     if (!nextValue || !subtitlePresetField) {

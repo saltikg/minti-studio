@@ -77,17 +77,6 @@
       max-width: 440px;
       word-break: break-word;
     }
-    .admin-errors-details {
-      margin-top: 8px;
-      max-width: 560px;
-    }
-    .admin-errors-details pre {
-      margin: 8px 0 0;
-      white-space: pre-wrap;
-      word-break: break-word;
-      color: rgba(255, 255, 255, 0.72);
-      font-size: 0.76rem;
-    }
     .admin-errors-path {
       max-width: 320px;
       color: rgba(255, 255, 255, 0.72);
@@ -198,12 +187,6 @@
                 <div class="admin-errors-message" title="{{ event.short_message or '' }}">
                   {{ event.short_message or '—' }}
                 </div>
-                {% if event.metadata.get('details') %}
-                  <details class="admin-errors-details">
-                    <summary>Diagnostic details</summary>
-                    <pre>{{ event.metadata.get('details')|tojson(indent=2) }}</pre>
-                  </details>
-                {% endif %}
               </td>
               <td>
                 <div class="admin-errors-path" title="{{ event.path or '' }}">{{ event.path or '—' }}</div>

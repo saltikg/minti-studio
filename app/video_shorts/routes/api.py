@@ -5564,7 +5564,6 @@ def client_error_api():
         message=payload.get("message"),
         source=payload.get("source") or payload.get("page"),
         user_agent=request.headers.get("User-Agent"),
-        details=payload.get("details"),
     )
     return ("", 204)
 

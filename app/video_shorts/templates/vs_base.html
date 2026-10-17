@@ -985,7 +985,6 @@
             message: truncate(details.message || "", 500),
             source: truncate(details.source || window.location.pathname, 240),
             page: truncate(window.location.pathname, 240),
-            details: details.details && typeof details.details === "object" ? details.details : undefined,
           }, { dedupe: details.dedupe !== false });
         },
       };
