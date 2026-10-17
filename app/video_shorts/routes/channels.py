@@ -634,8 +634,20 @@ def lead_feed_page():
                 gv.id,
                 gv.clip_filename,
                 gv.generated_title,
-                gv.created_at
+                gv.created_at,
+                CASE
+                    WHEN poster_asset.file_key IS NOT NULL
+                    THEN NULLIF(trim(gv.raw_plan_entry_json->>'poster_filename'), '')
+                    ELSE NULL
+                END
             FROM shorts_generated_videos gv
+            LEFT JOIN shorts_storage_assets poster_asset
+              ON poster_asset.file_key = 'shorts/posters/' ||
+                   NULLIF(trim(gv.raw_plan_entry_json->>'poster_filename'), '')
+             AND CAST(poster_asset.user_id AS VARCHAR) = CAST(gv.user_id AS VARCHAR)
+             AND poster_asset.brand_id IS NOT DISTINCT FROM gv.brand_id
+             AND lower(coalesce(poster_asset.status, 'active')) = 'active'
+             AND poster_asset.size_bytes > 0
             WHERE CAST(gv.user_id AS VARCHAR) = ?
               AND CAST(gv.brand_id AS VARCHAR) = ?
               AND NULLIF(trim(coalesce(gv.clip_filename, '')), '') IS NOT NULL
@@ -653,6 +665,7 @@ def lead_feed_page():
             clip_filename,
             str(current_user["id"]),
             brand_id,
+            str(row[4] or "").strip(),
         )
         if not video_url:
             continue
