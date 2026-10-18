@@ -2,7 +2,7 @@ from datetime import datetime, timedelta, timezone
 
 from flask import Flask
 
-from app.video_shorts.config import SUBTITLE_PRESETS
+from app.video_shorts.config import SUBTITLE_PILL_FONT_MAP, SUBTITLE_PRESETS
 from app.video_shorts.routes import generation
 from app.video_shorts.services.autopilot_leads import (
     OUTREACH_SUBTITLE_PRESET,
@@ -16,11 +16,11 @@ def test_outreach_video_style_is_fixed_and_isolated_from_product_defaults():
     style = _bold_pop_video_style_values()
 
     assert style == style | {
-        "subtitle_font_key": "arimo",
-        "subtitle_font_size": 45,
-        "subtitle_margin": 520,
+        "subtitle_font_key": "montserrat_black",
+        "subtitle_font_size": 64,
+        "subtitle_margin": 640,
         "subtitle_margin_custom": False,
-        "caption_anchor": "bottom",
+        "caption_anchor": "center",
         "subtitle_style": "karaoke",
         "subtitle_preset": "outreach_opus",
         "subtitle_text_color": "#FFFFFF",
@@ -33,6 +33,7 @@ def test_outreach_video_style_is_fixed_and_isolated_from_product_defaults():
     }
     assert OUTREACH_SUBTITLE_PRESET != "opus"
     assert SUBTITLE_PRESETS[OUTREACH_SUBTITLE_PRESET] == SUBTITLE_PRESETS["opus"]
+    assert SUBTITLE_PILL_FONT_MAP[OUTREACH_SUBTITLE_PRESET] == SUBTITLE_PILL_FONT_MAP["opus"]
 
 
 def test_outreach_editor_defaults_match_fixed_video_style():
@@ -50,7 +51,7 @@ def test_outreach_editor_defaults_match_fixed_video_style():
 
 
 def test_outreach_auto_layout_uses_face_count_modes():
-    assert generation._face_aware_mode_for_count(0) == "fit"
+    assert generation._face_aware_mode_for_count(0) == "fill"
     assert generation._face_aware_mode_for_count(1) == "fill"
     assert generation._face_aware_mode_for_count(2) == "split"
     assert generation._face_aware_mode_for_count(3) == "fit"

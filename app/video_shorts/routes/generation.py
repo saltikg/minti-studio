@@ -3536,7 +3536,7 @@ def _merge_face_aware_runs(runs: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
 
 def _face_aware_mode_for_count(face_count: int) -> str:
     if face_count <= 0:
-        return "fit"
+        return "fill"
     if face_count == 1:
         return "fill"
     if face_count == 2:

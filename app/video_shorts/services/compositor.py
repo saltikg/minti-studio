@@ -4057,7 +4057,7 @@ def _compose_trimmed_with_background(
             f"[{subscribe_input_index}:v]scale=iw*{SUBSCRIBE_OVERLAY_SCALE}:ih*{SUBSCRIBE_OVERLAY_SCALE},format=rgba{overlay_src_label}"
         )
         subscribe_y_expr = f"H-h-{SUBSCRIBE_OVERLAY_BOTTOM_OFFSET}"
-        if face_aware_layout_active:
+        if face_aware_layout_active and normalize_caption_anchor(caption_anchor) == "bottom":
             fit_y = f"min(H-h-{SUBSCRIBE_OVERLAY_BOTTOM_OFFSET},{face_aware_fit_metrics['subscribe_y']:.2f})"
             subscribe_y_intervals: list[tuple[float, float, str]] = []
             for segment in layout_segments:

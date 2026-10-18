@@ -1230,6 +1230,7 @@ SUB_FONT_CHOICES = [
     ("anton", "Anton", str(STATIC_FONTS_DIR / "Anton-Regular.ttf"), "Anton"),
     ("bebas_neue", "Bebas Neue", str(STATIC_FONTS_DIR / "BebasNeue-Regular.ttf"), "Bebas Neue"),
     ("montserrat", "Montserrat", str(STATIC_FONTS_DIR / "Montserrat-VariableFont_wght.ttf"), "Montserrat"),
+    ("montserrat_black", "Montserrat Black", str(STATIC_FONTS_DIR / "Montserrat-Black.ttf"), "Montserrat Black"),
     ("oswald_regular", "Oswald Regular", str(STATIC_FONTS_DIR / "Oswald-Regular.ttf"), "Oswald"),
     ("oswald_bold", "Oswald Bold", str(STATIC_FONTS_DIR / "Oswald-Bold.ttf"), "Oswald"),
     ("fjalla_one", "Fjalla One", str(STATIC_FONTS_DIR / "FjallaOne-Regular.ttf"), "Fjalla One"),
@@ -1264,6 +1265,10 @@ SUBTITLE_PILL_FONT_MAP = {
         "font_path": STATIC_FONTS_DIR / "Montserrat-Black.ttf",
     },
     "opus": {
+        "ass_font_name": "Montserrat Black",
+        "font_path": STATIC_FONTS_DIR / "Montserrat-Black.ttf",
+    },
+    "outreach_opus": {
         "ass_font_name": "Montserrat Black",
         "font_path": STATIC_FONTS_DIR / "Montserrat-Black.ttf",
     },
