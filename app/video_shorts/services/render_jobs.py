@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import logging
 import os
 import socket
 import threading
@@ -44,6 +45,7 @@ ACTIVE_JOB_STATUSES = (JOB_STATUS_QUEUED, JOB_STATUS_PROCESSING)
 DEFAULT_MAX_ATTEMPTS = 3
 
 _duckdb_claim_lock = threading.Lock()
+logger = logging.getLogger(__name__)
 
 
 def _utc_now() -> datetime:
@@ -64,6 +66,14 @@ def _serialize_json(value: Any) -> Optional[str]:
     if value is None:
         return None
     return json.dumps(value, ensure_ascii=False, sort_keys=True)
+
+
+def _serialize_timing(value: Any) -> Optional[str]:
+    try:
+        return _serialize_json(value)
+    except Exception:
+        logger.warning("Render timing serialization failed; continuing without timing payload", exc_info=True)
+        return None
 
 
 def _parse_json(value: Any) -> Any:
@@ -231,7 +241,8 @@ def ensure_render_jobs_schema(conn) -> None:
             created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
             started_at TIMESTAMP,
             finished_at TIMESTAMP,
-            updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+            updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+            timing_json {json_type}
         )
         """
     )
@@ -1051,8 +1062,15 @@ def claim_next_job(
                 """,
                 [JOB_STATUS_PROCESSING, worker_id, job_id],
             ).fetchone()
+            concurrent_row = conn.execute(
+                f"SELECT COUNT(*) FROM {JOBS_TABLE} WHERE status = ?",
+                [JOB_STATUS_PROCESSING],
+            ).fetchone()
             conn.commit()
-            return _row_to_job(updated) if updated else None
+            claimed = _row_to_job(updated) if updated else None
+            if claimed is not None:
+                claimed["_timing_concurrent_jobs"] = int((concurrent_row[0] if concurrent_row else 0) or 0)
+            return claimed
 
         with _duckdb_claim_lock:
             discovery_clause = _discovery_job_clause(conn)
@@ -1110,12 +1128,19 @@ def claim_next_job(
                 [JOB_STATUS_PROCESSING, worker_id, job_id],
             )
             conn.commit()
-            return get_job(job_id)
+            claimed = get_job(job_id)
+            if claimed is not None:
+                count_row = conn.execute(
+                    f"SELECT COUNT(*) FROM {JOBS_TABLE} WHERE status = ?",
+                    [JOB_STATUS_PROCESSING],
+                ).fetchone()
+                claimed["_timing_concurrent_jobs"] = int((count_row[0] if count_row else 0) or 0)
+            return claimed
     finally:
         conn.close()
 
 
-def mark_job_done(job_id: str, result: Dict[str, Any]) -> Dict[str, Any]:
+def mark_job_done(job_id: str, result: Dict[str, Any], *, timing_json: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
     conn = get_db()
     try:
         ensure_render_jobs_schema(conn)
@@ -1124,12 +1149,13 @@ def mark_job_done(job_id: str, result: Dict[str, Any]) -> Dict[str, Any]:
             UPDATE {JOBS_TABLE}
             SET status = ?,
                 result_json = {_json_value_sql(conn)},
+                timing_json = {_json_value_sql(conn)},
                 error = NULL,
                 finished_at = CURRENT_TIMESTAMP,
                 updated_at = CURRENT_TIMESTAMP
             WHERE id = ?
             """,
-            [JOB_STATUS_DONE, _serialize_json(result) or "{}", job_id],
+            [JOB_STATUS_DONE, _serialize_json(result) or "{}", _serialize_timing(timing_json), job_id],
         )
         conn.commit()
         return get_job(job_id) or {}
@@ -1137,7 +1163,7 @@ def mark_job_done(job_id: str, result: Dict[str, Any]) -> Dict[str, Any]:
         conn.close()
 
 
-def requeue_job(job_id: str, error: str) -> Dict[str, Any]:
+def requeue_job(job_id: str, error: str, *, timing_accumulator: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
     conn = get_db()
     try:
         ensure_render_jobs_schema(conn)
@@ -1146,13 +1172,19 @@ def requeue_job(job_id: str, error: str) -> Dict[str, Any]:
             UPDATE {JOBS_TABLE}
             SET status = ?,
                 error = ?,
+                result_json = COALESCE({_json_value_sql(conn)}, result_json),
                 worker_id = NULL,
                 started_at = NULL,
                 finished_at = NULL,
                 updated_at = CURRENT_TIMESTAMP
             WHERE id = ?
             """,
-            [JOB_STATUS_QUEUED, str(error or "").strip()[:4000], job_id],
+            [
+                JOB_STATUS_QUEUED,
+                str(error or "").strip()[:4000],
+                _serialize_timing({"_timing_accumulator": timing_accumulator}) if timing_accumulator else None,
+                job_id,
+            ],
         )
         conn.commit()
         return get_job(job_id) or {}
@@ -1160,7 +1192,13 @@ def requeue_job(job_id: str, error: str) -> Dict[str, Any]:
         conn.close()
 
 
-def mark_job_failed(job_id: str, error: str, *, release_reservation: bool = True) -> Dict[str, Any]:
+def mark_job_failed(
+    job_id: str,
+    error: str,
+    *,
+    release_reservation: bool = True,
+    timing_json: Optional[Dict[str, Any]] = None,
+) -> Dict[str, Any]:
     conn = get_db()
     try:
         ensure_render_jobs_schema(conn)
@@ -1175,11 +1213,12 @@ def mark_job_failed(job_id: str, error: str, *, release_reservation: bool = True
             UPDATE {JOBS_TABLE}
             SET status = ?,
                 error = ?,
+                timing_json = {_json_value_sql(conn)},
                 finished_at = CURRENT_TIMESTAMP,
                 updated_at = CURRENT_TIMESTAMP
             WHERE id = ?
             """,
-            [JOB_STATUS_FAILED, str(error or "").strip()[:4000], job_id],
+            [JOB_STATUS_FAILED, str(error or "").strip()[:4000], _serialize_timing(timing_json), job_id],
         )
         conn.commit()
     finally:

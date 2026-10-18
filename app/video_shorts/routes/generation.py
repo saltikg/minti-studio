@@ -134,6 +134,7 @@ from app.video_shorts.services.clip_planner_v10 import propose_clips_v10
 from app.video_shorts.services.clip_planning import _fallback_clip_plan
 from app.video_shorts.services.clip_title import generate_clip_title
 from app.video_shorts.services.clip_title import _detect_title_language
+from app.video_shorts.services import render_timing
 from app.video_shorts.services.compositor import _build_static_visual_clip, _compose_trimmed_with_background, _cut_clip, _sanitize_text_for_overlay, _trim_source_to_keep_ranges
 from app.video_shorts.services.compositor import _face_aware_fill_zoom_for_segment
 from app.video_shorts.services.compositor import _original_layout_target_dimensions
@@ -29438,6 +29439,7 @@ def autoclip_video(video_pk):
                     multi_range_duration,
                     multi_range_source_path,
                 )
+        caption_timing_started = time.monotonic()
         custom_transcript = str(plan_entry.get("transcript_full_custom") or "").strip()
         subtitle_srt = None
         subtitle_text = ""
@@ -29588,6 +29590,12 @@ def autoclip_video(video_pk):
                 subtitle_srt = _build_srt_for_clip(segments, adj_start, adj_end)
             if subtitle_srt:
                 temp_subs.append(subtitle_srt)
+        render_timing.record_elapsed("transcribe_captions", caption_timing_started)
+
+        render_timing.set_metadata(
+            clip_duration_s=round(max(0.0, float(adj_end) - float(adj_start)), 3),
+            layout=str(video_layout_mode or video_crop_aspect or "").strip() or None,
+        )
 
         final_file = None
         current_app.logger.info(
@@ -29861,20 +29869,39 @@ def autoclip_video(video_pk):
             compose_crop_settings = dict(crop_settings)
             compose_crop_aspect = video_crop_aspect
             try:
-                face_aware_layout_result = _compute_face_aware_layout_segments(
-                    video_id=str(vid),
-                    plan_index=int(plan_index),
-                    source_path=src_path,
-                    start_seconds=float(clip_trim_start),
-                    end_seconds=float(clip_trim_end),
-                    owner_user_id=video_owner_user_id or target_owner_user_id,
-                    crop_settings=crop_settings,
-                    crop_aspect=video_crop_aspect,
-                    visual_mode=video_visual_mode,
-                    layout_mode=video_layout_mode,
-                    static_visual_key=video_static_visual_key,
-                    face_track_smooth_path=face_track_smooth_path,
-                )
+                with render_timing.stage("face_detect"):
+                    face_aware_layout_result = _compute_face_aware_layout_segments(
+                        video_id=str(vid),
+                        plan_index=int(plan_index),
+                        source_path=src_path,
+                        start_seconds=float(clip_trim_start),
+                        end_seconds=float(clip_trim_end),
+                        owner_user_id=video_owner_user_id or target_owner_user_id,
+                        crop_settings=crop_settings,
+                        crop_aspect=video_crop_aspect,
+                        visual_mode=video_visual_mode,
+                        layout_mode=video_layout_mode,
+                        static_visual_key=video_static_visual_key,
+                        face_track_smooth_path=face_track_smooth_path,
+                    )
+                face_samples = list(face_aware_layout_result.get("samples") or [])
+                if face_samples:
+                    render_timing.set_metadata(
+                        face_found=any(int(sample.get("face_count") or 0) > 0 for sample in face_samples),
+                    )
+                    first_sized_sample = next(
+                        (
+                            sample
+                            for sample in face_samples
+                            if int(sample.get("frame_width") or 0) > 0 and int(sample.get("frame_height") or 0) > 0
+                        ),
+                        None,
+                    )
+                    if first_sized_sample:
+                        render_timing.record_source_resolution(
+                            first_sized_sample.get("frame_width"),
+                            first_sized_sample.get("frame_height"),
+                        )
                 generated_face_track = str(face_aware_layout_result.get("face_track_smooth_path") or "").strip()
                 if generated_face_track and Path(generated_face_track).exists():
                     face_track_smooth_path = Path(generated_face_track)
@@ -29918,7 +29945,8 @@ def autoclip_video(video_pk):
                 bool(face_aware_layout_result.get("enabled") if isinstance(face_aware_layout_result, dict) else False),
                 outreach_render,
             )
-            _compose_trimmed_with_background(
+            with render_timing.exclusive_stage("compose", excluding="encode"):
+                _compose_trimmed_with_background(
                 bg_path,
                 src_path,
                 clip_trim_start,
@@ -29970,8 +29998,8 @@ def autoclip_video(video_pk):
                 music_only=video_is_music_only,
                 face_track_smooth_path=face_track_smooth_path,
                 overlay_shapes=video_overlay_shapes,
-                outreach_layout=outreach_render,
-            )
+                    outreach_layout=outreach_render,
+                )
             if face_aware_layout_result and face_aware_layout_result.get("enabled"):
                 plan_entry["auto_layout_segments"] = [
                     {
@@ -29987,21 +30015,22 @@ def autoclip_video(video_pk):
                 plan_entry.pop("auto_layout_segments", None)
             final_file = bg_out
         else:
-            _cut_clip(
-                src_path,
-                adj_start,
-                adj_end,
-                output_path,
-                subtitle_srt if video_show_subtitle else None,
-                sub_font_name,
-                sub_font_size,
-                sub_margin,
-                subtitle_text_color,
-                subtitle_bg_color,
-                subtitle_bg_alpha,
-                subtitle_text_alpha,
-                video_subtitle_style,
-            )
+            with render_timing.exclusive_stage("compose", excluding="encode"):
+                _cut_clip(
+                    src_path,
+                    adj_start,
+                    adj_end,
+                    output_path,
+                    subtitle_srt if video_show_subtitle else None,
+                    sub_font_name,
+                    sub_font_size,
+                    sub_margin,
+                    subtitle_text_color,
+                    subtitle_bg_color,
+                    subtitle_bg_alpha,
+                    subtitle_text_alpha,
+                    video_subtitle_style,
+                )
             final_file = output_path
 
         if not final_file or not final_file.exists():
@@ -30024,7 +30053,8 @@ def autoclip_video(video_pk):
                     short_output_key,
                     final_file,
                 )
-                put_file_for_owner(final_file, short_output_key, owner_user_id=target_owner_user_id)
+                with render_timing.stage("upload"):
+                    put_file_for_owner(final_file, short_output_key, owner_user_id=target_owner_user_id)
                 current_app.logger.info(
                     "short s3 upload success clip_filename=%s key=%s",
                     clip_filename,

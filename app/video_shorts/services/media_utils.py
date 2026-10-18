@@ -22,6 +22,7 @@ from app.video_shorts.config import (
     VIDEOS_DIR,
 )
 from app.video_shorts.services.storage import get_media_storage, put_file_for_owner
+from app.video_shorts.services import render_timing
 
 
 logger = logging.getLogger(__name__)
@@ -97,6 +98,18 @@ def run_media_subprocess(
 ):
     active_logger = log or logger
     binary = Path(str(cmd[0])).name if cmd else "subprocess"
+    encode_operations = {
+        "multi_range_trim",
+        "podcast_fast_path_render",
+        "trim_clip",
+        "merge_visual_override",
+        "merge_audio_override",
+        "compose_trimmed_with_background",
+        "cut_clip",
+    }
+    encode_started = time.monotonic() if operation in encode_operations else None
+    if encode_started is not None:
+        render_timing.record_encode_command(cmd)
     try:
         return subprocess.run(cmd, timeout=timeout, **kwargs)
     except subprocess.TimeoutExpired as exc:
@@ -114,6 +127,9 @@ def run_media_subprocess(
             operation=operation,
             context=context,
         ) from exc
+    finally:
+        if encode_started is not None:
+            render_timing.record_elapsed("encode", encode_started)
 
 
 def run_ffmpeg_subprocess_with_progress(
@@ -547,6 +563,7 @@ def resolve_s3_source_video_cached(
             try:
                 size, etag = _head_s3_source(storage, clean_key)
             except Exception:
+                render_timing.record_source_cache_hit(False)
                 if log_missing:
                     logger.warning("source_cache MISS video_id=%s bytes=0 key=%s reason=head_failed", clean_video_id, clean_key)
                 return None
@@ -574,6 +591,7 @@ def resolve_s3_source_video_cached(
                             clean_key,
                             resolved_target.name,
                         )
+                        render_timing.record_source_cache_hit(True)
                         _evict_source_cache(keep=target)
                         return resolved_target
                 except Exception:
@@ -588,6 +606,7 @@ def resolve_s3_source_video_cached(
             except Exception:
                 pass
             storage.client.download_file(storage.bucket_name, clean_key, str(part_path))
+            render_timing.record_source_cache_hit(False)
             downloaded_size = part_path.stat().st_size
             if int(downloaded_size) != int(size):
                 try:
@@ -620,16 +639,18 @@ def resolve_s3_source_video_cached(
 
 
 def _resolve_source_video(video_id: str, *, video_pk=None):
-    from app.video_shorts.services import tenant_media
-    storage = get_media_storage()
-    for location in tenant_media.source_locations(video_id, video_pk=video_pk):
-        if location["local_path"].is_file():
-            return location["local_path"], False
-        if storage.backend_name == "s3":
-            cached = resolve_s3_source_video_cached(video_id, location["storage_key"], storage=storage, log_missing=False)
-            if cached and cached.exists():
-                return cached, True
-    return None, False
+    with render_timing.stage("download"):
+        from app.video_shorts.services import tenant_media
+        storage = get_media_storage()
+        for location in tenant_media.source_locations(video_id, video_pk=video_pk):
+            if location["local_path"].is_file():
+                render_timing.record_source_cache_hit(True)
+                return location["local_path"], False
+            if storage.backend_name == "s3":
+                cached = resolve_s3_source_video_cached(video_id, location["storage_key"], storage=storage, log_missing=False)
+                if cached and cached.exists():
+                    return cached, True
+        return None, False
 
 
 def _cleanup_resolved_source_video(path: Path | None, is_temp: bool) -> None:

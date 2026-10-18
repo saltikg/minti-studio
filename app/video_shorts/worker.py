@@ -1,5 +1,6 @@
 from __future__ import annotations
 from app.video_shorts.services import tenant_media
+from app.video_shorts.services import render_timing
 
 import errno
 import json
@@ -625,13 +626,20 @@ def _update_upload_session_progress(
 
 
 def _mark_job_terminal_failure(job: Dict[str, Any], message: str) -> None:
-    if job.get("type") == JOB_TYPE_RENDER_SHORT:
+    is_render = job.get("type") == JOB_TYPE_RENDER_SHORT
+    if is_render:
         _mark_plan_failure(job, message)
-    mark_job_failed(
-        job["id"],
-        message,
-        release_reservation=job.get("type") == JOB_TYPE_RENDER_SHORT and not (job.get("payload") or {}).get("regenerate"),
-    )
+    timing_json = render_timing.terminal_payload() if is_render else None
+    try:
+        mark_job_failed(
+            job["id"],
+            message,
+            release_reservation=is_render and not (job.get("payload") or {}).get("regenerate"),
+            timing_json=timing_json,
+        )
+    finally:
+        if is_render:
+            render_timing.clear()
     quick_session_id = str((job.get("payload") or {}).get("quick_session_id") or "").strip()
     if quick_session_id:
         quick_session = get_session(quick_session_id, user_id=job.get("user_id")) or {}
@@ -1682,7 +1690,8 @@ def _execute_render_job(app, job: Dict[str, Any]) -> Dict[str, Any]:
     title = str(payload.get("title") or "").strip()
     user, brand = _load_user_context(job["user_id"], payload.get("brand_id"))
     with app.app_context():
-        _ensure_render_face_track_cache(app, payload)
+        with render_timing.stage("face_detect"):
+            _ensure_render_face_track_cache(app, payload)
         with app.test_request_context(
             f"/video_shorts/generate/{video_pk}/autoclip",
             method="POST",
@@ -1847,6 +1856,7 @@ def process_next_job(
         return False
     if job.get("type") == JOB_TYPE_RENDER_SHORT:
         _update_plan_status(job, "processing")
+        render_timing.begin(job)
     try:
         if job.get("type") == JOB_TYPE_INGEST_YOUTUBE:
             result = _execute_ingest_youtube_job(app, job)
@@ -1871,7 +1881,10 @@ def process_next_job(
         else:
             result = _execute_render_job(app, job)
         try:
-            mark_job_done(job["id"], result)
+            timing_json = render_timing.terminal_payload() if job.get("type") == JOB_TYPE_RENDER_SHORT else None
+            mark_job_done(job["id"], result, timing_json=timing_json)
+            if job.get("type") == JOB_TYPE_RENDER_SHORT:
+                render_timing.clear()
         except Exception:
             app.logger.exception("Failed to mark job done job_id=%s type=%s", job.get("id"), job.get("type"))
             raise
@@ -1946,7 +1959,10 @@ def process_next_job(
         else:
             if latest.get("type") == JOB_TYPE_RENDER_SHORT:
                 _update_plan_status(latest, "queued")
-            requeue_job(job["id"], str(exc))
+            timing_accumulator = render_timing.retry_accumulator() if latest.get("type") == JOB_TYPE_RENDER_SHORT else None
+            requeue_job(job["id"], str(exc), timing_accumulator=timing_accumulator)
+            if latest.get("type") == JOB_TYPE_RENDER_SHORT:
+                render_timing.clear()
         return True
 
 

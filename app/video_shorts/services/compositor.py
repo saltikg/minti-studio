@@ -45,6 +45,7 @@ from app.video_shorts.services.media_utils import (
     run_media_subprocess,
     scale_media_timeout,
 )
+from app.video_shorts.services import render_timing
 
 SUBSCRIBE_OVERLAY_SCALE = DESIGN_GEOMETRY["subscribe_scale"]
 SUBSCRIBE_OVERLAY_BOTTOM_OFFSET = DESIGN_GEOMETRY["subscribe_bottom"]
@@ -2278,7 +2279,9 @@ def _probe_video_dimensions(path: Path) -> Tuple[int, int]:
     dims = result.stdout.strip()
     if "x" in dims:
         width, height = dims.split("x")
-        return int(width), int(height)
+        clean_width, clean_height = int(width), int(height)
+        render_timing.record_source_resolution(clean_width, clean_height)
+        return clean_width, clean_height
     raise RuntimeError(f"ffprobe returned unexpected dimensions: {dims}")
 
 
@@ -2605,6 +2608,7 @@ def _compose_trimmed_with_background(
         else:
             target_width = PODCAST_LANDSCAPE_WIDTH
             target_height = PODCAST_LANDSCAPE_HEIGHT
+        render_timing.record_output_resolution(target_width, target_height)
         title_txt = _sanitize_text_for_overlay(title or "", 140)
         title_overlay_path = None
         effective_subtitle_path = subtitle_path if show_subtitle else None
@@ -3264,6 +3268,7 @@ def _compose_trimmed_with_background(
     else:
         target_width = VIDEO_TARGET_WIDTH
         target_height = VIDEO_TARGET_HEIGHT
+    render_timing.record_output_resolution(target_width, target_height)
     overlay_width = min(VIDEO_OVERLAY_WIDTH, target_width)
     if original_layout_mode:
         overlay_width = target_width
