@@ -10,7 +10,7 @@ from flask import Flask, Response, jsonify, redirect, g, render_template, reques
 from dotenv import load_dotenv
 from werkzeug.exceptions import HTTPException, InternalServerError
 from app.video_shorts.services.temp_cleanup import cleanup_video_shorts_temp_dir_on_startup
-from app.video_shorts.services.error_capture import capture_server_error, wants_json_error_response
+from app.video_shorts.services.error_capture import capture_server_error, current_event_user_id, wants_json_error_response
 
 # .env yükle
 load_dotenv()
@@ -291,6 +291,13 @@ def create_app():
         status_code = 500
         if isinstance(exc, HTTPException):
             status_code = int(exc.code or 500)
+        if status_code >= 500:
+            logger.exception(
+                "application_exception method=%s route=%s user_id=%s",
+                request.method,
+                request.path,
+                current_event_user_id(),
+            )
         capture_server_error(
             status_code=status_code,
             exception_type=type(exc).__name__,

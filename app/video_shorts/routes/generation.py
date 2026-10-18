@@ -2006,8 +2006,8 @@ def _merge_storage_entries(*entry_groups: List[StorageEntry]) -> List[StorageEnt
     return rows
 
 
-def _build_video_meta_map_for_storage(conn) -> Dict[str, Dict[str, Any]]:
-    rows = conn.execute(
+def _load_video_meta_rows_for_storage(conn) -> List[Any]:
+    return conn.execute(
         """
         SELECT yv.id, yv.video_id, yv.title, yv.channel_id, ch.channel_name, yv.download_status
         FROM youtube_videos yv
@@ -2015,6 +2015,9 @@ def _build_video_meta_map_for_storage(conn) -> Dict[str, Dict[str, Any]]:
         ORDER BY yv.id DESC
         """
     ).fetchall()
+
+
+def _build_video_meta_map_for_storage(rows: List[Any]) -> Dict[str, Dict[str, Any]]:
     video_meta: Dict[str, Dict[str, Any]] = {}
     for db_id, video_id, title, channel_id, channel_name, download_status in rows:
         plan_stats = _load_short_plan_stats(video_id, video_pk=db_id)
@@ -2058,11 +2061,10 @@ def _build_video_meta_map_for_storage(conn) -> Dict[str, Dict[str, Any]]:
 
 
 def _list_user_podcast_short_clip_options(user_id: str) -> List[Dict[str, Any]]:
-    conn = get_db()
     brand_id = current_brand_id()
+    conn = get_db_readonly()
     try:
-        video_meta = _build_video_meta_map_for_storage(conn)
-        short_meta = _build_short_clip_meta(video_meta)
+        video_rows = _load_video_meta_rows_for_storage(conn)
         sql = """
             SELECT file_key, file_path, updated_at
             FROM shorts_storage_assets
@@ -2080,6 +2082,9 @@ def _list_user_podcast_short_clip_options(user_id: str) -> List[Dict[str, Any]]:
         rows = conn.execute(sql, params).fetchall()
     finally:
         conn.close()
+
+    video_meta = _build_video_meta_map_for_storage(video_rows)
+    short_meta = _build_short_clip_meta(video_meta)
     options: List[Dict[str, Any]] = []
     for file_key, file_path, updated_at in rows:
         key = str(file_key or "").strip()

@@ -1,4 +1,5 @@
 import json
+import logging
 import re
 from datetime import datetime, timedelta, timezone
 from typing import Any, Dict, List, Optional
@@ -51,6 +52,9 @@ from app.video_shorts.youtube_api import (
     get_channel_metadata,
 )
 from app.video_shorts.routes.videos import _get_or_create_real_youtube_channel, _load_admin_global_outreach_match
+
+
+logger = logging.getLogger(__name__)
 
 
 CLIENT_ERROR_RATE_LIMITS = [
@@ -5409,6 +5413,12 @@ def usage_api():
             payload["autopilot"] = _autopilot_usage_summary(current_user)
         return jsonify(payload)
     except Exception as exc:
+        logger.exception(
+            "usage_api_failed method=%s route=%s user_id=%s",
+            request.method,
+            request.path,
+            current_user.get("id"),
+        )
         return jsonify({"error": str(exc)}), 500
 
 

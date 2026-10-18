@@ -10,7 +10,7 @@ from app.video_shorts.config import (
     DEFAULT_USER_PLAN_ID,
     DEFAULT_USER_STORAGE_LIMIT,
 )
-from app.video_shorts.services.db import ensure_storage_user_schema, get_db, table_columns
+from app.video_shorts.services.db import ensure_storage_user_schema, get_db, get_db_readonly, table_columns
 
 
 USAGE_TABLE = "shorts_user_usage"
