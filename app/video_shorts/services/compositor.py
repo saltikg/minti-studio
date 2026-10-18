@@ -13,7 +13,7 @@ from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple
 
 import numpy as np
-from PIL import Image, ImageDraw, ImageFilter, ImageFont
+from PIL import Image, ImageDraw, ImageFilter, ImageFont, ImageSequence
 from flask import current_app
 
 from app.video_shorts.config import (
@@ -1438,6 +1438,37 @@ def _face_aware_top_caption_subscribe_metrics(
         "subscribe_max_height": max(1.0, ui_top - subscribe_top),
         "ui_top": ui_top,
     }
+
+
+def _overlay_visible_alpha_geometry(path: Path) -> Optional[Dict[str, int]]:
+    """Return the union of visible pixels across an image overlay's frames."""
+    try:
+        with Image.open(path) as image:
+            canvas_width, canvas_height = image.size
+            union_bbox = None
+            for frame in ImageSequence.Iterator(image):
+                bbox = frame.convert("RGBA").getchannel("A").getbbox()
+                if not bbox:
+                    continue
+                if union_bbox is None:
+                    union_bbox = bbox
+                else:
+                    union_bbox = (
+                        min(union_bbox[0], bbox[0]),
+                        min(union_bbox[1], bbox[1]),
+                        max(union_bbox[2], bbox[2]),
+                        max(union_bbox[3], bbox[3]),
+                    )
+            if not union_bbox:
+                return None
+            return {
+                "canvas_width": int(canvas_width),
+                "canvas_height": int(canvas_height),
+                "top": int(union_bbox[1]),
+                "height": max(1, int(union_bbox[3] - union_bbox[1])),
+            }
+    except Exception:
+        return None
 
 
 def _face_aware_split_position_metrics(
@@ -4101,10 +4132,27 @@ def _compose_trimmed_with_background(
                 subtitle_font_size=subtitle_font_size,
                 subtitle_top=subtitle_margin,
             )
-            subscribe_scale_filter = (
-                "scale=-2:"
-                f"min(ih*{SUBSCRIBE_OVERLAY_SCALE}\\,{int(top_caption_subscribe_metrics['subscribe_max_height'])})"
-            )
+            visible_geometry = _overlay_visible_alpha_geometry(Path(overlay_asset_path))
+            if visible_geometry:
+                max_visible_height = float(top_caption_subscribe_metrics["subscribe_max_height"])
+                visible_height = float(visible_geometry["height"])
+                effective_scale = min(
+                    float(SUBSCRIBE_OVERLAY_SCALE),
+                    max_visible_height / visible_height,
+                )
+                canvas_height = int(visible_geometry["canvas_height"])
+                scaled_canvas_height = max(2, int(math.floor(canvas_height * effective_scale)))
+                scaled_canvas_height -= scaled_canvas_height % 2
+                effective_scale = float(scaled_canvas_height) / float(canvas_height)
+                subscribe_scale_filter = f"scale=-2:{scaled_canvas_height}"
+                top_caption_subscribe_metrics["subscribe_top"] -= (
+                    float(visible_geometry["top"]) * effective_scale
+                )
+            else:
+                subscribe_scale_filter = (
+                    "scale=-2:"
+                    f"min(ih*{SUBSCRIBE_OVERLAY_SCALE}\\,{int(top_caption_subscribe_metrics['subscribe_max_height'])})"
+                )
         filter_parts.append(
             f"[{subscribe_input_index}:v]{subscribe_scale_filter},format=rgba{overlay_src_label}"
         )

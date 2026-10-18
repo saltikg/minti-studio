@@ -29876,14 +29876,6 @@ def autoclip_video(video_pk):
                     compose_crop_settings["layout_segments"] = layout_segments
                     if len(layout_segments) == 1 and layout_segments[0].get("mode") == "fit":
                         compose_crop_aspect = "landscape"
-                        compose_crop_settings.update(
-                            {
-                                "crop_x_ratio": 0.0,
-                                "crop_y_ratio": 0.0,
-                                "crop_w_ratio": 1.0,
-                                "crop_h_ratio": 1.0,
-                            }
-                        )
             except Exception as exc:
                 face_aware_layout_result = {
                     "enabled": False,
@@ -30063,7 +30055,7 @@ def autoclip_video(video_pk):
                     overwrite=True,
                     poster_filename=poster_filename,
                     owner_user_id=target_owner_user_id,
-                    brand_id=target_brand_id,
+                    brand_id=brand_id,
                     register_asset=True,
                 )
                 if poster_created:

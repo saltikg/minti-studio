@@ -1483,6 +1483,7 @@ def _caption_frame_layout(
     subtitle_margin, font_size, outline_width, force_uppercase=False,
     precomputed_layout=None, canvas_width=_PILLOW_CAPTION_WIDTH,
     canvas_height=_PILLOW_CAPTION_HEIGHT, caption_anchor="bottom",
+    draw_pill=True,
 ):
     """Font-measured geometry shared by the renderer and live DOM preview."""
     active_font = active_font or font
@@ -1517,7 +1518,8 @@ def _caption_frame_layout(
             )
 
         slot_widths = [metric["text_w"] for metric in word_metrics]
-        slot_widths[active_index] = max(slot_widths[active_index], word_metrics[active_index]["desired_pill_w"])
+        if draw_pill:
+            slot_widths[active_index] = max(slot_widths[active_index], word_metrics[active_index]["desired_pill_w"])
         layout = _layout_wrapped_caption(
             display_words,
             font=font,
@@ -1572,6 +1574,7 @@ def _render_word_highlight_caption_frame(
         force_uppercase=force_uppercase, precomputed_layout=precomputed_layout,
         canvas_width=canvas_width, canvas_height=canvas_height,
         caption_anchor=caption_anchor,
+        draw_pill=draw_pill,
     )
     pad_y = max(DESIGN_GEOMETRY["pill_padding_min_y"], int(round(float(font_size) * DESIGN_GEOMETRY["pill_padding_y"])))
     image = Image.new("RGBA", (int(canvas_width), int(canvas_height)), (0, 0, 0, 0))
