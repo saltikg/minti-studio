@@ -28914,6 +28914,13 @@ def autoclip_video(video_pk):
         video_title_line_spacing = int(video_title_line_spacing if video_title_line_spacing is not None else -4)
     except Exception:
         video_title_line_spacing = -4
+    outreach_render = _is_discovery_demo_scope(
+        target_owner_user_id,
+        brand_id,
+        int(video_pk),
+    )
+    if outreach_render:
+        video_overlay_shapes = []
     if not plan_entries:
         return _respond(
             "Clip plan not found. Please create the plan first.",
@@ -29893,7 +29900,7 @@ def autoclip_video(video_pk):
             current_app.logger.info(
                 "resolved_render_settings video_pk=%s plan_index=%s queued=%s regenerate=%s edit_keep_ranges=%s "
                 "subtitle_margin=%s subtitle_margin_custom=%s subtitle_style=%s subtitle_preset=%s "
-                "title_margin=%s title_line_spacing=%s crop_aspect=%s layout_mode=%s subscribe=%s face_aware=%s",
+                "title_margin=%s title_line_spacing=%s crop_aspect=%s layout_mode=%s subscribe=%s face_aware=%s outreach=%s",
                 video_pk,
                 plan_index,
                 bool(queued_job),
@@ -29909,6 +29916,7 @@ def autoclip_video(video_pk):
                 video_layout_mode,
                 video_subscribe_overlay,
                 bool(face_aware_layout_result.get("enabled") if isinstance(face_aware_layout_result, dict) else False),
+                outreach_render,
             )
             _compose_trimmed_with_background(
                 bg_path,
@@ -29962,6 +29970,7 @@ def autoclip_video(video_pk):
                 music_only=video_is_music_only,
                 face_track_smooth_path=face_track_smooth_path,
                 overlay_shapes=video_overlay_shapes,
+                outreach_layout=outreach_render,
             )
             if face_aware_layout_result and face_aware_layout_result.get("enabled"):
                 plan_entry["auto_layout_segments"] = [

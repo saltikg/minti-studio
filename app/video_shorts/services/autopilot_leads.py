@@ -31,7 +31,7 @@ FACE_AWARE_DEFAULT_PREFERENCE_KEY = "face_aware_layout_default"
 BOLD_POP_STYLE_TEMPLATE_KEY = "opus"
 OUTREACH_SUBTITLE_PRESET = "opus"
 OUTREACH_SUBTITLE_FONT_KEY = "montserrat_black"
-OUTREACH_SUBTITLE_FONT_SIZE = 64
+OUTREACH_SUBTITLE_FONT_SIZE = 53
 # 720x1280 design coordinates. The 16:9 fit band ends at y=735; y=772
 # places the caption top about 55px below it in the 1080x1920 export.
 OUTREACH_SUBTITLE_MARGIN = 772

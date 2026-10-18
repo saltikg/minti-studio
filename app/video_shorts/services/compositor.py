@@ -61,6 +61,11 @@ FACE_AWARE_TOP_CAPTION_LINE_HEIGHT_MULTIPLIER = 1.15
 FACE_AWARE_TOP_CAPTION_SUBSCRIBE_GAP_RATIO = 50.0 / 1920.0
 FACE_AWARE_SHORTS_UI_TOP_RATIO = 0.8
 FACE_AWARE_SUBSCRIBE_TARGET_WIDTH_RATIO = 380.0 / 1080.0
+OUTREACH_SUBSCRIBE_BOTTOM_RATIO = 1500.0 / 1920.0
+OUTREACH_BLUR_WIDTH = 270
+OUTREACH_BLUR_HEIGHT = 480
+OUTREACH_BLUR_SIGMA = 20
+OUTREACH_BACKGROUND_DARKEN_OPACITY = 0.32
 
 CROP_TARGET_SIZE = 1080  # reference crop resolution before resizing for display
 VIDEO_TARGET_WIDTH = DESIGN_GEOMETRY["width"]
@@ -2545,6 +2550,7 @@ def _compose_trimmed_with_background(
     music_only: bool = False,
     face_track_smooth_path: Optional[Path] = None,
     overlay_shapes: Optional[list[Dict[str, Any]]] = None,
+    outreach_layout: bool = False,
 ):
     """Single-pass trim + compose to reduce processing time."""
     if not bg_path.exists():
@@ -3427,15 +3433,31 @@ def _compose_trimmed_with_background(
     else:
         scale_stage = f"scale={overlay_width}:{overlay_height},"
 
-    bg_filter = (
-        f"[0:v]scale={target_width}:{target_height},setsar=1[bg]"
-    )
     face_aware_has_fit_segment = any(
         str(segment.get("mode") or "").strip().lower() == "fit"
         for segment in layout_segments
     )
     needs_background_stream = (not original_layout_mode) and (split_stack_enabled or (not face_aware_layout_active) or face_aware_has_fit_segment)
-    filter_parts = [bg_filter] if needs_background_stream else []
+    clip_input_label = "[1:v]"
+    filter_parts: list[str] = []
+    if needs_background_stream and outreach_layout:
+        clip_input_label = "[outreach_clip_src]"
+        filter_parts.extend(
+            [
+                "[1:v]split=2[outreach_bg_src][outreach_clip_src]",
+                (
+                    f"[outreach_bg_src]scale={OUTREACH_BLUR_WIDTH}:{OUTREACH_BLUR_HEIGHT}:"
+                    "force_original_aspect_ratio=increase,"
+                    f"crop={OUTREACH_BLUR_WIDTH}:{OUTREACH_BLUR_HEIGHT},"
+                    f"gblur=sigma={OUTREACH_BLUR_SIGMA}:steps=2,"
+                    f"scale={target_width}:{target_height}:flags=bilinear,"
+                    f"drawbox=x=0:y=0:w=iw:h=ih:color=black@{OUTREACH_BACKGROUND_DARKEN_OPACITY}:t=fill,"
+                    "setsar=1[bg]"
+                ),
+            ]
+        )
+    elif needs_background_stream:
+        filter_parts.append(f"[0:v]scale={target_width}:{target_height},setsar=1[bg]")
     if split_stack_enabled:
         crop2_x, crop2_y, crop2_w, crop2_h = _normalize_crop_box("crop2_")
         split_tile_width = target_width
@@ -3446,7 +3468,7 @@ def _compose_trimmed_with_background(
         split_divider_outline_thickness = DESIGN_GEOMETRY["split_outline"]
         filter_parts.extend(
             [
-                "[1:v]split=2[split_top_src][split_bottom_src]",
+                f"{clip_input_label}split=2[split_top_src][split_bottom_src]",
                 (
                     f"[split_top_src]crop=iw*{_fmt(crop_w)}:ih*{_fmt(crop_h)}:iw*{_fmt(crop_x)}:ih*{_fmt(crop_y)},"
                     f"scale={split_tile_width}:{split_tile_height},"
@@ -3510,7 +3532,7 @@ def _compose_trimmed_with_background(
             else:
                 crop_expr = ""
             filter_parts.append(
-                f"[1:v]{crop_expr}scale={target_width}:{target_height},setsar=1,setpts=PTS-STARTPTS[ov]"
+                f"{clip_input_label}{crop_expr}scale={target_width}:{target_height},setsar=1,setpts=PTS-STARTPTS[ov]"
             )
         elif face_aware_layout_active:
             for idx, segment in enumerate(layout_segments):
@@ -3559,7 +3581,7 @@ def _compose_trimmed_with_background(
         if (not original_layout_mode) and face_aware_layout_active:
             if len(layout_segments) > 1:
                 source_labels = "".join(f"[layout_src_{idx}]" for idx in range(len(layout_segments)))
-                filter_parts.append(f"[1:v]split={len(layout_segments)}{source_labels}")
+                filter_parts.append(f"{clip_input_label}split={len(layout_segments)}{source_labels}")
             fit_indices = [idx for idx, segment in enumerate(layout_segments) if segment["mode"] == "fit"]
             fit_bg_labels = {}
             if fit_indices:
@@ -3581,7 +3603,7 @@ def _compose_trimmed_with_background(
                 seg_duration = max(0.001, seg_end - seg_start)
                 seg_trim = f"[layout_trim_{idx}]"
                 seg_out = f"[layout_out_{idx}]"
-                layout_src = f"[layout_src_{idx}]" if len(layout_segments) > 1 else "[1:v]"
+                layout_src = f"[layout_src_{idx}]" if len(layout_segments) > 1 else clip_input_label
                 filter_parts.append(
                     f"{layout_src}trim=start={seg_start:.6f}:end={seg_end:.6f},"
                     f"setpts=PTS-STARTPTS,settb=AVTB{seg_trim}"
@@ -3754,7 +3776,7 @@ def _compose_trimmed_with_background(
             )
         elif not original_layout_mode:
             crop_filter = (
-                f"[1:v]crop=iw*{_fmt(crop_w)}:ih*{_fmt(crop_h)}:{crop_x_expr}:{crop_y_expr},"
+                f"{clip_input_label}crop=iw*{_fmt(crop_w)}:ih*{_fmt(crop_h)}:{crop_x_expr}:{crop_y_expr},"
                 f"{scale_stage}"
                 "setsar=1,"
                 "setpts=PTS-STARTPTS[clip_scaled]"
@@ -4182,6 +4204,25 @@ def _compose_trimmed_with_background(
                 scaled_canvas_height = max(2, int(math.floor(canvas_height * effective_scale)))
                 scaled_canvas_height -= scaled_canvas_height % 2
                 effective_scale = float(scaled_canvas_height) / float(canvas_height)
+                if outreach_layout:
+                    min_subscribe_top = (
+                        float(top_caption_subscribe_metrics["caption_top"])
+                        + float(top_caption_subscribe_metrics["max_caption_height"])
+                        + float(top_caption_subscribe_metrics["subscribe_gap"])
+                    )
+                    primary_scaled_height = primary_height * effective_scale
+                    target_subscribe_top = (
+                        float(target_height) * OUTREACH_SUBSCRIBE_BOTTOM_RATIO
+                        - primary_scaled_height
+                    )
+                    max_subscribe_top = (
+                        float(top_caption_subscribe_metrics["ui_top"])
+                        - primary_scaled_height
+                    )
+                    top_caption_subscribe_metrics["subscribe_top"] = min(
+                        max_subscribe_top,
+                        max(min_subscribe_top, target_subscribe_top),
+                    )
                 visible_canvas_height = max(
                     2,
                     int(math.floor(top_caption_subscribe_metrics["ui_top"] - top_caption_subscribe_metrics["subscribe_top"])),
