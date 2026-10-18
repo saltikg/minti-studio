@@ -31,7 +31,12 @@ from werkzeug.exceptions import HTTPException
 from werkzeug.utils import secure_filename
 
 from app.video_shorts import video_shorts_bp
-from app.video_shorts.services.brands import create_brand as create_brand_record, current_brand_id, ensure_brand_schema
+from app.video_shorts.services.brands import (
+    create_brand as create_brand_record,
+    current_brand_id,
+    ensure_brand_schema,
+    load_brand_context,
+)
 from app.video_shorts.config import (
     ARABIC_FALLBACK_FONT_PATH,
     AUTO_RENDER_COUNTS_QUOTA,
@@ -2006,21 +2011,54 @@ def _merge_storage_entries(*entry_groups: List[StorageEntry]) -> List[StorageEnt
     return rows
 
 
-def _load_video_meta_rows_for_storage(conn) -> List[Any]:
-    return conn.execute(
-        """
+def _require_storage_video_scope(*, owner_user_id: Optional[str], all_tenants: bool) -> None:
+    if all_tenants:
+        return
+    if not str(owner_user_id or "").strip():
+        raise ValueError("owner_user_id is required unless all_tenants=True")
+
+
+def _load_video_meta_rows_for_storage(
+    conn,
+    *,
+    owner_user_id: Optional[str],
+    brand_id: Optional[str],
+    all_tenants: bool,
+) -> List[Any]:
+    _require_storage_video_scope(owner_user_id=owner_user_id, all_tenants=all_tenants)
+    sql = """
         SELECT yv.id, yv.video_id, yv.title, yv.channel_id, ch.channel_name, yv.download_status
         FROM youtube_videos yv
         LEFT JOIN youtube_channels ch ON yv.channel_id = ch.channel_id
-        ORDER BY yv.id DESC
-        """
-    ).fetchall()
+    """
+    params: List[Any] = []
+    if all_tenants:
+        if brand_id is not None:
+            sql += "\nWHERE yv.brand_id IS NOT DISTINCT FROM ?"
+            params.append(brand_id)
+    else:
+        sql += "\nWHERE yv.owner_user_id = ? AND yv.brand_id IS NOT DISTINCT FROM ?"
+        params.extend([str(owner_user_id).strip(), brand_id])
+    sql += "\nORDER BY yv.id DESC"
+    return conn.execute(sql, params).fetchall()
 
 
-def _build_video_meta_map_for_storage(rows: List[Any]) -> Dict[str, Dict[str, Any]]:
+def _build_video_meta_map_for_storage(
+    rows: List[Any],
+    *,
+    owner_user_id: Optional[str],
+    brand_id: Optional[str],
+    all_tenants: bool,
+    include_plan_stats: bool,
+) -> Dict[str, Dict[str, Any]]:
+    _require_storage_video_scope(owner_user_id=owner_user_id, all_tenants=all_tenants)
     video_meta: Dict[str, Dict[str, Any]] = {}
     for db_id, video_id, title, channel_id, channel_name, download_status in rows:
-        plan_stats = _load_short_plan_stats(video_id, video_pk=db_id)
+        plan_stats = (
+            _load_short_plan_stats(video_id, video_pk=db_id)
+            if include_plan_stats
+            else {"plan_count": 0, "created_count": 0, "desc_ready": 0}
+        )
         meta = {
             "youtube_title": title or "",
             "db_id": str(db_id),
@@ -2061,10 +2099,22 @@ def _build_video_meta_map_for_storage(rows: List[Any]) -> Dict[str, Dict[str, An
 
 
 def _list_user_podcast_short_clip_options(user_id: str) -> List[Dict[str, Any]]:
-    brand_id = current_brand_id()
+    requested_brand_id = current_brand_id()
+    resolved_brand, brands = load_brand_context(
+        user_id=user_id,
+        requested_brand_id=requested_brand_id,
+    )
+    g.vs_current_brand = resolved_brand
+    g.vs_brands = brands
+    brand_id = str((resolved_brand or {}).get("id") or "").strip() or None
     conn = get_db_readonly()
     try:
-        video_rows = _load_video_meta_rows_for_storage(conn)
+        video_rows = _load_video_meta_rows_for_storage(
+            conn,
+            owner_user_id=user_id,
+            brand_id=brand_id,
+            all_tenants=False,
+        )
         sql = """
             SELECT file_key, file_path, updated_at
             FROM shorts_storage_assets
@@ -2083,7 +2133,13 @@ def _list_user_podcast_short_clip_options(user_id: str) -> List[Dict[str, Any]]:
     finally:
         conn.close()
 
-    video_meta = _build_video_meta_map_for_storage(video_rows)
+    video_meta = _build_video_meta_map_for_storage(
+        video_rows,
+        owner_user_id=user_id,
+        brand_id=brand_id,
+        all_tenants=False,
+        include_plan_stats=False,
+    )
     short_meta = _build_short_clip_meta(video_meta)
     options: List[Dict[str, Any]] = []
     for file_key, file_path, updated_at in rows:
@@ -15531,64 +15587,19 @@ def shorts_storage():
     conn = get_db()
     ensure_storage_user_schema(conn)
     ensure_channel_owner_schema(conn)
-    video_sql = """
-        SELECT yv.id, yv.video_id, yv.title, yv.channel_id, ch.channel_name, yv.download_status
-        FROM youtube_videos yv
-        LEFT JOIN youtube_channels ch ON yv.channel_id = ch.channel_id
-    """
-    video_params: List[Any] = []
-    video_where: List[str] = []
-    if not is_admin:
-        video_where.append("yv.owner_user_id = ?")
-        video_params.append(current_user["id"])
-    if brand_id:
-        video_where.append("yv.brand_id = ?")
-        video_params.append(brand_id)
-    if video_where:
-        video_sql += " WHERE " + " AND ".join(video_where)
-    video_sql += " ORDER BY yv.id DESC"
-    rows = conn.execute(video_sql, video_params).fetchall()
-    video_meta: Dict[str, Dict[str, str]] = {}
-    for db_id, video_id, title, channel_id, channel_name, download_status in rows:
-        plan_stats = _load_short_plan_stats(video_id, video_pk=db_id)
-        meta = {
-            "youtube_title": title or "",
-            "db_id": str(db_id),
-            "channel_name": channel_name or "",
-            "video_pk": str(db_id),
-            "status": download_status or "",
-            "video_id": video_id,
-            "plan_count": plan_stats["plan_count"],
-            "created_count": plan_stats["created_count"],
-            "desc_ready": plan_stats["desc_ready"],
-        }
-        variants = {
-            video_id,
-            f"{video_id}.mp4",
-            f"{video_id}.mov",
-            f"{video_id}.mkv",
-            f"{video_id}.mp3",
-            f"{video_id}.wav",
-            f"{video_id}.m4a",
-            f"{video_id}.aac",
-            f"{video_id}.ogg",
-            f"{video_id}.flac",
-            f"{video_id}.mp4M",
-            str(db_id),
-            f"{str(db_id)}.mp4",
-            f"{str(db_id)}.mov",
-            f"{str(db_id)}.mkv",
-            f"{str(db_id)}.mp3",
-            f"{str(db_id)}.wav",
-            f"{str(db_id)}.m4a",
-            f"{str(db_id)}.aac",
-            f"{str(db_id)}.ogg",
-            f"{str(db_id)}.flac",
-        }
-        if title:
-            meta["youtube_title"] = title
-        for key in variants:
-            video_meta[key] = meta
+    rows = _load_video_meta_rows_for_storage(
+        conn,
+        owner_user_id=None,
+        brand_id=brand_id,
+        all_tenants=True,
+    )
+    video_meta = _build_video_meta_map_for_storage(
+        rows,
+        owner_user_id=None,
+        brand_id=brand_id,
+        all_tenants=True,
+        include_plan_stats=True,
+    )
     allowed_video_ids = {
         str(meta.get("video_id") or "")
         for meta in video_meta.values()
