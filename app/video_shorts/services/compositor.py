@@ -13,10 +13,11 @@ from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple
 
 import numpy as np
-from PIL import Image, ImageDraw, ImageFilter, ImageFont, ImageSequence
+from PIL import Image, ImageDraw, ImageFilter, ImageFont, ImageSequence, features
 from flask import current_app
 
 from app.video_shorts.config import (
+    ARABIC_FALLBACK_FONT_PATH,
     DESIGN_GEOMETRY,
     DEFAULT_SUB_FONT_SIZE,
     DEFAULT_SUBTITLE_BG_ALPHA,
@@ -38,6 +39,7 @@ from app.video_shorts.config import (
     SUBTITLE_PRESETS,
     SUB_MARGIN_DEFAULT,
 )
+from app.video_shorts.services.arabic_text import contains_arabic_script
 
 from app.video_shorts.services.media_utils import (
     _normalize_source_cache_container,
@@ -88,6 +90,7 @@ TITLE_WRAP_MAX_LINES = DESIGN_GEOMETRY["title_max_lines"]
 TITLE_WRAP_MIN_FONT_SIZE = DESIGN_GEOMETRY["title_min_font_size"]
 TITLE_BOX_BORDER_WIDTH = DESIGN_GEOMETRY["title_box_border"]
 STATIC_VISUAL_MAP = {entry["key"]: entry for entry in STATIC_VISUAL_PRESETS}
+PILLOW_RAQM_AVAILABLE = bool(features.check("raqm"))
 
 
 def _render_overlay_shapes(
@@ -712,10 +715,25 @@ def _load_title_font(font_path: Optional[str], font_size: int) -> Optional[Image
     if not candidate or not candidate.exists():
         return None
     try:
-        return ImageFont.truetype(str(candidate), int(font_size))
+        kwargs: Dict[str, Any] = {}
+        if PILLOW_RAQM_AVAILABLE and candidate == ARABIC_FALLBACK_FONT_PATH:
+            kwargs["layout_engine"] = ImageFont.Layout.RAQM
+        font = ImageFont.truetype(str(candidate), int(font_size), **kwargs)
+        if candidate == ARABIC_FALLBACK_FONT_PATH:
+            try:
+                font.set_variation_by_name("Bold")
+            except Exception:
+                pass
+        return font
     except Exception:
         current_app.logger.warning("Could not load title font for wrap measurement: %s", candidate)
         return None
+
+
+def _title_font_path_for_text(text: Any, font_path: Optional[str]) -> str:
+    if contains_arabic_script(text) and ARABIC_FALLBACK_FONT_PATH.exists():
+        return str(ARABIC_FALLBACK_FONT_PATH)
+    return str(font_path or "/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf")
 
 
 def _wrap_words_to_width(words: list[str], font: ImageFont.FreeTypeFont, max_width: int) -> list[str]:
@@ -811,6 +829,7 @@ def _fit_title_text(
             "line_count": 0,
             "side_margin": _title_side_margin(target_width),
         }
+    font_path = _title_font_path_for_text(text, font_path)
     words = text.split()
     if not words:
         return {
@@ -1033,11 +1052,12 @@ def _title_overlay_layout(
     """Measure title geometry without generating an image."""
     font_size = max(1, int(round(font_size * DESIGN_GEOMETRY["font_scale"])))
     min_font_size = min(font_size, min_font_size)
-    font = _load_title_font(font_path, font_size)
-    if font is None:
-        raise RuntimeError(f"Pillow title font could not be resolved: {font_path}")
-
     display_text = _apply_title_case(text, title_language, uppercase)
+    effective_font_path = str(ARABIC_FALLBACK_FONT_PATH) if contains_arabic_script(display_text) else font_path
+    font = _load_title_font(effective_font_path, font_size)
+    if font is None:
+        raise RuntimeError(f"Pillow title font could not be resolved: {effective_font_path}")
+
     words = display_text.split()
     if not words:
         raise RuntimeError("Pillow title render requested with empty text")
@@ -1056,7 +1076,7 @@ def _title_overlay_layout(
     chosen_line_height = _measure_line_height(font)
 
     for candidate_font_size in range(int(font_size), int(min_font_size) - 1, -1):
-        candidate_font = _load_title_font(font_path, candidate_font_size)
+        candidate_font = _load_title_font(effective_font_path, candidate_font_size)
         if candidate_font is None:
             continue
         candidate_lines = _wrap_words_to_width(words, candidate_font, max_text_width)
@@ -2391,7 +2411,7 @@ def _compose_with_background(
 
     if title_txt:
         # Font dosyası
-        test_font_file = font_path or "/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf"
+        test_font_file = _title_font_path_for_text(title_txt, font_path)
 
         # Çok satırlı metni textfile ile kullan
         debug_textfile = _write_debug_textfile(title_txt.replace("\n", "\n"))
@@ -2669,7 +2689,7 @@ def _compose_trimmed_with_background(
                 final_label = "[pod_ov_out]"
         next_video_input_index = 2 + len(overlay_sources)
         if show_title and title_txt:
-            test_font_file = font_path or "/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf"
+            test_font_file = _title_font_path_for_text(title_txt, font_path)
             if normalized_title_engine == "pillow":
                 title_overlay_path, title_overlay_meta = _render_title_overlay(
                     title_txt,
@@ -3826,7 +3846,7 @@ def _compose_trimmed_with_background(
         )
         final_label = "[shape_overlay_out]"
     if show_title and title_txt:
-        test_font_file = font_path or "/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf"
+        test_font_file = _title_font_path_for_text(title_txt, font_path)
         if normalized_title_engine == "pillow":
             try:
                 requested_video_top = int(video_overlay_offset if video_overlay_offset is not None else VIDEO_OVERLAY_TOP_OFFSET)

@@ -1060,6 +1060,8 @@ DEFAULT_EDITOR_TITLE_FONT_SIZE = int(
 )
 
 STATIC_FONTS_DIR = Path(__file__).resolve().parent / "static" / "fonts"
+ARABIC_FALLBACK_FONT_PATH = STATIC_FONTS_DIR / "NotoSansArabic-VariableFont_wdth-wght.ttf"
+ARABIC_FALLBACK_FONT_NAME = "Noto Sans Arabic"
 MINTI_BACKGROUNDS_DIR = Path(__file__).resolve().parent / "static" / "mintibackgrounds"
 
 TITLE_FONTS = OrderedDict(
@@ -1153,6 +1155,14 @@ TITLE_FONTS = OrderedDict(
             },
         ),
         (
+            "noto_sans_arabic_bold",
+            {
+                "label": "Noto Sans Arabic Bold",
+                "css_family": "'Noto Sans Arabic', sans-serif",
+                "path": ARABIC_FALLBACK_FONT_PATH,
+            },
+        ),
+        (
             "oswald_regular",
             {
                 "label": "Oswald Regular",
@@ -1205,6 +1215,7 @@ FONT_CHOICES = [
 ]
 
 SUB_FONT_CHOICES = [
+    ("noto_sans_arabic_bold", "Noto Sans Arabic Bold", str(ARABIC_FALLBACK_FONT_PATH), ARABIC_FALLBACK_FONT_NAME),
     ("arimo", "Arimo", str(STATIC_FONTS_DIR / "Arimo-Regular.ttf"), "Arimo"),
     ("open_sans_semi", "Open Sans Semi Condensed", str(STATIC_FONTS_DIR / "OpenSans_SemiCondensed-Medium.ttf"), "Open Sans SemiCondensed"),
     ("anton", "Anton", str(STATIC_FONTS_DIR / "Anton-Regular.ttf"), "Anton"),

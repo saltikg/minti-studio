@@ -33,6 +33,7 @@ from werkzeug.utils import secure_filename
 from app.video_shorts import video_shorts_bp
 from app.video_shorts.services.brands import create_brand as create_brand_record, current_brand_id, ensure_brand_schema
 from app.video_shorts.config import (
+    ARABIC_FALLBACK_FONT_PATH,
     AUTO_RENDER_COUNTS_QUOTA,
     AUTO_RENDER_MIN_SCORE,
     AUTO_RENDER_TOP_N,
@@ -11448,6 +11449,16 @@ def generate_short(video_pk):
     if preview_path.exists():
         preview_url = _preview_frame_static_url(str(video["video_id"])) or None
     preview_font_faces_by_key: Dict[str, Dict[str, Any]] = {}
+    arabic_preview_font = _build_static_preview_font_entry(
+        "noto_sans_arabic_bold",
+        "Noto Sans Arabic Bold",
+        ARABIC_FALLBACK_FONT_PATH,
+    )
+    if arabic_preview_font:
+        preview_font_faces_by_key[arabic_preview_font["key"]] = arabic_preview_font
+    arabic_preview_family = (
+        f"'{arabic_preview_font['family']}', " if arabic_preview_font else ""
+    )
     title_font_options = []
     for key, cfg in TITLE_FONTS.items():
         font_entry = _build_static_preview_font_entry(key, cfg.get("label") or key, cfg.get("path"))
@@ -11458,7 +11469,7 @@ def generate_short(video_pk):
             {
                 "key": key,
                 "label": cfg["label"],
-                "css_family": f"'{font_entry['family']}', sans-serif",
+                "css_family": f"'{font_entry['family']}', {arabic_preview_family}sans-serif",
                 "preview_family": font_entry["family"],
                 "preview_weight": font_entry["weight"],
                 "renderer_path": font_entry["renderer_path"],
@@ -11487,7 +11498,7 @@ def generate_short(video_pk):
                     "key": key,
                     "label": label,
                     "path": path,
-                    "fontname": f"'{font_entry['family']}', sans-serif",
+                    "fontname": f"'{font_entry['family']}', {arabic_preview_family}sans-serif",
                     "preview_family": font_entry["family"],
                     "preview_weight": font_entry["weight"],
                     "renderer_fontname": fontname,

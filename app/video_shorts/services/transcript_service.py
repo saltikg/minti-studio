@@ -6,12 +6,13 @@ import tempfile
 from pathlib import Path
 from typing import Any, Callable, Dict, List, Optional, Tuple
 
-from PIL import Image, ImageDraw, ImageFilter, ImageFont
+from PIL import Image, ImageDraw, ImageFilter, ImageFont, features
 
 from flask import current_app
 
 from app.video_shorts.config import (
     DESIGN_GEOMETRY,
+    ARABIC_FALLBACK_FONT_PATH,
     DEFAULT_SUBTITLE_PRESET,
     DEFAULT_SUBTITLE_BG_ALPHA,
     DEFAULT_SUBTITLE_BG_COLOR,
@@ -19,6 +20,7 @@ from app.video_shorts.config import (
     FFMPEG_RENDER_TIMEOUT,
     FFPROBE_TIMEOUT,
     OPENAI_MODEL,
+    TITLE_MODEL,
     SUB_FONT_CHOICES,
     SUBTITLE_PILL_FONT_MAP,
     SUBTITLE_PRESETS,
@@ -29,7 +31,13 @@ from app.video_shorts.config import (
     normalize_caption_anchor,
     _openai_client,
 )
-from app.video_shorts.services.db import _ensure_transcript_schema
+from app.video_shorts.services.arabic_text import (
+    add_ass_arabic_font_fallback,
+    contains_arabic_script,
+    find_arabic_runs,
+    replace_arabic_runs,
+)
+from app.video_shorts.services.db import _ensure_transcript_schema, get_db
 from app.video_shorts.services.media_utils import _extract_audio_segment, _resolve_ffmpeg, run_media_subprocess
 from app.video_shorts.services.transcript_lang_tagging import infer_lang_from_text, tag_segments_with_language
 import re
@@ -54,6 +62,8 @@ _PILL_CURVE_FACTOR = 0.55228475
 _PILLOW_CAPTION_WIDTH = 720
 _PILLOW_CAPTION_HEIGHT = 1280
 _WORD_HIGHLIGHT_OVERLAY_FPS = 30
+_ARABIC_TRANSLITERATION_VERSION = 1
+_PILLOW_RAQM_AVAILABLE = bool(features.check("raqm"))
 
 
 def _normalize_whisper_language(raw: Any) -> str:
@@ -95,6 +105,212 @@ def _looks_english_text(text: str) -> bool:
     tr_hits = sum(1 for t in tokens if t in _TR_STOPWORDS)
     tr_chars = sum(1 for ch in text if ch in "çğıöşüÇĞİÖŞÜ")
     return tr_chars == 0 and en_hits >= 2 and en_hits >= (tr_hits + 1)
+
+
+def _arabic_run_key(value: Any) -> str:
+    return " ".join(str(value or "").strip().split())
+
+
+def _arabic_word_groups(words: Any) -> List[Tuple[int, int, str]]:
+    if not isinstance(words, list):
+        return []
+    groups: List[Tuple[int, int, str]] = []
+    index = 0
+    while index < len(words):
+        item = words[index]
+        token = str(item.get("word") or "") if isinstance(item, dict) else ""
+        if not contains_arabic_script(token):
+            index += 1
+            continue
+        end_index = index + 1
+        tokens = [token.strip()]
+        while end_index < len(words):
+            next_item = words[end_index]
+            next_token = str(next_item.get("word") or "") if isinstance(next_item, dict) else ""
+            if not contains_arabic_script(next_token):
+                break
+            tokens.append(next_token.strip())
+            end_index += 1
+        groups.append((index, end_index, " ".join(part for part in tokens if part)))
+        index = end_index
+    return groups
+
+
+def _transcript_is_turkish(
+    full_text: str,
+    segments: List[Dict[str, Any]],
+    *,
+    language_hint: str = "",
+) -> bool:
+    normalized_hint = _normalize_whisper_language(language_hint)
+    if normalized_hint:
+        return normalized_hint == "tr"
+    language_counts: Dict[str, int] = {}
+    for segment in segments or []:
+        language = _normalize_whisper_language(segment.get("lang") or segment.get("language"))
+        if language:
+            language_counts[language] = language_counts.get(language, 0) + 1
+    if language_counts:
+        if language_counts.get("tr", 0) > 0:
+            return language_counts.get("tr", 0) >= language_counts.get("en", 0)
+        if language_counts.get("en", 0) > 0:
+            return False
+    return infer_lang_from_text(full_text or "") == "tr" and not _looks_english_text(full_text or "")
+
+
+def _request_turkish_arabic_transliterations(runs: List[str]) -> Dict[str, str]:
+    if not runs or not _openai_client:
+        return {}
+    payload_runs = [{"id": f"r{index}", "arabic": run} for index, run in enumerate(runs)]
+    response = _openai_client.chat.completions.create(
+        model=TITLE_MODEL,
+        temperature=0,
+        response_format={"type": "json_object"},
+        messages=[
+            {
+                "role": "system",
+                "content": (
+                    "You transliterate Arabic-script quotations inside Turkish transcripts into the common "
+                    "Turkish Latin spelling. Do not translate, summarize, or add words. Return exactly one Latin "
+                    "transliteration for every input id. Prefer familiar Turkish forms, for example "
+                    "بسم الله الرحمن الرحيم -> Bismillahirrahmanirrahim, إن شاء الله -> inşallah, "
+                    "الحمد لله -> elhamdülillah. Output JSON only as "
+                    "{\"runs\":[{\"id\":\"r0\",\"latin\":\"...\"}]} and never include Arabic script in latin."
+                ),
+            },
+            {"role": "user", "content": json.dumps({"runs": payload_runs}, ensure_ascii=False)},
+        ],
+    )
+    raw = response.choices[0].message.content if response.choices else ""
+    parsed = json.loads(raw or "{}")
+    result: Dict[str, str] = {}
+    items = parsed.get("runs") if isinstance(parsed, dict) else None
+    if not isinstance(items, list):
+        return result
+    by_id = {entry["id"]: entry["arabic"] for entry in payload_runs}
+    for item in items:
+        if not isinstance(item, dict):
+            continue
+        source = by_id.get(str(item.get("id") or ""))
+        latin = " ".join(str(item.get("latin") or "").strip().split())
+        if source and latin and not contains_arabic_script(latin):
+            result[_arabic_run_key(source)] = latin
+    return result
+
+
+def _replace_arabic_word_groups(words: Any, replacements: Dict[str, str]) -> Tuple[Any, bool]:
+    if not isinstance(words, list) or not words:
+        return words, False
+    groups = _arabic_word_groups(words)
+    if not groups:
+        return words, False
+    updated: List[Dict[str, Any]] = []
+    cursor = 0
+    changed = False
+    for start_index, end_index, source in groups:
+        updated.extend(dict(item) if isinstance(item, dict) else item for item in words[cursor:start_index])
+        source_items = [item for item in words[start_index:end_index] if isinstance(item, dict)]
+        latin = replacements.get(_arabic_run_key(source))
+        latin_words = [token for token in str(latin or "").split() if token]
+        if not source_items or not latin_words:
+            updated.extend(dict(item) if isinstance(item, dict) else item for item in words[start_index:end_index])
+            cursor = end_index
+            continue
+        try:
+            span_start = float(source_items[0].get("start"))
+            span_end = float(source_items[-1].get("end"))
+        except (TypeError, ValueError):
+            span_start = span_end = 0.0
+        duration = max(0.0, span_end - span_start)
+        for word_index, latin_word in enumerate(latin_words):
+            replacement = dict(source_items[min(word_index, len(source_items) - 1)])
+            replacement["word"] = latin_word
+            if duration > 0:
+                replacement["start"] = span_start + (duration * word_index / len(latin_words))
+                replacement["end"] = span_start + (duration * (word_index + 1) / len(latin_words))
+            updated.append(replacement)
+        changed = True
+        cursor = end_index
+    updated.extend(dict(item) if isinstance(item, dict) else item for item in words[cursor:])
+    return updated, changed
+
+
+def transliterate_turkish_arabic_transcript(
+    full_text: str,
+    segments: List[Dict[str, Any]],
+    *,
+    language_hint: str = "",
+) -> Tuple[str, List[Dict[str, Any]], bool]:
+    """Transliterate Arabic runs once while retaining the original word timing span."""
+    source_full_text = str(full_text or "")
+    source_segments = [dict(segment) for segment in (segments or []) if isinstance(segment, dict)]
+    has_arabic = contains_arabic_script(source_full_text) or any(
+        contains_arabic_script(segment.get(key))
+        for segment in source_segments
+        for key in ("text", "tr_text", "ar_text")
+    ) or any(
+        contains_arabic_script(word.get("word"))
+        for segment in source_segments
+        for word in (segment.get("words") or [])
+        if isinstance(word, dict)
+    )
+    if not has_arabic or not _transcript_is_turkish(source_full_text, source_segments, language_hint=language_hint):
+        return source_full_text, source_segments, False
+
+    unique_runs: Dict[str, str] = {}
+    for value in [source_full_text] + [
+        segment.get(key) or ""
+        for segment in source_segments
+        for key in ("text", "tr_text", "ar_text")
+    ]:
+        for run in find_arabic_runs(value):
+            unique_runs.setdefault(_arabic_run_key(run), run.strip())
+    for segment in source_segments:
+        for _start, _end, run in _arabic_word_groups(segment.get("words")):
+            if run:
+                unique_runs.setdefault(_arabic_run_key(run), run)
+    if not unique_runs:
+        return source_full_text, source_segments, False
+
+    try:
+        replacements = _request_turkish_arabic_transliterations(list(unique_runs.values()))
+    except Exception as exc:
+        try:
+            current_app.logger.warning("Arabic transliteration failed; preserving transcript: %s", exc)
+        except Exception:
+            pass
+        return source_full_text, source_segments, False
+    if not replacements:
+        return source_full_text, source_segments, False
+
+    def replace_run(run: str) -> str:
+        return replacements.get(_arabic_run_key(run), run)
+
+    updated_full_text = replace_arabic_runs(source_full_text, replace_run)
+    changed = updated_full_text != source_full_text
+    updated_segments: List[Dict[str, Any]] = []
+    for source_segment in source_segments:
+        segment = dict(source_segment)
+        segment_changed = False
+        for key in ("text", "tr_text", "ar_text"):
+            if segment.get(key) is None:
+                continue
+            before = str(segment.get(key) or "")
+            after = replace_arabic_runs(before, replace_run)
+            if after != before:
+                segment[key] = after
+                segment_changed = True
+        updated_words, words_changed = _replace_arabic_word_groups(segment.get("words"), replacements)
+        if words_changed:
+            segment["words"] = updated_words
+            segment["word_tags"] = None
+            segment_changed = True
+        if segment_changed:
+            segment["lang"] = "tr"
+            segment["arabic_transliteration_version"] = _ARABIC_TRANSLITERATION_VERSION
+        changed = changed or segment_changed
+        updated_segments.append(segment)
+    return updated_full_text, updated_segments, changed
 
 
 def _detect_primary_audio_language(video_path: Path) -> str:
@@ -553,6 +769,30 @@ def _measure_line_height(font: ImageFont.FreeTypeFont) -> int:
     except Exception:
         bbox = font.getbbox("Ag")
         return int(max(1, bbox[3] - bbox[1]))
+
+
+def _load_arabic_fallback_font(font_size: int) -> Optional[ImageFont.FreeTypeFont]:
+    if not ARABIC_FALLBACK_FONT_PATH.exists():
+        return None
+    kwargs: Dict[str, Any] = {}
+    if _PILLOW_RAQM_AVAILABLE:
+        kwargs["layout_engine"] = ImageFont.Layout.RAQM
+    try:
+        font = ImageFont.truetype(str(ARABIC_FALLBACK_FONT_PATH), max(1, int(font_size)), **kwargs)
+        try:
+            font.set_variation_by_name("Bold")
+        except Exception:
+            pass
+        return font
+    except Exception:
+        return None
+
+
+def _font_for_script(text: Any, font: ImageFont.FreeTypeFont) -> ImageFont.FreeTypeFont:
+    if not contains_arabic_script(text):
+        return font
+    fallback = _load_arabic_fallback_font(int(getattr(font, "size", 1) or 1))
+    return fallback or font
 
 
 def _font_ascent(font: ImageFont.FreeTypeFont) -> int:
@@ -1150,6 +1390,7 @@ def _build_ass_karaoke_for_clip(
                 lambda match: f"{{\\k{match.group(1)}{active_word_tags}}}{match.group(2)}{{\\rDefault}}",
                 text,
             )
+        text = add_ass_arabic_font_fallback(text, base_font=resolved_font)
         lines.append(
             f"Dialogue: {int(event.get('layer', 0))},{_format_ass_time(float(event['start']))},{_format_ass_time(float(event['end']))},{event.get('style', 'Default')},,0,0,0,,{text}"
         )
@@ -1228,10 +1469,11 @@ def _build_blurred_shadow_region(
     probe_draw = ImageDraw.Draw(probe_image)
     word_bboxes: List[Tuple[int, int, int, int]] = []
     for word in words:
+        word_font = _font_for_script(word["word"], font)
         bbox = probe_draw.textbbox(
             (int(word["x"]), int(word["y"])),
             str(word["word"]),
-            font=font,
+            font=word_font,
             anchor="la",
             stroke_width=0,
         )
@@ -1252,13 +1494,14 @@ def _build_blurred_shadow_region(
     shadow_draw = ImageDraw.Draw(shadow_region)
     shadow_fill = _hex_to_rgba(shadow_color, int(round(opacity * 255)))
     for word in words:
+        word_font = _font_for_script(word["word"], font)
         shadow_draw.text(
             (
                 int(word["x"]) - region_left + int(shadow_offset_x),
                 int(word["y"]) - region_top + int(shadow_offset_y),
             ),
             str(word["word"]),
-            font=font,
+            font=word_font,
             fill=shadow_fill,
             anchor="la",
         )
@@ -1316,8 +1559,9 @@ def _layout_wrapped_caption(
 ) -> Dict[str, Any]:
     lines = _wrap_words_to_lines(words, font, max_width, slot_widths=slot_widths, word_fonts=word_fonts)
     space_width = _measure_text_width(font, " ")
-    line_height = max(_measure_line_height(font), _measure_line_height(line_height_font or font))
-    line_ascent = max(_font_ascent(font), _font_ascent(line_height_font or font))
+    measured_fonts = [font, line_height_font or font, *(word_fonts or [])]
+    line_height = max(_measure_line_height(item) for item in measured_fonts)
+    line_ascent = max(_font_ascent(item) for item in measured_fonts)
     line_gap = max(DESIGN_GEOMETRY["caption_line_gap_min"], int(round(line_height * DESIGN_GEOMETRY["caption_line_gap"])))
     total_height = (line_height * len(lines)) + (line_gap * max(0, len(lines) - 1))
     if normalize_caption_anchor(caption_anchor) == "center":
@@ -1438,6 +1682,7 @@ def _build_gradient_word_layer(
     font: ImageFont.FreeTypeFont,
     gradient_strip: Image.Image,
 ) -> Dict[str, Any] | None:
+    font = _font_for_script(word.get("word"), font)
     probe_image = Image.new("RGBA", (8, 8), (0, 0, 0, 0))
     probe_draw = ImageDraw.Draw(probe_image)
     bbox = probe_draw.textbbox(
@@ -1488,7 +1733,10 @@ def _caption_frame_layout(
     """Font-measured geometry shared by the renderer and live DOM preview."""
     active_font = active_font or font
     display_words = _caption_display_words(words, force_uppercase=force_uppercase, language=caption_language)
-    word_fonts = [active_font if index == active_index else font for index in range(len(display_words))]
+    word_fonts = [
+        _font_for_script(word, active_font if index == active_index else font)
+        for index, word in enumerate(display_words)
+    ]
     base_pad_x = max(DESIGN_GEOMETRY["pill_padding_min_x"], int(round(float(font_size) * DESIGN_GEOMETRY["pill_padding_x"])))
     pad_y = max(DESIGN_GEOMETRY["pill_padding_min_y"], int(round(float(font_size) * DESIGN_GEOMETRY["pill_padding_y"])))
     if precomputed_layout is None:
@@ -1610,10 +1858,11 @@ def _render_word_highlight_caption_frame(
             )
 
     active_word = layout["words"][active_index]
+    active_draw_font = _font_for_script(active_word["word"], active_font)
     active_bbox = draw.textbbox(
         (int(active_word["x"]), int(active_word["y"])),
         str(active_word["word"]),
-        font=active_font,
+        font=active_draw_font,
         anchor="la",
         stroke_width=outline_width,
     )
@@ -1647,7 +1896,7 @@ def _render_word_highlight_caption_frame(
             prev_bbox = draw.textbbox(
                 (int(prev_word["x"]), int(prev_word["y"])),
                 str(prev_word["word"]),
-                font=font,
+                font=_font_for_script(prev_word["word"], font),
                 anchor="la",
                 stroke_width=outline_width,
             )
@@ -1657,7 +1906,7 @@ def _render_word_highlight_caption_frame(
             next_bbox = draw.textbbox(
                 (int(next_word["x"]), int(next_word["y"])),
                 str(next_word["word"]),
-                font=font,
+                font=_font_for_script(next_word["word"], font),
                 anchor="la",
                 stroke_width=outline_width,
             )
@@ -1691,7 +1940,7 @@ def _render_word_highlight_caption_frame(
                         int(word["x"]),
                         int(word["y"]),
                         str(word["word"]),
-                        font=active_font if is_active_word else font,
+                        font=_font_for_script(word["word"], active_font if is_active_word else font),
                         fill=(0, 0, 0, 0),
                         stroke_fill=outline_rgba,
                         stroke_width=int(outline_width),
@@ -1707,7 +1956,7 @@ def _render_word_highlight_caption_frame(
                 int(word["x"]),
                 int(word["y"]),
                 str(word["word"]),
-                font=active_font if is_active_word else font,
+                font=_font_for_script(word["word"], active_font if is_active_word else font),
                 fill=fill,
                 stroke_fill=outline_rgba,
                 stroke_width=outline_width if is_active_word and active_outline else (0 if is_active_word else outline_width),
@@ -1721,7 +1970,7 @@ def _render_word_highlight_caption_frame(
                 int(word["x"]),
                 int(word["y"]),
                 str(word["word"]),
-                font=active_font if is_active_word else font,
+                font=_font_for_script(word["word"], active_font if is_active_word else font),
                 fill=fill,
                 stroke_fill=outline_rgba,
                 stroke_width=outline_width if is_active_word and active_outline else (0 if is_active_word else outline_width),
@@ -2941,6 +3190,69 @@ def save_transcript_override(conn, *, video_pk, video_id, full_text, segments):
     )
 
 
+def _decode_transcript_segments(raw: Any) -> List[Dict[str, Any]]:
+    if isinstance(raw, list):
+        return [dict(item) for item in raw if isinstance(item, dict)]
+    if not raw:
+        return []
+    try:
+        parsed = json.loads(raw)
+    except (TypeError, ValueError):
+        return []
+    return [dict(item) for item in parsed if isinstance(item, dict)] if isinstance(parsed, list) else []
+
+
+def _persist_lazy_arabic_transliteration(
+    *,
+    video_id: str,
+    video_pk: Optional[int],
+    full_text: str,
+    segments: List[Dict[str, Any]],
+) -> None:
+    """Best-effort cache update; a failure must never block transcript use."""
+    write_conn = None
+    try:
+        write_conn = get_db()
+        serialized = json.dumps(segments, ensure_ascii=False)
+        if video_pk is not None:
+            write_conn.execute(
+                """
+                UPDATE shorts_transcript_overrides
+                SET full_text = ?, segments_json = ?, updated_at = CURRENT_TIMESTAMP
+                WHERE video_pk = ?
+                """,
+                [full_text, serialized, int(video_pk)],
+            )
+        else:
+            write_conn.execute(
+                """
+                UPDATE youtube_transcripts
+                SET full_text = ?, segments_json = ?, whisper_segments_json = ?
+                WHERE video_id = ?
+                """,
+                [full_text, serialized, serialized, video_id],
+            )
+        write_conn.commit()
+    except Exception as exc:
+        if write_conn is not None:
+            try:
+                write_conn.rollback()
+            except Exception:
+                pass
+        try:
+            current_app.logger.warning(
+                "Lazy Arabic transliteration cache update failed video_id=%s video_pk=%s: %s",
+                video_id,
+                video_pk,
+                exc,
+            )
+        except Exception:
+            pass
+    finally:
+        if write_conn is not None:
+            write_conn.close()
+
+
 def _fetch_transcript(conn, video_id: str, *, video_pk=None) -> Tuple[str, List[Dict[str, Any]]]:
     pk = _transcript_video_pk(conn, video_id, video_pk)
     if pk is not None:
@@ -2948,7 +3260,17 @@ def _fetch_transcript(conn, video_id: str, *, video_pk=None) -> Tuple[str, List[
             "SELECT full_text, segments_json FROM shorts_transcript_overrides WHERE video_pk = ?", [pk],
         ).fetchone()
         if override:
-            return override[0] or "", _normalize_segments_for_use(json.loads(override[1] or "[]"))
+            full_text = override[0] or ""
+            raw_segments = _decode_transcript_segments(override[1])
+            full_text, raw_segments, changed = transliterate_turkish_arabic_transcript(full_text, raw_segments)
+            if changed:
+                _persist_lazy_arabic_transliteration(
+                    video_id=video_id,
+                    video_pk=pk,
+                    full_text=full_text,
+                    segments=raw_segments,
+                )
+            return full_text, _normalize_segments_for_use(raw_segments)
     cols = _ensure_transcript_schema(conn)
     has_whisper_col = "whisper_segments_json" in cols
     select_sql = (
@@ -2961,14 +3283,15 @@ def _fetch_transcript(conn, video_id: str, *, video_pk=None) -> Tuple[str, List[
         return "", []
     full_text = row[0] or ""
     segments_raw_json = row[2] if has_whisper_col and row[2] else row[1]
-    segments: List[Dict[str, Any]] = []
-    if segments_raw_json:
-        try:
-            parsed = json.loads(segments_raw_json)
-            if isinstance(parsed, list):
-                segments = parsed
-        except Exception:
-            segments = []
+    segments = _decode_transcript_segments(segments_raw_json)
+    full_text, segments, changed = transliterate_turkish_arabic_transcript(full_text, segments)
+    if changed:
+        _persist_lazy_arabic_transliteration(
+            video_id=video_id,
+            video_pk=None,
+            full_text=full_text,
+            segments=segments,
+        )
     return full_text, _normalize_segments_for_use(segments)
 
 
@@ -3263,6 +3586,16 @@ def _transcribe_with_whisper(
                 "word_tags": None,
             }
         )
+
+    if detected_lang == "tr":
+        _emit("arabic_transliteration", "Normalizing Arabic quotations for Turkish captions.")
+        full_text, segments, transliterated = transliterate_turkish_arabic_transcript(
+            str(full_text),
+            segments,
+            language_hint="tr",
+        )
+        if transliterated:
+            _emit("arabic_transliteration_done", "Arabic quotations transliterated.")
 
     _emit("cleanup", "Cleaning temporary files.")
     # Cleanup temp audio if created
