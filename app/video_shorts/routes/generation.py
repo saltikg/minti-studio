@@ -74,6 +74,7 @@ from app.video_shorts.config import (
     DEFAULT_VIDEO_OVERLAY_OFFSET,
     DEFAULT_USER_STORAGE_LIMIT,
     DEFAULT_USER_PLAN_ID,
+    GENERATE_V2_ALL,
     FACE_AWARE_LAYOUT_ALL,
     FACE_AWARE_MIN_FILL_SEC,
     FACE_AWARE_MIN_FIT_SEC,
@@ -9280,7 +9281,7 @@ def _schedule_async_clip_title_suggestion(
             try:
                 entries = _load_plan_entries(title_video)
                 plan_entry = _find_plan_entry(entries, plan_index)
-                if not plan_entry:
+                if not plan_entry or plan_entry.get("title_source") == "user":
                     return
                 suggestion_excerpt = str(
                     plan_entry.get("transcript_full")
@@ -9297,6 +9298,12 @@ def _schedule_async_clip_title_suggestion(
                     ),
                 )
                 if not new_title:
+                    return
+                # The title request can take seconds. Re-read before applying so a
+                # concurrent Edit title & time save always wins the race.
+                entries = _load_plan_entries(title_video)
+                plan_entry = _find_plan_entry(entries, plan_index)
+                if not plan_entry or plan_entry.get("title_source") == "user":
                     return
                 existing_title = str(plan_entry.get("title") or "").strip()
                 if existing_title and existing_title != safe_placeholder:
@@ -11168,7 +11175,11 @@ def generate_short(video_pk):
     }
     guest_mode = bool((current_user or {}).get("is_guest"))
     current_user_free_tool = guest_mode or int((current_user or {}).get("guest_video_count") or 0) > 0
-    generate_v2 = bool(current_user_free_tool or (current_user_id and current_user_id in generate_v2_user_ids))
+    generate_v2 = bool(
+        GENERATE_V2_ALL
+        or current_user_free_tool
+        or (current_user_id and current_user_id in generate_v2_user_ids)
+    )
     hide_clip_coachmark = load_user_bool_preference(
         current_user_id if current_user else None,
         HIDE_CLIP_COACHMARK_PREFERENCE_KEY,
@@ -23488,7 +23499,7 @@ def add_clip_section(video_pk):
 
     start_time_raw = (request.form.get("start_time") or "").strip()
     end_time_raw = (request.form.get("end_time") or "").strip()
-    title = (request.form.get("title") or "").strip()
+    title = (request.form.get("title") or "").strip()[:100]
 
     requested_keep_ranges: List[Dict[str, float]] = []
     keep_ranges_raw = str(request.form.get("keep_ranges") or request.form.get("parts") or "").strip()
@@ -23639,6 +23650,8 @@ def add_clip_section(video_pk):
         "transcript_full": transcript_full,
         "excerpt": transcript_full,
     }
+    if title:
+        new_entry["title_user_edited_at"] = _utc_now_iso()
     if len(requested_keep_ranges) > 1:
         new_entry["edit_keep_ranges"] = requested_keep_ranges
         new_entry["edit_cut_count"] = max(0, len(requested_keep_ranges) - 1)
@@ -23654,20 +23667,21 @@ def add_clip_section(video_pk):
         current_app.logger.warning("Failed to add manual plan entry for %s: %s", video_id, exc)
         return _respond("The new clip section could not be saved.", status=500, category="danger")
 
-    _schedule_async_clip_title_suggestion(
-        video_id=video_id,
-        plan_index=next_plan_index,
-        excerpt=transcript_full,
-        placeholder_title=clip_title,
-        user_id=editor_context["owner_user_id"],
-        language_hint=_infer_clip_language_from_segments(
-            segments,
-            start_time,
-            end_time,
+    if not title:
+        _schedule_async_clip_title_suggestion(
+            video_id=video_id,
+            plan_index=next_plan_index,
             excerpt=transcript_full,
-        ),
-        app_obj=current_app._get_current_object(),
-    )
+            placeholder_title=clip_title,
+            user_id=editor_context["owner_user_id"],
+            language_hint=_infer_clip_language_from_segments(
+                segments,
+                start_time,
+                end_time,
+                excerpt=transcript_full,
+            ),
+            app_obj=current_app._get_current_object(),
+        )
 
     return _respond(
         f"Clip section added (#{next_plan_index}).",
@@ -23676,6 +23690,7 @@ def add_clip_section(video_pk):
         extras={
             "plan_index": next_plan_index,
             "title": clip_title,
+            "title_source": title_source,
             "transcript_full": transcript_full,
             "excerpt": transcript_full,
             "edit_keep_ranges": requested_keep_ranges if len(requested_keep_ranges) > 1 else [],
