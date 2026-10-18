@@ -56,6 +56,10 @@ FACE_AWARE_FILL_CAPTION_GAP = 36.0
 FACE_AWARE_FILL_CAPTION_MIN_TOP = 640.0
 FACE_AWARE_FILL_SUBSCRIBE_ROOM = 300.0
 FACE_AWARE_LEGACY_DEFAULT_SUBTITLE_MARGINS = {270, 320, 405, 520}
+FACE_AWARE_TOP_CAPTION_MAX_LINES = 2
+FACE_AWARE_TOP_CAPTION_LINE_HEIGHT_MULTIPLIER = 1.3
+FACE_AWARE_TOP_CAPTION_SUBSCRIBE_GAP_RATIO = 40.0 / 1920.0
+FACE_AWARE_SHORTS_UI_TOP_RATIO = 0.8
 
 CROP_TARGET_SIZE = 1080  # reference crop resolution before resizing for display
 VIDEO_TARGET_WIDTH = DESIGN_GEOMETRY["width"]
@@ -1405,6 +1409,34 @@ def _face_aware_fit_position_metrics(
         "caption_top": caption_top,
         "caption_margin_v": caption_margin_v,
         "subscribe_y": subscribe_y,
+    }
+
+
+def _face_aware_top_caption_subscribe_metrics(
+    *,
+    target_height: int,
+    subtitle_font_size: int,
+    subtitle_top: int,
+) -> Dict[str, float]:
+    """Reserve two caption lines, then fit subscribe above the Shorts UI zone."""
+    design_scale = max(0.01, float(target_height) / float(DESIGN_GEOMETRY["height"]))
+    caption_top = float(subtitle_top) * design_scale
+    max_caption_height = (
+        float(subtitle_font_size)
+        * design_scale
+        * FACE_AWARE_TOP_CAPTION_MAX_LINES
+        * FACE_AWARE_TOP_CAPTION_LINE_HEIGHT_MULTIPLIER
+    )
+    gap = float(target_height) * FACE_AWARE_TOP_CAPTION_SUBSCRIBE_GAP_RATIO
+    subscribe_top = caption_top + max_caption_height + gap
+    ui_top = float(target_height) * FACE_AWARE_SHORTS_UI_TOP_RATIO
+    return {
+        "caption_top": caption_top,
+        "max_caption_height": max_caption_height,
+        "subscribe_gap": gap,
+        "subscribe_top": min(subscribe_top, ui_top - 1.0),
+        "subscribe_max_height": max(1.0, ui_top - subscribe_top),
+        "ui_top": ui_top,
     }
 
 
@@ -4053,11 +4085,25 @@ def _compose_trimmed_with_background(
         subscribe_input_index = next_video_input_index
         overlay_src_label = "[ov_sub_src]"
         overlay_out_label = "[ov_sub]"
+        subscribe_scale_filter = f"scale=iw*{SUBSCRIBE_OVERLAY_SCALE}:ih*{SUBSCRIBE_OVERLAY_SCALE}"
+        top_caption_subscribe_metrics = None
+        if face_aware_layout_active and normalize_caption_anchor(caption_anchor) == "top":
+            top_caption_subscribe_metrics = _face_aware_top_caption_subscribe_metrics(
+                target_height=target_height,
+                subtitle_font_size=subtitle_font_size,
+                subtitle_top=subtitle_margin,
+            )
+            subscribe_scale_filter = (
+                "scale=-2:"
+                f"min(ih*{SUBSCRIBE_OVERLAY_SCALE}\\,{int(top_caption_subscribe_metrics['subscribe_max_height'])})"
+            )
         filter_parts.append(
-            f"[{subscribe_input_index}:v]scale=iw*{SUBSCRIBE_OVERLAY_SCALE}:ih*{SUBSCRIBE_OVERLAY_SCALE},format=rgba{overlay_src_label}"
+            f"[{subscribe_input_index}:v]{subscribe_scale_filter},format=rgba{overlay_src_label}"
         )
         subscribe_y_expr = f"H-h-{SUBSCRIBE_OVERLAY_BOTTOM_OFFSET}"
-        if face_aware_layout_active and normalize_caption_anchor(caption_anchor) == "bottom":
+        if top_caption_subscribe_metrics:
+            subscribe_y_expr = f"{top_caption_subscribe_metrics['subscribe_top']:.2f}"
+        elif face_aware_layout_active and normalize_caption_anchor(caption_anchor) == "bottom":
             fit_y = f"min(H-h-{SUBSCRIBE_OVERLAY_BOTTOM_OFFSET},{face_aware_fit_metrics['subscribe_y']:.2f})"
             subscribe_y_intervals: list[tuple[float, float, str]] = []
             for segment in layout_segments:

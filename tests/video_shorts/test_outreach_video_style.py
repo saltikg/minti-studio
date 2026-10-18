@@ -2,8 +2,9 @@ from datetime import datetime, timedelta, timezone
 
 from flask import Flask
 
-from app.video_shorts.config import SUBTITLE_PILL_FONT_MAP, SUBTITLE_PRESETS
+from app.video_shorts.config import SUBTITLE_PRESETS
 from app.video_shorts.routes import generation
+from app.video_shorts.services import compositor
 from app.video_shorts.services.autopilot_leads import (
     OUTREACH_SUBTITLE_PRESET,
     _bold_pop_short_editor_defaults,
@@ -18,22 +19,22 @@ def test_outreach_video_style_is_fixed_and_isolated_from_product_defaults():
     assert style == style | {
         "subtitle_font_key": "montserrat_black",
         "subtitle_font_size": 64,
-        "subtitle_margin": 640,
+        "subtitle_margin": 772,
         "subtitle_margin_custom": False,
-        "caption_anchor": "center",
+        "caption_anchor": "top",
         "subtitle_style": "karaoke",
-        "subtitle_preset": "outreach_opus",
+        "subtitle_preset": "opus",
         "subtitle_text_color": "#FFFFFF",
         "subtitle_bg_color": "#000000",
-        "subtitle_bg_alpha": 85,
+        "subtitle_bg_alpha": 0,
         "subtitle_text_alpha": 100,
         "visual_mode": "video",
         "crop_aspect": "portrait",
         "layout_mode": "auto",
     }
-    assert OUTREACH_SUBTITLE_PRESET != "opus"
-    assert SUBTITLE_PRESETS[OUTREACH_SUBTITLE_PRESET] == SUBTITLE_PRESETS["opus"]
-    assert SUBTITLE_PILL_FONT_MAP[OUTREACH_SUBTITLE_PRESET] == SUBTITLE_PILL_FONT_MAP["opus"]
+    assert OUTREACH_SUBTITLE_PRESET == "opus"
+    assert SUBTITLE_PRESETS[OUTREACH_SUBTITLE_PRESET]["pillow_engine"] is True
+    assert SUBTITLE_PRESETS[OUTREACH_SUBTITLE_PRESET]["draw_pill"] is False
 
 
 def test_outreach_editor_defaults_match_fixed_video_style():
@@ -51,10 +52,22 @@ def test_outreach_editor_defaults_match_fixed_video_style():
 
 
 def test_outreach_auto_layout_uses_face_count_modes():
-    assert generation._face_aware_mode_for_count(0) == "fill"
+    assert generation._face_aware_mode_for_count(0) == "fit"
     assert generation._face_aware_mode_for_count(1) == "fill"
     assert generation._face_aware_mode_for_count(2) == "split"
     assert generation._face_aware_mode_for_count(3) == "fit"
+
+
+def test_top_caption_reserves_two_lines_and_keeps_subscribe_above_shorts_ui():
+    metrics = compositor._face_aware_top_caption_subscribe_metrics(
+        target_height=1280,
+        subtitle_font_size=64,
+        subtitle_top=772,
+    )
+
+    assert metrics["caption_top"] == 772
+    assert metrics["subscribe_gap"] >= (40 / 1.5)
+    assert metrics["subscribe_top"] + metrics["subscribe_max_height"] <= 1024
 
 
 def test_auto_layout_builds_face_track_during_render(monkeypatch, tmp_path):
