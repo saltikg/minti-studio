@@ -479,14 +479,14 @@
                 <div class="card vs-card h-100">
                   {% if asset.file_ext == 'mp4' %}
                     <video
-                      data-deferred-src="{{ asset.image_url }}"
+                      src="{{ asset.image_url }}"
+                      poster="{{ asset.poster_url or '' }}"
                       class="card-img-top"
                       muted
                       loop
                       playsinline
                       controls
                       preload="none"
-                      tabindex="0"
                       aria-label="Play {{ asset.label or 'subscribe animation' }}"
                     ></video>
                   {% else %}

@@ -1427,31 +1427,6 @@
       });
     })();
   </script>
-  <script>
-    (() => {
-      const activateDeferredVideo = (video) => {
-        if (!(video instanceof HTMLVideoElement) || video.getAttribute("src")) return;
-        const src = String(video.dataset.deferredSrc || "").trim();
-        if (!src) return;
-        video.preload = "auto";
-        video.src = src;
-        video.load();
-        const playPromise = video.play();
-        if (playPromise?.catch) playPromise.catch(() => {});
-      };
-      document.addEventListener("click", (event) => {
-        const video = event.target.closest?.("video[data-deferred-src]");
-        if (video) activateDeferredVideo(video);
-      }, {capture: true});
-      document.addEventListener("keydown", (event) => {
-        if (event.key !== "Enter" && event.key !== " ") return;
-        const video = event.target.closest?.("video[data-deferred-src]");
-        if (!video) return;
-        event.preventDefault();
-        activateDeferredVideo(video);
-      });
-    })();
-  </script>
   {% block scripts %}{% endblock %}
 </body>
 </html>

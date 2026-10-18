@@ -266,7 +266,18 @@ def _short_card_media_urls(
     owner_user_id: str,
     brand_id: str | None,
     poster_filename: str = "",
+    *,
+    storage_file_key: str = "",
 ) -> tuple[str, str]:
+    # Recent-short queries already join the tenant-owned active storage row.
+    # Sign that exact key directly so preload="none" does not need to resolve an
+    # application redirect before the user presses play.
+    if storage_file_key:
+        storage = get_media_storage()
+        return (
+            storage.public_url(str(storage_file_key).lstrip("/")),
+            storage.public_url(tenant_media.poster_key(poster_filename)) if poster_filename else "",
+        )
     from app.video_shorts.services.media_access import (
         media_url_for_authorized_asset,
         poster_url_for_authorized_asset,
@@ -448,6 +459,7 @@ def _load_recent_short_cards(conn, user_id: str, brand_id: str | None, user_tz: 
             str(user_id),
             brand_id,
             poster_filename,
+            storage_file_key=str(row[11] or "").strip(),
         )
         if has_real_metrics:
             meta_label = "Published " + _format_video_timestamp(published_at, user_tz)
