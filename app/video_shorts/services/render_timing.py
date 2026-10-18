@@ -3,6 +3,8 @@
 from __future__ import annotations
 
 import logging
+import os
+import threading
 import time
 from contextlib import contextmanager
 from contextvars import ContextVar
@@ -11,7 +13,7 @@ from typing import Any, Dict, Iterator, Optional
 
 
 logger = logging.getLogger(__name__)
-TIMING_VERSION = 1
+TIMING_VERSION = 2
 STAGE_KEYS = (
     "download",
     "face_detect",
@@ -44,6 +46,70 @@ def _parse_timestamp(value: Any) -> Optional[datetime]:
     return parsed.astimezone(timezone.utc)
 
 
+def _process_tree_rss_bytes(root_pid: int) -> int:
+    """Return current RSS for Python and all live descendants (including ffmpeg)."""
+    total = 0
+    pending = [int(root_pid)]
+    seen: set[int] = set()
+    while pending:
+        pid = pending.pop()
+        if pid <= 0 or pid in seen:
+            continue
+        seen.add(pid)
+        try:
+            with open(f"/proc/{pid}/status", "r", encoding="utf-8") as handle:
+                status = handle.readlines()
+            for line in status:
+                if line.startswith("VmRSS:"):
+                    total += int(line.split()[1]) * 1024
+                    break
+        except (FileNotFoundError, ProcessLookupError, PermissionError, ValueError, OSError):
+            pass
+        try:
+            with open(
+                f"/proc/{pid}/task/{pid}/children",
+                "r",
+                encoding="utf-8",
+            ) as handle:
+                children = handle.read().split()
+            pending.extend(int(child) for child in children)
+        except (FileNotFoundError, ProcessLookupError, PermissionError, ValueError, OSError):
+            pass
+    return total
+
+
+def _start_rss_monitor(state: Dict[str, Any]) -> None:
+    stop_event = threading.Event()
+
+    def _monitor() -> None:
+        while not stop_event.is_set():
+            try:
+                rss_mb = round(_process_tree_rss_bytes(os.getpid()) / (1024 * 1024), 2)
+                state["peak_rss_mb"] = max(float(state.get("peak_rss_mb") or 0.0), rss_mb)
+            except Exception:
+                _log_capture_error("peak_rss_sample")
+            stop_event.wait(0.25)
+
+    thread = threading.Thread(target=_monitor, name="render-rss-monitor", daemon=True)
+    state["_rss_stop_event"] = stop_event
+    state["_rss_thread"] = thread
+    thread.start()
+
+
+def _stop_rss_monitor(state: Optional[Dict[str, Any]]) -> None:
+    if not state:
+        return
+    try:
+        stop_event = state.get("_rss_stop_event")
+        if stop_event:
+            stop_event.set()
+        thread = state.get("_rss_thread")
+        if thread and thread is not threading.current_thread():
+            thread.join(timeout=0.5)
+    except Exception:
+        _log_capture_error("peak_rss_stop")
+
+
 def begin(job: Dict[str, Any]) -> None:
     """Begin timing a claimed render job. Never raises into the render path."""
     try:
@@ -56,24 +122,25 @@ def begin(job: Dict[str, Any]) -> None:
         current_wait_ms = 0
         if started_at and wait_from:
             current_wait_ms = max(0, int(round((started_at - wait_from).total_seconds() * 1000)))
-        _active.set(
-            {
-                "job_id": str(job.get("id") or ""),
-                "attempt_started": time.monotonic(),
-                "queue_wait_ms": int(prior.get("queue_wait_ms") or 0) + current_wait_ms,
-                "stages_ms": stages,
-                "ran_stages": ran_stages,
-                "clip_duration_s": prior.get("clip_duration_s"),
-                "source_resolution": prior.get("source_resolution"),
-                "face_found": prior.get("face_found"),
-                "layout": prior.get("layout"),
-                "concurrent_jobs": int(job.get("_timing_concurrent_jobs") or prior.get("concurrent_jobs") or 0),
-                "traffic_guard_wait_ms": prior.get("traffic_guard_wait_ms"),
-                "source_cache_hit": prior.get("source_cache_hit"),
-                "attempt_count": int(job.get("attempts") or prior.get("attempt_count") or 1),
-                "encode_settings": dict(prior.get("encode_settings") or {}),
-            }
-        )
+        state = {
+            "job_id": str(job.get("id") or ""),
+            "attempt_started": time.monotonic(),
+            "queue_wait_ms": int(prior.get("queue_wait_ms") or 0) + current_wait_ms,
+            "stages_ms": stages,
+            "ran_stages": ran_stages,
+            "clip_duration_s": prior.get("clip_duration_s"),
+            "source_resolution": prior.get("source_resolution"),
+            "face_found": prior.get("face_found"),
+            "layout": prior.get("layout"),
+            "concurrent_jobs": int(job.get("_timing_concurrent_jobs") or prior.get("concurrent_jobs") or 0),
+            "traffic_guard_wait_ms": prior.get("traffic_guard_wait_ms"),
+            "source_cache_hit": prior.get("source_cache_hit"),
+            "attempt_count": int(job.get("attempts") or prior.get("attempt_count") or 1),
+            "encode_settings": dict(prior.get("encode_settings") or {}),
+            "peak_rss_mb": float(prior.get("peak_rss_mb") or 0.0),
+        }
+        _active.set(state)
+        _start_rss_monitor(state)
     except Exception:
         _active.set(None)
         _log_capture_error("begin")
@@ -81,6 +148,7 @@ def begin(job: Dict[str, Any]) -> None:
 
 def clear() -> None:
     try:
+        _stop_rss_monitor(_active.get())
         _active.set(None)
     except Exception:
         _log_capture_error("clear")
@@ -236,6 +304,7 @@ def retry_accumulator() -> Optional[Dict[str, Any]]:
             "source_cache_hit": state.get("source_cache_hit"),
             "attempt_count": state.get("attempt_count"),
             "encode_settings": dict(state.get("encode_settings") or {}),
+            "peak_rss_mb": state.get("peak_rss_mb"),
             "last_requeued_at": datetime.now(timezone.utc).isoformat(),
         }
     except Exception:
@@ -275,6 +344,7 @@ def terminal_payload() -> Optional[Dict[str, Any]]:
             "traffic_guard_wait_ms": state.get("traffic_guard_wait_ms"),
             "source_cache_hit": state.get("source_cache_hit"),
             "attempt_count": int(state.get("attempt_count") or 1),
+            "peak_rss_mb": round(float(state.get("peak_rss_mb") or 0.0), 2) or None,
             "encode_settings": settings,
         }
     except Exception:

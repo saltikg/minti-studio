@@ -10,6 +10,10 @@ from datetime import datetime, timedelta
 from typing import Any, Dict, Optional
 from uuid import uuid4
 
+from app.video_shorts.config import (
+    MAX_GLOBAL_CONCURRENT_JOBS,
+    SECOND_RENDER_MIN_MEM_AVAILABLE_MB,
+)
 from app.video_shorts.services.db import get_db, get_db_readonly, table_columns
 from app.video_shorts.services.usage_metering import (
     ensure_usage_metering_schema,
@@ -93,12 +97,12 @@ def _json_origin_expr(conn) -> str:
     return "json_extract_string(payload_json, '$.job_origin')"
 
 
-def _guest_job_clause(conn) -> str:
-    return f"COALESCE({_json_origin_expr(conn)}, '') = '{GUEST_JOB_ORIGIN}'"
+def _guest_job_clause(conn, alias: str = "") -> str:
+    return f"{_payload_origin_sql(conn, alias)} = '{GUEST_JOB_ORIGIN}'"
 
 
-def _auto_job_clause(conn) -> str:
-    return f"COALESCE({_json_origin_expr(conn)}, '') = '{AUTO_RENDER_JOB_ORIGIN}'"
+def _auto_job_clause(conn, alias: str = "") -> str:
+    return f"{_payload_origin_sql(conn, alias)} = '{AUTO_RENDER_JOB_ORIGIN}'"
 
 
 def _is_guest_user(conn, user_id: Any) -> bool:
@@ -326,16 +330,101 @@ def _discovery_job_clause(conn, alias: str = "") -> str:
     return f"{_payload_origin_sql(conn, alias)} = '{DISCOVERY_JOB_ORIGIN}'"
 
 
-def _customer_active_exists_sql(conn) -> str:
-    discovery_clause = _discovery_job_clause(conn, "active_jobs")
+def _customer_queued_exists_sql(conn) -> str:
+    discovery_clause = _discovery_job_clause(conn, "queued_jobs")
     return f"""
         EXISTS (
             SELECT 1
-            FROM {JOBS_TABLE} active_jobs
-            WHERE active_jobs.status IN (?, ?)
+            FROM {JOBS_TABLE} queued_jobs
+            WHERE queued_jobs.status = ?
+              AND queued_jobs.type = '{JOB_TYPE_RENDER_SHORT}'
               AND NOT ({discovery_clause})
         )
     """
+
+
+def _mem_available_mb() -> int:
+    if not os.path.exists("/proc/meminfo"):
+        return 1 << 30
+    try:
+        with open("/proc/meminfo", "r", encoding="utf-8") as handle:
+            for line in handle:
+                if line.startswith("MemAvailable:"):
+                    return max(0, int(line.split()[1]) // 1024)
+    except (FileNotFoundError, PermissionError, ValueError, OSError):
+        logger.warning("Could not read MemAvailable before render claim", exc_info=True)
+    return 0
+
+
+def queued_customer_render_exists() -> bool:
+    conn = get_db_readonly()
+    try:
+        row = conn.execute(
+            f"""
+            SELECT 1
+            FROM {JOBS_TABLE}
+            WHERE status = ?
+              AND type = ?
+              AND NOT ({_discovery_job_clause(conn)})
+            LIMIT 1
+            """,
+            [JOB_STATUS_QUEUED, JOB_TYPE_RENDER_SHORT],
+        ).fetchone()
+        return bool(row)
+    finally:
+        conn.close()
+
+
+def _fair_customer_order_sql(conn, candidate_alias: str = "candidate") -> str:
+    fair_discovery = _discovery_job_clause(conn, "fair_jobs")
+    candidate_discovery = _discovery_job_clause(conn, candidate_alias)
+    return f"""
+        CASE
+          WHEN {candidate_alias}.type = '{JOB_TYPE_RENDER_SHORT}'
+           AND NOT ({candidate_discovery})
+          THEN COALESCE(
+            (
+              SELECT MAX(fair_jobs.started_at)
+              FROM {JOBS_TABLE} fair_jobs
+              WHERE fair_jobs.type = '{JOB_TYPE_RENDER_SHORT}'
+                AND CAST(fair_jobs.user_id AS VARCHAR) = CAST({candidate_alias}.user_id AS VARCHAR)
+                AND NOT ({fair_discovery})
+                AND fair_jobs.started_at IS NOT NULL
+            ),
+            TIMESTAMP '1970-01-01'
+          )
+          ELSE {candidate_alias}.created_at
+        END
+    """
+
+
+def _claim_capacity_available(conn, *, candidate_type: str) -> bool:
+    processing_row = conn.execute(
+        f"SELECT COUNT(*) FROM {JOBS_TABLE} WHERE status = ?",
+        [JOB_STATUS_PROCESSING],
+    ).fetchone()
+    processing_jobs = int((processing_row[0] if processing_row else 0) or 0)
+    if processing_jobs >= int(MAX_GLOBAL_CONCURRENT_JOBS):
+        return False
+    if candidate_type != JOB_TYPE_RENDER_SHORT:
+        return True
+    render_row = conn.execute(
+        f"SELECT COUNT(*) FROM {JOBS_TABLE} WHERE status = ? AND type = ?",
+        [JOB_STATUS_PROCESSING, JOB_TYPE_RENDER_SHORT],
+    ).fetchone()
+    processing_renders = int((render_row[0] if render_row else 0) or 0)
+    if processing_renders < 1:
+        return True
+    available_mb = _mem_available_mb()
+    if available_mb >= int(SECOND_RENDER_MIN_MEM_AVAILABLE_MB):
+        return True
+    logger.info(
+        "Second render claim deferred MemAvailable=%sMB threshold=%sMB processing_renders=%s",
+        available_mb,
+        SECOND_RENDER_MIN_MEM_AVAILABLE_MB,
+        processing_renders,
+    )
+    return False
 
 
 def _count_user_processing(conn, user_id: str) -> int:
@@ -987,13 +1076,15 @@ def claim_next_job(
         job_type_clause = ""
         params: list[Any] = []
         if job_type:
-            job_type_clause = "AND type = ?"
+            job_type_clause = "AND candidate.type = ?"
             params.append(job_type)
         if backend_name == "postgres":
-            discovery_clause = _discovery_job_clause(conn)
-            auto_clause = _auto_job_clause(conn)
-            guest_clause = _guest_job_clause(conn)
-            customer_active_exists = _customer_active_exists_sql(conn)
+            conn.execute("SELECT pg_advisory_xact_lock(746192441)")
+            discovery_clause = _discovery_job_clause(conn, "candidate")
+            auto_clause = _auto_job_clause(conn, "candidate")
+            guest_clause = _guest_job_clause(conn, "candidate")
+            customer_queued_exists = _customer_queued_exists_sql(conn)
+            fair_order = _fair_customer_order_sql(conn)
             origin_clause = ""
             if customer_only:
                 origin_clause = f"AND NOT ({discovery_clause})"
@@ -1001,14 +1092,14 @@ def claim_next_job(
                 origin_clause = f"AND ({discovery_clause})"
             row = conn.execute(
                 f"""
-                SELECT id
-                FROM {JOBS_TABLE}
-                WHERE status = ?
+                SELECT candidate.id, candidate.type
+                FROM {JOBS_TABLE} candidate
+                WHERE candidate.status = ?
                   {job_type_clause}
                   {origin_clause}
                   AND NOT (
                     {discovery_clause}
-                    AND {customer_active_exists}
+                    AND {customer_queued_exists}
                   )
                 ORDER BY
                   CASE
@@ -1017,8 +1108,10 @@ def claim_next_job(
                     WHEN {auto_clause} THEN 1
                     ELSE 0
                   END ASC,
-                  priority DESC,
-                  created_at ASC
+                  candidate.priority DESC,
+                  {fair_order} ASC,
+                  candidate.created_at ASC,
+                  candidate.id ASC
                 FOR UPDATE SKIP LOCKED
                 LIMIT 1
                 """,
@@ -1026,13 +1119,15 @@ def claim_next_job(
                     JOB_STATUS_QUEUED,
                     *params,
                     JOB_STATUS_QUEUED,
-                    JOB_STATUS_PROCESSING,
                 ],
             ).fetchone()
             if not row:
                 conn.commit()
                 return None
-            job_id = row[0]
+            job_id, candidate_type = row[0], str(row[1] or "")
+            if not _claim_capacity_available(conn, candidate_type=candidate_type):
+                conn.commit()
+                return None
             updated = conn.execute(
                 f"""
                 UPDATE {JOBS_TABLE}
@@ -1073,10 +1168,11 @@ def claim_next_job(
             return claimed
 
         with _duckdb_claim_lock:
-            discovery_clause = _discovery_job_clause(conn)
-            auto_clause = _auto_job_clause(conn)
-            guest_clause = _guest_job_clause(conn)
-            customer_active_exists = _customer_active_exists_sql(conn)
+            discovery_clause = _discovery_job_clause(conn, "candidate")
+            auto_clause = _auto_job_clause(conn, "candidate")
+            guest_clause = _guest_job_clause(conn, "candidate")
+            customer_queued_exists = _customer_queued_exists_sql(conn)
+            fair_order = _fair_customer_order_sql(conn)
             origin_clause = ""
             if customer_only:
                 origin_clause = f"AND NOT ({discovery_clause})"
@@ -1084,14 +1180,14 @@ def claim_next_job(
                 origin_clause = f"AND ({discovery_clause})"
             row = conn.execute(
                 f"""
-                SELECT id
-                FROM {JOBS_TABLE}
-                WHERE status = ?
+                SELECT candidate.id, candidate.type
+                FROM {JOBS_TABLE} candidate
+                WHERE candidate.status = ?
                   {job_type_clause}
                   {origin_clause}
                   AND NOT (
                     {discovery_clause}
-                    AND {customer_active_exists}
+                    AND {customer_queued_exists}
                   )
                 ORDER BY
                   CASE
@@ -1100,21 +1196,25 @@ def claim_next_job(
                     WHEN {auto_clause} THEN 1
                     ELSE 0
                   END ASC,
-                  priority DESC,
-                  created_at ASC
+                  candidate.priority DESC,
+                  {fair_order} ASC,
+                  candidate.created_at ASC,
+                  candidate.id ASC
                 LIMIT 1
                 """,
                 [
                     JOB_STATUS_QUEUED,
                     *params,
                     JOB_STATUS_QUEUED,
-                    JOB_STATUS_PROCESSING,
                 ],
             ).fetchone()
             if not row:
                 conn.commit()
                 return None
-            job_id = row[0]
+            job_id, candidate_type = row[0], str(row[1] or "")
+            if not _claim_capacity_available(conn, candidate_type=candidate_type):
+                conn.commit()
+                return None
             conn.execute(
                 f"""
                 UPDATE {JOBS_TABLE}

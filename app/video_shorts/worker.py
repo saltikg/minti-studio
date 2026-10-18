@@ -85,6 +85,7 @@ from app.video_shorts.services.render_jobs import (
     get_job,
     mark_job_done,
     mark_job_failed,
+    queued_customer_render_exists,
     recover_processing_discovery_jobs_on_startup,
     requeue_dead_local_worker_jobs,
     requeue_job,
@@ -1846,12 +1847,18 @@ def process_next_job(
     app,
     worker_id: str,
     *,
+    job_type: Optional[str] = None,
     customer_only: bool = False,
     discovery_only: bool = False,
 ) -> bool:
     if _worker_should_wait_before_claim(app):
         return False
-    job = claim_next_job(worker_id, customer_only=customer_only, discovery_only=discovery_only)
+    job = claim_next_job(
+        worker_id,
+        job_type=job_type,
+        customer_only=customer_only,
+        discovery_only=discovery_only,
+    )
     if not job:
         return False
     if job.get("type") == JOB_TYPE_RENDER_SHORT:
@@ -2207,6 +2214,17 @@ def run_worker_loop() -> None:
                 app.logger.exception("Stuck render job recovery failed")
             requeue_timed_out_jobs(timeout_seconds=STALE_JOB_TIMEOUT_SECONDS)
             processed_any = False
+            if mode == "discovery" and queued_customer_render_exists():
+                if process_next_job(
+                    app,
+                    worker_id,
+                    job_type=JOB_TYPE_RENDER_SHORT,
+                    customer_only=True,
+                ):
+                    processed_any = True
+                if not processed_any:
+                    time.sleep(JOB_POLL_INTERVAL_SECONDS)
+                continue
             if mode in {"all", "customer"}:
                 try:
                     if youtube_scheduling.scheduler_tick():

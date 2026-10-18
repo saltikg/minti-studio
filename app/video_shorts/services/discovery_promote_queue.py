@@ -521,7 +521,7 @@ def customer_job_waiting(conn) -> bool:
         f"""
         SELECT 1
         FROM shorts_render_jobs
-        WHERE status IN ('queued', 'processing')
+        WHERE status = 'queued'
           AND {origin_sql} <> 'discovery_demo'
         LIMIT 1
         """
