@@ -3344,6 +3344,11 @@ def _compose_trimmed_with_background(
         target_height=target_height,
         subtitle_font_size=subtitle_font_size,
     )
+    face_aware_fit_frame_height = max(
+        2,
+        int(round(face_aware_fit_metrics["frame_bottom"] - face_aware_fit_metrics["frame_top"])),
+    )
+    face_aware_fit_frame_height -= face_aware_fit_frame_height % 2
     face_aware_split_metrics = _face_aware_split_position_metrics(
         target_height=target_height,
         subtitle_font_size=subtitle_font_size,
@@ -3519,7 +3524,10 @@ def _compose_trimmed_with_background(
                     fit_scaled = f"[layout_fit_{idx}]"
                     fit_bg = f"[layout_bg_trim_{idx}]"
                     filter_parts.append(
-                        f"{seg_trim}scale={target_width}:{target_height}:force_original_aspect_ratio=decrease,"
+                        f"{seg_trim}crop=iw*{_fmt(crop_w)}:ih*{_fmt(crop_h)}:"
+                        f"iw*{_fmt(crop_x)}:ih*{_fmt(crop_y)},"
+                        f"scale={target_width}:{face_aware_fit_frame_height}:force_original_aspect_ratio=increase,"
+                        f"crop={target_width}:{face_aware_fit_frame_height},"
                         f"setsar=1,settb=AVTB{fit_scaled}"
                     )
                     filter_parts.append(
