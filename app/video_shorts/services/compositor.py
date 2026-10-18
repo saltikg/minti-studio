@@ -57,9 +57,10 @@ FACE_AWARE_FILL_CAPTION_MIN_TOP = 640.0
 FACE_AWARE_FILL_SUBSCRIBE_ROOM = 300.0
 FACE_AWARE_LEGACY_DEFAULT_SUBTITLE_MARGINS = {270, 320, 405, 520}
 FACE_AWARE_TOP_CAPTION_MAX_LINES = 2
-FACE_AWARE_TOP_CAPTION_LINE_HEIGHT_MULTIPLIER = 1.3
-FACE_AWARE_TOP_CAPTION_SUBSCRIBE_GAP_RATIO = 40.0 / 1920.0
+FACE_AWARE_TOP_CAPTION_LINE_HEIGHT_MULTIPLIER = 1.15
+FACE_AWARE_TOP_CAPTION_SUBSCRIBE_GAP_RATIO = 50.0 / 1920.0
 FACE_AWARE_SHORTS_UI_TOP_RATIO = 0.8
+FACE_AWARE_SUBSCRIBE_TARGET_WIDTH_RATIO = 380.0 / 1080.0
 
 CROP_TARGET_SIZE = 1080  # reference crop resolution before resizing for display
 VIDEO_TARGET_WIDTH = DESIGN_GEOMETRY["width"]
@@ -733,6 +734,29 @@ def _wrap_words_to_width(words: list[str], font: ImageFont.FreeTypeFont, max_wid
     return lines
 
 
+def _balance_two_title_lines(
+    words: list[str],
+    lines: list[str],
+    font: ImageFont.FreeTypeFont,
+    max_width: int,
+) -> list[str]:
+    """Choose the most even valid two-line split instead of leaving an orphan."""
+    if len(lines) != 2 or len(words) < 3:
+        return lines
+    candidates: list[tuple[int, int, list[str]]] = []
+    for split_at in range(1, len(words)):
+        candidate = [" ".join(words[:split_at]), " ".join(words[split_at:])]
+        widths = [_measure_text_width(font, line) for line in candidate]
+        if max(widths) > max_width:
+            continue
+        word_imbalance = abs(split_at - (len(words) - split_at))
+        width_imbalance = abs(widths[0] - widths[1])
+        candidates.append((word_imbalance, width_imbalance, candidate))
+    if not candidates:
+        return lines
+    return min(candidates, key=lambda item: (item[0], item[1]))[2]
+
+
 def _title_side_margin(target_width: int) -> int:
     scale = max(1.0, float(target_width) / float(VIDEO_TARGET_WIDTH))
     return max(TITLE_WRAP_SIDE_MARGIN, int(round(TITLE_WRAP_SIDE_MARGIN * scale)))
@@ -813,6 +837,7 @@ def _fit_title_text(
             break
         measured = True
         lines = _wrap_words_to_width(words, font, max_text_width)
+        lines = _balance_two_title_lines(words, lines, font, max_text_width)
         if len(lines) > max_lines:
             continue
         line_height = _measure_line_height(font)
@@ -1029,6 +1054,9 @@ def _title_overlay_layout(
         if candidate_font is None:
             continue
         candidate_lines = _wrap_words_to_width(words, candidate_font, max_text_width)
+        candidate_lines = _balance_two_title_lines(
+            words, candidate_lines, candidate_font, max_text_width
+        )
         if len(candidate_lines) > max_lines:
             if candidate_font_size == int(min_font_size):
                 chosen_lines = candidate_lines
@@ -1446,10 +1474,13 @@ def _overlay_visible_alpha_geometry(path: Path) -> Optional[Dict[str, int]]:
         with Image.open(path) as image:
             canvas_width, canvas_height = image.size
             union_bbox = None
+            primary_bbox = None
             for frame in ImageSequence.Iterator(image):
                 bbox = frame.convert("RGBA").getchannel("A").getbbox()
                 if not bbox:
                     continue
+                if primary_bbox is None:
+                    primary_bbox = bbox
                 if union_bbox is None:
                     union_bbox = bbox
                 else:
@@ -1459,13 +1490,17 @@ def _overlay_visible_alpha_geometry(path: Path) -> Optional[Dict[str, int]]:
                         max(union_bbox[2], bbox[2]),
                         max(union_bbox[3], bbox[3]),
                     )
-            if not union_bbox:
+            if not union_bbox or not primary_bbox:
                 return None
             return {
                 "canvas_width": int(canvas_width),
                 "canvas_height": int(canvas_height),
                 "top": int(union_bbox[1]),
+                "width": max(1, int(union_bbox[2] - union_bbox[0])),
                 "height": max(1, int(union_bbox[3] - union_bbox[1])),
+                "primary_top": int(primary_bbox[1]),
+                "primary_width": max(1, int(primary_bbox[2] - primary_bbox[0])),
+                "primary_height": max(1, int(primary_bbox[3] - primary_bbox[1])),
             }
     except Exception:
         return None
@@ -4134,19 +4169,30 @@ def _compose_trimmed_with_background(
             )
             visible_geometry = _overlay_visible_alpha_geometry(Path(overlay_asset_path))
             if visible_geometry:
-                max_visible_height = float(top_caption_subscribe_metrics["subscribe_max_height"])
-                visible_height = float(visible_geometry["height"])
+                target_visible_width = float(target_width) * FACE_AWARE_SUBSCRIBE_TARGET_WIDTH_RATIO
+                primary_width = float(visible_geometry["primary_width"])
+                primary_height = float(visible_geometry["primary_height"])
                 effective_scale = min(
                     float(SUBSCRIBE_OVERLAY_SCALE),
-                    max_visible_height / visible_height,
+                    target_visible_width / primary_width,
                 )
+                max_visible_height = float(top_caption_subscribe_metrics["subscribe_max_height"])
+                effective_scale = min(effective_scale, max_visible_height / primary_height)
                 canvas_height = int(visible_geometry["canvas_height"])
                 scaled_canvas_height = max(2, int(math.floor(canvas_height * effective_scale)))
                 scaled_canvas_height -= scaled_canvas_height % 2
                 effective_scale = float(scaled_canvas_height) / float(canvas_height)
-                subscribe_scale_filter = f"scale=-2:{scaled_canvas_height}"
+                visible_canvas_height = max(
+                    2,
+                    int(math.floor(top_caption_subscribe_metrics["ui_top"] - top_caption_subscribe_metrics["subscribe_top"])),
+                )
+                visible_canvas_height -= visible_canvas_height % 2
+                subscribe_scale_filter = (
+                    f"scale=-2:{scaled_canvas_height},"
+                    f"crop=iw:min(ih\\,{visible_canvas_height}):0:0"
+                )
                 top_caption_subscribe_metrics["subscribe_top"] -= (
-                    float(visible_geometry["top"]) * effective_scale
+                    float(visible_geometry["primary_top"]) * effective_scale
                 )
             else:
                 subscribe_scale_filter = (
