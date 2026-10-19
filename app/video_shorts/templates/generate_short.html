@@ -6198,17 +6198,25 @@
   .music-picker-list { max-height:280px; overflow:auto; padding-right:.2rem; }
   .music-upload-progress { display:flex; align-items:center; gap:.6rem; min-height:38px; padding:.5rem .65rem; border-radius:.55rem; background:rgba(13,110,253,.12); color:rgba(255,255,255,.9); }
   .music-upload-button.is-busy { pointer-events:none; opacity:.58; }
-  .music-timeline { position:relative; border:1px solid rgba(255,255,255,.15); border-radius:.65rem; padding:2rem .5rem .5rem; overflow:hidden; touch-action:none; cursor:grab; }
-  .music-timeline:active { cursor:grabbing; }
+  .music-timeline { position:relative; border:1px solid rgba(255,255,255,.15); border-radius:.65rem; padding:2rem .5rem .5rem; overflow:hidden; touch-action:none; }
   .music-timeline canvas { display:block; width:100%; height:54px; }
   .music-timeline-lane { position:relative; margin-top:.35rem; }
   .music-timeline-lane-label { display:block; margin-bottom:.15rem; color:#9ca3af; font-size:.68rem; }
+  .music-waveform-lane canvas { cursor:grab; }
+  .music-waveform-lane canvas:active { cursor:grabbing; }
   #musicEnvelopeCanvas { pointer-events:none; }
   .music-timeline-labels { position:absolute; top:.35rem; left:.5rem; right:.5rem; display:flex; justify-content:space-between; font-size:.72rem; color:#9ca3af; }
-  .music-speech-lane { position:relative; height:8px; background:rgba(255,255,255,.05); border-radius:4px; }
+  .music-time-ruler { display:flex; justify-content:space-between; align-items:center; min-height:22px; padding:0 .2rem; border-top:1px solid rgba(255,255,255,.18); color:rgba(255,255,255,.72); font-size:.68rem; cursor:pointer; }
+  .music-speech-lane { position:relative; height:10px; background:rgba(255,255,255,.05); border-radius:4px; cursor:pointer; }
   .music-speech-range { position:absolute; height:100%; background:#f59e0b; border-radius:3px; }
   .music-playhead { position:absolute; top:1.65rem; bottom:.4rem; left:.5rem; width:2px; background:#fff; pointer-events:none; z-index:3; }
+  .music-playhead-handle { position:absolute; top:-7px; left:50%; width:14px; height:14px; padding:0; border:2px solid #fff; border-radius:50%; background:#0d6efd; box-shadow:0 1px 4px rgba(0,0,0,.45); transform:translateX(-50%); pointer-events:auto; touch-action:none; cursor:ew-resize; }
   .music-timeline-toolbar { display:flex; align-items:center; justify-content:space-between; gap:.75rem; margin-bottom:.55rem; }
+  .music-timeline-player-controls { display:flex; align-items:center; gap:.45rem; min-width:0; }
+  .music-compact-volume { display:flex; align-items:center; gap:.35rem; min-width:0; }
+  .music-compact-volume button { width:30px; height:30px; padding:0; }
+  .music-compact-volume input { width:88px; margin:0; }
+  .music-compact-volume-output { min-width:34px; color:rgba(255,255,255,.82); font-size:.72rem; text-align:right; }
   .music-song-overview { position:relative; height:9px; margin:.15rem 0 .55rem; overflow:hidden; border-radius:999px; background:rgba(255,255,255,.12); }
   .music-song-overview-window { position:absolute; top:0; bottom:0; min-width:3px; border-radius:999px; background:#6ea8fe; }
   .music-level-scale { display:grid; grid-template-columns:1fr 1fr 1fr; gap:1rem; color:rgba(255,255,255,.72); }
@@ -8596,16 +8604,27 @@
                     </div>
                     <div class="music-timeline d-none" id="musicTimeline" aria-label="Drag waveform to choose the music start">
                       <div class="music-timeline-labels"><span>Fit the music to your clip</span><span id="musicStartLabel">Song plays from 0:00 → 0:00</span></div>
-                      <div class="music-timeline-toolbar"><button type="button" class="btn btn-sm btn-outline-light" id="musicTimelinePlay"><i class="bi bi-play-fill"></i> Play</button><span class="small music-helper-text" id="musicTimelineTime">0:00 / 0:00</span></div>
+                      <div class="music-timeline-toolbar">
+                        <div class="music-timeline-player-controls">
+                          <button type="button" class="btn btn-sm btn-outline-light" id="musicTimelinePlay"><i class="bi bi-play-fill"></i> Play</button>
+                          <div class="music-compact-volume">
+                            <button type="button" class="btn btn-sm btn-outline-light" id="musicPreviewMute" aria-label="Mute music preview" aria-pressed="false"><i class="bi bi-volume-up-fill"></i></button>
+                            <input type="range" class="form-range" id="musicLevelCompact" min="0" max="100" step="1" value="{{ selected_music_level if selected_music_level is not none else 50 }}" data-defer-design-dirty="1" aria-label="Music preview level">
+                            <span class="music-compact-volume-output" id="musicLevelCompactLabel">{{ selected_music_level if selected_music_level is not none else 50 }}%</span>
+                          </div>
+                        </div>
+                        <span class="small music-helper-text" id="musicTimelineTime">0:00 / 0:00</span>
+                      </div>
+                      <div class="music-time-ruler" id="musicTimeRuler" aria-label="Seek in clip"><span>0:00</span><span id="musicTimeRulerEnd">0:00</span></div>
                       <div class="music-timeline-lane"><span class="music-timeline-lane-label">Speech</span><div class="music-speech-lane" id="musicSpeechLane"></div></div>
                       <div class="music-timeline-lane"><span class="music-timeline-lane-label">Full song</span><div class="music-song-overview"><span class="music-song-overview-window" id="musicSongOverviewWindow"></span></div></div>
-                      <div class="music-timeline-lane"><span class="music-timeline-lane-label">Music · drag the song left/right</span><canvas id="musicWaveformCanvas" height="54"></canvas></div>
+                      <div class="music-timeline-lane music-waveform-lane"><span class="music-timeline-lane-label">Music · drag the song left/right</span><canvas id="musicWaveformCanvas" height="54"></canvas></div>
                       <div class="music-timeline-lane"><span class="music-timeline-lane-label">Music level</span><canvas id="musicEnvelopeCanvas" height="54"></canvas></div>
-                      <div class="music-playhead" aria-hidden="true"></div>
+                      <div class="music-playhead"><button type="button" class="music-playhead-handle" id="musicPlayheadHandle" aria-label="Seek in clip"></button></div>
                     </div>
                     <div class="music-controls d-none mt-3" id="musicControls">
                       <div class="d-flex justify-content-between"><label for="musicLevel">Music level</label><span id="musicLevelLabel">{{ selected_music_level if selected_music_level is not none else 50 }}%</span></div>
-                      <input type="range" class="form-range" name="music_level" id="musicLevel" min="0" max="100" value="{{ selected_music_level if selected_music_level is not none else 50 }}">
+                      <input type="range" class="form-range" name="music_level" id="musicLevel" min="0" max="100" step="1" value="{{ selected_music_level if selected_music_level is not none else 50 }}" data-defer-design-dirty="1">
                       <div class="music-level-scale small mb-2"><span>Off</span><span>Background</span><span>As loud as voice</span></div>
                       <div class="form-check form-switch"><input class="form-check-input" type="checkbox" name="music_duck" id="musicDuck" value="1" {% if selected_music_duck %}checked{% endif %}><label class="form-check-label" for="musicDuck">Lower music while speaking</label></div>
                       <div class="form-check form-switch"><input class="form-check-input" type="checkbox" name="music_fade_out" id="musicFadeOut" value="1" {% if selected_music_fade_out %}checked{% endif %}><label class="form-check-label" for="musicFadeOut">Fade out at the end</label></div>
@@ -18595,7 +18614,7 @@ document.addEventListener("DOMContentLoaded", () => {
   };
   window.restoreCropEditorDesignState = restoreCropEditorDesignState;
   document.addEventListener("input", (event) => {
-    if (event.target?.name && getEditorRoots().some((root) => root.contains(event.target))) {
+    if (event.target?.dataset?.deferDesignDirty !== "1" && event.target?.name && getEditorRoots().some((root) => root.contains(event.target))) {
       notifyCropEditorDesignChanged();
     }
   }, true);
@@ -23009,15 +23028,24 @@ document.addEventListener("DOMContentLoaded", () => {
   const levelLabel = document.getElementById("musicLevelLabel");
   const timelinePlay = document.getElementById("musicTimelinePlay");
   const timelineTime = document.getElementById("musicTimelineTime");
+  const timeRuler = document.getElementById("musicTimeRuler");
+  const timeRulerEnd = document.getElementById("musicTimeRulerEnd");
+  const compactLevel = document.getElementById("musicLevelCompact");
+  const compactLevelLabel = document.getElementById("musicLevelCompactLabel");
+  const previewMute = document.getElementById("musicPreviewMute");
   const overviewWindow = document.getElementById("musicSongOverviewWindow");
   const playhead = timeline?.querySelector(".music-playhead");
+  const playheadHandle = document.getElementById("musicPlayheadHandle");
   if (!audioId || !list || !previewAudio) return;
   let tracks = [];
   let selected = null;
-  let dragX = null;
+  let musicDragX = null;
+  let seekingPointerId = null;
   let audioMode = "";
   let libraryStartedAt = 0;
   let uploadBusy = false;
+  let previewMuted = false;
+  let levelInputFrame = 0;
 
   const activeCard = () => {
     const activeIndex = document.getElementById("clip-management-panel")?.dataset.activePlanIndex;
@@ -23035,6 +23063,7 @@ document.addEventListener("DOMContentLoaded", () => {
   };
   const showMusicGuestGate = () => window.handleGuestGatePayload?.({gate:"signup", action:"music_upload", register_url:{{ url_for('video_shorts_bp.register', next=request.path, action='music_upload')|tojson }}, login_url:{{ url_for('video_shorts_bp.login', next=request.path, action='music_upload')|tojson }}});
   const dispatch = (field) => field?.dispatchEvent(new Event("input", { bubbles: true }));
+  const dispatchChange = (field) => field?.dispatchEvent(new Event("change", { bubbles: true }));
   const gainForLevel = () => { const n = Math.max(0, Math.min(100, Number(level?.value || 0))); return n <= 0 ? 0 : Math.pow(10, (40 * (n / 100 - 1)) / 20); };
   const speechGain = (time) => {
     if (!duck?.checked) return 1;
@@ -23087,7 +23116,7 @@ document.addEventListener("DOMContentLoaded", () => {
     if (!setAudioTrack(track)) return;
     audioMode = "library";
     libraryStartedAt = Date.now();
-    previewAudio.volume = 1;
+    previewAudio.volume = previewMuted ? 0 : gainForLevel();
     const icon = button?.querySelector("i");
     if (icon) icon.className = "bi bi-pause-fill";
     button?.setAttribute("aria-label", "Pause music");
@@ -23104,6 +23133,13 @@ document.addEventListener("DOMContentLoaded", () => {
     const values = Array.isArray(peaks) && peaks.length ? peaks : [0];
     values.forEach((peak, i) => { const x = i / Math.max(1, values.length - 1) * canvas.width; const h = Number(peak || 0) * canvas.height * .45; ctx.moveTo(x, canvas.height/2-h); ctx.lineTo(x, canvas.height/2+h); }); ctx.stroke();
   };
+  const drawEnvelope = () => {
+    if (!selected || !envelope) return;
+    const width = envelope.clientWidth, height = envelope.clientHeight, ratio = window.devicePixelRatio || 1;
+    envelope.width = Math.max(1, width * ratio); envelope.height = Math.max(1, height * ratio);
+    const ctx = envelope.getContext("2d"); ctx.scale(ratio, ratio); ctx.strokeStyle="#f8fafc"; ctx.lineWidth=1.5; ctx.beginPath();
+    for (let x=0; x<=width; x+=2) { const t=x/Math.max(1,width)*clipDuration(); const fadeGain=fade?.checked&&t>clipDuration()-1.5?Math.max(0,(clipDuration()-t)/1.5):1; const visualGain=(Number(level?.value||0)/100)*speechGain(t)*fadeGain; const y=height-6-visualGain*(height-12); if(x===0)ctx.moveTo(x,y);else ctx.lineTo(x,y); } ctx.stroke();
+  };
   const drawTimeline = () => {
     if (!selected || !waveform || !envelope) return;
     const peaks = Array.isArray(selected.peaks) && selected.peaks.length ? selected.peaks : [0];
@@ -23114,11 +23150,8 @@ document.addEventListener("DOMContentLoaded", () => {
       return peaks[Math.min(peaks.length - 1, Math.floor((songTime / songDuration) * peaks.length))] || 0;
     });
     drawMiniWave(waveform, visiblePeaks);
-    const width = envelope.clientWidth, height = envelope.clientHeight, ratio = window.devicePixelRatio || 1;
-    envelope.width = Math.max(1, width * ratio); envelope.height = Math.max(1, height * ratio);
-    const ctx = envelope.getContext("2d"); ctx.scale(ratio, ratio); ctx.strokeStyle="#f8fafc"; ctx.lineWidth=1.5; ctx.beginPath();
+    drawEnvelope();
     const ranges = speechRanges();
-    for (let x=0; x<=width; x+=2) { const t=x/Math.max(1,width)*clipDuration(); const fadeGain=fade?.checked&&t>clipDuration()-1.5?Math.max(0,(clipDuration()-t)/1.5):1; const visualGain=(Number(level?.value||0)/100)*speechGain(t)*fadeGain; const y=height-6-visualGain*(height-12); if(x===0)ctx.moveTo(x,y);else ctx.lineTo(x,y); } ctx.stroke();
     speechLane.innerHTML="";
     ranges.forEach((range) => { const el=document.createElement("span"); el.className="music-speech-range"; el.style.left=`${100*Number(range.start||0)/clipDuration()}%`; el.style.width=`${100*Math.max(0,Number(range.end||0)-Number(range.start||0))/clipDuration()}%`; speechLane.appendChild(el); });
     startLabel.textContent = `Song plays from ${formatTime(start)} → ${formatTime(start + clipDuration())}`;
@@ -23126,10 +23159,13 @@ document.addEventListener("DOMContentLoaded", () => {
       overviewWindow.style.left = `${Math.min(100, 100 * start / songDuration)}%`;
       overviewWindow.style.width = `${Math.min(100, 100 * clipDuration() / songDuration)}%`;
     }
+    if (timeRulerEnd) timeRulerEnd.textContent = formatTime(clipDuration());
   };
   const setPickerOpen = (open) => {
-    picker?.classList.toggle("is-open", !!open);
-    if (open) { renderPicker(); window.setTimeout(() => search?.focus(), 0); }
+    if (!picker) return;
+    picker.classList.toggle("is-open", !!open);
+    picker.setAttribute("aria-hidden", open ? "false" : "true");
+    if (open) { renderPicker(); window.requestAnimationFrame(() => { picker.scrollIntoView({ block:"nearest" }); search?.focus(); }); }
   };
   const bindPlayButton = (button, track) => {
     if (!button) return;
@@ -23146,31 +23182,32 @@ document.addEventListener("DOMContentLoaded", () => {
     list.innerHTML="";
     if (!selected) {
       const drop=document.createElement("button"); drop.type="button"; drop.className="music-empty-drop"; drop.innerHTML='<i class="bi bi-cloud-arrow-up fs-3 d-block mb-1"></i><strong>Add music to your Short</strong><span class="d-block small music-helper-text">MP3, WAV or M4A</span>'; list.appendChild(drop); bindDropZone(drop);
-      if (tracks.length) { const choose=document.createElement("button"); choose.type="button"; choose.className="btn btn-sm btn-outline-light"; choose.textContent="Choose from your music"; choose.addEventListener("click",()=>setPickerOpen(true)); list.appendChild(choose); }
+      if (tracks.length) { const choose=document.createElement("button"); choose.type="button"; choose.className="btn btn-sm btn-outline-light"; choose.dataset.musicAction="open-picker"; choose.textContent="Choose from your music"; list.appendChild(choose); }
       return;
     }
     const card=document.createElement("div"); card.className="music-selected-card"; card.dataset.audioId=selected.id;
     card.innerHTML='<button type="button" class="btn btn-sm btn-outline-light music-library-play" aria-label="Play music"><i class="bi bi-play-fill"></i></button><div class="music-library-meta"><div class="music-selected-name-row"><span class="music-selected-name"></span><button type="button" class="music-rename-btn" aria-label="Rename music"><i class="bi bi-pencil"></i></button></div><small class="d-block music-helper-text"></small></div><span class="badge text-bg-primary">Selected</span><canvas class="music-selected-wave" height="34"></canvas>';
     const name=card.querySelector(".music-selected-name"); name.textContent=fallbackName(selected); card.querySelector("small").textContent=formatTime(selected.duration_seconds||0); bindPlayButton(card.querySelector(".music-library-play"),selected); card.querySelector(".music-rename-btn").addEventListener("click",()=>beginRename(selected,name)); list.appendChild(card); drawMiniWave(card.querySelector("canvas"),selected.peaks);
-    const actions=document.createElement("div"); actions.className="music-selected-actions"; actions.innerHTML='<button type="button" class="btn btn-sm btn-outline-light music-change-btn">Change music</button><button type="button" class="btn btn-sm btn-outline-danger music-remove-selection">Remove</button>'; actions.querySelector(".music-change-btn").addEventListener("click",()=>setPickerOpen(true)); actions.querySelector(".music-remove-selection").addEventListener("click",removeMusic); list.appendChild(actions);
+    const actions=document.createElement("div"); actions.className="music-selected-actions"; actions.innerHTML='<button type="button" class="btn btn-sm btn-outline-light music-change-btn" data-music-action="open-picker">Change music</button><button type="button" class="btn btn-sm btn-outline-danger music-remove-selection" data-music-action="remove">Remove</button>'; list.appendChild(actions);
   };
   const renderPicker = () => {
     if (!pickerList) return;
     const query=String(search?.value||"").trim().toLocaleLowerCase(); pickerList.innerHTML="";
     const filtered=tracks.filter((track)=>fallbackName(track).toLocaleLowerCase().includes(query));
     if(!filtered.length){const empty=document.createElement("div");empty.className="small music-helper-text";empty.textContent=query?"No matching music.":"No music uploaded yet.";pickerList.appendChild(empty);return;}
-    filtered.forEach((track)=>{const row=document.createElement("div");row.className="music-library-item";row.dataset.audioId=track.id;row.classList.toggle("is-active",track.id===audioId.value);row.innerHTML='<button type="button" class="btn btn-sm btn-outline-light music-library-play" aria-label="Play music"><i class="bi bi-play-fill"></i></button><canvas width="90" height="30"></canvas><span class="music-library-meta"><strong></strong><small class="d-block music-helper-text"></small></span><button type="button" class="btn btn-sm btn-outline-light music-library-use">Use</button>';row.querySelector("strong").textContent=fallbackName(track);row.querySelector("small").textContent=formatTime(track.duration_seconds||0);bindPlayButton(row.querySelector(".music-library-play"),track);row.querySelector(".music-library-use").addEventListener("click",()=>chooseTrack(track));pickerList.appendChild(row);drawMiniWave(row.querySelector("canvas"),track.peaks);});
+    filtered.forEach((track)=>{const row=document.createElement("div");row.className="music-library-item";row.dataset.audioId=track.id;row.classList.toggle("is-active",track.id===audioId.value);row.innerHTML='<button type="button" class="btn btn-sm btn-outline-light music-library-play" aria-label="Play music"><i class="bi bi-play-fill"></i></button><canvas width="90" height="30"></canvas><span class="music-library-meta"><strong></strong><small class="d-block music-helper-text"></small></span><button type="button" class="btn btn-sm btn-outline-light music-library-use">Use</button>';row.querySelector("strong").textContent=fallbackName(track);row.querySelector("small").textContent=formatTime(track.duration_seconds||0);bindPlayButton(row.querySelector(".music-library-play"),track);pickerList.appendChild(row);drawMiniWave(row.querySelector("canvas"),track.peaks);});
   };
   const syncUi = () => {
     selected = tracks.find((track) => track.id === audioId.value) || null;
     timeline?.classList.toggle("d-none", !selected); controls?.classList.toggle("d-none", !selected); chip?.classList.toggle("d-none", !selected);
-    if (selected) { if(audioMode!=="library")setAudioTrack(selected); chip.querySelector("span").textContent=`${fallbackName(selected)} · ${level?.value || 0}%`; drawTimeline(); }
+    if (level) syncLevelControls(level);
+    if (selected) { if(audioMode!=="library")setAudioTrack(selected); chip.querySelector("span").textContent=`${fallbackName(selected)} · ${level?.value || 0}%`; drawTimeline(); updatePlayhead(previewPlayback()?.time||0); }
     else { stopSharedAudio(); setPickerOpen(false); }
     renderSelected(); renderPicker();
   };
   const chooseTrack = (track) => {
     if (isGuest) { showMusicGuestGate(); return; }
-    stopSharedAudio(); audioId.value=track.id; startField.value="0"; if(level)level.value="50"; if(levelLabel)levelLabel.textContent="50%"; dispatch(audioId); dispatch(startField); dispatch(level); setPickerOpen(false); syncUi();
+    stopSharedAudio(); audioId.value=track.id; startField.value="0"; if(level)level.value="50"; if(compactLevel)compactLevel.value="50"; if(levelLabel)levelLabel.textContent="50%"; if(compactLevelLabel)compactLevelLabel.textContent="50%"; dispatch(audioId); dispatch(startField); dispatch(level); setPickerOpen(false); syncUi();
   };
   const renderList = () => {
     syncUi();
@@ -23187,32 +23224,104 @@ document.addEventListener("DOMContentLoaded", () => {
     return new Promise((resolve)=>{const xhr=new XMLHttpRequest();xhr.open("POST",uploadUrl);xhr.setRequestHeader("X-Requested-With","XMLHttpRequest");xhr.upload.addEventListener("progress",(event)=>{if(event.lengthComputable){const percent=Math.min(100,Math.round(event.loaded/event.total*100));setUploadState(percent>=100?"Preparing audio…":`Uploading… ${percent}%`);}});xhr.upload.addEventListener("load",()=>setUploadState("Preparing audio…"));xhr.addEventListener("load",()=>{let payload={};try{payload=JSON.parse(xhr.responseText||"{}");}catch(_){}if(window.handleGuestGatePayload?.(payload)){setUploadState("");return;}if(xhr.status<200||xhr.status>=300){setUploadState(payload.error||"Upload failed. Please try another audio file.","error");return;}tracks=tracks.filter((track)=>track.id!==payload.audio?.id);tracks.unshift(payload.audio);setUploadState("Music ready.","done");chooseTrack(payload.audio);window.setTimeout(()=>setUploadState(""),1800);});xhr.addEventListener("error",()=>setUploadState("Upload failed. Check your connection and try again.","error"));xhr.addEventListener("loadend",()=>{setUploadBusy(false);resolve();});xhr.send(body);});
   };
   const bindDropZone = (drop) => { if(!drop)return; drop.addEventListener("click",()=>document.getElementById("musicUploadInput")?.click()); drop.addEventListener("dragover",(event)=>{event.preventDefault();drop.classList.add("is-dragover");}); drop.addEventListener("dragleave",()=>drop.classList.remove("is-dragover")); drop.addEventListener("drop",(event)=>{event.preventDefault();drop.classList.remove("is-dragover");uploadFile(event.dataTransfer?.files?.[0]);}); };
+  function removeMusic(){audioId.value="";startField.value="0";stopSharedAudio();dispatch(audioId);dispatch(startField);syncUi();}
+  list.addEventListener("click", (event) => {
+    const action = event.target.closest?.("[data-music-action]")?.dataset.musicAction;
+    if (action === "open-picker") setPickerOpen(true);
+    else if (action === "remove") removeMusic();
+  });
+  pickerList?.addEventListener("click", (event) => {
+    const useButton = event.target.closest?.(".music-library-use");
+    if (!useButton) return;
+    const trackId = useButton.closest(".music-library-item")?.dataset.audioId;
+    const track = tracks.find((item) => String(item.id) === String(trackId));
+    if (track) chooseTrack(track);
+  });
   uploadInput?.addEventListener("click", (event) => { if(isGuest){event.preventDefault();showMusicGuestGate();} });
   uploadInput?.addEventListener("change", async (event) => { await uploadFile(event.target.files?.[0]); event.target.value=""; });
   document.getElementById("musicPickerClose")?.addEventListener("click",()=>setPickerOpen(false)); search?.addEventListener("input",renderPicker);
-  timeline?.addEventListener("pointerdown", (event) => { if(!selected||!event.target.closest?.("canvas"))return; dragX=event.clientX; timeline.setPointerCapture(event.pointerId); });
-  timeline?.addEventListener("pointermove", (event) => { if(dragX===null||!selected)return; const max=Math.max(0,Number(selected.duration_seconds||0)-clipDuration()); const delta=(dragX-event.clientX)/Math.max(1,timeline.clientWidth)*Math.max(clipDuration(),Number(selected.duration_seconds||0)); startField.value=String(Math.max(0,Math.min(max,Number(startField.value||0)+delta)).toFixed(3)); dragX=event.clientX; dispatch(startField); drawTimeline(); const playback=previewPlayback(); if(playback?.playing&&audioMode==="timeline")previewAudio.currentTime=(Number(startField.value||0)+playback.time)%Math.max(.1,Number(selected.duration_seconds||0)); });
-  timeline?.addEventListener("pointerup",()=>{dragX=null;});
-  level?.addEventListener("input",()=>{levelLabel.textContent=`${level.value}%`; if(selected)chip.querySelector("span").textContent=`${fallbackName(selected)} · ${level.value}%`; dispatch(level); drawTimeline();}); duck?.addEventListener("change",()=>{dispatch(duck);drawTimeline();}); fade?.addEventListener("change",()=>{dispatch(fade);drawTimeline();});
-  function removeMusic(){audioId.value="";startField.value="0";stopSharedAudio();dispatch(audioId);dispatch(startField);syncUi();}
-  document.getElementById("musicRemoveBtn")?.addEventListener("click",removeMusic);
   const previewPlayback = () => {
     const renderedVideo=activeCard()?.querySelector("video");
     if(renderedVideo)return {time:renderedVideo.currentTime||0,playing:!renderedVideo.paused,rate:renderedVideo.playbackRate||1};
     const sourceVideo=document.querySelector("#trs-player-frame video");
     if(sourceVideo)return {time:Math.max(0,(sourceVideo.currentTime||0)-Number(activeCard()?.dataset.start||0)),playing:!sourceVideo.paused,rate:sourceVideo.playbackRate||1};
-    const snapshot=window.__mintiTranscriptPlayer?.captureState?.();
+    const snapshot=window.__trsClipSelectorController?.capturePlayerState?.() || window.__mintiTranscriptPlayer?.captureState?.();
     return snapshot ? {time:Math.max(0,Number(snapshot.currentTime||0)-Number(activeCard()?.dataset.start||0)),playing:!!snapshot.playing,rate:Number(snapshot.rate||1)} : null;
   };
+  const updatePlayhead = (time) => {
+    const safeTime=Math.max(0,Math.min(clipDuration(),Number(time)||0));
+    if(playhead&&timeline){const usableWidth=Math.max(1,timeline.clientWidth-16);playhead.style.left=`${8+(safeTime/clipDuration())*usableWidth}px`;}
+    if(timelineTime)timelineTime.textContent=`${formatTime(safeTime)} / ${formatTime(clipDuration())}`;
+  };
+  const applyLivePreviewGain = () => {
+    const playback=previewPlayback();
+    const duckGain=audioMode==="library"?1:speechGain(playback?.time||0);
+    previewAudio.volume=previewMuted?0:Math.max(0,Math.min(1,gainForLevel()*duckGain));
+  };
+  const syncLevelControls = (source) => {
+    const next=String(Math.max(0,Math.min(100,Math.round(Number(source?.value||0)))));
+    if(level)level.value=next;
+    if(compactLevel)compactLevel.value=next;
+    if(levelLabel)levelLabel.textContent=`${next}%`;
+    if(compactLevelLabel)compactLevelLabel.textContent=`${next}%`;
+    if(selected&&chip)chip.querySelector("span").textContent=`${fallbackName(selected)} · ${next}%`;
+    applyLivePreviewGain();
+  };
+  const onLevelInput = (event) => {
+    const source=event.currentTarget;
+    if(levelInputFrame)window.cancelAnimationFrame(levelInputFrame);
+    levelInputFrame=window.requestAnimationFrame(()=>{levelInputFrame=0;syncLevelControls(source);});
+  };
+  level?.addEventListener("input",onLevelInput);
+  compactLevel?.addEventListener("input",onLevelInput);
+  level?.addEventListener("change",()=>{syncLevelControls(level);drawEnvelope();});
+  compactLevel?.addEventListener("change",()=>{syncLevelControls(compactLevel);dispatchChange(level);});
+  previewMute?.addEventListener("click",()=>{
+    previewMuted=!previewMuted;
+    previewMute.setAttribute("aria-pressed",previewMuted?"true":"false");
+    previewMute.setAttribute("aria-label",previewMuted?"Unmute music preview":"Mute music preview");
+    const icon=previewMute.querySelector("i"); if(icon)icon.className=previewMuted?"bi bi-volume-mute-fill":"bi bi-volume-up-fill";
+    applyLivePreviewGain();
+  });
+  duck?.addEventListener("change",()=>{dispatch(duck);drawEnvelope();}); fade?.addEventListener("change",()=>{dispatch(fade);drawEnvelope();});
+  document.getElementById("musicRemoveBtn")?.addEventListener("click",removeMusic);
+  const seekPreview = (time) => {
+    const target=Math.max(0,Math.min(clipDuration(),Number(time)||0));
+    const playback=previewPlayback()||{playing:false,rate:1};
+    const video=activeCard()?.querySelector("video");
+    if(video){video.currentTime=target;if(playback.playing)video.play().catch(()=>{});}
+    else {
+      const absolute=Number(activeCard()?.dataset.start||0)+target;
+      const restored=window.__trsClipSelectorController?.restorePlayerState?.({currentTime:absolute,playing:playback.playing,rate:playback.rate||1});
+      if(restored===false&&playback.playing)window.__trsClipSelectorController?.seekAndPlay?.(absolute);
+    }
+    audioMode="timeline";
+    if(selected){setAudioTrack(selected);previewAudio.currentTime=(Number(startField.value||0)+target)%Math.max(.1,Number(selected.duration_seconds||0));applyLivePreviewGain();if(playback.playing)previewAudio.play().catch(()=>{});else previewAudio.pause();}
+    updatePlayhead(target);
+  };
+  const seekFromPointer = (event, element) => {
+    const rect=element.getBoundingClientRect();
+    const inset=element===timeline?8:0;
+    const ratio=Math.max(0,Math.min(1,(event.clientX-rect.left-inset)/Math.max(1,rect.width-inset*2)));
+    seekPreview(ratio*clipDuration());
+  };
+  timeRuler?.addEventListener("pointerdown",(event)=>{if(!selected)return;event.preventDefault();seekFromPointer(event,timeRuler);});
+  speechLane?.addEventListener("pointerdown",(event)=>{if(!selected)return;event.preventDefault();seekFromPointer(event,speechLane);});
+  playheadHandle?.addEventListener("pointerdown",(event)=>{if(!selected)return;event.preventDefault();event.stopPropagation();seekingPointerId=event.pointerId;playheadHandle.setPointerCapture(event.pointerId);seekFromPointer(event,timeline);});
+  playheadHandle?.addEventListener("pointermove",(event)=>{if(seekingPointerId!==event.pointerId)return;event.preventDefault();seekFromPointer(event,timeline);});
+  const stopSeeking=(event)=>{if(seekingPointerId===event.pointerId)seekingPointerId=null;};
+  playheadHandle?.addEventListener("pointerup",stopSeeking); playheadHandle?.addEventListener("pointercancel",stopSeeking);
+  waveform?.addEventListener("pointerdown", (event) => { if(!selected)return; event.preventDefault(); musicDragX=event.clientX; waveform.setPointerCapture(event.pointerId); });
+  waveform?.addEventListener("pointermove", (event) => { if(musicDragX===null||!selected)return; const max=Math.max(0,Number(selected.duration_seconds||0)-clipDuration()); const delta=(musicDragX-event.clientX)/Math.max(1,waveform.clientWidth)*Math.max(clipDuration(),Number(selected.duration_seconds||0)); startField.value=String(Math.max(0,Math.min(max,Number(startField.value||0)+delta)).toFixed(3)); musicDragX=event.clientX; dispatch(startField); drawTimeline(); const playback=previewPlayback(); if(audioMode==="timeline")previewAudio.currentTime=(Number(startField.value||0)+Number(playback?.time||0))%Math.max(.1,Number(selected.duration_seconds||0)); });
+  const stopMusicDrag=()=>{musicDragX=null;}; waveform?.addEventListener("pointerup",stopMusicDrag); waveform?.addEventListener("pointercancel",stopMusicDrag);
   const syncPreview = () => {
     if(audioMode==="library")return;
     const playback=previewPlayback(); if(!playback||!selected)return;
     const target=(Number(startField.value||0)+playback.time)%Math.max(.1,Number(selected.duration_seconds||0));
     setAudioTrack(selected);
     if(Math.abs(previewAudio.currentTime-target)>.3)previewAudio.currentTime=target;
-    previewAudio.playbackRate=playback.rate; previewAudio.volume=Math.max(0,Math.min(1,gainForLevel()*speechGain(playback.time)));
-    if(playhead)playhead.style.left=`calc(.5rem + ${(Math.max(0,Math.min(clipDuration(),playback.time))/clipDuration())*100}% - 1px)`;
-    if(timelineTime)timelineTime.textContent=`${formatTime(Math.min(clipDuration(),playback.time))} / ${formatTime(clipDuration())}`;
+    previewAudio.playbackRate=playback.rate; applyLivePreviewGain();
+    updatePlayhead(playback.time);
     setTimelineButtonState(playback.playing);
     if(playback.playing&&previewAudio.paused){audioMode="timeline";previewAudio.play().catch(()=>{});}else if(!playback.playing&&audioMode==="timeline"&&!previewAudio.paused){previewAudio.pause();}
   };
