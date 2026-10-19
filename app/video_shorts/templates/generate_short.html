@@ -8625,7 +8625,6 @@
                     </div>
                     <div class="music-controls d-none music-options-row" id="musicControls">
                       <div class="form-check form-switch"><input class="form-check-input" type="checkbox" name="music_duck" id="musicDuck" value="1" {% if selected_music_duck %}checked{% endif %}><label class="form-check-label" for="musicDuck">Lower music when speaking</label></div>
-                      <div class="form-check form-switch"><input class="form-check-input" type="checkbox" name="music_fade_out" id="musicFadeOut" value="1" {% if selected_music_fade_out %}checked{% endif %}><label class="form-check-label" for="musicFadeOut">Fade out at the end</label></div>
                     </div>
                     <audio id="musicPreviewAudio" preload="metadata"></audio>
                   </div>
@@ -23005,7 +23004,6 @@ document.addEventListener("DOMContentLoaded", () => {
   const startField = document.getElementById("musicStartSeconds");
   const level = document.getElementById("musicLevel");
   const duck = document.getElementById("musicDuck");
-  const fade = document.getElementById("musicFadeOut");
   const list = document.getElementById("musicLibraryList");
   const picker = document.getElementById("musicPickerPanel");
   const pickerList = document.getElementById("musicPickerList");
@@ -23039,6 +23037,11 @@ document.addEventListener("DOMContentLoaded", () => {
   let uploadBusy = false;
   let previewMuted = false;
   let levelInputFrame = 0;
+  let playIntent = false;
+  let playIntentLockedUntil = 0;
+  let playIntentToken = 0;
+  let libraryPlayIntentId = "";
+  let libraryPlayToken = 0;
 
   const activeCard = () => {
     const activeIndex = document.getElementById("clip-management-panel")?.dataset.activePlanIndex;
@@ -23086,6 +23089,8 @@ document.addEventListener("DOMContentLoaded", () => {
     return true;
   };
   const stopSharedAudio = ({ clearMode = true } = {}) => {
+    libraryPlayIntentId = "";
+    libraryPlayToken++;
     previewAudio.pause();
     resetPlayButtons();
     if (clearMode) { audioMode = ""; libraryStartedAt = 0; }
@@ -23099,16 +23104,25 @@ document.addEventListener("DOMContentLoaded", () => {
     timelinePlay.innerHTML = playing ? '<i class="bi bi-pause-fill"></i>' : '<i class="bi bi-play-fill"></i>';
     timelinePlay.setAttribute("aria-label", playing ? "Pause preview" : "Play preview");
   };
+  const setPlayIntent = (playing, protect = false) => {
+    playIntent = playing;
+    playIntentLockedUntil = protect ? Date.now() + 800 : 0;
+    setTimelineButtonState(playing);
+  };
   const playLibraryTrack = async (track, button) => {
-    const samePlaying = audioMode === "library" && previewAudio.dataset.trackId === String(track.id || "") && !previewAudio.paused;
-    if (samePlaying) {
+    const trackId = String(track.id || "");
+    if (libraryPlayIntentId === trackId) {
       stopSharedAudio();
       return;
     }
+    playIntentToken++;
+    setPlayIntent(false, true);
     pauseVideoSide();
-    resetPlayButtons();
+    stopSharedAudio();
     if (!setAudioTrack(track)) return;
     audioMode = "library";
+    libraryPlayIntentId = trackId;
+    const token = ++libraryPlayToken;
     libraryStartedAt = Date.now();
     previewAudio.volume = previewMuted ? 0 : gainForLevel();
     const icon = button?.querySelector("i");
@@ -23117,7 +23131,7 @@ document.addEventListener("DOMContentLoaded", () => {
     try {
       await previewAudio.play();
     } catch (_) {
-      stopSharedAudio();
+      if (token === libraryPlayToken) stopSharedAudio();
     }
   };
   const drawMiniWave = (canvas, peaks) => {
@@ -23132,7 +23146,7 @@ document.addEventListener("DOMContentLoaded", () => {
     canvas.width=Math.max(1,canvas.clientWidth*ratio); canvas.height=Math.max(1,canvas.clientHeight*ratio);
     ctx.clearRect(0,0,canvas.width,canvas.height); ctx.lineWidth=Math.max(1,ratio);
     const values=Array.isArray(peaks)&&peaks.length?peaks:[0]; const ranges=speechRanges(); const levelScale=Math.max(0,Math.min(1,Number(level?.value||0)/100));
-    const drawBars=(ducked,color)=>{ctx.strokeStyle=color;ctx.beginPath();values.forEach((peak,index)=>{const t=index/Math.max(1,values.length-1)*clipDuration();const inSpeech=!!duck?.checked&&ranges.some((range)=>t>=Number(range.start||0)&&t<=Number(range.end||0));if(inSpeech!==ducked)return;const fadeScale=fade?.checked&&t>clipDuration()-1.5?Math.max(0,(clipDuration()-t)/1.5):1;const height=Number(peak||0)*canvas.height*.45*levelScale*fadeScale*(ducked?.45:1);const x=index/Math.max(1,values.length-1)*canvas.width;ctx.moveTo(x,canvas.height/2-height);ctx.lineTo(x,canvas.height/2+height);});ctx.stroke();};
+    const drawBars=(ducked,color)=>{ctx.strokeStyle=color;ctx.beginPath();values.forEach((peak,index)=>{const t=index/Math.max(1,values.length-1)*clipDuration();const inSpeech=!!duck?.checked&&ranges.some((range)=>t>=Number(range.start||0)&&t<=Number(range.end||0));if(inSpeech!==ducked)return;const height=Number(peak||0)*canvas.height*.45*levelScale*(ducked?.45:1);const x=index/Math.max(1,values.length-1)*canvas.width;ctx.moveTo(x,canvas.height/2-height);ctx.lineTo(x,canvas.height/2+height);});ctx.stroke();};
     drawBars(false,"#7aa2f7"); drawBars(true,"#365987");
   };
   const drawTimeline = () => {
@@ -23162,7 +23176,7 @@ document.addEventListener("DOMContentLoaded", () => {
   };
   const bindPlayButton = (button, track) => {
     if (!button) return;
-    if (audioMode==="library"&&previewAudio.dataset.trackId===String(track.id||"")&&!previewAudio.paused) { const icon=button.querySelector("i"); if(icon)icon.className="bi bi-pause-fill"; button.setAttribute("aria-label","Pause music"); }
+    if (libraryPlayIntentId===String(track.id||"")) { const icon=button.querySelector("i"); if(icon)icon.className="bi bi-pause-fill"; button.setAttribute("aria-label","Pause music"); }
     button.addEventListener("click", () => { void playLibraryTrack(track, button); });
   };
   const beginRename = (track, nameNode) => {
@@ -23199,7 +23213,17 @@ document.addEventListener("DOMContentLoaded", () => {
   };
   const chooseTrack = (track) => {
     if (isGuest) { showMusicGuestGate(); return; }
-    stopSharedAudio(); audioId.value=track.id; startField.value="0"; if(level)level.value="50"; if(levelLabel)levelLabel.textContent="50%"; dispatch(audioId); dispatch(startField); dispatch(level); setPickerOpen(false); syncUi();
+    stopSharedAudio();
+    const chosenId = String(track.id);
+    audioId.value = chosenId;
+    startField.value = "0";
+    if (level) level.value = "50";
+    if (levelLabel) levelLabel.textContent = "50%";
+    selected = track;
+    setPickerOpen(false);
+    syncUi();
+    dispatch(audioId); dispatch(startField); dispatch(level);
+    queueMicrotask(() => { if (audioId.value === chosenId) syncUi(); });
   };
   const renderList = () => {
     syncUi();
@@ -23271,7 +23295,7 @@ document.addEventListener("DOMContentLoaded", () => {
     const icon=previewMute.querySelector("i"); if(icon)icon.className=previewMuted?"bi bi-volume-mute-fill":"bi bi-volume-up-fill";
     applyLivePreviewGain();
   });
-  duck?.addEventListener("change",()=>{dispatch(duck);drawTimeline();}); fade?.addEventListener("change",()=>{dispatch(fade);drawTimeline();});
+  duck?.addEventListener("change",()=>{dispatch(duck);drawTimeline();});
   const seekPreview = (time) => {
     const target=Math.max(0,Math.min(clipDuration(),Number(time)||0));
     const playback=previewPlayback()||{playing:false,rate:1};
@@ -23302,17 +23326,41 @@ document.addEventListener("DOMContentLoaded", () => {
   const syncPreview = () => {
     if(audioMode==="library")return;
     const playback=previewPlayback(); if(!playback||!selected)return;
+    if (playIntent && Date.now() >= playIntentLockedUntil && !playback.playing && playback.time >= clipDuration() - .1) {
+      playIntentToken++;
+      setPlayIntent(false, true);
+      previewAudio.pause();
+      seekPreview(0);
+      return;
+    }
     const target=(Number(startField.value||0)+playback.time)%Math.max(.1,Number(selected.duration_seconds||0));
     setAudioTrack(selected);
     if(Math.abs(previewAudio.currentTime-target)>.3)previewAudio.currentTime=target;
     previewAudio.playbackRate=playback.rate; applyLivePreviewGain();
     updatePlayhead(playback.time);
-    setTimelineButtonState(playback.playing);
-    if(playback.playing&&previewAudio.paused){audioMode="timeline";previewAudio.play().catch(()=>{});}else if(!playback.playing&&audioMode==="timeline"&&!previewAudio.paused){previewAudio.pause();}
+    if (Date.now() >= playIntentLockedUntil) setPlayIntent(playback.playing);
+    else setTimelineButtonState(playIntent);
+    if(playIntent&&playback.playing&&previewAudio.paused){audioMode="timeline";previewAudio.play().catch(()=>{});}else if(!playIntent&&audioMode==="timeline"&&!previewAudio.paused){previewAudio.pause();}
   };
-  timelinePlay?.addEventListener("click",()=>{const playback=previewPlayback();if(!playback)return;stopSharedAudio();audioMode="timeline";if(playback.playing){activeCard()?.querySelector("video")?.pause?.();window.__trsClipSelectorController?.pausePlayer?.();setTimelineButtonState(false);return;}const video=activeCard()?.querySelector("video");if(video){if(video.ended||video.currentTime>=clipDuration())video.currentTime=0;video.play().catch(()=>{});}else{window.__trsClipSelectorController?.seekAndPlay?.(Number(activeCard()?.dataset.start||0)+Math.max(0,playback.time||0));}syncPreview();});
-  document.addEventListener("play",(event)=>{if(event.target.matches?.(".clip-card video, #trs-player-frame video")&&selected){stopSharedAudio();audioMode="timeline";syncPreview();}},true);
-  document.addEventListener("pause",(event)=>{if(event.target.matches?.(".clip-card video"))previewAudio.pause();},true);
+  timelinePlay?.addEventListener("click",async()=>{
+    const playback=previewPlayback(); if(!playback)return;
+    const token=++playIntentToken;
+    if(playIntent){setPlayIntent(false,true);pauseVideoSide();stopSharedAudio();audioMode="timeline";return;}
+    stopSharedAudio(); audioMode="timeline"; setPlayIntent(true,true);
+    const video=activeCard()?.querySelector("video");
+    try {
+      if(video){if(video.ended||video.currentTime>=clipDuration())video.currentTime=0;await video.play();}
+      else {
+        const result=await window.__trsClipSelectorController?.seekAndPlay?.(Number(activeCard()?.dataset.start||0)+Math.max(0,playback.time||0));
+        if(result===false)throw new Error("Preview could not start");
+      }
+    } catch (_) {
+      if(token===playIntentToken){setPlayIntent(false);stopSharedAudio();}
+    }
+  });
+  document.addEventListener("play",(event)=>{if(event.target.matches?.(".clip-card video, #trs-player-frame video")&&selected){stopSharedAudio();audioMode="timeline";setPlayIntent(true,true);syncPreview();}},true);
+  document.addEventListener("pause",(event)=>{if(event.target.matches?.(".clip-card video, #trs-player-frame video")&&selected){setPlayIntent(false,true);previewAudio.pause();}},true);
+  document.addEventListener("ended",(event)=>{if(event.target.matches?.(".clip-card video, #trs-player-frame video")&&selected){playIntentToken++;setPlayIntent(false,true);stopSharedAudio();audioMode="timeline";seekPreview(0);}},true);
   document.addEventListener("seeking",(event)=>{if(event.target.matches?.(".clip-card video"))syncPreview();},true);
   previewAudio.addEventListener("ended",()=>{if(audioMode==="library")stopSharedAudio();});
   window.setInterval(()=>{if(!selected)return;const playback=previewPlayback();if(audioMode==="library"&&playback?.playing&&Date.now()-libraryStartedAt>350){stopSharedAudio();audioMode="timeline";}syncPreview();},100);

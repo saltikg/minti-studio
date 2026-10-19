@@ -4319,9 +4319,6 @@ def _compose_trimmed_with_background(
             f"duration={duration:.3f},asetpts=PTS-STARTPTS,aresample=async=1:first_pts=0,"
             f"volume='{volume_expr}':eval=frame"
         )
-        if music_fade_out:
-            fade_duration = min(1.5, duration)
-            music_filters += f",afade=t=out:st={max(0.0, duration - fade_duration):.3f}:d={fade_duration:.3f}"
         music_filters += "[music_bg]"
         filter_parts.append(music_filters)
         voice_input_index = 2 if direct_audio_source is not None else 1
