@@ -1193,6 +1193,14 @@ def _update_storage_asset_label(file_key: str, label: Optional[str]) -> None:
 
 
 _ALLOWED_STATIC_AUDIO_EXTS = {".mp3", ".wav", ".m4a", ".aac", ".ogg", ".flac"}
+_STATIC_AUDIO_CONTENT_TYPES = {
+    ".mp3": "audio/mpeg",
+    ".wav": "audio/wav",
+    ".m4a": "audio/mp4",
+    ".aac": "audio/aac",
+    ".ogg": "audio/ogg",
+    ".flac": "audio/flac",
+}
 
 
 def _user_media_storage_key(kind: str, user_id: str, filename: str) -> str:
@@ -1933,7 +1941,7 @@ def _serialize_static_audio(user_id: str, audio_path: Path) -> Dict[str, Any]:
         finally:
             if resolved_path is not None and resolved_path is not audio_path and hasattr(resolved_path, "cleanup"):
                 resolved_path.cleanup()
-    display_name = str(meta.get("label") or audio_path.stem)
+    display_name = str(meta.get("display_name") or meta.get("label") or audio_path.stem)
     key = _user_media_storage_key("audio", user_id, audio_path.name)
     resolved = get_media_storage().resolve_local_or_s3(key, fallback_local_paths=[audio_path])
     return {
@@ -2447,7 +2455,8 @@ def upload_static_audio():
             {"error": _quota_block_message(_format_size_bytes(usage["limit_bytes"]), _format_size_bytes(usage["used_bytes"]))}
         ), 403
     waveform = compute_audio_waveform(normalized_path) if normalized_path else {"peaks": [], "duration_seconds": None}
-    storage.put_bytes(data, key, content_type=upload.mimetype or None)
+    normalized_content_type = _STATIC_AUDIO_CONTENT_TYPES.get(ext, "application/octet-stream")
+    storage.put_bytes(data, key, content_type=normalized_content_type)
     if normalized_path:
         normalized_path.unlink(missing_ok=True)
     _save_audio_meta(
@@ -2455,6 +2464,7 @@ def upload_static_audio():
         user_id,
         final_name,
         {
+            "display_name": (request.form.get("label") or original_name.stem or "Audio").strip(),
             "label": (request.form.get("label") or original_name.stem or "Audio").strip(),
             "original_filename": original_name.name,
             "created_at": datetime.utcnow().isoformat() + "Z",
@@ -2470,6 +2480,29 @@ def upload_static_audio():
         user_id,
     )
     return jsonify({"ok": True, "audio": _serialize_static_audio(user_id, final_path)})
+
+
+@video_shorts_bp.route("/api/static-audios/<path:audio_id>", methods=["PATCH"])
+def rename_static_audio(audio_id: str):
+    current_user = getattr(g, "vs_current_user", None)
+    if not current_user:
+        return jsonify({"error": "auth required"}), 401
+    user_id = current_user.get("id")
+    safe_name = Path(audio_id or "").name
+    if not safe_name or safe_name != (audio_id or ""):
+        return jsonify({"error": "audio not found"}), 404
+    audio_path = _legacy_media_path("audio", user_id, safe_name)
+    key = _user_media_storage_key("audio", user_id, safe_name)
+    if not get_media_storage().resolve_local_or_s3(key, fallback_local_paths=[audio_path]).exists:
+        return jsonify({"error": "audio not found"}), 404
+    payload = request.get_json(silent=True) or {}
+    display_name = str(payload.get("display_name") or "").strip()[:100]
+    if not display_name:
+        return jsonify({"error": "name required"}), 400
+    meta = _read_audio_meta("audio", user_id, safe_name)
+    meta["display_name"] = display_name
+    _save_audio_meta("audio", user_id, safe_name, meta)
+    return jsonify({"ok": True, "audio": _serialize_static_audio(user_id, audio_path)})
 
 
 @video_shorts_bp.route("/api/podcast-audios", methods=["POST"])

@@ -6182,8 +6182,22 @@
   .music-library-item.is-active { border-color:#6ea8fe; background:rgba(13,110,253,.14); }
   .music-library-item canvas { width:90px; height:30px; }
   .music-library-meta { flex:1; min-width:0; }
+  .music-library-meta strong { display:block; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+  .music-helper-text { color:rgba(255,255,255,.72); }
   .music-empty-drop { padding:1.4rem; border:1px dashed rgba(255,255,255,.3); border-radius:.75rem; text-align:center; background:rgba(255,255,255,.025); cursor:pointer; }
   .music-empty-drop.is-dragover { border-color:#6ea8fe; background:rgba(13,110,253,.14); }
+  .music-selected-card { display:grid; grid-template-columns:auto minmax(0,1fr) auto; align-items:center; gap:.7rem; padding:.75rem; border:1px solid rgba(255,255,255,.14); border-radius:.75rem; background:rgba(255,255,255,.035); }
+  .music-selected-wave { grid-column:2 / -1; width:100%; height:34px; }
+  .music-selected-name-row { display:flex; align-items:center; gap:.35rem; min-width:0; }
+  .music-selected-name { overflow:hidden; text-overflow:ellipsis; white-space:nowrap; font-weight:700; }
+  .music-rename-btn { flex:0 0 auto; border:0; padding:.1rem .25rem; background:transparent; color:rgba(255,255,255,.78); }
+  .music-rename-input { min-width:0; height:32px; }
+  .music-selected-actions { display:flex; flex-wrap:wrap; gap:.5rem; margin-top:.65rem; }
+  .music-picker-panel { display:none; margin-top:.65rem; padding:.75rem; border:1px solid rgba(255,255,255,.1); border-radius:.75rem; background:rgba(8,15,28,.55); }
+  .music-picker-panel.is-open { display:block; }
+  .music-picker-list { max-height:280px; overflow:auto; padding-right:.2rem; }
+  .music-upload-progress { display:flex; align-items:center; gap:.6rem; min-height:38px; padding:.5rem .65rem; border-radius:.55rem; background:rgba(13,110,253,.12); color:rgba(255,255,255,.9); }
+  .music-upload-button.is-busy { pointer-events:none; opacity:.58; }
   .music-timeline { position:relative; border:1px solid rgba(255,255,255,.15); border-radius:.65rem; padding:2rem .5rem .5rem; overflow:hidden; touch-action:none; cursor:grab; }
   .music-timeline:active { cursor:grabbing; }
   .music-timeline canvas { display:block; width:100%; height:54px; }
@@ -6194,7 +6208,15 @@
   .music-speech-lane { position:relative; height:8px; background:rgba(255,255,255,.05); border-radius:4px; }
   .music-speech-range { position:absolute; height:100%; background:#f59e0b; border-radius:3px; }
   .music-playhead { position:absolute; top:1.65rem; bottom:.4rem; left:.5rem; width:2px; background:#fff; pointer-events:none; z-index:3; }
+  .music-timeline-toolbar { display:flex; align-items:center; justify-content:space-between; gap:.75rem; margin-bottom:.55rem; }
+  .music-song-overview { position:relative; height:9px; margin:.15rem 0 .55rem; overflow:hidden; border-radius:999px; background:rgba(255,255,255,.12); }
+  .music-song-overview-window { position:absolute; top:0; bottom:0; min-width:3px; border-radius:999px; background:#6ea8fe; }
+  .music-level-scale { display:grid; grid-template-columns:1fr 1fr 1fr; gap:1rem; color:rgba(255,255,255,.72); }
+  .music-level-scale span:nth-child(2) { text-align:center; }
+  .music-level-scale span:last-child { text-align:right; }
   .music-preview-chip { width:max-content; padding:.25rem .55rem; border-radius:999px; background:rgba(13,110,253,.18); color:#9ec5fe; font-size:.75rem; }
+  .clip-card-media .created-music-badge { max-width:calc(100% - 12px); }
+  .clip-card-media .created-music-name { overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
 </style>
 
 
@@ -7293,7 +7315,7 @@
                       <div class="generate-v2-media-column{% if row.is_original_layout %} is-original-layout{% endif %}{% if row.render_job_status in ['queued', 'processing', 'running'] %} is-rendering{% endif %}">
                     {% endif %}
                     <video controls playsinline preload="none" src="{{ row.video_url }}" poster="{{ row.poster_url or short_bg_url }}" aria-label="Play {{ row.title or 'clip' }}"></video>
-	                    {% if row.has_music %}<span class="created-music-badge" title="Background music"><i class="bi bi-music-note-beamed"></i><span class="created-music-level">{{ row.music_level }}%</span></span>{% endif %}
+	                    {% if row.has_music %}<span class="created-music-badge" data-music-audio-id="{{ row.music_audio_id }}" title="Background music"><i class="bi bi-music-note-beamed"></i><span class="created-music-name">Music</span><span class="created-music-level">· {{ row.music_level }}%</span></span>{% endif %}
 	                    {% if generate_v2 %}
 	                      <div class="generate-v2-render-overlay{% if row.render_job_status not in ['queued', 'processing', 'running'] %} d-none{% endif %}" aria-live="polite">
 	                        <span class="spinner-border spinner-border-sm" role="status" aria-hidden="true"></span>
@@ -8559,15 +8581,24 @@
                   <div class="crop-modal-tab-panel crop-modal-settings-panel" data-crop-modal-panel="music" hidden>
                     <input type="hidden" name="music_audio_id" id="musicAudioId" value="{{ selected_music_audio_id or '' }}">
                     <input type="hidden" name="music_start_seconds" id="musicStartSeconds" value="{{ selected_music_start_seconds or 0 }}">
-                    <div class="d-flex align-items-start justify-content-between gap-3 mb-3">
-                      <div><div class="caption-tab-section-heading">Background music</div><div class="design-panel-hint">Choose a track and position it under this clip.</div></div>
-                      <label class="btn btn-sm btn-outline-light mb-0">Upload music<input type="file" id="musicUploadInput" accept=".mp3,.wav,.m4a,audio/mpeg,audio/wav,audio/mp4" hidden></label>
-                    </div>
-                    <div class="small text-muted mb-2">Use only music you own or have the rights to.</div>
+                    <div><div class="caption-tab-section-heading">Background music</div><div class="design-panel-hint">Choose a track and position it under this clip.</div></div>
+                    <div class="small music-helper-text">Use only music you own or have the rights to.</div>
                     <div class="music-library-list d-grid gap-2 mb-3" id="musicLibraryList"><div class="small text-muted">Loading music…</div></div>
+                    <div class="music-upload-progress d-none mb-2" id="musicUploadProgress" role="status" aria-live="polite"><span class="spinner-border spinner-border-sm" aria-hidden="true"></span><span id="musicUploadProgressText">Uploading… 0%</span></div>
+                    <div class="music-picker-panel" id="musicPickerPanel">
+                      <div class="d-flex align-items-center justify-content-between gap-2 mb-2">
+                        <strong>Choose music</strong>
+                        <button type="button" class="btn-close btn-close-white" id="musicPickerClose" aria-label="Close music picker"></button>
+                      </div>
+                      <label class="btn btn-sm btn-outline-light music-upload-button mb-2" id="musicUploadButton"><i class="bi bi-cloud-arrow-up me-1"></i>Upload music<input type="file" id="musicUploadInput" accept=".mp3,.wav,.m4a,audio/mpeg,audio/wav,audio/mp4" hidden></label>
+                      <input type="search" class="form-control form-control-sm mb-2" id="musicSearchInput" placeholder="Search your music" aria-label="Search your music">
+                      <div class="music-picker-list d-grid gap-2" id="musicPickerList"></div>
+                    </div>
                     <div class="music-timeline d-none" id="musicTimeline" aria-label="Drag waveform to choose the music start">
                       <div class="music-timeline-labels"><span>Fit the music to your clip</span><span id="musicStartLabel">Song plays from 0:00 → 0:00</span></div>
+                      <div class="music-timeline-toolbar"><button type="button" class="btn btn-sm btn-outline-light" id="musicTimelinePlay"><i class="bi bi-play-fill"></i> Play</button><span class="small music-helper-text" id="musicTimelineTime">0:00 / 0:00</span></div>
                       <div class="music-timeline-lane"><span class="music-timeline-lane-label">Speech</span><div class="music-speech-lane" id="musicSpeechLane"></div></div>
+                      <div class="music-timeline-lane"><span class="music-timeline-lane-label">Full song</span><div class="music-song-overview"><span class="music-song-overview-window" id="musicSongOverviewWindow"></span></div></div>
                       <div class="music-timeline-lane"><span class="music-timeline-lane-label">Music · drag the song left/right</span><canvas id="musicWaveformCanvas" height="54"></canvas></div>
                       <div class="music-timeline-lane"><span class="music-timeline-lane-label">Music level</span><canvas id="musicEnvelopeCanvas" height="54"></canvas></div>
                       <div class="music-playhead" aria-hidden="true"></div>
@@ -8575,7 +8606,7 @@
                     <div class="music-controls d-none mt-3" id="musicControls">
                       <div class="d-flex justify-content-between"><label for="musicLevel">Music level</label><span id="musicLevelLabel">{{ selected_music_level if selected_music_level is not none else 50 }}%</span></div>
                       <input type="range" class="form-range" name="music_level" id="musicLevel" min="0" max="100" value="{{ selected_music_level if selected_music_level is not none else 50 }}">
-                      <div class="d-flex justify-content-between small text-muted mb-2"><span>Off</span><span>Background</span><span>As loud as voice</span></div>
+                      <div class="music-level-scale small mb-2"><span>Off</span><span>Background</span><span>As loud as voice</span></div>
                       <div class="form-check form-switch"><input class="form-check-input" type="checkbox" name="music_duck" id="musicDuck" value="1" {% if selected_music_duck %}checked{% endif %}><label class="form-check-label" for="musicDuck">Lower music while speaking</label></div>
                       <div class="form-check form-switch"><input class="form-check-input" type="checkbox" name="music_fade_out" id="musicFadeOut" value="1" {% if selected_music_fade_out %}checked{% endif %}><label class="form-check-label" for="musicFadeOut">Fade out at the end</label></div>
                       <button type="button" class="btn btn-sm btn-outline-danger mt-2" id="musicRemoveBtn">Remove music</button>
@@ -22960,6 +22991,13 @@ document.addEventListener("DOMContentLoaded", () => {
   const duck = document.getElementById("musicDuck");
   const fade = document.getElementById("musicFadeOut");
   const list = document.getElementById("musicLibraryList");
+  const picker = document.getElementById("musicPickerPanel");
+  const pickerList = document.getElementById("musicPickerList");
+  const search = document.getElementById("musicSearchInput");
+  const uploadInput = document.getElementById("musicUploadInput");
+  const uploadButton = document.getElementById("musicUploadButton");
+  const uploadProgress = document.getElementById("musicUploadProgress");
+  const uploadProgressText = document.getElementById("musicUploadProgressText");
   const timeline = document.getElementById("musicTimeline");
   const controls = document.getElementById("musicControls");
   const waveform = document.getElementById("musicWaveformCanvas");
@@ -22969,14 +23007,17 @@ document.addEventListener("DOMContentLoaded", () => {
   const chip = document.getElementById("musicPreviewChip");
   const startLabel = document.getElementById("musicStartLabel");
   const levelLabel = document.getElementById("musicLevelLabel");
+  const timelinePlay = document.getElementById("musicTimelinePlay");
+  const timelineTime = document.getElementById("musicTimelineTime");
+  const overviewWindow = document.getElementById("musicSongOverviewWindow");
   const playhead = timeline?.querySelector(".music-playhead");
   if (!audioId || !list || !previewAudio) return;
   let tracks = [];
   let selected = null;
   let dragX = null;
-  let audioContext = null;
-  let previewGain = null;
-  let libraryPreviewing = false;
+  let audioMode = "";
+  let libraryStartedAt = 0;
+  let uploadBusy = false;
 
   const activeCard = () => {
     const activeIndex = document.getElementById("clip-management-panel")?.dataset.activePlanIndex;
@@ -22985,6 +23026,13 @@ document.addEventListener("DOMContentLoaded", () => {
   const clipDuration = () => Math.max(.1, Number(activeCard()?.dataset.duration || 0) || 30);
   const speechRanges = () => { try { return JSON.parse(activeCard()?.dataset.musicSpeechRanges || "[]"); } catch (_) { return []; } };
   const formatTime = (seconds) => `${Math.floor(Math.max(0, seconds) / 60)}:${String(Math.floor(Math.max(0, seconds) % 60)).padStart(2, "0")}`;
+  const fallbackName = (track) => String(track?.display_name || track?.filename || "Music").replace(/\.[^.]+$/, "");
+  const updateMusicBadges = () => {
+    document.querySelectorAll(".created-music-badge[data-music-audio-id]").forEach((badge) => {
+      const track=tracks.find((item)=>item.id===badge.dataset.musicAudioId); if(!track)return;
+      const name=fallbackName(track); const nameNode=badge.querySelector(".created-music-name"); if(nameNode)nameNode.textContent=name; badge.title=name;
+    });
+  };
   const showMusicGuestGate = () => window.handleGuestGatePayload?.({gate:"signup", action:"music_upload", register_url:{{ url_for('video_shorts_bp.register', next=request.path, action='music_upload')|tojson }}, login_url:{{ url_for('video_shorts_bp.login', next=request.path, action='music_upload')|tojson }}});
   const dispatch = (field) => field?.dispatchEvent(new Event("input", { bubbles: true }));
   const gainForLevel = () => { const n = Math.max(0, Math.min(100, Number(level?.value || 0))); return n <= 0 ? 0 : Math.pow(10, (40 * (n / 100 - 1)) / 20); };
@@ -22999,14 +23047,55 @@ document.addEventListener("DOMContentLoaded", () => {
     }
     return 1;
   };
-  const ensureAudioGraph = () => {
-    if (previewGain || !window.AudioContext) return;
+  const resetPlayButtons = () => {
+    document.querySelectorAll(".music-library-play").forEach((button) => {
+      const icon = button.querySelector("i");
+      if (icon) icon.className = "bi bi-play-fill";
+      button.setAttribute("aria-label", "Play music");
+    });
+  };
+  const setAudioTrack = (track) => {
+    if (!track?.url) return false;
+    if (previewAudio.dataset.trackId !== String(track.id || "")) {
+      previewAudio.pause();
+      previewAudio.src = track.url;
+      previewAudio.dataset.trackId = String(track.id || "");
+      previewAudio.load();
+    }
+    return true;
+  };
+  const stopSharedAudio = ({ clearMode = true } = {}) => {
+    previewAudio.pause();
+    resetPlayButtons();
+    if (clearMode) { audioMode = ""; libraryStartedAt = 0; }
+  };
+  const pauseVideoSide = () => {
+    activeCard()?.querySelector("video")?.pause?.();
+    window.__trsClipSelectorController?.pausePlayer?.();
+  };
+  const setTimelineButtonState = (playing) => {
+    if (timelinePlay) timelinePlay.innerHTML = playing ? '<i class="bi bi-pause-fill"></i> Pause' : '<i class="bi bi-play-fill"></i> Play';
+  };
+  const playLibraryTrack = async (track, button) => {
+    const samePlaying = audioMode === "library" && previewAudio.dataset.trackId === String(track.id || "") && !previewAudio.paused;
+    if (samePlaying) {
+      stopSharedAudio();
+      return;
+    }
+    pauseVideoSide();
+    resetPlayButtons();
+    if (!setAudioTrack(track)) return;
+    audioMode = "library";
+    libraryStartedAt = Date.now();
+    previewAudio.volume = 1;
+    const icon = button?.querySelector("i");
+    if (icon) icon.className = "bi bi-pause-fill";
+    button?.setAttribute("aria-label", "Pause music");
     try {
-      audioContext = new window.AudioContext();
-      const source = audioContext.createMediaElementSource(previewAudio);
-      previewGain = audioContext.createGain();
-      source.connect(previewGain).connect(audioContext.destination);
-    } catch (_) {}
+      await previewAudio.play();
+    } catch (_) {
+      stopSharedAudio();
+    }
   };
   const drawMiniWave = (canvas, peaks) => {
     const ctx = canvas.getContext("2d"); const ratio = window.devicePixelRatio || 1;
@@ -23033,39 +23122,80 @@ document.addEventListener("DOMContentLoaded", () => {
     speechLane.innerHTML="";
     ranges.forEach((range) => { const el=document.createElement("span"); el.className="music-speech-range"; el.style.left=`${100*Number(range.start||0)/clipDuration()}%`; el.style.width=`${100*Math.max(0,Number(range.end||0)-Number(range.start||0))/clipDuration()}%`; speechLane.appendChild(el); });
     startLabel.textContent = `Song plays from ${formatTime(start)} → ${formatTime(start + clipDuration())}`;
+    if (overviewWindow) {
+      overviewWindow.style.left = `${Math.min(100, 100 * start / songDuration)}%`;
+      overviewWindow.style.width = `${Math.min(100, 100 * clipDuration() / songDuration)}%`;
+    }
+  };
+  const setPickerOpen = (open) => {
+    picker?.classList.toggle("is-open", !!open);
+    if (open) { renderPicker(); window.setTimeout(() => search?.focus(), 0); }
+  };
+  const bindPlayButton = (button, track) => {
+    if (!button) return;
+    if (audioMode==="library"&&previewAudio.dataset.trackId===String(track.id||"")&&!previewAudio.paused) { const icon=button.querySelector("i"); if(icon)icon.className="bi bi-pause-fill"; button.setAttribute("aria-label","Pause music"); }
+    button.addEventListener("click", () => { void playLibraryTrack(track, button); });
+  };
+  const beginRename = (track, nameNode) => {
+    const input=document.createElement("input"); input.type="text"; input.maxLength=100; input.className="form-control form-control-sm music-rename-input"; input.value=fallbackName(track);
+    nameNode.replaceWith(input); input.focus(); input.select(); let saving=false; let cancelled=false;
+    const save=async()=>{if(saving||cancelled)return; const value=input.value.trim(); if(!value){input.focus();return;} saving=true; try { const response=await fetch(`${listUrl}/${encodeURIComponent(track.id)}`,{method:"PATCH",headers:{"Content-Type":"application/json","X-Requested-With":"XMLHttpRequest"},body:JSON.stringify({display_name:value})}); const payload=await response.json().catch(()=>({})); if(!response.ok)throw new Error(payload.error||"Name could not be saved."); Object.assign(track,payload.audio||{display_name:value}); updateMusicBadges(); renderSelected(); renderPicker(); } catch(error) { saving=false; input.classList.add("is-invalid"); input.title=error.message||"Name could not be saved."; }};
+    input.addEventListener("keydown",(event)=>{if(event.key==="Enter"){event.preventDefault();input.blur();}else if(event.key==="Escape"){event.preventDefault();cancelled=true;renderSelected();}}); input.addEventListener("blur",()=>{void save();},{once:true});
+  };
+  const renderSelected = () => {
+    list.innerHTML="";
+    if (!selected) {
+      const drop=document.createElement("button"); drop.type="button"; drop.className="music-empty-drop"; drop.innerHTML='<i class="bi bi-cloud-arrow-up fs-3 d-block mb-1"></i><strong>Add music to your Short</strong><span class="d-block small music-helper-text">MP3, WAV or M4A</span>'; list.appendChild(drop); bindDropZone(drop);
+      if (tracks.length) { const choose=document.createElement("button"); choose.type="button"; choose.className="btn btn-sm btn-outline-light"; choose.textContent="Choose from your music"; choose.addEventListener("click",()=>setPickerOpen(true)); list.appendChild(choose); }
+      return;
+    }
+    const card=document.createElement("div"); card.className="music-selected-card"; card.dataset.audioId=selected.id;
+    card.innerHTML='<button type="button" class="btn btn-sm btn-outline-light music-library-play" aria-label="Play music"><i class="bi bi-play-fill"></i></button><div class="music-library-meta"><div class="music-selected-name-row"><span class="music-selected-name"></span><button type="button" class="music-rename-btn" aria-label="Rename music"><i class="bi bi-pencil"></i></button></div><small class="d-block music-helper-text"></small></div><span class="badge text-bg-primary">Selected</span><canvas class="music-selected-wave" height="34"></canvas>';
+    const name=card.querySelector(".music-selected-name"); name.textContent=fallbackName(selected); card.querySelector("small").textContent=formatTime(selected.duration_seconds||0); bindPlayButton(card.querySelector(".music-library-play"),selected); card.querySelector(".music-rename-btn").addEventListener("click",()=>beginRename(selected,name)); list.appendChild(card); drawMiniWave(card.querySelector("canvas"),selected.peaks);
+    const actions=document.createElement("div"); actions.className="music-selected-actions"; actions.innerHTML='<button type="button" class="btn btn-sm btn-outline-light music-change-btn">Change music</button><button type="button" class="btn btn-sm btn-outline-danger music-remove-selection">Remove</button>'; actions.querySelector(".music-change-btn").addEventListener("click",()=>setPickerOpen(true)); actions.querySelector(".music-remove-selection").addEventListener("click",removeMusic); list.appendChild(actions);
+  };
+  const renderPicker = () => {
+    if (!pickerList) return;
+    const query=String(search?.value||"").trim().toLocaleLowerCase(); pickerList.innerHTML="";
+    const filtered=tracks.filter((track)=>fallbackName(track).toLocaleLowerCase().includes(query));
+    if(!filtered.length){const empty=document.createElement("div");empty.className="small music-helper-text";empty.textContent=query?"No matching music.":"No music uploaded yet.";pickerList.appendChild(empty);return;}
+    filtered.forEach((track)=>{const row=document.createElement("div");row.className="music-library-item";row.dataset.audioId=track.id;row.classList.toggle("is-active",track.id===audioId.value);row.innerHTML='<button type="button" class="btn btn-sm btn-outline-light music-library-play" aria-label="Play music"><i class="bi bi-play-fill"></i></button><canvas width="90" height="30"></canvas><span class="music-library-meta"><strong></strong><small class="d-block music-helper-text"></small></span><button type="button" class="btn btn-sm btn-outline-light music-library-use">Use</button>';row.querySelector("strong").textContent=fallbackName(track);row.querySelector("small").textContent=formatTime(track.duration_seconds||0);bindPlayButton(row.querySelector(".music-library-play"),track);row.querySelector(".music-library-use").addEventListener("click",()=>chooseTrack(track));pickerList.appendChild(row);drawMiniWave(row.querySelector("canvas"),track.peaks);});
   };
   const syncUi = () => {
     selected = tracks.find((track) => track.id === audioId.value) || null;
-    list.querySelectorAll(".music-library-item").forEach((button) => button.classList.toggle("is-active", button.dataset.audioId === audioId.value));
     timeline?.classList.toggle("d-none", !selected); controls?.classList.toggle("d-none", !selected); chip?.classList.toggle("d-none", !selected);
-    if (selected) { previewAudio.src=selected.url || ""; chip.querySelector("span").textContent=`${selected.display_name || "Music"} · ${level?.value || 0}%`; drawTimeline(); }
-    list.querySelectorAll(".music-library-item").forEach((row)=>{const use=row.querySelector(".music-library-use");if(use)use.textContent=row.dataset.audioId===audioId.value?"✓ In this Short":"Use";});
+    if (selected) { if(audioMode!=="library")setAudioTrack(selected); chip.querySelector("span").textContent=`${fallbackName(selected)} · ${level?.value || 0}%`; drawTimeline(); }
+    else { stopSharedAudio(); setPickerOpen(false); }
+    renderSelected(); renderPicker();
   };
   const chooseTrack = (track) => {
     if (isGuest) { showMusicGuestGate(); return; }
-    libraryPreviewing=false; audioId.value=track.id; startField.value="0"; if(level)level.value="50"; if(levelLabel)levelLabel.textContent="50%"; dispatch(audioId); dispatch(startField); dispatch(level); syncUi(); ensureAudioGraph();
+    stopSharedAudio(); audioId.value=track.id; startField.value="0"; if(level)level.value="50"; if(levelLabel)levelLabel.textContent="50%"; dispatch(audioId); dispatch(startField); dispatch(level); setPickerOpen(false); syncUi();
   };
   const renderList = () => {
-    list.innerHTML="";
-    if (!tracks.length) { list.innerHTML='<button type="button" class="music-empty-drop" id="musicEmptyDrop"><i class="bi bi-cloud-arrow-up fs-3 d-block mb-1"></i><strong>Add music to your Short</strong><span class="d-block small text-muted">MP3, WAV or M4A</span></button>'; bindDropZone(list.querySelector("#musicEmptyDrop")); return; }
-    tracks.forEach((track) => { const row=document.createElement("div"); row.className="music-library-item"; row.dataset.audioId=track.id; row.innerHTML='<button type="button" class="btn btn-sm btn-outline-light music-library-play" aria-label="Play music"><i class="bi bi-play-fill"></i></button><canvas width="90" height="30"></canvas><span class="music-library-meta"><strong></strong><small class="d-block text-muted"></small></span><button type="button" class="btn btn-sm btn-outline-light music-library-use">Use</button>'; row.querySelector("strong").textContent=track.display_name||track.filename||"Music"; row.querySelector("small").textContent=formatTime(track.duration_seconds||0); row.querySelector(".music-library-use").addEventListener("click",()=>chooseTrack(track)); row.querySelector(".music-library-play").addEventListener("click",()=>{ensureAudioGraph(); libraryPreviewing=true; if(previewAudio.src!==track.url)previewAudio.src=track.url||""; if(previewGain)previewGain.gain.value=1; if(previewAudio.paused){previewAudio.play().catch(()=>{});row.querySelector("i").className="bi bi-pause-fill";}else{previewAudio.pause();libraryPreviewing=false;row.querySelector("i").className="bi bi-play-fill";}}); list.appendChild(row); drawMiniWave(row.querySelector("canvas"),track.peaks); }); syncUi();
+    syncUi();
   };
-  const loadTracks = async () => { try { const response=await fetch(listUrl,{headers:{Accept:"application/json"}}); const payload=await response.json(); tracks=Array.isArray(payload.audios)?payload.audios:[]; renderList(); } catch (_) { list.innerHTML='<div class="small text-danger">Music library could not be loaded.</div>'; } };
-  const uploadFile = async (file) => {
-    if(!file)return; const body=new FormData(); body.append("audio",file); body.append("label",file.name.replace(/\.[^.]+$/, ""));
-    const response=await fetch(uploadUrl,{method:"POST",body,headers:{"X-Requested-With":"XMLHttpRequest"}}); const payload=await response.json().catch(()=>({}));
-    if (window.handleGuestGatePayload?.(payload)) return;
-    if(!response.ok){ list.innerHTML=`<div class="small text-danger">${payload.error||"Upload failed."}</div>`; return; }
-    tracks.unshift(payload.audio); renderList(); chooseTrack(payload.audio);
+  const loadTracks = async () => { try { const response=await fetch(listUrl,{headers:{Accept:"application/json"}}); const payload=await response.json(); tracks=(Array.isArray(payload.audios)?payload.audios:[]).sort((a,b)=>String(b.created_at||"").localeCompare(String(a.created_at||""))); updateMusicBadges(); renderList(); } catch (_) { list.innerHTML='<div class="small text-danger">Music library could not be loaded.</div>'; } };
+  const setUploadState = (message="", kind="busy") => {
+    uploadProgress?.classList.toggle("d-none", !message); if(uploadProgressText)uploadProgressText.textContent=message;
+    const spinner=uploadProgress?.querySelector(".spinner-border"); spinner?.classList.toggle("d-none",kind!=="busy"); uploadProgress?.classList.toggle("text-danger",kind==="error");
+  };
+  const setUploadBusy = (busy) => { uploadBusy=busy; if(uploadInput)uploadInput.disabled=busy; uploadButton?.classList.toggle("is-busy",busy); uploadButton?.setAttribute("aria-disabled",busy?"true":"false"); };
+  const uploadFile = (file) => {
+    if(!file||uploadBusy)return Promise.resolve(); if(isGuest){showMusicGuestGate();return Promise.resolve();} setPickerOpen(true); setUploadBusy(true); setUploadState("Uploading… 0%");
+    const body=new FormData(); body.append("audio",file); body.append("label",file.name.replace(/\.[^.]+$/, ""));
+    return new Promise((resolve)=>{const xhr=new XMLHttpRequest();xhr.open("POST",uploadUrl);xhr.setRequestHeader("X-Requested-With","XMLHttpRequest");xhr.upload.addEventListener("progress",(event)=>{if(event.lengthComputable){const percent=Math.min(100,Math.round(event.loaded/event.total*100));setUploadState(percent>=100?"Preparing audio…":`Uploading… ${percent}%`);}});xhr.upload.addEventListener("load",()=>setUploadState("Preparing audio…"));xhr.addEventListener("load",()=>{let payload={};try{payload=JSON.parse(xhr.responseText||"{}");}catch(_){}if(window.handleGuestGatePayload?.(payload)){setUploadState("");return;}if(xhr.status<200||xhr.status>=300){setUploadState(payload.error||"Upload failed. Please try another audio file.","error");return;}tracks=tracks.filter((track)=>track.id!==payload.audio?.id);tracks.unshift(payload.audio);setUploadState("Music ready.","done");chooseTrack(payload.audio);window.setTimeout(()=>setUploadState(""),1800);});xhr.addEventListener("error",()=>setUploadState("Upload failed. Check your connection and try again.","error"));xhr.addEventListener("loadend",()=>{setUploadBusy(false);resolve();});xhr.send(body);});
   };
   const bindDropZone = (drop) => { if(!drop)return; drop.addEventListener("click",()=>document.getElementById("musicUploadInput")?.click()); drop.addEventListener("dragover",(event)=>{event.preventDefault();drop.classList.add("is-dragover");}); drop.addEventListener("dragleave",()=>drop.classList.remove("is-dragover")); drop.addEventListener("drop",(event)=>{event.preventDefault();drop.classList.remove("is-dragover");uploadFile(event.dataTransfer?.files?.[0]);}); };
-  document.getElementById("musicUploadInput")?.addEventListener("click", (event) => { if(isGuest){event.preventDefault();showMusicGuestGate();} });
-  document.getElementById("musicUploadInput")?.addEventListener("change", async (event) => { await uploadFile(event.target.files?.[0]); event.target.value=""; });
-  timeline?.addEventListener("pointerdown", (event) => { if(!selected)return; dragX=event.clientX; timeline.setPointerCapture(event.pointerId); });
-  timeline?.addEventListener("pointermove", (event) => { if(dragX===null||!selected)return; const max=Math.max(0,Number(selected.duration_seconds||0)-clipDuration()); const delta=(dragX-event.clientX)/Math.max(1,timeline.clientWidth)*Math.max(clipDuration(),Number(selected.duration_seconds||0)); startField.value=String(Math.max(0,Math.min(max,Number(startField.value||0)+delta)).toFixed(3)); dragX=event.clientX; dispatch(startField); drawTimeline(); });
+  uploadInput?.addEventListener("click", (event) => { if(isGuest){event.preventDefault();showMusicGuestGate();} });
+  uploadInput?.addEventListener("change", async (event) => { await uploadFile(event.target.files?.[0]); event.target.value=""; });
+  document.getElementById("musicPickerClose")?.addEventListener("click",()=>setPickerOpen(false)); search?.addEventListener("input",renderPicker);
+  timeline?.addEventListener("pointerdown", (event) => { if(!selected||!event.target.closest?.("canvas"))return; dragX=event.clientX; timeline.setPointerCapture(event.pointerId); });
+  timeline?.addEventListener("pointermove", (event) => { if(dragX===null||!selected)return; const max=Math.max(0,Number(selected.duration_seconds||0)-clipDuration()); const delta=(dragX-event.clientX)/Math.max(1,timeline.clientWidth)*Math.max(clipDuration(),Number(selected.duration_seconds||0)); startField.value=String(Math.max(0,Math.min(max,Number(startField.value||0)+delta)).toFixed(3)); dragX=event.clientX; dispatch(startField); drawTimeline(); const playback=previewPlayback(); if(playback?.playing&&audioMode==="timeline")previewAudio.currentTime=(Number(startField.value||0)+playback.time)%Math.max(.1,Number(selected.duration_seconds||0)); });
   timeline?.addEventListener("pointerup",()=>{dragX=null;});
-  level?.addEventListener("input",()=>{levelLabel.textContent=`${level.value}%`; if(selected)chip.querySelector("span").textContent=`${selected.display_name || "Music"} · ${level.value}%`; dispatch(level); drawTimeline();}); duck?.addEventListener("change",()=>{dispatch(duck);drawTimeline();}); fade?.addEventListener("change",()=>{dispatch(fade);drawTimeline();});
-  document.getElementById("musicRemoveBtn")?.addEventListener("click",()=>{audioId.value="";startField.value="0";previewAudio.pause();dispatch(audioId);dispatch(startField);syncUi();});
+  level?.addEventListener("input",()=>{levelLabel.textContent=`${level.value}%`; if(selected)chip.querySelector("span").textContent=`${fallbackName(selected)} · ${level.value}%`; dispatch(level); drawTimeline();}); duck?.addEventListener("change",()=>{dispatch(duck);drawTimeline();}); fade?.addEventListener("change",()=>{dispatch(fade);drawTimeline();});
+  function removeMusic(){audioId.value="";startField.value="0";stopSharedAudio();dispatch(audioId);dispatch(startField);syncUi();}
+  document.getElementById("musicRemoveBtn")?.addEventListener("click",removeMusic);
   const previewPlayback = () => {
     const renderedVideo=activeCard()?.querySelector("video");
     if(renderedVideo)return {time:renderedVideo.currentTime||0,playing:!renderedVideo.paused,rate:renderedVideo.playbackRate||1};
@@ -23075,18 +23205,23 @@ document.addEventListener("DOMContentLoaded", () => {
     return snapshot ? {time:Math.max(0,Number(snapshot.currentTime||0)-Number(activeCard()?.dataset.start||0)),playing:!!snapshot.playing,rate:Number(snapshot.rate||1)} : null;
   };
   const syncPreview = () => {
-    if(libraryPreviewing)return;
+    if(audioMode==="library")return;
     const playback=previewPlayback(); if(!playback||!selected)return;
     const target=(Number(startField.value||0)+playback.time)%Math.max(.1,Number(selected.duration_seconds||0));
+    setAudioTrack(selected);
     if(Math.abs(previewAudio.currentTime-target)>.3)previewAudio.currentTime=target;
-    previewAudio.playbackRate=playback.rate; ensureAudioGraph(); if(previewGain)previewGain.gain.value=gainForLevel()*speechGain(playback.time);
+    previewAudio.playbackRate=playback.rate; previewAudio.volume=Math.max(0,Math.min(1,gainForLevel()*speechGain(playback.time)));
     if(playhead)playhead.style.left=`calc(.5rem + ${(Math.max(0,Math.min(clipDuration(),playback.time))/clipDuration())*100}% - 1px)`;
-    if(playback.playing&&previewAudio.paused){audioContext?.resume?.();previewAudio.play().catch(()=>{});}else if(!playback.playing&&!previewAudio.paused){previewAudio.pause();}
+    if(timelineTime)timelineTime.textContent=`${formatTime(Math.min(clipDuration(),playback.time))} / ${formatTime(clipDuration())}`;
+    setTimelineButtonState(playback.playing);
+    if(playback.playing&&previewAudio.paused){audioMode="timeline";previewAudio.play().catch(()=>{});}else if(!playback.playing&&audioMode==="timeline"&&!previewAudio.paused){previewAudio.pause();}
   };
-  document.addEventListener("play",(event)=>{if(event.target.matches?.(".clip-card video")&&selected){syncPreview();audioContext?.resume?.();previewAudio.play().catch(()=>{});}},true);
+  timelinePlay?.addEventListener("click",()=>{const playback=previewPlayback();if(!playback)return;stopSharedAudio();audioMode="timeline";if(playback.playing){activeCard()?.querySelector("video")?.pause?.();window.__trsClipSelectorController?.pausePlayer?.();setTimelineButtonState(false);return;}const video=activeCard()?.querySelector("video");if(video){if(video.ended||video.currentTime>=clipDuration())video.currentTime=0;video.play().catch(()=>{});}else{window.__trsClipSelectorController?.seekAndPlay?.(Number(activeCard()?.dataset.start||0)+Math.max(0,playback.time||0));}syncPreview();});
+  document.addEventListener("play",(event)=>{if(event.target.matches?.(".clip-card video, #trs-player-frame video")&&selected){stopSharedAudio();audioMode="timeline";syncPreview();}},true);
   document.addEventListener("pause",(event)=>{if(event.target.matches?.(".clip-card video"))previewAudio.pause();},true);
   document.addEventListener("seeking",(event)=>{if(event.target.matches?.(".clip-card video"))syncPreview();},true);
-  window.setInterval(()=>{if(selected)syncPreview();},100);
+  previewAudio.addEventListener("ended",()=>{if(audioMode==="library")stopSharedAudio();});
+  window.setInterval(()=>{if(!selected)return;const playback=previewPlayback();if(audioMode==="library"&&playback?.playing&&Date.now()-libraryStartedAt>350){stopSharedAudio();audioMode="timeline";}syncPreview();},100);
   window.syncMusicEditorFromFields=syncUi;
   loadTracks();
 });
