@@ -142,7 +142,14 @@ from app.video_shorts.services.clip_planning import _fallback_clip_plan
 from app.video_shorts.services.clip_title import generate_clip_title
 from app.video_shorts.services.clip_title import _detect_title_language
 from app.video_shorts.services import render_timing
-from app.video_shorts.services.compositor import _build_static_visual_clip, _compose_trimmed_with_background, _cut_clip, _sanitize_text_for_overlay, _trim_source_to_keep_ranges
+from app.video_shorts.services.music import (
+    build_final_timeline_speech_ranges,
+    compute_audio_waveform,
+    normalize_audio_file,
+    normalize_music_level,
+    normalize_music_start_seconds,
+)
+from app.video_shorts.services.compositor import _build_static_visual_clip, _compose_trimmed_with_background, _cut_clip, _has_audio_stream, _sanitize_text_for_overlay, _trim_source_to_keep_ranges
 from app.video_shorts.services.compositor import _face_aware_fill_zoom_for_segment
 from app.video_shorts.services.compositor import _original_layout_target_dimensions
 from app.video_shorts.services.db import (
@@ -452,6 +459,9 @@ SHORT_EDITOR_DEFAULT_FIELD_NAMES = (
     "show_subtitle",
     "visual_mode",
     "overlay_shapes",
+    "music_level",
+    "music_duck",
+    "music_fade_out",
 )
 
 _TRANSCRIBE_JOB_LOCK = threading.Lock()
@@ -926,6 +936,9 @@ def _short_editor_config_defaults() -> Dict[str, Any]:
         "show_subtitle": True,
         "visual_mode": "video",
         "overlay_shapes": [],
+        "music_level": 50,
+        "music_duck": True,
+        "music_fade_out": True,
     }
 
 
@@ -1026,6 +1039,9 @@ def _clean_short_editor_default_payload(source: Any) -> Dict[str, Any]:
     visual_mode = str(source.get("visual_mode") or defaults["visual_mode"]).strip().lower()
     payload["visual_mode"] = visual_mode if visual_mode in {"video", "static", "created", "podcast"} else "video"
     payload["overlay_shapes"] = _normalize_overlay_shapes(source.get("overlay_shapes"))
+    payload["music_level"] = normalize_music_level(source.get("music_level"), defaults["music_level"])
+    payload["music_duck"] = _normalize_optional_bool(source.get("music_duck"), default=True)
+    payload["music_fade_out"] = _normalize_optional_bool(source.get("music_fade_out"), default=True)
     return payload
 
 
@@ -1903,6 +1919,20 @@ def _save_audio_meta(kind: str, user_id: str, filename: str, payload: Dict[str, 
 
 def _serialize_static_audio(user_id: str, audio_path: Path) -> Dict[str, Any]:
     meta = _read_audio_meta("audio", user_id, audio_path.name)
+    if not isinstance(meta.get("peaks"), list) or meta.get("duration_seconds") is None:
+        key = _user_media_storage_key("audio", user_id, audio_path.name)
+        resolved_path: Any = audio_path if audio_path.exists() else None
+        try:
+            if resolved_path is None:
+                resolved_path = get_media_storage().download_to_temp(key)
+            waveform = compute_audio_waveform(Path(resolved_path))
+            meta.update(waveform)
+            _save_audio_meta("audio", user_id, audio_path.name, meta)
+        except Exception:
+            current_app.logger.exception("Failed to compute audio waveform for %s", key)
+        finally:
+            if resolved_path is not None and resolved_path is not audio_path and hasattr(resolved_path, "cleanup"):
+                resolved_path.cleanup()
     display_name = str(meta.get("label") or audio_path.stem)
     key = _user_media_storage_key("audio", user_id, audio_path.name)
     resolved = get_media_storage().resolve_local_or_s3(key, fallback_local_paths=[audio_path])
@@ -1913,6 +1943,8 @@ def _serialize_static_audio(user_id: str, audio_path: Path) -> Dict[str, Any]:
         "size_bytes": audio_path.stat().st_size if audio_path.exists() else None,
         "url": resolved.public_url or get_media_storage("local").public_url(key),
         "created_at": meta.get("created_at"),
+        "duration_seconds": meta.get("duration_seconds"),
+        "peaks": meta.get("peaks") if isinstance(meta.get("peaks"), list) else [],
     }
 
 
@@ -2356,6 +2388,9 @@ def upload_static_audio():
     current_user = getattr(g, "vs_current_user", None)
     if not current_user:
         return jsonify({"error": "auth required"}), 401
+    gated = _guest_gate_response("music_upload", reason="guest_action", json_only=True)
+    if gated is not None:
+        return gated
     upload = request.files.get("audio")
     if not upload or not upload.filename:
         return jsonify({"error": "audio file required"}), 400
@@ -2391,7 +2426,30 @@ def upload_static_audio():
         final_name = f"{safe_stem[:60]}_{secrets.token_hex(4)}{ext}"
         final_path = _legacy_media_path("audio", user_id, final_name)
         key = _user_media_storage_key("audio", user_id, final_name)
+    input_handle = tempfile.NamedTemporaryFile(prefix="minti-music-upload-", suffix=ext, delete=False)
+    input_handle.write(data)
+    input_handle.close()
+    input_path = Path(input_handle.name)
+    normalized_path: Optional[Path] = None
+    try:
+        normalized_path = normalize_audio_file(input_path, suffix=ext)
+        data = normalized_path.read_bytes()
+        size_bytes = len(data)
+    except Exception as exc:
+        current_app.logger.exception("Music upload normalization failed user_id=%s filename=%s", user_id, original_name.name)
+        return jsonify({"error": f"audio normalization failed: {exc}"}), 400
+    finally:
+        input_path.unlink(missing_ok=True)
+    if usage["limit_bytes"] and usage["used_bytes"] + size_bytes > usage["limit_bytes"]:
+        if normalized_path:
+            normalized_path.unlink(missing_ok=True)
+        return jsonify(
+            {"error": _quota_block_message(_format_size_bytes(usage["limit_bytes"]), _format_size_bytes(usage["used_bytes"]))}
+        ), 403
+    waveform = compute_audio_waveform(normalized_path) if normalized_path else {"peaks": [], "duration_seconds": None}
     storage.put_bytes(data, key, content_type=upload.mimetype or None)
+    if normalized_path:
+        normalized_path.unlink(missing_ok=True)
     _save_audio_meta(
         "audio",
         user_id,
@@ -2400,6 +2458,8 @@ def upload_static_audio():
             "label": (request.form.get("label") or original_name.stem or "Audio").strip(),
             "original_filename": original_name.name,
             "created_at": datetime.utcnow().isoformat() + "Z",
+            "normalized_lufs": -14,
+            **waveform,
         },
     )
     _upsert_storage_asset(
@@ -7634,6 +7694,9 @@ AUTO_RENDER_DESIGN_FIELD_MAP: Dict[str, str] = {
     "visual_mode": "visual_mode",
     "video_overlay_offset": "video_overlay_offset",
     "overlay_shapes": "overlay_shapes",
+    "music_level": "music_level",
+    "music_duck": "music_duck",
+    "music_fade_out": "music_fade_out",
 }
 
 
@@ -8650,6 +8713,12 @@ def _build_render_job_options(
     video_overlay_offset: Optional[int],
     subtitle_text: Optional[str],
     overlay_shapes: Optional[List[Dict[str, Any]]] = None,
+    music_audio_id: str = "",
+    music_level: int = 50,
+    music_start_seconds: float = 0.0,
+    music_duck: bool = True,
+    music_fade_out: bool = True,
+    music_speech_ranges: Optional[List[Dict[str, float]]] = None,
     subtitle_margin_custom: bool = False,
 ) -> Dict[str, Any]:
     return {
@@ -8692,6 +8761,12 @@ def _build_render_job_options(
         "video_overlay_offset": video_overlay_offset,
         "subtitle_text": (subtitle_text or "").strip(),
         "overlay_shapes": _normalize_overlay_shapes(overlay_shapes),
+        "music_audio_id": _normalize_music_audio_id(music_audio_id),
+        "music_level": normalize_music_level(music_level),
+        "music_start_seconds": round(normalize_music_start_seconds(music_start_seconds), 3),
+        "music_duck": _normalize_optional_bool(music_duck, default=True),
+        "music_fade_out": _normalize_optional_bool(music_fade_out, default=True),
+        "music_speech_ranges": music_speech_ranges or [],
     }
 
 
@@ -8851,6 +8926,16 @@ def _normalize_overlay_shapes(raw_value: Any) -> List[Dict[str, Any]]:
     return normalized
 
 
+def _normalize_music_audio_id(raw_value: Any) -> str:
+    value = str(raw_value or "").strip()
+    if not value:
+        return ""
+    safe_name = Path(value).name
+    if safe_name != value or Path(safe_name).suffix.lower() not in _ALLOWED_STATIC_AUDIO_EXTS:
+        return ""
+    return safe_name
+
+
 def _parse_podcast_overlay_short_ids(raw_value: Any) -> List[str]:
     raw = str(raw_value or "").strip()
     if not raw:
@@ -8947,6 +9032,18 @@ def _compute_render_settings_hash_for_plan_entry(
         video_overlay_offset=video.get("video_overlay_offset"),
         subtitle_text=subtitle_text,
         overlay_shapes=_normalize_overlay_shapes(video.get("overlay_shapes")),
+        music_audio_id=_normalize_music_audio_id(video.get("music_audio_id")),
+        music_level=normalize_music_level(video.get("music_level")),
+        music_start_seconds=normalize_music_start_seconds(video.get("music_start_seconds")),
+        music_duck=_normalize_optional_bool(video.get("music_duck"), default=True),
+        music_fade_out=_normalize_optional_bool(video.get("music_fade_out"), default=True),
+        music_speech_ranges=build_final_timeline_speech_ranges(
+            segments,
+            clip_start=start,
+            clip_end=end,
+            edit_keep_ranges=plan_entry.get("edit_keep_ranges"),
+            source_duration=video.get("duration_seconds"),
+        ),
     )
     if canonical:
         return _render_settings_hash_from_options(options)
@@ -11224,6 +11321,9 @@ def generate_short(video_pk):
         video_sql += ", layout_mode"
     if "overlay_shapes" in video_columns:
         video_sql += ", overlay_shapes"
+    for music_column in ("music_audio_id", "music_level", "music_start_seconds", "music_duck", "music_fade_out"):
+        if music_column in video_columns:
+            video_sql += f", {music_column}"
     row = _fetch_scoped_video_row(conn, video_pk, video_sql)
     if not row:
         conn.close()
@@ -11263,6 +11363,9 @@ def generate_short(video_pk):
         cols.append("layout_mode")
     if "overlay_shapes" in video_columns:
         cols.append("overlay_shapes")
+    for music_column in ("music_audio_id", "music_level", "music_start_seconds", "music_duck", "music_fade_out"):
+        if music_column in video_columns:
+            cols.append(music_column)
     video = dict(zip(cols, row))
     video["layout_mode"] = _effective_layout_mode_for_owner(video.get("owner_user_id"), video.get("layout_mode"))
     face_aware_layout_available = _face_aware_layout_enabled_for_owner(video.get("owner_user_id"))
@@ -11610,9 +11713,17 @@ def generate_short(video_pk):
         "show_subtitle": video.get("show_subtitle"),
         "visual_mode": video.get("visual_mode"),
         "overlay_shapes": video.get("overlay_shapes"),
+        "music_level": video.get("music_level"),
+        "music_duck": video.get("music_duck"),
+        "music_fade_out": video.get("music_fade_out"),
     }
     resolved_style_values = _apply_short_editor_defaults(raw_style_values, short_editor_defaults)
     video["overlay_shapes"] = _normalize_overlay_shapes(resolved_style_values.get("overlay_shapes"))
+    video["music_audio_id"] = _normalize_music_audio_id(video.get("music_audio_id"))
+    video["music_level"] = normalize_music_level(resolved_style_values.get("music_level"))
+    video["music_start_seconds"] = normalize_music_start_seconds(video.get("music_start_seconds"))
+    video["music_duck"] = _normalize_optional_bool(resolved_style_values.get("music_duck"), default=True)
+    video["music_fade_out"] = _normalize_optional_bool(resolved_style_values.get("music_fade_out"), default=True)
 
     video_font_key = resolved_style_values.get("font") or DEFAULT_EDITOR_TITLE_FONT_KEY
     video_title_font_size = resolved_style_values.get("title_font_size") or DEFAULT_EDITOR_TITLE_FONT_SIZE
@@ -11947,6 +12058,11 @@ def generate_short(video_pk):
     selected_show_subtitle = video_show_subtitle if video_show_subtitle is not None else True
     selected_video_overlay_offset = video_overlay_offset
     selected_overlay_shapes = video.get("overlay_shapes") or []
+    selected_music_audio_id = video.get("music_audio_id") or ""
+    selected_music_level = video.get("music_level")
+    selected_music_start_seconds = video.get("music_start_seconds")
+    selected_music_duck = video.get("music_duck")
+    selected_music_fade_out = video.get("music_fade_out")
     try:
         selected_video_overlay_offset = int(selected_video_overlay_offset)
     except Exception:
@@ -12731,6 +12847,20 @@ def generate_short(video_pk):
         except Exception:
             auto_layout_summary = ""
 
+        music_speech_ranges = build_final_timeline_speech_ranges(
+            segments,
+            clip_start=start,
+            clip_end=end,
+            edit_keep_ranges=entry.get("edit_keep_ranges"),
+            source_duration=video.get("duration_seconds"),
+        )
+        row_music_audio_id = _normalize_music_audio_id(
+            entry.get("music_audio_id") if "music_audio_id" in entry else video.get("music_audio_id")
+        )
+        row_music_level = normalize_music_level(
+            entry.get("music_level") if "music_level" in entry else video.get("music_level")
+        )
+
         clip_rows.append({
             "plan_index": pi,
             "origin": origin,
@@ -12758,6 +12888,21 @@ def generate_short(video_pk):
             "render_aspect": render_aspect,
             "is_original_layout": is_original_layout_preview,
             "auto_layout_summary": auto_layout_summary,
+            "music_audio_id": row_music_audio_id,
+            "music_level": row_music_level,
+            "music_start_seconds": normalize_music_start_seconds(
+                entry.get("music_start_seconds") if "music_start_seconds" in entry else video.get("music_start_seconds")
+            ),
+            "music_duck": _normalize_optional_bool(
+                entry.get("music_duck") if "music_duck" in entry else video.get("music_duck"),
+                default=True,
+            ),
+            "music_fade_out": _normalize_optional_bool(
+                entry.get("music_fade_out") if "music_fade_out" in entry else video.get("music_fade_out"),
+                default=True,
+            ),
+            "music_speech_ranges": music_speech_ranges,
+            "has_music": bool(row_music_audio_id and row_music_level > 0),
             "media_version": media_version,
             "subtitle": subtitle_source,
             "status": status,
@@ -13126,6 +13271,11 @@ def generate_short(video_pk):
         selected_visual_mode=selected_visual_mode,
         selected_video_overlay_offset=selected_video_overlay_offset,
         selected_overlay_shapes=selected_overlay_shapes,
+        selected_music_audio_id=selected_music_audio_id,
+        selected_music_level=selected_music_level,
+        selected_music_start_seconds=selected_music_start_seconds,
+        selected_music_duck=selected_music_duck,
+        selected_music_fade_out=selected_music_fade_out,
         debug_info=debug_info,
         clip_rows=clip_rows,
         clip_edit_words=clip_edit_words,
@@ -28050,6 +28200,11 @@ def save_short_settings(video_pk):
             podcast_overlay_short_ids = []
     podcast_overlay_short_ids = list(dict.fromkeys(podcast_overlay_short_ids))[:2]
     overlay_shapes = _normalize_overlay_shapes(request.form.get("overlay_shapes"))
+    music_audio_id = _normalize_music_audio_id(request.form.get("music_audio_id"))
+    music_level = normalize_music_level(request.form.get("music_level"))
+    music_start_seconds = normalize_music_start_seconds(request.form.get("music_start_seconds"))
+    music_duck = _normalize_optional_bool(request.form.get("music_duck"), default=True)
+    music_fade_out = _normalize_optional_bool(request.form.get("music_fade_out"), default=True)
 
     conn = get_db()
     _ensure_video_crop_schema(conn)
@@ -28073,6 +28228,12 @@ def save_short_settings(video_pk):
         return jsonify(success=False, message="Video not found"), 404
     if subscribe_overlay_value is None:
         subscribe_overlay_enabled = bool(row[1]) if len(row) > 1 and row[1] is not None else True
+    if music_audio_id and editor_owner_user_id:
+        music_path = _resolve_user_audio_path(editor_owner_user_id, music_audio_id)
+        if not music_path:
+            music_audio_id = ""
+        elif hasattr(music_path, "cleanup"):
+            music_path.cleanup()
     if podcast_audio_filename and editor_owner_user_id:
         if not _resolve_user_podcast_audio_path(editor_owner_user_id, podcast_audio_filename):
             podcast_audio_filename = ""
@@ -28118,6 +28279,11 @@ def save_short_settings(video_pk):
             "visual_mode": visual_mode,
             "podcast_overlay_short_ids": json.dumps(podcast_overlay_short_ids, ensure_ascii=False),
             "overlay_shapes": json.dumps(overlay_shapes, ensure_ascii=False, separators=(",", ":")),
+            "music_audio_id": music_audio_id or None,
+            "music_level": music_level,
+            "music_start_seconds": music_start_seconds,
+            "music_duck": music_duck,
+            "music_fade_out": music_fade_out,
         }
         source_fields_by_column = {
             "title_font_key": "font",
@@ -28149,6 +28315,11 @@ def save_short_settings(video_pk):
             "visual_mode": "visual_mode",
             "podcast_overlay_short_ids": "podcast_overlay_short_ids",
             "overlay_shapes": "overlay_shapes",
+            "music_audio_id": "music_audio_id",
+            "music_level": "music_level",
+            "music_start_seconds": "music_start_seconds",
+            "music_duck": "music_duck",
+            "music_fade_out": "music_fade_out",
         }
         if "visual_mode" in form_fields:
             source_fields_by_column["podcast_audio_filename"] = "visual_mode"
@@ -28402,6 +28573,11 @@ def autoclip_video(video_pk):
     video_owner_user_id = None
     video_layout_mode = "manual"
     video_overlay_shapes: List[Dict[str, Any]] = []
+    video_music_audio_id = ""
+    video_music_level = 50
+    video_music_start_seconds = 0.0
+    video_music_duck = True
+    video_music_fade_out = True
     try:
         conn_rw = get_db()
         _ensure_video_crop_schema(conn_rw)
@@ -28432,6 +28608,9 @@ def autoclip_video(video_pk):
             crop_sql += ", overlay_shapes"
         if "caption_anchor" in crop_columns:
             crop_sql += ", caption_anchor"
+        for music_column in ("music_audio_id", "music_level", "music_start_seconds", "music_duck", "music_fade_out"):
+            if music_column in crop_columns:
+                crop_sql += f", {music_column}"
         crop_sql += " FROM youtube_videos WHERE video_id = ?"
         crop_params: List[Any] = [vid]
         crop_sql += " AND owner_user_id = ? AND brand_id = ?"
@@ -28826,6 +29005,7 @@ def autoclip_video(video_pk):
             layout_mode_index = None
             overlay_shapes_index = None
             caption_anchor_index = None
+            music_column_indexes: Dict[str, int] = {}
             if "crop_locked" in crop_columns:
                 crop_locked_index = optional_index
                 optional_index += 1
@@ -28844,6 +29024,10 @@ def autoclip_video(video_pk):
             if "caption_anchor" in crop_columns:
                 caption_anchor_index = optional_index
                 optional_index += 1
+            for music_column in ("music_audio_id", "music_level", "music_start_seconds", "music_duck", "music_fade_out"):
+                if music_column in crop_columns:
+                    music_column_indexes[music_column] = optional_index
+                    optional_index += 1
             has_split_columns = len(crop_row) >= 35
             video_crop_ratios = {
                 "split_enabled": bool(crop_row[query_indexes["split_enabled"]]) if query_indexes["split_enabled"] is not None else False,
@@ -28873,6 +29057,16 @@ def autoclip_video(video_pk):
                 video_caption_anchor = str(crop_row[caption_anchor_index] or "bottom").strip().lower()
                 if video_caption_anchor not in {"top", "center", "bottom"}:
                     video_caption_anchor = "bottom"
+            if "music_audio_id" in music_column_indexes:
+                video_music_audio_id = _normalize_music_audio_id(crop_row[music_column_indexes["music_audio_id"]])
+            if "music_level" in music_column_indexes:
+                video_music_level = normalize_music_level(crop_row[music_column_indexes["music_level"]])
+            if "music_start_seconds" in music_column_indexes:
+                video_music_start_seconds = normalize_music_start_seconds(crop_row[music_column_indexes["music_start_seconds"]])
+            if "music_duck" in music_column_indexes:
+                video_music_duck = _normalize_optional_bool(crop_row[music_column_indexes["music_duck"]], default=True)
+            if "music_fade_out" in music_column_indexes:
+                video_music_fade_out = _normalize_optional_bool(crop_row[music_column_indexes["music_fade_out"]], default=True)
             video_font_key = crop_row[query_indexes["title_font_key"]]
             video_title_font_size = crop_row[query_indexes["title_font_size"]]
             video_sub_font_key = crop_row[query_indexes["subtitle_font_key"]]
@@ -29061,6 +29255,13 @@ def autoclip_video(video_pk):
     if not queued_job:
         try:
             edit_keep_ranges_for_job = _normalize_edit_keep_ranges(plan_entry.get("edit_keep_ranges"))
+            music_speech_ranges_for_job = build_final_timeline_speech_ranges(
+                segments,
+                clip_start=start,
+                clip_end=end,
+                edit_keep_ranges=edit_keep_ranges_for_job,
+                source_duration=duration_seconds,
+            )
             effective_subtitle_text = (
                 (plan_entry.get("transcript_full_custom") or "").strip()
                 or (
@@ -29117,6 +29318,12 @@ def autoclip_video(video_pk):
                 video_overlay_offset=video_overlay_offset,
                 subtitle_text=effective_subtitle_text,
                 overlay_shapes=video_overlay_shapes,
+                music_audio_id=video_music_audio_id,
+                music_level=video_music_level,
+                music_start_seconds=video_music_start_seconds,
+                music_duck=video_music_duck,
+                music_fade_out=video_music_fade_out,
+                music_speech_ranges=music_speech_ranges_for_job,
             )
             if edit_keep_ranges_for_job:
                 job_options["edit_keep_ranges"] = edit_keep_ranges_for_job
@@ -29445,6 +29652,7 @@ def autoclip_video(video_pk):
     subtitle_overlay_events: List[Dict[str, Any]] = []
     subtitle_overlay_cleanup_paths: List[Path] = []
     multi_range_source_path: Optional[Path] = None
+    music_path: Optional[Path] = None
     made = 0
     missing_outputs = 0
     try:
@@ -29462,6 +29670,13 @@ def autoclip_video(video_pk):
         if duration_seconds and not podcast_audio_path:
             adj_end = min(adj_end, float(duration_seconds))
         edit_keep_ranges = _normalize_edit_keep_ranges(plan_entry.get("edit_keep_ranges"))
+        music_speech_ranges = build_final_timeline_speech_ranges(
+            segments,
+            clip_start=start,
+            clip_end=end,
+            edit_keep_ranges=edit_keep_ranges,
+            source_duration=duration_seconds,
+        )
         if len(edit_keep_ranges) > 1 and not podcast_audio_path:
             multi_range_source_path = Path(tempfile.gettempdir()) / f"short_edit_ranges_{vid}_{plan_index}_{secrets.token_hex(5)}.mp4"
             multi_range_duration = _trim_source_to_keep_ranges(src_path, edit_keep_ranges, multi_range_source_path)
@@ -29749,6 +29964,7 @@ def autoclip_video(video_pk):
             override_source = None
             podcast_bg_image_source = None
             created_video_is_temp = False
+            is_created_video = False
             if video_static_visual_key:
                 user_static_image_path = None
                 is_user_static = video_static_visual_key.startswith("user:")
@@ -29903,6 +30119,25 @@ def autoclip_video(video_pk):
             )
             if not video_static_visual_key:
                 override_source = None
+            created_visual_has_own_music = bool(
+                is_created_video
+                and override_source
+                and _has_audio_stream(Path(override_source))
+            )
+            if (
+                video_music_audio_id
+                and video_owner_user_id
+                and not video_is_music_only
+                and not podcast_audio_path
+                and not created_visual_has_own_music
+            ):
+                music_path = _resolve_user_audio_path(str(video_owner_user_id), video_music_audio_id)
+                if not music_path:
+                    current_app.logger.warning(
+                        "Selected music audio is missing user_id=%s audio_id=%s",
+                        video_owner_user_id,
+                        video_music_audio_id,
+                    )
             overlay_offset = locals().get("selected_video_overlay_offset", video_overlay_offset)
             face_track_smooth_path = _preview_face_track_smooth_path(str(vid), start, end)
             if not face_track_smooth_path.exists():
@@ -30040,7 +30275,13 @@ def autoclip_video(video_pk):
                 music_only=video_is_music_only,
                 face_track_smooth_path=face_track_smooth_path,
                 overlay_shapes=video_overlay_shapes,
-                    outreach_layout=outreach_render,
+                music_path=music_path,
+                music_level=video_music_level,
+                music_start_seconds=video_music_start_seconds,
+                music_duck=video_music_duck,
+                music_fade_out=video_music_fade_out,
+                music_speech_ranges=music_speech_ranges,
+                outreach_layout=outreach_render,
                 )
             if face_aware_layout_result and face_aware_layout_result.get("enabled"):
                 plan_entry["auto_layout_segments"] = [
@@ -30167,6 +30408,11 @@ def autoclip_video(video_pk):
             plan_entry["audio_start"] = adj_start
             plan_entry["audio_end"] = adj_end
             plan_entry["output_filename"] = clip_filename
+            plan_entry["music_audio_id"] = video_music_audio_id
+            plan_entry["music_level"] = video_music_level
+            plan_entry["music_start_seconds"] = round(video_music_start_seconds, 3)
+            plan_entry["music_duck"] = bool(video_music_duck)
+            plan_entry["music_fade_out"] = bool(video_music_fade_out)
             try:
                 rendered_info = _probe_video_stream_info(final_file, log=current_app.logger)
                 rendered_width = _coerce_positive_int(rendered_info.get("width"))
@@ -30453,6 +30699,7 @@ def autoclip_video(video_pk):
             except Exception:
                 pass
         _cleanup_video_shorts_temp_path(podcast_audio_path)
+        _cleanup_video_shorts_temp_path(music_path)
         for overlay_source in podcast_overlay_video_sources:
             _cleanup_video_shorts_temp_path(overlay_source)
         _cleanup_resolved_source_video(src_path, src_path_is_temp)
@@ -30515,6 +30762,9 @@ def regenerate_clip_video(video_pk: int, plan_index: int):
             video_sql += ", layout_mode"
         if "overlay_shapes" in video_columns:
             video_sql += ", overlay_shapes"
+        for music_column in ("music_audio_id", "music_level", "music_start_seconds", "music_duck", "music_fade_out"):
+            if music_column in video_columns:
+                video_sql += f", {music_column}"
         video_row = _fetch_scoped_video_row(conn, video_pk, video_sql)
     finally:
         conn.close()
@@ -30543,6 +30793,9 @@ def regenerate_clip_video(video_pk: int, plan_index: int):
         video_cols.append("layout_mode")
     if "overlay_shapes" in video_columns:
         video_cols.append("overlay_shapes")
+    for music_column in ("music_audio_id", "music_level", "music_start_seconds", "music_duck", "music_fade_out"):
+        if music_column in video_columns:
+            video_cols.append(music_column)
     video = dict(zip(video_cols, video_row))
     video["layout_mode"] = _effective_layout_mode_for_owner(video.get("owner_user_id"), video.get("layout_mode"))
     plan_entries = _load_plan_entries(source_video_id, video_pk=video_pk)

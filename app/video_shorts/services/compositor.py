@@ -47,6 +47,7 @@ from app.video_shorts.services.media_utils import (
     run_media_subprocess,
     scale_media_timeout,
 )
+from app.video_shorts.services.music import music_volume_expression, normalize_music_level
 from app.video_shorts.services import render_timing
 
 SUBSCRIBE_OVERLAY_SCALE = DESIGN_GEOMETRY["subscribe_scale"]
@@ -2573,6 +2574,12 @@ def _compose_trimmed_with_background(
     music_only: bool = False,
     face_track_smooth_path: Optional[Path] = None,
     overlay_shapes: Optional[list[Dict[str, Any]]] = None,
+    music_path: Optional[Path] = None,
+    music_level: int = 50,
+    music_start_seconds: float = 0.0,
+    music_duck: bool = True,
+    music_fade_out: bool = True,
+    music_speech_ranges: Optional[list[Dict[str, float]]] = None,
     outreach_layout: bool = False,
 ):
     """Single-pass trim + compose to reduce processing time."""
@@ -3113,7 +3120,7 @@ def _compose_trimmed_with_background(
                         "-filter_complex",
                         "[1:a]aresample=async=1:first_pts=0[a_main];"
                         "[0:a]aresample=async=1:first_pts=0[a_bg];"
-                        "[a_main][a_bg]amix=inputs=2:duration=first:dropout_transition=0[a_mix]",
+                        "[a_main][a_bg]amix=inputs=2:duration=first:dropout_transition=0:normalize=0[a_mix]",
                         "-map",
                         "0:v",
                         "-map",
@@ -4292,6 +4299,43 @@ def _compose_trimmed_with_background(
             f"{final_label}{overlay_src_label}overlay=(W-w)/2:{subscribe_y_expr}:shortest=1{overlay_out_label}"
         )
         final_label = overlay_out_label
+    music_enabled = bool(
+        music_path
+        and Path(music_path).exists()
+        and normalize_music_level(music_level) > 0
+        and not music_only
+        and not podcast_mode
+    )
+    music_input_index = next_video_input_index + (1 if overlay_enabled else 0)
+    music_audio_map = None
+    if music_enabled:
+        volume_expr = music_volume_expression(
+            music_level,
+            music_speech_ranges or [],
+            duck=bool(music_duck),
+        ).replace(",", r"\,")
+        music_filters = (
+            f"[{music_input_index}:a]atrim=start={max(0.0, float(music_start_seconds or 0.0)):.3f}:"
+            f"duration={duration:.3f},asetpts=PTS-STARTPTS,aresample=async=1:first_pts=0,"
+            f"volume='{volume_expr}':eval=frame"
+        )
+        if music_fade_out:
+            fade_duration = min(1.5, duration)
+            music_filters += f",afade=t=out:st={max(0.0, duration - fade_duration):.3f}:d={fade_duration:.3f}"
+        music_filters += "[music_bg]"
+        filter_parts.append(music_filters)
+        voice_input_index = 2 if direct_audio_source is not None else 1
+        voice_source = direct_audio_source is not None or _has_audio_stream(clip_video_source)
+        if voice_source:
+            filter_parts.append(
+                f"[{voice_input_index}:a]aresample=async=1:first_pts=0[voice_main]"
+            )
+            filter_parts.append(
+                "[voice_main][music_bg]amix=inputs=2:duration=first:dropout_transition=0:normalize=0[a_music_mix]"
+            )
+            music_audio_map = "[a_music_mix]"
+        else:
+            music_audio_map = "[music_bg]"
     filter_complex = ";".join(filter_parts)
 
     out_path.parent.mkdir(parents=True, exist_ok=True)
@@ -4336,6 +4380,9 @@ def _compose_trimmed_with_background(
         cmd.extend(["-i", str(effective_subtitle_overlay_path)])
     if overlay_enabled:
         cmd.extend(["-stream_loop", "-1", "-i", str(overlay_asset_path)])
+    if music_enabled:
+        cmd.extend(["-stream_loop", "-1", "-i", str(music_path)])
+        audio_map = music_audio_map or audio_map
     cmd.extend(
         [
             "-filter_complex",

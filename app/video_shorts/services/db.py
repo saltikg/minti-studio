@@ -633,6 +633,11 @@ def _ensure_video_crop_schema(conn) -> set:
         ("original_zoom_rect", "VARCHAR", None),
         ("layout_mode", "VARCHAR", None),
         ("overlay_shapes", "VARCHAR", None),
+        ("music_audio_id", "VARCHAR", None),
+        ("music_level", "INTEGER", 50),
+        ("music_start_seconds", "DOUBLE", 0),
+        ("music_duck", "BOOLEAN", True),
+        ("music_fade_out", "BOOLEAN", True),
         ("creator_name", "VARCHAR", None),
         ("creator_email", "VARCHAR", None),
     ]

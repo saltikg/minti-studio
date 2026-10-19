@@ -1381,6 +1381,7 @@ GUEST_RESUME_ACTIONS = {
     "regenerate",
     "update_clips",
     "new_video",
+    "music_upload",
 }
 
 
