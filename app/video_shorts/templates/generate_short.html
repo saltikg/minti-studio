@@ -8563,7 +8563,7 @@
                       <div><div class="caption-tab-section-heading">Background music</div><div class="design-panel-hint">Choose a track and position it under this clip.</div></div>
                       <label class="btn btn-sm btn-outline-light mb-0">Upload music<input type="file" id="musicUploadInput" accept=".mp3,.wav,.m4a,audio/mpeg,audio/wav,audio/mp4" hidden></label>
                     </div>
-                    <div class="small text-muted mb-2">Only upload audio you have the rights to use.</div>
+                    <div class="small text-muted mb-2">Use only music you own or have the rights to.</div>
                     <div class="music-library-list d-grid gap-2 mb-3" id="musicLibraryList"><div class="small text-muted">Loading music…</div></div>
                     <div class="music-timeline d-none" id="musicTimeline" aria-label="Drag waveform to choose the music start">
                       <div class="music-timeline-labels"><span>Fit the music to your clip</span><span id="musicStartLabel">Song plays from 0:00 → 0:00</span></div>
@@ -8576,7 +8576,7 @@
                       <div class="d-flex justify-content-between"><label for="musicLevel">Music level</label><span id="musicLevelLabel">{{ selected_music_level if selected_music_level is not none else 50 }}%</span></div>
                       <input type="range" class="form-range" name="music_level" id="musicLevel" min="0" max="100" value="{{ selected_music_level if selected_music_level is not none else 50 }}">
                       <div class="d-flex justify-content-between small text-muted mb-2"><span>Off</span><span>Background</span><span>As loud as voice</span></div>
-                      <div class="form-check form-switch"><input class="form-check-input" type="checkbox" name="music_duck" id="musicDuck" value="1" {% if selected_music_duck %}checked{% endif %}><label class="form-check-label" for="musicDuck">Lower music during speech</label></div>
+                      <div class="form-check form-switch"><input class="form-check-input" type="checkbox" name="music_duck" id="musicDuck" value="1" {% if selected_music_duck %}checked{% endif %}><label class="form-check-label" for="musicDuck">Lower music while speaking</label></div>
                       <div class="form-check form-switch"><input class="form-check-input" type="checkbox" name="music_fade_out" id="musicFadeOut" value="1" {% if selected_music_fade_out %}checked{% endif %}><label class="form-check-label" for="musicFadeOut">Fade out at the end</label></div>
                       <button type="button" class="btn btn-sm btn-outline-danger mt-2" id="musicRemoveBtn">Remove music</button>
                     </div>
@@ -10110,6 +10110,7 @@ document.addEventListener("DOMContentLoaded", () => {
         captureState: () => ({
           currentTime: Number(video.currentTime || 0),
           playing: !video.paused,
+          rate: Number(video.playbackRate || 1),
         }),
         restoreState: (snapshot) => {
           if (!snapshot || !Number.isFinite(Number(snapshot.currentTime))) {
@@ -10172,6 +10173,7 @@ document.addEventListener("DOMContentLoaded", () => {
             return {
               currentTime: Number(this.player.getCurrentTime?.() || 0),
               playing: playerState === window.YT?.PlayerState?.PLAYING,
+              rate: Number(this.player.getPlaybackRate?.() || 1),
             };
           } catch (_) {
             return pendingRestoreState;
@@ -23070,7 +23072,7 @@ document.addEventListener("DOMContentLoaded", () => {
     const sourceVideo=document.querySelector("#trs-player-frame video");
     if(sourceVideo)return {time:Math.max(0,(sourceVideo.currentTime||0)-Number(activeCard()?.dataset.start||0)),playing:!sourceVideo.paused,rate:sourceVideo.playbackRate||1};
     const snapshot=window.__mintiTranscriptPlayer?.captureState?.();
-    return snapshot ? {time:Math.max(0,Number(snapshot.currentTime||0)-Number(activeCard()?.dataset.start||0)),playing:!!snapshot.playing,rate:1} : null;
+    return snapshot ? {time:Math.max(0,Number(snapshot.currentTime||0)-Number(activeCard()?.dataset.start||0)),playing:!!snapshot.playing,rate:Number(snapshot.rate||1)} : null;
   };
   const syncPreview = () => {
     if(libraryPreviewing)return;
