@@ -12,6 +12,13 @@ _SLUG_RE = re.compile(r"[^a-z0-9]+")
 
 HELP_CATEGORY_DEFS = [
     {
+        "slug": "creating-shorts",
+        "title": "Creating Shorts",
+        "description": "Generating clips, editor, captions, titles and templates.",
+        "icon": "movie",
+        "topics": ["Creating", "Captions", "Titles", "Templates"],
+    },
+    {
         "slug": "scheduling-publishing",
         "title": "Scheduling & Publishing",
         "description": "Schedule clips, time zones, publishing status and failed posts.",
@@ -24,13 +31,6 @@ HELP_CATEGORY_DEFS = [
         "description": "YouTube, Instagram, Facebook and connected accounts.",
         "icon": "hub",
         "topics": ["YouTube", "Instagram", "Facebook", "Connections"],
-    },
-    {
-        "slug": "creating-shorts",
-        "title": "Creating Shorts",
-        "description": "Generating clips, editor, captions, titles and templates.",
-        "icon": "movie",
-        "topics": ["Creating", "Captions", "Titles", "Templates"],
     },
     {
         "slug": "account-billing",

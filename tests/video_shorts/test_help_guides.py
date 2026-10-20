@@ -32,9 +32,9 @@ def test_blog_heading_ids_only_allow_lowercase_slug_values():
 
 
 def test_editor_guide_is_first_creating_shorts_article_and_searchable():
-    creating_shorts = next(
-        category for category in get_faq_categories() if category["slug"] == "creating-shorts"
-    )
+    categories = get_faq_categories()
+    assert categories[0]["slug"] == "creating-shorts"
+    creating_shorts = categories[0]
     slugs = [entry["slug"] for entry in creating_shorts["entries"]]
 
     assert slugs[:2] == ["editor-guide", "creating-shorts"]
