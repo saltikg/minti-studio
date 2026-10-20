@@ -323,7 +323,7 @@
         }
 
         const matches = searchIndex
-          .filter((item) => item.question.toLowerCase().includes(normalized))
+          .filter((item) => (item.search_text || item.question).toLowerCase().includes(normalized))
           .slice(0, 8);
 
         if (!matches.length) {

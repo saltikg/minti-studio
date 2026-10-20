@@ -3,6 +3,9 @@
 {% block title %}{{ entry.title }}{% endblock %}
 
 {% block extra_styles %}
+  {% if entry.type == 'guide' %}
+    {% include "_vs_blog_article_styles.html" %}
+  {% endif %}
   <style>
     .vs-help-article-page {
       max-width: 920px;
@@ -118,6 +121,26 @@
 {% endblock %}
 
 {% block content %}
+  {% if entry.type == 'guide' %}
+  <article class="vs-blog-article-page vs-help-guide-page">
+    <header class="vs-blog-article-head">
+      <a href="{{ back_href }}" class="vs-help-backlink mb-0">
+        <span class="material-symbols-outlined">arrow_back</span>
+        <span>Back to FAQ</span>
+      </a>
+      <h1 class="page-title mb-0">{{ entry.title }}</h1>
+      {% if entry.description %}
+        <p class="vs-help-article-subtitle mb-0">{{ entry.description }}</p>
+      {% endif %}
+    </header>
+
+    <section class="vs-blog-richtext">
+      {{ entry.content_html | safe }}
+    </section>
+  </article>
+
+  {% include "_vs_blog_lightbox.html" %}
+  {% else %}
   <div class="vs-help-article-page">
     <a href="{{ back_href }}" class="vs-help-backlink">
       <span class="material-symbols-outlined">arrow_back</span>
@@ -245,4 +268,12 @@
       });
     });
   </script>
+  {% endif %}
+{% endblock %}
+
+{% block scripts %}
+  {{ super() }}
+  {% if entry.type == 'guide' %}
+    {% include "_vs_blog_lightbox_script.html" %}
+  {% endif %}
 {% endblock %}

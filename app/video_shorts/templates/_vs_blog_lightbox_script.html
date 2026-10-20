@@ -1,0 +1,85 @@
+<script>
+    document.addEventListener("DOMContentLoaded", function () {
+      const lightbox = document.getElementById("vs-blog-lightbox");
+      if (!lightbox) return;
+
+      const image = lightbox.querySelector("[data-lightbox-image]");
+      const caption = lightbox.querySelector("[data-lightbox-caption]");
+      const closeButton = lightbox.querySelector("[data-lightbox-close]");
+      const focusableSelector = "button, [href], input, select, textarea, [tabindex]:not([tabindex='-1'])";
+      let lastTrigger = null;
+
+      function figureCaption(media) {
+        const figure = media.closest(".figure");
+        const captionNode = figure ? figure.querySelector("figcaption") : null;
+        return captionNode ? captionNode.textContent.trim() : "";
+      }
+
+      function openLightbox(media) {
+        const img = media.querySelector("img");
+        if (!img) return;
+        lastTrigger = document.activeElement instanceof HTMLElement ? document.activeElement : media;
+        const text = figureCaption(media);
+        image.src = img.currentSrc || img.src;
+        image.alt = img.alt || text || "Expanded image";
+        caption.textContent = text;
+        caption.hidden = !text;
+        lightbox.classList.add("open");
+        lightbox.setAttribute("aria-hidden", "false");
+        document.body.style.overflow = "hidden";
+        closeButton.focus();
+      }
+
+      function closeLightbox() {
+        lightbox.classList.remove("open");
+        lightbox.setAttribute("aria-hidden", "true");
+        document.body.style.overflow = "";
+        image.removeAttribute("src");
+        if (lastTrigger && typeof lastTrigger.focus === "function") {
+          lastTrigger.focus();
+        }
+      }
+
+      document.querySelectorAll(".vs-blog-article-page .media").forEach(function (media) {
+        media.addEventListener("click", function (event) {
+          event.preventDefault();
+          openLightbox(media);
+        });
+        media.addEventListener("keydown", function (event) {
+          if (event.key === "Enter" || event.key === " ") {
+            event.preventDefault();
+            openLightbox(media);
+          }
+        });
+      });
+
+      closeButton.addEventListener("click", closeLightbox);
+      lightbox.addEventListener("click", function (event) {
+        if (event.target === lightbox) {
+          closeLightbox();
+        }
+      });
+
+      document.addEventListener("keydown", function (event) {
+        if (!lightbox.classList.contains("open")) return;
+        if (event.key === "Escape") {
+          closeLightbox();
+          return;
+        }
+        if (event.key !== "Tab") return;
+        const focusable = Array.from(lightbox.querySelectorAll(focusableSelector)).filter(function (element) {
+          return !element.disabled && element.offsetParent !== null;
+        });
+        if (!focusable.length) return;
+        const first = focusable[0];
+        const last = focusable[focusable.length - 1];
+        if (event.shiftKey && document.activeElement === first) {
+          event.preventDefault();
+          last.focus();
+        } else if (!event.shiftKey && document.activeElement === last) {
+          event.preventDefault();
+          first.focus();
+        }
+      });
+    });
+  </script>

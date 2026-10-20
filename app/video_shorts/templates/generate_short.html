@@ -6169,6 +6169,7 @@
   .music-library-meta strong { display:block; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
   .music-helper-text { color:rgba(255,255,255,.72); }
   .music-empty-drop { padding:1.4rem; border:1px dashed rgba(255,255,255,.3); border-radius:.75rem; text-align:center; background:rgba(255,255,255,.025); cursor:pointer; }
+  .music-empty-drop strong { color:#fff; }
   .music-empty-drop.is-dragover { border-color:#6ea8fe; background:rgba(13,110,253,.14); }
   .music-selected-card { display:flex; align-items:center; gap:.65rem; min-width:0; padding:.6rem .7rem; border:1px solid rgba(255,255,255,.14); border-radius:.65rem; background:rgba(255,255,255,.035); }
   .music-selected-icon { flex:0 0 auto; color:#9ec5fe; font-size:1rem; }
@@ -23317,7 +23318,7 @@ document.addEventListener("DOMContentLoaded", () => {
     if (!pickerList) return;
     const query=String(search?.value||"").trim().toLocaleLowerCase(); pickerList.innerHTML="";
     const filtered=tracks.filter((track)=>fallbackName(track).toLocaleLowerCase().includes(query));
-    if(!filtered.length){const empty=document.createElement("div");empty.className="small music-helper-text";empty.textContent=query?"No matching music.":"No music uploaded yet.";pickerList.appendChild(empty);return;}
+    if(!filtered.length){if(uploadBusy&&!query)return;const empty=document.createElement("div");empty.className="small music-helper-text";empty.textContent=query?"No matching music.":"No music uploaded yet.";pickerList.appendChild(empty);return;}
     filtered.forEach((track)=>{const row=document.createElement("div");row.className="music-library-item";row.dataset.audioId=track.id;row.classList.toggle("is-active",track.id===audioId.value);row.innerHTML='<button type="button" class="btn btn-sm btn-outline-light music-library-play" aria-label="Play music"><i class="bi bi-play-fill"></i></button><canvas width="90" height="30"></canvas><span class="music-library-meta"><strong></strong><small class="d-block music-helper-text"></small></span><button type="button" class="btn btn-sm btn-outline-light music-library-use">Use</button>';row.querySelector("strong").textContent=fallbackName(track);row.querySelector("small").textContent=formatTime(track.duration_seconds||0);bindPlayButton(row.querySelector(".music-library-play"),track);pickerList.appendChild(row);drawMiniWave(row.querySelector("canvas"),track.peaks);});
   };
   const syncUi = () => {
@@ -23354,7 +23355,7 @@ document.addEventListener("DOMContentLoaded", () => {
     uploadProgress?.classList.toggle("d-none", !message); if(uploadProgressText)uploadProgressText.textContent=message;
     const spinner=uploadProgress?.querySelector(".spinner-border"); spinner?.classList.toggle("d-none",kind!=="busy"); uploadProgress?.classList.toggle("text-danger",kind==="error");
   };
-  const setUploadBusy = (busy) => { uploadBusy=busy; if(uploadInput)uploadInput.disabled=busy; uploadButton?.classList.toggle("is-busy",busy); uploadButton?.setAttribute("aria-disabled",busy?"true":"false"); };
+  const setUploadBusy = (busy) => { uploadBusy=busy; if(uploadInput)uploadInput.disabled=busy; uploadButton?.classList.toggle("is-busy",busy); uploadButton?.setAttribute("aria-disabled",busy?"true":"false"); renderPicker(); };
   const uploadFile = (file) => {
     if(!file||uploadBusy)return Promise.resolve(); if(isGuest){showMusicGuestGate();return Promise.resolve();} setPickerOpen(true); setUploadBusy(true); setUploadState("Uploading… 0%");
     const body=new FormData(); body.append("audio",file); body.append("label",file.name.replace(/\.[^.]+$/, ""));

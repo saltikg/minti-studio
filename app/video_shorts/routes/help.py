@@ -10,6 +10,7 @@ from app.video_shorts.services.help_content import (
     get_faq_entries,
     get_faq_entry,
 )
+from app.video_shorts.services.blog_markdown import render_markdown
 
 
 @video_shorts_bp.route("/help/faq/", methods=["GET"])
@@ -46,6 +47,8 @@ def help_faq_article(slug: str):
     entry = get_faq_entry(slug)
     if not entry:
         abort(404)
+    if entry.get("type") == "guide":
+        entry["content_html"] = render_markdown(str(entry.get("body") or ""))
     return render_template(
         "vs_help_faq_article.html",
         entry=entry,

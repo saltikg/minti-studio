@@ -199,6 +199,7 @@ def _load_faq_entry(path: Path) -> dict[str, object]:
     intro_blocks, question_items = _question_items_from_blocks(blocks)
     category_slug = _infer_category_slug(slug, meta)
     topics = _parse_list_like(meta.get("topics"))
+    entry_type = (meta.get("type") or "faq").strip().lower()
 
     return {
         "slug": slug,
@@ -211,6 +212,8 @@ def _load_faq_entry(path: Path) -> dict[str, object]:
         "question_count": len(question_items),
         "category_slug": category_slug,
         "topics": topics,
+        "type": entry_type,
+        "body": body,
     }
 
 
@@ -261,6 +264,27 @@ def build_faq_search_index(entries: list[dict[str, object]] | None = None) -> li
         category_slug = str(entry.get("category_slug") or "").strip()
         category = next((item for item in HELP_CATEGORY_DEFS if item["slug"] == category_slug), None)
         category_title = str(category["title"]) if category else str(entry.get("title") or "")
+        if entry.get("type") == "guide":
+            searchable_text = " ".join(
+                str(value or "").strip()
+                for value in (
+                    entry.get("title"),
+                    entry.get("description"),
+                    " ".join(entry.get("topics") or []),
+                )
+                if value
+            )
+            search_entries.append(
+                {
+                    "question": str(entry.get("title") or "").strip(),
+                    "search_text": searchable_text,
+                    "question_id": "",
+                    "slug": str(entry.get("slug") or "").strip(),
+                    "entry_title": str(entry.get("title") or "").strip(),
+                    "category_title": category_title,
+                    "href": f"/video_shorts/help/faq/{entry.get('slug')}/",
+                }
+            )
         for question in entry.get("question_items") or []:
             question_id = str(question.get("id") or "").strip()
             question_text = str(question.get("question") or "").strip()
@@ -269,6 +293,7 @@ def build_faq_search_index(entries: list[dict[str, object]] | None = None) -> li
             search_entries.append(
                 {
                     "question": question_text,
+                    "search_text": question_text,
                     "question_id": question_id,
                     "slug": str(entry.get("slug") or "").strip(),
                     "entry_title": str(entry.get("title") or "").strip(),

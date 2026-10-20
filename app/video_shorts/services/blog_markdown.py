@@ -24,6 +24,7 @@ _TABLE_RE = re.compile(r"(<table\b[^>]*>.*?</table>)", re.I | re.S)
 _SPECIMEN_TAGS = {"short": "Short", "long": "Long-form"}
 _PLACEHOLDER_ALT_VALUES = {"alt text", "image", "placeholder"}
 _INTERNAL_LINK_HOSTS = {"mintistudio.com", "www.mintistudio.com"}
+_HEADING_ID_RE = re.compile(r"^[a-z0-9-]+$")
 
 _ALLOWED_TAGS = [
     "a",
@@ -57,6 +58,12 @@ _ALLOWED_ATTRIBUTES = {
     "a": ["href", "title", "rel", "target"],
     "img": ["src", "alt", "title", "loading"],
 }
+
+
+def _allowed_attribute(tag: str, name: str, value: str) -> bool:
+    if name in _ALLOWED_ATTRIBUTES.get(tag, []):
+        return True
+    return tag in {"h2", "h3"} and name == "id" and bool(_HEADING_ID_RE.fullmatch(value or ""))
 
 
 def _external_link_attrs(attrs: dict, new: bool = False) -> dict:
@@ -435,13 +442,13 @@ def _render_markdown(markdown_text: str, *, expand_components: bool = True) -> s
 
     raw_html = markdown.markdown(
         _expand_youtube_embeds(source),
-        extensions=["extra", "sane_lists", "tables"],
+        extensions=["extra", "sane_lists", "tables", "attr_list"],
         output_format="html5",
     )
     clean_html = bleach.clean(
         raw_html,
         tags=_ALLOWED_TAGS,
-        attributes=_ALLOWED_ATTRIBUTES,
+        attributes=_allowed_attribute,
         protocols=["http", "https", "mailto"],
         strip=True,
     )

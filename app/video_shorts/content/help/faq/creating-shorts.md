@@ -7,15 +7,17 @@ topics: [Shorts, AI, Editor, Captions, Templates]
 order: 30
 ---
 
+New here? Read the [Editor guide](/video_shorts/help/faq/editor-guide/).
+
 Turn source videos into Shorts with AI suggestions, manual clip selection, and the built-in editor.
 
 **How can I create a Short in MintiStudio?**
 
 You can create Shorts from videos connected or imported from YouTube, or from videos you upload to [`My videos`](/video_shorts/my-videos).
 
-After the source video is ready and transcribed, you can either select your own clip manually or ask MintiStudio to suggest clips with AI.
+After the source video is ready and transcribed, you can either select your own clip manually or use `AI Suggest`.
 
-From there, open the Editor, customize the Short, and click `Generate Short Clip` to create the final rendered video.
+From there, open the Editor, customize the Short, and click `Save & regenerate` or ↻ `Regenerate` to create the final rendered video.
 
 **Do I need a transcript before creating Shorts?**
 
@@ -31,7 +33,7 @@ If the source video is still being prepared, MintiStudio may show:
 
 Yes.
 
-Click `Suggest clips with AI` and MintiStudio will analyze the video and transcript to suggest moments that can work well as Shorts.
+Click `AI Suggest` and MintiStudio will analyze the video and transcript to suggest moments that can work well as Shorts.
 
 You can choose from the suggested clips or continue creating your own clips manually.
 
@@ -51,13 +53,15 @@ AI suggestions are not locked. You can adjust the clip's start and end times bef
 
 You can also edit the clip title and subtitle text.
 
-**What is the difference between Fill, Fill split, and Fit?**
+**What is the difference between Auto, Fill, Fill split, Fit, and Original?**
 
-MintiStudio provides three layout options for preparing your source video for the vertical Shorts format:
+MintiStudio provides five layout options for preparing your source video for the vertical Shorts format:
 
+- **Auto** chooses the best layout for each part based on the number of faces.
 - **Fill** fills the vertical frame with the source video.
 - **Fill split** uses the split-style layout available in the editor.
 - **Fit** keeps more of the original video visible and can use a background behind it.
+- **Original** keeps the source video's original shape without cropping.
 
 You can also manually reposition the video using the editor's reframing controls.
 
@@ -107,17 +111,18 @@ The editor also supports date text and date positioning.
 
 Style Templates are ready-made combinations of title and caption styling that let you quickly change the visual appearance of a Short.
 
-MintiStudio currently includes multiple built-in templates, including:
+MintiStudio currently includes these built-in templates:
 
+- Bold Pop
+- Blue Pop
+- Silver Pop
+- Amber Gold
+- Modern Pink
+- Modern Purple
+- Sky Cyan
+- Electric Lime
+- Serif Bordo
 - Word Highlight
-- Flame Highlight
-- Ocean Highlight
-- Classic
-- Bold Green
-- Vivid Pink
-- Minimal White
-- Deep Blue
-- Clean Black
 
 After choosing a template, you can continue adjusting the available title and caption settings in the Editor.
 
@@ -127,7 +132,7 @@ Some MintiStudio caption styles use a karaoke-style highlighted word treatment.
 
 As the Short plays, the currently spoken word can appear inside a colored highlight pill.
 
-Current highlighted-word styles include treatments such as Word Highlight, Flame Highlight, and Ocean Highlight.
+The `Word Highlight` template provides this treatment, and you can fine-tune its caption settings in the Editor.
 
 **Can I add a Subscribe Animation?**
 
@@ -137,9 +142,9 @@ The Editor includes a `Subscribe Animation` option that can be turned on or off.
 
 If subscribe animation assets are available in the workspace, you can select one and include it as an overlay in the generated Short.
 
-**What happens when I click Generate Short Clip?**
+**What happens when I click Save & regenerate or ↻ Regenerate?**
 
-`Generate Short Clip` starts a background rendering job that creates the final Short video using your selected clip and Editor settings.
+`Save & regenerate` and ↻ `Regenerate` start a background rendering job that creates the final Short video using your selected clip and Editor settings.
 
 You can continue to see the clip in MintiStudio while the render is processed. After rendering finishes, the final video becomes available for playback and the next publishing steps.
 
