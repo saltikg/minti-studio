@@ -11931,6 +11931,7 @@ const enterGenerateV2EditMode = ({ section = "style" } = {}) => {
   pauseGenerateV2WorkbenchVideos({ pauseSourcePlayer: true });
   generateV2EditState.active = true;
   window.__generateV2EditModeActive = true;
+  window.__musicDesignEditorEntered?.();
   root.classList.add("is-v2-editing");
   editor.setAttribute("aria-hidden", "false");
   previewMount?.setAttribute("aria-hidden", "false");
@@ -11964,6 +11965,7 @@ window.exitGenerateV2EditMode = ({ saved = false } = {}) => {
   generateV2EditState.snapshot = null;
   generateV2EditState.active = false;
   window.__generateV2EditModeActive = false;
+  window.__musicDesignEditorExited?.();
   root?.classList.remove("is-v2-editing");
   document.getElementById("generate-v2-editor")?.setAttribute("aria-hidden", "true");
   document.getElementById("generate-v2-preview-mount")?.setAttribute("aria-hidden", "true");
@@ -23097,6 +23099,8 @@ document.addEventListener("DOMContentLoaded", () => {
   let lastStartRetryAt = 0;
   let libraryPlayIntentId = "";
   let libraryPlayToken = 0;
+  const renderedMuteStates = new Map();
+  let lastVoiceVideo = null;
 
   const activeCard = () => {
     const activeIndex = document.getElementById("clip-management-panel")?.dataset.activePlanIndex;
@@ -23104,6 +23108,35 @@ document.addEventListener("DOMContentLoaded", () => {
     return document.querySelector(`#generate-v2-selected-clip-mount ${selector}`)
       || document.querySelector(selector)
       || document.querySelector(".clip-card");
+  };
+  const isDesignEditorOpen = () => Boolean(window.__generateV2EditModeActive
+    || document.getElementById("crop-area-modal")?.classList.contains("show"));
+  const sourceVideo = () => document.querySelector("#trs-player-frame video");
+  const voiceVideo = () => {
+    const next = isDesignEditorOpen() ? sourceVideo() : (activeCard()?.querySelector("video") || sourceVideo());
+    if (lastVoiceVideo && lastVoiceVideo !== next) lastVoiceVideo.pause();
+    lastVoiceVideo = next || null;
+    return next;
+  };
+  const silenceRenderedClips = () => {
+    if (!isDesignEditorOpen()) return;
+    renderedMuteStates.forEach((_, video) => { if (!video.isConnected) renderedMuteStates.delete(video); });
+    document.querySelectorAll(".clip-card video").forEach((video) => {
+      if (!renderedMuteStates.has(video)) renderedMuteStates.set(video, video.muted);
+      video.muted = true;
+      if (!video.paused) video.pause();
+    });
+  };
+  const restoreRenderedClips = () => {
+    renderedMuteStates.forEach((muted, video) => { if (video.isConnected) video.muted = muted; });
+    renderedMuteStates.clear();
+  };
+  const pauseOtherPlayback = ({ keepVideo = null, keepSourcePlayer = false } = {}) => {
+    document.querySelectorAll("video,audio").forEach((media) => {
+      if (media !== keepVideo && media !== previewAudio && !media.paused) media.pause();
+    });
+    if (!keepSourcePlayer) window.__trsClipSelectorController?.pausePlayer?.();
+    silenceRenderedClips();
   };
   const clipDuration = () => Math.max(.1, Number(activeCard()?.dataset.duration || 0) || 30);
   const speechRanges = () => { try { return JSON.parse(activeCard()?.dataset.musicSpeechRanges || "[]"); } catch (_) { return []; } };
@@ -23154,7 +23187,8 @@ document.addEventListener("DOMContentLoaded", () => {
     if (clearMode) { audioMode = ""; libraryStartedAt = 0; }
   };
   const pauseVideoSide = () => {
-    activeCard()?.querySelector("video")?.pause?.();
+    lastVoiceVideo?.pause?.();
+    document.querySelectorAll(".clip-card video").forEach((video) => video.pause());
     window.__trsClipSelectorController?.pausePlayer?.();
   };
   const setTimelineButtonState = () => {
@@ -23187,6 +23221,7 @@ document.addEventListener("DOMContentLoaded", () => {
     explicitPauseUntil = Date.now() + 800;
     pauseVideoSide();
     stopSharedAudio();
+    pauseOtherPlayback();
     if (!setAudioTrack(track)) return;
     audioMode = "library";
     libraryPlayIntentId = trackId;
@@ -23281,7 +23316,10 @@ document.addEventListener("DOMContentLoaded", () => {
   };
   const chooseTrack = (track) => {
     if (isGuest) { showMusicGuestGate(); return; }
+    if (playIntent) stopTimeline();
+    else pauseVideoSide();
     stopSharedAudio();
+    pauseOtherPlayback();
     const chosenId = String(track.id);
     audioId.value = chosenId;
     startField.value = "0";
@@ -23325,12 +23363,10 @@ document.addEventListener("DOMContentLoaded", () => {
   uploadInput?.addEventListener("change", async (event) => { await uploadFile(event.target.files?.[0]); event.target.value=""; });
   document.getElementById("musicPickerClose")?.addEventListener("click",()=>setPickerOpen(false)); search?.addEventListener("input",renderPicker);
   const previewPlayback = () => {
-    const renderedVideo=activeCard()?.querySelector("video");
-    if(renderedVideo)return {time:renderedVideo.currentTime||0,rate:renderedVideo.playbackRate||1,ready:renderedVideo.readyState>=2,
-      state:renderedVideo.error?"error":renderedVideo.ended?"ended":renderedVideo.seeking?"seeking":renderedVideo.paused?"paused":renderedVideo.readyState<3?"waiting":"playing"};
-    const sourceVideo=document.querySelector("#trs-player-frame video");
-    if(sourceVideo)return {time:Math.max(0,(sourceVideo.currentTime||0)-Number(activeCard()?.dataset.start||0)),rate:sourceVideo.playbackRate||1,ready:sourceVideo.readyState>=2,
-      state:sourceVideo.error?"error":sourceVideo.ended?"ended":sourceVideo.seeking?"seeking":sourceVideo.paused?"paused":sourceVideo.readyState<3?"waiting":"playing"};
+    const video = voiceVideo();
+    if(video){const offset=video===sourceVideo()?Number(activeCard()?.dataset.start||0):0;
+      return {time:Math.max(0,(video.currentTime||0)-offset),rate:video.playbackRate||1,ready:video.readyState>=2,
+        state:video.error?"error":video.ended?"ended":video.seeking?"seeking":video.paused?"paused":video.readyState<3?"waiting":"playing"};}
     const status=window.__trsClipSelectorController?.getPlaybackStatus?.();
     const snapshot=window.__trsClipSelectorController?.capturePlayerState?.() || window.__mintiTranscriptPlayer?.captureState?.();
     if(!snapshot&&!status)return null;
@@ -23372,8 +23408,8 @@ document.addEventListener("DOMContentLoaded", () => {
   const seekPreview = (time, { resume = playIntent } = {}) => {
     const target=Math.max(0,Math.min(clipDuration(),Number(time)||0));
     const playback=previewPlayback()||{rate:1};
-    const video=activeCard()?.querySelector("video");
-    if(video){video.currentTime=target;if(resume)video.play().catch(()=>{});else video.pause();}
+    const video=voiceVideo();
+    if(video){video.currentTime=(video===sourceVideo()?Number(activeCard()?.dataset.start||0):0)+target;if(resume){pauseOtherPlayback({keepVideo:video,keepSourcePlayer:video===sourceVideo()});video.play().catch(()=>{});}else video.pause();}
     else {
       const absolute=Number(activeCard()?.dataset.start||0)+target;
       const restored=window.__trsClipSelectorController?.restorePlayerState?.({currentTime:absolute,playing:resume,rate:playback.rate||1});
@@ -23406,6 +23442,7 @@ document.addEventListener("DOMContentLoaded", () => {
     if(reset)seekPreview(0,{resume:false});
   };
   const syncPreview = () => {
+    silenceRenderedClips();
     if(audioMode==="library")return;
     const playback=previewPlayback(); if(!playback||!selected)return;
     const now=Date.now();
@@ -23417,6 +23454,7 @@ document.addEventListener("DOMContentLoaded", () => {
       audioMode="timeline";
     }
     if(playIntent){
+      if(playback.state==="playing")pauseOtherPlayback({keepVideo:voiceVideo(),keepSourcePlayer:isDesignEditorOpen()});
       if(playbackStarting&&playback.ready&&timelinePlay?.querySelector(".spinner-border"))setTimelineButtonState();
       if(playbackStarting&&playback.ready&&["unstarted","cued"].includes(playback.state)
           &&startRetryCount<6&&now-lastStartRetryAt>=(startRetryCount?700:400)){
@@ -23447,9 +23485,10 @@ document.addEventListener("DOMContentLoaded", () => {
     const token=++playIntentToken;
     if(playIntent){stopTimeline();return;}
     stopSharedAudio();audioMode="timeline";setPlayIntent(true,true);
-    const video=activeCard()?.querySelector("video");
+    const video=voiceVideo();
+    pauseOtherPlayback({keepVideo:video,keepSourcePlayer:isDesignEditorOpen()});
     try {
-      if(video){if(video.ended||video.currentTime>=clipDuration())video.currentTime=0;await video.play();}
+      if(video){const offset=video===sourceVideo()?Number(activeCard()?.dataset.start||0):0;if(video.ended||playback.time>=clipDuration())video.currentTime=offset;await video.play();}
       else {
         const player = window.__trsClipSelectorController;
         const absolute = Number(activeCard()?.dataset.start||0)+Math.max(0,playback.time||0);
@@ -23466,8 +23505,18 @@ document.addEventListener("DOMContentLoaded", () => {
     }
   });
   document.addEventListener("seeking",(event)=>{if(event.target.matches?.(".clip-card video"))syncPreview();},true);
+  document.addEventListener("play",(event)=>{
+    if (!(event.target instanceof HTMLMediaElement) || !isDesignEditorOpen()) return;
+    if (event.target === sourceVideo()) pauseOtherPlayback({keepVideo:event.target,keepSourcePlayer:true});
+    else if (event.target !== previewAudio) { event.target.pause(); silenceRenderedClips(); }
+  },true);
+  window.__musicDesignEditorEntered = () => { pauseOtherPlayback(); silenceRenderedClips(); };
+  window.__musicDesignEditorExited = () => { stopTimeline(); restoreRenderedClips(); };
+  document.getElementById("crop-area-modal")?.addEventListener("shown.bs.modal",window.__musicDesignEditorEntered);
+  document.getElementById("crop-area-modal")?.addEventListener("hidden.bs.modal",window.__musicDesignEditorExited);
   previewAudio.addEventListener("ended",()=>{if(audioMode==="library")stopSharedAudio();});
-  window.setInterval(()=>{if(!selected)return;const playback=previewPlayback();if(audioMode==="library"&&playback?.state==="playing"&&Date.now()-libraryStartedAt>350){stopSharedAudio();audioMode="timeline";}syncPreview();},100);
+  window.setInterval(()=>{silenceRenderedClips();if(!selected)return;const playback=previewPlayback();if(audioMode==="library"&&playback?.state==="playing"&&Date.now()-libraryStartedAt>350){stopSharedAudio();audioMode="timeline";}syncPreview();},100);
+  if(isDesignEditorOpen())silenceRenderedClips();
   window.__musicPreviewPlaybackIntent = (planIndex) => playIntent && audioMode === "timeline" && String(activeCard()?.dataset.planIndex || "") === String(planIndex || "");
   window.syncMusicEditorFromFields=syncUi;
   loadTracks();
