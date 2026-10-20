@@ -15078,9 +15078,8 @@ const clipJobStatusUrlTemplate = {{ (
   ) if editor_is_admin_operation else '/api/jobs/__JOB_ID__'
 ) | tojson }};
 const clipJobStorageKey = "vsActiveClipJobs";
-const clipJobPollMaxMs = 10 * 60 * 1000;
-const clipJobBasePollMs = 2000;
-const clipJobMaxPollMs = 6000;
+const clipJobPollDelaysMs = [2000, 5000, 10000];
+const clipJobMaxPollDelayMs = 15000;
 const clipJobRevealAttempts = 4;
 const clipJobRevealDelayMs = 1200;
 const clipJobPolls = new Map();
@@ -15396,6 +15395,7 @@ const stopClipJobPolling = (planIndex, { clearStored = false } = {}) => {
   const existing = clipJobPolls.get(key);
   if (existing) {
     existing.cancelled = true;
+    existing.controller?.abort();
     clipJobPolls.delete(key);
   }
   if (clearStored) {
@@ -15406,6 +15406,7 @@ const stopClipJobPolling = (planIndex, { clearStored = false } = {}) => {
 const finalizeClipJobSuccess = async (planIndex, { cached = false } = {}) => {
   stopClipJobPolling(planIndex, { clearStored: true });
   setGenerateV2ClipMutationLocked(planIndex, false);
+  setGenerateV2RenderOverlay(planIndex, { active: false, failed: false, success: false });
   for (let attempt = 0; attempt < clipJobRevealAttempts; attempt += 1) {
     const refreshed = await refreshClipList(planIndex, "list", { forceReplaceSelected: true });
     if (refreshed && isCreatedClipRendered(planIndex)) {
@@ -15421,7 +15422,7 @@ const finalizeClipJobSuccess = async (planIndex, { cached = false } = {}) => {
       }
       window.__trsClipSelectorController?.showReadyCoachmark?.(planIndex);
       loadGenerateUsageSummary();
-      showGenerateV2RenderSuccess(planIndex);
+      setGenerateV2RenderOverlay(planIndex, { active: false, failed: false, success: false });
       return;
     }
     if (attempt < clipJobRevealAttempts - 1) {
@@ -15451,8 +15452,9 @@ const finalizeClipJobSuccess = async (planIndex, { cached = false } = {}) => {
 
 const handleClipJobFailure = (planIndex) => {
   stopClipJobPolling(planIndex, { clearStored: true });
-  setGenerateV2RenderOverlay(planIndex, { active: false, failed: true });
   setRegenerateFeedback(planIndex, "", false);
+  setGenerateV2ClipMutationLocked(planIndex, false);
+  setGenerateV2RenderOverlay(planIndex, { active: false, failed: true });
   const card = getClipCardByPlanIndex(planIndex);
   if (!card) {
     return;
@@ -15524,8 +15526,8 @@ const handleClipJobFailurePayload = (planIndex, payload = null) => {
   }
   stopClipJobPolling(planIndex, { clearStored: true });
   setGenerateV2ClipMutationLocked(planIndex, false);
-  setGenerateV2RenderOverlay(planIndex, { active: false, failed: true });
   setRegenerateFeedback(planIndex, "", false);
+  setGenerateV2RenderOverlay(planIndex, { active: false, failed: true });
   const card = getClipCardByPlanIndex(planIndex);
   if (!card) {
     return;
@@ -15570,6 +15572,31 @@ const normalizeClipJobStatus = (status) => {
   return normalizedStatus;
 };
 
+const clipJobPollDelay = (attempt) => {
+  if (attempt < clipJobPollDelaysMs.length) {
+    return clipJobPollDelaysMs[attempt];
+  }
+  return clipJobMaxPollDelayMs;
+};
+
+const showClipJobRetryablePollError = (planIndex, payload = null) => {
+  const detail = String(payload?.message || payload?.error || "Could not check this render job.").trim();
+  stopClipJobPolling(planIndex, { clearStored: true });
+  setGenerateV2ClipMutationLocked(planIndex, false);
+  setRegenerateFeedback(planIndex, "", false);
+  setGenerateV2RenderOverlay(planIndex, { active: false, failed: true });
+  const card = getClipCardByPlanIndex(planIndex);
+  bindGenerateV2RenderRetry(card);
+  setClipFeedbackState(card, {
+    message: detail,
+    tone: "text-danger",
+    busy: false,
+    buttonLabel: "Try again",
+    disableButton: false,
+    showSpinner: false,
+  });
+};
+
 const pollClipJobUntilDone = async (
   planIndex,
   jobId,
@@ -15587,47 +15614,52 @@ const pollClipJobUntilDone = async (
     return;
   }
   stopClipJobPolling(key);
-  const state = { cancelled: false, jobId };
+  const state = { cancelled: false, jobId, controller: null };
   clipJobPolls.set(key, state);
-  storeClipJob(key, { jobId, startedAt });
+  storeClipJob(key, { jobId, startedAt, status: initialStatus, mode });
 
   let attempt = 0;
   let status = normalizeClipJobStatus(initialStatus);
   let queuePosition = initialQueuePosition;
-  let lastObservedStatus = status;
-  let lastObservedQueuePosition = initialQueuePosition;
   let pollErrorCount = 0;
-  let timeoutNoticeShown = false;
 
   while (!state.cancelled) {
-    const timedOut = (Date.now() - startedAt) >= clipJobPollMaxMs;
-    const card = getClipCardByPlanIndex(planIndex);
-    if (card) {
-      if (timedOut) {
-        handleClipJobBackgroundContinue(planIndex, lastObservedStatus, lastObservedQueuePosition);
-        timeoutNoticeShown = true;
-      } else {
+    try {
+      const card = getClipCardByPlanIndex(planIndex);
+      if (card) {
         renderClipJobProgressState(card, status, queuePosition, { mode });
       }
+    } catch (error) {
+      console.warn("Could not update render progress UI; polling will continue", error);
     }
 
     try {
       const statusUrl = clipJobStatusUrlTemplate.replace("__JOB_ID__", encodeURIComponent(jobId));
+      const controller = new AbortController();
+      state.controller = controller;
       const response = await fetch(statusUrl, {
         credentials: "same-origin",
         cache: "no-store",
+        signal: controller.signal,
       });
-      if (!response.ok) {
-        throw new Error(`HTTP ${response.status}`);
-      }
-      const payload = await response.json();
+      state.controller = null;
+      const payload = await response.json().catch(() => ({}));
       if (state.cancelled) {
         return;
       }
+      if (response.status >= 400 && response.status < 500) {
+        showClipJobRetryablePollError(planIndex, {
+          ...payload,
+          error: payload?.error || payload?.message || `Job status request failed (HTTP ${response.status}).`,
+        });
+        return;
+      }
+      if (!response.ok) {
+        throw new Error(`HTTP ${response.status}`);
+      }
       status = normalizeClipJobStatus(payload?.status || status);
       queuePosition = payload?.queue_position;
-      lastObservedStatus = status;
-      lastObservedQueuePosition = queuePosition;
+      storeClipJob(key, { jobId, startedAt, status, mode });
       pollErrorCount = 0;
       if (status === "done") {
         await finalizeClipJobSuccess(planIndex);
@@ -15638,6 +15670,10 @@ const pollClipJobUntilDone = async (
         return;
       }
     } catch (error) {
+      state.controller = null;
+      if (state.cancelled || error?.name === "AbortError") {
+        return;
+      }
       pollErrorCount += 1;
       if (pollErrorCount >= 5) {
         const card = getClipCardByPlanIndex(planIndex);
@@ -15652,7 +15688,7 @@ const pollClipJobUntilDone = async (
       }
     }
 
-    const delay = timeoutNoticeShown ? 15000 : Math.min(clipJobBasePollMs + (attempt * 500), clipJobMaxPollMs);
+    const delay = clipJobPollDelay(attempt);
     attempt += 1;
     await sleep(delay);
   }
@@ -16939,8 +16975,7 @@ const initGenerateClipForms = () => {
 const resumeQueuedClipJobs = ({ forceRestart = false } = {}) => {
   const storedJobs = getStoredClipJobs();
   document.querySelectorAll(".clip-card").forEach((card) => {
-    const planIndexInput = card.querySelector("input[name='plan_index']");
-    const planIndex = planIndexInput?.value || "";
+    const planIndex = getPlanIndexFromCard(card);
     if (!planIndex) {
       return;
     }
@@ -16949,15 +16984,16 @@ const resumeQueuedClipJobs = ({ forceRestart = false } = {}) => {
       stopClipJobPolling(planIndex, { clearStored: true });
       return;
     }
-    const jobId = String(card.dataset.renderJobId || "").trim() || String(storedJobs[String(planIndex)]?.jobId || "").trim();
-    const status = liveRenderStatus || String(card.dataset.status || "").trim().toLowerCase();
-	    if (!jobId || !["queued", "processing", "running"].includes(status)) {
-	      return;
-	    }
+    const storedJob = storedJobs[String(planIndex)] || {};
+    const jobId = String(card.dataset.renderJobId || "").trim() || String(storedJob.jobId || "").trim();
+    const status = liveRenderStatus || normalizeClipJobStatus(storedJob.status || card.dataset.status);
+    if (!jobId || !isClipJobLiveStatus(status)) {
+      return;
+    }
     pollClipJobUntilDone(planIndex, jobId, {
       initialStatus: status,
-      startedAt: Number(storedJobs[String(planIndex)]?.startedAt || Date.now()),
-      mode: card.querySelector("video") ? "regenerate" : "render",
+      startedAt: Number(storedJob.startedAt || Date.now()),
+      mode: storedJob.mode || (card.querySelector("video") ? "regenerate" : "render"),
       forceRestart,
     });
   });
