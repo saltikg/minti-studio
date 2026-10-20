@@ -10202,6 +10202,7 @@ document.addEventListener("DOMContentLoaded", () => {
         seekAndPlay(seconds) {
           const safeSeconds = Math.max(0, Number(seconds) || 0);
           if (!this.ready || !this.player) {
+            pendingRestoreState = null;
             this.pendingSeek = safeSeconds;
             setStatus(`Loading player…`);
             return false;
@@ -10248,6 +10249,10 @@ document.addEventListener("DOMContentLoaded", () => {
           } catch (_) {
             return { ready: false, state: "not-ready" };
           }
+        },
+        retryPlay() {
+          if (!this.ready || !this.player) return false;
+          try { this.player.playVideo(); return true; } catch (_) { return false; }
         },
         restoreState(snapshot) {
           if (!snapshot || !Number.isFinite(Number(snapshot.currentTime))) {
@@ -11239,6 +11244,7 @@ document.addEventListener("DOMContentLoaded", () => {
       pausePlayer: () => player.pause?.(),
       capturePlayerState: () => player.captureState?.() || null,
       getPlaybackStatus: () => player.getPlaybackStatus?.() || null,
+      retryPlayer: () => player.retryPlay?.() || false,
       restorePlayerState: (snapshot) => player.restoreState?.(snapshot) || false,
       destroy: () => {
         clearCoachmarkModalTimer();
@@ -12334,7 +12340,9 @@ const setupGenerateV2UnrenderedSourcePreview = (card) => {
   if (!preview || !slot || !sourcePlayerCard || !card) {
     return false;
   }
-  pauseGenerateV2WorkbenchVideos({ pauseSourcePlayer: true });
+  if (!window.__musicPreviewPlaybackIntent?.(card.dataset.planIndex)) {
+    pauseGenerateV2WorkbenchVideos({ pauseSourcePlayer: true });
+  }
   if (sourcePlayerCard.parentElement !== slot) {
     slot.appendChild(sourcePlayerCard);
   }
@@ -12361,7 +12369,11 @@ const setupGenerateV2UnrenderedSourcePreview = (card) => {
     });
   }
   updateGenerateV2UnrenderedPreviewActions();
-  window.setTimeout(cueGenerateV2SourcePlayerToSelectedClip, 0);
+  window.setTimeout(() => {
+    if (!window.__musicPreviewPlaybackIntent?.(card.dataset.planIndex)) {
+      cueGenerateV2SourcePlayerToSelectedClip();
+    }
+  }, 0);
   return true;
 };
 
@@ -12941,7 +12953,9 @@ const selectGenerateV2Clip = (planIndex = "") => {
     mountedCard &&
     clipCardPlanIndex(mountedCard) === normalized
   );
-  pauseGenerateV2WorkbenchVideos({ pauseSourcePlayer: false });
+  if (!window.__musicPreviewPlaybackIntent?.(normalized)) {
+    pauseGenerateV2WorkbenchVideos({ pauseSourcePlayer: false });
+  }
   if (!keepMountedCard) {
     restoreGenerateV2MountedClip();
   }
@@ -14729,13 +14743,14 @@ const refreshClipList = async (preferredPlanIndex = null, preferredViewMode = nu
     const selectedSignatureAfter = isGenerateV2
       ? getGenerateV2ClipRefreshSignature(doc, activePlanIndex)
       : "";
+    const preserveMusicPreview = isGenerateV2 && window.__musicPreviewPlaybackIntent?.(activePlanIndex);
     const preserveSelectedPanel = Boolean(
-      isGenerateV2 &&
-      activePlanIndex &&
-      selectedSignatureBefore &&
-      !forceReplaceSelected &&
-      (selectedEditorDirty || selectedSignatureBefore === selectedSignatureAfter) &&
-      !window.__generateV2EditModeActive
+      isGenerateV2 && activePlanIndex && !forceReplaceSelected &&
+      (preserveMusicPreview || (
+        selectedSignatureBefore &&
+        (selectedEditorDirty || selectedSignatureBefore === selectedSignatureAfter) &&
+        !window.__generateV2EditModeActive
+      ))
     );
     window.__generateV2PreserveSelectedPlanIndex = preserveSelectedPanel ? String(activePlanIndex) : "";
     if (getGenerateV2Root()) {
@@ -14767,7 +14782,9 @@ const refreshClipList = async (preferredPlanIndex = null, preferredViewMode = nu
     }
     if (newClipPanel) {
       if (!preserveSelectedPanel) {
-        pauseGenerateV2WorkbenchVideos({ pauseSourcePlayer: true });
+        if (!window.__musicPreviewPlaybackIntent?.(activePlanIndex)) {
+          pauseGenerateV2WorkbenchVideos({ pauseSourcePlayer: true });
+        }
         restoreGenerateV2ClipEditForm();
         if (!window.__generateV2EditModeActive) {
           restoreGenerateV2MountedClip();
@@ -23076,6 +23093,8 @@ document.addEventListener("DOMContentLoaded", () => {
   let hasPlayedSinceIntent = false;
   let pausedSince = 0;
   let explicitPauseUntil = 0;
+  let startRetryCount = 0;
+  let lastStartRetryAt = 0;
   let libraryPlayIntentId = "";
   let libraryPlayToken = 0;
 
@@ -23145,7 +23164,12 @@ document.addEventListener("DOMContentLoaded", () => {
   const setPlayIntent = (playing, starting = false) => {
     playIntent = playing;
     playbackStarting = playing && starting;
-    if (playing && starting) { startDeadline = Date.now() + 8000; hasPlayedSinceIntent = false; }
+    if (playing && starting) {
+      startDeadline = Date.now() + 8000;
+      lastStartRetryAt = Date.now();
+      startRetryCount = 0;
+      hasPlayedSinceIntent = false;
+    }
     if (!playing) { startDeadline = 0; hasPlayedSinceIntent = false; pausedSince = 0; }
     setTimelineButtonState();
   };
@@ -23308,7 +23332,7 @@ document.addEventListener("DOMContentLoaded", () => {
     const snapshot=window.__trsClipSelectorController?.capturePlayerState?.() || window.__mintiTranscriptPlayer?.captureState?.();
     if(!snapshot&&!status)return null;
     return {time:Math.max(0,Number(snapshot?.currentTime||0)-Number(activeCard()?.dataset.start||0)),rate:Number(snapshot?.rate||1),
-      state:status?.state||(!status?.ready?"not-ready":snapshot?.playing?"playing":"paused")};
+      ready:!!status?.ready,state:status?.state||(!status?.ready?"not-ready":snapshot?.playing?"playing":"paused")};
   };
   const updatePlayhead = (time) => {
     const safeTime=Math.max(0,Math.min(clipDuration(),Number(time)||0));
@@ -23390,6 +23414,12 @@ document.addEventListener("DOMContentLoaded", () => {
       audioMode="timeline";
     }
     if(playIntent){
+      if(playbackStarting&&playback.ready&&["unstarted","cued"].includes(playback.state)
+          &&startRetryCount<6&&now-lastStartRetryAt>=(startRetryCount?700:400)){
+        startRetryCount++;
+        lastStartRetryAt=now;
+        window.__trsClipSelectorController?.retryPlayer?.();
+      }
       if(playback.state==="playing"){
         hasPlayedSinceIntent=true;
         pausedSince=0;
@@ -23417,7 +23447,15 @@ document.addEventListener("DOMContentLoaded", () => {
     try {
       if(video){if(video.ended||video.currentTime>=clipDuration())video.currentTime=0;await video.play();}
       else {
-        await window.__trsClipSelectorController?.seekAndPlay?.(Number(activeCard()?.dataset.start||0)+Math.max(0,playback.time||0));
+        const player = window.__trsClipSelectorController;
+        const absolute = Number(activeCard()?.dataset.start||0)+Math.max(0,playback.time||0);
+        const sourceTime = Number(player?.capturePlayerState?.()?.currentTime);
+        if (playback.ready && ["paused", "cued", "unstarted"].includes(playback.state)
+            && Number.isFinite(sourceTime) && Math.abs(sourceTime-absolute)<.3) {
+          await player?.retryPlayer?.();
+        } else {
+          await player?.seekAndPlay?.(absolute);
+        }
       }
     } catch (_) {
       if(token===playIntentToken)stopTimeline();
@@ -23426,6 +23464,7 @@ document.addEventListener("DOMContentLoaded", () => {
   document.addEventListener("seeking",(event)=>{if(event.target.matches?.(".clip-card video"))syncPreview();},true);
   previewAudio.addEventListener("ended",()=>{if(audioMode==="library")stopSharedAudio();});
   window.setInterval(()=>{if(!selected)return;const playback=previewPlayback();if(audioMode==="library"&&playback?.state==="playing"&&Date.now()-libraryStartedAt>350){stopSharedAudio();audioMode="timeline";}syncPreview();},100);
+  window.__musicPreviewPlaybackIntent = (planIndex) => playIntent && audioMode === "timeline" && String(activeCard()?.dataset.planIndex || "") === String(planIndex || "");
   window.syncMusicEditorFromFields=syncUi;
   loadTracks();
 });
