@@ -221,6 +221,15 @@ def _is_ignored_web_hit(line: str) -> bool:
         return True
     if "/api/client-error" in path:
         return True
+    if (
+        path.endswith("/status")
+        or "/render-jobs/" in path
+        or "/api/jobs/" in path
+        or "/notifications" in path
+        or "/heartbeat" in path
+        or path.endswith("/auto-suggest-render-status")
+    ):
+        return True
     if "gokhansaltik" in lowered:
         return True
     return False

@@ -724,11 +724,45 @@ DESIGN_POSITION_LIMITS = {
 }
 
 CAPTION_ANCHORS = {"top", "center", "bottom"}
+CAPTION_ANCHOR_DEFAULT_MARGINS = {
+    "top": 520,
+    "center": 640,
+    "bottom": 270,
+}
 
 
 def normalize_caption_anchor(value, *, default="bottom") -> str:
     anchor = str(value or "").strip().lower()
     return anchor if anchor in CAPTION_ANCHORS else default
+
+
+def resolve_caption_anchor_margin(
+    *,
+    stored_anchor,
+    stored_margin,
+    margin_custom,
+    default_anchor,
+    default_margin,
+) -> tuple[str, int]:
+    """Resolve a caption's anchor and coordinate from the same source."""
+    fallback_anchor = normalize_caption_anchor(default_anchor, default="top")
+    try:
+        fallback_margin = int(round(float(default_margin)))
+    except (TypeError, ValueError):
+        fallback_margin = CAPTION_ANCHOR_DEFAULT_MARGINS[fallback_anchor]
+
+    raw_anchor = str(stored_anchor or "").strip().lower()
+    if raw_anchor not in CAPTION_ANCHORS:
+        return fallback_anchor, fallback_margin
+
+    if bool(margin_custom):
+        try:
+            return raw_anchor, int(round(float(stored_margin)))
+        except (TypeError, ValueError):
+            pass
+    if raw_anchor == fallback_anchor:
+        return raw_anchor, fallback_margin
+    return raw_anchor, CAPTION_ANCHOR_DEFAULT_MARGINS[raw_anchor]
 
 
 def caption_block_top(position, anchor, block_height, frame_height) -> float:
@@ -1296,7 +1330,7 @@ SUBTITLE_PILL_FONT_MAP = {
 
 TITLE_FONT_SIZES = [8, 20, 24, 28, 30, 34, 40, 44]
 SUB_FONT_SIZES = [8, 9, 10, 12, 14, 16]
-SUB_MARGIN_DEFAULT = 520
+SUB_MARGIN_DEFAULT = CAPTION_ANCHOR_DEFAULT_MARGINS["top"]
 
 STATIC_IMG_DIR = Path(__file__).resolve().parent / "static" / "img"
 STATIC_USER_IMAGES_DIR = Path(__file__).resolve().parent / "static" / "user_images"

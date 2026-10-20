@@ -70,6 +70,7 @@ from app.video_shorts.config import (
     DESIGN_GEOMETRY,
     DESIGN_POSITION_LIMITS,
     clamp_design_position,
+    resolve_caption_anchor_margin,
     DEFAULT_SUBTITLE_TEXT_COLOR,
     DEFAULT_VIDEO_OVERLAY_OFFSET,
     DEFAULT_USER_STORAGE_LIMIT,
@@ -378,6 +379,7 @@ from app.video_shorts.services.timezones import DEFAULT_TIME_ZONE, TIMEZONE_LABE
 from app.video_shorts.services.render_jobs import (
     AUTO_RENDER_JOB_ORIGIN,
     AUTO_RENDER_JOB_PRIORITY,
+    CUSTOMER_JOB_ORIGIN,
     DISCOVERY_JOB_ORIGIN,
     DISCOVERY_JOB_PRIORITY,
     GUEST_JOB_ORIGIN,
@@ -1067,6 +1069,24 @@ def _apply_short_editor_defaults(raw_values: Dict[str, Any], user_defaults: Dict
         else:
             resolved[name] = raw_value
     return resolved
+
+
+def _resolve_caption_position(
+    *,
+    stored_anchor: Any,
+    stored_margin: Any,
+    margin_custom: Any,
+    user_defaults: Dict[str, Any],
+) -> tuple[str, int]:
+    config_defaults = _short_editor_config_defaults()
+    clean_defaults = _clean_short_editor_default_payload(user_defaults) if user_defaults else {}
+    return resolve_caption_anchor_margin(
+        stored_anchor=stored_anchor,
+        stored_margin=stored_margin,
+        margin_custom=_normalize_optional_bool(margin_custom, default=False),
+        default_anchor=clean_defaults.get("caption_anchor", config_defaults["caption_anchor"]),
+        default_margin=clean_defaults.get("sub_margin", config_defaults["sub_margin"]),
+    )
 
 
 def _format_size_bytes(num: int) -> str:
@@ -7663,7 +7683,7 @@ def _enqueue_selected_lead_render(
     with current_app.test_request_context(
         f"/video_shorts/generate/{int(video_pk)}/autoclip?admin_operation_brand={brand_id}&admin_operation_kind=lead",
         method="POST",
-        data={"plan_index": str(plan_index)},
+        data={"plan_index": str(plan_index), "_discovery_pipeline_job": "1"},
         headers={"X-Requested-With": "XMLHttpRequest"},
     ):
         g.vs_current_user = {
@@ -7746,14 +7766,17 @@ def apply_short_editor_defaults_to_video_if_null(*, owner_user_id: str, brand_id
         if not selectable:
             conn.commit()
             return {"updated": False, "fields": []}
+        select_columns = list(selectable)
+        if "subtitle_margin_custom" in columns:
+            select_columns.append("subtitle_margin_custom")
         row = conn.execute(
-            f"SELECT {', '.join(selectable)} FROM youtube_videos WHERE id = ? AND owner_user_id = ? AND brand_id = ?",
+            f"SELECT {', '.join(select_columns)} FROM youtube_videos WHERE id = ? AND owner_user_id = ? AND brand_id = ?",
             [int(video_pk), owner_user_id, brand_id],
         ).fetchone()
         if not row:
             conn.commit()
             return {"updated": False, "fields": [], "reason": "video_not_found"}
-        current_by_column = dict(zip(selectable, row))
+        current_by_column = dict(zip(select_columns, row))
         if not any(current_by_column.get(column) is None for column in selectable):
             conn.commit()
             return {"updated": False, "fields": []}
@@ -7763,6 +7786,14 @@ def apply_short_editor_defaults_to_video_if_null(*, owner_user_id: str, brand_id
             if column_name in current_by_column
         }
         resolved = _apply_short_editor_defaults(raw_values, _load_short_editor_defaults(owner_user_id, brand_id))
+        resolved_anchor, resolved_margin = _resolve_caption_position(
+            stored_anchor=current_by_column.get("caption_anchor"),
+            stored_margin=current_by_column.get("subtitle_margin"),
+            margin_custom=current_by_column.get("subtitle_margin_custom"),
+            user_defaults=_load_short_editor_defaults(owner_user_id, brand_id),
+        )
+        resolved["caption_anchor"] = resolved_anchor
+        resolved["sub_margin"] = resolved_margin
         assignments: List[str] = []
         params: List[Any] = []
         updated_fields: List[str] = []
@@ -8051,6 +8082,21 @@ def _is_discovery_demo_scope(owner_user_id: str, brand_id: str, video_pk: Option
         return False
     finally:
         conn.close()
+
+
+def _interactive_render_origin(
+    *,
+    owner_user_id: str,
+    brand_id: str,
+    video_pk: int,
+    auto_render_job: bool,
+    discovery_pipeline_job: bool,
+) -> tuple[str, Optional[int]]:
+    if discovery_pipeline_job and _is_discovery_demo_scope(owner_user_id, brand_id, video_pk):
+        return DISCOVERY_JOB_ORIGIN, DISCOVERY_JOB_PRIORITY
+    if auto_render_job:
+        return AUTO_RENDER_JOB_ORIGIN, AUTO_RENDER_JOB_PRIORITY
+    return CUSTOMER_JOB_ORIGIN, None
 
 
 def _active_transcription_or_ingest_job_for_video(
@@ -11734,7 +11780,7 @@ def generate_short(video_pk):
         "title_font_size": video.get("title_font_size"),
         "sub_font_size": video.get("subtitle_font_size"),
         "sub_margin": video.get("subtitle_margin"),
-        "caption_anchor": video.get("caption_anchor") or "bottom",
+        "caption_anchor": video.get("caption_anchor"),
         "subtitle_style": video.get("subtitle_style"),
         "subtitle_preset": video.get("subtitle_preset"),
         "title_margin": video.get("title_margin"),
@@ -11768,11 +11814,13 @@ def generate_short(video_pk):
     video_title_font_size = resolved_style_values.get("title_font_size") or DEFAULT_EDITOR_TITLE_FONT_SIZE
     video_sub_font_key = resolved_style_values.get("sub_font") or DEFAULT_SUB_FONT_KEY
     video_sub_font_size = resolved_style_values.get("sub_font_size") or DEFAULT_SUB_FONT_SIZE
-    video_sub_margin = resolved_style_values.get("sub_margin") or SUB_MARGIN_DEFAULT
-    video_caption_anchor = str(resolved_style_values.get("caption_anchor") or "bottom").strip().lower()
-    if video_caption_anchor not in {"top", "center", "bottom"}:
-        video_caption_anchor = "bottom"
     video_sub_margin_custom = _normalize_optional_bool(video.get("subtitle_margin_custom"), default=False)
+    video_caption_anchor, video_sub_margin = _resolve_caption_position(
+        stored_anchor=video.get("caption_anchor"),
+        stored_margin=video.get("subtitle_margin"),
+        margin_custom=video_sub_margin_custom,
+        user_defaults=short_editor_defaults,
+    )
     video_subtitle_style = str(resolved_style_values.get("subtitle_style") or "plain").strip().lower()
     if video_subtitle_style not in {"plain", "karaoke"}:
         video_subtitle_style = "plain"
@@ -28562,6 +28610,7 @@ def autoclip_video(video_pk):
     queued_job = (request.form.get("_queued_job") or "").strip() in {"1", "true", "yes"}
     regenerate_job = (request.form.get("_regenerate_job") or "").strip() in {"1", "true", "yes"}
     auto_render_job = (request.form.get("_auto_render_job") or "").strip() in {"1", "true", "yes"}
+    discovery_pipeline_job = (request.form.get("_discovery_pipeline_job") or "").strip() in {"1", "true", "yes"}
     queued_render_settings_hash = (request.form.get("_render_settings_hash") or "").strip() or None
 
     def _respond(message, success=False, status=200, category="info", extras=None, redirect_to=None):
@@ -28664,7 +28713,7 @@ def autoclip_video(video_pk):
     video_sub_font_key = None
     video_sub_font_size = None
     video_sub_margin = None
-    video_caption_anchor = "bottom"
+    video_caption_anchor = None
     video_sub_margin_custom = False
     video_title_margin = None
     video_title_line_spacing = -4
@@ -29240,6 +29289,12 @@ def autoclip_video(video_pk):
     video_title_bg_color = _normalize_hex_color(video_title_bg_color, DEFAULT_EDITOR_TITLE_BG_COLOR)
     video_title_text_color = _normalize_hex_color(video_title_text_color, DEFAULT_EDITOR_TITLE_TEXT_COLOR)
     video_subtitle_text_color = _normalize_hex_color(video_subtitle_text_color, DEFAULT_SUBTITLE_TEXT_COLOR)
+    video_caption_anchor, video_sub_margin = _resolve_caption_position(
+        stored_anchor=video_caption_anchor,
+        stored_margin=video_sub_margin,
+        margin_custom=video_sub_margin_custom,
+        user_defaults=_load_short_editor_defaults(video_owner_user_id or target_owner_user_id, brand_id),
+    )
     if video_subtitle_style not in {"plain", "karaoke"}:
         video_subtitle_style = "plain"
     if video_subtitle_preset not in SUBTITLE_PRESETS:
@@ -29450,16 +29505,19 @@ def autoclip_video(video_pk):
             }
             if edit_keep_ranges_for_job:
                 payload["edit_keep_ranges"] = edit_keep_ranges_for_job
-            is_discovery_demo = _is_discovery_demo_scope(target_owner_user_id, brand_id, int(video_pk))
-            if is_discovery_demo:
-                payload["job_origin"] = DISCOVERY_JOB_ORIGIN
-            elif auto_render_job:
-                payload["job_origin"] = AUTO_RENDER_JOB_ORIGIN
+            job_origin, job_priority = _interactive_render_origin(
+                owner_user_id=target_owner_user_id,
+                brand_id=brand_id,
+                video_pk=int(video_pk),
+                auto_render_job=auto_render_job,
+                discovery_pipeline_job=discovery_pipeline_job,
+            )
+            payload["job_origin"] = job_origin
             enqueue_result = enqueue_render_job(
                 user_id=str(target_owner_user_id),
                 payload=payload,
                 input_hash=input_hash,
-                priority=DISCOVERY_JOB_PRIORITY if is_discovery_demo else (AUTO_RENDER_JOB_PRIORITY if auto_render_job else None),
+                priority=job_priority,
             )
             kind = enqueue_result.get("kind")
             job = enqueue_result.get("job") or {}
@@ -29473,7 +29531,7 @@ def autoclip_video(video_pk):
                         user_id=str(target_owner_user_id),
                         payload=payload,
                         input_hash=input_hash,
-                        priority=DISCOVERY_JOB_PRIORITY if is_discovery_demo else (AUTO_RENDER_JOB_PRIORITY if auto_render_job else None),
+                        priority=job_priority,
                     )
                     kind = enqueue_result.get("kind")
                     job = enqueue_result.get("job") or {}
@@ -31019,6 +31077,7 @@ def regenerate_clip_video(video_pk: int, plan_index: int):
         "start": start,
         "end": end,
         "regenerate": True,
+        "job_origin": CUSTOMER_JOB_ORIGIN,
         "render_settings_hash": current_hash,
         "previous_youtube_video_id": str((generated_row[2] if generated_row else "") or plan_entry.get("yt_video_id") or "").strip(),
         "previous_publish_at_iso": str(plan_entry.get("publish_at_iso") or plan_entry.get("publish_at") or "").strip(),

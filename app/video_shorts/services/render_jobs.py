@@ -35,6 +35,7 @@ JOB_TYPE_INSTAGRAM_COMMENT_WEBHOOK = "instagram_comment_webhook"
 JOB_TYPE_ENRICH_DISCOVERY_EMAILS = "enrich_discovery_emails"
 JOB_TYPE_ENRICH_AUTOPILOT_DISCOVERY_EMAILS = "enrich_autopilot_discovery_emails"
 DISCOVERY_JOB_ORIGIN = "discovery_demo"
+CUSTOMER_JOB_ORIGIN = "customer"
 AUTO_RENDER_JOB_ORIGIN = "auto"
 GUEST_JOB_ORIGIN = "guest"
 AUTO_RENDER_JOB_PRIORITY = -10
