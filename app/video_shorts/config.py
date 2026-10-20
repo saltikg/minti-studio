@@ -755,11 +755,10 @@ def resolve_caption_anchor_margin(
     if raw_anchor not in CAPTION_ANCHORS:
         return fallback_anchor, fallback_margin
 
-    if bool(margin_custom):
-        try:
-            return raw_anchor, int(round(float(stored_margin)))
-        except (TypeError, ValueError):
-            pass
+    try:
+        return raw_anchor, int(round(float(stored_margin)))
+    except (TypeError, ValueError):
+        pass
     if raw_anchor == fallback_anchor:
         return raw_anchor, fallback_margin
     return raw_anchor, CAPTION_ANCHOR_DEFAULT_MARGINS[raw_anchor]

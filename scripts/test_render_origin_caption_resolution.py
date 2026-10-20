@@ -51,7 +51,7 @@ def main() -> None:
         stored_margin=772,
         margin_custom=False,
         user_defaults=defaults,
-    ) == ("top", 520)
+    ) == ("top", 772)
     assert generation._resolve_caption_position(
         stored_anchor=None,
         stored_margin=None,
