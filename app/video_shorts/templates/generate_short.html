@@ -23100,7 +23100,10 @@ document.addEventListener("DOMContentLoaded", () => {
 
   const activeCard = () => {
     const activeIndex = document.getElementById("clip-management-panel")?.dataset.activePlanIndex;
-    return document.querySelector(`.clip-card[data-plan-index="${CSS.escape(String(activeIndex || ""))}"]`) || document.querySelector(".clip-card");
+    const selector = `.clip-card[data-plan-index="${CSS.escape(String(activeIndex || ""))}"]`;
+    return document.querySelector(`#generate-v2-selected-clip-mount ${selector}`)
+      || document.querySelector(selector)
+      || document.querySelector(".clip-card");
   };
   const clipDuration = () => Math.max(.1, Number(activeCard()?.dataset.duration || 0) || 30);
   const speechRanges = () => { try { return JSON.parse(activeCard()?.dataset.musicSpeechRanges || "[]"); } catch (_) { return []; } };
@@ -23156,7 +23159,7 @@ document.addEventListener("DOMContentLoaded", () => {
   };
   const setTimelineButtonState = () => {
     if (!timelinePlay) return;
-    timelinePlay.innerHTML = playbackStarting && playIntent
+    timelinePlay.innerHTML = playbackStarting && playIntent && previewPlayback()?.ready === false
       ? '<span class="spinner-border spinner-border-sm" role="status" aria-hidden="true"></span>'
       : playIntent ? '<i class="bi bi-pause-fill"></i>' : '<i class="bi bi-play-fill"></i>';
     timelinePlay.setAttribute("aria-label", playIntent ? "Pause preview" : "Play preview");
@@ -23323,10 +23326,10 @@ document.addEventListener("DOMContentLoaded", () => {
   document.getElementById("musicPickerClose")?.addEventListener("click",()=>setPickerOpen(false)); search?.addEventListener("input",renderPicker);
   const previewPlayback = () => {
     const renderedVideo=activeCard()?.querySelector("video");
-    if(renderedVideo)return {time:renderedVideo.currentTime||0,rate:renderedVideo.playbackRate||1,
+    if(renderedVideo)return {time:renderedVideo.currentTime||0,rate:renderedVideo.playbackRate||1,ready:renderedVideo.readyState>=2,
       state:renderedVideo.error?"error":renderedVideo.ended?"ended":renderedVideo.seeking?"seeking":renderedVideo.paused?"paused":renderedVideo.readyState<3?"waiting":"playing"};
     const sourceVideo=document.querySelector("#trs-player-frame video");
-    if(sourceVideo)return {time:Math.max(0,(sourceVideo.currentTime||0)-Number(activeCard()?.dataset.start||0)),rate:sourceVideo.playbackRate||1,
+    if(sourceVideo)return {time:Math.max(0,(sourceVideo.currentTime||0)-Number(activeCard()?.dataset.start||0)),rate:sourceVideo.playbackRate||1,ready:sourceVideo.readyState>=2,
       state:sourceVideo.error?"error":sourceVideo.ended?"ended":sourceVideo.seeking?"seeking":sourceVideo.paused?"paused":sourceVideo.readyState<3?"waiting":"playing"};
     const status=window.__trsClipSelectorController?.getPlaybackStatus?.();
     const snapshot=window.__trsClipSelectorController?.capturePlayerState?.() || window.__mintiTranscriptPlayer?.captureState?.();
@@ -23414,6 +23417,7 @@ document.addEventListener("DOMContentLoaded", () => {
       audioMode="timeline";
     }
     if(playIntent){
+      if(playbackStarting&&playback.ready&&timelinePlay?.querySelector(".spinner-border"))setTimelineButtonState();
       if(playbackStarting&&playback.ready&&["unstarted","cued"].includes(playback.state)
           &&startRetryCount<6&&now-lastStartRetryAt>=(startRetryCount?700:400)){
         startRetryCount++;
