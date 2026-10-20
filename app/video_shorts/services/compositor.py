@@ -1533,6 +1533,40 @@ def _overlay_visible_alpha_geometry(path: Path) -> Optional[Dict[str, int]]:
         return None
 
 
+def _overlay_canvas_dimensions(path: Path) -> Optional[Tuple[int, int]]:
+    try:
+        with Image.open(path) as image:
+            return int(image.width), int(image.height)
+    except Exception:
+        pass
+    try:
+        cmd = [
+            _resolve_ffprobe(),
+            "-v",
+            "error",
+            "-select_streams",
+            "v:0",
+            "-show_entries",
+            "stream=width,height",
+            "-of",
+            "csv=p=0:s=x",
+            str(path),
+        ]
+        result = run_media_subprocess(
+            cmd,
+            operation="probe_overlay_dimensions",
+            context=f"path={path.name}",
+            check=True,
+            capture_output=True,
+            text=True,
+            timeout=FFPROBE_TIMEOUT,
+        )
+        width, height = result.stdout.strip().split("x", 1)
+        return int(width), int(height)
+    except Exception:
+        return None
+
+
 def _face_aware_split_position_metrics(
     *,
     target_height: int = VIDEO_TARGET_HEIGHT,
@@ -1583,11 +1617,14 @@ def _face_aware_caption_top_for_block(
     target_width: int,
     target_height: int,
     subtitle_margin: Optional[int],
-    subtitle_margin_custom: bool = False,
+    subtitle_margin_custom: Optional[bool] = None,
 ) -> float:
     mode = str(segment.get("mode") or "fill").strip().lower()
     safe_block_height = max(1.0, float(block_height or _face_aware_caption_block_height(None)))
-    if subtitle_margin_custom:
+    if not _is_face_aware_default_subtitle_margin(
+        subtitle_margin,
+        subtitle_margin_custom=subtitle_margin_custom,
+    ):
         margin = clamp_design_position(
             "sub_margin",
             subtitle_margin,
@@ -1604,9 +1641,6 @@ def _face_aware_caption_top_for_block(
             subtitle_font_size=int(max(1, round(safe_block_height / 2.0))),
         )
         return max(0.0, min(float(target_height) - safe_block_height, float(metrics["frame_bottom"]) + DESIGN_GEOMETRY["fit_caption_gap"]))
-    if not _is_face_aware_default_subtitle_margin(subtitle_margin, subtitle_margin_custom=subtitle_margin_custom):
-        margin = _face_aware_fill_subtitle_margin(subtitle_margin, subtitle_margin_custom=subtitle_margin_custom)
-        return max(0.0, float(target_height) - float(margin) - safe_block_height)
     try:
         face_bottom = segment.get("caption_face_bottom")
         if face_bottom is not None:
@@ -1622,10 +1656,14 @@ def _face_aware_caption_top_for_block(
 def _is_face_aware_default_subtitle_margin(
     subtitle_margin: Optional[int],
     *,
-    subtitle_margin_custom: bool = False,
+    subtitle_margin_custom: Optional[bool] = None,
 ) -> bool:
-    if subtitle_margin_custom:
-        return False
+    if subtitle_margin_custom is not None:
+        if isinstance(subtitle_margin_custom, str):
+            is_custom = subtitle_margin_custom.strip().lower() in {"1", "true", "yes", "on", "t"}
+        else:
+            is_custom = bool(subtitle_margin_custom)
+        return not is_custom
     try:
         margin = int(round(float(subtitle_margin)))
     except Exception:
@@ -1636,7 +1674,7 @@ def _is_face_aware_default_subtitle_margin(
 def _face_aware_fill_subtitle_margin(
     subtitle_margin: Optional[int],
     *,
-    subtitle_margin_custom: bool = False,
+    subtitle_margin_custom: Optional[bool] = None,
 ) -> int:
     if _is_face_aware_default_subtitle_margin(subtitle_margin, subtitle_margin_custom=subtitle_margin_custom):
         return FACE_AWARE_FILL_FALLBACK_SUBTITLE_MARGIN
@@ -1654,7 +1692,7 @@ def _face_aware_fill_caption_metrics_for_segment(
     target_height: int,
     subtitle_font_size: int,
     subtitle_margin: Optional[int],
-    subtitle_margin_custom: bool = False,
+    subtitle_margin_custom: Optional[bool] = None,
 ) -> Dict[str, Optional[float]]:
     caption_block_height = _face_aware_caption_block_height(subtitle_font_size)
     if not _is_face_aware_default_subtitle_margin(subtitle_margin, subtitle_margin_custom=subtitle_margin_custom):
@@ -2367,7 +2405,7 @@ def _compose_with_background(
     subtitle_font_size: int = DEFAULT_SUB_FONT_SIZE,
     subtitle_margin: int = SUB_MARGIN_DEFAULT,
     caption_anchor: str = "bottom",
-    subtitle_margin_custom: bool = False,
+    subtitle_margin_custom: Optional[bool] = None,
     subtitle_text_color: Optional[str] = None,
     subtitle_bg_color: Optional[str] = None,
     subtitle_bg_alpha: Optional[int] = DEFAULT_SUBTITLE_BG_ALPHA,
@@ -2551,7 +2589,7 @@ def _compose_trimmed_with_background(
     subtitle_font_size: int = DEFAULT_SUB_FONT_SIZE,
     subtitle_margin: int = SUB_MARGIN_DEFAULT,
     caption_anchor: str = "bottom",
-    subtitle_margin_custom: bool = False,
+    subtitle_margin_custom: Optional[bool] = None,
     subtitle_text_color: Optional[str] = None,
     subtitle_bg_color: Optional[str] = None,
     subtitle_bg_alpha: Optional[int] = DEFAULT_SUBTITLE_BG_ALPHA,
@@ -3443,6 +3481,13 @@ def _compose_trimmed_with_background(
             layout_segments[0]["start"] = 0.0
             layout_segments[0]["end"] = float(duration)
     face_aware_layout_active = len(layout_segments) >= 1
+    face_aware_auto_caption_placement = bool(
+        face_aware_layout_active
+        and _is_face_aware_default_subtitle_margin(
+            subtitle_margin,
+            subtitle_margin_custom=subtitle_margin_custom,
+        )
+    )
     face_aware_fit_metrics = _face_aware_fit_position_metrics(
         target_width=target_width,
         target_height=target_height,
@@ -3585,6 +3630,28 @@ def _compose_trimmed_with_background(
                 segment["caption_block_height"] = float(metrics["caption_block_height"] or _face_aware_caption_block_height(subtitle_font_size))
                 segment["caption_face_bottom"] = metrics["median_face_bottom"]
                 segment["subscribe_y"] = float(metrics["subscribe_y"] or 0.0)
+            caption_block_height = _face_aware_caption_block_height(subtitle_font_size)
+            for segment in layout_segments:
+                caption_top = _face_aware_caption_top_for_block(
+                    segment,
+                    block_height=caption_block_height,
+                    target_width=target_width,
+                    target_height=target_height,
+                    subtitle_margin=subtitle_margin,
+                    subtitle_margin_custom=subtitle_margin_custom,
+                )
+                segment["caption_top"] = float(caption_top)
+                segment["caption_block_height"] = float(caption_block_height)
+                segment["caption_margin_v"] = max(
+                    0.0,
+                    float(target_height) - float(caption_top) - float(caption_block_height),
+                )
+                if str(segment.get("mode") or "fill").strip().lower() == "fit":
+                    segment["subscribe_y"] = float(face_aware_fit_metrics["subscribe_y"])
+                else:
+                    segment["subscribe_y"] = float(
+                        caption_top + caption_block_height + DESIGN_GEOMETRY["fit_caption_gap"]
+                    )
         if dynamic_crop_enabled:
             x_ratio_expr = _piecewise_linear_ratio_expr(face_track_points, "x") or _fmt(crop_x)
             y_ratio_expr = _piecewise_linear_ratio_expr(face_track_points, "y") or _fmt(crop_y)
@@ -4052,7 +4119,7 @@ def _compose_trimmed_with_background(
             )
             if anchored_subtitle_path:
                 subtitle_path_for_filter = anchored_subtitle_path
-        if face_aware_layout_active and not subtitle_margin_custom and normalize_caption_anchor(caption_anchor) == "bottom":
+        if face_aware_auto_caption_placement:
             try:
                 face_aware_subtitle_path = _build_face_aware_subtitle_path(
                     effective_subtitle_path,
@@ -4107,7 +4174,7 @@ def _compose_trimmed_with_background(
     elif effective_subtitle_overlay_path:
         filter_parts.append(f"[{next_video_input_index}:v]format=rgba[caption_src]")
         caption_overlay_y_expr = "0"
-        if face_aware_layout_active and not subtitle_margin_custom and normalize_caption_anchor(caption_anchor) == "bottom":
+        if face_aware_auto_caption_placement:
             caption_overlay_y_expr = "0"
             if effective_subtitle_overlay_events:
                 fallback_height = _face_aware_caption_block_height(subtitle_font_size)
@@ -4215,7 +4282,7 @@ def _compose_trimmed_with_background(
         overlay_out_label = "[ov_sub]"
         subscribe_scale_filter = f"scale=iw*{SUBSCRIBE_OVERLAY_SCALE}:ih*{SUBSCRIBE_OVERLAY_SCALE}"
         top_caption_subscribe_metrics = None
-        if face_aware_layout_active and normalize_caption_anchor(caption_anchor) == "top":
+        if face_aware_layout_active and not face_aware_auto_caption_placement and normalize_caption_anchor(caption_anchor) == "top":
             top_caption_subscribe_metrics = _face_aware_top_caption_subscribe_metrics(
                 target_height=target_height,
                 subtitle_font_size=subtitle_font_size,
@@ -4278,17 +4345,36 @@ def _compose_trimmed_with_background(
         subscribe_y_expr = f"H-h-{SUBSCRIBE_OVERLAY_BOTTOM_OFFSET}"
         if top_caption_subscribe_metrics:
             subscribe_y_expr = f"{top_caption_subscribe_metrics['subscribe_top']:.2f}"
-        elif face_aware_layout_active and normalize_caption_anchor(caption_anchor) == "bottom":
-            fit_y = f"min(H-h-{SUBSCRIBE_OVERLAY_BOTTOM_OFFSET},{face_aware_fit_metrics['subscribe_y']:.2f})"
+        elif face_aware_auto_caption_placement:
+            default_subscribe_top = float(target_height) - float(SUBSCRIBE_OVERLAY_BOTTOM_OFFSET)
+            try:
+                overlay_dimensions = _overlay_canvas_dimensions(Path(overlay_asset_path))
+                if not overlay_dimensions:
+                    raise RuntimeError("overlay dimensions unavailable")
+                _, overlay_source_height = overlay_dimensions
+                default_subscribe_top -= float(overlay_source_height) * float(SUBSCRIBE_OVERLAY_SCALE)
+            except Exception as exc:
+                current_app.logger.warning(
+                    "Face-aware subscribe placement probe failed path=%s: %s",
+                    overlay_asset_path,
+                    exc,
+                )
             subscribe_y_intervals: list[tuple[float, float, str]] = []
             for segment in layout_segments:
                 seg_start = float(segment.get("start") or 0.0)
                 seg_end = float(segment.get("end") or duration)
                 if str(segment.get("mode") or "fill") == "fit":
-                    segment_subscribe_y = fit_y
+                    segment_subscribe_top = min(
+                        default_subscribe_top,
+                        float(face_aware_fit_metrics["subscribe_y"]),
+                    )
                 else:
-                    segment_subscribe_y = f"max(H-h-{SUBSCRIBE_OVERLAY_BOTTOM_OFFSET},{float(segment.get('subscribe_y') or 0.0):.2f})"
-                subscribe_y_intervals.append((seg_start, seg_end, segment_subscribe_y))
+                    segment_subscribe_top = max(
+                        default_subscribe_top,
+                        float(segment.get("subscribe_y") or 0.0),
+                    )
+                segment["subscribe_top"] = float(segment_subscribe_top)
+                subscribe_y_intervals.append((seg_start, seg_end, f"{segment_subscribe_top:.2f}"))
             subscribe_y_expr = _piecewise_constant_expr(
                 subscribe_y_intervals,
                 duration=duration,
@@ -4299,6 +4385,30 @@ def _compose_trimmed_with_background(
             f"{final_label}{overlay_src_label}overlay=(W-w)/2:{subscribe_y_expr}:shortest=1{overlay_out_label}"
         )
         final_label = overlay_out_label
+    if face_aware_layout_active:
+        resolved_layout_segments = [
+            {
+                "start": round(float(segment.get("start") or 0.0), 6),
+                "end": round(float(segment.get("end") or duration), 6),
+                "mode": str(segment.get("mode") or "fill"),
+                "caption_top": round(float(segment.get("caption_top") or 0.0), 3),
+                "caption_block_height": round(float(segment.get("caption_block_height") or 0.0), 3),
+                "subscribe_top": (
+                    round(float(segment["subscribe_top"]), 3)
+                    if segment.get("subscribe_top") is not None
+                    else None
+                ),
+            }
+            for segment in layout_segments
+        ]
+        crop_settings["resolved_layout_segments"] = resolved_layout_segments
+        current_app.logger.info(
+            "face_aware_caption_placement auto=%s subtitle_margin=%s subtitle_margin_custom=%s segments=%s",
+            face_aware_auto_caption_placement,
+            subtitle_margin,
+            subtitle_margin_custom,
+            resolved_layout_segments,
+        )
     music_enabled = bool(
         music_path
         and Path(music_path).exists()

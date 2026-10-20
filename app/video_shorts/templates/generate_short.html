@@ -7188,6 +7188,7 @@
                  data-render-height="{{ row.render_height or '' }}"
                  data-render-aspect="{{ row.render_aspect or '' }}"
                  data-auto-layout-summary="{{ row.auto_layout_summary or '' }}"
+                 data-auto-layout-segments='{{ (row.auto_layout_segments or [])|tojson|safe }}'
                  data-outdated="{{ '1' if row.render_settings_outdated else '0' }}"
                  data-needs-regenerate="{{ '1' if row.needs_regenerate else '0' }}"
                  data-regenerate-reason="{{ row.regenerate_reason or '' }}"
@@ -19663,6 +19664,37 @@ document.addEventListener("DOMContentLoaded", () => {
     const activeIndex = document.getElementById("clip-management-panel")?.dataset.activePlanIndex;
     return (activeIndex && document.querySelector(`.clip-card[data-plan-index="${CSS.escape(activeIndex)}"]`)) || document.querySelector(".clip-card");
   };
+  const getAutoLayoutPreviewTime = () => {
+    const card = getActiveClipCard();
+    const clipStart = Number(card?.dataset.start || 0);
+    const renderedVideo = card?.querySelector(".generate-v2-media-column > video, .clip-card-media video");
+    if (renderedVideo && Number.isFinite(Number(renderedVideo.currentTime)) && !renderedVideo.paused) {
+      return Math.max(0, Number(renderedVideo.currentTime));
+    }
+    const sourceSnapshot = window.__trsClipSelectorController?.capturePlayerState?.()
+      || window.__mintiTranscriptPlayer?.captureState?.();
+    if (Number.isFinite(Number(sourceSnapshot?.currentTime))) {
+      return Math.max(0, Number(sourceSnapshot.currentTime) - clipStart);
+    }
+    return Math.max(0, Number(renderedVideo?.currentTime || 0));
+  };
+  const getAutoLayoutPreviewPlacement = () => {
+    if (!isAutoLayoutMode() || initialSubtitleMarginCustom || dirtyOverlayFields.has("sub_margin")) return null;
+    const card = getActiveClipCard();
+    let segments = [];
+    try {
+      segments = JSON.parse(String(card?.dataset.autoLayoutSegments || "[]"));
+    } catch (_) {
+      segments = [];
+    }
+    if (!Array.isArray(segments) || !segments.length) return null;
+    const playhead = getAutoLayoutPreviewTime();
+    return segments.find((segment, index) => {
+      const start = Number(segment?.start || 0);
+      const end = Number(segment?.end || 0);
+      return playhead >= start && (playhead < end || (index === segments.length - 1 && playhead <= end));
+    }) || segments[0];
+  };
   const longestRenderedCaptionGroup = () => {
     const transcript = String(getActiveClipCard()?.dataset.previewCaption || "").trim();
     if (!transcript) return "Sample subtitle line";
@@ -19826,7 +19858,11 @@ document.addEventListener("DOMContentLoaded", () => {
     subscribeCanvas.width = width; subscribeCanvas.height = height;
     subscribeCanvas.getContext("2d").drawImage(subscribeStill, 0, 0, width, height);
     const x = (getActiveRenderFrameWidth()-width)/2;
-    const y = getActiveRenderFrameHeight()-height-DESIGN_GEOMETRY.subscribe_bottom;
+    const autoPlacement = getAutoLayoutPreviewPlacement();
+    const resolvedSubscribeTop = Number(autoPlacement?.subscribe_top);
+    const y = Number.isFinite(resolvedSubscribeTop)
+      ? resolvedSubscribeTop
+      : getActiveRenderFrameHeight()-height-DESIGN_GEOMETRY.subscribe_bottom;
     Object.assign(subscribeCanvas.style, {left: `${x*getActivePreviewScaleX()}px`, top: `${y*getActivePreviewScaleY()}px`,
       width: `${width*getActivePreviewScaleX()}px`, height: `${height*getActivePreviewScaleY()}px`});
     subscribeCanvas.dataset.renderBbox = JSON.stringify([x,y,x+width,y+height]);
@@ -19902,11 +19938,15 @@ document.addEventListener("DOMContentLoaded", () => {
         );
     const safeMargin = activeRenderHeight * 0.05;
     const subtitleSafeMargin = originalPreview && getCaptionAnchor() === "bottom" && !subtitleMarginCustom ? safeMargin : 0;
-    const subtitleTop = clampRenderValue(
-      captionTopForPosition(subtitleMargin, getCaptionAnchor(), subtitleHeight, activeRenderHeight),
-      subtitleSafeMargin,
-      Math.max(subtitleSafeMargin, activeRenderHeight - subtitleSafeMargin - subtitleHeight),
-    );
+    const autoPlacement = getAutoLayoutPreviewPlacement();
+    const resolvedAutoCaptionTop = Number(autoPlacement?.caption_top);
+    const subtitleTop = Number.isFinite(resolvedAutoCaptionTop)
+      ? clampRenderValue(resolvedAutoCaptionTop, 0, Math.max(0, activeRenderHeight - subtitleHeight))
+      : clampRenderValue(
+          captionTopForPosition(subtitleMargin, getCaptionAnchor(), subtitleHeight, activeRenderHeight),
+          subtitleSafeMargin,
+          Math.max(subtitleSafeMargin, activeRenderHeight - subtitleSafeMargin - subtitleHeight),
+        );
     if (originalPreview && !titleMarginCustom) {
       const minGap = Math.max(8, activeRenderHeight * 0.025);
       titleTop = Math.min(titleTop, Math.max(safeMargin, subtitleTop - baseTitleHeight - minGap));
@@ -20026,6 +20066,18 @@ document.addEventListener("DOMContentLoaded", () => {
     }
   };
   window.syncCropEditorFinalPreviewLayout = applyPreviewLayout;
+  let lastAutoLayoutPreviewSegmentKey = "";
+  window.setInterval(() => {
+    if (!isAutoLayoutMode() || !previewCard || previewCard.offsetParent === null) return;
+    const card = getActiveClipCard();
+    const placement = getAutoLayoutPreviewPlacement();
+    const segmentKey = placement
+      ? `${card?.dataset.planIndex || ""}:${placement.start}:${placement.end}:${placement.mode}:${placement.caption_top}:${placement.subscribe_top}`
+      : "";
+    if (segmentKey === lastAutoLayoutPreviewSegmentKey) return;
+    lastAutoLayoutPreviewSegmentKey = segmentKey;
+    applyPreviewLayout();
+  }, 200);
   const clearPreviewCanvas = () => {
     if (!previewCanvas || !previewCtx) {
       return;

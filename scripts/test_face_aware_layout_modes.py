@@ -171,6 +171,24 @@ def _append_custom_caption_position_checks(rows: list[tuple[str, str, str]]) -> 
         subtitle_margin=520,
         subtitle_margin_custom=False,
     )
+    outreach_auto = compositor._face_aware_fill_caption_metrics_for_segment(
+        segment,
+        face_track_points=face_points,
+        crop_h=1.0,
+        target_height=1280,
+        subtitle_font_size=52,
+        subtitle_margin=772,
+        subtitle_margin_custom=False,
+    )
+    legacy_nondefault = compositor._face_aware_fill_caption_metrics_for_segment(
+        segment,
+        face_track_points=face_points,
+        crop_h=1.0,
+        target_height=1280,
+        subtitle_font_size=52,
+        subtitle_margin=772,
+        subtitle_margin_custom=None,
+    )
     if round(float(custom["caption_margin_v"] or 0)) == 520 and custom["median_face_bottom"] is None:
         rows.append(("custom_caption_margin_wins", "PASS", "custom subtitle_margin=520 preserved"))
     else:
@@ -179,6 +197,14 @@ def _append_custom_caption_position_checks(rows: list[tuple[str, str, str]]) -> 
         rows.append(("default_caption_margin_auto_places", "PASS", f"auto margin={auto['caption_margin_v']:.2f}"))
     else:
         rows.append(("default_caption_margin_auto_places", "FAIL", f"auto metrics={auto}"))
+    if outreach_auto["median_face_bottom"] is not None and round(float(outreach_auto["caption_margin_v"] or 0)) != 772:
+        rows.append(("explicit_default_772_auto_places", "PASS", f"auto margin={outreach_auto['caption_margin_v']:.2f}"))
+    else:
+        rows.append(("explicit_default_772_auto_places", "FAIL", f"auto metrics={outreach_auto}"))
+    if legacy_nondefault["median_face_bottom"] is None and round(float(legacy_nondefault["caption_margin_v"] or 0)) == 772:
+        rows.append(("legacy_null_uses_margin_fallback", "PASS", "legacy subtitle_margin=772 preserved"))
+    else:
+        rows.append(("legacy_null_uses_margin_fallback", "FAIL", f"legacy metrics={legacy_nondefault}"))
 
     expected_top = 1280.0 - 520.0 - 96.0
     custom_modes = []
@@ -280,6 +306,7 @@ def _append_style_template_position_preservation_check(rows: list[tuple[str, str
         subtitle_font_key=saved_video["subtitle_font_key"],
         subtitle_font_size=saved_video["subtitle_font_size"],
         subtitle_margin=saved_video["subtitle_margin"],
+        caption_anchor="bottom",
         subtitle_margin_custom=saved_video["subtitle_margin_custom"],
         subtitle_style=saved_video["subtitle_style"],
         subtitle_preset=saved_video["subtitle_preset"],

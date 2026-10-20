@@ -8798,7 +8798,7 @@ def _build_render_job_options(
     music_duck: bool = True,
     music_fade_out: bool = True,
     music_speech_ranges: Optional[List[Dict[str, float]]] = None,
-    subtitle_margin_custom: bool = False,
+    subtitle_margin_custom: Optional[bool] = None,
 ) -> Dict[str, Any]:
     return {
         "plan_index": int(plan_index),
@@ -8813,7 +8813,7 @@ def _build_render_job_options(
         "subtitle_font_size": subtitle_font_size,
         "subtitle_margin": subtitle_margin,
         "caption_anchor": str(caption_anchor or "bottom").strip().lower(),
-        "subtitle_margin_custom": bool(subtitle_margin_custom),
+        "subtitle_margin_custom": subtitle_margin_custom,
         "subtitle_style": (subtitle_style or "plain").strip().lower(),
         "subtitle_preset": str(subtitle_preset or DEFAULT_SUBTITLE_PRESET).strip() or DEFAULT_SUBTITLE_PRESET,
         "title_margin": title_margin,
@@ -9080,7 +9080,7 @@ def _compute_render_settings_hash_for_plan_entry(
         subtitle_font_size=video.get("subtitle_font_size"),
         subtitle_margin=video.get("subtitle_margin"),
         caption_anchor=video.get("caption_anchor") or "bottom",
-        subtitle_margin_custom=_normalize_optional_bool(video.get("subtitle_margin_custom"), default=False),
+        subtitle_margin_custom=video.get("subtitle_margin_custom"),
         subtitle_style=subtitle_style,
         subtitle_preset=subtitle_preset,
         title_margin=video.get("title_margin"),
@@ -13025,6 +13025,7 @@ def generate_short(video_pk):
             "render_aspect": render_aspect,
             "is_original_layout": is_original_layout_preview,
             "auto_layout_summary": auto_layout_summary,
+            "auto_layout_segments": auto_segments if isinstance(auto_segments, list) else [],
             "music_audio_id": row_music_audio_id,
             "music_level": row_music_level,
             "music_start_seconds": normalize_music_start_seconds(
@@ -28714,7 +28715,7 @@ def autoclip_video(video_pk):
     video_sub_font_size = None
     video_sub_margin = None
     video_caption_anchor = None
-    video_sub_margin_custom = False
+    video_sub_margin_custom: Optional[bool] = None
     video_title_margin = None
     video_title_line_spacing = -4
     video_title_bg_color = None
@@ -29219,7 +29220,7 @@ def autoclip_video(video_pk):
             video_sub_font_size = crop_row[query_indexes["subtitle_font_size"]]
             video_sub_margin = crop_row[query_indexes["subtitle_margin"]]
             if subtitle_margin_custom_index is not None:
-                video_sub_margin_custom = _normalize_optional_bool(crop_row[subtitle_margin_custom_index], default=False)
+                video_sub_margin_custom = crop_row[subtitle_margin_custom_index]
             video_title_margin = crop_row[query_indexes["title_margin"]]
             if query_indexes["title_line_spacing"] is not None:
                 video_title_line_spacing = crop_row[query_indexes["title_line_spacing"]]
@@ -30445,6 +30446,16 @@ def autoclip_video(video_pk):
                 outreach_layout=outreach_render,
                 )
             if face_aware_layout_result and face_aware_layout_result.get("enabled"):
+                resolved_layout_segments = compose_crop_settings.get("resolved_layout_segments")
+                placement_by_window = {
+                    (
+                        round(float(segment.get("start") or 0.0), 6),
+                        round(float(segment.get("end") or 0.0), 6),
+                        str(segment.get("mode") or ""),
+                    ): segment
+                    for segment in (resolved_layout_segments or [])
+                    if isinstance(segment, dict)
+                }
                 plan_entry["auto_layout_segments"] = [
                     {
                         "start": round(float(segment.get("start") or 0.0), 6),
@@ -30452,6 +30463,27 @@ def autoclip_video(video_pk):
                         "mode": str(segment.get("mode") or ""),
                         "zoom": round(float(segment.get("zoom") or 1.0), 6),
                         "split_crops": segment.get("split_crops") if segment.get("mode") == "split" else None,
+                        "caption_top": (
+                            placement_by_window.get((
+                                round(float(segment.get("start") or 0.0), 6),
+                                round(float(segment.get("end") or 0.0), 6),
+                                str(segment.get("mode") or ""),
+                            ), {}).get("caption_top")
+                        ),
+                        "caption_block_height": (
+                            placement_by_window.get((
+                                round(float(segment.get("start") or 0.0), 6),
+                                round(float(segment.get("end") or 0.0), 6),
+                                str(segment.get("mode") or ""),
+                            ), {}).get("caption_block_height")
+                        ),
+                        "subscribe_top": (
+                            placement_by_window.get((
+                                round(float(segment.get("start") or 0.0), 6),
+                                round(float(segment.get("end") or 0.0), 6),
+                                str(segment.get("mode") or ""),
+                            ), {}).get("subscribe_top")
+                        ),
                     }
                     for segment in (face_aware_layout_result.get("segments") or [])
                 ]
