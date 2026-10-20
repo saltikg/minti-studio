@@ -1947,39 +1947,23 @@
     overflow: hidden;
     text-overflow: ellipsis;
   }
-  .generate-v2-design-dialog {
+  .generate-v2-needs-regenerate-dot {
+    display: inline-block;
+    width: 8px;
+    height: 8px;
+    flex: 0 0 8px;
+    border-radius: 50%;
+    background: #f59e0b;
+    box-shadow: 0 0 0 2px rgba(10, 14, 25, .9);
+  }
+  .clip-rail-thumb .generate-v2-needs-regenerate-dot {
     position: absolute;
-    left: 12px;
-    right: auto;
-    bottom: 12px;
-    z-index: 20;
-    display: flex;
-    align-items: center;
-    justify-content: space-between;
-    gap: 12px;
-    width: min(460px, calc(100% - 24px));
-    min-width: min(360px, calc(100% - 24px));
-    padding: 12px;
-    border: 1px solid rgba(45, 212, 191, 0.22);
-    border-radius: 14px;
-    background: rgba(9, 14, 27, 0.96);
-    box-shadow: 0 20px 48px rgba(0, 0, 0, 0.38);
+    top: 5px;
+    right: 5px;
+    z-index: 2;
   }
-  .generate-v2-design-dialog-title {
-    color: #fff;
-    font-size: 0.92rem;
-    font-weight: 800;
-  }
-  .generate-v2-design-dialog-copy {
-    color: rgba(255, 255, 255, 0.64);
-    font-size: 0.8rem;
-  }
-  .generate-v2-design-dialog-actions {
-    display: inline-flex;
-    align-items: center;
-    gap: 8px;
-    flex: 0 0 auto;
-  }
+  .generate-v2-regenerate-btn .generate-v2-needs-regenerate-dot { margin-left: 2px; }
+  .created-music-badge.is-not-applied { color: #fbbf24; }
   .generate-v2-panel,
   .generate-v2-right-panel {
     display: none;
@@ -6924,6 +6908,9 @@
                           <span class="material-symbols-outlined" aria-hidden="true">movie</span>
                         {% endif %}
                       {% endif %}
+                      {% if generate_v2 and row.needs_regenerate %}
+                      <span class="generate-v2-needs-regenerate-dot" role="img" aria-label="Needs regenerate" title="Needs regenerate"></span>
+                      {% endif %}
                       {% if generate_v2 %}
                       <span class="clip-rail-duration">{{ rail_duration_label }}</span>
                       {% endif %}
@@ -7128,16 +7115,6 @@
                 {% endfor %}
               </div>
               {% if generate_v2 %}
-              <div class="generate-v2-design-dialog d-none" id="generate-v2-design-updated-dialog" role="dialog" aria-live="polite" aria-labelledby="generate-v2-design-dialog-title">
-                <div>
-                  <div class="generate-v2-design-dialog-title" id="generate-v2-design-dialog-title">Design updated</div>
-                  <div class="generate-v2-design-dialog-copy" id="generate-v2-design-dialog-copy">{% if generate_v2 %}Update your ready clips to the new design?{% else %}Apply it to your existing clips?{% endif %}</div>
-                </div>
-                <div class="generate-v2-design-dialog-actions">
-                  <button type="button" class="btn btn-sm btn-outline-light" id="generate-v2-design-dialog-dismiss">Not now</button>
-                  <button type="button" class="btn btn-sm btn-primary" id="generate-v2-design-dialog-update">Update clips</button>
-                </div>
-              </div>
               <div class="generate-v2-platform-popover d-none" id="generate-v2-platform-popover" role="dialog" aria-live="polite"></div>
               {% endif %}
             </div>
@@ -7212,6 +7189,8 @@
                  data-render-aspect="{{ row.render_aspect or '' }}"
                  data-auto-layout-summary="{{ row.auto_layout_summary or '' }}"
                  data-outdated="{{ '1' if row.render_settings_outdated else '0' }}"
+                 data-needs-regenerate="{{ '1' if row.needs_regenerate else '0' }}"
+                 data-regenerate-reason="{{ row.regenerate_reason or '' }}"
                  data-regenerate-locked="{{ '1' if row.regenerate_locked else '0' }}"
                  data-regenerate-lock-reason="{{ row.regenerate_lock_reason or '' }}"
                  data-regenerate-url="{{ editor_url('regenerate_clip_video', video_pk=video.id, plan_index=row.plan_index) }}"
@@ -7326,7 +7305,7 @@
                       <div class="generate-v2-media-column{% if row.is_original_layout %} is-original-layout{% endif %}{% if row.render_job_status in ['queued', 'processing', 'running'] %} is-rendering{% endif %}">
                     {% endif %}
                     <video controls playsinline preload="none" src="{{ row.video_url }}" poster="{{ row.poster_url or short_bg_url }}" aria-label="Play {{ row.title or 'clip' }}"></video>
-	                    {% if row.has_music %}<span class="created-music-badge" data-music-audio-id="{{ row.rendered_music_audio_id }}" title="Background music"><i class="bi bi-music-note-beamed"></i><span class="created-music-name">Music</span><span class="created-music-level">· {{ row.rendered_music_level }}%</span></span>{% endif %}
+	                    {% if generate_v2 and row.regenerate_reason == 'music' %}<span class="created-music-badge is-not-applied" title="Music change has not been applied to this Short"><i class="bi bi-music-note-beamed" aria-hidden="true"></i><span>{% if row.music_audio_id %}Music changed{% else %}Music removed{% endif %} · not applied yet</span></span>{% elif row.has_music %}<span class="created-music-badge" data-music-audio-id="{{ row.rendered_music_audio_id }}" title="Background music"><i class="bi bi-music-note-beamed"></i><span class="created-music-name">Music</span><span class="created-music-level">· {{ row.rendered_music_level }}%</span></span>{% endif %}
 	                    {% if generate_v2 %}
 	                      <div class="generate-v2-render-overlay{% if row.render_job_status not in ['queued', 'processing', 'running'] %} d-none{% endif %}" aria-live="polite">
 	                        <span class="spinner-border spinner-border-sm" role="status" aria-hidden="true"></span>
@@ -7359,10 +7338,11 @@
                           data-plan-index="{{ row.plan_index }}"
                           data-regenerate-url="{{ editor_url('regenerate_clip_video', video_pk=video.id, plan_index=row.plan_index) }}"
                           {% if row.regenerate_locked %}hidden{% endif %}
-                          title="Regenerate"
-                          aria-label="Regenerate">
+                          title="{% if row.regenerate_reason == 'music' %}Music changed — regenerate to apply{% elif row.needs_regenerate %}Design changed — regenerate to apply{% else %}Regenerate{% endif %}"
+                          aria-label="{% if row.regenerate_reason == 'music' %}Music changed — regenerate to apply{% elif row.needs_regenerate %}Design changed — regenerate to apply{% else %}Regenerate{% endif %}">
                           <i class="bi bi-arrow-clockwise" aria-hidden="true"></i>
                           <span>Regenerate</span>
+                          {% if row.needs_regenerate %}<span class="generate-v2-needs-regenerate-dot" aria-hidden="true"></span>{% endif %}
                         </button>
                       </div>
                       <div class="generate-v2-download-toast d-none" role="status" aria-live="polite">Preparing your download…</div>
@@ -11551,6 +11531,9 @@ const getGenerateV2ClipRefreshSignature = (scope = document, planIndex = "") => 
       renderHeight: card?.dataset?.renderHeight || "",
       renderAspect: card?.dataset?.renderAspect || "",
       outdated: card?.dataset?.outdated || "",
+      regenerateReason: card?.dataset?.regenerateReason || "",
+      musicAudioId: card?.dataset?.musicAudioId || "",
+      musicLevel: card?.dataset?.musicLevel || "",
       regenerateLocked: card?.dataset?.regenerateLocked || "",
       publish: card?.dataset?.publish || "",
       media: source,
@@ -15754,53 +15737,6 @@ const initGenerateV2RegenerateControls = () => {
       void enqueueRegenerateClip(card, { force: card.dataset.outdated !== "1" });
     });
   });
-  const dialog = document.getElementById("generate-v2-design-updated-dialog");
-  const dismissButton = document.getElementById("generate-v2-design-dialog-dismiss");
-  const updateButton = document.getElementById("generate-v2-design-dialog-update");
-  if (dismissButton && dismissButton.dataset.designDialogDismissBound !== "1") {
-    dismissButton.dataset.designDialogDismissBound = "1";
-    dismissButton.addEventListener("click", () => {
-      dialog?.classList.add("d-none");
-    });
-  }
-  if (updateButton && updateButton.dataset.designDialogUpdateBound !== "1") {
-    updateButton.dataset.designDialogUpdateBound = "1";
-    updateButton.addEventListener("click", async () => {
-      const cards = getGenerateV2RegenerateTargets();
-      if (!cards.length) {
-        dialog?.classList.add("d-none");
-        return;
-      }
-      updateButton.disabled = true;
-      for (const card of cards) {
-        await enqueueRegenerateClip(card);
-      }
-      updateButton.disabled = false;
-      dialog?.classList.add("d-none");
-    });
-  }
-};
-
-const getGenerateV2RegenerateTargets = () => Array.from(
-  document.querySelectorAll(".clip-card[data-outdated='1'][data-regenerate-locked='0'][data-status='created']"),
-);
-
-window.showGenerateV2DesignUpdatedDialog = () => {
-  const root = getGenerateV2Root();
-  const dialog = document.getElementById("generate-v2-design-updated-dialog");
-  const copy = document.getElementById("generate-v2-design-dialog-copy");
-  const updateButton = document.getElementById("generate-v2-design-dialog-update");
-  if (!root || !dialog || !copy || !updateButton) {
-    return;
-  }
-  const count = getGenerateV2RegenerateTargets().length;
-  if (!count) {
-    dialog.classList.add("d-none");
-    return;
-  }
-  copy.textContent = `Update your ${count} ready ${count === 1 ? "clip" : "clips"} to the new design?`;
-  updateButton.textContent = `Update ${count} ${count === 1 ? "clip" : "clips"}`;
-  dialog.classList.remove("d-none");
 };
 
 const usageResetCopy = (resetAt) => {
@@ -21521,12 +21457,7 @@ document.addEventListener("DOMContentLoaded", () => {
         window.setGenerateV2EditorBusy?.(false);
         window.setGenerateV2ActiveTab?.("shorts", { persist: true, selectedPlanIndex: activePlanIndex || "" });
         if (typeof refreshClipList === "function") {
-          refreshClipList(activePlanIndex, "list")
-            .then((refreshed) => {
-              if (refreshed) {
-                window.showGenerateV2DesignUpdatedDialog?.();
-              }
-            })
+          refreshClipList(activePlanIndex, "list", { forceReplaceSelected: true })
             .catch((error) => {
               console.warn("generate_v2_refresh_after_save_failed", error);
             });

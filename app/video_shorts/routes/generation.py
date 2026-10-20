@@ -12833,6 +12833,7 @@ def generate_short(video_pk):
         render_job_status = str((render_job or {}).get("status") or "").strip().lower()
         current_render_settings_hash = ""
         render_settings_outdated = False
+        regenerate_reason = ""
         if status == "created" and video_filename and stored_render_settings_hash:
             try:
                 current_render_settings_hashes = _compute_render_settings_hash_aliases_for_plan_entry(
@@ -12845,7 +12846,45 @@ def generate_short(video_pk):
                 )
                 current_render_settings_hash = current_render_settings_hashes[0] if current_render_settings_hashes else ""
                 render_settings_outdated = stored_render_settings_hash not in current_render_settings_hashes
+                if render_settings_outdated:
+                    raw_snapshot = generated_record.get("raw_plan_entry_json")
+                    rendered_snapshot = raw_snapshot if isinstance(raw_snapshot, dict) else json.loads(raw_snapshot or "null")
+                    if isinstance(rendered_snapshot, dict):
+                        music_fields = ("music_audio_id", "music_level", "music_start_seconds", "music_duck")
+                        current_music = (
+                            _normalize_music_audio_id(entry.get("music_audio_id")),
+                            normalize_music_level(entry.get("music_level")),
+                            normalize_music_start_seconds(entry.get("music_start_seconds")),
+                            _normalize_optional_bool(entry.get("music_duck"), default=True),
+                        )
+                        rendered_music = (
+                            _normalize_music_audio_id(rendered_snapshot.get("music_audio_id")),
+                            normalize_music_level(rendered_snapshot.get("music_level")),
+                            normalize_music_start_seconds(rendered_snapshot.get("music_start_seconds")),
+                            _normalize_optional_bool(rendered_snapshot.get("music_duck"), default=True),
+                        )
+                        if current_music != rendered_music:
+                            previous_music_entry = dict(entry)
+                            for field in music_fields:
+                                if field in rendered_snapshot:
+                                    previous_music_entry[field] = rendered_snapshot[field]
+                                else:
+                                    previous_music_entry.pop(field, None)
+                            previous_music_hashes = _compute_render_settings_hash_aliases_for_plan_entry(
+                                video_pk=int(video.get("id") or video_pk),
+                                video=video,
+                                plan_entry=previous_music_entry,
+                                segments=segments,
+                                brand_id=brand_id,
+                                fallback_title=video.get("title") or "",
+                            )
+                            if stored_render_settings_hash in previous_music_hashes:
+                                regenerate_reason = "music"
+                    if not regenerate_reason:
+                        regenerate_reason = "design"
             except Exception as exc:
+                if render_settings_outdated and not regenerate_reason:
+                    regenerate_reason = "design"
                 current_app.logger.warning(
                     "Failed to compute render settings hash video_pk=%s plan_index=%s: %s",
                     video_pk,
@@ -12966,6 +13005,8 @@ def generate_short(video_pk):
             "render_settings_hash": stored_render_settings_hash,
             "current_render_settings_hash": current_render_settings_hash,
             "render_settings_outdated": render_settings_outdated,
+            "needs_regenerate": render_settings_outdated,
+            "regenerate_reason": regenerate_reason,
             "regenerate_locked": bool(yt_id) or any_platform_published or publishing_soon,
             "regenerate_lock_reason": youtube_scheduling.studio_message(yt_id) if yt_id else "Already published" if any_platform_published else ("Publishing soon — editing is locked." if publishing_soon else ""),
             "edit_locked": bool(yt_id) or any_platform_published or publishing_soon,
