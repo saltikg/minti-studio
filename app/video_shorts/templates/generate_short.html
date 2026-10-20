@@ -10158,6 +10158,10 @@ document.addEventListener("DOMContentLoaded", () => {
           playing: !video.paused,
           rate: Number(video.playbackRate || 1),
         }),
+        getPlaybackStatus: () => ({
+          ready: video.readyState >= 2,
+          state: video.error ? "error" : video.seeking ? "seeking" : video.paused ? "paused" : video.readyState < 3 ? "waiting" : "playing",
+        }),
         restoreState: (snapshot) => {
           if (!snapshot || !Number.isFinite(Number(snapshot.currentTime))) {
             return false;
@@ -10172,6 +10176,7 @@ document.addEventListener("DOMContentLoaded", () => {
               }
               setStatus(`Playing from ${formatSeconds(safeSeconds)}`);
             } else {
+              video.pause();
               setStatus(`Ready at ${formatSeconds(safeSeconds)}`);
             }
             setNowPlayingByTime(safeSeconds);
@@ -10192,6 +10197,7 @@ document.addEventListener("DOMContentLoaded", () => {
       const adapter = {
         player: null,
         ready: false,
+        failed: false,
         pendingSeek: null,
         seekAndPlay(seconds) {
           const safeSeconds = Math.max(0, Number(seconds) || 0);
@@ -10225,6 +10231,24 @@ document.addEventListener("DOMContentLoaded", () => {
             return pendingRestoreState;
           }
         },
+        getPlaybackStatus() {
+          if (this.failed) return { ready: false, state: "error" };
+          if (!this.ready || !this.player) return { ready: false, state: "not-ready" };
+          try {
+            const state = this.player.getPlayerState?.();
+            const playerStates = window.YT?.PlayerState;
+            return {
+              ready: true,
+              state: state === playerStates?.PLAYING ? "playing"
+                : state === playerStates?.PAUSED ? "paused"
+                : state === playerStates?.BUFFERING ? "buffering"
+                : state === playerStates?.ENDED ? "ended"
+                : state === playerStates?.CUED ? "cued" : "unstarted",
+            };
+          } catch (_) {
+            return { ready: false, state: "not-ready" };
+          }
+        },
         restoreState(snapshot) {
           if (!snapshot || !Number.isFinite(Number(snapshot.currentTime))) {
             return false;
@@ -10256,6 +10280,8 @@ document.addEventListener("DOMContentLoaded", () => {
           }
         },
         pause() {
+          this.pendingSeek = null;
+          if (pendingRestoreState) pendingRestoreState.playing = false;
           try {
             this.player?.pauseVideo?.();
           } catch (_) {}
@@ -10306,12 +10332,14 @@ document.addEventListener("DOMContentLoaded", () => {
                 }
               },
               onError: () => {
+                adapter.failed = true;
                 renderFallback("This YouTube video cannot be embedded here.", source.watch_url || "");
               },
             },
           });
         })
         .catch(() => {
+          adapter.failed = true;
           renderFallback("YouTube player could not be loaded.", source.watch_url || "");
         });
       return adapter;
@@ -11210,6 +11238,7 @@ document.addEventListener("DOMContentLoaded", () => {
       seekAndPlay: (seconds) => player.seekAndPlay?.(seconds),
       pausePlayer: () => player.pause?.(),
       capturePlayerState: () => player.captureState?.() || null,
+      getPlaybackStatus: () => player.getPlaybackStatus?.() || null,
       restorePlayerState: (snapshot) => player.restoreState?.(snapshot) || false,
       destroy: () => {
         clearCoachmarkModalTimer();
@@ -22997,8 +23026,11 @@ document.addEventListener("DOMContentLoaded", function () {
 </script>
 <script>
 document.addEventListener("DOMContentLoaded", () => {
-  const listUrl = {{ url_for('video_shorts_bp.list_static_audios')|tojson }};
-  const uploadUrl = {{ url_for('video_shorts_bp.upload_static_audio')|tojson }};
+  const staticAudioBaseUrl = {{ url_for('video_shorts_bp.list_static_audios')|tojson }};
+  const staticAudioScopeQuery = {{ static_audio_scope_query|tojson }};
+  const listUrl = staticAudioBaseUrl + staticAudioScopeQuery;
+  const uploadUrl = staticAudioBaseUrl + staticAudioScopeQuery;
+  const staticAudioItemUrl = (id) => `${staticAudioBaseUrl}/${encodeURIComponent(id)}${staticAudioScopeQuery}`;
   const isGuest = {{ 'true' if guest_mode else 'false' }};
   const audioId = document.getElementById("musicAudioId");
   const startField = document.getElementById("musicStartSeconds");
@@ -23038,8 +23070,12 @@ document.addEventListener("DOMContentLoaded", () => {
   let previewMuted = false;
   let levelInputFrame = 0;
   let playIntent = false;
-  let playIntentLockedUntil = 0;
   let playIntentToken = 0;
+  let playbackStarting = false;
+  let startDeadline = 0;
+  let hasPlayedSinceIntent = false;
+  let pausedSince = 0;
+  let explicitPauseUntil = 0;
   let libraryPlayIntentId = "";
   let libraryPlayToken = 0;
 
@@ -23099,15 +23135,19 @@ document.addEventListener("DOMContentLoaded", () => {
     activeCard()?.querySelector("video")?.pause?.();
     window.__trsClipSelectorController?.pausePlayer?.();
   };
-  const setTimelineButtonState = (playing) => {
+  const setTimelineButtonState = () => {
     if (!timelinePlay) return;
-    timelinePlay.innerHTML = playing ? '<i class="bi bi-pause-fill"></i>' : '<i class="bi bi-play-fill"></i>';
-    timelinePlay.setAttribute("aria-label", playing ? "Pause preview" : "Play preview");
+    timelinePlay.innerHTML = playbackStarting && playIntent
+      ? '<span class="spinner-border spinner-border-sm" role="status" aria-hidden="true"></span>'
+      : playIntent ? '<i class="bi bi-pause-fill"></i>' : '<i class="bi bi-play-fill"></i>';
+    timelinePlay.setAttribute("aria-label", playIntent ? "Pause preview" : "Play preview");
   };
-  const setPlayIntent = (playing, protect = false) => {
+  const setPlayIntent = (playing, starting = false) => {
     playIntent = playing;
-    playIntentLockedUntil = protect ? Date.now() + 800 : 0;
-    setTimelineButtonState(playing);
+    playbackStarting = playing && starting;
+    if (playing && starting) { startDeadline = Date.now() + 8000; hasPlayedSinceIntent = false; }
+    if (!playing) { startDeadline = 0; hasPlayedSinceIntent = false; pausedSince = 0; }
+    setTimelineButtonState();
   };
   const playLibraryTrack = async (track, button) => {
     const trackId = String(track.id || "");
@@ -23116,7 +23156,8 @@ document.addEventListener("DOMContentLoaded", () => {
       return;
     }
     playIntentToken++;
-    setPlayIntent(false, true);
+    setPlayIntent(false);
+    explicitPauseUntil = Date.now() + 800;
     pauseVideoSide();
     stopSharedAudio();
     if (!setAudioTrack(track)) return;
@@ -23182,7 +23223,7 @@ document.addEventListener("DOMContentLoaded", () => {
   const beginRename = (track, nameNode) => {
     const input=document.createElement("input"); input.type="text"; input.maxLength=100; input.className="form-control form-control-sm music-rename-input"; input.value=fallbackName(track);
     nameNode.replaceWith(input); input.focus(); input.select(); let saving=false; let cancelled=false;
-    const save=async()=>{if(saving||cancelled)return; const value=input.value.trim(); if(!value){input.focus();return;} saving=true; try { const response=await fetch(`${listUrl}/${encodeURIComponent(track.id)}`,{method:"PATCH",headers:{"Content-Type":"application/json","X-Requested-With":"XMLHttpRequest"},body:JSON.stringify({display_name:value})}); const payload=await response.json().catch(()=>({})); if(!response.ok)throw new Error(payload.error||"Name could not be saved."); Object.assign(track,payload.audio||{display_name:value}); updateMusicBadges(); renderSelected(); renderPicker(); } catch(error) { saving=false; input.classList.add("is-invalid"); input.title=error.message||"Name could not be saved."; }};
+    const save=async()=>{if(saving||cancelled)return; const value=input.value.trim(); if(!value){input.focus();return;} saving=true; try { const response=await fetch(staticAudioItemUrl(track.id),{method:"PATCH",headers:{"Content-Type":"application/json","X-Requested-With":"XMLHttpRequest"},body:JSON.stringify({display_name:value})}); const payload=await response.json().catch(()=>({})); if(!response.ok)throw new Error(payload.error||"Name could not be saved."); Object.assign(track,payload.audio||{display_name:value}); updateMusicBadges(); renderSelected(); renderPicker(); } catch(error) { saving=false; input.classList.add("is-invalid"); input.title=error.message||"Name could not be saved."; }};
     input.addEventListener("keydown",(event)=>{if(event.key==="Enter"){event.preventDefault();input.blur();}else if(event.key==="Escape"){event.preventDefault();cancelled=true;renderSelected();}}); input.addEventListener("blur",()=>{void save();},{once:true});
   };
   const renderSelected = () => {
@@ -23258,11 +23299,16 @@ document.addEventListener("DOMContentLoaded", () => {
   document.getElementById("musicPickerClose")?.addEventListener("click",()=>setPickerOpen(false)); search?.addEventListener("input",renderPicker);
   const previewPlayback = () => {
     const renderedVideo=activeCard()?.querySelector("video");
-    if(renderedVideo)return {time:renderedVideo.currentTime||0,playing:!renderedVideo.paused,rate:renderedVideo.playbackRate||1};
+    if(renderedVideo)return {time:renderedVideo.currentTime||0,rate:renderedVideo.playbackRate||1,
+      state:renderedVideo.error?"error":renderedVideo.ended?"ended":renderedVideo.seeking?"seeking":renderedVideo.paused?"paused":renderedVideo.readyState<3?"waiting":"playing"};
     const sourceVideo=document.querySelector("#trs-player-frame video");
-    if(sourceVideo)return {time:Math.max(0,(sourceVideo.currentTime||0)-Number(activeCard()?.dataset.start||0)),playing:!sourceVideo.paused,rate:sourceVideo.playbackRate||1};
+    if(sourceVideo)return {time:Math.max(0,(sourceVideo.currentTime||0)-Number(activeCard()?.dataset.start||0)),rate:sourceVideo.playbackRate||1,
+      state:sourceVideo.error?"error":sourceVideo.ended?"ended":sourceVideo.seeking?"seeking":sourceVideo.paused?"paused":sourceVideo.readyState<3?"waiting":"playing"};
+    const status=window.__trsClipSelectorController?.getPlaybackStatus?.();
     const snapshot=window.__trsClipSelectorController?.capturePlayerState?.() || window.__mintiTranscriptPlayer?.captureState?.();
-    return snapshot ? {time:Math.max(0,Number(snapshot.currentTime||0)-Number(activeCard()?.dataset.start||0)),playing:!!snapshot.playing,rate:Number(snapshot.rate||1)} : null;
+    if(!snapshot&&!status)return null;
+    return {time:Math.max(0,Number(snapshot?.currentTime||0)-Number(activeCard()?.dataset.start||0)),rate:Number(snapshot?.rate||1),
+      state:status?.state||(!status?.ready?"not-ready":snapshot?.playing?"playing":"paused")};
   };
   const updatePlayhead = (time) => {
     const safeTime=Math.max(0,Math.min(clipDuration(),Number(time)||0));
@@ -23296,18 +23342,18 @@ document.addEventListener("DOMContentLoaded", () => {
     applyLivePreviewGain();
   });
   duck?.addEventListener("change",()=>{dispatch(duck);drawTimeline();});
-  const seekPreview = (time) => {
+  const seekPreview = (time, { resume = playIntent } = {}) => {
     const target=Math.max(0,Math.min(clipDuration(),Number(time)||0));
-    const playback=previewPlayback()||{playing:false,rate:1};
+    const playback=previewPlayback()||{rate:1};
     const video=activeCard()?.querySelector("video");
-    if(video){video.currentTime=target;if(playback.playing)video.play().catch(()=>{});}
+    if(video){video.currentTime=target;if(resume)video.play().catch(()=>{});else video.pause();}
     else {
       const absolute=Number(activeCard()?.dataset.start||0)+target;
-      const restored=window.__trsClipSelectorController?.restorePlayerState?.({currentTime:absolute,playing:playback.playing,rate:playback.rate||1});
-      if(restored===false&&playback.playing)window.__trsClipSelectorController?.seekAndPlay?.(absolute);
+      const restored=window.__trsClipSelectorController?.restorePlayerState?.({currentTime:absolute,playing:resume,rate:playback.rate||1});
+      if(restored===false&&resume)window.__trsClipSelectorController?.seekAndPlay?.(absolute);
     }
     audioMode="timeline";
-    if(selected){setAudioTrack(selected);previewAudio.currentTime=(Number(startField.value||0)+target)%Math.max(.1,Number(selected.duration_seconds||0));applyLivePreviewGain();if(playback.playing)previewAudio.play().catch(()=>{});else previewAudio.pause();}
+    if(selected){setAudioTrack(selected);previewAudio.currentTime=(Number(startField.value||0)+target)%Math.max(.1,Number(selected.duration_seconds||0));applyLivePreviewGain();if(resume&&playback.state==="playing")previewAudio.play().catch(()=>{});else previewAudio.pause();}
     updatePlayhead(target);
   };
   const seekFromPointer = (event, element) => {
@@ -23323,47 +23369,63 @@ document.addEventListener("DOMContentLoaded", () => {
   waveform?.addEventListener("pointerdown", (event) => { if(!selected)return; event.preventDefault(); musicDragX=event.clientX; waveform.setPointerCapture(event.pointerId); });
   waveform?.addEventListener("pointermove", (event) => { if(musicDragX===null||!selected)return; const max=Math.max(0,Number(selected.duration_seconds||0)-clipDuration()); const delta=(musicDragX-event.clientX)/Math.max(1,waveform.clientWidth)*Math.max(clipDuration(),Number(selected.duration_seconds||0)); startField.value=String(Math.max(0,Math.min(max,Number(startField.value||0)+delta)).toFixed(3)); musicDragX=event.clientX; dispatch(startField); drawTimeline(); const playback=previewPlayback(); if(audioMode==="timeline")previewAudio.currentTime=(Number(startField.value||0)+Number(playback?.time||0))%Math.max(.1,Number(selected.duration_seconds||0)); });
   const stopMusicDrag=()=>{musicDragX=null;}; waveform?.addEventListener("pointerup",stopMusicDrag); waveform?.addEventListener("pointercancel",stopMusicDrag);
+  const stopTimeline = ({ reset = false } = {}) => {
+    playIntentToken++;
+    setPlayIntent(false);
+    explicitPauseUntil = Date.now() + 800;
+    pauseVideoSide();
+    stopSharedAudio();
+    audioMode = "timeline";
+    if(reset)seekPreview(0,{resume:false});
+  };
   const syncPreview = () => {
     if(audioMode==="library")return;
     const playback=previewPlayback(); if(!playback||!selected)return;
-    if (playIntent && Date.now() >= playIntentLockedUntil && !playback.playing && playback.time >= clipDuration() - .1) {
-      playIntentToken++;
-      setPlayIntent(false, true);
-      previewAudio.pause();
-      seekPreview(0);
-      return;
+    const now=Date.now();
+    if(playIntent&&playback.state==="error"){stopTimeline();return;}
+    if(playIntent&&(playback.state==="ended"||playback.time>=clipDuration()-.05)){stopTimeline({reset:true});return;}
+    if(!playIntent&&playback.state==="playing"&&now>=explicitPauseUntil){
+      setPlayIntent(true);
+      hasPlayedSinceIntent=true;
+      audioMode="timeline";
+    }
+    if(playIntent){
+      if(playback.state==="playing"){
+        hasPlayedSinceIntent=true;
+        pausedSince=0;
+        if(playbackStarting){playbackStarting=false;setTimelineButtonState();}
+      }else if(playback.state==="paused"&&hasPlayedSinceIntent){
+        if(!pausedSince)pausedSince=now;
+        if(now-pausedSince>400){stopTimeline();return;}
+      }else pausedSince=0;
+      if(!hasPlayedSinceIntent&&startDeadline&&now>=startDeadline){stopTimeline();return;}
     }
     const target=(Number(startField.value||0)+playback.time)%Math.max(.1,Number(selected.duration_seconds||0));
     setAudioTrack(selected);
-    if(Math.abs(previewAudio.currentTime-target)>.3)previewAudio.currentTime=target;
-    previewAudio.playbackRate=playback.rate; applyLivePreviewGain();
-    updatePlayhead(playback.time);
-    if (Date.now() >= playIntentLockedUntil) setPlayIntent(playback.playing);
-    else setTimelineButtonState(playIntent);
-    if(playIntent&&playback.playing&&previewAudio.paused){audioMode="timeline";previewAudio.play().catch(()=>{});}else if(!playIntent&&audioMode==="timeline"&&!previewAudio.paused){previewAudio.pause();}
+    if(playback.state==="playing"&&Math.abs(previewAudio.currentTime-target)>.3)previewAudio.currentTime=target;
+    previewAudio.playbackRate=playback.rate;applyLivePreviewGain();updatePlayhead(playback.time);
+    if(playIntent&&playback.state==="playing"){
+      if(previewAudio.paused){audioMode="timeline";previewAudio.play().catch(()=>{});}
+    }else if(audioMode==="timeline"&&!previewAudio.paused)previewAudio.pause();
   };
   timelinePlay?.addEventListener("click",async()=>{
     const playback=previewPlayback(); if(!playback)return;
     const token=++playIntentToken;
-    if(playIntent){setPlayIntent(false,true);pauseVideoSide();stopSharedAudio();audioMode="timeline";return;}
-    stopSharedAudio(); audioMode="timeline"; setPlayIntent(true,true);
+    if(playIntent){stopTimeline();return;}
+    stopSharedAudio();audioMode="timeline";setPlayIntent(true,true);
     const video=activeCard()?.querySelector("video");
     try {
       if(video){if(video.ended||video.currentTime>=clipDuration())video.currentTime=0;await video.play();}
       else {
-        const result=await window.__trsClipSelectorController?.seekAndPlay?.(Number(activeCard()?.dataset.start||0)+Math.max(0,playback.time||0));
-        if(result===false)throw new Error("Preview could not start");
+        await window.__trsClipSelectorController?.seekAndPlay?.(Number(activeCard()?.dataset.start||0)+Math.max(0,playback.time||0));
       }
     } catch (_) {
-      if(token===playIntentToken){setPlayIntent(false);stopSharedAudio();}
+      if(token===playIntentToken)stopTimeline();
     }
   });
-  document.addEventListener("play",(event)=>{if(event.target.matches?.(".clip-card video, #trs-player-frame video")&&selected){stopSharedAudio();audioMode="timeline";setPlayIntent(true,true);syncPreview();}},true);
-  document.addEventListener("pause",(event)=>{if(event.target.matches?.(".clip-card video, #trs-player-frame video")&&selected){setPlayIntent(false,true);previewAudio.pause();}},true);
-  document.addEventListener("ended",(event)=>{if(event.target.matches?.(".clip-card video, #trs-player-frame video")&&selected){playIntentToken++;setPlayIntent(false,true);stopSharedAudio();audioMode="timeline";seekPreview(0);}},true);
   document.addEventListener("seeking",(event)=>{if(event.target.matches?.(".clip-card video"))syncPreview();},true);
   previewAudio.addEventListener("ended",()=>{if(audioMode==="library")stopSharedAudio();});
-  window.setInterval(()=>{if(!selected)return;const playback=previewPlayback();if(audioMode==="library"&&playback?.playing&&Date.now()-libraryStartedAt>350){stopSharedAudio();audioMode="timeline";}syncPreview();},100);
+  window.setInterval(()=>{if(!selected)return;const playback=previewPlayback();if(audioMode==="library"&&playback?.state==="playing"&&Date.now()-libraryStartedAt>350){stopSharedAudio();audioMode="timeline";}syncPreview();},100);
   window.syncMusicEditorFromFields=syncUi;
   loadTracks();
 });

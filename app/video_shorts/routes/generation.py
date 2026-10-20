@@ -2255,7 +2255,7 @@ def list_static_audios():
     current_user = getattr(g, "vs_current_user", None)
     if not current_user:
         return jsonify({"error": "auth required"}), 401
-    user_id = current_user.get("id")
+    user_id = _active_editor_context()["owner_user_id"]
     storage = get_media_storage()
     prefix = _user_media_storage_key("audio", user_id, "")
     local_entries = get_media_storage("local").list_prefix(prefix)
@@ -2407,7 +2407,7 @@ def upload_static_audio():
     if ext not in _ALLOWED_STATIC_AUDIO_EXTS:
         return jsonify({"error": "unsupported audio format"}), 400
 
-    user_id = current_user.get("id")
+    user_id = _active_editor_context()["owner_user_id"]
     storage = get_media_storage()
     data = upload.read()
     size_bytes = len(data)
@@ -2487,7 +2487,7 @@ def rename_static_audio(audio_id: str):
     current_user = getattr(g, "vs_current_user", None)
     if not current_user:
         return jsonify({"error": "auth required"}), 401
-    user_id = current_user.get("id")
+    user_id = _active_editor_context()["owner_user_id"]
     safe_name = Path(audio_id or "").name
     if not safe_name or safe_name != (audio_id or ""):
         return jsonify({"error": "audio not found"}), 404
@@ -2587,7 +2587,7 @@ def delete_static_audio(audio_id: str):
     current_user = getattr(g, "vs_current_user", None)
     if not current_user:
         return jsonify({"error": "auth required"}), 401
-    user_id = current_user.get("id")
+    user_id = _active_editor_context()["owner_user_id"]
     path = _resolve_user_audio_path(user_id, audio_id)
     if not path:
         return jsonify({"error": "audio not found"}), 404
@@ -9994,9 +9994,15 @@ def _activate_admin_operation_editor_context() -> None:
     if not requested_brand_id or not requested_workspace_kind:
         _deny("incomplete_request_context")
     route_rule = str(getattr(request.url_rule, "rule", "") or "")
-    if not route_rule.startswith(ADMIN_OPERATION_EDITOR_ROUTE_PREFIX) and request.endpoint != "video_shorts_bp.upload_clip_to_youtube":
+    static_audio_endpoint = request.endpoint in {
+        "video_shorts_bp.list_static_audios",
+        "video_shorts_bp.upload_static_audio",
+        "video_shorts_bp.rename_static_audio",
+        "video_shorts_bp.delete_static_audio",
+    }
+    if not static_audio_endpoint and not route_rule.startswith(ADMIN_OPERATION_EDITOR_ROUTE_PREFIX) and request.endpoint != "video_shorts_bp.upload_clip_to_youtube":
         _deny("route_not_allowed")
-    video_pk = (request.view_args or {}).get("video_pk") or request.form.get("video_pk")
+    video_pk = request.args.get("video_pk") if static_audio_endpoint else (request.view_args or {}).get("video_pk") or request.form.get("video_pk")
     try:
         video_pk = int(video_pk)
     except (TypeError, ValueError):
@@ -13338,6 +13344,11 @@ def generate_short(video_pk):
         is_admin=is_admin,
         editor_is_admin_operation=editor_context["is_admin_operation"],
         editor_is_customer_operation=bool(getattr(g, "vs_admin_operation_workspace_kind", "") == "customer"),
+        static_audio_scope_query=("?" + urlencode({
+            "admin_operation_brand": editor_context["brand_id"],
+            "admin_operation_kind": editor_context["workspace_kind"],
+            "video_pk": video_pk,
+        })) if editor_context["is_admin_operation"] else "",
         generate_v2=generate_v2,
         guest_mode=guest_mode,
         guest_renders_left=_guest_renders_left_for_user(current_user_id) if guest_mode else None,
