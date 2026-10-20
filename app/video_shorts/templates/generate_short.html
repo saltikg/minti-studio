@@ -7220,6 +7220,10 @@
                  data-start="{{ row.start or 0 }}"
                  data-duration="{{ row.duration or 0 }}"
                  data-music-speech-ranges='{{ (row.music_speech_ranges or [])|tojson|safe }}'
+                 data-music-audio-id="{{ row.music_audio_id or '' }}"
+                 data-music-level="{{ row.music_level }}"
+                 data-music-start-seconds="{{ row.music_start_seconds }}"
+                 data-music-duck="{{ '1' if row.music_duck else '0' }}"
                  data-modal-yt-tooltip="{{ modal_yt_tooltip|e }}"
                  data-modal-yt-iso="{{ row.db_publish_client_iso }}"
                  data-modal-yt-icon-class="{{ modal_yt_icon_class }}"
@@ -7322,7 +7326,7 @@
                       <div class="generate-v2-media-column{% if row.is_original_layout %} is-original-layout{% endif %}{% if row.render_job_status in ['queued', 'processing', 'running'] %} is-rendering{% endif %}">
                     {% endif %}
                     <video controls playsinline preload="none" src="{{ row.video_url }}" poster="{{ row.poster_url or short_bg_url }}" aria-label="Play {{ row.title or 'clip' }}"></video>
-	                    {% if row.has_music %}<span class="created-music-badge" data-music-audio-id="{{ row.music_audio_id }}" title="Background music"><i class="bi bi-music-note-beamed"></i><span class="created-music-name">Music</span><span class="created-music-level">· {{ row.music_level }}%</span></span>{% endif %}
+	                    {% if row.has_music %}<span class="created-music-badge" data-music-audio-id="{{ row.rendered_music_audio_id }}" title="Background music"><i class="bi bi-music-note-beamed"></i><span class="created-music-name">Music</span><span class="created-music-level">· {{ row.rendered_music_level }}%</span></span>{% endif %}
 	                    {% if generate_v2 %}
 	                      <div class="generate-v2-render-overlay{% if row.render_job_status not in ['queued', 'processing', 'running'] %} d-none{% endif %}" aria-live="polite">
 	                        <span class="spinner-border spinner-border-sm" role="status" aria-hidden="true"></span>
@@ -12983,6 +12987,7 @@ const selectGenerateV2Clip = (planIndex = "") => {
       mount.appendChild(activeCard);
     }
   }
+  window.syncMusicEditorForClip?.(normalized);
   mountGenerateV2ClipEditor(normalized);
   const isRendered = isGenerateV2RenderedClipCard(activeCard);
   if (activeCard && !isRendered) {
@@ -21265,6 +21270,7 @@ document.addEventListener("DOMContentLoaded", () => {
 	    }
 	    const params = new URLSearchParams();
 	    appendShortDesignFields(params);
+	    params.set("plan_index", document.getElementById("clip-management-panel")?.dataset.activePlanIndex || "");
 	    const subscribeToggle = getEditorField("enable_subscribe_overlay");
 	    if (subscribeToggle) {
 	      params.set("enable_subscribe_overlay", subscribeToggle.checked ? "1" : "0");
@@ -21310,6 +21316,16 @@ document.addEventListener("DOMContentLoaded", () => {
     const payload = await response.json().catch(() => ({}));
     if (!response.ok || !payload.success) {
       throw new Error(payload.message || "Settings could not be saved.");
+    }
+    const activeIndex = document.getElementById("clip-management-panel")?.dataset.activePlanIndex || "";
+    const escapedIndex = window.CSS?.escape ? CSS.escape(activeIndex) : activeIndex;
+    const activeCard = document.querySelector(`.clip-card[data-plan-index="${escapedIndex}"]`);
+    if (activeCard) {
+      for (const [fieldId, key] of [["musicAudioId", "musicAudioId"], ["musicLevel", "musicLevel"], ["musicStartSeconds", "musicStartSeconds"]]) {
+        const field = document.getElementById(fieldId);
+        if (field) activeCard.dataset[key] = field.value;
+      }
+      activeCard.dataset.musicDuck = document.getElementById("musicDuck")?.checked ? "1" : "0";
     }
     if (settingsContainer) {
       settingsContainer.dataset.selectedVisualMode = activeVisualMode || "video";
@@ -23069,6 +23085,8 @@ document.addEventListener("DOMContentLoaded", () => {
   const waveform = document.getElementById("musicWaveformCanvas");
   const speechLane = document.getElementById("musicSpeechLane");
   const previewAudio = document.getElementById("musicPreviewAudio");
+  const newMusicLevel = {{ selected_music_level if selected_music_level is not none else 50 }};
+  const newMusicDuck = {{ 'true' if selected_music_duck else 'false' }};
   const chip = document.getElementById("musicPreviewChip");
   const startLabel = document.getElementById("musicStartLabel");
   const levelLabel = document.getElementById("musicLevelLabel");
@@ -23108,6 +23126,19 @@ document.addEventListener("DOMContentLoaded", () => {
     return document.querySelector(`#generate-v2-selected-clip-mount ${selector}`)
       || document.querySelector(selector)
       || document.querySelector(".clip-card");
+  };
+  let loadedMusicPlanIndex = "";
+  window.syncMusicEditorForClip = (planIndex) => {
+    const normalized = String(planIndex || "");
+    if (!normalized || normalized === loadedMusicPlanIndex) return;
+    const card = activeCard();
+    if (!card || String(card.dataset.planIndex || "") !== normalized) return;
+    loadedMusicPlanIndex = normalized;
+    audioId.value = card.dataset.musicAudioId || "";
+    startField.value = card.dataset.musicStartSeconds || "0";
+    if (level) level.value = card.dataset.musicLevel || "50";
+    if (duck) duck.checked = card.dataset.musicDuck !== "0";
+    if (typeof syncUi === "function") syncUi();
   };
   const isDesignEditorOpen = () => Boolean(window.__generateV2EditModeActive
     || document.getElementById("crop-area-modal")?.classList.contains("show"));
@@ -23323,8 +23354,9 @@ document.addEventListener("DOMContentLoaded", () => {
     const chosenId = String(track.id);
     audioId.value = chosenId;
     startField.value = "0";
-    if (level) level.value = "50";
-    if (levelLabel) levelLabel.textContent = "50%";
+    if (level) level.value = String(newMusicLevel);
+    if (levelLabel) levelLabel.textContent = `${newMusicLevel}%`;
+    if (duck) duck.checked = newMusicDuck;
     selected = track;
     setPickerOpen(false);
     syncUi();
@@ -23520,6 +23552,7 @@ document.addEventListener("DOMContentLoaded", () => {
   window.__musicPreviewPlaybackIntent = (planIndex) => playIntent && audioMode === "timeline" && String(activeCard()?.dataset.planIndex || "") === String(planIndex || "");
   window.syncMusicEditorFromFields=syncUi;
   loadTracks();
+  window.syncMusicEditorForClip?.(document.getElementById("clip-management-panel")?.dataset.activePlanIndex || "");
 });
 </script>
 {% endblock %}
