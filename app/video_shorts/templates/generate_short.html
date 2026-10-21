@@ -4114,6 +4114,20 @@
     text-transform: uppercase;
     white-space: nowrap;
   }
+  .clip-card-auto-created-badge,
+  .clip-rail-auto-created-badge {
+    display: inline-flex;
+    align-items: center;
+    border-radius: 999px;
+    padding: 4px 9px;
+    background: rgba(167, 139, 250, 0.16);
+    border: 1px solid rgba(196, 181, 253, 0.34);
+    color: #ede9fe;
+    font-size: 0.7rem;
+    font-weight: 750;
+    letter-spacing: 0.02em;
+    white-space: nowrap;
+  }
   .clip-card-score-badge {
     display: inline-flex;
     align-items: center;
@@ -7001,6 +7015,7 @@
                         <span class="clip-rail-kind-badge is-ai{% if row.status == 'created' %} is-rendered{% endif %}" data-bs-toggle="tooltip" data-bs-placement="top" title="AI score — how likely this moment works as a Short">
                           <span>{{ rail_score if rail_score is not none else '—' }}</span>
                         </span>
+                        {% if row.auto_created %}<span class="clip-rail-auto-created-badge">Auto-created</span>{% endif %}
                       {% else %}
                         <span class="clip-rail-kind-badge is-manual" data-bs-toggle="tooltip" data-bs-placement="top" title="Made by you">
                           <i class="bi bi-scissors" aria-hidden="true"></i>
@@ -7226,6 +7241,9 @@
                 </div>
                 <div class="clip-card-meta-status">
                   <div class="small text-white-50 d-flex align-items-center gap-2 flex-wrap">
+                    {% if row.auto_created %}
+                      <span class="clip-card-auto-created-badge">Auto-created</span>
+                    {% endif %}
                     {% if row.is_ai_suggestion %}
                       {% set clip_score = row.get('score') %}
                       {% set score_missing = clip_score is none %}

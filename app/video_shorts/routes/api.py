@@ -5609,7 +5609,7 @@ def caption_result():
     ensure_postgres_youtube_transcripts_id_default(conn)
     try:
         row = conn.execute(
-            "SELECT video_id, owner_user_id, duration_seconds, title FROM youtube_videos WHERE id = ?",
+            "SELECT video_id, owner_user_id, duration_seconds, title, brand_id FROM youtube_videos WHERE id = ?",
             [video_db_id],
         ).fetchone()
         if not row:
@@ -5619,6 +5619,7 @@ def caption_result():
         owner_user_id = row[1]
         duration_seconds = row[2]
         video_title = row[3]
+        brand_id = row[4]
         event_video_id, should_emit_transcript_completed = prepare_transcript_completed_transition(
             conn,
             video_pk=video_db_id,
@@ -5651,6 +5652,21 @@ def caption_result():
                 video_id=event_video_id or video_id,
                 status="completed",
             )
+            try:
+                from app.video_shorts.routes import generation
+
+                generation.enqueue_auto_suggest_render_job_after_transcript(
+                    owner_user_id=owner_user_id,
+                    brand_id=brand_id,
+                    video_pk=video_db_id,
+                    video_id=video_id,
+                    ingest_source="",
+                )
+            except Exception:
+                current_app.logger.exception(
+                    "Failed to enqueue suggestions-only workflow for caption result video_db_id=%s",
+                    video_db_id,
+                )
         if owner_user_id:
             minutes = _duration_minutes(duration_seconds)
             if minutes > 0:

@@ -40,11 +40,12 @@ from app.video_shorts.services.brands import (
 )
 from app.video_shorts.config import (
     ARABIC_FALLBACK_FONT_PATH,
-    AUTO_RENDER_COUNTS_QUOTA,
+    AUTO_RENDER_DAILY_ACCOUNT_CAP,
     AUTO_RENDER_MIN_SCORE,
     AUTO_RENDER_TOP_N,
     AUTO_SUGGEST_RENDER_ENABLED,
     AUTO_SUGGEST_RENDER_USER_IDS,
+    AUTO_SUGGEST_CUSTOMER_CLIP_COUNT,
     BGCOVER_PATH,
     BACKGROUND_VISUAL_PRESETS,
     DEFAULT_SUB_FONT_KEY,
@@ -5292,6 +5293,13 @@ def _auto_suggest_render_input_hash(owner_user_id: Any, brand_id: Any, video_pk:
     return sha256(raw.encode("utf-8")).hexdigest()
 
 
+USER_ADDED_INGEST_SOURCES = {"user_local_upload", "user_youtube_import"}
+
+
+def _is_user_added_ingest_source(value: Any) -> bool:
+    return str(value or "").strip().lower() in USER_ADDED_INGEST_SOURCES
+
+
 def enqueue_auto_suggest_render_job_after_transcript(
     *,
     owner_user_id: Any,
@@ -5299,6 +5307,7 @@ def enqueue_auto_suggest_render_job_after_transcript(
     video_pk: Any,
     video_id: Any,
     job_origin: Any = "",
+    ingest_source: Any = "",
 ) -> Optional[Dict[str, Any]]:
     clean_owner = str(owner_user_id or "").strip()
     clean_brand = str(brand_id or "").strip()
@@ -5310,12 +5319,14 @@ def enqueue_auto_suggest_render_job_after_transcript(
     if not clean_owner or not clean_brand or not clean_video_pk or not clean_video_id:
         return None
     owner_is_guest = _owner_is_guest_user(clean_owner)
-    if not owner_is_guest and not _auto_suggest_render_gate_matches(clean_owner):
-        return None
+    legacy_mode = bool(owner_is_guest or _auto_suggest_render_gate_matches(clean_owner))
     if str(job_origin or "").strip() == DISCOVERY_JOB_ORIGIN:
         return None
     if _is_discovery_demo_scope(clean_owner, clean_brand, clean_video_pk):
         return None
+    auto_suggest_mode = "legacy" if legacy_mode else (
+        "user_added" if _is_user_added_ingest_source(ingest_source) else "suggestions_only"
+    )
     return enqueue_worker_job(
         user_id=clean_owner,
         job_type=JOB_TYPE_AUTO_SUGGEST_RENDER,
@@ -5325,6 +5336,8 @@ def enqueue_auto_suggest_render_job_after_transcript(
             "video_pk": clean_video_pk,
             "video_id": clean_video_id,
             "job_origin": GUEST_JOB_ORIGIN if owner_is_guest else AUTO_RENDER_JOB_ORIGIN,
+            "auto_suggest_mode": auto_suggest_mode,
+            "ingest_source": str(ingest_source or "").strip(),
         },
         input_hash=_auto_suggest_render_input_hash(clean_owner, clean_brand, clean_video_pk, clean_video_id),
         max_attempts=1,
@@ -5468,7 +5481,7 @@ def build_auto_suggest_render_status_payload(video_pk: int, current_user: Option
         "audio_transcribing",
         "processing",
     }
-    gated = _owner_is_guest_user(owner_user_id) or _auto_suggest_render_gate_matches(owner_user_id)
+    gated = not _is_discovery_demo_scope(str(owner_user_id or ""), str(brand_id or ""), int(video_pk))
     pending = bool(gated and (transcript_pending or ingest_pending) and not clip_count and not state.get("no_strong"))
     active = bool(state.get("active") or pending)
     return {
@@ -6900,7 +6913,7 @@ def _selected_entries_requiring_enqueue(entries: List[Dict[str, Any]]) -> List[D
 def _select_auto_render_entries(
     entries: List[Dict[str, Any]],
     *,
-    min_score: float = AUTO_RENDER_MIN_SCORE,
+    min_score: Optional[float] = AUTO_RENDER_MIN_SCORE,
     limit: int = AUTO_RENDER_TOP_N,
 ) -> List[Dict[str, Any]]:
     candidates: List[Tuple[float, int, Dict[str, Any]]] = []
@@ -6915,9 +6928,9 @@ def _select_auto_render_entries(
         if str(entry.get("render_job_id") or "").strip():
             continue
         score = _coerce_plan_score(entry)
-        if score is None or score < float(min_score or 0):
+        if min_score is not None and (score is None or score < float(min_score)):
             continue
-        candidates.append((score, position, entry))
+        candidates.append((score if score is not None else float("-inf"), position, entry))
     candidates.sort(key=lambda item: (-item[0], item[1]))
     return [entry for _score, _position, entry in candidates[: max(0, int(limit or 0))]]
 
@@ -7829,6 +7842,7 @@ def _enqueue_auto_render_for_plan_entry(
     brand_id: str,
     video_pk: int,
     plan_index: int,
+    default_customer: bool = False,
 ) -> Dict[str, Any]:
     conn = get_db_readonly()
     try:
@@ -7843,7 +7857,10 @@ def _enqueue_auto_render_for_plan_entry(
     with current_app.test_request_context(
         f"/video_shorts/generate/{int(video_pk)}/autoclip",
         method="POST",
-        data={"plan_index": str(plan_index), "_auto_render_job": "1"},
+        data={
+            "plan_index": str(plan_index),
+            "_auto_render_job": "1",
+        },
         headers={"X-Requested-With": "XMLHttpRequest"},
     ):
         g.vs_current_user = {
@@ -7853,6 +7870,10 @@ def _enqueue_auto_render_for_plan_entry(
             "plan_id": user_row[3],
         }
         g.vs_current_brand = {"id": brand_id}
+        g.vs_auto_suggest_render_context = {
+            "quota_exempt": True,
+            "default_customer": bool(default_customer),
+        }
         response = autoclip_video(int(video_pk))
         status_code = getattr(response, "status_code", None)
         response_obj = response
@@ -7875,6 +7896,67 @@ def _enqueue_auto_render_for_plan_entry(
             "job_id": payload.get("job_id"),
             "message": payload.get("message"),
         }
+
+
+def _default_auto_render_count_last_24h(owner_user_id: str) -> int:
+    conn = get_db_readonly()
+    try:
+        origin_expr = (
+            "payload_json->>'job_origin'"
+            if getattr(conn, "backend_name", "") == "postgres"
+            else "json_extract_string(payload_json, '$.job_origin')"
+        )
+        row = conn.execute(
+            f"""
+            SELECT COUNT(*)
+            FROM shorts_render_jobs
+            WHERE CAST(user_id AS VARCHAR) = CAST(? AS VARCHAR)
+              AND type = ?
+              AND COALESCE({origin_expr}, '') = ?
+              AND status != 'cancelled'
+              AND created_at >= (CURRENT_TIMESTAMP - INTERVAL '24 hours')
+            """,
+            [owner_user_id, JOB_TYPE_RENDER_SHORT, AUTO_RENDER_JOB_ORIGIN],
+        ).fetchone()
+        return int((row or [0])[0] or 0)
+    finally:
+        conn.close()
+
+
+def _default_auto_render_account_block_reason(owner_user_id: str) -> str:
+    conn = get_db_readonly()
+    try:
+        row = conn.execute(
+            "SELECT COALESCE(subscription_status, '') FROM shorts_users WHERE CAST(id AS VARCHAR) = CAST(? AS VARCHAR) LIMIT 1",
+            [owner_user_id],
+        ).fetchone()
+        if not row:
+            return "account_not_found"
+        subscription_status = str(row[0] or "").strip().lower()
+        if subscription_status in {"suspended", "paused", "past_due", "unpaid", "incomplete_expired"}:
+            return "account_suspended"
+        usage = _get_user_storage_usage(conn, owner_user_id)
+    finally:
+        conn.close()
+    if usage["limit_bytes"] and usage["used_bytes"] >= usage["limit_bytes"]:
+        return "storage_full"
+    return ""
+
+
+def _mark_plan_entry_auto_created(video_id: str, video_pk: int, plan_index: int) -> None:
+    entries = _load_plan_entries(video_id, video_pk=video_pk) or []
+    changed = False
+    for entry in entries:
+        try:
+            matches = int(entry.get("plan_index") or 0) == int(plan_index)
+        except Exception:
+            matches = False
+        if matches:
+            entry["auto_created"] = True
+            changed = True
+            break
+    if changed:
+        _write_plan_entries(video_id, entries, video_pk=video_pk)
 
 
 def execute_auto_suggest_render_job(payload: Dict[str, Any]) -> Dict[str, Any]:
@@ -7924,8 +8006,12 @@ def execute_auto_suggest_render_job(payload: Dict[str, Any]) -> Dict[str, Any]:
     if not owner_user_id or not brand_id or not video_pk or not video_id:
         return finish("missing_scope")
     owner_is_guest = _owner_is_guest_user(owner_user_id) or str((payload or {}).get("job_origin") or "").strip() == GUEST_JOB_ORIGIN
-    if not owner_is_guest and not _auto_suggest_render_gate_matches(owner_user_id):
+    auto_suggest_mode = str((payload or {}).get("auto_suggest_mode") or "legacy").strip().lower()
+    legacy_mode = auto_suggest_mode == "legacy"
+    if legacy_mode and not owner_is_guest and not _auto_suggest_render_gate_matches(owner_user_id):
         return finish("gate_disabled")
+    if not legacy_mode and auto_suggest_mode not in {"user_added", "suggestions_only"}:
+        return finish("invalid_auto_suggest_mode")
     if _is_discovery_demo_scope(owner_user_id, brand_id, video_pk):
         return finish("discovery_or_lead_video")
     conn = get_db_readonly()
@@ -7993,6 +8079,7 @@ def execute_auto_suggest_render_job(payload: Dict[str, Any]) -> Dict[str, Any]:
             form_data,
             owner_user_id=owner_user_id,
             brand_id=brand_id,
+            suggestion_limit=None if legacy_mode else AUTO_SUGGEST_CUSTOMER_CLIP_COUNT,
         )
         entries = _load_plan_entries(video_id, video_pk=video_pk) or []
         generated_entries = [
@@ -8002,17 +8089,28 @@ def execute_auto_suggest_render_job(payload: Dict[str, Any]) -> Dict[str, Any]:
         result["entries_generated"] = int(plan_result.get("clip_count") or len(generated_entries))
         result["planner"] = next((str(entry.get("planner") or "") for entry in generated_entries if entry.get("planner")), "")
 
-    defaults_result = apply_short_editor_defaults_to_video_if_null(
-        owner_user_id=owner_user_id,
-        brand_id=brand_id,
-        video_pk=video_pk,
-    )
-    result["defaults"] = defaults_result
+    if legacy_mode or auto_suggest_mode == "user_added":
+        defaults_result = apply_short_editor_defaults_to_video_if_null(
+            owner_user_id=owner_user_id,
+            brand_id=brand_id,
+            video_pk=video_pk,
+        )
+        result["defaults"] = defaults_result
+
+    if auto_suggest_mode == "suggestions_only":
+        return finish("suggestions_only_import")
+
+    if not legacy_mode:
+        block_reason = _default_auto_render_account_block_reason(owner_user_id)
+        if block_reason:
+            return finish(block_reason)
+        if AUTO_RENDER_DAILY_ACCOUNT_CAP and _default_auto_render_count_last_24h(owner_user_id) >= AUTO_RENDER_DAILY_ACCOUNT_CAP:
+            return finish("daily_auto_render_cap")
 
     selected_entries = _select_auto_render_entries(
         entries,
-        min_score=AUTO_RENDER_MIN_SCORE,
-        limit=1 if owner_is_guest else AUTO_RENDER_TOP_N,
+        min_score=AUTO_RENDER_MIN_SCORE if legacy_mode else None,
+        limit=(1 if owner_is_guest else AUTO_RENDER_TOP_N) if legacy_mode else 1,
     )
     if not selected_entries:
         result["selected"] = []
@@ -8031,7 +8129,10 @@ def execute_auto_suggest_render_job(payload: Dict[str, Any]) -> Dict[str, Any]:
             brand_id=brand_id,
             video_pk=video_pk,
             plan_index=plan_index,
+            default_customer=not legacy_mode,
         )
+        if not legacy_mode and enqueue_result.get("ok"):
+            _mark_plan_entry_auto_created(video_id, video_pk, plan_index)
         enqueued.append({"plan_index": plan_index, **enqueue_result})
     result["selected"] = selected_summary
     result["enqueued"] = enqueued
@@ -12275,7 +12376,11 @@ def generate_short(video_pk):
         video_pk=video_pk,
         video_id=video["video_id"],
     )
-    if generate_v2 and _auto_suggest_render_gate_matches(editor_owner_user_id) and not plan_entries:
+    if (
+        generate_v2
+        and not _is_discovery_demo_scope(str(editor_owner_user_id or ""), str(brand_id or ""), int(video_pk))
+        and not plan_entries
+    ):
         transcript_pending_for_auto = str(video.get("transcript_status") or "").strip().lower() not in {
             "done",
             "ready",
@@ -13006,6 +13111,7 @@ def generate_short(video_pk):
             "origin": origin,
             "is_ai_suggestion": is_ai_suggestion,
             "is_ai_clip": is_ai_clip,
+            "auto_created": bool(entry.get("auto_created")),
             "score": entry.get("score"),
             "score_breakdown": entry.get("score_breakdown"),
             "generated_video_id": generated_record.get("id"),
@@ -26745,7 +26851,7 @@ def _run_transcribe_job(video_pk: int, video_id: str, source_path: Path, source_
             owner_user_id = None
             try:
                 owner_row = conn.execute(
-                    "SELECT owner_user_id, duration_seconds, title FROM youtube_videos WHERE id = ?",
+                    "SELECT owner_user_id, duration_seconds, title, brand_id FROM youtube_videos WHERE id = ?",
                     [video_pk],
                 ).fetchone()
                 if owner_row:
@@ -26767,6 +26873,19 @@ def _run_transcribe_job(video_pk: int, video_id: str, source_path: Path, source_
                     video_id=event_video_id or video_id,
                     status="completed",
                 )
+                try:
+                    enqueue_auto_suggest_render_job_after_transcript(
+                        owner_user_id=owner_user_id,
+                        brand_id=owner_row[3],
+                        video_pk=video_pk,
+                        video_id=video_id,
+                        ingest_source="",
+                    )
+                except Exception:
+                    app_obj.logger.exception(
+                        "Failed to enqueue suggestions-only workflow after background transcript video_pk=%s",
+                        video_pk,
+                    )
             elapsed = round(time.monotonic() - start_ts, 1)
             _set_transcribe_job_state(
                 video_pk,
@@ -27043,6 +27162,19 @@ def transcribe_video(video_pk):
                 video_id=event_video_id or vid,
                 status="completed",
             )
+            try:
+                enqueue_auto_suggest_render_job_after_transcript(
+                    owner_user_id=target_owner_user_id,
+                    brand_id=target_brand_id,
+                    video_pk=video_pk,
+                    video_id=vid,
+                    ingest_source="",
+                )
+            except Exception:
+                current_app.logger.exception(
+                    "Failed to enqueue suggestions-only workflow after synchronous transcript video_pk=%s",
+                    video_pk,
+                )
         if target_owner_user_id and audio_minutes > 0:
             try:
                 add_transcription_minutes(
@@ -27295,6 +27427,7 @@ def _generate_clip_plan_for_video(
     owner_user_id: Any = None,
     brand_id: Any = None,
     preloaded_video_info: Optional[Tuple[str, str, Optional[float], str, List[Dict[str, Any]]]] = None,
+    suggestion_limit: Optional[int] = None,
 ) -> Dict[str, Any]:
     def _emit(stage: str, message: str, **extra: Any) -> None:
         if not progress_cb:
@@ -27451,6 +27584,17 @@ def _generate_clip_plan_for_video(
         used_fallback_plan = True
     if not clip_plan:
         raise RuntimeError("LLM did not return any clip suggestions and fallback couldn't generate clips.")
+
+    if suggestion_limit is not None:
+        ranked_clips = sorted(
+            enumerate(clip_plan),
+            key=lambda item: (
+                _coerce_plan_score(item[1]) is None,
+                -(_coerce_plan_score(item[1]) or 0.0),
+                item[0],
+            ),
+        )
+        clip_plan = [clip for _position, clip in ranked_clips[: max(1, int(suggestion_limit))]]
 
     timestamped_plan = []
     _emit("prepare_plan", "Preparing plan entries.", clip_count=len(clip_plan))
@@ -28637,6 +28781,9 @@ def autoclip_video(video_pk):
     queued_job = (request.form.get("_queued_job") or "").strip() in {"1", "true", "yes"}
     regenerate_job = (request.form.get("_regenerate_job") or "").strip() in {"1", "true", "yes"}
     auto_render_job = (request.form.get("_auto_render_job") or "").strip() in {"1", "true", "yes"}
+    internal_auto_context = getattr(g, "vs_auto_suggest_render_context", None) or {}
+    auto_render_quota_exempt = auto_render_job and bool(internal_auto_context.get("quota_exempt"))
+    auto_suggest_default = auto_render_job and bool(internal_auto_context.get("default_customer"))
     discovery_pipeline_job = (request.form.get("_discovery_pipeline_job") or "").strip() in {"1", "true", "yes"}
     queued_render_settings_hash = (request.form.get("_render_settings_hash") or "").strip() or None
 
@@ -29567,6 +29714,10 @@ def autoclip_video(video_pk):
                 discovery_pipeline_job=discovery_pipeline_job,
             )
             payload["job_origin"] = job_origin
+            if auto_suggest_default:
+                payload["auto_suggest_default"] = True
+            if auto_render_quota_exempt:
+                payload["auto_render_quota_exempt"] = True
             enqueue_result = enqueue_render_job(
                 user_id=str(target_owner_user_id),
                 payload=payload,
@@ -29664,7 +29815,10 @@ def autoclip_video(video_pk):
                 render_job_id=job.get("id"),
              video_pk=video_pk)
             reserve_result = {"allowed": True, "remaining": None}
-            if (not guest_reserve_result.get("guest")) and ((not auto_render_job) or AUTO_RENDER_COUNTS_QUOTA):
+            if (
+                not guest_reserve_result.get("guest")
+                and not auto_render_quota_exempt
+            ):
                 reserve_result = reserve_export(target_owner_user_id)
             if not reserve_result.get("allowed", False):
                 if job.get("id"):

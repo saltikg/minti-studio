@@ -1083,6 +1083,7 @@ def _execute_ingest_youtube_job(app, job: Dict[str, Any]) -> Dict[str, Any]:
     brand_id = str(payload.get("brand_id") or "").strip()
     duration_seconds = payload.get("duration_seconds")
     job_origin = str(payload.get("job_origin") or "").strip()
+    ingest_source = str(payload.get("ingest_source") or "").strip()
     bill_usage = not _is_unconverted_discovery_demo_transcription(
         owner_user_id=owner_user_id,
         brand_id=brand_id,
@@ -1198,6 +1199,7 @@ def _execute_ingest_youtube_job(app, job: Dict[str, Any]) -> Dict[str, Any]:
                 video_pk=video_pk,
                 video_id=video_id,
                 job_origin=job_origin,
+                ingest_source=ingest_source,
             )
             if enqueue_auto_result:
                 app.logger.info(
@@ -1259,6 +1261,7 @@ def _execute_transcribe_upload_job(app, job: Dict[str, Any]) -> Dict[str, Any]:
     brand_id = str(payload.get("brand_id") or "").strip()
     duration_seconds = payload.get("duration_seconds")
     job_origin = str(payload.get("job_origin") or "").strip()
+    ingest_source = str(payload.get("ingest_source") or "").strip()
     bill_usage = not _is_unconverted_discovery_demo_transcription(
         owner_user_id=owner_user_id,
         brand_id=brand_id,
@@ -1300,6 +1303,7 @@ def _execute_transcribe_upload_job(app, job: Dict[str, Any]) -> Dict[str, Any]:
                 video_pk=video_pk,
                 video_id=video_id,
                 job_origin=job_origin,
+                ingest_source=ingest_source,
             )
             if enqueue_auto_result:
                 app.logger.info(

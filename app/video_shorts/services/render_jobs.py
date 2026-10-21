@@ -1304,10 +1304,12 @@ def mark_job_failed(
     try:
         ensure_render_jobs_schema(conn)
         row = conn.execute(
-            f"SELECT user_id FROM {JOBS_TABLE} WHERE id = ?",
+            f"SELECT user_id, payload_json FROM {JOBS_TABLE} WHERE id = ?",
             [job_id],
         ).fetchone()
         user_id = str(row[0]) if row and row[0] else None
+        payload = _parse_json(row[1]) if row and len(row) > 1 else {}
+        quota_exempt = bool((payload or {}).get("auto_render_quota_exempt"))
         _refund_guest_render_if_reserved(conn, job_id)
         conn.execute(
             f"""
@@ -1324,7 +1326,7 @@ def mark_job_failed(
         conn.commit()
     finally:
         conn.close()
-    if release_reservation and user_id:
+    if release_reservation and user_id and not quota_exempt:
         release_export(user_id)
     return get_job(job_id) or {}
 
