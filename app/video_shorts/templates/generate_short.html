@@ -3306,6 +3306,7 @@
     bottom: 0;
     z-index: 4;
     align-items: center;
+    flex-wrap: wrap;
     gap: 8px;
     margin-top: 4px;
     padding: 8px;
@@ -3318,20 +3319,40 @@
     display: flex;
   }
   .generate-v2-text-parts-summary {
-    flex: 1 1 auto;
-    min-width: 0;
+    flex: 0 0 auto;
     color: rgba(226, 232, 240, 0.82);
     font-size: 0.78rem;
     font-weight: 800;
     font-variant-numeric: tabular-nums;
     white-space: nowrap;
-    overflow: hidden;
-    text-overflow: ellipsis;
   }
   .generate-v2-text-preview-controls {
     display: inline-flex;
     align-items: center;
-    gap: 6px;
+    gap: 0;
+    overflow: hidden;
+    border: 1px solid rgba(148, 163, 184, 0.28);
+    border-radius: 999px;
+    background: rgba(15, 23, 42, 0.72);
+  }
+  .generate-v2-text-preview-controls .btn {
+    width: 40px;
+    height: 40px;
+    min-width: 40px;
+    padding: 0;
+    border: 0;
+    border-radius: 0;
+    color: #ccfbf1;
+    font-size: 0.9rem;
+    line-height: 1;
+  }
+  .generate-v2-text-preview-controls .btn + .btn {
+    border-left: 1px solid rgba(148, 163, 184, 0.22);
+  }
+  .generate-v2-text-preview-controls .btn:hover,
+  .generate-v2-text-preview-controls .btn:focus-visible {
+    background: rgba(45, 212, 191, 0.18);
+    color: #fff;
   }
   .generate-v2-text-preview-status {
     color: #99f6e4;
@@ -3339,6 +3360,41 @@
     font-weight: 800;
     font-variant-numeric: tabular-nums;
     white-space: nowrap;
+  }
+  .generate-v2-text-preview-progress {
+    position: relative;
+    flex: 0 0 100%;
+    height: 16px;
+    margin: -4px 0 0;
+    cursor: pointer;
+    touch-action: none;
+  }
+  .generate-v2-text-preview-progress::before {
+    content: "";
+    position: absolute;
+    top: 7px;
+    right: 0;
+    left: 0;
+    height: 2px;
+    border-radius: 999px;
+    background: rgba(148, 163, 184, 0.28);
+  }
+  .generate-v2-text-preview-progress-fill {
+    position: absolute;
+    top: 7px;
+    left: 0;
+    width: 0;
+    height: 2px;
+    border-radius: 999px;
+    background: #2dd4bf;
+    pointer-events: none;
+  }
+  .generate-v2-text-preview-progress:focus-visible {
+    outline: 2px solid rgba(94, 234, 212, 0.72);
+    outline-offset: 2px;
+  }
+  .generate-v2-text-clear-parts {
+    margin-left: auto;
   }
   .generate-v2-text-title-wrap {
     position: relative;
@@ -3372,6 +3428,18 @@
     font-size: 0.74rem;
     font-weight: 800;
     white-space: nowrap;
+  }
+  @media (max-width: 767.98px) {
+    .generate-v2-text-parts-bar {
+      gap: 7px;
+    }
+    .generate-v2-text-title-wrap {
+      flex: 1 1 100%;
+      max-width: none;
+    }
+    .generate-v2-text-clear-parts {
+      margin-left: auto;
+    }
   }
   #clip-workbench-shell[data-generate-v2="1"] .trs-hint,
   #clip-workbench-shell[data-generate-v2="1"] .trs-panel {
@@ -6770,8 +6838,18 @@
                   <button type="button" class="btn btn-sm btn-primary" data-generate-v2-text-add>+ Add</button>
                 </div>
                 <div class="generate-v2-text-parts-bar" data-generate-v2-text-parts-bar aria-live="polite">
+                  <div class="generate-v2-text-preview-progress d-none"
+                       data-generate-v2-text-preview-progress
+                       role="slider"
+                       tabindex="0"
+                       aria-label="Preview position"
+                       aria-valuemin="0"
+                       aria-valuemax="100"
+                       aria-valuenow="0">
+                    <span class="generate-v2-text-preview-progress-fill" data-generate-v2-text-preview-progress-fill></span>
+                  </div>
                   <span class="generate-v2-text-parts-summary" data-generate-v2-text-parts-summary></span>
-                  <label class="generate-v2-text-title-wrap">
+                  <label class="generate-v2-text-title-wrap" data-generate-v2-text-title-wrap>
                     <span class="visually-hidden">Clip title</span>
                     <input type="text"
                            class="form-control form-control-sm generate-v2-text-title-input"
@@ -6782,12 +6860,11 @@
                   </label>
                   <button type="button" class="btn btn-sm btn-outline-light" data-generate-v2-text-preview-all>▶ Preview all</button>
                   <div class="generate-v2-text-preview-controls d-none" data-generate-v2-text-preview-controls>
-                    <button type="button" class="btn btn-sm btn-outline-light" data-generate-v2-text-preview-toggle>Pause</button>
-                    <button type="button" class="btn btn-sm btn-outline-light" data-generate-v2-text-preview-back>⟲ 3s</button>
-                    <span class="generate-v2-text-preview-status" data-generate-v2-text-preview-status></span>
-                    <button type="button" class="btn btn-sm btn-outline-light" data-generate-v2-text-preview-stop>Stop</button>
+                    <button type="button" class="btn" data-generate-v2-text-preview-toggle aria-label="Pause preview" title="Pause preview">⏸</button>
+                    <button type="button" class="btn" data-generate-v2-text-preview-stop aria-label="Stop preview" title="Stop preview">■</button>
                   </div>
-                  <button type="button" class="btn btn-sm btn-outline-light" data-generate-v2-text-clear-parts>Clear</button>
+                  <span class="generate-v2-text-preview-status d-none" data-generate-v2-text-preview-status></span>
+                  <button type="button" class="btn btn-sm btn-outline-light generate-v2-text-clear-parts" data-generate-v2-text-clear-parts>Clear</button>
                   <span class="generate-v2-text-parts-warning d-none" data-generate-v2-text-parts-warning>5–90s required</span>
                   <button type="button" class="btn btn-sm btn-primary" data-generate-v2-text-create>Create clip</button>
                 </div>
@@ -13925,14 +14002,16 @@ window.initGenerateV2TextTranscript = () => {
   const previewAllBtn = shell.querySelector("[data-generate-v2-text-preview-all]");
   const previewControls = shell.querySelector("[data-generate-v2-text-preview-controls]");
   const previewToggleBtn = shell.querySelector("[data-generate-v2-text-preview-toggle]");
-  const previewBackBtn = shell.querySelector("[data-generate-v2-text-preview-back]");
   const previewStopBtn = shell.querySelector("[data-generate-v2-text-preview-stop]");
   const previewStatus = shell.querySelector("[data-generate-v2-text-preview-status]");
+  const previewProgress = shell.querySelector("[data-generate-v2-text-preview-progress]");
+  const previewProgressFill = shell.querySelector("[data-generate-v2-text-preview-progress-fill]");
   const clearPartsBtn = shell.querySelector("[data-generate-v2-text-clear-parts]");
   const createBtn = shell.querySelector("[data-generate-v2-text-create]");
   const partsWarning = shell.querySelector("[data-generate-v2-text-parts-warning]");
   const titleInput = shell.querySelector("[data-generate-v2-clip-title]");
   const titleCounter = shell.querySelector("[data-generate-v2-clip-title-counter]");
+  const titleWrap = shell.querySelector("[data-generate-v2-text-title-wrap]");
   const searchInput = document.getElementById("trs-search-input");
   const clearSearchBtn = document.getElementById("trs-search-clear");
   const prevBtn = document.getElementById("trs-match-prev");
@@ -13955,6 +14034,8 @@ window.initGenerateV2TextTranscript = () => {
       frameHandle: null,
       restoreSnapshot: null,
       seekToken: 0,
+      scrubPointerId: null,
+      resumeAfterScrub: false,
     },
   };
   window.__generateV2TextParts = state.parts;
@@ -14038,9 +14119,14 @@ window.initGenerateV2TextTranscript = () => {
     const current = Number.isFinite(Number(sourceTime)) ? Number(sourceTime) : Number(part?.start || 0);
     const elapsed = previewElapsedBeforePart(state.preview.partIndex)
       + Math.max(0, Math.min(Number(part?.end || 0), current) - Number(part?.start || 0));
+    const total = previewTotalDuration();
+    const percent = total > 0 ? Math.max(0, Math.min(100, (elapsed / total) * 100)) : 0;
     if (previewStatus) {
-      previewStatus.textContent = `Part ${state.preview.partIndex + 1}/${state.preview.ranges.length} · ${formatPreviewTime(elapsed)} / ${formatPreviewTime(previewTotalDuration())}`;
+      previewStatus.textContent = `${formatPreviewTime(elapsed)} / ${formatPreviewTime(total)}`;
     }
+    if (previewProgressFill) previewProgressFill.style.width = `${percent}%`;
+    previewProgress?.setAttribute("aria-valuenow", String(Math.round(percent)));
+    previewProgress?.setAttribute("aria-valuetext", `${formatPreviewTime(elapsed)} of ${formatPreviewTime(total)}`);
   };
   const cancelPreviewFrame = () => {
     if (!state.preview.frameHandle) return;
@@ -14050,7 +14136,15 @@ window.initGenerateV2TextTranscript = () => {
   const setPreviewControls = (active) => {
     previewControls?.classList.toggle("d-none", !active);
     previewAllBtn?.classList.toggle("d-none", active);
-    if (previewToggleBtn) previewToggleBtn.textContent = state.preview.paused ? "Resume" : "Pause";
+    previewProgress?.classList.toggle("d-none", !active);
+    previewStatus?.classList.toggle("d-none", !active);
+    titleWrap?.classList.toggle("d-none", active);
+    if (previewToggleBtn) {
+      const action = state.preview.paused ? "Play" : "Pause";
+      previewToggleBtn.textContent = state.preview.paused ? "▶" : "⏸";
+      previewToggleBtn.setAttribute("aria-label", `${action} preview`);
+      previewToggleBtn.title = `${action} preview`;
+    }
     updatePartsBar();
   };
   const stopPreview = ({ restore = true } = {}) => {
@@ -14064,7 +14158,10 @@ window.initGenerateV2TextTranscript = () => {
     const snapshot = state.preview.restoreSnapshot;
     state.preview.ranges = [];
     state.preview.partIndex = 0;
+    state.preview.scrubPointerId = null;
+    state.preview.resumeAfterScrub = false;
     state.preview.restoreSnapshot = null;
+    if (previewProgressFill) previewProgressFill.style.width = "0%";
     if (restore && snapshot) window.__trsClipSelectorController?.restorePlayerState?.(snapshot);
     setPreviewControls(false);
   };
@@ -14109,6 +14206,25 @@ window.initGenerateV2TextTranscript = () => {
       schedulePreviewFrame();
     }
     setPreviewControls(true);
+  };
+  const seekPreviewElapsed = (elapsedSeconds, shouldPlay = !state.preview.paused) => {
+    if (!state.preview.active || !state.preview.ranges.length) return;
+    let remaining = Math.max(0, Math.min(previewTotalDuration(), Number(elapsedSeconds) || 0));
+    let partIndex = 0;
+    while (partIndex < state.preview.ranges.length - 1) {
+      const duration = state.preview.ranges[partIndex].end - state.preview.ranges[partIndex].start;
+      if (remaining <= duration) break;
+      remaining -= duration;
+      partIndex += 1;
+    }
+    const part = state.preview.ranges[partIndex];
+    void seekPreviewPart(partIndex, part.start + Math.min(remaining, Math.max(0, part.end - part.start - 0.001)), shouldPlay);
+  };
+  const previewElapsedFromPointer = (event) => {
+    const rect = previewProgress?.getBoundingClientRect();
+    if (!rect?.width) return 0;
+    const ratio = Math.max(0, Math.min(1, (Number(event.clientX) - rect.left) / rect.width));
+    return ratio * previewTotalDuration();
   };
   const previewPartsSequentially = async (startPartIndex = 0, sourceTime = null) => {
     const parts = normalizeTranscriptParts(state.parts);
@@ -14320,23 +14436,44 @@ window.initGenerateV2TextTranscript = () => {
     }
     setPreviewControls(true);
   });
-  previewBackBtn?.addEventListener("click", () => {
+  previewStopBtn?.addEventListener("click", () => stopPreview());
+  previewProgress?.addEventListener("pointerdown", (event) => {
     if (!state.preview.active) return;
+    event.preventDefault();
+    state.preview.scrubPointerId = event.pointerId;
+    state.preview.resumeAfterScrub = !state.preview.paused;
+    previewProgress.setPointerCapture?.(event.pointerId);
+    cancelPreviewFrame();
+    window.__trsClipSelectorController?.pausePlayer?.();
+    seekPreviewElapsed(previewElapsedFromPointer(event), false);
+  });
+  previewProgress?.addEventListener("pointermove", (event) => {
+    if (!state.preview.active || state.preview.scrubPointerId !== event.pointerId) return;
+    event.preventDefault();
+    seekPreviewElapsed(previewElapsedFromPointer(event), false);
+  });
+  const finishPreviewScrub = (event) => {
+    if (!state.preview.active || state.preview.scrubPointerId !== event.pointerId) return;
+    event.preventDefault();
+    const shouldPlay = state.preview.resumeAfterScrub;
+    state.preview.scrubPointerId = null;
+    state.preview.resumeAfterScrub = false;
+    seekPreviewElapsed(previewElapsedFromPointer(event), shouldPlay);
+  };
+  previewProgress?.addEventListener("pointerup", finishPreviewScrub);
+  previewProgress?.addEventListener("pointercancel", finishPreviewScrub);
+  previewProgress?.addEventListener("keydown", (event) => {
+    if (!state.preview.active || !["ArrowLeft", "ArrowRight", "Home", "End"].includes(event.key)) return;
+    event.preventDefault();
     const snapshot = window.__trsClipSelectorController?.capturePlayerState?.();
     const part = state.preview.ranges[state.preview.partIndex];
-    const current = Math.max(Number(part.start), Math.min(Number(part.end), Number(snapshot?.currentTime ?? part.start)));
-    let targetElapsed = Math.max(0, previewElapsedBeforePart(state.preview.partIndex) + (current - part.start) - 3);
-    let targetPartIndex = 0;
-    while (targetPartIndex < state.preview.ranges.length - 1) {
-      const duration = state.preview.ranges[targetPartIndex].end - state.preview.ranges[targetPartIndex].start;
-      if (targetElapsed <= duration) break;
-      targetElapsed -= duration;
-      targetPartIndex += 1;
-    }
-    const targetPart = state.preview.ranges[targetPartIndex];
-    void seekPreviewPart(targetPartIndex, targetPart.start + targetElapsed, !state.preview.paused);
+    const current = Math.max(part.start, Math.min(part.end, Number(snapshot?.currentTime ?? part.start)));
+    const elapsed = previewElapsedBeforePart(state.preview.partIndex) + (current - part.start);
+    const target = event.key === "Home" ? 0
+      : event.key === "End" ? previewTotalDuration()
+      : elapsed + (event.key === "ArrowRight" ? 1 : -1);
+    seekPreviewElapsed(target);
   });
-  previewStopBtn?.addEventListener("click", () => stopPreview());
   clearPartsBtn?.addEventListener("click", () => {
     stopPreview();
     state.parts = [];
