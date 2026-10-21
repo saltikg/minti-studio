@@ -375,15 +375,15 @@
             <dd>{{ user_detail.subscription_status or '—' }}</dd>
 
             <dt>Current period end</dt>
-            <dd>{{ user_detail.subscription_current_period_end.strftime('%b %-d, %Y · %H:%M') if user_detail.subscription_current_period_end and user_detail.subscription_current_period_end.strftime else (user_detail.subscription_current_period_end or '—') }}</dd>
+            <dd>{{ user_detail.subscription_current_period_end|admin_datetime }}</dd>
 
             <dt>Created</dt>
-            <dd>{{ user_detail.created_at.strftime('%b %-d, %Y · %H:%M') if user_detail.created_at and user_detail.created_at.strftime else (user_detail.created_at or '—') }}</dd>
+            <dd>{{ user_detail.created_at|admin_datetime }}</dd>
 
             <dt>Trial reminder</dt>
             <dd>
               {% if user_detail.trial_days and user_detail.trial_expires_at %}
-                {{ user_detail.trial_days_label }} · expires {{ user_detail.trial_expires_at.strftime('%b %-d, %Y · %H:%M') if user_detail.trial_expires_at and user_detail.trial_expires_at.strftime else user_detail.trial_expires_at }}
+                {{ user_detail.trial_days_label }} · expires {{ user_detail.trial_expires_at|admin_datetime }}
                 {% if user_detail.trial_status_label %}
                   <span class="admin-detail-trial-badge {% if user_detail.trial_status_tone == 'warning' %}is-warning{% elif user_detail.trial_status_tone == 'danger' %}is-danger{% else %}is-neutral{% endif %}">{{ user_detail.trial_status_label }}</span>
                 {% endif %}
@@ -428,7 +428,7 @@
                 <span class="admin-detail-failure-id">{{ failure.identifier }}</span>
               </div>
               <div class="admin-detail-timeline-meta">
-                <span>{{ failure.timestamp.strftime('%b %-d, %Y · %H:%M') if failure.timestamp and failure.timestamp.strftime else (failure.timestamp or '—') }}</span>
+                <span>{{ failure.timestamp|admin_datetime }}</span>
                 {% if failure.meta %}<span>{{ failure.meta }}</span>{% endif %}
               </div>
               <div class="admin-detail-failure-reason">{{ failure.reason }}</div>
@@ -446,7 +446,7 @@
                     <span class="admin-detail-failure-id">{{ failure.identifier }}</span>
                   </div>
                   <div class="admin-detail-timeline-meta">
-                    <span>{{ failure.timestamp.strftime('%b %-d, %Y · %H:%M') if failure.timestamp and failure.timestamp.strftime else (failure.timestamp or '—') }}</span>
+                    <span>{{ failure.timestamp|admin_datetime }}</span>
                     {% if failure.meta %}<span>{{ failure.meta }}</span>{% endif %}
                   </div>
                   <div class="admin-detail-failure-reason">{{ failure.reason }}</div>
@@ -471,7 +471,7 @@
                 {% if event.status %}<span class="vs-admin-muted">· {{ event.status }}</span>{% endif %}
               </div>
               <div class="admin-detail-timeline-meta">
-                <span>{{ event.created_at.strftime('%b %-d, %Y · %H:%M') if event.created_at and event.created_at.strftime else (event.created_at or '—') }}</span>
+                <span>{{ event.created_at|admin_datetime }}</span>
                 {% if event.platform %}<span>platform: {{ event.platform }}</span>{% endif %}
                 {% if event.video_id %}<span>video: {{ event.video_id }}</span>{% endif %}
                 {% if event.short_id %}<span>short: {{ event.short_id }}</span>{% endif %}

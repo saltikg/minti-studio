@@ -85,7 +85,7 @@
   </div>
 
   <div class="blog-pipeline-stats">
-    <div class="blog-pipeline-stat">Last scout: {{ header_stats.last_scout_run|fmt_dt if header_stats.last_scout_run else 'Not run yet' }}</div>
+    <div class="blog-pipeline-stat">Last scout: {{ header_stats.last_scout_run|admin_datetime if header_stats.last_scout_run else 'Not run yet' }}</div>
     <div class="blog-pipeline-stat">LLM spend this month: ${{ '%.5f'|format(header_stats.monthly_spend) }} of ${{ header_stats.monthly_budget }} budget</div>
   </div>
 
@@ -104,7 +104,7 @@
       <tbody>
         {% for run in runs %}
           <tr>
-            <td>{{ run.started_at|fmt_dt if run.started_at else '—' }}</td>
+            <td>{{ run.started_at|admin_datetime }}</td>
             <td>
               <div class="blog-run-topic">{{ run.topic_title or ('Topic #' ~ run.topic_id) }}</div>
               <div class="blog-muted">Run #{{ run.id }}</div>

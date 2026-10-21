@@ -8,6 +8,7 @@ from flask import g
 
 
 DEFAULT_TIME_ZONE = "America/Los_Angeles"
+ADMIN_TIME_ZONE = "America/Los_Angeles"
 
 
 def _resolve_timezone(tz_name: Optional[str]) -> ZoneInfo:
@@ -61,3 +62,14 @@ def format_datetime(value: object, tz_name: Optional[str] = None) -> str:
     localized = dt.astimezone(zone)
     label = localized.strftime("%Y-%m-%d %I:%M:%S %p %Z")
     return label
+
+
+def format_admin_datetime(value: object) -> str:
+    """Format a UTC timestamp for admin-only displays in Pacific time."""
+    dt = _normalize_datetime(value)
+    if not dt:
+        return "—"
+    if dt.tzinfo is None:
+        dt = dt.replace(tzinfo=timezone.utc)
+    localized = dt.astimezone(ZoneInfo(ADMIN_TIME_ZONE))
+    return f"{localized.strftime('%b')} {localized.day}, {localized.year} · {localized:%H:%M} {localized:%Z}"

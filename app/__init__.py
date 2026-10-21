@@ -58,8 +58,9 @@ def create_app():
 
     # Jinja filter
     app.jinja_env.filters['from_json_safe'] = from_json_safe
-    from app.utils.datetime_format import format_datetime
+    from app.utils.datetime_format import format_admin_datetime, format_datetime
     app.jinja_env.filters["fmt_dt"] = format_datetime
+    app.jinja_env.filters["admin_datetime"] = format_admin_datetime
 
     if ENABLE_LEGACY_BLOG:
         @app.context_processor

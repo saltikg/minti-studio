@@ -222,10 +222,10 @@
               <td class="admin-users-meta admin-users-metric{% if user.transcription_usage.is_over_limit %} text-danger{% endif %}">{{ user.transcription_usage.display }}</td>
               <td class="admin-users-meta admin-users-metric">{{ user.cost_summary.display_monthly_avg_usd }}</td>
               <td class="admin-users-meta">
-                {{ user.created_at.strftime('%b %-d, %Y') if user.created_at and user.created_at.strftime else (user.created_at or '—') }}
+                {{ user.created_at|admin_datetime }}
               </td>
               <td class="admin-users-meta">
-                {{ user.last_activity_at.strftime('%b %-d, %Y · %H:%M') if user.last_activity_at and user.last_activity_at.strftime else (user.last_activity_at or '—') }}
+                {{ user.last_activity_at|admin_datetime }}
               </td>
               <td class="text-end">
                 <a

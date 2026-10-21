@@ -87,7 +87,7 @@
   </div>
 
   <div class="blog-pipeline-stats">
-    <div class="blog-pipeline-stat">Last scout: {{ header_stats.last_scout_run|fmt_dt if header_stats.last_scout_run else 'Not run yet' }}</div>
+    <div class="blog-pipeline-stat">Last scout: {{ header_stats.last_scout_run|admin_datetime if header_stats.last_scout_run else 'Not run yet' }}</div>
     <div class="blog-pipeline-stat">Last run: {{ header_stats.recent_candidates }} found / {{ header_stats.recent_accepted }} accepted</div>
     <div class="blog-pipeline-stat">LLM spend this month: ${{ '%.5f'|format(header_stats.monthly_spend) }} of ${{ header_stats.monthly_budget }} budget</div>
   </div>
@@ -126,7 +126,7 @@
             </td>
             <td>{{ source.type }}</td>
             <td><a href="{{ source.url }}" target="_blank" rel="noopener">{{ source.url }}</a></td>
-            <td>{{ source.last_checked_at|fmt_dt if source.last_checked_at else '—' }}</td>
+            <td>{{ source.last_checked_at|admin_datetime }}</td>
             <td>
               <span class="badge {% if source.enabled %}text-bg-success{% else %}text-bg-secondary{% endif %}">
                 {{ 'enabled' if source.enabled else 'disabled' }}

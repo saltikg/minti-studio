@@ -62,9 +62,9 @@
                 <div class="vs-admin-muted small">/{{ article.slug }}/</div>
               </td>
               <td><span class="badge text-bg-secondary text-uppercase">{{ article.status }}</span></td>
-              <td>{{ article.published_at|fmt_dt if article.published_at else '—' }}</td>
+              <td>{{ article.published_at|admin_datetime }}</td>
               <td>{{ article.view_count }}</td>
-              <td>{{ article.updated_at|fmt_dt if article.updated_at else '—' }}</td>
+              <td>{{ article.updated_at|admin_datetime }}</td>
               <td class="text-end">
                 <div class="d-inline-flex gap-2 flex-wrap justify-content-end">
                   <a href="{{ url_for('video_shorts_bp.admin_blog_article_edit', article_id=article.id) }}" class="btn btn-sm btn-outline-light">Edit</a>

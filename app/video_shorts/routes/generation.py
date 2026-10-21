@@ -28,6 +28,7 @@ from google.auth.exceptions import RefreshError
 from flask import abort, current_app, flash, g, jsonify, redirect, render_template, request, send_file, session, url_for
 import requests
 from werkzeug.exceptions import HTTPException
+from app.utils.datetime_format import format_admin_datetime
 from werkzeug.utils import secure_filename
 
 from app.video_shorts import video_shorts_bp
@@ -4634,15 +4635,8 @@ def _format_long_created_at_pst(created_at_iso: Optional[str], fallback_ts: Opti
 def _format_datetime_pst(value: Any) -> str:
     if value in (None, ""):
         return ""
-    dt_value: Optional[datetime]
-    if isinstance(value, datetime):
-        dt_value = value if value.tzinfo else value.replace(tzinfo=timezone.utc)
-    else:
-        parsed = _parse_iso_datetime(str(value))
-        if parsed is None:
-            return str(value)
-        dt_value = parsed if parsed.tzinfo else parsed.replace(tzinfo=timezone.utc)
-    return dt_value.astimezone(PST_ZONE).strftime("%b %-d, %Y · %H:%M:%S")
+    formatted = format_admin_datetime(value)
+    return str(value) if formatted == "—" else formatted
 
 
 def _trial_duration_label(days: Any, language: str = "EN") -> str:

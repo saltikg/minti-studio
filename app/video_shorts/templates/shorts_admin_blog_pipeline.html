@@ -145,7 +145,7 @@
   </div>
 
   <div class="blog-pipeline-stats">
-    <div class="blog-pipeline-stat">Last scout: {{ header_stats.last_scout_run|fmt_dt if header_stats.last_scout_run else 'Not run yet' }}</div>
+    <div class="blog-pipeline-stat">Last scout: {{ header_stats.last_scout_run|admin_datetime if header_stats.last_scout_run else 'Not run yet' }}</div>
     <div class="blog-pipeline-stat">Last run: {{ header_stats.recent_candidates }} found / {{ header_stats.recent_accepted }} accepted</div>
     <div class="blog-pipeline-stat">LLM spend this month: ${{ '%.5f'|format(header_stats.monthly_spend) }} of ${{ header_stats.monthly_budget }} budget</div>
   </div>
@@ -180,7 +180,7 @@
           {% set breakdown = topic.fit_breakdown|from_json_safe if topic.fit_breakdown else {} %}
           {% set source_summary = topic.source_summary|from_json_safe if topic.source_summary else {} %}
           <tr data-topic-row>
-            <td>{{ topic.created_at|fmt_dt if topic.created_at else '—' }}</td>
+            <td>{{ topic.created_at|admin_datetime }}</td>
             <td class="blog-topic-title">
               <form method="post" action="{{ url_for('video_shorts_bp.admin_blog_pipeline_topic_update', topic_id=topic.id) }}" id="topic-form-{{ topic.id }}">
                 <input type="hidden" name="filter_status" value="{{ selected_status }}">

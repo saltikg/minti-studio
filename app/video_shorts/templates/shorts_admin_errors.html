@@ -169,7 +169,7 @@
           {% for event in events %}
             <tr>
               <td class="admin-errors-meta">
-                {{ event.created_at.strftime('%b %-d, %Y · %H:%M:%S') if event.created_at and event.created_at.strftime else (event.created_at or '—') }}
+                {{ event.created_at|admin_datetime }}
               </td>
               <td>
                 <div class="admin-errors-user">{{ event.user_label }}</div>

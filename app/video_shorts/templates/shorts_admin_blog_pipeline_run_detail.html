@@ -69,7 +69,7 @@
       <div class="col-md-3"><div class="blog-muted">Status</div><div>{{ run.status }}</div></div>
       <div class="col-md-3"><div class="blog-muted">Final score</div><div>{{ run.final_review_score if run.final_review_score is not none else '—' }}</div></div>
       <div class="col-md-3"><div class="blog-muted">Cost</div><div>${{ '%.5f'|format(run.total_cost_usd or 0) }}</div></div>
-      <div class="col-md-3"><div class="blog-muted">Finished</div><div>{{ run.finished_at|fmt_dt if run.finished_at else '—' }}</div></div>
+      <div class="col-md-3"><div class="blog-muted">Finished</div><div>{{ run.finished_at|admin_datetime }}</div></div>
     </div>
     {% if run.error %}
       <div class="alert alert-danger mt-3 mb-0">{{ run.error }}</div>
@@ -84,7 +84,7 @@
             <strong>{{ stage.stage|replace('_', ' ') }}</strong>
             <div class="blog-muted">{{ stage.model or 'deterministic' }} · {{ stage.status }}{% if stage.score is not none %} · score {{ stage.score }}{% endif %}</div>
           </div>
-          <div class="blog-muted">${{ '%.5f'|format(stage.cost_usd or 0) }} · {{ stage.finished_at|fmt_dt if stage.finished_at else '—' }}</div>
+          <div class="blog-muted">${{ '%.5f'|format(stage.cost_usd or 0) }} · {{ stage.finished_at|admin_datetime }}</div>
         </div>
         {% if stage.notes %}
           <div class="blog-muted mb-2">{{ stage.notes }}</div>
