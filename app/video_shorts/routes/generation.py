@@ -9164,13 +9164,6 @@ def _normalize_music_audio_id(raw_value: Any) -> str:
     return safe_name
 
 
-def _plan_music_value(plan_entry: Dict[str, Any], video: Dict[str, Any], field: str) -> Any:
-    """Use an explicit per-clip value, otherwise inherit the video's design."""
-    if field in plan_entry:
-        return plan_entry.get(field)
-    return video.get(field)
-
-
 def _parse_podcast_overlay_short_ids(raw_value: Any) -> List[str]:
     raw = str(raw_value or "").strip()
     if not raw:
@@ -9267,11 +9260,11 @@ def _compute_render_settings_hash_for_plan_entry(
         video_overlay_offset=video.get("video_overlay_offset"),
         subtitle_text=subtitle_text,
         overlay_shapes=_normalize_overlay_shapes(video.get("overlay_shapes")),
-        music_audio_id=_normalize_music_audio_id(_plan_music_value(plan_entry, video, "music_audio_id")),
-        music_level=normalize_music_level(_plan_music_value(plan_entry, video, "music_level")),
-        music_start_seconds=normalize_music_start_seconds(_plan_music_value(plan_entry, video, "music_start_seconds")),
-        music_duck=_normalize_optional_bool(_plan_music_value(plan_entry, video, "music_duck"), default=True),
-        music_fade_out=_normalize_optional_bool(_plan_music_value(plan_entry, video, "music_fade_out"), default=True),
+        music_audio_id=_normalize_music_audio_id(video.get("music_audio_id")),
+        music_level=normalize_music_level(video.get("music_level")),
+        music_start_seconds=normalize_music_start_seconds(video.get("music_start_seconds")),
+        music_duck=_normalize_optional_bool(video.get("music_duck"), default=True),
+        music_fade_out=_normalize_optional_bool(video.get("music_fade_out"), default=True),
         music_speech_ranges=build_final_timeline_speech_ranges(
             segments,
             clip_start=start,
@@ -9358,11 +9351,11 @@ def _compute_render_freshness_state(
         if isinstance(rendered_snapshot, dict):
             music_fields = ("music_audio_id", "music_level", "music_start_seconds", "music_duck", "music_fade_out")
             current_music = (
-                _normalize_music_audio_id(_plan_music_value(plan_entry, video, "music_audio_id")),
-                normalize_music_level(_plan_music_value(plan_entry, video, "music_level")),
-                normalize_music_start_seconds(_plan_music_value(plan_entry, video, "music_start_seconds")),
-                _normalize_optional_bool(_plan_music_value(plan_entry, video, "music_duck"), default=True),
-                _normalize_optional_bool(_plan_music_value(plan_entry, video, "music_fade_out"), default=True),
+                _normalize_music_audio_id(video.get("music_audio_id")),
+                normalize_music_level(video.get("music_level")),
+                normalize_music_start_seconds(video.get("music_start_seconds")),
+                _normalize_optional_bool(video.get("music_duck"), default=True),
+                _normalize_optional_bool(video.get("music_fade_out"), default=True),
             )
             rendered_music = (
                 _normalize_music_audio_id(rendered_snapshot.get("music_audio_id")),
@@ -9372,16 +9365,16 @@ def _compute_render_freshness_state(
                 _normalize_optional_bool(rendered_snapshot.get("music_fade_out"), default=True),
             )
             if current_music != rendered_music:
-                previous_music_entry = dict(plan_entry)
+                previous_music_video = dict(video)
                 for field in music_fields:
                     if field in rendered_snapshot:
-                        previous_music_entry[field] = rendered_snapshot[field]
+                        previous_music_video[field] = rendered_snapshot[field]
                     else:
-                        previous_music_entry.pop(field, None)
+                        previous_music_video.pop(field, None)
                 previous_music_hashes = _compute_render_settings_hash_aliases_for_plan_entry(
                     video_pk=int(video.get("id") or video_pk),
-                    video=video,
-                    plan_entry=previous_music_entry,
+                    video=previous_music_video,
+                    plan_entry=plan_entry,
                     segments=segments,
                     brand_id=brand_id,
                     fallback_title=fallback_title,
@@ -13186,8 +13179,8 @@ def generate_short(video_pk):
             edit_keep_ranges=entry.get("edit_keep_ranges"),
             source_duration=video.get("duration_seconds"),
         )
-        row_music_audio_id = _normalize_music_audio_id(_plan_music_value(entry, video, "music_audio_id"))
-        row_music_level = normalize_music_level(_plan_music_value(entry, video, "music_level"))
+        row_music_audio_id = _normalize_music_audio_id(video.get("music_audio_id"))
+        row_music_level = normalize_music_level(video.get("music_level"))
         rendered_music_audio_id = ""
         rendered_music_level = 0
         if status == "created" and generated_record.get("raw_plan_entry_json"):
@@ -13233,17 +13226,9 @@ def generate_short(video_pk):
             "auto_layout_segments": auto_segments if isinstance(auto_segments, list) else [],
             "music_audio_id": row_music_audio_id,
             "music_level": row_music_level,
-            "music_start_seconds": normalize_music_start_seconds(
-                _plan_music_value(entry, video, "music_start_seconds")
-            ),
-            "music_duck": _normalize_optional_bool(
-                _plan_music_value(entry, video, "music_duck"),
-                default=True,
-            ),
-            "music_fade_out": _normalize_optional_bool(
-                _plan_music_value(entry, video, "music_fade_out"),
-                default=True,
-            ),
+            "music_start_seconds": normalize_music_start_seconds(video.get("music_start_seconds")),
+            "music_duck": _normalize_optional_bool(video.get("music_duck"), default=True),
+            "music_fade_out": _normalize_optional_bool(video.get("music_fade_out"), default=True),
             "music_speech_ranges": music_speech_ranges,
             "has_music": bool(rendered_music_audio_id and rendered_music_level > 0),
             "rendered_music_audio_id": rendered_music_audio_id,
@@ -28621,25 +28606,24 @@ def save_short_settings(video_pk):
             podcast_overlay_short_ids = []
     podcast_overlay_short_ids = list(dict.fromkeys(podcast_overlay_short_ids))[:2]
     overlay_shapes = _normalize_overlay_shapes(request.form.get("overlay_shapes"))
-    music_audio_id = _normalize_music_audio_id(request.form.get("music_audio_id"))
+    raw_music_audio_id = str(request.form.get("music_audio_id") or "").strip()
+    music_audio_id = _normalize_music_audio_id(raw_music_audio_id)
     music_level = normalize_music_level(request.form.get("music_level"))
     music_start_seconds = normalize_music_start_seconds(request.form.get("music_start_seconds"))
     music_duck = _normalize_optional_bool(request.form.get("music_duck"), default=True)
     music_fade_out = _normalize_optional_bool(request.form.get("music_fade_out"), default=True)
-    music_fields = {"music_audio_id", "music_level", "music_start_seconds", "music_duck", "music_fade_out"}
-    music_plan_index = None
-    if form_fields & music_fields:
-        raw_music_plan_index = str(request.form.get("plan_index") or "").strip()
-        if raw_music_plan_index:
-            music_plan_index = _coerce_positive_plan_index(raw_music_plan_index)
-            if music_plan_index is None:
-                return jsonify(success=False, message="Choose a valid clip before saving clip-specific music."), 400
+    if "music_audio_id" in form_fields and raw_music_audio_id and not music_audio_id:
+        return jsonify(
+            success=False,
+            message="The selected music file is invalid. Choose the track again.",
+        ), 422
 
     conn = get_db()
     _ensure_video_crop_schema(conn)
     video_columns = table_columns(conn, "youtube_videos")
     select_sql = """
-        SELECT video_id, subscribe_overlay_enabled
+        SELECT video_id, subscribe_overlay_enabled,
+               music_audio_id, music_level, music_start_seconds, music_duck, music_fade_out
         FROM youtube_videos
         WHERE id = ?
           AND owner_user_id = ?
@@ -28655,23 +28639,16 @@ def save_short_settings(video_pk):
     if not row:
         conn.close()
         return jsonify(success=False, message="Video not found"), 404
-    plan_entries = []
-    music_entry = None
-    if music_plan_index is not None:
-        plan_entries = _load_plan_entries(row[0], video_pk=video_pk)
-        music_entry = next(
-            (entry for entry in plan_entries if _coerce_positive_plan_index(entry.get("plan_index")) == music_plan_index),
-            None,
-        )
-        if music_entry is None:
-            conn.close()
-            return jsonify(success=False, message="Selected clip was not found in the plan."), 404
     if subscribe_overlay_value is None:
         subscribe_overlay_enabled = bool(row[1]) if len(row) > 1 and row[1] is not None else True
     if music_audio_id and editor_owner_user_id:
         music_path = _resolve_user_audio_path(editor_owner_user_id, music_audio_id)
         if not music_path:
-            music_audio_id = ""
+            conn.close()
+            return jsonify(
+                success=False,
+                message="The selected music file is no longer available. Choose the track again.",
+            ), 422
         elif hasattr(music_path, "cleanup"):
             music_path.cleanup()
     if podcast_audio_filename and editor_owner_user_id:
@@ -28754,25 +28731,24 @@ def save_short_settings(video_pk):
         if "visual_mode" in form_fields:
             source_fields_by_column["podcast_audio_filename"] = "visual_mode"
             source_fields_by_column["podcast_overlay_short_ids"] = "visual_mode"
-        if music_entry is None:
-            update_values.update(
-                {
-                    "music_audio_id": music_audio_id or None,
-                    "music_level": music_level,
-                    "music_start_seconds": round(music_start_seconds, 3),
-                    "music_duck": bool(music_duck),
-                    "music_fade_out": bool(music_fade_out),
-                }
-            )
-            source_fields_by_column.update(
-                {
-                    "music_audio_id": "music_audio_id",
-                    "music_level": "music_level",
-                    "music_start_seconds": "music_start_seconds",
-                    "music_duck": "music_duck",
-                    "music_fade_out": "music_fade_out",
-                }
-            )
+        update_values.update(
+            {
+                "music_audio_id": music_audio_id or None,
+                "music_level": music_level,
+                "music_start_seconds": round(music_start_seconds, 3),
+                "music_duck": bool(music_duck),
+                "music_fade_out": bool(music_fade_out),
+            }
+        )
+        source_fields_by_column.update(
+            {
+                "music_audio_id": "music_audio_id",
+                "music_level": "music_level",
+                "music_start_seconds": "music_start_seconds",
+                "music_duck": "music_duck",
+                "music_fade_out": "music_fade_out",
+            }
+        )
         update_values = {
             column: value
             for column, value in update_values.items()
@@ -28804,18 +28780,6 @@ def save_short_settings(video_pk):
                 params,
             )
         conn.commit()
-        if music_entry is not None:
-            if "music_audio_id" in form_fields:
-                music_entry["music_audio_id"] = music_audio_id
-            if "music_level" in form_fields:
-                music_entry["music_level"] = music_level
-            if "music_start_seconds" in form_fields:
-                music_entry["music_start_seconds"] = round(music_start_seconds, 3)
-            if "music_duck" in form_fields:
-                music_entry["music_duck"] = bool(music_duck)
-            if "music_fade_out" in form_fields:
-                music_entry["music_fade_out"] = bool(music_fade_out)
-            _write_plan_entries(row[0], plan_entries, video_pk=video_pk)
         if "subscribe_overlay_image" in form_fields:
             _save_subscribe_overlay_key(
                 editor_owner_user_id,
@@ -28827,6 +28791,25 @@ def save_short_settings(video_pk):
         conn.close()
         current_app.logger.warning("Failed to save short settings for %s: %s", video_pk, exc)
         return jsonify(success=False, message="Ayarlar kaydedilemedi"), 500
+    effective_music = {
+        "music_audio_id": music_audio_id if "music_audio_id" in form_fields else _normalize_music_audio_id(row[2]),
+        "music_level": music_level if "music_level" in form_fields else normalize_music_level(row[3]),
+        "music_start_seconds": (
+            round(music_start_seconds, 3)
+            if "music_start_seconds" in form_fields
+            else normalize_music_start_seconds(row[4])
+        ),
+        "music_duck": (
+            bool(music_duck)
+            if "music_duck" in form_fields
+            else _normalize_optional_bool(row[5], default=True)
+        ),
+        "music_fade_out": (
+            bool(music_fade_out)
+            if "music_fade_out" in form_fields
+            else _normalize_optional_bool(row[6], default=True)
+        ),
+    }
     conn.close()
 
     session["vs_font"] = font_key
@@ -28857,7 +28840,7 @@ def save_short_settings(video_pk):
     session["vs_visual_mode"] = visual_mode
     session["vs_podcast_overlay_short_ids"] = podcast_overlay_short_ids
     session["vs_video_overlay_offset"] = video_overlay_offset
-    return jsonify(success=True, message="Ayarlar kaydedildi")
+    return jsonify(success=True, message="Ayarlar kaydedildi", music=effective_music)
 
 
 @video_shorts_bp.route("/generate/<int:video_pk>/render-jobs/<job_id>/status", methods=["GET"])
@@ -29651,18 +29634,13 @@ def autoclip_video(video_pk):
     if not plan_entry:
         return _respond("Selected clip was not found in the plan.", status=404, category="warning")
 
-    video_music_defaults = {
-        "music_audio_id": video_music_audio_id,
-        "music_level": video_music_level,
-        "music_start_seconds": video_music_start_seconds,
-        "music_duck": video_music_duck,
-        "music_fade_out": video_music_fade_out,
-    }
-    video_music_audio_id = _normalize_music_audio_id(_plan_music_value(plan_entry, video_music_defaults, "music_audio_id"))
-    video_music_level = normalize_music_level(_plan_music_value(plan_entry, video_music_defaults, "music_level"))
-    video_music_start_seconds = normalize_music_start_seconds(_plan_music_value(plan_entry, video_music_defaults, "music_start_seconds"))
-    video_music_duck = _normalize_optional_bool(_plan_music_value(plan_entry, video_music_defaults, "music_duck"), default=True)
-    video_music_fade_out = _normalize_optional_bool(_plan_music_value(plan_entry, video_music_defaults, "music_fade_out"), default=True)
+    # Music is part of the video's design, just like captions and title styling.
+    # Legacy per-clip music keys remain in plan JSON as history but never override it.
+    video_music_audio_id = _normalize_music_audio_id(video_music_audio_id)
+    video_music_level = normalize_music_level(video_music_level)
+    video_music_start_seconds = normalize_music_start_seconds(video_music_start_seconds)
+    video_music_duck = _normalize_optional_bool(video_music_duck, default=True)
+    video_music_fade_out = _normalize_optional_bool(video_music_fade_out, default=True)
 
     if queued_job and not regenerate_job and plan_entry.get("status") == "created":
         return _respond(
@@ -30935,12 +30913,6 @@ def autoclip_video(video_pk):
             plan_entry["audio_start"] = adj_start
             plan_entry["audio_end"] = adj_end
             plan_entry["output_filename"] = clip_filename
-            plan_entry["music_audio_id"] = video_music_audio_id
-            plan_entry["music_rendered_audio_id"] = video_music_audio_id if music_path else ""
-            plan_entry["music_level"] = video_music_level
-            plan_entry["music_start_seconds"] = round(video_music_start_seconds, 3)
-            plan_entry["music_duck"] = bool(video_music_duck)
-            plan_entry["music_fade_out"] = bool(video_music_fade_out)
             try:
                 rendered_info = _probe_video_stream_info(final_file, log=current_app.logger)
                 rendered_width = _coerce_positive_int(rendered_info.get("width"))
@@ -30997,6 +30969,17 @@ def autoclip_video(video_pk):
                 )
             except Exception as exc:
                 current_app.logger.warning("Failed to update plan file %s: %s", _plan_path(vid), exc)
+            rendered_plan_snapshot = dict(plan_entry)
+            rendered_plan_snapshot.update(
+                {
+                    "music_audio_id": video_music_audio_id,
+                    "music_rendered_audio_id": video_music_audio_id if music_path else "",
+                    "music_level": video_music_level,
+                    "music_start_seconds": round(video_music_start_seconds, 3),
+                    "music_duck": bool(video_music_duck),
+                    "music_fade_out": bool(video_music_fade_out),
+                }
+            )
             _record_successful_short_render(
                 source_video_id=vid,
                 clip_filename=clip_filename,
@@ -31004,7 +30987,7 @@ def autoclip_video(video_pk):
                 size_bytes=size_bytes,
                 owner_user_id=target_owner_user_id,
                 brand_id=brand_id,
-                plan_entry=plan_entry,
+                plan_entry=rendered_plan_snapshot,
                 render_settings_hash=queued_render_settings_hash,
             )
             owner_event_user_id = str(video_owner_user_id or (current_user or {}).get("id") or "").strip()

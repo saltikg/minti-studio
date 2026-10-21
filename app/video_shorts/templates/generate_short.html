@@ -13184,7 +13184,6 @@ const selectGenerateV2Clip = (planIndex = "") => {
       mount.appendChild(activeCard);
     }
   }
-  window.syncMusicEditorForClip?.(normalized);
   mountGenerateV2ClipEditor(normalized);
   const isRendered = isGenerateV2RenderedClipCard(activeCard);
   if (activeCard && !isRendered) {
@@ -21783,7 +21782,6 @@ document.addEventListener("DOMContentLoaded", () => {
 	    }
 	    const params = new URLSearchParams();
 	    appendShortDesignFields(params);
-	    params.set("plan_index", document.getElementById("clip-management-panel")?.dataset.activePlanIndex || "");
 	    const subscribeToggle = getEditorField("enable_subscribe_overlay");
 	    if (subscribeToggle) {
 	      params.set("enable_subscribe_overlay", subscribeToggle.checked ? "1" : "0");
@@ -21830,19 +21828,11 @@ document.addEventListener("DOMContentLoaded", () => {
     if (!response.ok || !payload.success) {
       throw createGenerateV2SaveError(response, payload, "Settings could not be saved.");
     }
-    const activeIndex = document.getElementById("clip-management-panel")?.dataset.activePlanIndex || "";
-    const escapedIndex = window.CSS?.escape ? CSS.escape(activeIndex) : activeIndex;
-    const activeCard = document.querySelector(`.clip-card[data-plan-index="${escapedIndex}"]`);
-    if (activeCard) {
-      for (const [fieldId, key] of [["musicAudioId", "musicAudioId"], ["musicLevel", "musicLevel"], ["musicStartSeconds", "musicStartSeconds"]]) {
-        const field = document.getElementById(fieldId);
-        if (field) activeCard.dataset[key] = field.value;
-      }
-      activeCard.dataset.musicDuck = document.getElementById("musicDuck")?.checked ? "1" : "0";
-    }
+    window.syncVideoMusicEditor?.(payload.music || {});
     if (settingsContainer) {
       settingsContainer.dataset.selectedVisualMode = activeVisualMode || "video";
     }
+    return payload;
   };
   const currentShortDesignDetails = () => {
     const activeStyleCard = queryEditorFields("[data-style-template-card].is-active")[0];
@@ -23633,19 +23623,6 @@ document.addEventListener("DOMContentLoaded", () => {
       || document.querySelector(selector)
       || document.querySelector(".clip-card");
   };
-  let loadedMusicPlanIndex = "";
-  window.syncMusicEditorForClip = (planIndex) => {
-    const normalized = String(planIndex || "");
-    if (!normalized || normalized === loadedMusicPlanIndex) return;
-    const card = activeCard();
-    if (!card || String(card.dataset.planIndex || "") !== normalized) return;
-    loadedMusicPlanIndex = normalized;
-    audioId.value = card.dataset.musicAudioId || "";
-    startField.value = card.dataset.musicStartSeconds || "0";
-    if (level) level.value = card.dataset.musicLevel || "50";
-    if (duck) duck.checked = card.dataset.musicDuck !== "0";
-    if (typeof syncUi === "function") syncUi();
-  };
   const isDesignEditorOpen = () => Boolean(window.__generateV2EditModeActive
     || document.getElementById("crop-area-modal")?.classList.contains("show"));
   const sourceVideo = () => document.querySelector("#trs-player-frame video");
@@ -23850,6 +23827,13 @@ document.addEventListener("DOMContentLoaded", () => {
     if (selected) { if(audioMode!=="library")setAudioTrack(selected); chip.querySelector("span").textContent=`${fallbackName(selected)} · ${level?.value || 0}%`; drawTimeline(); updatePlayhead(previewPlayback()?.time||0); }
     else { stopSharedAudio(); setPickerOpen(false); }
     renderSelected(); renderPicker();
+  };
+  window.syncVideoMusicEditor = (music = {}) => {
+    audioId.value = String(music.music_audio_id || "");
+    startField.value = String(music.music_start_seconds ?? 0);
+    if (level) level.value = String(music.music_level ?? 50);
+    if (duck) duck.checked = music.music_duck !== false;
+    syncUi();
   };
   const chooseTrack = (track) => {
     if (isGuest) { showMusicGuestGate(); return; }
@@ -24058,7 +24042,6 @@ document.addEventListener("DOMContentLoaded", () => {
   window.__musicPreviewPlaybackIntent = (planIndex) => playIntent && audioMode === "timeline" && String(activeCard()?.dataset.planIndex || "") === String(planIndex || "");
   window.syncMusicEditorFromFields=syncUi;
   loadTracks();
-  window.syncMusicEditorForClip?.(document.getElementById("clip-management-panel")?.dataset.activePlanIndex || "");
 });
 </script>
 {% endblock %}
