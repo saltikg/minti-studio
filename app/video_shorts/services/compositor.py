@@ -416,12 +416,10 @@ def _trim_source_to_keep_ranges(
         return max(0.0, (ranges[0]["end"] - ranges[0]["start"]) if ranges else 0.0)
     if not src_path.exists():
         raise FileNotFoundError(f"Source video not found: {src_path}")
-    src_path = _normalize_source_cache_container(src_path)
+    src_path, ranges, has_audio = resolve_keep_ranges_for_trim(src_path, ranges)
     resolved_ffmpeg = _resolve_ffmpeg()
-    has_audio = _has_audio_stream(src_path)
     source_fps = _probe_video_frame_rate(src_path) or 30.0
     if has_audio:
-        ranges = _snap_keep_range_boundaries_to_audio(src_path, ranges)
         for index, item in enumerate(ranges):
             if index >= len(keep_ranges) or not isinstance(keep_ranges[index], dict):
                 continue
@@ -497,6 +495,21 @@ def _trim_source_to_keep_ranges(
         _format_loadavg(load_end),
     )
     return total_duration
+
+
+def resolve_keep_ranges_for_trim(
+    src_path: Path,
+    keep_ranges: list[Dict[str, Any]],
+) -> tuple[Path, list[dict[str, float]], bool]:
+    """Resolve the exact source ranges used by the multi-range ffmpeg trim."""
+    ranges = _normalize_keep_ranges_for_trim(keep_ranges)
+    if not src_path.exists():
+        raise FileNotFoundError(f"Source video not found: {src_path}")
+    normalized_src_path = _normalize_source_cache_container(src_path)
+    has_audio = _has_audio_stream(normalized_src_path)
+    if len(ranges) > 1 and has_audio:
+        ranges = _snap_keep_range_boundaries_to_audio(normalized_src_path, ranges)
+    return normalized_src_path, ranges, has_audio
 
 
 def _probe_video_frame_rate(source: Path) -> Optional[float]:

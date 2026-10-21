@@ -152,7 +152,7 @@ from app.video_shorts.services.music import (
     normalize_music_level,
     normalize_music_start_seconds,
 )
-from app.video_shorts.services.compositor import _build_static_visual_clip, _compose_trimmed_with_background, _cut_clip, _has_audio_stream, _sanitize_text_for_overlay, _trim_source_to_keep_ranges
+from app.video_shorts.services.compositor import _build_static_visual_clip, _compose_trimmed_with_background, _cut_clip, _has_audio_stream, _sanitize_text_for_overlay, _trim_source_to_keep_ranges, resolve_keep_ranges_for_trim
 from app.video_shorts.services.compositor import _face_aware_fill_zoom_for_segment
 from app.video_shorts.services.compositor import _original_layout_target_dimensions
 from app.video_shorts.services.db import (
@@ -23886,6 +23886,37 @@ def _clamp_manual_clip_selection_to_duration(
     if clamped_end <= clamped_start:
         return None, "End time must be greater than Start after applying the video boundaries."
     return (clamped_start, clamped_end, clamped_ranges), None
+
+
+@video_shorts_bp.route("/generate/<int:video_pk>/preview-keep-ranges", methods=["POST"])
+def preview_keep_ranges(video_pk: int):
+    payload = request.get_json(silent=True) or {}
+    ranges = _normalize_edit_keep_ranges(payload.get("ranges"))
+    if not ranges:
+        return jsonify(success=False, message="Select at least one clip part."), 400
+
+    conn = get_db_readonly()
+    row = _fetch_scoped_video_row(conn, video_pk, "video_id")
+    conn.close()
+    if not row:
+        return jsonify(success=False, message="Video not found."), 404
+
+    source_path: Optional[Path] = None
+    source_path_is_temp = False
+    try:
+        source_path, source_path_is_temp = _resolve_source_video(str(row[0] or ""), video_pk=video_pk)
+        _, resolved_ranges, _ = resolve_keep_ranges_for_trim(source_path, ranges)
+        return jsonify(
+            success=True,
+            ranges=resolved_ranges,
+            duration=round(sum(item["end"] - item["start"] for item in resolved_ranges), 6),
+        )
+    except Exception as exc:
+        current_app.logger.exception("Could not resolve preview ranges video_pk=%s", video_pk)
+        return jsonify(success=False, message="Could not prepare the exact preview boundaries."), 500
+    finally:
+        if source_path is not None:
+            _cleanup_resolved_source_video(source_path, source_path_is_temp)
 
 
 @video_shorts_bp.route("/generate/<int:video_pk>/add_clip_section", methods=["POST"])

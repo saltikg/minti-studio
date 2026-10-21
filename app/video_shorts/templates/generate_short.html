@@ -3328,6 +3328,18 @@
     overflow: hidden;
     text-overflow: ellipsis;
   }
+  .generate-v2-text-preview-controls {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+  }
+  .generate-v2-text-preview-status {
+    color: #99f6e4;
+    font-size: 0.74rem;
+    font-weight: 800;
+    font-variant-numeric: tabular-nums;
+    white-space: nowrap;
+  }
   .generate-v2-text-title-wrap {
     position: relative;
     flex: 1 1 260px;
@@ -6701,6 +6713,7 @@
             <div class="trs-shell"
                  id="transcript-range-selector"
                  data-add-clip-url="{{ editor_url('add_clip_section', video_pk=video.id) }}"
+                 data-preview-keep-ranges-url="{{ editor_url('preview_keep_ranges', video_pk=video.id) }}"
                  data-edit-url="{{ editor_url('edit_segment_text', video_pk=video.id) }}"
                  data-coachmark-hidden="{{ 'true' if hide_clip_coachmark else 'false' }}"
                  data-coachmark-preference-url="{{ clip_coachmark_preference_url }}">
@@ -6768,6 +6781,12 @@
                     <span class="generate-v2-text-title-counter" data-generate-v2-clip-title-counter>0/100</span>
                   </label>
                   <button type="button" class="btn btn-sm btn-outline-light" data-generate-v2-text-preview-all>▶ Preview all</button>
+                  <div class="generate-v2-text-preview-controls d-none" data-generate-v2-text-preview-controls>
+                    <button type="button" class="btn btn-sm btn-outline-light" data-generate-v2-text-preview-toggle>Pause</button>
+                    <button type="button" class="btn btn-sm btn-outline-light" data-generate-v2-text-preview-back>⟲ 3s</button>
+                    <span class="generate-v2-text-preview-status" data-generate-v2-text-preview-status></span>
+                    <button type="button" class="btn btn-sm btn-outline-light" data-generate-v2-text-preview-stop>Stop</button>
+                  </div>
                   <button type="button" class="btn btn-sm btn-outline-light" data-generate-v2-text-clear-parts>Clear</button>
                   <span class="generate-v2-text-parts-warning d-none" data-generate-v2-text-parts-warning>5–90s required</span>
                   <button type="button" class="btn btn-sm btn-primary" data-generate-v2-text-create>Create clip</button>
@@ -10157,6 +10176,54 @@ document.addEventListener("DOMContentLoaded", () => {
             video.pause();
           } catch (_) {}
         },
+        play: () => {
+          try {
+            const playPromise = video.play();
+            if (playPromise?.catch) playPromise.catch(() => {});
+            return true;
+          } catch (_) {
+            return false;
+          }
+        },
+        seekAndWait: (seconds, shouldPlay = true) => new Promise((resolve) => {
+          const target = Math.max(0, Number(seconds) || 0);
+          let settled = false;
+          const finish = () => {
+            if (settled) return;
+            settled = true;
+            video.removeEventListener("seeked", finish);
+            if (shouldPlay) {
+              const playPromise = video.play();
+              if (playPromise?.catch) playPromise.catch(() => {});
+            } else {
+              video.pause();
+            }
+            setNowPlayingByTime(target);
+            resolve(true);
+          };
+          try {
+            video.pause();
+            video.addEventListener("seeked", finish, { once: true });
+            video.currentTime = target;
+            if (!video.seeking && Math.abs(Number(video.currentTime || 0) - target) < 0.002) {
+              window.requestAnimationFrame(finish);
+            }
+          } catch (_) {
+            video.removeEventListener("seeked", finish);
+            resolve(false);
+          }
+        }),
+        requestPlaybackFrame: (callback) => {
+          if (typeof video.requestVideoFrameCallback === "function") {
+            return { type: "video", id: video.requestVideoFrameCallback((_now, metadata) => callback(Number(metadata?.mediaTime ?? video.currentTime ?? 0))) };
+          }
+          return { type: "animation", id: window.requestAnimationFrame(() => callback(Number(video.currentTime || 0))) };
+        },
+        cancelPlaybackFrame: (handle) => {
+          if (!handle) return;
+          if (handle.type === "video" && typeof video.cancelVideoFrameCallback === "function") video.cancelVideoFrameCallback(handle.id);
+          else window.cancelAnimationFrame(handle.id);
+        },
         captureState: () => ({
           currentTime: Number(video.currentTime || 0),
           playing: !video.paused,
@@ -10257,6 +10324,39 @@ document.addEventListener("DOMContentLoaded", () => {
         retryPlay() {
           if (!this.ready || !this.player) return false;
           try { this.player.playVideo(); return true; } catch (_) { return false; }
+        },
+        play() {
+          try { this.player?.playVideo?.(); return true; } catch (_) { return false; }
+        },
+        seekAndWait(seconds, shouldPlay = true) {
+          const target = Math.max(0, Number(seconds) || 0);
+          if (!this.ready || !this.player) return Promise.resolve(false);
+          try {
+            this.player.pauseVideo?.();
+            this.player.seekTo(target, true);
+          } catch (_) {
+            return Promise.resolve(false);
+          }
+          return new Promise((resolve) => {
+            const startedAt = performance.now();
+            const check = () => {
+              let current = -1;
+              try { current = Number(this.player?.getCurrentTime?.() ?? -1); } catch (_) {}
+              if (Math.abs(current - target) < 0.08 || (performance.now() - startedAt) > 1800) {
+                if (shouldPlay) this.player?.playVideo?.();
+                resolve(true);
+                return;
+              }
+              window.requestAnimationFrame(check);
+            };
+            window.requestAnimationFrame(check);
+          });
+        },
+        requestPlaybackFrame(callback) {
+          return { type: "animation", id: window.requestAnimationFrame(() => callback(Number(this.captureState()?.currentTime || 0))) };
+        },
+        cancelPlaybackFrame(handle) {
+          if (handle) window.cancelAnimationFrame(handle.id);
         },
         restoreState(snapshot) {
           if (!snapshot || !Number.isFinite(Number(snapshot.currentTime))) {
@@ -11245,7 +11345,11 @@ document.addEventListener("DOMContentLoaded", () => {
         return ok;
       },
       seekAndPlay: (seconds) => player.seekAndPlay?.(seconds),
+      seekAndWait: (seconds, shouldPlay = true) => player.seekAndWait?.(seconds, shouldPlay) || Promise.resolve(false),
+      playPlayer: () => player.play?.() || false,
       pausePlayer: () => player.pause?.(),
+      requestPlaybackFrame: (callback) => player.requestPlaybackFrame?.(callback) || { type: "animation", id: window.requestAnimationFrame(() => callback(Number(player.captureState?.()?.currentTime || 0))) },
+      cancelPlaybackFrame: (handle) => player.cancelPlaybackFrame?.(handle) || (handle && window.cancelAnimationFrame(handle.id)),
       capturePlayerState: () => player.captureState?.() || null,
       getPlaybackStatus: () => player.getPlaybackStatus?.() || null,
       retryPlayer: () => player.retryPlay?.() || false,
@@ -13819,6 +13923,11 @@ window.initGenerateV2TextTranscript = () => {
   const partsBar = shell.querySelector("[data-generate-v2-text-parts-bar]");
   const partsSummary = shell.querySelector("[data-generate-v2-text-parts-summary]");
   const previewAllBtn = shell.querySelector("[data-generate-v2-text-preview-all]");
+  const previewControls = shell.querySelector("[data-generate-v2-text-preview-controls]");
+  const previewToggleBtn = shell.querySelector("[data-generate-v2-text-preview-toggle]");
+  const previewBackBtn = shell.querySelector("[data-generate-v2-text-preview-back]");
+  const previewStopBtn = shell.querySelector("[data-generate-v2-text-preview-stop]");
+  const previewStatus = shell.querySelector("[data-generate-v2-text-preview-status]");
   const clearPartsBtn = shell.querySelector("[data-generate-v2-text-clear-parts]");
   const createBtn = shell.querySelector("[data-generate-v2-text-create]");
   const partsWarning = shell.querySelector("[data-generate-v2-text-parts-warning]");
@@ -13829,14 +13938,24 @@ window.initGenerateV2TextTranscript = () => {
   const prevBtn = document.getElementById("trs-match-prev");
   const nextBtn = document.getElementById("trs-match-next");
   const matchCount = document.getElementById("trs-match-count");
-  const editUrl = document.getElementById("transcript-range-selector")?.dataset.editUrl || "";
+  const transcriptSelector = document.getElementById("transcript-range-selector");
+  const editUrl = transcriptSelector?.dataset.editUrl || "";
+  const previewKeepRangesUrl = transcriptSelector?.dataset.previewKeepRangesUrl || "";
   const state = {
     selectedIndexes: [],
     parts: [],
-    previewRunId: 0,
     matches: [],
     currentMatchIndex: -1,
     query: "",
+    preview: {
+      active: false,
+      paused: false,
+      ranges: [],
+      partIndex: 0,
+      frameHandle: null,
+      restoreSnapshot: null,
+      seekToken: 0,
+    },
   };
   window.__generateV2TextParts = state.parts;
   const showTextToast = showGenerateV2TextToast;
@@ -13887,40 +14006,137 @@ window.initGenerateV2TextTranscript = () => {
       createBtn.disabled = !normalizedParts.length || !valid;
       createBtn.title = valid ? "Create clip" : "Total duration must be 5-90 seconds.";
     }
-    if (previewAllBtn) {
-      previewAllBtn.disabled = !normalizedParts.length || state.previewRunId < 0;
-    }
+    if (previewAllBtn) previewAllBtn.disabled = !normalizedParts.length || state.preview.active;
     if (clearPartsBtn) {
       clearPartsBtn.disabled = !normalizedParts.length;
     }
   };
   const addPart = (range) => {
     if (!range) return;
+    stopPreview();
     state.parts = normalizeTranscriptParts([...state.parts, { start: range.start, end: range.end }]);
     window.getSelection?.()?.removeAllRanges?.();
     hideToolbar();
     render();
   };
   const removePartAt = (index) => {
+    stopPreview();
     state.parts = normalizeTranscriptParts(state.parts.filter((_, partIndex) => partIndex !== index));
     render();
   };
-  const previewPartsSequentially = async () => {
-    const parts = normalizeTranscriptParts(state.parts);
-    if (!parts.length || state.previewRunId < 0) return;
-    const runId = state.previewRunId + 1;
-    state.previewRunId = runId;
-    if (previewAllBtn) previewAllBtn.disabled = true;
-    for (const part of parts) {
-      if (state.previewRunId !== runId) break;
-      window.__trsClipSelectorController?.previewRange?.(part.start, part.end);
-      const delayMs = Math.max(250, Math.min(90000, (part.end - part.start) * 1000)) + 160;
-      await new Promise((resolve) => window.setTimeout(resolve, delayMs));
+  const previewTotalDuration = () => state.preview.ranges.reduce((total, part) => total + Math.max(0, part.end - part.start), 0);
+  const formatPreviewTime = (seconds) => {
+    const total = Math.max(0, Math.round(Number(seconds) || 0));
+    return `${Math.floor(total / 60)}:${String(total % 60).padStart(2, "0")}`;
+  };
+  const previewElapsedBeforePart = (partIndex) => state.preview.ranges
+    .slice(0, Math.max(0, partIndex))
+    .reduce((total, part) => total + Math.max(0, part.end - part.start), 0);
+  const updatePreviewStatus = (sourceTime = null) => {
+    if (!state.preview.active || !state.preview.ranges.length) return;
+    const part = state.preview.ranges[state.preview.partIndex];
+    const current = Number.isFinite(Number(sourceTime)) ? Number(sourceTime) : Number(part?.start || 0);
+    const elapsed = previewElapsedBeforePart(state.preview.partIndex)
+      + Math.max(0, Math.min(Number(part?.end || 0), current) - Number(part?.start || 0));
+    if (previewStatus) {
+      previewStatus.textContent = `Part ${state.preview.partIndex + 1}/${state.preview.ranges.length} · ${formatPreviewTime(elapsed)} / ${formatPreviewTime(previewTotalDuration())}`;
     }
-    if (state.previewRunId === runId) {
-      state.previewRunId = runId + 1;
-    }
+  };
+  const cancelPreviewFrame = () => {
+    if (!state.preview.frameHandle) return;
+    window.__trsClipSelectorController?.cancelPlaybackFrame?.(state.preview.frameHandle);
+    state.preview.frameHandle = null;
+  };
+  const setPreviewControls = (active) => {
+    previewControls?.classList.toggle("d-none", !active);
+    previewAllBtn?.classList.toggle("d-none", active);
+    if (previewToggleBtn) previewToggleBtn.textContent = state.preview.paused ? "Resume" : "Pause";
     updatePartsBar();
+  };
+  const stopPreview = ({ restore = true } = {}) => {
+    if (!state.preview.active) return;
+    state.preview.active = false;
+    state.preview.paused = false;
+    state.preview.seekToken += 1;
+    cancelPreviewFrame();
+    window.__trsClipSelectorController?.pausePlayer?.();
+    stopGenerateV2KaraokePolling({ clear: true });
+    const snapshot = state.preview.restoreSnapshot;
+    state.preview.ranges = [];
+    state.preview.partIndex = 0;
+    state.preview.restoreSnapshot = null;
+    if (restore && snapshot) window.__trsClipSelectorController?.restorePlayerState?.(snapshot);
+    setPreviewControls(false);
+  };
+  const schedulePreviewFrame = () => {
+    cancelPreviewFrame();
+    if (!state.preview.active || state.preview.paused) return;
+    state.preview.frameHandle = window.__trsClipSelectorController?.requestPlaybackFrame?.((mediaTime) => {
+      state.preview.frameHandle = null;
+      if (!state.preview.active || state.preview.paused) return;
+      const part = state.preview.ranges[state.preview.partIndex];
+      updatePreviewStatus(mediaTime);
+      if (part && Number(mediaTime) >= Number(part.end) - 0.002) {
+        if (state.preview.partIndex + 1 >= state.preview.ranges.length) {
+          stopPreview();
+          return;
+        }
+        void seekPreviewPart(state.preview.partIndex + 1);
+        return;
+      }
+      schedulePreviewFrame();
+    }) || null;
+  };
+  const seekPreviewPart = async (partIndex, sourceTime = null, shouldPlay = true) => {
+    if (!state.preview.active || !state.preview.ranges.length) return;
+    const safeIndex = Math.max(0, Math.min(state.preview.ranges.length - 1, Number(partIndex) || 0));
+    const part = state.preview.ranges[safeIndex];
+    const requested = Number.isFinite(Number(sourceTime)) ? Number(sourceTime) : Number(part.start);
+    const target = Math.max(Number(part.start), Math.min(Number(part.end) - 0.001, requested));
+    const seekTarget = Math.max(0, target - 0.006);
+    const seekToken = state.preview.seekToken + 1;
+    state.preview.seekToken = seekToken;
+    state.preview.partIndex = safeIndex;
+    state.preview.paused = !shouldPlay;
+    cancelPreviewFrame();
+    updatePreviewStatus(target);
+    setPreviewControls(true);
+    const ok = await window.__trsClipSelectorController?.seekAndWait?.(seekTarget, shouldPlay);
+    if (!state.preview.active || state.preview.seekToken !== seekToken || ok === false) return;
+    if (shouldPlay) {
+      state.preview.paused = false;
+      window.startGenerateV2KaraokePolling?.();
+      schedulePreviewFrame();
+    }
+    setPreviewControls(true);
+  };
+  const previewPartsSequentially = async (startPartIndex = 0, sourceTime = null) => {
+    const parts = normalizeTranscriptParts(state.parts);
+    if (!parts.length || state.preview.active || !previewKeepRangesUrl) return;
+    if (previewAllBtn) previewAllBtn.disabled = true;
+    try {
+      const response = await fetch(previewKeepRangesUrl, {
+        method: "POST",
+        credentials: "same-origin",
+        headers: { "Content-Type": "application/json", "X-Requested-With": "XMLHttpRequest" },
+        body: JSON.stringify({ ranges: parts }),
+      });
+      const payload = await response.json().catch(() => ({}));
+      if (!response.ok || payload.success === false) throw new Error(payload.message || "Could not prepare preview.");
+      const resolved = (Array.isArray(payload.ranges) ? payload.ranges : [])
+        .map((part) => ({ start: Number(part?.start), end: Number(part?.end) }))
+        .filter((part) => Number.isFinite(part.start) && Number.isFinite(part.end) && part.end > part.start);
+      if (!resolved.length) throw new Error("The selected parts have no playable duration.");
+      state.preview.active = true;
+      state.preview.paused = false;
+      state.preview.ranges = resolved;
+      state.preview.restoreSnapshot = window.__trsClipSelectorController?.capturePlayerState?.() || null;
+      setPreviewControls(true);
+      await seekPreviewPart(Math.min(startPartIndex, resolved.length - 1), sourceTime);
+    } catch (error) {
+      showTextToast(error?.message || "Could not prepare preview.", true);
+      if (previewAllBtn) previewAllBtn.disabled = false;
+    }
   };
   const renderSearch = (scroll = false) => {
     const query = String(searchInput?.value || "").trim().toLowerCase();
@@ -14010,6 +14226,13 @@ window.initGenerateV2TextTranscript = () => {
       time.setAttribute("aria-label", `Play from ${formatClipDurationLabel(paragraphStart)}`);
       time.innerHTML = `<span class="generate-v2-text-time-icon" data-generate-v2-paragraph-play-icon aria-hidden="true">▶</span><span>${escapeHtml(formatClipDurationLabel(paragraphStart))}</span>`;
       time.addEventListener("click", () => {
+        if (state.preview.active) {
+          const previewPartIndex = state.preview.ranges.findIndex((part) => part.end > paragraphStart && part.start < paragraphEnd);
+          if (previewPartIndex >= 0) {
+            void seekPreviewPart(previewPartIndex, Math.max(paragraphStart, state.preview.ranges[previewPartIndex].start));
+            return;
+          }
+        }
         const snapshot = window.__trsClipSelectorController?.capturePlayerState?.();
         if (p.classList.contains("is-karaoke-active") && snapshot?.playing) {
           window.__trsClipSelectorController?.pausePlayer?.();
@@ -14030,6 +14253,11 @@ window.initGenerateV2TextTranscript = () => {
         }
         span.dataset.wordIndex = String(word.index);
         span.textContent = `${word.text || ""} `;
+        span.addEventListener("click", () => {
+          if (!state.preview.active || partIndex < 0) return;
+          const resolvedPart = state.preview.ranges[partIndex];
+          if (resolvedPart) void seekPreviewPart(partIndex, Math.max(resolvedPart.start, wordStart));
+        });
         span.addEventListener("dblclick", (event) => {
           event.preventDefault();
           event.stopPropagation();
@@ -14077,9 +14305,41 @@ window.initGenerateV2TextTranscript = () => {
   previewAllBtn?.addEventListener("click", () => {
     void previewPartsSequentially();
   });
+  previewToggleBtn?.addEventListener("click", () => {
+    if (!state.preview.active) return;
+    if (state.preview.paused) {
+      state.preview.paused = false;
+      window.__trsClipSelectorController?.playPlayer?.();
+      window.startGenerateV2KaraokePolling?.();
+      schedulePreviewFrame();
+    } else {
+      state.preview.paused = true;
+      cancelPreviewFrame();
+      window.__trsClipSelectorController?.pausePlayer?.();
+      stopGenerateV2KaraokePolling();
+    }
+    setPreviewControls(true);
+  });
+  previewBackBtn?.addEventListener("click", () => {
+    if (!state.preview.active) return;
+    const snapshot = window.__trsClipSelectorController?.capturePlayerState?.();
+    const part = state.preview.ranges[state.preview.partIndex];
+    const current = Math.max(Number(part.start), Math.min(Number(part.end), Number(snapshot?.currentTime ?? part.start)));
+    let targetElapsed = Math.max(0, previewElapsedBeforePart(state.preview.partIndex) + (current - part.start) - 3);
+    let targetPartIndex = 0;
+    while (targetPartIndex < state.preview.ranges.length - 1) {
+      const duration = state.preview.ranges[targetPartIndex].end - state.preview.ranges[targetPartIndex].start;
+      if (targetElapsed <= duration) break;
+      targetElapsed -= duration;
+      targetPartIndex += 1;
+    }
+    const targetPart = state.preview.ranges[targetPartIndex];
+    void seekPreviewPart(targetPartIndex, targetPart.start + targetElapsed, !state.preview.paused);
+  });
+  previewStopBtn?.addEventListener("click", () => stopPreview());
   clearPartsBtn?.addEventListener("click", () => {
+    stopPreview();
     state.parts = [];
-    state.previewRunId += 1;
     clearOptionalTitle();
     render();
   });
@@ -14112,6 +14372,13 @@ window.initGenerateV2TextTranscript = () => {
   });
   prevBtn?.addEventListener("click", () => cycleSearch(-1));
   nextBtn?.addEventListener("click", () => cycleSearch(1));
+  document.addEventListener("keydown", (event) => {
+    if (!state.preview.active || event.code !== "Space") return;
+    const target = event.target;
+    if (target?.matches?.("input, textarea, select") || target?.isContentEditable) return;
+    event.preventDefault();
+    previewToggleBtn?.click();
+  });
   document.addEventListener("click", (event) => {
     if (!toolbar?.classList.contains("is-visible")) return;
     if (toolbar.contains(event.target) || event.target.closest?.("[data-generate-v2-text-document]")) return;
