@@ -304,6 +304,19 @@
         </div>
       </div>
     </div>
+    {% if stats_connect_empty %}
+      <div class="card shadow-sm mb-4 vs-card" data-dashboard-widget="filters">
+        <div class="card-body text-center py-5">
+          <i class="bi bi-youtube fs-1 text-danger" aria-hidden="true"></i>
+          <h2 class="h5 mt-3 mb-2">Connect your YouTube channel to see your stats</h2>
+          <p class="text-muted mb-3">Once connected, your channel and video performance will appear here.</p>
+          <a href="{{ url_for('video_shorts_bp.social_connect') }}" class="btn btn-primary">Connect YouTube</a>
+        </div>
+      </div>
+      {% for widget_name in ['summary', 'performance', 'audience-summary', 'audience-chart', 'details-toggle', 'details'] %}
+        <div class="d-none" data-dashboard-widget="{{ widget_name }}"></div>
+      {% endfor %}
+    {% else %}
     {% if youtube_subscriber_data_missing %}
       <div class="alert alert-warning d-flex flex-wrap align-items-center justify-content-between gap-2">
         <div class="d-flex align-items-center gap-2">
@@ -707,6 +720,7 @@
   </div>
   </div>
   </div>
+    {% endif %}
 </div>
   {% endif %}
 {% endblock %}
@@ -749,6 +763,7 @@
     });
   </script>
   {% else %}
+  {% if not stats_connect_empty %}
   <script data-stats-widget-script>
     (function () {
       const metricInfo = {
@@ -1461,10 +1476,6 @@
       const startField = document.getElementById("rangeStart");
       const endField = document.getElementById("rangeEnd");
       const chartFilters = document.getElementById("chartFilters");
-      const earliestSnapshotIso = "{{ earliest_snapshot.isoformat() }}";
-      const earliestSnapshot = earliestSnapshotIso
-        ? new Date(earliestSnapshotIso)
-        : new Date(startField.value || new Date().toISOString().slice(0, 10));
       if (!rangePicker || !startField || !endField || !chartFilters) {
         return;
       }
@@ -1494,6 +1505,10 @@
       const startField = document.getElementById("rangeStart");
       const endField = document.getElementById("rangeEnd");
       const chartFilters = document.getElementById("chartFilters");
+      const earliestSnapshotIso = "{{ earliest_snapshot.isoformat() }}";
+      const earliestSnapshot = earliestSnapshotIso
+        ? new Date(earliestSnapshotIso)
+        : new Date(startField?.value || new Date().toISOString().slice(0, 10));
       if (!presetButtons.length || !startField || !endField || !rangePicker || !chartFilters) {
         return;
       }
@@ -1598,5 +1613,6 @@
       });
     })();
   </script>
+  {% endif %}
   {% endif %}
 {% endblock %}

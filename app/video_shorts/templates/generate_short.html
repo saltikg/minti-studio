@@ -11680,6 +11680,19 @@ const isGenerateV2EditorDirty = () => {
   return !!window.isCropEditorDesignDirty?.();
 };
 
+const createGenerateV2SaveError = (response, payload, fallback) => {
+  const error = new Error(payload?.message || fallback);
+  error.retryable = Number(response?.status || 0) >= 500;
+  return error;
+};
+
+const getGenerateV2SaveErrorMessage = (error) => {
+  if (error?.retryable === false && error?.message) {
+    return error.message;
+  }
+  return "Couldn't save. Try again.";
+};
+
 const setGenerateV2EditorStatus = (message = "", variant = "") => {
   const status = document.getElementById("generate-v2-editor-status");
   if (!status) {
@@ -12014,7 +12027,7 @@ document.addEventListener("DOMContentLoaded", () => {
         }
       }, 2000);
     } catch (error) {
-      setGenerateV2EditorStatus("Couldn't save. Try again.", "error");
+      setGenerateV2EditorStatus(getGenerateV2SaveErrorMessage(error), "error");
     } finally {
       controls.forEach((control) => {
         if (control) {
@@ -21284,7 +21297,7 @@ document.addEventListener("DOMContentLoaded", () => {
     });
     const payload = await response.json().catch(() => ({}));
     if (!response.ok || !payload.success) {
-      throw new Error(payload.message || "Defaults could not be saved.");
+      throw createGenerateV2SaveError(response, payload, "Defaults could not be saved.");
     }
     return payload;
   };
@@ -21340,7 +21353,7 @@ document.addEventListener("DOMContentLoaded", () => {
     });
     const payload = await response.json().catch(() => ({}));
     if (!response.ok || !payload.success) {
-      throw new Error(payload.message || "Settings could not be saved.");
+      throw createGenerateV2SaveError(response, payload, "Settings could not be saved.");
     }
     const activeIndex = document.getElementById("clip-management-panel")?.dataset.activePlanIndex || "";
     const escapedIndex = window.CSS?.escape ? CSS.escape(activeIndex) : activeIndex;
@@ -21416,7 +21429,7 @@ document.addEventListener("DOMContentLoaded", () => {
       updateInfo(err.message || "Settings could not be saved.");
       setSaveStatus(err.message || "Settings save failed", "danger");
       window.setGenerateV2EditorBusy?.(false);
-      window.setGenerateV2EditorStatus?.("Couldn't save. Try again.", "error");
+      window.setGenerateV2EditorStatus?.(getGenerateV2SaveErrorMessage(err), "error");
       return;
     }
     const activeTopRatios = normalizePresetRatios(currentPresetRatios);
@@ -21435,7 +21448,7 @@ document.addEventListener("DOMContentLoaded", () => {
       cropSaveInFlight = false;
       updateInfo("Save endpoint not configured.");
       window.setGenerateV2EditorBusy?.(false);
-      window.setGenerateV2EditorStatus?.("Couldn't save. Try again.", "error");
+      window.setGenerateV2EditorStatus?.("Save endpoint not configured.", "error");
       return;
     }
     const params = new URLSearchParams();
@@ -21480,7 +21493,7 @@ document.addEventListener("DOMContentLoaded", () => {
       });
       const payload = await response.json().catch(() => ({}));
       if (!response.ok || !payload.success) {
-        throw new Error(payload.message || "Crop save failed.");
+        throw createGenerateV2SaveError(response, payload, "Crop save failed.");
       }
       updateInfo(
         `Saved – x:${xRatio.toFixed(3)} y:${yRatio.toFixed(3)} w:${wRatio.toFixed(3)} h:${hRatio.toFixed(3)}`
@@ -21558,7 +21571,7 @@ document.addEventListener("DOMContentLoaded", () => {
       updateInfo(err.message || "Crop could not be saved.");
       setSaveStatus(err.message || "Save failed", "danger");
       window.setGenerateV2EditorBusy?.(false);
-      window.setGenerateV2EditorStatus?.("Couldn't save. Try again.", "error");
+      window.setGenerateV2EditorStatus?.(getGenerateV2SaveErrorMessage(err), "error");
     } finally {
       cropSaveInFlight = false;
       saveBtn.disabled = false;

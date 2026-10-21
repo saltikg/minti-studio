@@ -20,6 +20,7 @@ from app.video_shorts.services.subscriber_metrics import (
     SUBSCRIBER_SNAPSHOT_TABLE,
 )
 from app.video_shorts.services.timezones import DEFAULT_TIME_ZONE, TIMEZONE_OPTIONS
+from app.video_shorts.services.youtube_token_store import has_refresh_token
 
 
 CHANNEL_OPTIONS: Sequence[Mapping[str, str]] = [
@@ -1258,9 +1259,10 @@ def _render_video_stats(*, load_widgets: bool):
     user_time_zone_label = _timezone_label(user_time_zone)
     current_user = getattr(g, "vs_current_user", None) or {}
     oauth_reauth_required = False
+    active_brand_id = str(current_brand_id() or "").strip() or None
+    youtube_connected = has_refresh_token(current_user.get("id"), brand_id=active_brand_id)
     conn = get_db_readonly()
     try:
-        active_brand_id = str(current_brand_id() or "").strip() or None
         snapshot_brand_clause, snapshot_brand_params = _brand_scope_clause(
             conn,
             SNAPSHOT_TABLE,
@@ -2088,6 +2090,7 @@ def _render_video_stats(*, load_widgets: bool):
             youtube_subscriber_data_missing or oauth_reauth_required
         ),
         last_api_at=last_api_at,
+        stats_connect_empty=bool(not youtube_connected and not channel_rows),
     )
     template = current_app.jinja_env.get_template("video_metrics.html")
     fragment_context = template.new_context(
