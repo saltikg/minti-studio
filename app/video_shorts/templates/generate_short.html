@@ -843,6 +843,7 @@
     flex-direction: column;
     gap: 10px;
     position: relative;
+    min-height: 0;
   }
   .trs-coachmark {
     position: absolute;
@@ -1196,6 +1197,7 @@
   .trs-document {
     max-height: 620px;
     overflow: auto;
+    overscroll-behavior: contain;
     padding: 6px 10px 88px;
     display: flex;
     flex-direction: column;
@@ -3145,6 +3147,7 @@
     min-height: 0;
     flex: 1 1 auto;
     overflow: auto;
+    overscroll-behavior: contain;
     padding: 12px;
     border: 1px solid rgba(148, 163, 184, 0.14);
     border-radius: 12px;
@@ -3439,6 +3442,7 @@
   @media (max-width: 767.98px) {
     .generate-v2-text-parts-bar {
       gap: 7px;
+      bottom: env(safe-area-inset-bottom, 0);
     }
     .generate-v2-text-title-wrap {
       flex: 1 1 100%;
@@ -3457,6 +3461,45 @@
     height: 100%;
     display: flex;
     flex-direction: column;
+    overflow: hidden;
+  }
+
+  #clip-workbench-shell:not([data-generate-v2="1"]) #transcript-range-selector {
+    height: min(720px, calc(100dvh - 180px));
+    min-height: 360px;
+    overflow: hidden;
+  }
+  #clip-workbench-shell:not([data-generate-v2="1"]) #transcript-range-selector .trs-panel {
+    min-height: 0;
+    flex: 1 1 auto;
+    display: flex;
+    flex-direction: column;
+    overflow: hidden;
+  }
+  #clip-workbench-shell:not([data-generate-v2="1"]) #transcript-range-selector .trs-document {
+    min-height: 0;
+    max-height: none;
+    flex: 1 1 auto;
+  }
+
+  @media (max-width: 1023.98px) {
+    #clip-workbench-shell[data-generate-v2="1"] [data-generate-v2-panel="transcript"].is-active {
+      display: flex;
+      min-height: 0;
+      overflow: hidden;
+    }
+    #clip-workbench-shell[data-generate-v2="1"] [data-generate-v2-transcript-card] {
+      display: flex;
+      flex-direction: column;
+      width: 100%;
+      height: var(--generate-v2-mobile-transcript-height, calc(100dvh - 96px));
+      min-height: 280px;
+      overflow: hidden;
+    }
+    #clip-workbench-shell[data-generate-v2="1"] .generate-v2-text-transcript,
+    #clip-workbench-shell[data-generate-v2="1"] .generate-v2-text-document {
+      min-height: 0;
+    }
   }
   #clip-workbench-shell[data-generate-v2="1"] #trs-search-input::placeholder {
     color: rgba(226, 232, 240, 0.48);
@@ -6782,7 +6825,7 @@
           <div class="gs-card h-100"{% if generate_v2 %} data-generate-v2-transcript-card{% endif %}>
             {% if not generate_v2 %}
             <div class="d-flex flex-wrap align-items-center justify-content-between gap-2 mb-2">
-              <h5 class="mb-0">Transcript{% if transcript_language %} <span class="badge bg-secondary-subtle text-secondary-emphasis border border-secondary-subtle align-middle">{{ transcript_language|upper }}</span>{% endif %} <span class="small text-white-50 fw-normal">(Click one row to set the start, then click another row to set the end.)</span></h5>
+              <h5 class="mb-0">Transcript <span class="small text-white-50 fw-normal">(Click one row to set the start, then click another row to set the end.)</span></h5>
             </div>
             {% endif %}
             <div class="trs-shell"
@@ -6812,30 +6855,6 @@
                 </div>
               </div>
               {% endif %}
-              <div class="trs-toolbar">
-                <div class="trs-search-group">
-                  <input
-                    type="search"
-                    class="form-control form-control-sm"
-                    id="trs-search-input"
-                    placeholder="Search transcript">
-                  {% if generate_v2 and transcript_language %}
-                    <span class="badge bg-secondary-subtle text-secondary-emphasis border border-secondary-subtle align-middle trs-language-badge">{{ transcript_language|upper }}</span>
-                  {% endif %}
-                  {% if not generate_v2 %}
-                  <button type="button" class="btn btn-outline-secondary btn-sm" id="trs-search-clear">Clear</button>
-                  {% endif %}
-                </div>
-                <div class="trs-match-nav">
-                  <button type="button" class="btn btn-outline-secondary btn-sm" id="trs-match-prev" aria-label="Previous match">↑</button>
-                  <span class="trs-match-count" id="trs-match-count">0 / 0</span>
-                  <button type="button" class="btn btn-outline-secondary btn-sm" id="trs-match-next" aria-label="Next match">↓</button>
-                </div>
-                {% if generate_v2 %}
-                <button type="button" class="btn btn-outline-secondary btn-sm" id="trs-search-clear">Clear</button>
-                {% endif %}
-              </div>
-              <div class="trs-match-list" id="trs-match-list" aria-live="polite"></div>
               {% if generate_v2 %}
               <div class="generate-v2-text-transcript" data-generate-v2-text-transcript>
                 <div class="generate-v2-text-document" data-generate-v2-text-document aria-label="Transcript text"></div>
@@ -6869,7 +6888,6 @@
                   <div class="generate-v2-text-preview-controls d-none" data-generate-v2-text-preview-controls>
                     <button type="button" class="btn" data-generate-v2-text-preview-toggle aria-label="Pause preview" title="Pause preview">⏸</button>
                     <button type="button" class="btn d-none" data-generate-v2-text-preview-music aria-label="Music on/off" aria-pressed="true" title="Music on">♪</button>
-                    <button type="button" class="btn" data-generate-v2-text-preview-stop aria-label="Stop preview" title="Stop preview">■</button>
                   </div>
                   <span class="generate-v2-text-preview-status d-none" data-generate-v2-text-preview-status></span>
                   <button type="button" class="btn btn-sm btn-outline-light generate-v2-text-clear-parts" data-generate-v2-text-clear-parts>Clear</button>
@@ -10737,7 +10755,19 @@ document.addEventListener("DOMContentLoaded", () => {
         }
       });
       if (segmentIndex !== null && canAutoScrollTranscript()) {
-        segments[segmentIndex]?.rowEl?.scrollIntoView({ behavior: "smooth", block: "nearest", inline: "nearest" });
+        const segment = segments[segmentIndex];
+        if (documentEl && segment?.rowEl) {
+          const rowTop = segment.rowEl.offsetTop;
+          const rowBottom = rowTop + segment.rowEl.offsetHeight;
+          const viewportTop = documentEl.scrollTop;
+          const viewportBottom = viewportTop + documentEl.clientHeight;
+          if (rowTop < viewportTop || rowBottom > viewportBottom) {
+            documentEl.scrollTo({
+              top: Math.max(0, rowTop - ((documentEl.clientHeight - segment.rowEl.offsetHeight) / 2)),
+              behavior: "smooth",
+            });
+          }
+        }
       }
     });
     window.__mintiTranscriptPlayer = player;
@@ -11222,6 +11252,11 @@ document.addEventListener("DOMContentLoaded", () => {
         updateSegmentTextMarkup(segment);
       });
 
+      if (!matchCount || !prevBtn || !nextBtn || !matchList) {
+        renderSelection();
+        return;
+      }
+
       matchCount.textContent = state.matches.length
         ? `${state.currentMatchIndex + 1} / ${state.matches.length}`
         : "0 / 0";
@@ -11249,7 +11284,7 @@ document.addEventListener("DOMContentLoaded", () => {
       const activeIndex = state.matches[state.currentMatchIndex];
       const activeSegment = activeIndex !== undefined ? segments[activeIndex] : null;
       if (scrollToCurrent && activeSegment?.rowEl) {
-        activeSegment.rowEl.scrollIntoView({ behavior: "smooth", block: "center", inline: "nearest" });
+        scrollSegmentToTop(activeSegment);
       }
       renderSelection();
     };
@@ -11411,7 +11446,7 @@ document.addEventListener("DOMContentLoaded", () => {
           return null;
         }
         flashLinkedSegment(segment);
-        segment.rowEl.scrollIntoView({ behavior: "smooth", block: "center", inline: "nearest" });
+        scrollSegmentToTop(segment);
         return segment;
       },
       previewRange: (startSeconds, endSeconds) => {
@@ -13080,22 +13115,30 @@ const syncGenerateV2WorkbenchHeight = () => {
   if (!root || !layout) {
     return;
   }
+  const transcriptCard = root.querySelector("[data-generate-v2-transcript-card]");
   if (!window.matchMedia || !window.matchMedia("(min-width: 1024px)").matches) {
     root.style.removeProperty("--generate-v2-workbench-height");
+    if (transcriptCard?.offsetParent !== null) {
+      const transcriptTop = Math.max(0, transcriptCard.getBoundingClientRect().top);
+      const transcriptHeight = Math.max(280, Math.floor(window.innerHeight - transcriptTop - 8));
+      root.style.setProperty("--generate-v2-mobile-transcript-height", `${transcriptHeight}px`);
+    }
     return;
   }
+  root.style.removeProperty("--generate-v2-mobile-transcript-height");
   const top = layout.getBoundingClientRect().top;
   const bottomGap = 14;
   const height = Math.max(520, Math.floor(window.innerHeight - top - bottomGap));
   root.style.setProperty("--generate-v2-workbench-height", `${height}px`);
-  const transcriptCard = root.querySelector("[data-generate-v2-transcript-card]");
   const sourcePlayerCard = root.querySelector("[data-generate-v2-source-player-card]");
   const scrollTargets = [transcriptCard, sourcePlayerCard].filter(Boolean);
-  scrollTargets.forEach((target) => {
+  const targetHeights = scrollTargets.map((target) => {
     const targetTop = target.getBoundingClientRect().top;
-    const targetHeight = Math.max(360, Math.floor(window.innerHeight - targetTop - bottomGap));
-    root.style.setProperty("--generate-v2-transcript-card-max-height", `${targetHeight}px`);
+    return Math.max(360, Math.floor(window.innerHeight - targetTop - bottomGap));
   });
+  if (targetHeights.length) {
+    root.style.setProperty("--generate-v2-transcript-card-max-height", `${Math.min(...targetHeights)}px`);
+  }
 };
 
 const initGenerateV2LazyThumbnails = (scope = document) => {
@@ -13243,6 +13286,9 @@ window.setGenerateV2ActiveTab = async (tab, { persist = true, selectedPlanIndex 
   root.querySelectorAll("[data-generate-v2-right]").forEach((panel) => {
     panel.classList.toggle("is-active", panel.dataset.generateV2Right === normalized);
   });
+  if (normalized === "transcript") {
+    window.requestAnimationFrame(syncGenerateV2WorkbenchHeight);
+  }
   if (normalized === "edit") {
     root.querySelectorAll("[data-generate-v2-right]").forEach((panel) => {
       panel.classList.toggle("is-active", panel.dataset.generateV2Right === "shorts");
@@ -13848,7 +13894,17 @@ const syncGenerateV2KaraokeHighlight = (seconds) => {
       const container = el.closest("[data-generate-v2-text-document], [data-clip-text-trim-editor]");
       return container && container.offsetParent !== null;
     });
-    visibleWord?.scrollIntoView({ behavior: "smooth", block: "center", inline: "nearest" });
+    const container = visibleWord?.closest("[data-generate-v2-text-document], [data-clip-text-trim-editor]");
+    if (visibleWord && container) {
+      const wordRect = visibleWord.getBoundingClientRect();
+      const containerRect = container.getBoundingClientRect();
+      if (wordRect.top < containerRect.top || wordRect.bottom > containerRect.bottom) {
+        const target = container.scrollTop
+          + (wordRect.top - containerRect.top)
+          - ((container.clientHeight - wordRect.height) / 2);
+        container.scrollTo({ top: Math.max(0, target), behavior: "smooth" });
+      }
+    }
   }
 };
 
@@ -14034,7 +14090,6 @@ window.initGenerateV2TextTranscript = () => {
   const previewControls = shell.querySelector("[data-generate-v2-text-preview-controls]");
   const previewToggleBtn = shell.querySelector("[data-generate-v2-text-preview-toggle]");
   const previewMusicBtn = shell.querySelector("[data-generate-v2-text-preview-music]");
-  const previewStopBtn = shell.querySelector("[data-generate-v2-text-preview-stop]");
   const previewStatus = shell.querySelector("[data-generate-v2-text-preview-status]");
   const previewProgress = shell.querySelector("[data-generate-v2-text-preview-progress]");
   const previewProgressFill = shell.querySelector("[data-generate-v2-text-preview-progress-fill]");
@@ -14043,7 +14098,6 @@ window.initGenerateV2TextTranscript = () => {
   const partsWarning = shell.querySelector("[data-generate-v2-text-parts-warning]");
   const titleInput = shell.querySelector("[data-generate-v2-clip-title]");
   const titleCounter = shell.querySelector("[data-generate-v2-clip-title-counter]");
-  const titleWrap = shell.querySelector("[data-generate-v2-text-title-wrap]");
   const searchInput = document.getElementById("trs-search-input");
   const clearSearchBtn = document.getElementById("trs-search-clear");
   const prevBtn = document.getElementById("trs-match-prev");
@@ -14100,6 +14154,7 @@ window.initGenerateV2TextTranscript = () => {
   };
   const normalizeTranscriptParts = (parts) => normalizeClipKeepRanges(parts);
   const setTranscriptParts = (parts) => {
+    stopPreview();
     state.parts = normalizeTranscriptParts(Array.isArray(parts) ? parts : []);
     window.__generateV2TextParts = state.parts.slice();
     render();
@@ -14191,7 +14246,6 @@ window.initGenerateV2TextTranscript = () => {
     previewAllBtn?.classList.toggle("d-none", active);
     previewProgress?.classList.toggle("d-none", !active);
     previewStatus?.classList.toggle("d-none", !active);
-    titleWrap?.classList.toggle("d-none", active);
     if (previewToggleBtn) {
       const action = state.preview.paused ? "Play" : "Pause";
       previewToggleBtn.textContent = state.preview.paused ? "▶" : "⏸";
@@ -14527,7 +14581,6 @@ window.initGenerateV2TextTranscript = () => {
     syncPreviewMusic(null, !state.preview.paused);
     setPreviewControls(true);
   });
-  previewStopBtn?.addEventListener("click", () => stopPreview());
   previewProgress?.addEventListener("pointerdown", (event) => {
     if (!state.preview.active) return;
     event.preventDefault();
@@ -14575,6 +14628,7 @@ window.initGenerateV2TextTranscript = () => {
   createBtn?.addEventListener("click", async () => {
     const ranges = normalizeTranscriptParts(state.parts);
     if (!ranges.length || createBtn.disabled) return;
+    stopPreview();
     createBtn.disabled = true;
     try {
       await window.__generateV2CreateClipFromTranscript?.({
