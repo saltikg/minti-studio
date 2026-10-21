@@ -28519,11 +28519,23 @@ def save_short_settings(video_pk):
     editor_owner_user_id = editor_context["owner_user_id"]
     form_fields = set(request.form.keys())
     current_app.logger.info(
-        "save_short_settings fields video=%s fields=%s subtitle_preset=%s subtitle_style=%s",
+        "save_short_settings fields video=%s fields=%s subtitle_preset=%s subtitle_style=%s "
+        "layout_mode=%s split_enabled=%s crop_locked=%s crop1=%s,%s,%s,%s crop2=%s,%s,%s,%s",
         video_pk,
         sorted(form_fields),
         request.form.get("subtitle_preset"),
         request.form.get("subtitle_style"),
+        request.form.get("layout_mode"),
+        request.form.get("split_enabled"),
+        request.form.get("crop_locked"),
+        request.form.get("crop_x_ratio"),
+        request.form.get("crop_y_ratio"),
+        request.form.get("crop_w_ratio"),
+        request.form.get("crop_h_ratio"),
+        request.form.get("crop2_x_ratio"),
+        request.form.get("crop2_y_ratio"),
+        request.form.get("crop2_w_ratio"),
+        request.form.get("crop2_h_ratio"),
     )
     font_key = request.form.get("font") or DEFAULT_EDITOR_TITLE_FONT_KEY
     sub_font_key = request.form.get("sub_font") or DEFAULT_SUB_FONT_KEY
@@ -28628,6 +28640,121 @@ def save_short_settings(video_pk):
             success=False,
             message="The selected music file is invalid. Choose the track again.",
         ), 422
+
+    layout_field_names = {
+        "layout_mode",
+        "split_enabled",
+        "crop_aspect",
+        "crop_locked",
+        "crop_x_ratio",
+        "crop_y_ratio",
+        "crop_w_ratio",
+        "crop_h_ratio",
+        "crop2_x_ratio",
+        "crop2_y_ratio",
+        "crop2_w_ratio",
+        "crop2_h_ratio",
+        "original_zoom_rect",
+        "static_visual_key",
+        "background_visual_key",
+    }
+    has_layout_payload = bool(form_fields & layout_field_names)
+    layout_update_values: Dict[str, Any] = {}
+    if has_layout_payload:
+        required_layout_fields = {
+            "layout_mode",
+            "split_enabled",
+            "crop_aspect",
+            "crop_locked",
+            "crop_x_ratio",
+            "crop_y_ratio",
+            "crop_w_ratio",
+            "crop_h_ratio",
+        }
+        missing_layout_fields = sorted(required_layout_fields - form_fields)
+        if missing_layout_fields:
+            return jsonify(
+                success=False,
+                message=f"Layout could not be saved: missing {', '.join(missing_layout_fields)}.",
+            ), 422
+
+        layout_mode = _normalize_layout_mode(request.form.get("layout_mode"))
+        crop_aspect = str(request.form.get("crop_aspect") or "").strip().lower()
+        if crop_aspect not in {"landscape", "portrait", "original"}:
+            return jsonify(success=False, message="Layout could not be saved: invalid crop aspect."), 422
+        split_enabled = _normalize_optional_bool(request.form.get("split_enabled"), default=False)
+        crop_locked = _normalize_optional_bool(request.form.get("crop_locked"), default=False)
+
+        def _required_layout_ratio(name: str) -> float:
+            raw_value = request.form.get(name)
+            try:
+                value = float(raw_value)
+            except (TypeError, ValueError):
+                raise ValueError(name)
+            if not math.isfinite(value):
+                raise ValueError(name)
+            return max(0.0, min(1.0, value))
+
+        try:
+            crop_x = _required_layout_ratio("crop_x_ratio")
+            crop_y = _required_layout_ratio("crop_y_ratio")
+            crop_w = max(0.01, min(1.0 - crop_x, _required_layout_ratio("crop_w_ratio")))
+            crop_h = max(0.01, min(1.0 - crop_y, _required_layout_ratio("crop_h_ratio")))
+        except ValueError as exc:
+            return jsonify(
+                success=False,
+                message=f"Layout could not be saved: invalid {exc.args[0]}.",
+            ), 422
+
+        crop2_names = ("crop2_x_ratio", "crop2_y_ratio", "crop2_w_ratio", "crop2_h_ratio")
+        has_complete_crop2 = all(name in form_fields and request.form.get(name) != "" for name in crop2_names)
+        if split_enabled and not has_complete_crop2:
+            return jsonify(
+                success=False,
+                message="Layout could not be saved: both split crop boxes are required.",
+            ), 422
+        crop2_values: Dict[str, Optional[float]] = {name: None for name in crop2_names}
+        if has_complete_crop2:
+            try:
+                crop2_x = _required_layout_ratio("crop2_x_ratio")
+                crop2_y = _required_layout_ratio("crop2_y_ratio")
+                crop2_values = {
+                    "crop2_x_ratio": crop2_x,
+                    "crop2_y_ratio": crop2_y,
+                    "crop2_w_ratio": max(
+                        0.01,
+                        min(1.0 - crop2_x, _required_layout_ratio("crop2_w_ratio")),
+                    ),
+                    "crop2_h_ratio": max(
+                        0.01,
+                        min(1.0 - crop2_y, _required_layout_ratio("crop2_h_ratio")),
+                    ),
+                }
+            except ValueError as exc:
+                return jsonify(
+                    success=False,
+                    message=f"Layout could not be saved: invalid {exc.args[0]}.",
+                ), 422
+
+        layout_update_values = {
+            "layout_mode": layout_mode,
+            "split_enabled": bool(split_enabled),
+            "crop_aspect": crop_aspect,
+            "crop_locked": bool(crop_locked),
+            "crop_x_ratio": crop_x,
+            "crop_y_ratio": crop_y,
+            "crop_w_ratio": crop_w,
+            "crop_h_ratio": crop_h,
+            **crop2_values,
+        }
+        if "original_zoom_rect" in form_fields:
+            original_zoom_rect = _normalize_original_zoom_rect(request.form.get("original_zoom_rect"))
+            layout_update_values["original_zoom_rect"] = (
+                json.dumps(original_zoom_rect, sort_keys=True) if original_zoom_rect else None
+            )
+        for key in ("static_visual_key", "background_visual_key"):
+            if key in form_fields:
+                layout_update_values[key] = str(request.form.get(key) or "").strip() or None
 
     conn = get_db()
     _ensure_video_crop_schema(conn)
@@ -28760,6 +28887,8 @@ def save_short_settings(video_pk):
                 "music_fade_out": "music_fade_out",
             }
         )
+        update_values.update(layout_update_values)
+        source_fields_by_column.update({column: column for column in layout_update_values})
         update_values = {
             column: value
             for column, value in update_values.items()
@@ -28790,6 +28919,46 @@ def save_short_settings(video_pk):
                 """,
                 params,
             )
+        effective_layout_sql = """
+            SELECT layout_mode, split_enabled, crop_aspect, crop_locked,
+                   crop_x_ratio, crop_y_ratio, crop_w_ratio, crop_h_ratio,
+                   crop2_x_ratio, crop2_y_ratio, crop2_w_ratio, crop2_h_ratio
+            FROM youtube_videos
+            WHERE id = ?
+              AND owner_user_id = ?
+        """
+        effective_layout_params: List[Any] = [video_pk, editor_owner_user_id]
+        if "brand_id" in video_columns:
+            if brand_id is None:
+                effective_layout_sql += "\n AND brand_id IS NULL"
+            else:
+                effective_layout_sql += "\n AND brand_id = ?"
+                effective_layout_params.append(brand_id)
+        effective_layout_row = conn.execute(effective_layout_sql, effective_layout_params).fetchone()
+        if not effective_layout_row:
+            raise RuntimeError("Saved video layout could not be read back.")
+        effective_layout = dict(
+            zip(
+                (
+                    "layout_mode",
+                    "split_enabled",
+                    "crop_aspect",
+                    "crop_locked",
+                    "crop_x_ratio",
+                    "crop_y_ratio",
+                    "crop_w_ratio",
+                    "crop_h_ratio",
+                    "crop2_x_ratio",
+                    "crop2_y_ratio",
+                    "crop2_w_ratio",
+                    "crop2_h_ratio",
+                ),
+                effective_layout_row,
+            )
+        )
+        effective_layout["layout_mode"] = _normalize_layout_mode(effective_layout.get("layout_mode"))
+        effective_layout["split_enabled"] = bool(effective_layout.get("split_enabled"))
+        effective_layout["crop_locked"] = bool(effective_layout.get("crop_locked"))
         conn.commit()
         if "subscribe_overlay_image" in form_fields:
             _save_subscribe_overlay_key(
@@ -28799,9 +28968,13 @@ def save_short_settings(video_pk):
                 subscribe_overlay_key,
             )
     except Exception as exc:
+        try:
+            conn.rollback()
+        except Exception:
+            pass
         conn.close()
         current_app.logger.warning("Failed to save short settings for %s: %s", video_pk, exc)
-        return jsonify(success=False, message="Ayarlar kaydedilemedi"), 500
+        return jsonify(success=False, message="Design could not be saved; no changes were applied."), 500
     effective_music = {
         "music_audio_id": music_audio_id if "music_audio_id" in form_fields else _normalize_music_audio_id(row[2]),
         "music_level": music_level if "music_level" in form_fields else normalize_music_level(row[3]),
@@ -28851,7 +29024,12 @@ def save_short_settings(video_pk):
     session["vs_visual_mode"] = visual_mode
     session["vs_podcast_overlay_short_ids"] = podcast_overlay_short_ids
     session["vs_video_overlay_offset"] = video_overlay_offset
-    return jsonify(success=True, message="Ayarlar kaydedildi", music=effective_music)
+    return jsonify(
+        success=True,
+        message="Ayarlar kaydedildi",
+        music=effective_music,
+        layout=effective_layout,
+    )
 
 
 @video_shorts_bp.route("/generate/<int:video_pk>/render-jobs/<job_id>/status", methods=["GET"])

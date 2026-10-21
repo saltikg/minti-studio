@@ -6409,6 +6409,7 @@
       data-crop-y="{{ video.crop_y_ratio if video.crop_y_ratio is not none else '' }}"
       data-crop-w="{{ video.crop_w_ratio if video.crop_w_ratio is not none else '' }}"
       data-crop-h="{{ video.crop_h_ratio if video.crop_h_ratio is not none else '' }}"
+      data-crop-locked="{{ '1' if video.crop_locked else '0' }}"
       data-crop2-x="{{ video.crop2_x_ratio if video.crop2_x_ratio is not none else '' }}"
       data-crop2-y="{{ video.crop2_y_ratio if video.crop2_y_ratio is not none else '' }}"
       data-crop2-w="{{ video.crop2_w_ratio if video.crop2_w_ratio is not none else '' }}"
@@ -6474,6 +6475,7 @@
         data-crop-y="{{ video.crop_y_ratio if video.crop_y_ratio is not none else '' }}"
         data-crop-w="{{ video.crop_w_ratio if video.crop_w_ratio is not none else '' }}"
         data-crop-h="{{ video.crop_h_ratio if video.crop_h_ratio is not none else '' }}"
+        data-crop-locked="{{ '1' if video.crop_locked else '0' }}"
         data-crop2-x="{{ video.crop2_x_ratio if video.crop2_x_ratio is not none else '' }}"
         data-crop2-y="{{ video.crop2_y_ratio if video.crop2_y_ratio is not none else '' }}"
         data-crop2-w="{{ video.crop2_w_ratio if video.crop2_w_ratio is not none else '' }}"
@@ -19024,6 +19026,7 @@ document.addEventListener("DOMContentLoaded", () => {
   let currentPresetRatiosBottom = { x: 0, y: 0, w: 1, h: 1 };
   let lastSinglePresetRatios = { x: 0, y: 0, w: 1, h: 1 };
   let activeSplitEnabled = false;
+  let activeCropLocked = false;
   let cropDirty = false;
   let cropSaveInFlight = false;
   let cropperProgrammaticUpdateDepth = 0;
@@ -19193,6 +19196,7 @@ document.addEventListener("DOMContentLoaded", () => {
     layout_mode: activeLayoutMode || "manual",
     crop_aspect: activeCropAspect || "landscape",
     split_enabled: !!activeSplitEnabled,
+    crop_locked: !!activeCropLocked,
     visual_mode: activeVisualMode || "video",
     static_visual_key: activeStaticVisualKey || "",
     background_visual_key: activeBackgroundKey || "",
@@ -19236,6 +19240,7 @@ document.addEventListener("DOMContentLoaded", () => {
       activeLayoutMode = snapshot.layout_mode === "auto" ? "auto" : "manual";
       activeCropAspect = snapshot.crop_aspect || "landscape";
       activeSplitEnabled = !!snapshot.split_enabled;
+      activeCropLocked = !!snapshot.crop_locked;
       activeVisualMode = snapshot.visual_mode || "video";
       activeStaticVisualKey = snapshot.static_visual_key || "";
       activeBackgroundKey = snapshot.background_visual_key || "";
@@ -19925,6 +19930,7 @@ document.addEventListener("DOMContentLoaded", () => {
   };
   const markCropDirty = () => {
     cropDirty = true;
+    activeCropLocked = true;
     notifyCropEditorDesignChanged();
   };
   const normalizeOriginalZoomRect = (rect) => {
@@ -21741,6 +21747,8 @@ document.addEventListener("DOMContentLoaded", () => {
     );
     activeSplitEnabled = (trigger.dataset.splitEnabled || "").toLowerCase() === "1"
       || (trigger.dataset.splitEnabled || "").toLowerCase() === "true";
+    activeCropLocked = (trigger.dataset.cropLocked || "").toLowerCase() === "1"
+      || (trigger.dataset.cropLocked || "").toLowerCase() === "true";
     setLayoutMode(trigger.dataset.layoutMode || "manual");
     originalZoomRect = parseOriginalZoomRect(trigger.dataset.originalZoomRect || "");
     splitDefaultsPrimed = hasStoredCrop2;
@@ -21922,6 +21930,76 @@ document.addEventListener("DOMContentLoaded", () => {
     return payload;
   };
 
+  const appendCurrentLayoutFields = (params) => {
+    const top = normalizePresetRatios(currentPresetRatios);
+    if (isOriginalCropAspect()) {
+      originalZoomRect = normalizeOriginalZoomRect(top);
+      syncOriginalZoomUi();
+    }
+    const crop = isOriginalCropAspect() ? { x: 0, y: 0, w: 1, h: 1 } : top;
+    const crop2 = normalizePresetRatios(currentPresetRatiosBottom);
+    params.set("layout_mode", activeLayoutMode || "manual");
+    params.set("split_enabled", getEffectiveSplitEnabled() ? "1" : "0");
+    params.set("crop_aspect", activeCropAspect || "landscape");
+    params.set("crop_locked", activeCropLocked ? "1" : "0");
+    params.set("crop_x_ratio", crop.x.toFixed(6));
+    params.set("crop_y_ratio", crop.y.toFixed(6));
+    params.set("crop_w_ratio", crop.w.toFixed(6));
+    params.set("crop_h_ratio", crop.h.toFixed(6));
+    params.set("crop2_x_ratio", crop2.x.toFixed(6));
+    params.set("crop2_y_ratio", crop2.y.toFixed(6));
+    params.set("crop2_w_ratio", crop2.w.toFixed(6));
+    params.set("crop2_h_ratio", crop2.h.toFixed(6));
+    params.set("original_zoom_rect", originalZoomRect ? JSON.stringify(originalZoomRect) : "");
+    params.set("static_visual_key", activeStaticVisualKey || "");
+    params.set("background_visual_key", activeBackgroundKey || "");
+  };
+
+  const syncSavedLayout = (layout) => {
+    const required = [
+      "layout_mode", "split_enabled", "crop_aspect", "crop_locked",
+      "crop_x_ratio", "crop_y_ratio", "crop_w_ratio", "crop_h_ratio",
+      "crop2_x_ratio", "crop2_y_ratio", "crop2_w_ratio", "crop2_h_ratio",
+    ];
+    if (!layout || required.some((name) => !Object.prototype.hasOwnProperty.call(layout, name))) {
+      throw new Error("Design was saved, but the saved layout could not be confirmed. Reload and try again.");
+    }
+    activeLayoutMode = layout.layout_mode === "auto" ? "auto" : "manual";
+    activeSplitEnabled = layout.split_enabled === true;
+    activeCropLocked = layout.crop_locked === true;
+    activeCropAspect = layout.crop_aspect || "landscape";
+    currentPresetRatios = normalizePresetRatios({
+      x: layout.crop_x_ratio,
+      y: layout.crop_y_ratio,
+      w: layout.crop_w_ratio,
+      h: layout.crop_h_ratio,
+    });
+    currentPresetRatiosBottom = normalizePresetRatios({
+      x: layout.crop2_x_ratio,
+      y: layout.crop2_y_ratio,
+      w: layout.crop2_w_ratio,
+      h: layout.crop2_h_ratio,
+    });
+    setLayoutMode(activeLayoutMode);
+    setCropFormat(activeCropAspect, activeSplitEnabled);
+    [latestTrigger, chooseBtn].filter(Boolean).forEach((trigger) => {
+      trigger.dataset.layoutMode = activeLayoutMode;
+      trigger.dataset.splitEnabled = activeSplitEnabled ? "1" : "0";
+      trigger.dataset.cropLocked = activeCropLocked ? "1" : "0";
+      trigger.dataset.cropAspect = activeCropAspect;
+      trigger.dataset.cropX = currentPresetRatios.x;
+      trigger.dataset.cropY = currentPresetRatios.y;
+      trigger.dataset.cropW = currentPresetRatios.w;
+      trigger.dataset.cropH = currentPresetRatios.h;
+      trigger.dataset.crop2X = currentPresetRatiosBottom.x;
+      trigger.dataset.crop2Y = currentPresetRatiosBottom.y;
+      trigger.dataset.crop2W = currentPresetRatiosBottom.w;
+      trigger.dataset.crop2H = currentPresetRatiosBottom.h;
+    });
+    applyPreviewLayout();
+    updateSplitUiState();
+  };
+
 	  const saveShortSettings = async () => {
 	    if (!settingsSaveUrl || !settingsContainer) {
 	      return;
@@ -21957,6 +22035,7 @@ document.addEventListener("DOMContentLoaded", () => {
       params.set("podcast_overlay_short_ids", "[]");
     }
     params.set("visual_mode", activeVisualMode || "video");
+    appendCurrentLayoutFields(params);
     console.debug("crop modal save payload", {
       loadedOverlayFieldValues: { ...loadedOverlayFieldValues },
       dirtyOverlayFields: Array.from(dirtyOverlayFields),
@@ -21975,6 +22054,7 @@ document.addEventListener("DOMContentLoaded", () => {
       throw createGenerateV2SaveError(response, payload, "Settings could not be saved.");
     }
     window.syncVideoMusicEditor?.(payload.music || {});
+    syncSavedLayout(payload.layout);
     if (settingsContainer) {
       settingsContainer.dataset.selectedVisualMode = activeVisualMode || "video";
     }
@@ -22032,85 +22112,16 @@ document.addEventListener("DOMContentLoaded", () => {
     }
     setSaveStatus("", "");
     cropSaveInFlight = true;
-    try {
-      setSaveStatus("Saving settings…", "");
-      await saveShortSettings();
-    } catch (err) {
-      cropSaveInFlight = false;
-      updateInfo(err.message || "Settings could not be saved.");
-      setSaveStatus(err.message || "Settings save failed", "danger");
-      window.setGenerateV2EditorBusy?.(false);
-      window.setGenerateV2EditorStatus?.(getGenerateV2SaveErrorMessage(err), "error");
-      return;
-    }
-    const activeTopRatios = normalizePresetRatios(currentPresetRatios);
-    if (isOriginalCropAspect()) {
-      originalZoomRect = normalizeOriginalZoomRect(activeTopRatios);
-      syncOriginalZoomUi();
-    }
-    const xRatio = isOriginalCropAspect() ? 0 : activeTopRatios.x;
-    const yRatio = isOriginalCropAspect() ? 0 : activeTopRatios.y;
-    const wRatio = isOriginalCropAspect() ? 1 : activeTopRatios.w;
-    const hRatio = isOriginalCropAspect() ? 1 : activeTopRatios.h;
-    const effectiveSplit = getEffectiveSplitEnabled();
-    const crop2Ratios = effectiveSplit ? normalizePresetRatios(currentPresetRatiosBottom) : null;
-    const saveUrl = modalEl.dataset.saveUrl || chooseBtn?.dataset.saveUrl;
-    if (!saveUrl) {
-      cropSaveInFlight = false;
-      updateInfo("Save endpoint not configured.");
-      window.setGenerateV2EditorBusy?.(false);
-      window.setGenerateV2EditorStatus?.("Save endpoint not configured.", "error");
-      return;
-    }
-    const params = new URLSearchParams();
-    params.append("crop_x_ratio", xRatio.toFixed(6));
-    params.append("crop_y_ratio", yRatio.toFixed(6));
-    params.append("crop_w_ratio", wRatio.toFixed(6));
-    params.append("crop_h_ratio", hRatio.toFixed(6));
-    params.append("split_enabled", effectiveSplit ? "1" : "0");
-    if (effectiveSplit && crop2Ratios) {
-      params.append("crop2_x_ratio", crop2Ratios.x.toFixed(6));
-      params.append("crop2_y_ratio", crop2Ratios.y.toFixed(6));
-      params.append("crop2_w_ratio", crop2Ratios.w.toFixed(6));
-      params.append("crop2_h_ratio", crop2Ratios.h.toFixed(6));
-    }
-    params.append("static_visual_key", activeStaticVisualKey || "");
-    params.append("background_visual_key", activeBackgroundKey || "");
-    params.append("subscribe_overlay_image", activeSubscribeKey || "");
-    params.append("crop_aspect", activeCropAspect || "landscape");
-    params.append("layout_mode", activeLayoutMode || "manual");
-    params.append("visual_mode", activeVisualMode || "video");
-    params.append("original_zoom_rect", originalZoomRect ? JSON.stringify(originalZoomRect) : "");
-	    params.append("crop_changed", cropDirty ? "1" : "0");
-    if (subtitleStyleField) {
-      params.append("subtitle_style", getPersistedFieldValue(subtitleStyleField));
-    }
-	    const subscribeToggle = getEditorField("enable_subscribe_overlay");
-    if (subscribeToggle) {
-      params.append("enable_subscribe_overlay", subscribeToggle.checked ? "1" : "0");
-    }
     const originalText = saveBtn.textContent;
     const savingText = saveBtn.dataset.savingText || "Saving…";
     saveBtn.setAttribute("aria-busy", "true");
     saveBtn.textContent = savingText;
     try {
-      const response = await fetch(saveUrl, {
-        method: "POST",
-        body: params,
-        credentials: "same-origin",
-        headers: {
-          "X-Requested-With": "XMLHttpRequest",
-        },
-      });
-      const payload = await response.json().catch(() => ({}));
-      if (!response.ok || !payload.success) {
-        throw createGenerateV2SaveError(response, payload, "Crop save failed.");
-      }
-      updateInfo(
-        `Saved – x:${xRatio.toFixed(3)} y:${yRatio.toFixed(3)} w:${wRatio.toFixed(3)} h:${hRatio.toFixed(3)}`
-      );
-	      setSaveStatus("Saved", "success");
-	      cropDirty = false;
+      setSaveStatus("Saving settings…", "");
+      await saveShortSettings();
+      updateInfo("Design and layout saved.");
+      setSaveStatus("Saved", "success");
+      cropDirty = false;
       userEditedCropBoxes.clear();
       window.rememberCropEditorSavedDesignState?.();
       if (statusText) {
@@ -22133,36 +22144,12 @@ document.addEventListener("DOMContentLoaded", () => {
           statusText.classList.add("is-hidden");
         }, 2800);
       }
-      if (latestTrigger) {
-        latestTrigger.dataset.cropX = xRatio;
-        latestTrigger.dataset.cropY = yRatio;
-        latestTrigger.dataset.cropW = wRatio;
-        latestTrigger.dataset.cropH = hRatio;
-        latestTrigger.dataset.splitEnabled = effectiveSplit ? "1" : "0";
-        latestTrigger.dataset.crop2X = crop2Ratios ? crop2Ratios.x : "";
-        latestTrigger.dataset.crop2Y = crop2Ratios ? crop2Ratios.y : "";
-        latestTrigger.dataset.crop2W = crop2Ratios ? crop2Ratios.w : "";
-        latestTrigger.dataset.crop2H = crop2Ratios ? crop2Ratios.h : "";
-        latestTrigger.dataset.staticVisualKey = activeStaticVisualKey || "";
-        latestTrigger.dataset.backgroundVisualKey = activeBackgroundKey || "";
-        latestTrigger.dataset.subscribeVisualKey = activeSubscribeKey || "";
-        latestTrigger.dataset.cropAspect = activeCropAspect || "landscape";
-        latestTrigger.dataset.layoutMode = activeLayoutMode || "manual";
-        latestTrigger.dataset.originalZoomRect = originalZoomRect ? JSON.stringify(originalZoomRect) : "";
-      }
-      if (chooseBtn) {
-        chooseBtn.dataset.splitEnabled = effectiveSplit ? "1" : "0";
-        chooseBtn.dataset.crop2X = crop2Ratios ? crop2Ratios.x : "";
-        chooseBtn.dataset.crop2Y = crop2Ratios ? crop2Ratios.y : "";
-        chooseBtn.dataset.crop2W = crop2Ratios ? crop2Ratios.w : "";
-        chooseBtn.dataset.crop2H = crop2Ratios ? crop2Ratios.h : "";
-        chooseBtn.dataset.staticVisualKey = activeStaticVisualKey || "";
-        chooseBtn.dataset.backgroundVisualKey = activeBackgroundKey || "";
-        chooseBtn.dataset.subscribeVisualKey = activeSubscribeKey || "";
-        chooseBtn.dataset.cropAspect = activeCropAspect || "landscape";
-        chooseBtn.dataset.layoutMode = activeLayoutMode || "manual";
-        chooseBtn.dataset.originalZoomRect = originalZoomRect ? JSON.stringify(originalZoomRect) : "";
-      }
+      [latestTrigger, chooseBtn].filter(Boolean).forEach((trigger) => {
+        trigger.dataset.staticVisualKey = activeStaticVisualKey || "";
+        trigger.dataset.backgroundVisualKey = activeBackgroundKey || "";
+        trigger.dataset.subscribeVisualKey = activeSubscribeKey || "";
+        trigger.dataset.originalZoomRect = originalZoomRect ? JSON.stringify(originalZoomRect) : "";
+      });
       window.updateShortDesignStrip?.(currentShortDesignDetails());
       if (getGenerateV2Root()) {
         window.setGenerateV2EditorBusy?.(false);
@@ -22177,7 +22164,7 @@ document.addEventListener("DOMContentLoaded", () => {
       }
       continueAfterSave();
     } catch (err) {
-      updateInfo(err.message || "Crop could not be saved.");
+      updateInfo(err.message || "Design could not be saved.");
       setSaveStatus(err.message || "Save failed", "danger");
       window.setGenerateV2EditorBusy?.(false);
       window.setGenerateV2EditorStatus?.(getGenerateV2SaveErrorMessage(err), "error");
