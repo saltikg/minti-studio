@@ -6988,7 +6988,7 @@
                   {% set v2_edit_locked = row.edit_locked or rail_is_rendering %}
                   {% set rail_render_aspect_class = ' is-landscape' if row.render_aspect == 'landscape' or (generate_v2 and not rail_has_rendered_media and (video_crop_aspect or '') == 'original') else (' is-portrait' if row.render_aspect == 'portrait' else '') %}
                   <div class="clip-rail-row" data-plan-index="{{ row.plan_index }}">
-                  <button type="button" class="clip-rail-item{{ rail_render_aspect_class }}{% if row.is_ai_suggestion %} is-ai-suggestion{% endif %}{% if generate_v2 and not rail_has_rendered_media %} is-unrendered{% endif %}" title="{{ row.title or ('Manual clip #' ~ row.plan_index) }}" data-plan-index="{{ row.plan_index }}" data-origin="{{ row.origin }}" data-ai-suggestion="{{ '1' if row.is_ai_suggestion else '0' }}" data-score="{{ rail_score if rail_score is not none else '' }}" data-status="{{ row.status }}" data-render-job-status="{{ row.render_job_status or '' }}" data-filename="{{ row.video_filename or '' }}" data-media-version="{{ row.media_version or '' }}" data-render-width="{{ row.render_width or '' }}" data-render-height="{{ row.render_height or '' }}" data-render-aspect="{{ row.render_aspect or '' }}" data-outdated="{{ '1' if row.render_settings_outdated else '0' }}" data-regenerate-locked="{{ '1' if row.regenerate_locked else '0' }}" data-regenerate-lock-reason="{{ row.regenerate_lock_reason or '' }}" data-title="{{ (row.yt_title or row.title or video.title) | e }}" data-description="{{ (row.yt_description or '') | replace('\\', '\\\\') | replace('\n', '\\n') | replace('\r', '\\r') | e }}" data-yt-video-id="{{ row.yt_video_id or '' }}" data-publish-status="{{ row.publish_status or '' }}" data-db-publish-status="{{ row.db_publish_status or '' }}" data-publish-at="{{ row.publish_at or row.publish_at_iso or '' }}" data-start="{{ row.start or 0 }}" data-end="{{ row.end or 0 }}" data-edit-url="{{ editor_url('edit_clip_title_time', video_pk=video.id, plan_index=row.plan_index) }}">
+                  <button type="button" class="clip-rail-item{{ rail_render_aspect_class }}{% if row.is_ai_suggestion %} is-ai-suggestion{% endif %}{% if generate_v2 and not rail_has_rendered_media %} is-unrendered{% endif %}" title="{{ row.title or ('Manual clip #' ~ row.plan_index) }}" data-plan-index="{{ row.plan_index }}" data-origin="{{ row.origin }}" data-ai-suggestion="{{ '1' if row.is_ai_suggestion else '0' }}" data-score="{{ rail_score if rail_score is not none else '' }}" data-status="{{ row.status }}" data-render-job-status="{{ row.render_job_status or '' }}" data-filename="{{ row.video_filename or '' }}" data-media-version="{{ row.media_version or '' }}" data-render-width="{{ row.render_width or '' }}" data-render-height="{{ row.render_height or '' }}" data-render-aspect="{{ row.render_aspect or '' }}" data-outdated="{{ '1' if row.render_settings_outdated else '0' }}" data-needs-regenerate="{{ '1' if row.needs_regenerate else '0' }}" data-regenerate-reason="{{ row.regenerate_reason or '' }}" data-regenerate-locked="{{ '1' if row.regenerate_locked else '0' }}" data-regenerate-lock-reason="{{ row.regenerate_lock_reason or '' }}" data-title="{{ (row.yt_title or row.title or video.title) | e }}" data-description="{{ (row.yt_description or '') | replace('\\', '\\\\') | replace('\n', '\\n') | replace('\r', '\\r') | e }}" data-yt-video-id="{{ row.yt_video_id or '' }}" data-publish-status="{{ row.publish_status or '' }}" data-db-publish-status="{{ row.db_publish_status or '' }}" data-publish-at="{{ row.publish_at or row.publish_at_iso or '' }}" data-start="{{ row.start or 0 }}" data-end="{{ row.end or 0 }}" data-edit-url="{{ editor_url('edit_clip_title_time', video_pk=video.id, plan_index=row.plan_index) }}">
                     {% if generate_v2 %}
                     <span class="clip-rail-number">{{ loop.index }}</span>
                     {% endif %}
@@ -15838,12 +15838,62 @@ const stopClipJobPolling = (planIndex, { clearStored = false } = {}) => {
   }
 };
 
-const finalizeClipJobSuccess = async (planIndex, { cached = false } = {}) => {
+const applyServerClipFreshness = (planIndex, freshness) => {
+  if (!freshness || typeof freshness.needs_regenerate !== "boolean") {
+    return;
+  }
+  const needsRegenerate = freshness.needs_regenerate;
+  const reason = String(freshness.regenerate_reason || "").trim();
+  const value = needsRegenerate ? "1" : "0";
+  const card = getClipCardByPlanIndex(planIndex);
+  const railItem = document.querySelector(
+    `.clip-rail-item[data-plan-index="${CSS.escape(String(planIndex || ""))}"]`,
+  );
+  [card, railItem].forEach((element) => {
+    if (!element) return;
+    element.dataset.outdated = value;
+    element.dataset.needsRegenerate = value;
+    element.dataset.regenerateReason = reason;
+  });
+
+  card?.querySelectorAll(".generate-v2-needs-regenerate-dot").forEach((dot) => dot.remove());
+  railItem?.querySelectorAll(".generate-v2-needs-regenerate-dot").forEach((dot) => dot.remove());
+  const regenerateButton = card?.querySelector(".generate-v2-regenerate-btn");
+  const regenerateLabel = needsRegenerate
+    ? (reason === "music" ? "Music changed — regenerate to apply" : "Design changed — regenerate to apply")
+    : "Regenerate";
+  if (regenerateButton) {
+    regenerateButton.title = regenerateLabel;
+    regenerateButton.setAttribute("aria-label", regenerateLabel);
+  }
+  if (!needsRegenerate) {
+    return;
+  }
+  const railThumb = railItem?.querySelector(".clip-rail-thumb");
+  if (railThumb) {
+    const dot = document.createElement("span");
+    dot.className = "generate-v2-needs-regenerate-dot";
+    dot.setAttribute("role", "img");
+    dot.setAttribute("aria-label", "Needs regenerate");
+    dot.title = "Needs regenerate";
+    railThumb.appendChild(dot);
+  }
+  if (regenerateButton) {
+    const dot = document.createElement("span");
+    dot.className = "generate-v2-needs-regenerate-dot";
+    dot.setAttribute("aria-hidden", "true");
+    regenerateButton.appendChild(dot);
+  }
+};
+
+const finalizeClipJobSuccess = async (planIndex, { cached = false, freshness = null } = {}) => {
+  applyServerClipFreshness(planIndex, freshness);
   stopClipJobPolling(planIndex, { clearStored: true });
   setGenerateV2ClipMutationLocked(planIndex, false);
   setGenerateV2RenderOverlay(planIndex, { active: false, failed: false, success: false });
   for (let attempt = 0; attempt < clipJobRevealAttempts; attempt += 1) {
     const refreshed = await refreshClipList(planIndex, "list", { forceReplaceSelected: true });
+    applyServerClipFreshness(planIndex, freshness);
     if (refreshed && isCreatedClipRendered(planIndex)) {
       if (cached) {
         injectClipNotice(planIndex, "You've already generated this clip.");
@@ -16097,7 +16147,10 @@ const pollClipJobUntilDone = async (
       storeClipJob(key, { jobId, startedAt, status, mode });
       pollErrorCount = 0;
       if (status === "done") {
-        await finalizeClipJobSuccess(planIndex);
+        const freshness = payload?.media && typeof payload.media === "object"
+          ? payload.media
+          : (payload?.result && typeof payload.result === "object" ? payload.result : null);
+        await finalizeClipJobSuccess(planIndex, { freshness });
         return;
       }
       if (status === "failed" || status === "cancelled") {

@@ -6792,14 +6792,16 @@ def render_job_media_payload(job: Dict[str, Any]) -> Dict[str, Any]:
     if not clip_filename or not _short_exists(clip_filename):
         return {}
     media_version = ""
+    generated_record: Dict[str, Any] = {}
     conn = get_db_readonly()
     try:
         columns = table_columns(conn, "shorts_generated_videos")
         if columns:
             select_updated = "updated_at" if "updated_at" in columns else "NULL AS updated_at"
             select_hash = "render_settings_hash" if "render_settings_hash" in columns else "NULL AS render_settings_hash"
+            select_snapshot = "raw_plan_entry_json" if "raw_plan_entry_json" in columns else "NULL AS raw_plan_entry_json"
             sql = f"""
-                SELECT {select_updated}, {select_hash}
+                SELECT {select_updated}, {select_hash}, {select_snapshot}
                 FROM shorts_generated_videos
                 WHERE CAST(source_video_id AS VARCHAR) = ?
                   AND lower(coalesce(source_channel_type, 'youtube')) = 'youtube'
@@ -6812,6 +6814,11 @@ def render_job_media_payload(job: Dict[str, Any]) -> Dict[str, Any]:
             sql += " LIMIT 1"
             row = conn.execute(sql, params).fetchone()
             if row:
+                generated_record = {
+                    "updated_at": row[0],
+                    "render_settings_hash": row[1],
+                    "raw_plan_entry_json": row[2],
+                }
                 updated_at = _as_utc_datetime(row[0])
                 if updated_at:
                     media_version = str(int(updated_at.timestamp()))
@@ -6821,6 +6828,52 @@ def render_job_media_payload(job: Dict[str, Any]) -> Dict[str, Any]:
         current_app.logger.debug("Could not build render job media payload job_id=%s", (job or {}).get("id"), exc_info=True)
     finally:
         conn.close()
+
+    freshness_payload: Dict[str, Any] = {}
+    try:
+        video_pk = int(payload.get("video_pk"))
+        owner_user_id = str((job or {}).get("user_id") or payload.get("owner_user_id") or "").strip()
+        conn = get_db_readonly()
+        sql = "SELECT * FROM youtube_videos WHERE id = ?"
+        params: List[Any] = [video_pk]
+        if owner_user_id:
+            sql += " AND CAST(owner_user_id AS VARCHAR) = CAST(? AS VARCHAR)"
+            params.append(owner_user_id)
+        if brand_id:
+            sql += " AND CAST(brand_id AS VARCHAR) = CAST(? AS VARCHAR)"
+            params.append(brand_id)
+        else:
+            sql += " AND brand_id IS NULL"
+        result = conn.execute(sql, params)
+        video_row = result.fetchone()
+        descriptions = result.description or []
+        if video_row:
+            video = dict(zip([str(item[0]) for item in descriptions], video_row))
+            video["layout_mode"] = _effective_layout_mode_for_owner(
+                video.get("owner_user_id"), video.get("layout_mode")
+            )
+            _, segments = _fetch_transcript(conn, source_video_id, video_pk=video_pk)
+            freshness_payload = _compute_render_freshness_state(
+                video_pk=video_pk,
+                video=video,
+                plan_entry=target_entry,
+                segments=segments or [],
+                brand_id=brand_id or None,
+                fallback_title=video.get("title") or "",
+                generated_record=generated_record,
+                has_rendered_media=True,
+            )
+    except Exception:
+        current_app.logger.debug(
+            "Could not build render job freshness payload job_id=%s",
+            (job or {}).get("id"),
+            exc_info=True,
+        )
+    finally:
+        try:
+            conn.close()
+        except Exception:
+            pass
     video_url = _versioned_media_url(_short_public_url(clip_filename), media_version)
     poster_filename = str((target_entry or {}).get("poster_filename") or "").strip()
     poster_url = (
@@ -6848,6 +6901,7 @@ def render_job_media_payload(job: Dict[str, Any]) -> Dict[str, Any]:
             (target_entry or {}).get("render_width"),
             (target_entry or {}).get("render_height"),
         ),
+        **freshness_payload,
     }
 
 
@@ -9259,6 +9313,93 @@ def _compute_render_settings_hash_aliases_for_plan_entry(
     return aliases
 
 
+def _compute_render_freshness_state(
+    *,
+    video_pk: int,
+    video: Dict[str, Any],
+    plan_entry: Dict[str, Any],
+    segments: List[Dict[str, Any]],
+    brand_id: Optional[str],
+    fallback_title: str,
+    generated_record: Optional[Dict[str, Any]] = None,
+    has_rendered_media: bool = True,
+) -> Dict[str, Any]:
+    """Return the authoritative server-side freshness state for one rendered clip."""
+    record = generated_record if isinstance(generated_record, dict) else {}
+    stored_hash = str(record.get("render_settings_hash") or "").strip()
+    state = {
+        "needs_regenerate": False,
+        "render_settings_outdated": False,
+        "regenerate_reason": "",
+        "render_settings_hash": stored_hash,
+        "current_render_settings_hash": "",
+    }
+    if not has_rendered_media or not stored_hash:
+        return state
+
+    try:
+        current_hashes = _compute_render_settings_hash_aliases_for_plan_entry(
+            video_pk=int(video.get("id") or video_pk),
+            video=video,
+            plan_entry=plan_entry,
+            segments=segments,
+            brand_id=brand_id,
+            fallback_title=fallback_title,
+        )
+        state["current_render_settings_hash"] = current_hashes[0] if current_hashes else ""
+        is_outdated = stored_hash not in current_hashes
+        state["needs_regenerate"] = is_outdated
+        state["render_settings_outdated"] = is_outdated
+        if not is_outdated:
+            return state
+
+        raw_snapshot = record.get("raw_plan_entry_json")
+        rendered_snapshot = raw_snapshot if isinstance(raw_snapshot, dict) else json.loads(raw_snapshot or "null")
+        if isinstance(rendered_snapshot, dict):
+            music_fields = ("music_audio_id", "music_level", "music_start_seconds", "music_duck", "music_fade_out")
+            current_music = (
+                _normalize_music_audio_id(_plan_music_value(plan_entry, video, "music_audio_id")),
+                normalize_music_level(_plan_music_value(plan_entry, video, "music_level")),
+                normalize_music_start_seconds(_plan_music_value(plan_entry, video, "music_start_seconds")),
+                _normalize_optional_bool(_plan_music_value(plan_entry, video, "music_duck"), default=True),
+                _normalize_optional_bool(_plan_music_value(plan_entry, video, "music_fade_out"), default=True),
+            )
+            rendered_music = (
+                _normalize_music_audio_id(rendered_snapshot.get("music_audio_id")),
+                normalize_music_level(rendered_snapshot.get("music_level")),
+                normalize_music_start_seconds(rendered_snapshot.get("music_start_seconds")),
+                _normalize_optional_bool(rendered_snapshot.get("music_duck"), default=True),
+                _normalize_optional_bool(rendered_snapshot.get("music_fade_out"), default=True),
+            )
+            if current_music != rendered_music:
+                previous_music_entry = dict(plan_entry)
+                for field in music_fields:
+                    if field in rendered_snapshot:
+                        previous_music_entry[field] = rendered_snapshot[field]
+                    else:
+                        previous_music_entry.pop(field, None)
+                previous_music_hashes = _compute_render_settings_hash_aliases_for_plan_entry(
+                    video_pk=int(video.get("id") or video_pk),
+                    video=video,
+                    plan_entry=previous_music_entry,
+                    segments=segments,
+                    brand_id=brand_id,
+                    fallback_title=fallback_title,
+                )
+                if stored_hash in previous_music_hashes:
+                    state["regenerate_reason"] = "music"
+        if not state["regenerate_reason"]:
+            state["regenerate_reason"] = "design"
+    except Exception as exc:
+        current_app.logger.warning(
+            "Failed to compute render freshness video_pk=%s plan_index=%s: %s",
+            video_pk,
+            plan_entry.get("plan_index"),
+            exc,
+        )
+    return state
+
+
 def _find_plan_entry(entries: List[Dict[str, Any]], plan_index: Optional[str]) -> Optional[Dict[str, Any]]:
     if not entries:
         return None
@@ -11494,6 +11635,8 @@ def generate_short(video_pk):
     """
     if "subtitle_preset" in video_columns:
         video_sql += ", subtitle_preset"
+    if "crop_locked" in video_columns:
+        video_sql += ", crop_locked"
     if "creator_name" in video_columns:
         video_sql += ", creator_name"
     if "creator_email" in video_columns:
@@ -11536,6 +11679,8 @@ def generate_short(video_pk):
     ]
     if "subtitle_preset" in video_columns:
         cols.append("subtitle_preset")
+    if "crop_locked" in video_columns:
+        cols.append("crop_locked")
     if "creator_name" in video_columns:
         cols.append("creator_name")
     if "creator_email" in video_columns:
@@ -12981,72 +13126,23 @@ def generate_short(video_pk):
             or tt_status in {"pending", "retry", "uploading", "published"}
             or fb_status in {"pending", "retry", "uploading", "published"}
         )
-        stored_render_settings_hash = str(generated_record.get("render_settings_hash") or "").strip()
         render_job_id = str(entry.get("render_job_id") or "").strip()
         render_job = render_jobs_by_id.get(render_job_id) or active_render_job
         render_job_status = str((render_job or {}).get("status") or "").strip().lower()
-        current_render_settings_hash = ""
-        render_settings_outdated = False
-        regenerate_reason = ""
-        if status == "created" and video_filename and stored_render_settings_hash:
-            try:
-                current_render_settings_hashes = _compute_render_settings_hash_aliases_for_plan_entry(
-                    video_pk=int(video.get("id") or video_pk),
-                    video=video,
-                    plan_entry=entry,
-                    segments=segments,
-                    brand_id=brand_id,
-                    fallback_title=video.get("title") or "",
-                )
-                current_render_settings_hash = current_render_settings_hashes[0] if current_render_settings_hashes else ""
-                render_settings_outdated = stored_render_settings_hash not in current_render_settings_hashes
-                if render_settings_outdated:
-                    raw_snapshot = generated_record.get("raw_plan_entry_json")
-                    rendered_snapshot = raw_snapshot if isinstance(raw_snapshot, dict) else json.loads(raw_snapshot or "null")
-                    if isinstance(rendered_snapshot, dict):
-                        music_fields = ("music_audio_id", "music_level", "music_start_seconds", "music_duck", "music_fade_out")
-                        current_music = (
-                            _normalize_music_audio_id(_plan_music_value(entry, video, "music_audio_id")),
-                            normalize_music_level(_plan_music_value(entry, video, "music_level")),
-                            normalize_music_start_seconds(_plan_music_value(entry, video, "music_start_seconds")),
-                            _normalize_optional_bool(_plan_music_value(entry, video, "music_duck"), default=True),
-                            _normalize_optional_bool(_plan_music_value(entry, video, "music_fade_out"), default=True),
-                        )
-                        rendered_music = (
-                            _normalize_music_audio_id(rendered_snapshot.get("music_audio_id")),
-                            normalize_music_level(rendered_snapshot.get("music_level")),
-                            normalize_music_start_seconds(rendered_snapshot.get("music_start_seconds")),
-                            _normalize_optional_bool(rendered_snapshot.get("music_duck"), default=True),
-                            _normalize_optional_bool(rendered_snapshot.get("music_fade_out"), default=True),
-                        )
-                        if current_music != rendered_music:
-                            previous_music_entry = dict(entry)
-                            for field in music_fields:
-                                if field in rendered_snapshot:
-                                    previous_music_entry[field] = rendered_snapshot[field]
-                                else:
-                                    previous_music_entry.pop(field, None)
-                            previous_music_hashes = _compute_render_settings_hash_aliases_for_plan_entry(
-                                video_pk=int(video.get("id") or video_pk),
-                                video=video,
-                                plan_entry=previous_music_entry,
-                                segments=segments,
-                                brand_id=brand_id,
-                                fallback_title=video.get("title") or "",
-                            )
-                            if stored_render_settings_hash in previous_music_hashes:
-                                regenerate_reason = "music"
-                    if not regenerate_reason:
-                        regenerate_reason = "design"
-            except Exception as exc:
-                if render_settings_outdated and not regenerate_reason:
-                    regenerate_reason = "design"
-                current_app.logger.warning(
-                    "Failed to compute render settings hash video_pk=%s plan_index=%s: %s",
-                    video_pk,
-                    pi,
-                    exc,
-                )
+        render_freshness = _compute_render_freshness_state(
+            video_pk=video_pk,
+            video=video,
+            plan_entry=entry,
+            segments=segments,
+            brand_id=brand_id,
+            fallback_title=video.get("title") or "",
+            generated_record=generated_record,
+            has_rendered_media=status == "created" and bool(video_filename),
+        )
+        stored_render_settings_hash = render_freshness["render_settings_hash"]
+        current_render_settings_hash = render_freshness["current_render_settings_hash"]
+        render_settings_outdated = bool(render_freshness["needs_regenerate"])
+        regenerate_reason = str(render_freshness["regenerate_reason"] or "")
 
         updated_at_dt = _as_utc_datetime(generated_record.get("updated_at"))
         media_version = ""
