@@ -6520,7 +6520,7 @@
                         role="tab"
                         aria-selected="false">
                   <i class="bi bi-sliders" aria-hidden="true"></i>
-                  <span>Edit Shorts</span>
+                  <span>Design</span>
                 </button>
               </div>
               <div class="generate-v2-tab-actions" aria-label="Clip actions">
@@ -7668,7 +7668,7 @@
                     </button>
                     <button type="button" class="generate-v2-tab" data-generate-v2-tab="edit" role="tab" aria-selected="false" disabled>
                       <i class="bi bi-sliders" aria-hidden="true"></i>
-                      <span>Edit Shorts</span>
+                      <span>Design</span>
                     </button>
                   </div>
                 </div>
@@ -7729,7 +7729,7 @@
                     </button>
                     <button type="button" class="generate-v2-tab" data-generate-v2-tab="edit" role="tab" aria-selected="false" disabled>
                       <i class="bi bi-sliders" aria-hidden="true"></i>
-                      <span>Edit Shorts</span>
+                      <span>Design</span>
                     </button>
                   </div>
                 </div>
@@ -21553,17 +21553,15 @@ document.addEventListener("DOMContentLoaded", () => {
         chooseBtn.dataset.originalZoomRect = originalZoomRect ? JSON.stringify(originalZoomRect) : "";
       }
       window.updateShortDesignStrip?.(currentShortDesignDetails());
-      const activePlanIndex = document.getElementById("clip-management-panel")?.dataset.activePlanIndex || "";
       if (getGenerateV2Root()) {
-        window.exitGenerateV2EditMode?.({ saved: true });
         window.setGenerateV2EditorBusy?.(false);
-        window.setGenerateV2ActiveTab?.("shorts", { persist: true, selectedPlanIndex: activePlanIndex || "" });
-        if (typeof refreshClipList === "function") {
-          refreshClipList(activePlanIndex, "list", { forceReplaceSelected: true })
-            .catch((error) => {
-              console.warn("generate_v2_refresh_after_save_failed", error);
-            });
-        }
+        window.setGenerateV2EditorStatus?.("Saved ✓", "success");
+        window.setTimeout(() => {
+          const editorStatus = document.getElementById("generate-v2-editor-status");
+          if (generateV2EditState.active && editorStatus?.textContent === "Saved ✓") {
+            window.setGenerateV2EditorStatus?.("", "");
+          }
+        }, 2000);
         return;
       }
       continueAfterSave();

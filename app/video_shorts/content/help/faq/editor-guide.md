@@ -10,7 +10,7 @@ order: 25
 
 Turn one long video into several Shorts: add the video, pick your moments, design them, and render. This guide walks through every part of the editor.
 
-**On this page:** [Add a video](#add-a-video) · [Your Clips](#your-clips) · [Make a Clip](#make-a-clip) · [Edit a clip's text](#edit-clip-text) · [Edit Shorts](#edit-shorts) · [Style](#style) · [Layout](#layout) · [Captions](#captions) · [Title](#title) · [Shapes](#shapes) · [Music](#music) · [Background](#background) · [Subscribe](#subscribe) · [Save & regenerate](#saving) · [Schedule](#schedule) · [Common questions](#faq)
+**On this page:** [Add a video](#add-a-video) · [Your Clips](#your-clips) · [Make a Clip](#make-a-clip) · [Edit a clip's text](#edit-clip-text) · [Design](#edit-shorts) · [Style](#style) · [Layout](#layout) · [Captions](#captions) · [Title](#title) · [Shapes](#shapes) · [Music](#music) · [Background](#background) · [Subscribe](#subscribe) · [Save & regenerate](#saving) · [Schedule](#schedule) · [Common questions](#faq)
 
 ## Add a video {#add-a-video}
 
@@ -78,9 +78,9 @@ Open a clip in `Your Clips`. The middle column shows the transcript around the c
 
 Click `Save`, or `Save & regenerate` to render the new version right away.
 
-## Edit Shorts — design your Shorts {#edit-shorts}
+## Design your Shorts {#edit-shorts}
 
-Click `Edit Shorts` to change how your Shorts look. The menu on the left has eight sections; the preview on the right updates as you go.
+Click `Design` to change how your Shorts look. The menu on the left has eight sections; the preview on the right updates as you go.
 
 :::info
 The preview is labelled **Preview — not rendered**. It's a live preview. Your changes are written into the video file when you regenerate the clip.
