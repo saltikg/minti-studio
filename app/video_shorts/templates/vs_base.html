@@ -1188,7 +1188,6 @@
         }).join("");
       };
 
-      const isGenerateV2Page = () => Boolean(document.querySelector('#clip-workbench-shell[data-generate-v2="1"]'));
       const isShortReadyNotification = (item) => {
         const title = String(item?.title || "").trim().toLowerCase();
         const message = String(item?.message || "").trim().toLowerCase();
@@ -1202,7 +1201,7 @@
         }
         const items = readNotifications();
         const latest = items.length ? items[items.length - 1] : null;
-        if (!latest || (isGenerateV2Page() && isShortReadyNotification(latest))) {
+        if (!latest || isShortReadyNotification(latest)) {
           banner.classList.add("d-none");
           banner.innerHTML = "";
           return;
