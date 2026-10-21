@@ -23977,20 +23977,31 @@ def preview_keep_ranges(video_pk: int):
         return jsonify(success=False, message="Select at least one clip part."), 400
 
     conn = get_db_readonly()
-    row = _fetch_scoped_video_row(conn, video_pk, "video_id")
-    conn.close()
-    if not row:
-        return jsonify(success=False, message="Video not found."), 404
+    try:
+        row = _fetch_scoped_video_row(conn, video_pk, "video_id, duration_seconds")
+        if not row:
+            return jsonify(success=False, message="Video not found."), 404
+        _, segments = _fetch_transcript(conn, str(row[0] or ""), video_pk=video_pk)
+    finally:
+        conn.close()
 
     source_path: Optional[Path] = None
     source_path_is_temp = False
     try:
         source_path, source_path_is_temp = _resolve_source_video(str(row[0] or ""), video_pk=video_pk)
         _, resolved_ranges, _ = resolve_keep_ranges_for_trim(source_path, ranges)
+        speech_ranges = build_final_timeline_speech_ranges(
+            segments,
+            clip_start=resolved_ranges[0]["start"],
+            clip_end=resolved_ranges[-1]["end"],
+            edit_keep_ranges=resolved_ranges,
+            source_duration=row[1],
+        )
         return jsonify(
             success=True,
             ranges=resolved_ranges,
             duration=round(sum(item["end"] - item["start"] for item in resolved_ranges), 6),
+            music_speech_ranges=speech_ranges,
         )
     except Exception as exc:
         current_app.logger.exception("Could not resolve preview ranges video_pk=%s", video_pk)

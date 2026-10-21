@@ -3354,6 +3354,13 @@
     background: rgba(45, 212, 191, 0.18);
     color: #fff;
   }
+  .generate-v2-text-preview-controls .btn[aria-pressed="false"] {
+    color: rgba(226, 232, 240, 0.5);
+  }
+  .generate-v2-text-preview-controls .btn[aria-disabled="true"] {
+    color: rgba(226, 232, 240, 0.28);
+    cursor: not-allowed;
+  }
   .generate-v2-text-preview-status {
     color: #99f6e4;
     font-size: 0.74rem;
@@ -6861,6 +6868,7 @@
                   <button type="button" class="btn btn-sm btn-outline-light" data-generate-v2-text-preview-all>▶ Preview all</button>
                   <div class="generate-v2-text-preview-controls d-none" data-generate-v2-text-preview-controls>
                     <button type="button" class="btn" data-generate-v2-text-preview-toggle aria-label="Pause preview" title="Pause preview">⏸</button>
+                    <button type="button" class="btn d-none" data-generate-v2-text-preview-music aria-label="Music on/off" aria-pressed="true" title="Music on">♪</button>
                     <button type="button" class="btn" data-generate-v2-text-preview-stop aria-label="Stop preview" title="Stop preview">■</button>
                   </div>
                   <span class="generate-v2-text-preview-status d-none" data-generate-v2-text-preview-status></span>
@@ -8726,7 +8734,7 @@
                     <div class="music-controls d-none music-options-row" id="musicControls">
                       <div class="form-check form-switch"><input class="form-check-input" type="checkbox" name="music_duck" id="musicDuck" value="1" {% if selected_music_duck %}checked{% endif %}><label class="form-check-label" for="musicDuck">Lower music when speaking</label></div>
                     </div>
-                    <audio id="musicPreviewAudio" preload="metadata"></audio>
+                    <audio id="musicPreviewAudio" preload="none"></audio>
                   </div>
                   <div class="crop-modal-tab-panel crop-modal-settings-panel" data-crop-modal-panel="background" hidden>
                     <div class="control-group background-visual-selector" data-bg-visuals='{{ bg_visual_options | tojson | safe }}' data-selection-url="{{ background_preference_update_url }}">
@@ -13979,6 +13987,30 @@ const startGenerateV2TranscriptWordEdit = ({
   input.addEventListener("touchstart", (event) => event.stopPropagation(), { passive: true });
 };
 
+window.__mintiMusicPreviewMix = window.__mintiMusicPreviewMix || {
+  gainForLevel(level) {
+    const normalized = Math.max(0, Math.min(100, Number(level) || 0));
+    return normalized <= 0 ? 0 : Math.pow(10, (40 * (normalized / 100 - 1)) / 20);
+  },
+  speechGain(time, ranges, enabled = true) {
+    if (!enabled) return 1;
+    const ramp = 0.15;
+    const duckedGain = Math.pow(10, -10 / 20);
+    for (const range of Array.isArray(ranges) ? ranges : []) {
+      const start = Number(range?.start || 0);
+      const end = Number(range?.end || 0);
+      if (time >= start && time <= end) return duckedGain;
+      if (time >= start - ramp && time < start) {
+        return 1 - ((time - (start - ramp)) / ramp) * (1 - duckedGain);
+      }
+      if (time > end && time <= end + ramp) {
+        return duckedGain + ((time - end) / ramp) * (1 - duckedGain);
+      }
+    }
+    return 1;
+  },
+};
+
 window.initGenerateV2TextTranscript = () => {
   const root = getGenerateV2Root();
   const shell = document.querySelector("[data-generate-v2-text-transcript]");
@@ -14001,6 +14033,7 @@ window.initGenerateV2TextTranscript = () => {
   const previewAllBtn = shell.querySelector("[data-generate-v2-text-preview-all]");
   const previewControls = shell.querySelector("[data-generate-v2-text-preview-controls]");
   const previewToggleBtn = shell.querySelector("[data-generate-v2-text-preview-toggle]");
+  const previewMusicBtn = shell.querySelector("[data-generate-v2-text-preview-music]");
   const previewStopBtn = shell.querySelector("[data-generate-v2-text-preview-stop]");
   const previewStatus = shell.querySelector("[data-generate-v2-text-preview-status]");
   const previewProgress = shell.querySelector("[data-generate-v2-text-preview-progress]");
@@ -14035,6 +14068,9 @@ window.initGenerateV2TextTranscript = () => {
       seekToken: 0,
       scrubPointerId: null,
       resumeAfterScrub: false,
+      musicEnabled: true,
+      musicFailed: false,
+      musicSpeechRanges: [],
     },
   };
   window.__generateV2TextParts = state.parts;
@@ -14112,12 +14148,29 @@ window.initGenerateV2TextTranscript = () => {
   const previewElapsedBeforePart = (partIndex) => state.preview.ranges
     .slice(0, Math.max(0, partIndex))
     .reduce((total, part) => total + Math.max(0, part.end - part.start), 0);
+  const previewElapsedAt = (sourceTime = null) => {
+    if (!state.preview.ranges.length) return 0;
+    const part = state.preview.ranges[state.preview.partIndex];
+    const playerTime = window.__trsClipSelectorController?.capturePlayerState?.()?.currentTime;
+    const current = Number.isFinite(Number(sourceTime))
+      ? Number(sourceTime)
+      : Number.isFinite(Number(playerTime)) ? Number(playerTime) : Number(part?.start || 0);
+    return previewElapsedBeforePart(state.preview.partIndex)
+      + Math.max(0, Math.min(Number(part?.end || 0), current) - Number(part?.start || 0));
+  };
+  const syncPreviewMusic = (sourceTime = null, playing = !state.preview.paused) => {
+    if (!state.preview.active) return;
+    window.__videoMusicPreview?.sync?.({
+      elapsed: previewElapsedAt(sourceTime),
+      totalDuration: previewTotalDuration(),
+      playing: !!playing,
+      enabled: state.preview.musicEnabled && !state.preview.musicFailed,
+      speechRanges: state.preview.musicSpeechRanges,
+    });
+  };
   const updatePreviewStatus = (sourceTime = null) => {
     if (!state.preview.active || !state.preview.ranges.length) return;
-    const part = state.preview.ranges[state.preview.partIndex];
-    const current = Number.isFinite(Number(sourceTime)) ? Number(sourceTime) : Number(part?.start || 0);
-    const elapsed = previewElapsedBeforePart(state.preview.partIndex)
-      + Math.max(0, Math.min(Number(part?.end || 0), current) - Number(part?.start || 0));
+    const elapsed = previewElapsedAt(sourceTime);
     const total = previewTotalDuration();
     const percent = total > 0 ? Math.max(0, Math.min(100, (elapsed / total) * 100)) : 0;
     if (previewStatus) {
@@ -14126,6 +14179,7 @@ window.initGenerateV2TextTranscript = () => {
     if (previewProgressFill) previewProgressFill.style.width = `${percent}%`;
     previewProgress?.setAttribute("aria-valuenow", String(Math.round(percent)));
     previewProgress?.setAttribute("aria-valuetext", `${formatPreviewTime(elapsed)} of ${formatPreviewTime(total)}`);
+    syncPreviewMusic(sourceTime);
   };
   const cancelPreviewFrame = () => {
     if (!state.preview.frameHandle) return;
@@ -14144,6 +14198,15 @@ window.initGenerateV2TextTranscript = () => {
       previewToggleBtn.setAttribute("aria-label", `${action} preview`);
       previewToggleBtn.title = `${action} preview`;
     }
+    if (previewMusicBtn) {
+      const hasMusic = !!window.__videoMusicPreview?.hasMusic?.();
+      previewMusicBtn.classList.toggle("d-none", !active || !hasMusic);
+      previewMusicBtn.setAttribute("aria-disabled", state.preview.musicFailed ? "true" : "false");
+      previewMusicBtn.setAttribute("aria-pressed", state.preview.musicEnabled && !state.preview.musicFailed ? "true" : "false");
+      previewMusicBtn.title = state.preview.musicFailed
+        ? "Music could not be loaded"
+        : state.preview.musicEnabled ? "Music on" : "Music off";
+    }
     updatePartsBar();
   };
   const stopPreview = ({ restore = true } = {}) => {
@@ -14153,12 +14216,16 @@ window.initGenerateV2TextTranscript = () => {
     state.preview.seekToken += 1;
     cancelPreviewFrame();
     window.__trsClipSelectorController?.pausePlayer?.();
+    window.__videoMusicPreview?.stop?.();
     stopGenerateV2KaraokePolling({ clear: true });
     const snapshot = state.preview.restoreSnapshot;
     state.preview.ranges = [];
     state.preview.partIndex = 0;
     state.preview.scrubPointerId = null;
     state.preview.resumeAfterScrub = false;
+    state.preview.musicEnabled = true;
+    state.preview.musicFailed = false;
+    state.preview.musicSpeechRanges = [];
     state.preview.restoreSnapshot = null;
     if (previewProgressFill) previewProgressFill.style.width = "0%";
     if (restore && snapshot) window.__trsClipSelectorController?.restorePlayerState?.(snapshot);
@@ -14196,6 +14263,7 @@ window.initGenerateV2TextTranscript = () => {
     state.preview.paused = !shouldPlay;
     cancelPreviewFrame();
     updatePreviewStatus(target);
+    syncPreviewMusic(target, false);
     setPreviewControls(true);
     const ok = await window.__trsClipSelectorController?.seekAndWait?.(seekTarget, shouldPlay);
     if (!state.preview.active || state.preview.seekToken !== seekToken || ok === false) return;
@@ -14203,6 +14271,7 @@ window.initGenerateV2TextTranscript = () => {
       state.preview.paused = false;
       window.startGenerateV2KaraokePolling?.();
       schedulePreviewFrame();
+      syncPreviewMusic(target, true);
     }
     setPreviewControls(true);
   };
@@ -14245,8 +14314,22 @@ window.initGenerateV2TextTranscript = () => {
       state.preview.active = true;
       state.preview.paused = false;
       state.preview.ranges = resolved;
+      state.preview.musicEnabled = true;
+      state.preview.musicFailed = false;
+      state.preview.musicSpeechRanges = Array.isArray(payload.music_speech_ranges) ? payload.music_speech_ranges : [];
       state.preview.restoreSnapshot = window.__trsClipSelectorController?.capturePlayerState?.() || null;
       setPreviewControls(true);
+      void window.__videoMusicPreview?.start?.({
+        elapsed: previewElapsedBeforePart(Math.min(startPartIndex, resolved.length - 1)),
+        totalDuration: previewTotalDuration(),
+        enabled: true,
+        speechRanges: state.preview.musicSpeechRanges,
+        onError: () => {
+          if (!state.preview.active) return;
+          state.preview.musicFailed = true;
+          setPreviewControls(true);
+        },
+      });
       await seekPreviewPart(Math.min(startPartIndex, resolved.length - 1), sourceTime);
     } catch (error) {
       showTextToast(error?.message || "Could not prepare preview.", true);
@@ -14418,6 +14501,7 @@ window.initGenerateV2TextTranscript = () => {
     addPart(range);
   });
   previewAllBtn?.addEventListener("click", () => {
+    window.__videoMusicPreview?.prepare?.();
     void previewPartsSequentially();
   });
   previewToggleBtn?.addEventListener("click", () => {
@@ -14427,12 +14511,20 @@ window.initGenerateV2TextTranscript = () => {
       window.__trsClipSelectorController?.playPlayer?.();
       window.startGenerateV2KaraokePolling?.();
       schedulePreviewFrame();
+      syncPreviewMusic(null, true);
     } else {
       state.preview.paused = true;
       cancelPreviewFrame();
       window.__trsClipSelectorController?.pausePlayer?.();
       stopGenerateV2KaraokePolling();
+      syncPreviewMusic(null, false);
     }
+    setPreviewControls(true);
+  });
+  previewMusicBtn?.addEventListener("click", () => {
+    if (!state.preview.active || state.preview.musicFailed) return;
+    state.preview.musicEnabled = !state.preview.musicEnabled;
+    syncPreviewMusic(null, !state.preview.paused);
     setPreviewControls(true);
   });
   previewStopBtn?.addEventListener("click", () => stopPreview());
@@ -23583,6 +23675,7 @@ document.addEventListener("DOMContentLoaded", () => {
   const previewAudio = document.getElementById("musicPreviewAudio");
   const newMusicLevel = {{ selected_music_level if selected_music_level is not none else 50 }};
   const newMusicDuck = {{ 'true' if selected_music_duck else 'false' }};
+  const newMusicFadeOut = {{ 'true' if selected_music_fade_out else 'false' }};
   const chip = document.getElementById("musicPreviewChip");
   const startLabel = document.getElementById("musicStartLabel");
   const levelLabel = document.getElementById("musicLevelLabel");
@@ -23613,6 +23706,10 @@ document.addEventListener("DOMContentLoaded", () => {
   let lastStartRetryAt = 0;
   let libraryPlayIntentId = "";
   let libraryPlayToken = 0;
+  let resolveTracksLoaded;
+  const tracksLoaded = new Promise((resolve) => { resolveTracksLoaded = resolve; });
+  let textPreviewConfig = null;
+  let textPreviewToken = 0;
   const renderedMuteStates = new Map();
   let lastVoiceVideo = null;
 
@@ -23664,18 +23761,8 @@ document.addEventListener("DOMContentLoaded", () => {
   };
   const showMusicGuestGate = () => window.handleGuestGatePayload?.({gate:"signup", action:"music_upload", register_url:{{ url_for('video_shorts_bp.register', next=request.path, action='music_upload')|tojson }}, login_url:{{ url_for('video_shorts_bp.login', next=request.path, action='music_upload')|tojson }}});
   const dispatch = (field) => field?.dispatchEvent(new Event("input", { bubbles: true }));
-  const gainForLevel = () => { const n = Math.max(0, Math.min(100, Number(level?.value || 0))); return n <= 0 ? 0 : Math.pow(10, (40 * (n / 100 - 1)) / 20); };
-  const speechGain = (time) => {
-    if (!duck?.checked) return 1;
-    const ramp = .15;
-    for (const range of speechRanges()) {
-      const a = Number(range.start || 0), b = Number(range.end || 0);
-      if (time >= a && time <= b) return Math.pow(10, -10 / 20);
-      if (time >= a - ramp && time < a) return 1 - ((time - (a - ramp)) / ramp) * (1 - Math.pow(10, -10 / 20));
-      if (time > b && time <= b + ramp) return Math.pow(10, -10 / 20) + ((time - b) / ramp) * (1 - Math.pow(10, -10 / 20));
-    }
-    return 1;
-  };
+  const gainForLevel = () => window.__mintiMusicPreviewMix.gainForLevel(level?.value);
+  const speechGain = (time) => window.__mintiMusicPreviewMix.speechGain(time, speechRanges(), !!duck?.checked);
   const resetPlayButtons = () => {
     document.querySelectorAll(".music-library-play").forEach((button) => {
       const icon = button.querySelector("i");
@@ -23824,7 +23911,7 @@ document.addEventListener("DOMContentLoaded", () => {
     selected = tracks.find((track) => track.id === audioId.value) || null;
     timeline?.classList.toggle("d-none", !selected); controls?.classList.toggle("d-none", !selected); chip?.classList.toggle("d-none", !selected);
     if (level) syncLevelControls(level);
-    if (selected) { if(audioMode!=="library")setAudioTrack(selected); chip.querySelector("span").textContent=`${fallbackName(selected)} · ${level?.value || 0}%`; drawTimeline(); updatePlayhead(previewPlayback()?.time||0); }
+    if (selected) { chip.querySelector("span").textContent=`${fallbackName(selected)} · ${level?.value || 0}%`; drawTimeline(); updatePlayhead(previewPlayback()?.time||0); }
     else { stopSharedAudio(); setPickerOpen(false); }
     renderSelected(); renderPicker();
   };
@@ -23856,7 +23943,96 @@ document.addEventListener("DOMContentLoaded", () => {
   const renderList = () => {
     syncUi();
   };
-  const loadTracks = async () => { try { const response=await fetch(listUrl,{headers:{Accept:"application/json"}}); const payload=await response.json(); tracks=(Array.isArray(payload.audios)?payload.audios:[]).sort((a,b)=>String(b.created_at||"").localeCompare(String(a.created_at||""))); updateMusicBadges(); renderList(); } catch (_) { list.innerHTML='<div class="small text-danger">Music library could not be loaded.</div>'; } };
+  const loadTracks = async () => { try { const response=await fetch(listUrl,{headers:{Accept:"application/json"}}); const payload=await response.json(); tracks=(Array.isArray(payload.audios)?payload.audios:[]).sort((a,b)=>String(b.created_at||"").localeCompare(String(a.created_at||""))); updateMusicBadges(); renderList(); } catch (_) { list.innerHTML='<div class="small text-danger">Music library could not be loaded.</div>'; } finally { resolveTracksLoaded?.(); } };
+  const failTextPreviewMusic = () => {
+    if (audioMode !== "text-preview" || !textPreviewConfig) return;
+    const onError = textPreviewConfig.onError;
+    textPreviewConfig = null;
+    textPreviewToken += 1;
+    previewAudio.pause();
+    audioMode = "";
+    onError?.();
+  };
+  const syncTextPreviewMusic = (next = {}) => {
+    if (audioMode !== "text-preview" || !textPreviewConfig || !selected) return;
+    textPreviewConfig = { ...textPreviewConfig, ...next };
+    const config = textPreviewConfig;
+    const elapsed = Math.max(0, Number(config.elapsed) || 0);
+    const totalDuration = Math.max(0, Number(config.totalDuration) || 0);
+    const enabled = config.enabled !== false;
+    const playing = !!config.playing;
+    if (!enabled) {
+      previewAudio.pause();
+      previewAudio.volume = 0;
+      return;
+    }
+    const trackDuration = Math.max(0.1, Number(previewAudio.duration || selected.duration_seconds) || 0.1);
+    const target = (Math.max(0, Number(startField.value) || 0) + elapsed) % trackDuration;
+    if (previewAudio.readyState >= 1 && Math.abs(Number(previewAudio.currentTime || 0) - target) > 0.25) {
+      try { previewAudio.currentTime = target; } catch (_) {}
+    }
+    const duckGain = window.__mintiMusicPreviewMix.speechGain(
+      elapsed,
+      config.speechRanges,
+      !!duck?.checked,
+    );
+    const fadeSeconds = 1;
+    const remaining = Math.max(0, totalDuration - elapsed);
+    const fadeGain = newMusicFadeOut && remaining < fadeSeconds ? remaining / fadeSeconds : 1;
+    previewAudio.volume = Math.max(0, Math.min(1, gainForLevel() * duckGain * fadeGain));
+    if (playing) {
+      if (previewAudio.paused) previewAudio.play().catch(failTextPreviewMusic);
+    } else if (!previewAudio.paused) {
+      previewAudio.pause();
+    }
+  };
+  window.__videoMusicPreview = {
+    hasMusic: () => !!String(audioId.value || "").trim(),
+    prepare: () => {
+      if (!String(audioId.value || "").trim()) return;
+      const prepareTrack = () => {
+        selected = tracks.find((track) => String(track.id) === String(audioId.value)) || null;
+        if (!selected) return;
+        previewAudio.preload = "auto";
+        setAudioTrack(selected);
+      };
+      if (tracks.length) prepareTrack();
+      else void tracksLoaded.then(prepareTrack);
+    },
+    start: async (config = {}) => {
+      const token = ++textPreviewToken;
+      await tracksLoaded;
+      if (token !== textPreviewToken || !String(audioId.value || "").trim()) return false;
+      selected = tracks.find((track) => String(track.id) === String(audioId.value)) || null;
+      if (!selected) {
+        config.onError?.();
+        return false;
+      }
+      stopSharedAudio();
+      audioMode = "text-preview";
+      textPreviewConfig = { ...config, playing: false };
+      previewAudio.preload = "auto";
+      if (!setAudioTrack(selected)) {
+        failTextPreviewMusic();
+        return false;
+      }
+      syncTextPreviewMusic(textPreviewConfig);
+      return true;
+    },
+    sync: syncTextPreviewMusic,
+    stop: () => {
+      textPreviewToken += 1;
+      textPreviewConfig = null;
+      if (audioMode === "text-preview") {
+        previewAudio.pause();
+        audioMode = "";
+      }
+    },
+  };
+  previewAudio.addEventListener("loadedmetadata", () => {
+    if (audioMode === "text-preview" && textPreviewConfig) syncTextPreviewMusic(textPreviewConfig);
+  });
+  previewAudio.addEventListener("error", failTextPreviewMusic);
   const setUploadState = (message="", kind="busy") => {
     uploadProgress?.classList.toggle("d-none", !message); if(uploadProgressText)uploadProgressText.textContent=message;
     const spinner=uploadProgress?.querySelector(".spinner-border"); spinner?.classList.toggle("d-none",kind!=="busy"); uploadProgress?.classList.toggle("text-danger",kind==="error");
@@ -23965,7 +24141,7 @@ document.addEventListener("DOMContentLoaded", () => {
   };
   const syncPreview = () => {
     silenceRenderedClips();
-    if(audioMode==="library")return;
+    if(audioMode==="library"||audioMode==="text-preview")return;
     const playback=previewPlayback(); if(!playback||!selected)return;
     const now=Date.now();
     if(playIntent&&playback.state==="error"){stopTimeline();return;}
