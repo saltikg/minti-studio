@@ -20458,16 +20458,36 @@ document.addEventListener("DOMContentLoaded", () => {
     return rect.width > 0 && rect.height > 0
       && style.display !== "none" && style.visibility !== "hidden";
   };
-  const waitForMeasuredCaptionFont = async (captionText = "") => {
-    if (!document.fonts?.load) return;
-    const captionElement = isOriginalCropAspect() ? origPreviewCaption : previewSubtitle;
-    const computed = window.getComputedStyle(captionElement || previewSubtitle || subtitlePreview);
-    const family = computed.fontFamily || "sans-serif";
-    const size = Math.max(1, Number(subtitleFontSizeInput?.value || 40));
-    try {
-      await document.fonts.load(`${size}px ${family}`, captionText || "Sample subtitle line");
-    } catch (_) {}
+  const FONT_LOAD_SAMPLE = "ŞÜĞİ şüği Allah'a hakkıyla şükretmek mümkün mü?";
+  const measuredFontSpec = (kind) => {
+    const isTitle = kind === "title";
+    const element = isTitle
+      ? (isOriginalCropAspect() ? origPreviewTitle : previewTitle)
+      : (isOriginalCropAspect() ? origPreviewCaption : previewSubtitle);
+    const select = getEditorField(isTitle ? "font" : "sub_font");
+    const sizeField = isTitle ? titleFontSizeInput : subtitleFontSizeInput;
+    const option = select?.options?.[select.selectedIndex];
+    const fallbackElement = document.getElementById(isTitle ? "titlePreview" : "subtitlePreview");
+    const computed = window.getComputedStyle(element || fallbackElement);
+    const family = String(option?.dataset.fontFamily || computed.fontFamily || "sans-serif").trim();
+    const weight = String(option?.dataset.fontWeight || computed.fontWeight || (isTitle ? "700" : "400")).trim();
+    const size = Math.max(1, Number(sizeField?.value || (isTitle ? 44 : 40)));
+    return { descriptor: `normal ${weight} ${size}px ${family}`, family, weight, size };
   };
+  const waitForMeasuredFonts = async (kinds = ["title", "caption"], samples = {}) => {
+    if (!document.fonts?.load) return;
+    const loads = normalizeMeasuredKinds(kinds).map((kind) => {
+      const spec = measuredFontSpec(kind);
+      const text = `${String(samples[kind] || "").trim()} ${FONT_LOAD_SAMPLE}`.trim();
+      return document.fonts.load(spec.descriptor, text).catch(() => []);
+    });
+    if (!loads.length) return;
+    await Promise.race([
+      Promise.all(loads),
+      new Promise((resolve) => window.setTimeout(resolve, 1500)),
+    ]);
+  };
+  window.waitForCropEditorPreviewFonts = waitForMeasuredFonts;
   const svgNode = (tag, attrs = {}) => {
     const node = document.createElementNS("http://www.w3.org/2000/svg", tag);
     Object.entries(attrs).forEach(([key, value]) => node.setAttribute(key, String(value)));
@@ -20810,7 +20830,7 @@ document.addEventListener("DOMContentLoaded", () => {
     clearTimeout(designMeasureTimer);
     designMeasureTimer = setTimeout(async () => {
       try {
-        await waitForMeasuredCaptionFont(captionText);
+        await waitForMeasuredFonts(changedKinds, { title: titleText, caption: captionText });
         if (requestVersion !== designMeasureVersion || !isMeasuredPreviewVisible()) {
           designNeedsVisibleRefresh = true;
           return;
@@ -23246,8 +23266,10 @@ document.addEventListener("DOMContentLoaded", function () {
         previewTitle.style.fontWeight = fontWeight;
       }
       if (fontFamily && document.fonts?.load) {
-        document.fonts.load(`${fontWeight} 24px ${fontFamily}`).then(() => {
-          syncFinalPreviewLayout({ measureKinds: ["title"] });
+        window.waitForCropEditorPreviewFonts?.(["title"], {
+          title: previewTitle?.dataset.rawTitle || previewTitle?.textContent || "ŞÜĞİ Title",
+        }).then(() => {
+          window.refreshMeasuredDesignPreview?.({ force: true, kinds: ["title"] });
         }).catch(() => {});
       }
       syncFinalPreviewLayout({ measureKinds: ["title"] });
@@ -23268,8 +23290,10 @@ document.addEventListener("DOMContentLoaded", function () {
         previewSubtitle.style.fontWeight = fontWeight;
       }
       if (fontFamily && document.fonts?.load) {
-        document.fonts.load(`${fontWeight} 24px ${fontFamily}`).then(() => {
-          applySubtitlePreview();
+        window.waitForCropEditorPreviewFonts?.(["caption"], {
+          caption: window.getHonestCaptionPreviewText?.() || "Sample subtitle line",
+        }).then(() => {
+          window.refreshMeasuredDesignPreview?.({ force: true, kinds: ["caption"] });
         }).catch(() => {});
       }
       syncFinalPreviewLayout({ measureKinds: ["caption"] });
