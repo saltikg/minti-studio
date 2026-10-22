@@ -5720,8 +5720,24 @@
   .shape-editor-empty { color: rgba(255,255,255,.52); font-size: .82rem; padding: 18px 4px; }
   .shape-editor-controls { display: grid; gap: 14px; }
   .shape-editor-actions { display: flex; flex-wrap: wrap; gap: 8px; }
+  .overlay-editor-add-actions { display: flex; flex-wrap: wrap; justify-content: flex-end; gap: 8px; }
+  .overlay-image-library { display: none; padding: 12px; border: 1px solid rgba(255,255,255,.12); border-radius: 8px; background: rgba(15,23,42,.56); }
+  .overlay-image-library.is-open { display: grid; gap: 10px; }
+  .overlay-image-library-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(72px, 1fr)); gap: 8px; }
+  .overlay-image-library-item { position: relative; min-width: 0; }
+  .overlay-image-library-use { display: grid; width: 100%; min-height: 76px; place-items: center; padding: 6px; border: 1px solid rgba(255,255,255,.12); border-radius: 8px; background: rgba(255,255,255,.04); color: #fff; }
+  .overlay-image-library-use:hover { border-color: #50cdb5; }
+  .overlay-image-library-use img { display: block; width: 52px; height: 42px; object-fit: contain; }
+  .overlay-image-library-use span { overflow: hidden; width: 100%; font-size: .66rem; text-overflow: ellipsis; white-space: nowrap; }
+  .overlay-image-library-delete { position: absolute; top: 3px; right: 3px; width: 24px; height: 24px; padding: 0; border: 0; border-radius: 50%; background: rgba(5,10,18,.82); color: rgba(255,255,255,.72); }
+  .overlay-image-library-message { min-height: 18px; font-size: .75rem; }
+  .shape-editor-row-thumb { width: 34px; height: 34px; object-fit: contain; border-radius: 5px; background: rgba(255,255,255,.06); }
+  .overlay-image-position-actions { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 8px; }
+  .overlay-image-opacity { display: grid; gap: 6px; }
+  .overlay-image-opacity input { width: 100%; }
   .preview-shapes-layer { position: absolute; inset: 0; z-index: 2; overflow: hidden; pointer-events: none; }
   .preview-shape { position: absolute; pointer-events: auto; touch-action: none; cursor: grab; }
+  .preview-shape > img { display: block; width: 100%; height: 100%; object-fit: fill; pointer-events: none; user-select: none; }
   body.is-shape-moving .preview-shape { cursor: grabbing; }
   .preview-shape.is-selected { outline: 2px solid #50cdb5; outline-offset: 1px; }
   .preview-shape-handle { position: absolute; width: 10px; height: 10px; border: 1px solid #0f172a; border-radius: 50%; background: #fff; transform: translate(-50%, -50%); }
@@ -6793,7 +6809,7 @@
                   </button>
                   <button type="button" class="generate-v2-editor-rail-btn" data-v2-editor-section="shapes" role="tab" aria-selected="false">
                     <svg viewBox="0 0 24 24" aria-hidden="true" fill="none" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="4" y="6" width="16" height="12" rx="2"/></svg>
-                    <span>Shapes</span>
+                    <span>Overlays</span>
                   </button>
                   <button type="button" class="generate-v2-editor-rail-btn" data-v2-editor-section="music" role="tab" aria-selected="false">
                     <i class="bi bi-music-note-beamed" aria-hidden="true"></i>
@@ -8479,7 +8495,7 @@
             <button type="button" class="crop-modal-tab is-active" data-crop-modal-tab data-crop-modal-tab-target="layout" role="tab" aria-selected="true">Layout</button>
             <button type="button" class="crop-modal-tab" data-crop-modal-tab data-crop-modal-tab-target="caption" role="tab" aria-selected="false">Caption</button>
             <button type="button" class="crop-modal-tab" data-crop-modal-tab data-crop-modal-tab-target="title" role="tab" aria-selected="false">Title</button>
-            <button type="button" class="crop-modal-tab" data-crop-modal-tab data-crop-modal-tab-target="shapes" role="tab" aria-selected="false">Shapes</button>
+            <button type="button" class="crop-modal-tab" data-crop-modal-tab data-crop-modal-tab-target="shapes" role="tab" aria-selected="false">Overlays</button>
             <button type="button" class="crop-modal-tab" data-crop-modal-tab data-crop-modal-tab-target="music" role="tab" aria-selected="false">Music</button>
             <button type="button" class="crop-modal-tab" data-crop-modal-tab data-crop-modal-tab-target="background" role="tab" aria-selected="false">Background</button>
           </div>
@@ -8718,16 +8734,29 @@
                     <input type="hidden" name="overlay_shapes" id="overlayShapesValue" value='{{ (selected_overlay_shapes or [])|tojson|safe }}'>
                     <div class="d-flex align-items-center justify-content-between gap-3 mb-3">
                       <div>
-                        <div class="caption-tab-section-heading">Shapes</div>
-                        <div class="design-panel-hint">Cover a fixed area of the source video.</div>
+                        <div class="caption-tab-section-heading">Overlays</div>
+                        <div class="design-panel-hint">Add a fixed shape or logo over the video.</div>
                       </div>
-                      <button type="button" class="btn btn-sm btn-primary" id="shape-add-btn"><i class="bi bi-plus-lg me-1"></i>Add shape</button>
+                      <div class="overlay-editor-add-actions">
+                        <button type="button" class="btn btn-sm btn-primary" id="shape-add-btn"><i class="bi bi-plus-lg me-1"></i>Shape</button>
+                        <button type="button" class="btn btn-sm btn-outline-light" id="overlay-image-add-btn"><i class="bi bi-image me-1"></i>Image</button>
+                      </div>
+                    </div>
+                    <div class="overlay-image-library mb-3" id="overlay-image-library"
+                         data-list-url="{{ editor_url('overlay_image_assets', video_pk=video.id) }}">
+                      <div class="d-flex align-items-center justify-content-between gap-2">
+                        <strong class="small">Your images</strong>
+                        <label class="btn btn-sm btn-outline-light mb-0"><i class="bi bi-cloud-arrow-up me-1"></i>Upload image<input type="file" id="overlay-image-upload" accept=".png,.jpg,.jpeg,.webp,.svg,image/png,image/jpeg,image/webp,image/svg+xml" hidden></label>
+                      </div>
+                      <div class="overlay-image-library-grid" id="overlay-image-library-grid"></div>
+                      <div class="overlay-image-library-message text-white-50" id="overlay-image-library-message" aria-live="polite"></div>
+                      <div class="small text-white-50">PNG, JPG, WEBP or SVG · max 2 MB</div>
                     </div>
                     <div class="shape-editor-list" id="shape-editor-list"></div>
-                    <div class="shape-editor-empty" id="shape-editor-empty">No shapes yet.</div>
+                    <div class="shape-editor-empty" id="shape-editor-empty">No overlays yet.</div>
                     <div class="shape-editor-controls d-none" id="shape-editor-controls">
                       <div class="design-panel-section-label"><span>Appearance</span></div>
-                      <div>
+                      <div class="shape-controls-shape-only">
                         <label class="form-label small text-white-50">Color</label><br>
                         <button type="button" class="short-bg-trigger design-color-chip" id="shapeColorTrigger" aria-label="Shape color">
                           <span class="short-bg-swatch" id="shapeColorSwatch" style="background:#000"></span>
@@ -8747,7 +8776,20 @@
                           <div class="design-popover-alpha"><div class="d-flex justify-content-between"><span>Opacity</span><span data-design-alpha-label="shape_alpha">100%</span></div><input type="range" min="0" max="100" value="100" data-design-alpha-input="shape_alpha"></div>
                         </div>
                       </div>
-                      <label class="form-label small text-white-50">Corner radius <input type="number" class="form-control form-control-sm mt-1" id="shape-radius" min="0" max="540" value="0"></label>
+                      <label class="form-label small text-white-50 shape-controls-shape-only">Corner radius <input type="number" class="form-control form-control-sm mt-1" id="shape-radius" min="0" max="540" value="0"></label>
+                      <div class="shape-controls-image-only d-none overlay-image-opacity">
+                        <div class="d-flex justify-content-between small text-white-50"><label for="overlay-image-opacity">Opacity</label><span id="overlay-image-opacity-label">100%</span></div>
+                        <input type="range" class="form-range" id="overlay-image-opacity" min="0" max="100" value="100">
+                      </div>
+                      <div class="shape-controls-image-only d-none">
+                        <div class="small text-white-50 mb-2">Quick position</div>
+                        <div class="overlay-image-position-actions">
+                          <button type="button" class="btn btn-sm btn-outline-light" data-overlay-position="top-left">Top left</button>
+                          <button type="button" class="btn btn-sm btn-outline-light" data-overlay-position="top-right">Top right</button>
+                          <button type="button" class="btn btn-sm btn-outline-light" data-overlay-position="bottom-left">Bottom left</button>
+                          <button type="button" class="btn btn-sm btn-outline-light" data-overlay-position="bottom-right">Bottom right</button>
+                        </div>
+                      </div>
                       <button type="button" class="design-panel-more-toggle" id="shape-more-toggle" aria-expanded="false">▸ More options</button>
                       <div class="design-panel-more-options" id="shape-more-options">
                         <div class="design-panel-more-grid">
@@ -23357,6 +23399,13 @@ document.addEventListener("DOMContentLoaded", function () {
   const shapeEmpty = document.getElementById("shape-editor-empty");
   const shapeControls = document.getElementById("shape-editor-controls");
   const shapeAdd = document.getElementById("shape-add-btn");
+  const imageAdd = document.getElementById("overlay-image-add-btn");
+  const imageLibrary = document.getElementById("overlay-image-library");
+  const imageLibraryGrid = document.getElementById("overlay-image-library-grid");
+  const imageLibraryMessage = document.getElementById("overlay-image-library-message");
+  const imageUpload = document.getElementById("overlay-image-upload");
+  const imageOpacity = document.getElementById("overlay-image-opacity");
+  const imageOpacityLabel = document.getElementById("overlay-image-opacity-label");
   const shapeDuplicate = document.getElementById("shape-duplicate-btn");
   const shapeDelete = document.getElementById("shape-delete-btn");
   const shapeRadius = document.getElementById("shape-radius");
@@ -23366,11 +23415,14 @@ document.addEventListener("DOMContentLoaded", function () {
   let overlayShapes = [];
   let selectedShapeId = null;
   let shapePointerState = null;
+  let overlayImageAssets = [];
   const shapeValidationErrors = new Map();
   const shapeHandles = ["nw", "n", "ne", "e", "se", "s", "sw", "w"];
   const shapeCoordinateMin = Number(DESIGN_GEOMETRY.shape_coordinate_min);
   const shapeCoordinateMax = Number(DESIGN_GEOMETRY.shape_coordinate_max);
   const shapeSizeMax = Number(DESIGN_GEOMETRY.shape_size_max);
+  const isImageOverlay = (shape) => String(shape?.type || "shape") === "image";
+  const overlayImageAsset = (assetId) => overlayImageAssets.find((asset) => String(asset.id) === String(assetId)) || null;
   const validateShape = (shape) => {
     const errors = [];
     const numeric = Object.fromEntries(["x", "y", "w", "h", "alpha", "radius"].map((key) => [key, Number(shape[key])]));
@@ -23380,21 +23432,38 @@ document.addEventListener("DOMContentLoaded", function () {
     if (Number.isFinite(numeric.x) && (numeric.x < shapeCoordinateMin || numeric.x > shapeCoordinateMax)) errors.push(`X must be between ${shapeCoordinateMin} and ${shapeCoordinateMax}.`);
     if (Number.isFinite(numeric.y) && (numeric.y < shapeCoordinateMin || numeric.y > shapeCoordinateMax)) errors.push(`Y must be between ${shapeCoordinateMin} and ${shapeCoordinateMax}.`);
     if (!Number.isFinite(numeric.alpha) || numeric.alpha < 0 || numeric.alpha > 100) errors.push("Opacity must be between 0 and 100%.");
-    if (!Number.isFinite(numeric.radius) || numeric.radius < 0) errors.push("Corner radius must be zero or greater.");
-    if (!/^#[0-9a-f]{6}$/i.test(String(shape.color || ""))) errors.push("Color must be a six-digit hex value.");
+    if (isImageOverlay(shape)) {
+      if (!String(shape.asset_id || "").trim()) errors.push("Choose an uploaded image.");
+      if (numeric.x < 0 || numeric.y < 0 || numeric.x + numeric.w > 1080 || numeric.y + numeric.h > 1920) errors.push("Image must stay inside the video frame.");
+    } else {
+      if (!Number.isFinite(numeric.radius) || numeric.radius < 0) errors.push("Corner radius must be zero or greater.");
+      if (!/^#[0-9a-f]{6}$/i.test(String(shape.color || ""))) errors.push("Color must be a six-digit hex value.");
+    }
     return errors.join(" ");
   };
   const clampShape = (shape) => {
+    const image = isImageOverlay(shape);
+    shape.w = Math.max(1, Math.min(1080, Math.round(Number(shape.w) || 1)));
+    shape.h = Math.max(1, Math.min(1920, Math.round(Number(shape.h) || 1)));
+    shape.x = Math.max(0, Math.min(1080 - shape.w, Math.round(Number(shape.x) || 0)));
+    shape.y = Math.max(0, Math.min(1920 - shape.h, Math.round(Number(shape.y) || 0)));
+    shape.alpha = Math.max(0, Math.min(100, Math.round(Number(shape.alpha) || 0)));
+    if (image) {
+      shape.type = "image";
+      shape.asset_id = String(shape.asset_id || "").trim();
+      shape.aspect_locked = shape.aspect_locked !== false;
+      delete shape.color;
+      delete shape.radius;
+    } else {
+      delete shape.type;
+      delete shape.asset_id;
+      delete shape.aspect_locked;
+      shape.radius = Math.max(0, Math.min(Math.floor(Math.min(shape.w, shape.h) / 2), Math.round(Number(shape.radius) || 0)));
+      shape.color = normalize(shape.color || "#000000") || "#000000";
+    }
     const error = validateShape(shape);
     if (shape.id && error) shapeValidationErrors.set(String(shape.id), error);
     else if (shape.id) shapeValidationErrors.delete(String(shape.id));
-    shape.w = Math.max(1, Math.min(shapeSizeMax, Math.round(Number(shape.w) || 1)));
-    shape.h = Math.max(1, Math.min(shapeSizeMax, Math.round(Number(shape.h) || 1)));
-    shape.x = Math.max(shapeCoordinateMin, Math.min(shapeCoordinateMax, Math.round(Number(shape.x) || 0)));
-    shape.y = Math.max(shapeCoordinateMin, Math.min(shapeCoordinateMax, Math.round(Number(shape.y) || 0)));
-    shape.alpha = Math.max(0, Math.min(100, Math.round(Number(shape.alpha) || 0)));
-    shape.radius = Math.max(0, Math.min(Math.floor(Math.min(shape.w, shape.h) / 2), Math.round(Number(shape.radius) || 0)));
-    shape.color = normalize(shape.color || "#000000") || "#000000";
     return shape;
   };
   const selectedShape = () => overlayShapes.find((shape) => shape.id === selectedShapeId) || null;
@@ -23411,18 +23480,30 @@ document.addEventListener("DOMContentLoaded", function () {
       layer.innerHTML = "";
       overlayShapes.forEach((shape) => {
         const element = document.createElement("div");
-        element.className = `preview-shape${shape.id === selectedShapeId ? " is-selected" : ""}`;
+        element.className = `preview-shape${isImageOverlay(shape) ? " is-image" : ""}${shape.id === selectedShapeId ? " is-selected" : ""}`;
         element.dataset.shapeId = shape.id;
         element.tabIndex = shape.id === selectedShapeId ? 0 : -1;
         element.style.left = `${shape.x / 10.8}%`;
         element.style.top = `${shape.y / 19.2}%`;
         element.style.width = `${shape.w / 10.8}%`;
         element.style.height = `${shape.h / 19.2}%`;
-        element.style.backgroundColor = hexToRgba(shape.color, shape.alpha / 100);
-        const radiusScale = Math.min(layer.clientWidth / 1080, layer.clientHeight / 1920);
-        element.style.borderRadius = `${Math.max(0, shape.radius * radiusScale)}px`;
+        if (isImageOverlay(shape)) {
+          const asset = overlayImageAsset(shape.asset_id);
+          if (asset?.url) {
+            const image = document.createElement("img");
+            image.src = asset.url;
+            image.alt = "";
+            image.draggable = false;
+            element.appendChild(image);
+          }
+          element.style.opacity = String(shape.alpha / 100);
+        } else {
+          element.style.backgroundColor = hexToRgba(shape.color, shape.alpha / 100);
+          const radiusScale = Math.min(layer.clientWidth / 1080, layer.clientHeight / 1920);
+          element.style.borderRadius = `${Math.max(0, shape.radius * radiusScale)}px`;
+        }
         if (shape.id === selectedShapeId) {
-          shapeHandles.forEach((handle) => {
+          (isImageOverlay(shape) ? ["nw", "ne", "se", "sw"] : shapeHandles).forEach((handle) => {
             const grip = document.createElement("span");
             grip.className = "preview-shape-handle";
             grip.dataset.handle = handle;
@@ -23438,12 +23519,18 @@ document.addEventListener("DOMContentLoaded", function () {
     shapeControls?.classList.toggle("d-none", !shape);
     shapeEmpty?.classList.toggle("d-none", overlayShapes.length > 0);
     if (shapeAdd) shapeAdd.disabled = overlayShapes.length >= 5;
+    if (imageAdd) imageAdd.disabled = overlayShapes.length >= 5;
     if (!shape) return;
-    if (shapeColor) shapeColor.value = shape.color;
+    const image = isImageOverlay(shape);
+    document.querySelectorAll(".shape-controls-shape-only").forEach((node) => node.classList.toggle("d-none", image));
+    document.querySelectorAll(".shape-controls-image-only").forEach((node) => node.classList.toggle("d-none", !image));
+    if (shapeColor && !image) shapeColor.value = shape.color;
     if (shapeAlpha) shapeAlpha.value = String(shape.alpha);
-    if (shapeRadius) shapeRadius.value = String(shape.radius);
+    if (shapeRadius && !image) shapeRadius.value = String(shape.radius);
+    if (imageOpacity) imageOpacity.value = String(shape.alpha);
+    if (imageOpacityLabel) imageOpacityLabel.textContent = `${shape.alpha}%`;
     Object.entries(shapeGeometry).forEach(([key, field]) => { if (field) field.value = String(shape[key]); });
-    syncDesignChip("shapeColorValue", shape.color, shape.alpha);
+    if (!image) syncDesignChip("shapeColorValue", shape.color, shape.alpha);
     const native = document.querySelector("#shapeColorPopover input[type='color']");
     if (native) native.value = shape.color;
   };
@@ -23455,7 +23542,19 @@ document.addEventListener("DOMContentLoaded", function () {
       row.type = "button";
       row.className = `shape-editor-row${shape.id === selectedShapeId ? " is-selected" : ""}`;
       const error = shapeValidationErrors.get(String(shape.id)) || "";
-      row.innerHTML = `<span class="shape-editor-row-copy"><span>Shape ${index + 1}</span>${error ? `<span class="shape-editor-error" role="alert">${error}</span>` : ""}</span><span class="short-bg-swatch" style="background:${hexToRgba(shape.color, shape.alpha / 100)}"></span>`;
+      const copy = document.createElement("span");
+      copy.className = "shape-editor-row-copy";
+      const title = document.createElement("span");
+      const asset = isImageOverlay(shape) ? overlayImageAsset(shape.asset_id) : null;
+      title.textContent = isImageOverlay(shape) ? (asset?.label || `Image ${index + 1}`) : `Shape ${index + 1}`;
+      copy.appendChild(title);
+      if (error) { const errorNode = document.createElement("span"); errorNode.className = "shape-editor-error"; errorNode.role = "alert"; errorNode.textContent = error; copy.appendChild(errorNode); }
+      row.appendChild(copy);
+      if (isImageOverlay(shape) && asset?.url) {
+        const thumbnail = document.createElement("img"); thumbnail.className = "shape-editor-row-thumb"; thumbnail.src = asset.url; thumbnail.alt = ""; row.appendChild(thumbnail);
+      } else {
+        const swatch = document.createElement("span"); swatch.className = "short-bg-swatch"; swatch.style.background = hexToRgba(shape.color, shape.alpha / 100); row.appendChild(swatch);
+      }
       row.addEventListener("click", () => { selectedShapeId = shape.id; syncShapesUi(); });
       shapeList.appendChild(row);
     });
@@ -23482,6 +23581,82 @@ document.addEventListener("DOMContentLoaded", function () {
     selectedShapeId = id;
     syncShapesUi();
   });
+  const overlayImageItemUrl = (assetId) => {
+    const url = new URL(imageLibrary?.dataset.listUrl || "", window.location.href);
+    url.pathname = `${url.pathname.replace(/\/$/, "")}/${encodeURIComponent(assetId)}`;
+    return url.toString();
+  };
+  const setImageLibraryMessage = (message, error = false) => {
+    if (!imageLibraryMessage) return;
+    imageLibraryMessage.textContent = message || "";
+    imageLibraryMessage.classList.toggle("text-danger", !!error);
+    imageLibraryMessage.classList.toggle("text-white-50", !error);
+  };
+  const addImageOverlay = (asset) => {
+    if (!asset || overlayShapes.length >= 5) return;
+    const place = (naturalWidth, naturalHeight) => {
+      const width = 180;
+      const height = Math.max(1, Math.min(900, Math.round(width * naturalHeight / Math.max(1, naturalWidth))));
+      const id = `image-${Date.now()}-${overlayShapes.length + 1}`;
+      overlayShapes.push({ type: "image", id, asset_id: String(asset.id), x: 1080 - 40 - width, y: 40, w: width, h: height, alpha: 100, aspect_locked: true });
+      selectedShapeId = id;
+      imageLibrary?.classList.remove("is-open");
+      syncShapesUi();
+    };
+    const probe = new Image();
+    probe.onload = () => place(probe.naturalWidth, probe.naturalHeight);
+    probe.onerror = () => place(Number(asset.width) || 1, Number(asset.height) || 1);
+    probe.src = asset.url;
+  };
+  const renderImageLibrary = () => {
+    if (!imageLibraryGrid) return;
+    imageLibraryGrid.innerHTML = "";
+    overlayImageAssets.forEach((asset) => {
+      const item = document.createElement("div"); item.className = "overlay-image-library-item";
+      const use = document.createElement("button"); use.type = "button"; use.className = "overlay-image-library-use"; use.title = asset.label || "Use image";
+      const image = document.createElement("img"); image.src = asset.url; image.alt = "";
+      const label = document.createElement("span"); label.textContent = asset.label || "Image";
+      use.append(image, label); use.addEventListener("click", () => addImageOverlay(asset));
+      const remove = document.createElement("button"); remove.type = "button"; remove.className = "overlay-image-library-delete"; remove.title = "Delete uploaded image"; remove.setAttribute("aria-label", `Delete ${asset.label || "image"}`); remove.innerHTML = '<i class="bi bi-x-lg"></i>';
+      remove.addEventListener("click", async () => {
+        if (overlayShapes.some((shape) => isImageOverlay(shape) && String(shape.asset_id) === String(asset.id))) {
+          setImageLibraryMessage("Used in 1 designs", true);
+          return;
+        }
+        setImageLibraryMessage("Deleting…");
+        const response = await fetch(overlayImageItemUrl(asset.id), { method: "DELETE", headers: { Accept: "application/json", "X-Requested-With": "XMLHttpRequest" } });
+        const payload = await response.json().catch(() => ({}));
+        if (!response.ok) { setImageLibraryMessage(payload.error || "The image could not be deleted.", true); return; }
+        overlayImageAssets = overlayImageAssets.filter((candidate) => candidate.id !== asset.id); renderImageLibrary(); setImageLibraryMessage("Image deleted.");
+      });
+      item.append(use, remove); imageLibraryGrid.appendChild(item);
+    });
+    if (!overlayImageAssets.length) setImageLibraryMessage("No uploaded images yet.");
+  };
+  const loadOverlayImages = async () => {
+    if (!imageLibrary?.dataset.listUrl) return;
+    try {
+      const response = await fetch(imageLibrary.dataset.listUrl, { headers: { Accept: "application/json" } });
+      const payload = await response.json();
+      if (!response.ok) throw new Error(payload.error || "Images could not be loaded.");
+      overlayImageAssets = Array.isArray(payload.images) ? payload.images : [];
+      renderImageLibrary(); renderShapeList(); renderShapeLayers();
+    } catch (error) { setImageLibraryMessage(error.message || "Images could not be loaded.", true); }
+  };
+  imageAdd?.addEventListener("click", () => { imageLibrary?.classList.toggle("is-open"); if (imageLibrary?.classList.contains("is-open")) void loadOverlayImages(); });
+  imageUpload?.addEventListener("change", async () => {
+    const file = imageUpload.files?.[0]; imageUpload.value = ""; if (!file) return;
+    if (file.size > 2 * 1024 * 1024) { setImageLibraryMessage("Image must be 2 MB or smaller.", true); return; }
+    const body = new FormData(); body.append("image", file); body.append("label", file.name.replace(/\.[^.]+$/, ""));
+    setImageLibraryMessage("Uploading…");
+    try {
+      const response = await fetch(imageLibrary.dataset.listUrl, { method: "POST", headers: { Accept: "application/json", "X-Requested-With": "XMLHttpRequest" }, body });
+      const payload = await response.json().catch(() => ({}));
+      if (!response.ok) throw new Error(payload.error || "The image could not be uploaded.");
+      overlayImageAssets = [payload.image, ...overlayImageAssets.filter((asset) => asset.id !== payload.image.id)];
+      renderImageLibrary(); setImageLibraryMessage("Image ready."); addImageOverlay(payload.image);
+    } catch (error) { setImageLibraryMessage(error.message || "The image could not be uploaded.", true); }
+  });
   shapeDuplicate?.addEventListener("click", () => {
     const source = selectedShape();
     if (!source || overlayShapes.length >= 5) return;
@@ -23494,6 +23669,14 @@ document.addEventListener("DOMContentLoaded", function () {
     overlayShapes.splice(index, 1); selectedShapeId = overlayShapes[Math.min(index, overlayShapes.length - 1)]?.id || null; syncShapesUi();
   });
   shapeRadius?.addEventListener("input", () => { const shape = selectedShape(); if (shape) { shape.radius = shapeRadius.value; syncShapesUi(); } });
+  imageOpacity?.addEventListener("input", () => { const shape = selectedShape(); if (isImageOverlay(shape)) { shape.alpha = Number(imageOpacity.value); syncShapesUi(); } });
+  document.querySelectorAll("[data-overlay-position]").forEach((button) => button.addEventListener("click", () => {
+    const shape = selectedShape(); if (!isImageOverlay(shape)) return;
+    const margin = 40; const bottomY = Math.max(0, Math.min(1920 - margin - shape.h, 1536 - shape.h));
+    const rightX = Math.max(0, 1080 - margin - shape.w);
+    const positions = { "top-left": [margin, margin], "top-right": [rightX, margin], "bottom-left": [margin, bottomY], "bottom-right": [rightX, bottomY] };
+    const [x, y] = positions[button.dataset.overlayPosition] || [shape.x, shape.y]; shape.x = x; shape.y = y; syncShapesUi();
+  }));
   Object.entries(shapeGeometry).forEach(([key, field]) => field?.addEventListener("input", () => { const shape = selectedShape(); if (shape) { shape[key] = field.value; syncShapesUi(); } }));
   document.getElementById("shape-more-toggle")?.addEventListener("click", (event) => {
     const options = document.getElementById("shape-more-options");
@@ -23519,7 +23702,16 @@ document.addEventListener("DOMContentLoaded", function () {
     const dy = (event.clientY - shapePointerState.startY) * 1920 / Math.max(1, shapePointerState.height);
     const base = shapePointerState.shape; const handle = shapePointerState.handle;
     if (handle === "move") { shape.x = base.x + dx; shape.y = base.y + dy; }
-    else {
+    else if (isImageOverlay(shape) && shape.aspect_locked && !event.shiftKey && ["nw", "ne", "se", "sw"].includes(handle)) {
+      const rawW = Math.max(20, base.w + (handle.includes("e") ? dx : -dx));
+      const rawH = Math.max(20, base.h + (handle.includes("s") ? dy : -dy));
+      const ratio = base.w / Math.max(1, base.h);
+      let nextW = rawW; let nextH = rawW / ratio;
+      if (Math.abs((rawH - base.h) / Math.max(1, base.h)) > Math.abs((rawW - base.w) / Math.max(1, base.w))) { nextH = rawH; nextW = rawH * ratio; }
+      shape.w = nextW; shape.h = nextH;
+      shape.x = handle.includes("w") ? base.x + base.w - nextW : base.x;
+      shape.y = handle.includes("n") ? base.y + base.h - nextH : base.y;
+    } else {
       if (handle.includes("e")) shape.w = base.w + dx;
       if (handle.includes("s")) shape.h = base.h + dy;
       if (handle.includes("w")) { shape.x = base.x + dx; shape.w = base.w - dx; }
@@ -23544,6 +23736,7 @@ document.addEventListener("DOMContentLoaded", function () {
     event.preventDefault(); syncShapesUi();
   }));
   window.syncOverlayShapesFromField();
+  void loadOverlayImages();
   if (window.ResizeObserver) {
     let previewResizeFrame = 0;
     const previewResizeObserver = new ResizeObserver(() => {
@@ -23562,7 +23755,7 @@ document.addEventListener("DOMContentLoaded", function () {
   bindColorPicker({
     triggerId: "shapeColorTrigger", popoverId: "shapeColorPopover", hiddenId: "shapeColorValue", hexId: "shapeColorChipValue", swatchId: "shapeColorSwatch", customInputId: "shapeColorCustom",
     alphaFieldId: "shapeAlphaValue", alphaFieldKey: "shape_alpha",
-    onApply: (hex) => { const shape = selectedShape(); if (shape) { shape.color = hex; shape.alpha = Number(shapeAlpha?.value ?? shape.alpha); syncShapesUi(); } },
+    onApply: (hex) => { const shape = selectedShape(); if (shape && !isImageOverlay(shape)) { shape.color = hex; shape.alpha = Number(shapeAlpha?.value ?? shape.alpha); syncShapesUi(); } },
   });
 
   bindColorPicker({

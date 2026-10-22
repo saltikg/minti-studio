@@ -100,6 +100,8 @@ def _render_overlay_shapes(
     *,
     target_width: int,
     target_height: int,
+    owner_user_id: Optional[str] = None,
+    brand_id: Optional[str] = None,
 ) -> Optional[Path]:
     if not shapes:
         return None
@@ -123,14 +125,54 @@ def _render_overlay_shapes(
             radius = max(0.0, float(shape.get("radius", 0)))
         except Exception:
             continue
-        color = str(shape.get("color") or "#000000").strip().lstrip("#")
-        if not re.fullmatch(r"[0-9A-Fa-f]{6}", color):
-            color = "000000"
-        rgba = tuple(int(color[offset:offset + 2], 16) for offset in (0, 2, 4)) + (round(alpha * 255 / 100),)
         left = int(round(x * scale_x))
         top = int(round(y * scale_y))
         right = int(round((x + w) * scale_x))
         bottom = int(round((y + h) * scale_y))
+        if str(shape.get("type") or "shape").strip().lower() == "image":
+            managed_path = None
+            try:
+                local_override = str(shape.get("_image_path") or "").strip()
+                if local_override:
+                    image_path = Path(local_override)
+                else:
+                    if not owner_user_id:
+                        raise ValueError("Overlay image owner is missing")
+                    from app.video_shorts.services.overlay_assets import resolve_overlay_image_asset
+
+                    image_path, managed_path = resolve_overlay_image_asset(
+                        str(shape.get("asset_id") or ""),
+                        owner_user_id=str(owner_user_id),
+                        brand_id=brand_id,
+                    )
+                with Image.open(image_path) as source_image:
+                    overlay_image = source_image.convert("RGBA").resize(
+                        (max(1, right - left), max(1, bottom - top)),
+                        Image.Resampling.LANCZOS,
+                    )
+                if alpha < 100:
+                    alpha_channel = overlay_image.getchannel("A").point(
+                        lambda value: int(round(value * alpha / 100.0))
+                    )
+                    overlay_image.putalpha(alpha_channel)
+                canvas.alpha_composite(overlay_image, (left, top))
+                drawn += 1
+            except Exception as exc:
+                current_app.logger.warning(
+                    "Overlay image skipped asset_id=%s owner_user_id=%s brand_id=%s error=%s",
+                    shape.get("asset_id"),
+                    owner_user_id,
+                    brand_id,
+                    exc,
+                )
+            finally:
+                if managed_path is not None:
+                    managed_path.cleanup()
+            continue
+        color = str(shape.get("color") or "#000000").strip().lstrip("#")
+        if not re.fullmatch(r"[0-9A-Fa-f]{6}", color):
+            color = "000000"
+        rgba = tuple(int(color[offset:offset + 2], 16) for offset in (0, 2, 4)) + (round(alpha * 255 / 100),)
         scaled_radius = int(round(radius * min(scale_x, scale_y)))
         draw.rounded_rectangle(
             [left, top, max(left + 1, right), max(top + 1, bottom)],
@@ -2654,6 +2696,8 @@ def _compose_trimmed_with_background(
     music_only: bool = False,
     face_track_smooth_path: Optional[Path] = None,
     overlay_shapes: Optional[list[Dict[str, Any]]] = None,
+    overlay_owner_user_id: Optional[str] = None,
+    overlay_brand_id: Optional[str] = None,
     music_path: Optional[Path] = None,
     music_level: int = 50,
     music_start_seconds: float = 0.0,
@@ -4088,6 +4132,8 @@ def _compose_trimmed_with_background(
         overlay_shapes,
         target_width=target_width,
         target_height=target_height,
+        owner_user_id=overlay_owner_user_id,
+        brand_id=overlay_brand_id,
     )
     if shape_overlay_path:
         shape_input_index = next_video_input_index

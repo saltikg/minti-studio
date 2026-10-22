@@ -2,15 +2,15 @@
 title: Editor guide — from long video to Shorts
 slug: editor-guide
 type: guide
-description: A complete guide to the MintiStudio editor — clips, AI suggestions, layout, captions, title, shapes, music and regenerating.
+description: A complete guide to the MintiStudio editor — clips, AI suggestions, layout, captions, title, overlays, music and regenerating.
 category_slug: creating-shorts
-topics: [Shorts, AI, Editor, Captions, Layout, Music, Shapes, Templates]
+topics: [Shorts, AI, Editor, Captions, Layout, Music, Overlays, Templates]
 order: 25
 ---
 
 Turn one long video into several Shorts: add the video, pick your moments, design them, and render. This guide walks through every part of the editor.
 
-**On this page:** [Add a video](#add-a-video) · [Your Clips](#your-clips) · [Make a Clip](#make-a-clip) · [Edit a clip's text](#edit-clip-text) · [Design](#edit-shorts) · [Style](#style) · [Layout](#layout) · [Captions](#captions) · [Title](#title) · [Shapes](#shapes) · [Music](#music) · [Background](#background) · [Subscribe](#subscribe) · [Save & regenerate](#saving) · [Schedule](#schedule) · [Common questions](#faq)
+**On this page:** [Add a video](#add-a-video) · [Your Clips](#your-clips) · [Make a Clip](#make-a-clip) · [Edit a clip's text](#edit-clip-text) · [Design](#edit-shorts) · [Style](#style) · [Layout](#layout) · [Captions](#captions) · [Title](#title) · [Overlays](#overlays) · [Music](#music) · [Background](#background) · [Subscribe](#subscribe) · [Save & regenerate](#saving) · [Schedule](#schedule) · [Common questions](#faq)
 
 ## Add a video {#add-a-video}
 
@@ -135,22 +135,22 @@ The title sits at the top of the Short.
 
 To change the words, rename the clip — see [Edit a clip's text](#edit-clip-text).
 
-### Shapes {#shapes}
+### Overlays {#overlays}
 
-Shapes are rectangles placed over the video — perfect for **covering burned-in subtitles, a logo or a watermark** in the source.
+Overlays are fixed rectangles or uploaded images placed over the video. Use a shape to cover burned-in subtitles, or upload a logo and reuse it across designs.
 
 :::steps
-### Add a shape
-Click `Add shape`.
+### Add an overlay
+Click `Shape` for a rectangle, or `Image` to upload or reuse a logo.
 
 ### Place it
 Drag and resize it in the preview.
 
 ### Style it
-Set `Color`, `Opacity` and `Corner radius`. Use `Duplicate` or `Delete` as needed.
+For shapes, set `Color`, `Opacity` and `Corner radius`. For images, set opacity or use a quick corner position. Use `Duplicate` or `Delete` as needed.
 :::
 
-Shapes cover the same area for the whole clip.
+Overlays cover the same area for the whole clip.
 
 ### Music {#music}
 
@@ -225,7 +225,7 @@ Details: [Scheduling & Publishing](/video_shorts/help/faq/scheduling-and-publish
 
 **Can each Short have different music?** Yes — music is set per clip.
 
-**The source video has burned-in subtitles.** Cover them with a [Shape](#shapes), then use MintiStudio captions.
+**The source video has burned-in subtitles.** Cover them with a [shape overlay](#overlays), then use MintiStudio captions.
 
 **I reached my monthly export limit.** You can't render more Shorts until the limit resets or you upgrade.
 

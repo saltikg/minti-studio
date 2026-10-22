@@ -4,6 +4,7 @@ from app.video_shorts.services import youtube_scheduling
 
 import json
 from app.video_shorts.services import tenant_media
+from app.video_shorts.services import overlay_assets
 import errno
 import fcntl
 import math
@@ -2276,6 +2277,104 @@ def _resolve_user_short_clip_source_paths(user_id: str, clip_ids: List[str], max
         if path.exists() and path.is_file():
             resolved.append(path)
     return resolved[:max_items]
+
+
+def _overlay_image_editor_scope(video_pk: int) -> tuple[Dict[str, Any], Any]:
+    current_user = getattr(g, "vs_current_user", None)
+    if not current_user:
+        abort(401)
+    context = _active_editor_context()
+    conn = get_db_readonly()
+    try:
+        row = _fetch_scoped_video_row(conn, video_pk, "id")
+    finally:
+        conn.close()
+    if not row:
+        abort(404)
+    return context, current_user
+
+
+@video_shorts_bp.route("/generate/<int:video_pk>/overlay-images", methods=["GET", "POST"])
+def overlay_image_assets(video_pk: int):
+    context, _ = _overlay_image_editor_scope(video_pk)
+    owner_user_id = str(context.get("owner_user_id") or "").strip()
+    brand_id = context.get("brand_id")
+    if request.method == "GET":
+        return jsonify(
+            ok=True,
+            images=overlay_assets.list_overlay_image_assets(
+                owner_user_id=owner_user_id,
+                brand_id=brand_id,
+            ),
+        )
+
+    upload = request.files.get("image")
+    if not upload or not upload.filename:
+        return jsonify(ok=False, error="Choose a PNG, JPG, WEBP or SVG image."), 400
+    data = upload.read(overlay_assets.OVERLAY_IMAGE_MAX_BYTES + 1)
+    try:
+        normalized = overlay_assets.normalize_overlay_image_upload(data, upload.filename)
+    except overlay_assets.OverlayAssetError as exc:
+        return jsonify(ok=False, error=str(exc)), 400
+
+    conn = get_db_readonly()
+    try:
+        usage = _get_user_storage_usage(conn, owner_user_id)
+    finally:
+        conn.close()
+    final_size = len(normalized[0])
+    if usage["limit_bytes"] and usage["used_bytes"] + final_size > usage["limit_bytes"]:
+        return jsonify(
+            ok=False,
+            error=_quota_block_message(
+                _format_size_bytes(usage["limit_bytes"]),
+                _format_size_bytes(usage["used_bytes"]),
+            ),
+        ), 403
+    try:
+        image = overlay_assets.create_overlay_image_asset(
+            owner_user_id=owner_user_id,
+            brand_id=brand_id,
+            data=data,
+            filename=upload.filename,
+            label=request.form.get("label"),
+            normalized_upload=normalized,
+        )
+    except Exception:
+        current_app.logger.exception(
+            "Overlay image upload failed owner_user_id=%s brand_id=%s video_pk=%s",
+            owner_user_id,
+            brand_id,
+            video_pk,
+        )
+        return jsonify(ok=False, error="The image could not be saved."), 500
+    return jsonify(ok=True, image=image), 201
+
+
+@video_shorts_bp.route("/generate/<int:video_pk>/overlay-images/<asset_id>", methods=["DELETE"])
+def delete_overlay_image_asset(video_pk: int, asset_id: str):
+    context, _ = _overlay_image_editor_scope(video_pk)
+    owner_user_id = str(context.get("owner_user_id") or "").strip()
+    brand_id = context.get("brand_id")
+    try:
+        uses = overlay_assets.delete_overlay_image_asset(
+            asset_id=str(asset_id),
+            owner_user_id=owner_user_id,
+            brand_id=brand_id,
+        )
+    except overlay_assets.OverlayAssetError as exc:
+        return jsonify(ok=False, error=str(exc)), 404
+    except Exception:
+        current_app.logger.exception(
+            "Overlay image delete failed asset_id=%s owner_user_id=%s brand_id=%s",
+            asset_id,
+            owner_user_id,
+            brand_id,
+        )
+        return jsonify(ok=False, error="The image could not be deleted."), 500
+    if uses:
+        return jsonify(ok=False, error=f"Used in {uses} designs", used_in=uses), 409
+    return jsonify(ok=True)
 
 
 @video_shorts_bp.route("/api/static-audios", methods=["GET"])
@@ -9436,6 +9535,9 @@ def _normalize_overlay_shapes(raw_value: Any) -> List[Dict[str, Any]]:
     for index, item in enumerate(raw_value[:5]):
         if not isinstance(item, dict):
             continue
+        item_type = str(item.get("type") or "shape").strip().lower()
+        if item_type not in {"shape", "image"}:
+            continue
         try:
             x = int(round(float(item.get("x", 0))))
             y = int(round(float(item.get("y", 0))))
@@ -9445,30 +9547,53 @@ def _normalize_overlay_shapes(raw_value: Any) -> List[Dict[str, Any]]:
             radius = max(0, int(round(float(item.get("radius", 0)))))
         except Exception:
             continue
-        coordinate_min = int(DESIGN_GEOMETRY["shape_coordinate_min"])
-        coordinate_max = int(DESIGN_GEOMETRY["shape_coordinate_max"])
-        size_max = int(DESIGN_GEOMETRY["shape_size_max"])
-        w = max(1, min(size_max, w))
-        h = max(1, min(size_max, h))
-        x = max(coordinate_min, min(coordinate_max, x))
-        y = max(coordinate_min, min(coordinate_max, y))
+        w = max(1, min(1080, w))
+        h = max(1, min(1920, h))
+        x = max(0, min(1080 - w, x))
+        y = max(0, min(1920 - h, y))
         radius = min(radius, w // 2, h // 2)
         color = _normalize_hex_color(item.get("color"), "#000000")
         shape_id = re.sub(r"[^A-Za-z0-9_-]", "", str(item.get("id") or f"shape-{index + 1}"))[:64]
         if not shape_id or shape_id in seen_ids:
             shape_id = f"shape-{index + 1}"
         seen_ids.add(shape_id)
-        normalized.append({
+        normalized_item = {
             "id": shape_id,
             "x": x,
             "y": y,
             "w": w,
             "h": h,
-            "color": color,
             "alpha": alpha,
-            "radius": radius,
-        })
+        }
+        if item_type == "image":
+            asset_id = re.sub(r"[^A-Za-z0-9_-]", "", str(item.get("asset_id") or ""))[:64]
+            if not asset_id:
+                continue
+            normalized_item.update({
+                "type": "image",
+                "asset_id": asset_id,
+                "aspect_locked": _normalize_optional_bool(item.get("aspect_locked"), default=True),
+            })
+        else:
+            normalized_item.update({"color": color, "radius": radius})
+        normalized.append(normalized_item)
     return normalized
+
+
+def _invalid_overlay_image_asset_ids(
+    shapes: List[Dict[str, Any]], *, owner_user_id: str, brand_id: Optional[str]
+) -> set[str]:
+    requested = {
+        str(item.get("asset_id") or "")
+        for item in shapes
+        if str(item.get("type") or "shape") == "image"
+    }
+    valid = overlay_assets.validate_overlay_image_asset_ids(
+        requested,
+        owner_user_id=owner_user_id,
+        brand_id=brand_id,
+    )
+    return requested - valid
 
 
 def _normalize_music_audio_id(raw_value: Any) -> str:
@@ -15541,6 +15666,13 @@ def save_short_editor_defaults():
     source = source or {}
     try:
         payload = _clean_short_editor_default_payload(source)
+        invalid_assets = _invalid_overlay_image_asset_ids(
+            payload.get("overlay_shapes") or [],
+            owner_user_id=owner_user_id,
+            brand_id=editor_context.get("brand_id"),
+        )
+        if invalid_assets:
+            return jsonify({"success": False, "message": "One or more overlay images are unavailable."}), 422
         save_user_preference(
             owner_user_id,
             _short_editor_defaults_preference_key(editor_context.get("brand_id")),
@@ -29001,6 +29133,16 @@ def save_short_settings(video_pk):
             podcast_overlay_short_ids = []
     podcast_overlay_short_ids = list(dict.fromkeys(podcast_overlay_short_ids))[:2]
     overlay_shapes = _normalize_overlay_shapes(request.form.get("overlay_shapes"))
+    invalid_overlay_assets = _invalid_overlay_image_asset_ids(
+        overlay_shapes,
+        owner_user_id=editor_owner_user_id,
+        brand_id=brand_id,
+    )
+    if invalid_overlay_assets:
+        return jsonify(
+            success=False,
+            message="One or more overlay images are unavailable. Choose the image again.",
+        ), 422
     raw_music_audio_id = str(request.form.get("music_audio_id") or "").strip()
     music_audio_id = _normalize_music_audio_id(raw_music_audio_id)
     music_level = normalize_music_level(request.form.get("music_level"))
@@ -31351,6 +31493,8 @@ def autoclip_video(video_pk):
                 music_only=video_is_music_only,
                 face_track_smooth_path=face_track_smooth_path,
                 overlay_shapes=video_overlay_shapes,
+                overlay_owner_user_id=video_owner_user_id or target_owner_user_id,
+                overlay_brand_id=brand_id,
                 music_path=music_path,
                 music_level=video_music_level,
                 music_start_seconds=video_music_start_seconds,

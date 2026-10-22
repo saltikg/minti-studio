@@ -22,3 +22,4 @@ stripe
 Markdown
 bleach
 youtube-transcript-api
+CairoSVG>=2.7
