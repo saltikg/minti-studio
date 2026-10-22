@@ -9639,7 +9639,9 @@ const syncPreviewTitleText = (nextTitle = null) => {
   const fallbackTitle = document.getElementById("clip-detail-modal-title")?.textContent;
   const resolvedTitle = String((nextTitle ?? activeTitle) || fallbackTitle || "Life is full of fun").trim() || "Life is full of fun";
   previewTitle.dataset.rawTitle = resolvedTitle;
-  previewTitle.textContent = getPreviewTitleDisplayText(resolvedTitle);
+  if (previewTitle.dataset.captionDomOwner !== "measured-svg") {
+    previewTitle.textContent = getPreviewTitleDisplayText(resolvedTitle);
+  }
   const titlePreview = document.getElementById("titlePreview");
   if (titlePreview) {
     titlePreview.textContent = getPreviewTitleDisplayText(resolvedTitle);
@@ -19505,8 +19507,7 @@ document.addEventListener("DOMContentLoaded", () => {
       ? nextPosition / Math.max(1, activeHeight) * renderFrameHeight
       : nextPosition);
     syncCaptionPositionLabel();
-    requestMeasuredDesign();
-    applyPreviewLayout();
+    applyPreviewLayout({ measure: false });
   }));
   syncCaptionPositionLabel();
   const showTitleToggle = getEditorField("show_title");
@@ -20398,7 +20399,8 @@ document.addEventListener("DOMContentLoaded", () => {
     }
   }
   let measuredDesign = null;
-  let measuredDesignKey = "";
+  const measuredDesignKeys = { title: "", caption: "" };
+  const measuredPlacement = { title: null, caption: null };
   let pendingDesignKey = "";
   let designMeasureTimer = null;
   let designMeasureVersion = 0;
@@ -20428,15 +20430,30 @@ document.addEventListener("DOMContentLoaded", () => {
     Object.entries(attrs).forEach(([key, value]) => node.setAttribute(key, String(value)));
     return node;
   };
-  const paintMeasuredText = (element, spec, kind, scaleX, scaleY) => {
+  const positionedMeasuredSpec = (spec, kind) => {
+    if (measuredPlacement[kind] == null) return spec;
+    const targetTop = Number(measuredPlacement[kind]);
+    const currentTop = Number(spec?.box?.[1]);
+    if (!spec || !Number.isFinite(targetTop) || !Number.isFinite(currentTop)) return spec;
+    const deltaY = targetTop - currentTop;
+    if (Math.abs(deltaY) < 0.01) return spec;
+    return {
+      ...spec,
+      box: [spec.box[0], spec.box[1] + deltaY, spec.box[2], spec.box[3] + deltaY],
+      pill: spec.pill
+        ? [spec.pill[0], spec.pill[1] + deltaY, spec.pill[2], spec.pill[3] + deltaY]
+        : spec.pill,
+      runs: (spec.runs || []).map((run) => ({ ...run, y: Number(run.y) + deltaY })),
+    };
+  };
+  const paintMeasuredText = (element, rawSpec, kind, scaleX, scaleY) => {
+    const spec = positionedMeasuredSpec(rawSpec, kind);
     if (!element || !spec) return;
     const [left, top, right, bottom] = spec.box;
-    Object.assign(element.style, {left: `${left*scaleX}px`, right: "auto", top: `${top*scaleY}px`,
+    const nextStyles = {left: `${left*scaleX}px`, right: "auto", top: `${top*scaleY}px`,
       width: `${(right-left)*scaleX}px`, height: `${(bottom-top)*scaleY}px`, padding: "0",
       minHeight: "0", display: (kind === "title" ? isTitleVisible() : isSubtitleVisible()) ? "block" : "none", lineHeight: "normal", letterSpacing: `${DESIGN_GEOMETRY.letter_spacing}px`,
-      borderRadius: `${Math.max(DESIGN_GEOMETRY.box_radius_min, Math.round(spec.font_size*DESIGN_GEOMETRY.box_radius))*scaleX}px`});
-    element.dataset.renderBbox = JSON.stringify(spec.box);
-    element.dataset.lineCount = String(spec.lines);
+      borderRadius: `${Math.max(DESIGN_GEOMETRY.box_radius_min, Math.round(spec.font_size*DESIGN_GEOMETRY.box_radius))*scaleX}px`};
     const svg = svgNode("svg", {viewBox: `${left} ${top} ${right-left} ${bottom-top}`, width: "100%", height: "100%", "aria-hidden": "true"});
     svg.style.overflow = "visible";
     svg.style.display = "block";
@@ -20496,10 +20513,22 @@ document.addEventListener("DOMContentLoaded", () => {
       }
       svg.appendChild(text);
     }
-    element.replaceChildren(svg);
-    element.dataset.captionDomOwner = "measured-svg";
+    const paintVersion = Number(element.__mintiMeasuredPaintVersion || 0) + 1;
+    element.__mintiMeasuredPaintVersion = paintVersion;
+    window.requestAnimationFrame(() => {
+      if (!element.isConnected || element.__mintiMeasuredPaintVersion !== paintVersion) return;
+      Object.assign(element.style, nextStyles);
+      element.dataset.renderBbox = JSON.stringify(spec.box);
+      element.dataset.lineCount = String(spec.lines);
+      element.replaceChildren(svg);
+      element.dataset.captionDomOwner = "measured-svg";
+    });
   };
-  const repaintMeasuredDesign = (force = false) => {
+  const normalizeMeasuredKinds = (kinds) => {
+    const values = Array.isArray(kinds) && kinds.length ? kinds : ["title", "caption"];
+    return values.filter((kind, index) => ["title", "caption"].includes(kind) && values.indexOf(kind) === index);
+  };
+  const repaintMeasuredDesign = (kinds = ["title", "caption"]) => {
     if (!measuredDesign) return false;
     if (!isMeasuredPreviewVisible()) {
       designNeedsVisibleRefresh = true;
@@ -20507,8 +20536,13 @@ document.addEventListener("DOMContentLoaded", () => {
     }
     const titleEl = isOriginalCropAspect() ? origPreviewTitle : previewTitle;
     const captionEl = isOriginalCropAspect() ? origPreviewCaption : previewSubtitle;
-    paintMeasuredText(titleEl, measuredDesign.title, "title", getActivePreviewScaleX(), getActivePreviewScaleY());
-    paintMeasuredText(captionEl, measuredDesign.caption, "caption", getActivePreviewScaleX(), getActivePreviewScaleY());
+    const selectedKinds = normalizeMeasuredKinds(kinds);
+    if (selectedKinds.includes("title")) {
+      paintMeasuredText(titleEl, measuredDesign.title, "title", getActivePreviewScaleX(), getActivePreviewScaleY());
+    }
+    if (selectedKinds.includes("caption")) {
+      paintMeasuredText(captionEl, measuredDesign.caption, "caption", getActivePreviewScaleX(), getActivePreviewScaleY());
+    }
     designNeedsVisibleRefresh = false;
     return true;
   };
@@ -20588,7 +20622,7 @@ document.addEventListener("DOMContentLoaded", () => {
   };
   window.getHonestCaptionPreviewText = longestRenderedCaptionGroup;
   window.buildCaptionPreviewMarkup = captionPreviewMarkup;
-  const requestMeasuredDesign = ({ force = false } = {}) => {
+  const requestMeasuredDesign = ({ force = false, kinds = null, repaintIfUnchanged = false } = {}) => {
     if (!isMeasuredPreviewVisible()) {
       designNeedsVisibleRefresh = true;
       return;
@@ -20615,7 +20649,26 @@ document.addEventListener("DOMContentLoaded", () => {
     if (original && getCaptionAnchor() === "bottom" && !initialSubtitleMarginCustom && !dirtyOverlayFields.has("sub_margin")) {
       data.caption_margin = Math.round(height-height*DESIGN_GEOMETRY.original_caption_center-data.caption_size);
     }
-    const key = JSON.stringify(data);
+    const requestedKinds = normalizeMeasuredKinds(kinds);
+    const nextKeys = {
+      title: JSON.stringify({
+        width: data.width, height: data.height, title: data.title, title_font: data.title_font,
+        title_size: data.title_size, line_spacing: data.line_spacing, preset: data.preset,
+        language: data.language,
+      }),
+      caption: JSON.stringify({
+        width: data.width, height: data.height, caption: data.caption, caption_source: data.caption_source,
+        caption_font: data.caption_font, caption_size: data.caption_size, preset: data.preset,
+        caption_style: data.caption_style, language: data.language, active_word: data.active_word,
+      }),
+    };
+    const changedKinds = requestedKinds.filter((kind) => force || nextKeys[kind] !== measuredDesignKeys[kind]);
+    if (!changedKinds.length) {
+      if (repaintIfUnchanged) repaintMeasuredDesign(requestedKinds);
+      return;
+    }
+    const body = JSON.stringify(data);
+    const key = JSON.stringify({ body, changedKinds });
     if (!force && key === pendingDesignKey) return;
     const requestVersion = ++designMeasureVersion;
     pendingDesignKey = key;
@@ -20627,13 +20680,8 @@ document.addEventListener("DOMContentLoaded", () => {
           designNeedsVisibleRefresh = true;
           return;
         }
-        if (key === measuredDesignKey && measuredDesign) {
-          pendingDesignKey = "";
-          repaintMeasuredDesign(true);
-          return;
-        }
         const response = await fetch(previewConfig.metricsUrl, {method: "POST", credentials: "same-origin",
-          headers: {"Content-Type": "application/json"}, body: key});
+          headers: {"Content-Type": "application/json"}, body});
         if (!response.ok) throw new Error(`Design metrics ${response.status}`);
         const result = await response.json();
         if (requestVersion !== designMeasureVersion || pendingDesignKey !== key || !isMeasuredPreviewVisible()) {
@@ -20641,21 +20689,21 @@ document.addEventListener("DOMContentLoaded", () => {
           return;
         }
         measuredDesign = result;
-        measuredDesignKey = key;
+        changedKinds.forEach((kind) => { measuredDesignKeys[kind] = nextKeys[kind]; });
         pendingDesignKey = "";
-        repaintMeasuredDesign(true);
+        repaintMeasuredDesign(changedKinds);
       } catch (error) {
         if (requestVersion === designMeasureVersion && pendingDesignKey === key) pendingDesignKey = "";
         console.warn("Unable to measure Final Preview", error);
       }
     }, force ? 0 : 80);
   };
-  const scheduleMeasuredDesignRefresh = ({ force = true } = {}) => {
+  const scheduleMeasuredDesignRefresh = ({ force = false, kinds = null, repaintIfUnchanged = true } = {}) => {
     if (designRefreshFrame) window.cancelAnimationFrame(designRefreshFrame);
     designRefreshFrame = window.requestAnimationFrame(() => {
       designRefreshFrame = window.requestAnimationFrame(() => {
         designRefreshFrame = null;
-        requestMeasuredDesign({ force });
+        requestMeasuredDesign({ force, kinds, repaintIfUnchanged });
       });
     });
   };
@@ -20720,7 +20768,7 @@ document.addEventListener("DOMContentLoaded", () => {
     subscribeCanvas.dataset.renderBbox = JSON.stringify([x,y,x+width,y+height]);
   };
 
-  const applyPreviewLayout = () => {
+  const applyPreviewLayout = ({ measure = true, measureKinds = null, repaintIfUnchanged = false } = {}) => {
     const dims = getOverlayDims();
     const originalPreview = isOriginalCropAspect();
     previewSubtitle?.classList.toggle("is-caption-paint-inactive", originalPreview);
@@ -20854,7 +20902,9 @@ document.addEventListener("DOMContentLoaded", () => {
       previewSubtitle.style.height = "auto";
     }
     if (origPreviewTitle) {
-      origPreviewTitle.textContent = previewTitle?.textContent || "Life is full of fun";
+      if (origPreviewTitle.dataset.captionDomOwner !== "measured-svg") {
+        origPreviewTitle.textContent = previewTitle?.textContent || "Life is full of fun";
+      }
       origPreviewTitle.classList.toggle("is-hidden", !isTitleVisible());
       origPreviewTitle.style.top = titleTop * scaleY + "px";
       origPreviewTitle.style.height = baseTitleHeight * scaleY + "px";
@@ -20868,7 +20918,9 @@ document.addEventListener("DOMContentLoaded", () => {
       origPreviewTitle.style.textTransform = previewTitle?.style.textTransform || "";
     }
     if (origPreviewCaption) {
-      origPreviewCaption.innerHTML = previewSubtitle?.innerHTML || "Sample subtitle line";
+      if (origPreviewCaption.dataset.captionDomOwner !== "measured-svg") {
+        origPreviewCaption.innerHTML = previewSubtitle?.innerHTML || "Sample subtitle line";
+      }
       origPreviewCaption.className = "orig-preview__caption";
       origPreviewCaption.dataset.previewElement = "subtitle";
       previewSubtitle?.classList.forEach((className) => {
@@ -20913,8 +20965,14 @@ document.addEventListener("DOMContentLoaded", () => {
         }
       });
     }
+    const activeMeasuredTitle = originalPreview ? origPreviewTitle : previewTitle;
+    const activeMeasuredCaption = originalPreview ? origPreviewCaption : previewSubtitle;
+    const renderedTitleTop = Number.parseFloat(activeMeasuredTitle?.style.top || "");
+    const renderedCaptionTop = Number.parseFloat(activeMeasuredCaption?.style.top || "");
+    measuredPlacement.title = Number.isFinite(renderedTitleTop) ? renderedTitleTop / Math.max(scaleY, 0.0001) : titleTop;
+    measuredPlacement.caption = Number.isFinite(renderedCaptionTop) ? renderedCaptionTop / Math.max(scaleY, 0.0001) : subtitleTop;
     drawOriginalResultPreview();
-    requestMeasuredDesign();
+    if (measure) requestMeasuredDesign({ kinds: measureKinds, repaintIfUnchanged });
     syncSubscribeStill();
     syncOverlayVisibilityUi();
     if (selectedPreviewElement === "video" && !isPreviewElementDraggable("video")) {
@@ -20932,7 +20990,7 @@ document.addEventListener("DOMContentLoaded", () => {
       : "";
     if (segmentKey === lastAutoLayoutPreviewSegmentKey) return;
     lastAutoLayoutPreviewSegmentKey = segmentKey;
-    applyPreviewLayout();
+    applyPreviewLayout({ measure: false });
   }, 200);
   const clearPreviewCanvas = () => {
     if (!previewCanvas || !previewCtx) {
@@ -21548,15 +21606,31 @@ document.addEventListener("DOMContentLoaded", () => {
     setCropFormat(value, activeSplitEnabled);
   };
 
-  [titleMarginInput, subtitleMarginInput, videoOverlayOffsetInput, videoDateTopInput, videoDateTextInput, titleFontSizeInput, subtitleFontSizeInput, showTitleToggle, showSubtitleToggle].forEach((field) => {
+  [titleMarginInput, subtitleMarginInput, videoOverlayOffsetInput, videoDateTopInput, videoDateTextInput, showTitleToggle, showSubtitleToggle].forEach((field) => {
     field?.addEventListener("input", () => {
       markOverlayFieldDirty(field);
-      applyPreviewLayout();
+      applyPreviewLayout({ measure: false });
     });
     field?.addEventListener("change", () => {
       markOverlayFieldDirty(field);
-      applyPreviewLayout();
+      applyPreviewLayout({ measure: false });
     });
+  });
+  titleFontSizeInput?.addEventListener("input", () => {
+    markOverlayFieldDirty(titleFontSizeInput);
+    applyPreviewLayout({ measureKinds: ["title"] });
+  });
+  titleFontSizeInput?.addEventListener("change", () => {
+    markOverlayFieldDirty(titleFontSizeInput);
+    applyPreviewLayout({ measureKinds: ["title"] });
+  });
+  subtitleFontSizeInput?.addEventListener("input", () => {
+    markOverlayFieldDirty(subtitleFontSizeInput);
+    applyPreviewLayout({ measureKinds: ["caption"] });
+  });
+  subtitleFontSizeInput?.addEventListener("change", () => {
+    markOverlayFieldDirty(subtitleFontSizeInput);
+    applyPreviewLayout({ measureKinds: ["caption"] });
   });
 
   [previewTitle, previewVideo, previewSubtitle, previewDate, origPreviewTitle, origPreviewCaption].forEach((element) => {
@@ -21682,7 +21756,7 @@ document.addEventListener("DOMContentLoaded", () => {
   });
   window.addEventListener("resize", () => {
     if (isOriginalCropAspect()) {
-      applyPreviewLayout();
+      applyPreviewLayout({ measure: false });
     }
   });
   originalResetBtn?.addEventListener("click", () => {
@@ -22041,7 +22115,7 @@ document.addEventListener("DOMContentLoaded", () => {
       return;
     }
     syncPreviewTitleText(event.detail.title);
-    applyPreviewLayout();
+    applyPreviewLayout({ measureKinds: ["title"] });
   });
 
   const shortDesignFieldNames = [
@@ -22987,9 +23061,9 @@ document.addEventListener("DOMContentLoaded", function () {
     window.syncOverlayShapesFromField?.();
   };
   window.applyCropEditorFieldState = applyDesignState;
-  const syncFinalPreviewLayout = () => {
+  const syncFinalPreviewLayout = (options = {}) => {
     if (typeof window.syncCropEditorFinalPreviewLayout === "function") {
-      window.syncCropEditorFinalPreviewLayout();
+      window.syncCropEditorFinalPreviewLayout(options);
     }
   };
 
@@ -23008,9 +23082,11 @@ document.addEventListener("DOMContentLoaded", function () {
         previewTitle.style.fontWeight = fontWeight;
       }
       if (fontFamily && document.fonts?.load) {
-        document.fonts.load(`${fontWeight} 24px ${fontFamily}`).then(syncFinalPreviewLayout).catch(() => {});
+        document.fonts.load(`${fontWeight} 24px ${fontFamily}`).then(() => {
+          syncFinalPreviewLayout({ measureKinds: ["title"] });
+        }).catch(() => {});
       }
-      syncFinalPreviewLayout();
+      syncFinalPreviewLayout({ measureKinds: ["title"] });
     }
   };
   const updateSubtitleFont = () => {
@@ -23030,10 +23106,9 @@ document.addEventListener("DOMContentLoaded", function () {
       if (fontFamily && document.fonts?.load) {
         document.fonts.load(`${fontWeight} 24px ${fontFamily}`).then(() => {
           applySubtitlePreview();
-          syncFinalPreviewLayout();
         }).catch(() => {});
       }
-      syncFinalPreviewLayout();
+      syncFinalPreviewLayout({ measureKinds: ["caption"] });
     }
   };
 
@@ -23276,7 +23351,7 @@ document.addEventListener("DOMContentLoaded", function () {
     if (titlePreview) titlePreview.style.fontWeight = selectedTitleWeight;
     if (previewTitle) previewTitle.style.fontWeight = selectedTitleWeight;
     syncPreviewTitleText();
-    syncFinalPreviewLayout();
+    syncFinalPreviewLayout({ measureKinds: ["title"], repaintIfUnchanged: true });
   };
   const applySubtitlePreview = () => {
     const subtitleTextHidden = document.getElementById("subtitleTextColorValue");
@@ -23327,9 +23402,7 @@ document.addEventListener("DOMContentLoaded", function () {
       previewSubtitle.classList.toggle("is-gradient-fill", wordHighlightPreset?.fillMode === "gradient");
       previewSubtitle.classList.toggle("is-active-gradient-fill", wordHighlightPreset?.fillMode === "active_gradient_only");
       previewSubtitle.dataset.captionText = window.getHonestCaptionPreviewText();
-      if (window.hasMeasuredDesignPreview?.()) {
-        window.refreshMeasuredDesignPreview?.({ force: true });
-      } else {
+      if (!window.hasMeasuredDesignPreview?.()) {
         previewSubtitle.replaceChildren(window.buildCaptionPreviewMarkup(window.getHonestCaptionPreviewText(), isWordHighlight));
         previewSubtitle.dataset.captionDomOwner = "html-fallback";
       }
@@ -23342,7 +23415,7 @@ document.addEventListener("DOMContentLoaded", function () {
     if (subtitleBgSwatch) subtitleBgSwatch.style.backgroundColor = bgRgba;
     syncDesignChip("subtitleTextColorValue", textHex, Number(subtitleTextAlphaInput?.value ?? 100));
     syncDesignChip("subtitleBgColorValue", bgHex, Number(subtitleBgAlphaInput?.value ?? 85));
-    syncFinalPreviewLayout();
+    syncFinalPreviewLayout({ measureKinds: ["caption"], repaintIfUnchanged: true });
   };
   const applySubtitlePresetValue = (nextValue) => {
     if (!nextValue || !subtitlePresetField) {
@@ -23366,7 +23439,7 @@ document.addEventListener("DOMContentLoaded", function () {
     const previewTitle = document.getElementById("shorts-preview-title-band");
     if (previewTitle) previewTitle.style.color = hex;
     if (titleTextColorSwatch) titleTextColorSwatch.style.backgroundColor = hex;
-    syncFinalPreviewLayout();
+    syncFinalPreviewLayout({ measureKinds: ["title"], repaintIfUnchanged: true });
   };
   const syncStyleTemplateCards = () => {
     const activeSubtitlePreset = String(subtitlePresetField?.value || "").trim();
