@@ -2366,6 +2366,14 @@
     position: relative;
     visibility: visible;
   }
+  .generate-v2-editor-section.is-active > [data-crop-modal-panel] {
+    position: static !important;
+    left: auto !important;
+    top: auto !important;
+    width: 100% !important;
+    visibility: visible !important;
+    pointer-events: auto !important;
+  }
   .generate-v2-editor-section .crop-modal-settings-panel,
   .generate-v2-editor-section .caption-tab-panel {
     padding: 14px;
@@ -12272,6 +12280,7 @@ const syncGenerateV2InlinePreviewScale = () => {
   slot.style.height = `${Math.round(Math.min(targetHeight, sourceHeight * scale))}px`;
   window.requestAnimationFrame(() => {
     window.refreshMeasuredDesignPreview?.({
+      force: true,
       kinds: ["title", "caption"],
       repaintIfUnchanged: true,
     });
@@ -12282,10 +12291,9 @@ window.syncGenerateV2InlinePreviewScale = syncGenerateV2InlinePreviewScale;
 const syncGenerateV2MountedSectionPanels = (activeSection) => {
   const root = getGenerateV2Root();
   root?.querySelectorAll("[data-v2-editor-section-panel]").forEach((section) => {
-    const isActive = section.dataset.v2EditorSectionPanel === activeSection;
     section.querySelectorAll(":scope > [data-crop-modal-panel]").forEach((panel) => {
       panel.hidden = false;
-      panel.classList.toggle("generate-v2-editor-pane-hidden", !isActive);
+      panel.classList.remove("generate-v2-editor-pane-hidden");
     });
   });
 };
@@ -19973,27 +19981,36 @@ document.addEventListener("DOMContentLoaded", () => {
   };
   const getActiveRenderFrameWidth = () => isOriginalCropAspect() ? originalRenderDimensions()[0] : renderFrameWidth;
   const getActiveRenderFrameHeight = () => isOriginalCropAspect() ? originalRenderDimensions()[1] : renderFrameHeight;
-  const getActivePreviewFrameWidth = () => {
-    if (!isOriginalCropAspect()) {
-      return previewConfig.frameWidth;
-    }
-    return Math.max(
-      1,
-      origPreviewFrame?.getBoundingClientRect?.().width ||
-        previewFrame?.getBoundingClientRect?.().width ||
-        previewConfig.frameWidth,
-    );
+  const getActivePreviewGeometry = () => {
+    const frame = isOriginalCropAspect() ? origPreviewFrame : previewFrame;
+    const rect = frame?.getBoundingClientRect?.();
+    const renderWidth = Math.max(1, getActiveRenderFrameWidth());
+    const renderHeight = Math.max(1, getActiveRenderFrameHeight());
+    // CSS coordinates live inside a card that may itself be transformed in v2.
+    // Keep both spaces so every preview layer derives from the same live frame.
+    const localWidth = Math.max(1, Number(frame?.clientWidth || frame?.offsetWidth || previewConfig.frameWidth));
+    const localHeight = Math.max(1, Number(frame?.clientHeight || frame?.offsetHeight || previewConfig.frameHeight));
+    const renderedWidth = Math.max(1, Number(rect?.width || localWidth));
+    const renderedHeight = Math.max(1, Number(rect?.height || localHeight));
+    return {
+      frame,
+      renderWidth,
+      renderHeight,
+      localWidth,
+      localHeight,
+      renderedWidth,
+      renderedHeight,
+      scaleX: localWidth / renderWidth,
+      scaleY: localHeight / renderHeight,
+      renderedScaleX: renderedWidth / renderWidth,
+      renderedScaleY: renderedHeight / renderHeight,
+    };
   };
-  const getActivePreviewFrameHeight = () => (
-    isOriginalCropAspect()
-      ? (
-          origPreviewFrame?.getBoundingClientRect?.().height ||
-          (getActivePreviewFrameWidth() * 9 / 16)
-        )
-      : previewConfig.frameHeight
-  );
-  const getActivePreviewScaleX = () => getActivePreviewFrameWidth() / Math.max(1, getActiveRenderFrameWidth());
-  const getActivePreviewScaleY = () => getActivePreviewFrameHeight() / Math.max(1, getActiveRenderFrameHeight());
+  window.getCropEditorPreviewGeometry = getActivePreviewGeometry;
+  const getActivePreviewFrameWidth = () => getActivePreviewGeometry().localWidth;
+  const getActivePreviewFrameHeight = () => getActivePreviewGeometry().localHeight;
+  const getActivePreviewScaleX = () => getActivePreviewGeometry().scaleX;
+  const getActivePreviewScaleY = () => getActivePreviewGeometry().scaleY;
   const getMeasuredRenderHeight = (element, fallback) => {
     if (!element) return fallback;
     const scaleY = Math.max(0.001, getActivePreviewScaleY());
@@ -20431,6 +20448,7 @@ document.addEventListener("DOMContentLoaded", () => {
   let designNeedsVisibleRefresh = false;
   let previewLayerSafetyFrame = null;
   let previewLayerSafetyReported = false;
+  let previewBandScaleReported = false;
   const getMeasuredPreviewFrame = () => isOriginalCropAspect() ? origPreviewFrame : previewFrame;
   const isMeasuredPreviewVisible = () => {
     const frame = getMeasuredPreviewFrame();
@@ -20467,11 +20485,27 @@ document.addEventListener("DOMContentLoaded", () => {
     return isOriginalCropAspect() ? origPreviewCaption : previewSubtitle;
   };
   const renderedPreviewScaleSignature = () => {
-    const frame = getMeasuredPreviewFrame();
-    const rect = frame?.getBoundingClientRect?.();
-    const scaleX = Number(rect?.width || 0) / Math.max(1, getActiveRenderFrameWidth());
-    const scaleY = Number(rect?.height || 0) / Math.max(1, getActiveRenderFrameHeight());
-    return `${scaleX.toFixed(4)}:${scaleY.toFixed(4)}`;
+    const geometry = getActivePreviewGeometry();
+    return `${geometry.renderedScaleX.toFixed(4)}:${geometry.renderedScaleY.toFixed(4)}`;
+  };
+  const verifyMeasuredBandScale = (element, kind) => {
+    if (!element?.isConnected || element.dataset.captionDomOwner !== "measured-svg") return;
+    const svg = element.querySelector(":scope > svg[viewBox]");
+    const viewBox = svg?.viewBox?.baseVal;
+    if (!viewBox?.width || !viewBox?.height) return;
+    const geometry = getActivePreviewGeometry();
+    const bandRect = element.getBoundingClientRect();
+    const actualX = bandRect.width / viewBox.width;
+    const actualY = bandRect.height / viewBox.height;
+    const mismatch = Math.abs(actualX - geometry.renderedScaleX) / geometry.renderedScaleX > 0.01
+      || Math.abs(actualY - geometry.renderedScaleY) / geometry.renderedScaleY > 0.01;
+    if (!mismatch || previewBandScaleReported) return;
+    previewBandScaleReported = true;
+    window.MintiErrorReporter?.report?.({
+      error_type: "design_preview_band_scale_mismatch",
+      message: `${kind} band scale ${actualX.toFixed(4)}:${actualY.toFixed(4)} does not match frame ${geometry.renderedScaleX.toFixed(4)}:${geometry.renderedScaleY.toFixed(4)}`,
+      source: window.location.pathname,
+    });
   };
   const measuredLayerHasVisiblePaint = (element) => {
     if (!element?.isConnected || element.classList.contains("is-caption-paint-inactive")) return false;
@@ -20621,6 +20655,7 @@ document.addEventListener("DOMContentLoaded", () => {
       element.dataset.previewScale = renderedPreviewScaleSignature();
       element.replaceChildren(svg);
       element.dataset.captionDomOwner = "measured-svg";
+      verifyMeasuredBandScale(element, kind);
       schedulePreviewLayerSafetyCheck(`${kind}_repaint`);
     });
   };
@@ -20810,6 +20845,7 @@ document.addEventListener("DOMContentLoaded", () => {
   window.refreshMeasuredDesignPreview = scheduleMeasuredDesignRefresh;
   window.hasMeasuredDesignPreview = () => !!measuredDesign;
   const refreshMeasuredLayersForScale = () => scheduleMeasuredDesignRefresh({
+    force: true,
     kinds: ["title", "caption"],
     repaintIfUnchanged: true,
   });
@@ -24405,7 +24441,9 @@ document.addEventListener("DOMContentLoaded", function () {
     cropModalPanels.forEach((panel) => {
       const isActive = panel.dataset.cropModalPanel === target;
       panel.hidden = keepMeasurable ? false : !isActive;
-      panel.classList.toggle("generate-v2-editor-pane-hidden", keepMeasurable && !isActive);
+      // In v2 each panel already lives in a section wrapper. Parking the child as
+      // well leaves the active wrapper empty when modal-tab state changes later.
+      panel.classList.remove("generate-v2-editor-pane-hidden");
     });
     window.requestAnimationFrame(() => window.refreshMeasuredDesignPreview?.({ force: true }));
   };
