@@ -5,6 +5,7 @@ from app.video_shorts.services import youtube_scheduling
 import json
 from app.video_shorts.services import tenant_media
 import errno
+import fcntl
 import math
 import os
 import re
@@ -79,6 +80,7 @@ from app.video_shorts.config import (
     DEFAULT_USER_PLAN_ID,
     GENERATE_V2_ALL,
     FACE_AWARE_LAYOUT_ALL,
+    FACE_AWARE_DETECT_WIDTH,
     FACE_AWARE_MIN_FILL_SEC,
     FACE_AWARE_MIN_FIT_SEC,
     FACE_AWARE_MIN_SPLIT_SEC,
@@ -109,6 +111,7 @@ from app.video_shorts.config import (
     CLIP_PLAN_MAX_RUNS_PER_VIDEO,
     SHORTS_CATEGORY_OPTIONS,
     SHORTS_DIR,
+    PRIVATE_STATE_DIR,
     SIGNUPS_ENABLED,
     STATIC_FONTS_DIR,
     SUB_FONT_CHOICES,
@@ -266,6 +269,7 @@ from app.video_shorts.services.billing import (
 from app.video_shorts.services.media_utils import (
     _cleanup_resolved_source_video,
     _find_source_video,
+    _is_source_cache_path,
     _format_time_label,
     _resolve_ffmpeg,
     _probe_video_stream_info,
@@ -3164,6 +3168,8 @@ _FACE_TRACK_OUTLIER_DELTA = 0.09
 _FACE_TRACK_OUTLIER_NEIGHBOR_DELTA = 0.06
 _FACE_TRACK_SMOOTH_WINDOW = 5
 _FACE_TRACK_DEADZONE = 0.02
+_FACE_DETECTION_CACHE_SCHEMA_VERSION = 1
+_FACE_DETECTOR_VERSION = "yunet-2023mar-v1"
 
 
 def _face_track_smooth_window() -> int:
@@ -3223,19 +3229,24 @@ def _yunet_face_detection_ratios(
     image: Any,
     frame_width: int,
     frame_height: int,
+    *,
+    detector: Any = None,
 ) -> list[dict[str, float | int]]:
     if frame_width <= 0 or frame_height <= 0:
         return []
     if not _YUNET_FACE_MODEL_PATH.exists():
         raise FileNotFoundError(f"YuNet face detector model not found: {_YUNET_FACE_MODEL_PATH}")
-    detector = cv2.FaceDetectorYN_create(
-        str(_YUNET_FACE_MODEL_PATH),
-        "",
-        (int(frame_width), int(frame_height)),
-        float(_YUNET_FACE_SCORE_THRESHOLD),
-        0.3,
-        5000,
-    )
+    if detector is None:
+        detector = cv2.FaceDetectorYN_create(
+            str(_YUNET_FACE_MODEL_PATH),
+            "",
+            (int(frame_width), int(frame_height)),
+            float(_YUNET_FACE_SCORE_THRESHOLD),
+            0.3,
+            5000,
+        )
+    else:
+        detector.setInputSize((int(frame_width), int(frame_height)))
     _, detections = detector.detect(image)
     faces: list[dict[str, float | int]] = []
     if detections is None:
@@ -3534,15 +3545,6 @@ def _ensure_preview_face_track(
     if start_seconds is None or end_seconds is None:
         return None
     track_path, smooth_path = _preview_face_track_paths(video_id, start_seconds, end_seconds)
-    if smooth_path.exists():
-        current_app.logger.info(
-            "Preview face track cache hit video_id=%s start=%s end=%s output=%s",
-            video_id,
-            start_seconds,
-            end_seconds,
-            smooth_path.name,
-        )
-        return track_path if track_path.exists() else smooth_path
     start_val = _to_float(start_seconds)
     end_val = _to_float(end_seconds)
     duration_val = _to_float(duration_seconds)
@@ -3556,87 +3558,36 @@ def _ensure_preview_face_track(
     clip_duration = max(0.0, end_val - start_val)
     if clip_duration <= 0:
         return None
-    sample_sec = max(0.1, float(FACE_AWARE_SAMPLE_SEC or 0.5))
-    fps = 1.0 / sample_sec
-    ffmpeg_bin = _resolve_ffmpeg()
-    rows: list[dict[str, Any]] = []
     try:
-        import cv2
-
-        with tempfile.TemporaryDirectory(prefix=f"track_{video_id}_") as temp_dir:
-            temp_dir_path = Path(temp_dir)
-            frame_pattern = temp_dir_path / f"{video_id}_track_%06d.jpg"
-            cmd = [
-                ffmpeg_bin,
-                "-y",
-                "-ss",
-                f"{start_val:.6f}",
-                "-t",
-                f"{clip_duration:.6f}",
-                "-i",
-                str(source_path),
-                "-vf",
-                f"fps={fps:.6f},scale=720:-1",
-                "-q:v",
-                "2",
-                str(frame_pattern),
-            ]
-            extract_started = time.monotonic()
-            extract_result = run_media_subprocess(
-                cmd,
-                operation="generate_preview_face_track",
-                context=f"video_id={video_id} start={start_val:.3f} end={end_val:.3f}",
-                check=True,
-                timeout=scale_media_timeout(
-                    FFMPEG_SHORT_TIMEOUT,
-                    duration_seconds=clip_duration,
-                    multiplier=0.6,
-                    extra_seconds=20,
-                ),
-                capture_output=True,
-                text=True,
-            )
-            frame_paths = sorted(temp_dir_path.glob(f"{video_id}_track_*.jpg"))
-            current_app.logger.info(
-                "Preview face track extraction completed video_id=%s samples=%s elapsed_ms=%s stderr_tail=%s",
-                video_id,
-                len(frame_paths),
-                int((time.monotonic() - extract_started) * 1000),
-                (extract_result.stderr or "")[-240:].replace("\n", " "),
-            )
-            for index, candidate_path in enumerate(frame_paths):
-                timestamp = round(min(end_val, start_val + (index * sample_sec)), 3)
-                row: dict[str, Any] = {
-                    "t": timestamp,
-                    "cx_ratio": None,
-                    "cy_ratio": None,
-                    "w_ratio": None,
-                    "h_ratio": None,
-                    "found": False,
+        cache_info: Dict[str, Any] = {"hit": True, "analyzed_spans": []}
+        samples = _sample_face_presence_for_layout(
+            video_id=video_id,
+            source_path=Path(source_path),
+            start_seconds=float(start_val),
+            end_seconds=float(end_val),
+            cache_info=cache_info,
+        )
+        rows: list[dict[str, Any]] = []
+        for sample in samples:
+            faces = sample.get("faces") if isinstance(sample.get("faces"), list) else []
+            face = faces[0] if len(faces) == 1 and isinstance(faces[0], dict) else {}
+            rows.append(
+                {
+                    "t": round(float(start_val) + float(sample.get("t") or 0.0), 3),
+                    "cx_ratio": face.get("cx_ratio"),
+                    "cy_ratio": face.get("cy_ratio"),
+                    "w_ratio": face.get("w_ratio"),
+                    "h_ratio": face.get("h_ratio"),
+                    "found": bool(face),
                 }
-                image = cv2.imread(str(candidate_path))
-                if image is not None:
-                    frame_height, frame_width = image.shape[:2]
-                    faces = _yunet_face_detection_ratios(cv2, image, frame_width, frame_height)
-                    filtered_faces = _filter_preview_faces_by_size(faces)
-                    if len(filtered_faces) == 1:
-                        face = filtered_faces[0]
-                        row.update(
-                            {
-                                "cx_ratio": face["cx_ratio"],
-                                "cy_ratio": face["cy_ratio"],
-                                "w_ratio": face["w_ratio"],
-                                "h_ratio": face["h_ratio"],
-                                "found": True,
-                            }
-                        )
-                rows.append(row)
+            )
         track_path.write_text(json.dumps(rows, ensure_ascii=True), encoding="utf-8")
         current_app.logger.info(
-            "Preview face track written video_id=%s samples=%s found=%s output=%s",
+            "Preview face track written video_id=%s samples=%s found=%s cache_hit=%s output=%s",
             video_id,
             len(rows),
             sum(1 for row in rows if row.get("found")),
+            bool(cache_info.get("hit")),
             track_path.name,
         )
         try:
@@ -4157,31 +4108,109 @@ def _attach_face_aware_split_crops_to_segments(
     return enriched
 
 
-def _sample_face_presence_for_layout(
+def _face_detection_settings_key() -> str:
+    try:
+        model_identity = sha256(_YUNET_FACE_MODEL_PATH.read_bytes()).hexdigest()
+    except OSError:
+        model_identity = "missing"
+    settings = {
+        "detector": _FACE_DETECTOR_VERSION,
+        "model": model_identity,
+        "sample_seconds": round(max(0.1, float(FACE_AWARE_SAMPLE_SEC or 0.5)), 6),
+        "width": int(FACE_AWARE_DETECT_WIDTH),
+        "score_threshold": float(_YUNET_FACE_SCORE_THRESHOLD),
+        "min_face_height_ratio": float(_PREVIEW_FACE_MIN_H_RATIO),
+    }
+    return sha256(json.dumps(settings, sort_keys=True).encode("utf-8")).hexdigest()
+
+
+def _face_detection_source_fingerprint(source_path: Path) -> str:
+    path = Path(source_path).resolve()
+    stat = path.stat()
+    identity: Dict[str, Any] = {
+        "size": int(stat.st_size),
+        "name": path.name,
+    }
+    if _is_source_cache_path(path):
+        # S3 cache filenames contain the object size and ETag. mtime is excluded
+        # because cache hits intentionally touch the file for LRU eviction.
+        identity["kind"] = "s3_cache"
+    else:
+        identity.update(
+            {
+                "kind": "local",
+                "path": str(path),
+                "mtime_ns": int(stat.st_mtime_ns),
+            }
+        )
+    return sha256(json.dumps(identity, sort_keys=True).encode("utf-8")).hexdigest()
+
+
+def _face_detection_cache_path(video_id: str) -> Path:
+    cache_dir = PRIVATE_STATE_DIR / "face_detection_cache"
+    cache_dir.mkdir(parents=True, exist_ok=True)
+    video_key = sha256(str(video_id or "").strip().encode("utf-8")).hexdigest()
+    return cache_dir / f"{video_key}.json"
+
+
+def _merge_face_detection_coverage(
+    ranges: List[List[float]],
+    *,
+    tolerance: float,
+) -> List[List[float]]:
+    merged: List[List[float]] = []
+    clean_ranges: List[List[float]] = []
+    for item in ranges:
+        if not isinstance(item, (list, tuple)) or len(item) < 2:
+            continue
+        try:
+            clean_ranges.append([float(item[0]), float(item[1])])
+        except (TypeError, ValueError):
+            continue
+    for start, end in sorted(
+        clean_ranges,
+        key=lambda item: item[0],
+    ):
+        if end <= start:
+            continue
+        if not merged or start > merged[-1][1] + tolerance:
+            merged.append([start, end])
+        else:
+            merged[-1][1] = max(merged[-1][1], end)
+    return [[round(start, 6), round(end, 6)] for start, end in merged]
+
+
+def _missing_face_detection_ranges(
+    start: float,
+    end: float,
+    coverage: List[List[float]],
+    *,
+    tolerance: float,
+) -> List[Tuple[float, float]]:
+    missing: List[Tuple[float, float]] = []
+    cursor = float(start)
+    for covered_start, covered_end in _merge_face_detection_coverage(coverage, tolerance=tolerance):
+        if covered_end < cursor + tolerance:
+            continue
+        if covered_start > end - tolerance:
+            break
+        if covered_start > cursor + tolerance:
+            missing.append((cursor, min(float(end), float(covered_start))))
+        cursor = max(cursor, float(covered_end))
+        if cursor >= end - tolerance:
+            break
+    if cursor < end - tolerance:
+        missing.append((cursor, float(end)))
+    return [(start_value, end_value) for start_value, end_value in missing if end_value > start_value]
+
+
+def _detect_face_samples_for_span(
     *,
     video_id: str,
     source_path: Path,
     start_seconds: float,
     end_seconds: float,
-    source_keep_ranges: Optional[List[Dict[str, float]]] = None,
 ) -> List[Dict[str, Any]]:
-    keep_ranges = _normalize_edit_keep_ranges(source_keep_ranges)
-    if len(keep_ranges) > 1:
-        samples: List[Dict[str, Any]] = []
-        timeline_offset = 0.0
-        for item in keep_ranges:
-            part_samples = _sample_face_presence_for_layout(
-                video_id=video_id,
-                source_path=source_path,
-                start_seconds=float(item["start"]),
-                end_seconds=float(item["end"]),
-            )
-            for sample in part_samples:
-                shifted = dict(sample)
-                shifted["t"] = timeline_offset + float(sample.get("t") or 0.0)
-                samples.append(shifted)
-            timeline_offset += max(0.0, float(item["end"]) - float(item["start"]))
-        return samples
     duration = max(0.0, float(end_seconds) - float(start_seconds))
     if duration <= 0:
         return []
@@ -4202,7 +4231,7 @@ def _sample_face_presence_for_layout(
             "-i",
             str(source_path),
             "-vf",
-            f"fps={fps:.6f},scale=720:-1",
+            f"fps={fps:.6f},scale={int(FACE_AWARE_DETECT_WIDTH)}:-2",
             "-q:v",
             "2",
             str(frame_pattern),
@@ -4223,6 +4252,7 @@ def _sample_face_presence_for_layout(
         )
         import cv2
 
+        detector = None
         for idx, frame_path in enumerate(sorted(temp_dir_path.glob("frame_*.jpg"))):
             image = cv2.imread(str(frame_path))
             filtered_faces: List[Dict[str, Any]] = []
@@ -4230,7 +4260,22 @@ def _sample_face_presence_for_layout(
             frame_width = 0
             if image is not None:
                 frame_height, frame_width = image.shape[:2]
-                faces = _yunet_face_detection_ratios(cv2, image, frame_width, frame_height)
+                if detector is None:
+                    detector = cv2.FaceDetectorYN_create(
+                        str(_YUNET_FACE_MODEL_PATH),
+                        "",
+                        (int(frame_width), int(frame_height)),
+                        float(_YUNET_FACE_SCORE_THRESHOLD),
+                        0.3,
+                        5000,
+                    )
+                faces = _yunet_face_detection_ratios(
+                    cv2,
+                    image,
+                    frame_width,
+                    frame_height,
+                    detector=detector,
+                )
                 filtered_faces = [
                     {
                         "cx_ratio": float(face.get("cx_ratio") or 0.0),
@@ -4242,7 +4287,7 @@ def _sample_face_presence_for_layout(
                 ]
             samples.append(
                 {
-                    "t": min(duration, idx * sample_sec),
+                    "source_t": round(min(float(end_seconds), float(start_seconds) + (idx * sample_sec)), 6),
                     "face_present": len(filtered_faces) >= 1,
                     "face_count": len(filtered_faces),
                     "faces": filtered_faces,
@@ -4251,6 +4296,176 @@ def _sample_face_presence_for_layout(
                 }
             )
     return samples
+
+
+def _cached_face_samples_for_range(
+    *,
+    video_id: str,
+    source_path: Path,
+    start_seconds: float,
+    end_seconds: float,
+    cache_info: Dict[str, Any],
+) -> List[Dict[str, Any]]:
+    sample_sec = max(0.1, float(FACE_AWARE_SAMPLE_SEC or 0.5))
+    tolerance = min(0.125, sample_sec / 4.0)
+    cache_path = _face_detection_cache_path(video_id)
+    lock_path = cache_path.with_suffix(".lock")
+    source_fingerprint = _face_detection_source_fingerprint(source_path)
+    detector_key = _face_detection_settings_key()
+    with lock_path.open("a+") as lock_handle:
+        fcntl.flock(lock_handle.fileno(), fcntl.LOCK_EX)
+        try:
+            payload: Dict[str, Any] = {}
+            if cache_path.exists():
+                try:
+                    loaded = json.loads(cache_path.read_text(encoding="utf-8"))
+                    if isinstance(loaded, dict):
+                        payload = loaded
+                except Exception:
+                    current_app.logger.warning("Ignoring invalid face cache path=%s", cache_path)
+            valid = (
+                payload.get("schema_version") == _FACE_DETECTION_CACHE_SCHEMA_VERSION
+                and payload.get("source_fingerprint") == source_fingerprint
+                and payload.get("detector_key") == detector_key
+            )
+            if not valid:
+                payload = {
+                    "schema_version": _FACE_DETECTION_CACHE_SCHEMA_VERSION,
+                    "source_video_id": str(video_id),
+                    "source_fingerprint": source_fingerprint,
+                    "detector_key": detector_key,
+                    "coverage": [],
+                    "samples": [],
+                }
+            coverage = payload.get("coverage") if isinstance(payload.get("coverage"), list) else []
+            missing = _missing_face_detection_ranges(
+                float(start_seconds),
+                float(end_seconds),
+                coverage,
+                tolerance=tolerance,
+            )
+            if missing:
+                cache_info["hit"] = False
+            for missing_start, missing_end in missing:
+                new_samples = _detect_face_samples_for_span(
+                    video_id=video_id,
+                    source_path=source_path,
+                    start_seconds=missing_start,
+                    end_seconds=missing_end,
+                )
+                existing_by_time = {
+                    round(float(item.get("source_t") or 0.0), 6): item
+                    for item in payload.get("samples") or []
+                    if isinstance(item, dict)
+                }
+                for item in new_samples:
+                    existing_by_time[round(float(item.get("source_t") or 0.0), 6)] = item
+                payload["samples"] = [existing_by_time[key] for key in sorted(existing_by_time)]
+                if new_samples:
+                    coverage.append([missing_start, missing_end])
+                cache_info.setdefault("analyzed_spans", []).append(
+                    [round(missing_start, 6), round(missing_end, 6)]
+                )
+            payload["coverage"] = _merge_face_detection_coverage(coverage, tolerance=tolerance)
+            if missing or not cache_path.exists():
+                temp_path = cache_path.with_name(f"{cache_path.name}.{os.getpid()}.tmp")
+                temp_path.write_text(json.dumps(payload, ensure_ascii=True, sort_keys=True), encoding="utf-8")
+                os.replace(temp_path, cache_path)
+            cached_samples = [
+                item
+                for item in payload.get("samples") or []
+                if isinstance(item, dict)
+                and float(start_seconds) - tolerance
+                <= float(item.get("source_t") or 0.0)
+                <= float(end_seconds) + tolerance
+            ]
+        finally:
+            fcntl.flock(lock_handle.fileno(), fcntl.LOCK_UN)
+    result: List[Dict[str, Any]] = []
+    seen_times: set[float] = set()
+    for item in sorted(cached_samples, key=lambda row: float(row.get("source_t") or 0.0)):
+        relative_t = round(max(0.0, min(float(end_seconds) - float(start_seconds), float(item.get("source_t") or 0.0) - float(start_seconds))), 6)
+        if relative_t in seen_times:
+            continue
+        seen_times.add(relative_t)
+        sample = dict(item)
+        sample.pop("source_t", None)
+        sample["t"] = relative_t
+        result.append(sample)
+    current_app.logger.info(
+        "face_detection_cache video_id=%s start=%.3f end=%.3f hit=%s missing=%s samples=%s settings=%s",
+        video_id,
+        float(start_seconds),
+        float(end_seconds),
+        not bool(missing),
+        [(round(item[0], 3), round(item[1], 3)) for item in missing],
+        len(result),
+        detector_key[:12],
+    )
+    return result
+
+
+def _sample_face_presence_for_layout(
+    *,
+    video_id: str,
+    source_path: Path,
+    start_seconds: float,
+    end_seconds: float,
+    source_keep_ranges: Optional[List[Dict[str, float]]] = None,
+    cache_info: Optional[Dict[str, Any]] = None,
+) -> List[Dict[str, Any]]:
+    if cache_info is None:
+        cache_info = {"hit": True, "analyzed_spans": []}
+    keep_ranges = _normalize_edit_keep_ranges(source_keep_ranges)
+    if len(keep_ranges) > 1:
+        samples: List[Dict[str, Any]] = []
+        timeline_offset = 0.0
+        for item in keep_ranges:
+            part_samples = _sample_face_presence_for_layout(
+                video_id=video_id,
+                source_path=source_path,
+                start_seconds=float(item["start"]),
+                end_seconds=float(item["end"]),
+                cache_info=cache_info,
+            )
+            for sample in part_samples:
+                shifted = dict(sample)
+                shifted["t"] = timeline_offset + float(sample.get("t") or 0.0)
+                samples.append(shifted)
+            timeline_offset += max(0.0, float(item["end"]) - float(item["start"]))
+        return samples
+    duration = max(0.0, float(end_seconds) - float(start_seconds))
+    if duration <= 0:
+        return []
+    try:
+        return _cached_face_samples_for_range(
+            video_id=video_id,
+            source_path=source_path,
+            start_seconds=float(start_seconds),
+            end_seconds=float(end_seconds),
+            cache_info=cache_info,
+        )
+    except Exception:
+        cache_info["hit"] = False
+        current_app.logger.warning(
+            "Face cache unavailable; analyzing directly video_id=%s start=%.3f end=%.3f",
+            video_id,
+            float(start_seconds),
+            float(end_seconds),
+            exc_info=True,
+        )
+        return [
+            {
+                **{key: value for key, value in sample.items() if key != "source_t"},
+                "t": max(0.0, float(sample.get("source_t") or 0.0) - float(start_seconds)),
+            }
+            for sample in _detect_face_samples_for_span(
+                video_id=video_id,
+                source_path=source_path,
+                start_seconds=float(start_seconds),
+                end_seconds=float(end_seconds),
+            )
+        ]
 
 
 def _compute_face_aware_layout_segments(
@@ -4278,16 +4493,25 @@ def _compute_face_aware_layout_segments(
         static_visual_key=static_visual_key,
     )
     if reason:
-        return {"enabled": False, "reason": reason, "samples": [], "segments": [], "snapped_boundaries": []}
+        return {
+            "enabled": False,
+            "reason": reason,
+            "samples": [],
+            "segments": [],
+            "snapped_boundaries": [],
+            "face_detect_cache_hit": "skipped",
+        }
     started = time.perf_counter()
+    cache_info: Dict[str, Any] = {"hit": True, "analyzed_spans": []}
     samples = _sample_face_presence_for_layout(
         video_id=video_id,
         source_path=source_path,
         start_seconds=start_seconds,
         end_seconds=end_seconds,
         source_keep_ranges=source_keep_ranges,
+        cache_info=cache_info,
     )
-    if not face_track_smooth_path and samples:
+    if samples:
         track_rows = []
         for sample in samples:
             faces = sample.get("faces") if isinstance(sample.get("faces"), list) else []
@@ -4382,6 +4606,8 @@ def _compute_face_aware_layout_segments(
         "snapped_boundaries": snapped_boundaries,
         "elapsed_ms": elapsed_ms,
         "face_track_smooth_path": str(face_track_smooth_path) if face_track_smooth_path else "",
+        "face_detect_cache_hit": bool(cache_info.get("hit")),
+        "face_detect_analyzed_spans": list(cache_info.get("analyzed_spans") or []),
     }
 
 
@@ -30652,6 +30878,7 @@ def autoclip_video(video_pk):
         render_timing.set_metadata(
             clip_duration_s=round(max(0.0, float(adj_end) - float(adj_start)), 3),
             layout=str(video_layout_mode or video_crop_aspect or "").strip() or None,
+            face_detect_cache_hit="skipped",
         )
 
         final_file = None
@@ -30939,9 +31166,9 @@ def autoclip_video(video_pk):
                         video_music_audio_id,
                     )
             overlay_offset = locals().get("selected_video_overlay_offset", video_overlay_offset)
-            face_track_smooth_path = _preview_face_track_smooth_path(str(vid), start, end)
-            if not face_track_smooth_path.exists():
-                face_track_smooth_path = None
+            # The shared detector cache validates source identity and detector
+            # settings. Exact-range preview files alone are not authoritative.
+            face_track_smooth_path = None
             face_aware_layout_result: Optional[Dict[str, Any]] = None
             compose_crop_settings = dict(crop_settings)
             compose_crop_aspect = video_crop_aspect
@@ -30962,24 +31189,14 @@ def autoclip_video(video_pk):
                         face_track_smooth_path=face_track_smooth_path,
                         source_keep_ranges=compose_keep_ranges,
                     )
+                render_timing.set_metadata(
+                    face_detect_cache_hit=face_aware_layout_result.get("face_detect_cache_hit"),
+                )
                 face_samples = list(face_aware_layout_result.get("samples") or [])
                 if face_samples:
                     render_timing.set_metadata(
                         face_found=any(int(sample.get("face_count") or 0) > 0 for sample in face_samples),
                     )
-                    first_sized_sample = next(
-                        (
-                            sample
-                            for sample in face_samples
-                            if int(sample.get("frame_width") or 0) > 0 and int(sample.get("frame_height") or 0) > 0
-                        ),
-                        None,
-                    )
-                    if first_sized_sample:
-                        render_timing.record_source_resolution(
-                            first_sized_sample.get("frame_width"),
-                            first_sized_sample.get("frame_height"),
-                        )
                 generated_face_track = str(face_aware_layout_result.get("face_track_smooth_path") or "").strip()
                 if generated_face_track and Path(generated_face_track).exists():
                     face_track_smooth_path = Path(generated_face_track)
@@ -30995,7 +31212,9 @@ def autoclip_video(video_pk):
                     "samples": [],
                     "segments": [],
                     "snapped_boundaries": [],
+                    "face_detect_cache_hit": False,
                 }
+                render_timing.set_metadata(face_detect_cache_hit=False)
                 current_app.logger.warning(
                     "Face-aware layout skipped after error video_id=%s plan_index=%s: %s",
                     vid,

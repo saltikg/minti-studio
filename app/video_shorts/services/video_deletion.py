@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import logging
+from hashlib import sha256
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Dict, Iterable, Optional
@@ -823,6 +824,10 @@ def _delete_private_state(video_pk: int, source_video_id: str) -> None:
     for name in names:
         for root in (PRIVATE_STATE_DIR, PRIVATE_STATE_DIR / "legacy", SHORTS_DIR):
             (root / name).unlink(missing_ok=True)
+    face_cache_key = sha256(str(source_video_id or "").strip().encode("utf-8")).hexdigest()
+    face_cache_dir = PRIVATE_STATE_DIR / "face_detection_cache"
+    (face_cache_dir / f"{face_cache_key}.json").unlink(missing_ok=True)
+    (face_cache_dir / f"{face_cache_key}.lock").unlink(missing_ok=True)
 
 
 def _archive_published_rows(conn, audit_id: str, manifest: dict[str, Any]) -> int:
