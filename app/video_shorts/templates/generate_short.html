@@ -2432,6 +2432,11 @@
   .generate-v2-preview-mount {
     gap: 10px;
     justify-items: center;
+    position: sticky;
+    top: 0;
+    width: 100%;
+    max-width: 100%;
+    align-self: start;
   }
   .generate-v2-preview-chip {
     justify-self: center;
@@ -2528,6 +2533,25 @@
   }
   #clip-workbench-shell[data-generate-v2="1"].is-v2-editing .short-bg-popover {
     z-index: 60;
+  }
+  @media (min-width: 992px) {
+    #clip-workbench-shell[data-generate-v2="1"].is-v2-editing .generate-v2-editor-rail {
+      display: grid;
+      grid-template-rows: repeat(8, minmax(42px, 1fr));
+      gap: 4px;
+      overflow: hidden;
+    }
+    #clip-workbench-shell[data-generate-v2="1"].is-v2-editing .generate-v2-editor-rail-btn {
+      min-height: 42px;
+      padding: 4px 3px;
+      gap: 2px;
+    }
+    #clip-workbench-shell[data-generate-v2="1"].is-v2-editing .generate-v2-editor-rail-btn svg,
+    #clip-workbench-shell[data-generate-v2="1"].is-v2-editing .generate-v2-editor-rail-btn .bi {
+      width: 18px;
+      height: 18px;
+      font-size: 18px;
+    }
   }
   @media (max-width: 991.98px) {
     .generate-v2-editor-body {
@@ -5923,6 +5947,10 @@
   .orig-preview__caption.is-dragging {
     cursor: grabbing;
   }
+  .is-caption-paint-inactive {
+    visibility: hidden !important;
+    pointer-events: none !important;
+  }
   .caption-tab-font-field .form-select,
   .caption-tab-size-field .form-control {
     min-height: 46px;
@@ -6031,6 +6059,7 @@
   }
   .crop-preview-selectable.is-dragging {
     cursor: grabbing;
+    will-change: transform;
   }
   .shorts-preview-title-band,
   .shorts-preview-subtitle-band {
@@ -12206,6 +12235,8 @@ const syncGenerateV2InlinePreviewScale = () => {
   const slot = document.getElementById("generate-v2-preview-slot");
   const frame = document.getElementById("shorts-preview-frame");
   const card = frame?.closest(".cropper-preview-card");
+  const previewMount = document.getElementById("generate-v2-preview-mount");
+  const mediaColumn = slot?.closest(".generate-v2-media-column");
   if (!slot || !frame || !card || !slot.contains(card)) {
     return;
   }
@@ -12215,18 +12246,28 @@ const syncGenerateV2InlinePreviewScale = () => {
     slot.style.removeProperty("--generate-v2-preview-frame-source-width");
     slot.style.removeProperty("--generate-v2-preview-frame-scale");
     slot.style.height = "";
+    slot.style.width = "";
+    mediaColumn?.style.removeProperty("width");
     return;
   }
   slot.classList.remove("is-original-layout");
-  slot.closest(".generate-v2-media-column")?.classList.remove("is-original-layout");
-  const frameRect = frame.getBoundingClientRect();
-  const sourceWidth = frameRect.width || Number.parseFloat(frame.style.width || frame.getAttribute("data-frame-width") || card.dataset.frameWidth || "248") || frame.offsetWidth || 248;
-  const sourceHeight = frameRect.height || Number.parseFloat(frame.style.height || "") || frame.offsetHeight || Math.round(sourceWidth * 16 / 9);
-  const targetWidth = Math.max(1, slot.getBoundingClientRect().width || sourceWidth);
+  mediaColumn?.classList.remove("is-original-layout");
+  const sourceWidth = Number.parseFloat(frame.style.width || frame.getAttribute("data-frame-width") || card.dataset.frameWidth || "248") || 248;
+  const sourceHeight = Number.parseFloat(frame.style.height || "") || Math.round(sourceWidth * 16 / 9);
+  const viewportHeight = Math.max(1, window.visualViewport?.height || window.innerHeight || 720);
+  const slotTop = Math.max(0, slot.getBoundingClientRect().top);
+  const mountWidth = Math.max(1, previewMount?.clientWidth || mediaColumn?.parentElement?.clientWidth || sourceWidth);
+  const visibleHeight = Math.max(1, Math.floor(viewportHeight - slotTop - 14));
+  const widthLimitedHeight = mountWidth * 16 / 9;
+  const preferredHeight = Math.max(360, Math.min(860, visibleHeight));
+  const targetHeight = Math.max(1, Math.min(preferredHeight, visibleHeight, widthLimitedHeight));
+  const targetWidth = Math.max(1, targetHeight * 9 / 16);
   const scale = Math.max(0.1, targetWidth / sourceWidth);
+  if (mediaColumn) mediaColumn.style.width = `${Math.round(targetWidth)}px`;
+  slot.style.width = `${Math.round(targetWidth)}px`;
   slot.style.setProperty("--generate-v2-preview-frame-source-width", `${sourceWidth}px`);
   slot.style.setProperty("--generate-v2-preview-frame-scale", String(scale));
-  slot.style.height = `${Math.round(sourceHeight * scale)}px`;
+  slot.style.height = `${Math.round(Math.min(targetHeight, sourceHeight * scale))}px`;
 };
 
 const setGenerateV2EditorSection = (section = "style") => {
@@ -20682,6 +20723,10 @@ document.addEventListener("DOMContentLoaded", () => {
   const applyPreviewLayout = () => {
     const dims = getOverlayDims();
     const originalPreview = isOriginalCropAspect();
+    previewSubtitle?.classList.toggle("is-caption-paint-inactive", originalPreview);
+    previewSubtitle?.setAttribute("aria-hidden", originalPreview ? "true" : "false");
+    origPreviewCaption?.classList.toggle("is-caption-paint-inactive", !originalPreview);
+    origPreviewCaption?.setAttribute("aria-hidden", originalPreview ? "false" : "true");
     reframeSection?.classList.toggle("is-original-layout", originalPreview);
     if (previewFrame) {
       previewFrame.classList.toggle("is-original-layout", originalPreview);
@@ -21523,13 +21568,23 @@ document.addEventListener("DOMContentLoaded", () => {
       event.preventDefault();
       event.stopPropagation();
       setSelectedPreviewElement(kind);
+      const activeFrame = isOriginalCropAspect() ? origPreviewFrame : previewFrame;
+      const activeFrameRect = activeFrame?.getBoundingClientRect?.();
+      const elementRect = element.getBoundingClientRect();
+      const displayedFrameHeight = Math.max(1, activeFrameRect?.height || activeFrame?.offsetHeight || 1);
       dragState = {
         kind,
-        startClientY: event.clientY,
         pointerDownClientY: event.clientY,
+        previewDeltaY: 0,
+        element,
+        cssPixelsPerClientY: Math.max(0.001, (activeFrame?.offsetHeight || displayedFrameHeight) / displayedFrameHeight),
+        renderUnitsPerClientY: getActiveRenderFrameHeight() / displayedFrameHeight,
+        minClientDeltaY: (activeFrameRect?.top ?? elementRect.top) - elementRect.top,
+        maxClientDeltaY: (activeFrameRect?.bottom ?? elementRect.bottom) - elementRect.bottom,
         moved: false,
       };
       element.classList.add("is-dragging");
+      element.style.willChange = "transform";
       (isOriginalCropAspect() ? origPreviewFrame : previewFrame)?.classList.add("is-dragging");
       previewFrame?.classList.add("show-ui-safe-guides");
       element.setPointerCapture?.(event.pointerId);
@@ -21541,19 +21596,30 @@ document.addEventListener("DOMContentLoaded", () => {
       return;
     }
     event.preventDefault();
-    const deltaPreviewY = event.clientY - dragState.startClientY;
-    dragState.startClientY = event.clientY;
-    if (Math.abs(event.clientY - dragState.pointerDownClientY) > 2) {
+    dragState.previewDeltaY = Math.max(
+      dragState.minClientDeltaY,
+      Math.min(dragState.maxClientDeltaY, event.clientY - dragState.pointerDownClientY),
+    );
+    if (Math.abs(dragState.previewDeltaY) > 2) {
       dragState.moved = true;
     }
-    const deltaRenderY = deltaPreviewY / Math.max(0.001, getActivePreviewScaleY() || overlayScale);
-    applyElementDelta(dragState.kind, deltaRenderY);
+    if (dragState.element) {
+      dragState.element.style.transform = `translate3d(0, ${dragState.previewDeltaY * dragState.cssPixelsPerClientY}px, 0)`;
+    }
   };
   previewFrame?.addEventListener("pointermove", handlePreviewPointerMove);
   origPreviewFrame?.addEventListener("pointermove", handlePreviewPointerMove);
 
   const endPreviewDrag = (event) => {
     const completedDragState = dragState;
+    if (completedDragState?.element) {
+      completedDragState.element.style.removeProperty("transform");
+      completedDragState.element.style.removeProperty("will-change");
+    }
+    if (completedDragState?.moved) {
+      const deltaRenderY = completedDragState.previewDeltaY * completedDragState.renderUnitsPerClientY;
+      applyElementDelta(completedDragState.kind, deltaRenderY);
+    }
     if (event?.target && event.target.classList?.remove) {
       event.target.classList.remove("is-dragging");
     }
@@ -23583,6 +23649,47 @@ document.addEventListener("DOMContentLoaded", function () {
       appendShapeSnapGuides(layer);
     });
   };
+  const paintShapeGeometryWithoutRebuild = (shape) => {
+    if (!shape?.id) return;
+    clampShape(shape);
+    shapeLayerElements().forEach((layer) => {
+      const element = layer.querySelector(`.preview-shape[data-shape-id="${CSS.escape(shape.id)}"]`);
+      if (!element) return;
+      element.style.left = `${shape.x / 10.8}%`;
+      element.style.top = `${shape.y / 19.2}%`;
+      element.style.width = `${shape.w / 10.8}%`;
+      element.style.height = `${shape.h / 19.2}%`;
+      if (isImageOverlay(shape)) {
+        element.style.opacity = String(shape.alpha / 100);
+      } else {
+        const radiusScale = Math.min(layer.clientWidth / 1080, layer.clientHeight / 1920);
+        element.style.borderRadius = `${Math.max(0, shape.radius * radiusScale)}px`;
+      }
+    });
+    Object.entries(shapeGeometry).forEach(([key, field]) => { if (field) field.value = String(shape[key]); });
+    const widthPercent = Math.max(1, Math.min(100, Math.round(shape.w / 10.8)));
+    if (overlaySize) overlaySize.value = String(widthPercent);
+    if (overlaySizeLabel) overlaySizeLabel.textContent = `${widthPercent}%`;
+  };
+  const paintShapeTranslationWithoutRebuild = (shape, baseShape) => {
+    if (!shape?.id || !baseShape) return;
+    clampShape(shape);
+    shapeLayerElements().forEach((layer) => {
+      const element = layer.querySelector(`.preview-shape[data-shape-id="${CSS.escape(shape.id)}"]`);
+      if (!element) return;
+      const dx = (shape.x - baseShape.x) * layer.clientWidth / 1080;
+      const dy = (shape.y - baseShape.y) * layer.clientHeight / 1920;
+      element.style.transform = `translate3d(${dx}px, ${dy}px, 0)`;
+      element.style.willChange = "transform";
+    });
+    Object.entries(shapeGeometry).forEach(([key, field]) => { if (field) field.value = String(shape[key]); });
+  };
+  const repaintShapeSnapGuides = () => {
+    shapeLayerElements().forEach((layer) => {
+      layer.querySelectorAll(".preview-shape-snap-guide").forEach((guide) => guide.remove());
+      appendShapeSnapGuides(layer);
+    });
+  };
   const syncShapeControls = () => {
     const shape = selectedShape();
     shapeControls?.classList.toggle("d-none", !shape);
@@ -23903,7 +24010,15 @@ document.addEventListener("DOMContentLoaded", function () {
     if (!shape || !layer) return;
     selectedShapeId = shape.id;
     activeShapeSnapGuides = [];
-    shapePointerState = { startX: event.clientX, startY: event.clientY, shape: { ...shape }, handle: event.target.dataset.handle || "move", width: layer.clientWidth, height: layer.clientHeight };
+    const layerRect = layer.getBoundingClientRect();
+    shapePointerState = {
+      startX: event.clientX,
+      startY: event.clientY,
+      shape: { ...shape },
+      handle: event.target.dataset.handle || "move",
+      width: layerRect.width || layer.clientWidth,
+      height: layerRect.height || layer.clientHeight,
+    };
     document.body.classList.toggle("is-shape-moving", shapePointerState.handle === "move");
     event.preventDefault(); syncShapesUi();
     window.requestAnimationFrame(() => document.querySelector(`.preview-shape[data-shape-id="${CSS.escape(shape.id)}"]`)?.focus({ preventScroll: true }));
@@ -23957,13 +24072,16 @@ document.addEventListener("DOMContentLoaded", function () {
       if (handle.includes("w")) { shape.x = base.x + dx; shape.w = base.w - dx; }
       if (handle.includes("n")) { shape.y = base.y + dy; shape.h = base.h - dy; }
     }
-    syncShapesUi();
+    if (handle === "move") paintShapeTranslationWithoutRebuild(shape, base);
+    else paintShapeGeometryWithoutRebuild(shape);
+    repaintShapeSnapGuides();
   });
   const finishShapePointerInteraction = () => {
+    const hadInteraction = Boolean(shapePointerState);
     shapePointerState = null;
     activeShapeSnapGuides = [];
     document.body.classList.remove("is-shape-moving");
-    renderShapeLayers();
+    if (hadInteraction) syncShapesUi();
   };
   document.addEventListener("pointerup", finishShapePointerInteraction);
   document.addEventListener("pointercancel", finishShapePointerInteraction);
