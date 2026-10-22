@@ -34,6 +34,7 @@ JOB_TYPE_PUBLISH_SHORT = "publish_short"
 JOB_TYPE_INSTAGRAM_COMMENT_WEBHOOK = "instagram_comment_webhook"
 JOB_TYPE_ENRICH_DISCOVERY_EMAILS = "enrich_discovery_emails"
 JOB_TYPE_ENRICH_AUTOPILOT_DISCOVERY_EMAILS = "enrich_autopilot_discovery_emails"
+JOB_TYPE_PURGE_VIDEO = "purge_video"
 DISCOVERY_JOB_ORIGIN = "discovery_demo"
 CUSTOMER_JOB_ORIGIN = "customer"
 AUTO_RENDER_JOB_ORIGIN = "auto"
@@ -500,7 +501,7 @@ def validate_render_job_scope(job, conn=None):
     if own_conn:
         conn = get_db_readonly()
     try:
-        row = conn.execute("SELECT video_id, owner_user_id, brand_id FROM youtube_videos WHERE id = ?",
+        row = conn.execute("SELECT video_id, owner_user_id, brand_id FROM youtube_videos WHERE id = ? AND deleted_at IS NULL",
                            [int(payload["video_pk"])]).fetchone()
         if (not row or str(row[0]) != str(payload["source_video_id"])
                 or str(row[1] or "") != str(job["user_id"])

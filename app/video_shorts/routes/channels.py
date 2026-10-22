@@ -24,6 +24,12 @@ from app.video_shorts.services.storage import get_media_storage
 from app.video_shorts.services.user_events import track_event
 from app.video_shorts.services.user_preferences import load_user_bool_preference, save_user_bool_preference
 from app.video_shorts.services.youtube_oauth import resolve_stored_token_owner_brand
+from app.video_shorts.services.video_deletion import (
+    VideoDeletionConflict,
+    VideoDeletionNotFound,
+    preview_video_deletion,
+    request_video_deletion,
+)
 
 DEFAULT_TIME_ZONE = "America/Los_Angeles"
 MUSIC_CHANNEL_NAME = "Music channel"
@@ -332,10 +338,11 @@ def _visible_short_rows(conn, user_id, brand_id):
           ON published_video.video_id = gv.youtube_video_id
          AND published_video.owner_user_id = gv.user_id
          AND published_video.brand_id = gv.brand_id
-        LEFT JOIN youtube_videos source_video
+        JOIN youtube_videos source_video
           ON source_video.video_id = gv.source_video_id
          AND source_video.owner_user_id = gv.user_id
          AND source_video.brand_id = gv.brand_id
+         AND source_video.deleted_at IS NULL
         ORDER BY gv.created_at DESC
         """,
         [user_id, brand_id],
@@ -378,6 +385,7 @@ def _short_counts_by_video(conn, user_id, brand_id):
           ON source_video.video_id = gv.source_video_id
          AND source_video.owner_user_id = gv.user_id
          AND source_video.brand_id IS NOT DISTINCT FROM gv.brand_id
+         AND source_video.deleted_at IS NULL
         WHERE gv.user_id = ?
           AND gv.brand_id IS NOT DISTINCT FROM ?
           AND NULLIF(trim(coalesce(gv.clip_filename, '')), '') IS NOT NULL
@@ -813,6 +821,7 @@ def my_videos_page():
     where_clauses = [
         "v.owner_user_id = ?",
         "(v.channel_id IS NULL OR lower(coalesce(c.channel_url, '')) = 'local://uploads')",
+        "v.deleted_at IS NULL",
     ]
     if brand_id:
         where_clauses.append("v.brand_id = ?")
@@ -1025,6 +1034,46 @@ def my_videos_page():
             current_user["id"], HIDE_MY_VIDEOS_COACHMARK_PREFERENCE_KEY, default=False
         ),
     )
+
+
+@video_shorts_bp.route("/my-videos/<int:video_pk>/delete-summary", methods=["GET"])
+def my_video_delete_summary(video_pk: int):
+    current_user = getattr(g, "vs_current_user", None)
+    if not current_user:
+        return jsonify(ok=False, message="Authentication required."), 401
+    try:
+        summary = preview_video_deletion(
+            video_pk=video_pk,
+            owner_user_id=str(current_user["id"]),
+            brand_id=current_brand_id(),
+        )
+        return jsonify(ok=True, summary=summary)
+    except VideoDeletionNotFound:
+        return jsonify(ok=False, message="Video not found."), 404
+
+
+@video_shorts_bp.route("/my-videos/<int:video_pk>/delete", methods=["POST"])
+def delete_my_video(video_pk: int):
+    current_user = getattr(g, "vs_current_user", None)
+    if not current_user:
+        return jsonify(ok=False, message="Authentication required."), 401
+    try:
+        summary = request_video_deletion(
+            video_pk=video_pk,
+            owner_user_id=str(current_user["id"]),
+            brand_id=current_brand_id(),
+            deleted_by=str(current_user["id"]),
+        )
+        return jsonify(
+            ok=True,
+            message="Video deleted. Stored files are being removed in the background.",
+            summary=summary,
+            redirect_url=url_for("video_shorts_bp.my_videos_page"),
+        ), 202
+    except VideoDeletionConflict as exc:
+        return jsonify(ok=False, message=str(exc)), 409
+    except VideoDeletionNotFound:
+        return jsonify(ok=False, message="Video not found."), 404
 
 
 @video_shorts_bp.route("/my-videos/recent-shorts", methods=["GET"])
@@ -1375,6 +1424,7 @@ def channels_page():
         LEFT JOIN (
             SELECT channel_id, COUNT(*) AS pulled_videos
             FROM youtube_videos
+            WHERE deleted_at IS NULL
             GROUP BY channel_id
         ) v
           ON v.channel_id = c.channel_id
@@ -1383,6 +1433,7 @@ def channels_page():
                    COUNT(*) FILTER (WHERE lower(coalesce(download_status,'')) = 'pending') AS pending_videos,
                    COUNT(*) FILTER (WHERE lower(coalesce(download_status,'')) = 'downloaded') AS downloaded_videos
             FROM youtube_videos
+            WHERE deleted_at IS NULL
             GROUP BY channel_id
         ) p
           ON p.channel_id = c.channel_id

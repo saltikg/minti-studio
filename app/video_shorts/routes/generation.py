@@ -9874,7 +9874,7 @@ def _fetch_scoped_video_row(
     editor_context = _active_editor_context()
     owner_user_id = editor_context["owner_user_id"]
     brand_id = editor_context["brand_id"]
-    sql = f"SELECT {select_clause} FROM youtube_videos WHERE id = ?"
+    sql = f"SELECT {select_clause} FROM youtube_videos WHERE id = ? AND deleted_at IS NULL"
     params: List[Any] = [pk_int]
     if owner_user_id:
         sql += " AND owner_user_id = ?"
@@ -9901,7 +9901,7 @@ def _fetch_scoped_video_row_with_scope(
         pk_int = int(video_pk)
     except (TypeError, ValueError):
         return None
-    sql = f"SELECT {select_clause} FROM youtube_videos WHERE id = ?"
+    sql = f"SELECT {select_clause} FROM youtube_videos WHERE id = ? AND deleted_at IS NULL"
     params: List[Any] = [pk_int]
     if owner_user_id:
         sql += " AND owner_user_id = ?"
@@ -13738,9 +13738,10 @@ def _load_shared_short_row(conn, token: str) -> dict[str, Any] | None:
               ON CAST(gv.id AS BIGINT) = CAST(sl.generated_video_id AS BIGINT)
             LEFT JOIN shorts_brands b
               ON CAST(b.id AS VARCHAR) = CAST(gv.brand_id AS VARCHAR)
-            LEFT JOIN youtube_videos yv
+            JOIN youtube_videos yv
               ON CAST(yv.video_id AS VARCHAR) = CAST(gv.source_video_id AS VARCHAR)
              AND yv.owner_user_id = gv.user_id AND yv.brand_id IS NOT DISTINCT FROM gv.brand_id
+             AND yv.deleted_at IS NULL
             WHERE sl.token = ?
             LIMIT 1
             """,
@@ -13777,9 +13778,10 @@ def _load_shared_short_row(conn, token: str) -> dict[str, Any] | None:
         FROM shorts_generated_videos gv
         LEFT JOIN shorts_brands b
           ON CAST(b.id AS VARCHAR) = CAST(gv.brand_id AS VARCHAR)
-        LEFT JOIN youtube_videos yv
+        JOIN youtube_videos yv
           ON CAST(yv.video_id AS VARCHAR) = CAST(gv.source_video_id AS VARCHAR)
          AND yv.owner_user_id = gv.user_id AND yv.brand_id IS NOT DISTINCT FROM gv.brand_id
+         AND yv.deleted_at IS NULL
         WHERE gv.share_token = ?
         LIMIT 1
         """,

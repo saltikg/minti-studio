@@ -80,6 +80,7 @@ from app.video_shorts.services.render_jobs import (
     JOB_TYPE_NORMALIZE_UPLOAD,
     JOB_TYPE_PREVIEW_FRAME,
     JOB_TYPE_PUBLISH_SHORT,
+    JOB_TYPE_PURGE_VIDEO,
     JOB_TYPE_RENDER_SHORT,
     JOB_TYPE_TRANSCRIBE_UPLOAD,
     claim_next_job,
@@ -1912,6 +1913,10 @@ def process_next_job(
             result = enrich_discovery_email_batch(job.get("payload") or {})
         elif job.get("type") == JOB_TYPE_ENRICH_AUTOPILOT_DISCOVERY_EMAILS:
             result = enrich_autopilot_discovery_email_batch(job.get("payload") or {})
+        elif job.get("type") == JOB_TYPE_PURGE_VIDEO:
+            from app.video_shorts.services.video_deletion import execute_video_purge_job
+
+            result = execute_video_purge_job(job.get("payload") or {})
         else:
             result = _execute_render_job(app, job)
         try:

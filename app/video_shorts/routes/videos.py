@@ -34,8 +34,11 @@ from app.video_shorts.services.db import (
     ensure_youtube_video_local_bucket_schema,
     table_columns,
 )
-from app.video_shorts.services.render_jobs import clear_done_job_cache_for_videos
-from app.video_shorts.services.media_utils import purge_source_cache_for_video
+from app.video_shorts.services.video_deletion import (
+    VideoDeletionConflict,
+    VideoDeletionNotFound,
+    request_video_deletion,
+)
 from app.video_shorts.services.comment_moderation import moderate_text_entries
 from app.video_shorts.services.comment_store import (
     upsert_comment_records,
@@ -92,9 +95,6 @@ from app.video_shorts.services.youtube_quota import record_youtube_data_api_call
 from app.video_shorts.services.storage import get_media_storage
 from app.video_shorts.services.ai_video_workspace import list_ai_broadcast_entries
 
-SOURCE_VIDEO_SUFFIXES = (".mp4", ".mov", ".mkv", ".webm", ".mp3", ".wav", ".m4a", ".aac", ".ogg", ".flac")
-
-
 def _pretty_duration(seconds):
     try:
         secs = int(seconds)
@@ -141,15 +141,6 @@ def _short_s3_index() -> Optional[set[str]]:
         keys = set()
     g._vs_short_s3_index = keys
     return keys
-
-
-def _delete_source_video_media(video_id: str, *, conn, excluding_pks=()) -> bool:
-    return tenant_media.delete_source_media(conn, video_id, excluding_pks=excluding_pks)
-
-
-def _delete_short_media(filename: str, *, video_pk=None, owner_user_id=None, brand_id=None) -> None:
-    from app.video_shorts.routes.generation import _delete_short_media as delete_media
-    delete_media(filename, video_pk=video_pk, owner_user_id=owner_user_id, brand_id=brand_id)
 
 
 def _short_public_url(filename: str) -> str:
@@ -1546,6 +1537,7 @@ def _brand_allowed_source_video_ids(
         if effective_owner_user_id:
             where.append("owner_user_id = ?")
             params.append(effective_owner_user_id)
+        where.append("deleted_at IS NULL")
         sql = f"SELECT video_id FROM youtube_videos WHERE {' AND '.join(where)}"
         rows = conn.execute(sql, params).fetchall()
         return {str(row[0]) for row in rows if row and row[0]}
@@ -1635,7 +1627,7 @@ def _load_video_scope(video_id: str) -> Tuple[Optional[str], Optional[str], Opti
             SELECT v.title, v.owner_user_id, c.owner_user_id, v.brand_id, v.channel_id
             FROM youtube_videos v
             LEFT JOIN youtube_channels c ON c.channel_id = v.channel_id
-            WHERE v.video_id = ?
+            WHERE v.video_id = ? AND v.deleted_at IS NULL
             """,
             [video_id],
         ).fetchone()
@@ -1666,7 +1658,7 @@ def _resolve_owner_for_short_id(short_video_id: str) -> Optional[str]:
             SELECT v.owner_user_id, c.owner_user_id
             FROM youtube_videos v
             LEFT JOIN youtube_channels c ON c.channel_id = v.channel_id
-            WHERE v.video_id = ?
+            WHERE v.video_id = ? AND v.deleted_at IS NULL
             """,
             [source_video_id],
         ).fetchone()
@@ -3481,7 +3473,7 @@ def videos_page(channel_id):
     duration_min_seconds = duration_min * 60 if duration_min is not None else None
     duration_max_seconds = duration_max * 60 if duration_max is not None else None
 
-    where_clauses = [channel_scope_sql, "title ILIKE ?"]
+    where_clauses = [channel_scope_sql, "deleted_at IS NULL", "title ILIKE ?"]
     where_params = channel_scope_params + [f"%{search_q}%" if search_q else "%"]
     if video_id_q:
         where_clauses.append("video_id = ?")
@@ -3553,7 +3545,7 @@ def videos_page(channel_id):
     caption_pending = conn.execute(
         """
         SELECT COUNT(*) FROM youtube_videos
-        WHERE """ + channel_scope_sql + """ AND fetch_transcript = TRUE
+        WHERE """ + channel_scope_sql + """ AND deleted_at IS NULL AND fetch_transcript = TRUE
               AND lower(transcript_status) = 'pending'
         """,
         channel_scope_params,
@@ -3562,7 +3554,7 @@ def videos_page(channel_id):
     caption_ready = conn.execute(
         """
         SELECT COUNT(*) FROM youtube_videos
-        WHERE """ + channel_scope_sql + """ AND lower(transcript_status) IN ('done','ready','completed','ok')
+        WHERE """ + channel_scope_sql + """ AND deleted_at IS NULL AND lower(transcript_status) IN ('done','ready','completed','ok')
         """,
         channel_scope_params,
     ).fetchone()[0]
@@ -3570,35 +3562,35 @@ def videos_page(channel_id):
     download_ready = conn.execute(
         """
         SELECT COUNT(*) FROM youtube_videos
-        WHERE """ + channel_scope_sql + """ AND lower(coalesce(download_status,'')) = 'downloaded'
+        WHERE """ + channel_scope_sql + """ AND deleted_at IS NULL AND lower(coalesce(download_status,'')) = 'downloaded'
         """,
         channel_scope_params,
     ).fetchone()[0]
     download_ready_deleted = conn.execute(
         """
         SELECT COUNT(*) FROM youtube_videos
-        WHERE """ + channel_scope_sql + """ AND lower(coalesce(download_status,'')) = 'downloaded_deleted'
+        WHERE """ + channel_scope_sql + """ AND deleted_at IS NULL AND lower(coalesce(download_status,'')) = 'downloaded_deleted'
         """,
         channel_scope_params,
     ).fetchone()[0]
     download_short = conn.execute(
         """
         SELECT COUNT(*) FROM youtube_videos
-        WHERE """ + channel_scope_sql + """ AND lower(coalesce(download_status,'')) = 'short'
+        WHERE """ + channel_scope_sql + """ AND deleted_at IS NULL AND lower(coalesce(download_status,'')) = 'short'
         """,
         channel_scope_params,
     ).fetchone()[0]
     download_irrelevant = conn.execute(
         """
         SELECT COUNT(*) FROM youtube_videos
-        WHERE """ + channel_scope_sql + """ AND lower(coalesce(download_status,'')) = 'irrelevant'
+        WHERE """ + channel_scope_sql + """ AND deleted_at IS NULL AND lower(coalesce(download_status,'')) = 'irrelevant'
         """,
         channel_scope_params,
     ).fetchone()[0]
     download_pending = conn.execute(
         """
         SELECT COUNT(*) FROM youtube_videos
-        WHERE """ + channel_scope_sql + """ AND lower(coalesce(download_status,'')) = 'pending'
+        WHERE """ + channel_scope_sql + """ AND deleted_at IS NULL AND lower(coalesce(download_status,'')) = 'pending'
         """,
         channel_scope_params,
     ).fetchone()[0]
@@ -3607,7 +3599,7 @@ def videos_page(channel_id):
     short_plan_stats = {}
     short_dir = SHORTS_DIR
     for row in conn.execute(
-        "SELECT id, video_id, download_status FROM youtube_videos WHERE " + channel_scope_sql,
+        "SELECT id, video_id, download_status FROM youtube_videos WHERE " + channel_scope_sql + " AND deleted_at IS NULL",
         channel_scope_params,
     ).fetchall():
         vid_id = row[1]
@@ -3655,7 +3647,7 @@ def videos_page(channel_id):
     download_not_needed = conn.execute(
         """
         SELECT COUNT(*) FROM youtube_videos
-        WHERE """ + channel_scope_sql + """ AND (download_status IS NULL OR lower(download_status) = 'not_needed')
+        WHERE """ + channel_scope_sql + """ AND deleted_at IS NULL AND (download_status IS NULL OR lower(download_status) = 'not_needed')
         """,
         channel_scope_params,
     ).fetchone()[0]
@@ -5332,182 +5324,39 @@ def delete_video_row(video_pk: int):
 
     active_brand_id = str(current_brand_id() or "").strip() or None
     requested_channel_id = request.form.get("channel_id", "").strip()
-    redirect_params = {
-        "sort": request.form.get("sort", ""),
-        "dir": request.form.get("dir", ""),
-        "page": request.form.get("page", "1"),
-        "q": request.form.get("q", ""),
-        "vid": request.form.get("vid", ""),
-        "dstatus": request.form.get("dstatus", ""),
-        "dmin": request.form.get("dmin", ""),
-        "dmax": request.form.get("dmax", ""),
-        "short_filter": request.form.get("short_filter", ""),
-        "email_sent": request.form.get("email_sent", ""),
-        "has_email": request.form.get("has_email", ""),
-    }
-
-    conn = get_db()
-    ensure_brand_schema(conn)
-    ensure_channel_owner_schema(conn)
-    ensure_youtube_video_local_bucket_schema(conn)
+    conn = get_db_readonly()
     try:
         row = conn.execute(
-            """
-            SELECT id, video_id, owner_user_id, brand_id, channel_id
-            FROM youtube_videos
-            WHERE id = ?
-            LIMIT 1
-            """,
+            "SELECT owner_user_id, brand_id, channel_id FROM youtube_videos WHERE id = ? AND deleted_at IS NULL",
             [video_pk],
         ).fetchone()
-        if not row:
-            flash("Video not found.", "danger")
-            if requested_channel_id:
-                return redirect(url_for("video_shorts_bp.videos_page", channel_id=requested_channel_id, **redirect_params))
-            return redirect(url_for("video_shorts_bp.channels_page"))
-
-        source_video_id = str(row[1] or "").strip()
-        owner_user_id = str(row[2] or "").strip() or None
-        record_brand_id = str(row[3] or "").strip() or None
-        channel_id = row[4]
-        is_admin = current_user.get("role") == "admin"
-
-        if record_brand_id != active_brand_id:
-            flash("Forbidden.", "danger")
-            return redirect(url_for("video_shorts_bp.videos_page", channel_id=requested_channel_id or channel_id, **redirect_params))
-        if not is_admin and owner_user_id != current_user.get("id"):
-            flash("Forbidden.", "danger")
-            return redirect(url_for("video_shorts_bp.videos_page", channel_id=requested_channel_id or channel_id, **redirect_params))
-
-        generated_columns = table_columns(conn, "shorts_generated_videos")
-        share_link_columns = table_columns(conn, "short_share_links")
-        onboarding_columns = table_columns(conn, "onboarding_magic_links")
-
-        generated_ids: list[str] = []
-        clip_filenames: set[str] = set()
-        if generated_columns and source_video_id:
-            if record_brand_id:
-                generated_rows = conn.execute(
-                    """
-                    SELECT id, clip_filename, output_filename
-                    FROM shorts_generated_videos
-                    WHERE CAST(source_video_id AS VARCHAR) = ?
-                      AND brand_id = ? AND user_id = ?
-                    """,
-                    [source_video_id, record_brand_id, owner_user_id],
-                ).fetchall()
-            else:
-                generated_rows = conn.execute(
-                    """
-                    SELECT id, clip_filename, output_filename
-                    FROM shorts_generated_videos
-                    WHERE CAST(source_video_id AS VARCHAR) = ?
-                      AND brand_id IS NULL AND user_id = ?
-                    """,
-                    [source_video_id, owner_user_id],
-                ).fetchall()
-            for generated_row in generated_rows:
-                generated_id = str(generated_row[0] or "").strip()
-                if generated_id:
-                    generated_ids.append(generated_id)
-                for value in generated_row[1:]:
-                    safe_name = Path(str(value or "")).name
-                    if safe_name:
-                        clip_filenames.add(safe_name)
-
-        tenant_media.lock_source_references(conn)
-        keep_shared_source = tenant_media.other_source_references(conn, source_video_id, excluding_pks=[video_pk])
-        for clip_filename in clip_filenames:
-            _delete_short_media(clip_filename, video_pk=video_pk, owner_user_id=owner_user_id, brand_id=record_brand_id)
-        if source_video_id:
-            _delete_source_video_media(source_video_id, conn=conn, excluding_pks=[video_pk])
-
-        clip_asset_keys = [tenant_media.asset_key(name) for name in clip_filenames]
-        source_asset_keys = [f"downloaded:{source_video_id}{suffix}" for suffix in SOURCE_VIDEO_SUFFIXES if source_video_id and not keep_shared_source]
-        if clip_asset_keys:
-            placeholders = ", ".join("?" for _ in clip_asset_keys)
-            conn.execute(
-                f"DELETE FROM shorts_storage_assets WHERE file_key IN ({placeholders})",
-                clip_asset_keys,
-            )
-        if source_asset_keys:
-            placeholders = ", ".join("?" for _ in source_asset_keys)
-            conn.execute(
-                f"DELETE FROM shorts_storage_assets WHERE file_key IN ({placeholders})",
-                source_asset_keys,
-            )
-
-        if generated_ids and share_link_columns:
-            generated_placeholders = ", ".join("?" for _ in generated_ids)
-            share_link_rows = conn.execute(
-                f"""
-                SELECT id
-                FROM short_share_links
-                WHERE CAST(generated_video_id AS VARCHAR) IN ({generated_placeholders})
-                """,
-                generated_ids,
-            ).fetchall()
-            share_link_ids = [str(link_row[0] or "").strip() for link_row in share_link_rows if str(link_row[0] or "").strip()]
-            if share_link_ids and onboarding_columns:
-                share_link_placeholders = ", ".join("?" for _ in share_link_ids)
-                conn.execute(
-                    f"DELETE FROM onboarding_magic_links WHERE CAST(share_link_id AS VARCHAR) IN ({share_link_placeholders})",
-                    share_link_ids,
-                )
-            conn.execute(
-                f"DELETE FROM short_share_links WHERE CAST(generated_video_id AS VARCHAR) IN ({generated_placeholders})",
-                generated_ids,
-            )
-
-        if source_video_id and generated_columns:
-            if record_brand_id:
-                conn.execute(
-                    """
-                    DELETE FROM shorts_generated_videos
-                    WHERE CAST(source_video_id AS VARCHAR) = ?
-                      AND brand_id = ? AND user_id = ?
-                    """,
-                    [source_video_id, record_brand_id, owner_user_id],
-                )
-            else:
-                conn.execute(
-                    """
-                    DELETE FROM shorts_generated_videos
-                    WHERE CAST(source_video_id AS VARCHAR) = ?
-                      AND brand_id IS NULL AND user_id = ?
-                    """,
-                    [source_video_id, owner_user_id],
-                )
-
-        if source_video_id and not keep_shared_source:
-            conn.execute("DELETE FROM youtube_transcripts WHERE video_id = ?", [source_video_id])
-
-        conn.execute("DELETE FROM youtube_videos WHERE id = ?", [video_pk])
-        conn.commit()
-
-        if source_video_id and owner_user_id:
-            try:
-                clear_done_job_cache_for_videos(
-                    user_id=str(owner_user_id),
-                    source_video_ids=[source_video_id],
-                )
-            except Exception as exc:
-                current_app.logger.warning("Failed to clear render cache for deleted video %s: %s", source_video_id, exc)
-
-        flash("Video deleted.", "success")
-        return redirect(url_for("video_shorts_bp.videos_page", channel_id=requested_channel_id or channel_id, **redirect_params))
-    except Exception as exc:
-        conn.rollback()
-        current_app.logger.exception("Failed to delete video row %s: %s", video_pk, exc)
-        flash("Delete failed.", "danger")
-        if requested_channel_id:
-            return redirect(url_for("video_shorts_bp.videos_page", channel_id=requested_channel_id, **redirect_params))
-        fallback_row = conn.execute("SELECT channel_id FROM youtube_videos WHERE id = ?", [video_pk]).fetchone()
-        if fallback_row:
-            return redirect(url_for("video_shorts_bp.videos_page", channel_id=fallback_row[0], **redirect_params))
-        return redirect(url_for("video_shorts_bp.channels_page"))
     finally:
         conn.close()
+    if not row:
+        flash("Video not found.", "danger")
+        return redirect(url_for("video_shorts_bp.channels_page"))
+
+    owner_user_id = str(row[0] or "").strip()
+    record_brand_id = str(row[1] or "").strip() or None
+    channel_id = row[2]
+    if record_brand_id != active_brand_id or (
+        current_user.get("role") != "admin" and owner_user_id != str(current_user.get("id") or "")
+    ):
+        flash("Forbidden.", "danger")
+        return redirect(url_for("video_shorts_bp.videos_page", channel_id=requested_channel_id or channel_id))
+    try:
+        request_video_deletion(
+            video_pk=video_pk,
+            owner_user_id=owner_user_id,
+            brand_id=record_brand_id,
+            deleted_by=str(current_user.get("id") or ""),
+        )
+        flash("Video deleted. Stored files are being removed in the background.", "success")
+    except VideoDeletionConflict as exc:
+        flash(str(exc), "warning")
+    except VideoDeletionNotFound:
+        flash("Video not found.", "danger")
+    return redirect(url_for("video_shorts_bp.videos_page", channel_id=requested_channel_id or channel_id))
 
 
 @video_shorts_bp.route("/api/admin/videos/<int:video_pk>/creator", methods=["POST"])

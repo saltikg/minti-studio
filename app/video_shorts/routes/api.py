@@ -278,6 +278,7 @@ def _video_already_in_bucket(conn, video_id: str, local_bucket_channel_id) -> bo
         SELECT id
         FROM youtube_videos
         WHERE video_id = ?
+          AND deleted_at IS NULL
           AND (channel_id = ? OR local_bucket_channel_id = ?)
         LIMIT 1
         """,
@@ -297,6 +298,7 @@ def _count_videos_for_creator_channel(conn, channel_id: str) -> int:
         JOIN youtube_channels c
           ON c.channel_id = v.channel_id
         WHERE COALESCE(c.youtube_channel_id, '') = ?
+          AND v.deleted_at IS NULL
         """,
         [normalized_channel_id],
     ).fetchone()
@@ -5511,6 +5513,19 @@ def render_job_status_api(job_id: str):
         return jsonify({"error": str(exc)}), 500
     if not job:
         return jsonify({"error": "not_found"}), 404
+    payload = job.get("payload") or {}
+    video_pk = payload.get("video_pk")
+    if video_pk:
+        conn = get_db_readonly()
+        try:
+            active_video = conn.execute(
+                "SELECT 1 FROM youtube_videos WHERE id = ? AND deleted_at IS NULL",
+                [video_pk],
+            ).fetchone()
+        finally:
+            conn.close()
+        if not active_video:
+            return jsonify({"error": "not_found"}), 404
     if job.get("type") == "render_short":
         from app.video_shorts.services.tenant_media import current_scope
         _, brand = current_scope()

@@ -6491,8 +6491,48 @@
       </button>
     </div>
     {% endif %}
+    {% if not editor_is_admin_operation %}
+    <div class="dropdown ms-auto">
+      <button class="btn btn-outline-secondary btn-sm" type="button" data-bs-toggle="dropdown" aria-expanded="false" aria-label="More video actions" title="More video actions">⋯</button>
+      <ul class="dropdown-menu dropdown-menu-end">
+        <li>
+          <button
+            type="button"
+            class="dropdown-item text-danger"
+            id="delete-source-video-action"
+            data-summary-url="{{ url_for('video_shorts_bp.my_video_delete_summary', video_pk=video.id) }}"
+            data-delete-url="{{ url_for('video_shorts_bp.delete_my_video', video_pk=video.id) }}">
+            Delete video
+          </button>
+        </li>
+      </ul>
+    </div>
+    {% endif %}
   </div>
 </div>
+
+{% if not editor_is_admin_operation %}
+<div class="modal fade" id="deleteSourceVideoModal" tabindex="-1" aria-labelledby="deleteSourceVideoModalLabel" aria-hidden="true">
+  <div class="modal-dialog modal-dialog-centered">
+    <div class="modal-content bg-dark text-light border-secondary">
+      <div class="modal-header border-secondary">
+        <h5 class="modal-title" id="deleteSourceVideoModalLabel">Delete video?</h5>
+        <button type="button" class="btn-close btn-close-white" data-bs-dismiss="modal" aria-label="Close"></button>
+      </div>
+      <div class="modal-body">
+        <p class="mb-2" data-delete-summary>Loading deletion details…</p>
+        <p class="mb-2 text-warning d-none" data-delete-scheduled></p>
+        <p class="mb-0 text-warning d-none" data-delete-youtube-warning></p>
+        <div class="alert alert-danger mt-3 mb-0 d-none" data-delete-error role="alert"></div>
+      </div>
+      <div class="modal-footer border-secondary">
+        <button type="button" class="btn btn-outline-light" data-bs-dismiss="modal">Cancel</button>
+        <button type="button" class="btn btn-danger" data-delete-confirm disabled>Delete</button>
+      </div>
+    </div>
+  </div>
+</div>
+{% endif %}
 
 {% if generate_v2 %}
   {% if editor_ready %}
@@ -9183,6 +9223,67 @@
 
 {% block scripts %}
 <script src="{{ url_for('video_shorts_bp.static', filename='vendor/cropper/cropper.min.js') }}"></script>
+{% if not editor_is_admin_operation %}
+<script>
+(() => {
+  const action = document.getElementById('delete-source-video-action');
+  const modalEl = document.getElementById('deleteSourceVideoModal');
+  if (!action || !modalEl) return;
+  const modal = bootstrap.Modal.getOrCreateInstance(modalEl);
+  const summaryEl = modalEl.querySelector('[data-delete-summary]');
+  const scheduledEl = modalEl.querySelector('[data-delete-scheduled]');
+  const youtubeEl = modalEl.querySelector('[data-delete-youtube-warning]');
+  const errorEl = modalEl.querySelector('[data-delete-error]');
+  const confirmButton = modalEl.querySelector('[data-delete-confirm]');
+  const showError = (message = '') => {
+    errorEl.textContent = message;
+    errorEl.classList.toggle('d-none', !message);
+  };
+  action.addEventListener('click', async () => {
+    summaryEl.textContent = 'Loading deletion details…';
+    scheduledEl.classList.add('d-none');
+    youtubeEl.classList.add('d-none');
+    confirmButton.disabled = true;
+    showError('');
+    modal.show();
+    try {
+      const response = await fetch(action.dataset.summaryUrl, { credentials: 'same-origin' });
+      const payload = await response.json().catch(() => ({}));
+      if (!response.ok || !payload.ok) throw new Error(payload.message || 'Deletion details could not be loaded.');
+      const details = payload.summary || {};
+      const clips = Number(details.clip_count || 0);
+      const scheduled = Number(details.scheduled_post_count || 0);
+      const youtube = Number(details.remote_youtube_schedule_count || 0);
+      summaryEl.textContent = `This video and ${clips} ${clips === 1 ? 'clip' : 'clips'} will be deleted.`;
+      scheduledEl.textContent = `${scheduled} scheduled ${scheduled === 1 ? 'post' : 'posts'} will be cancelled.`;
+      scheduledEl.classList.toggle('d-none', scheduled === 0);
+      youtubeEl.textContent = `${youtube} ${youtube === 1 ? 'clip is' : 'clips are'} already scheduled on YouTube. We can't remove ${youtube === 1 ? 'it' : 'them'} there; delete ${youtube === 1 ? 'it' : 'them'} in YouTube Studio if you don't want ${youtube === 1 ? 'it' : 'them'} to publish.`;
+      youtubeEl.classList.toggle('d-none', youtube === 0);
+      confirmButton.disabled = false;
+    } catch (error) {
+      showError(error.message || 'Deletion details could not be loaded.');
+    }
+  });
+  confirmButton.addEventListener('click', async () => {
+    confirmButton.disabled = true;
+    showError('');
+    try {
+      const response = await fetch(action.dataset.deleteUrl, {
+        method: 'POST',
+        headers: { 'X-Requested-With': 'XMLHttpRequest' },
+        credentials: 'same-origin',
+      });
+      const payload = await response.json().catch(() => ({}));
+      if (!response.ok || !payload.ok) throw new Error(payload.message || 'Video could not be deleted.');
+      window.location.assign(payload.redirect_url || {{ url_for('video_shorts_bp.my_videos_page')|tojson }});
+    } catch (error) {
+      showError(error.message || 'Video could not be deleted.');
+      confirmButton.disabled = false;
+    }
+  });
+})();
+</script>
+{% endif %}
 {% if guest_mode %}
 <script>
 (() => {

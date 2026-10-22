@@ -52,7 +52,7 @@ def resolve_video(video_id=None, *, video_pk=None, owner_user_id=None, brand_id=
         raise TenantMediaConflict("A video_pk or authenticated owner/brand is required")
     conn = get_db_readonly()
     try:
-        sql = "SELECT id, video_id, owner_user_id, brand_id FROM youtube_videos WHERE "
+        sql = "SELECT id, video_id, owner_user_id, brand_id FROM youtube_videos WHERE deleted_at IS NULL AND "
         if video_pk is not None:
             sql += "id = ?"
             params = [int(video_pk)]
@@ -301,7 +301,7 @@ def upsert_asset(conn, *, file_key, file_path, file_type, size_bytes, user_id, b
 
 
 def other_source_references(conn, youtube_id, *, excluding_pks=()):
-    sql = "SELECT 1 FROM youtube_videos WHERE video_id = ?"
+    sql = "SELECT 1 FROM youtube_videos WHERE video_id = ? AND deleted_at IS NULL"
     params = [youtube_id]
     if excluding_pks:
         sql += " AND id NOT IN (" + ",".join("?" for _ in excluding_pks) + ")"
@@ -328,7 +328,7 @@ def delete_source_media(conn, youtube_id, *, excluding_pks=()):
     for location in source_locations(youtube_id, conn=conn):
         key = location["storage_key"]
         params = [f"s3://{key}"]
-        sql = "SELECT 1 FROM youtube_videos WHERE video_url=?"
+        sql = "SELECT 1 FROM youtube_videos WHERE video_url=? AND deleted_at IS NULL"
         if excluding_pks:
             sql += " AND id NOT IN (" + ",".join("?" for _ in excluding_pks) + ")"
             params.extend(excluding_pks)

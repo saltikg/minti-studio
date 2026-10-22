@@ -35,8 +35,10 @@ def authorize_file(filename, *, owner_user_id, brand_id, video_pk=None, require_
         compilation = None
         if name.startswith(("long_from_shorts_", "monthly_top_")) and table_columns(conn, "shorts_compilations"):
             compilation = conn.execute(
-                """SELECT owner_user_id, brand_id, video_pk, storage_file_key
-                   FROM shorts_compilations WHERE filename = ?""", [name],
+                """SELECT c.owner_user_id, c.brand_id, c.video_pk, c.storage_file_key
+                   FROM shorts_compilations c
+                   JOIN youtube_videos v ON v.id = c.video_pk AND v.deleted_at IS NULL
+                   WHERE c.filename = ?""", [name],
             ).fetchone()
         if require_lifecycle and not rows and not compilation:
             raise tenant_media.TenantMediaConflict("Media has no stored ownership record")
@@ -45,6 +47,25 @@ def authorize_file(filename, *, owner_user_id, brand_id, video_pk=None, require_
             identities.append((str(compilation[0]), str(compilation[1]) if compilation[1] else None))
         if any(identity != (owner, brand) for identity in identities):
             raise tenant_media.TenantMediaConflict("Media belongs to another tenant")
+        if rows:
+            source_ids = {str(r[2] or "") for r in rows if str(r[2] or "")}
+            active_source = False
+            for source_id in source_ids:
+                if conn.execute(
+                    """
+                    SELECT 1 FROM youtube_videos
+                    WHERE CAST(video_id AS VARCHAR) = CAST(? AS VARCHAR)
+                      AND CAST(owner_user_id AS VARCHAR) = CAST(? AS VARCHAR)
+                      AND brand_id IS NOT DISTINCT FROM ?
+                      AND deleted_at IS NULL
+                    LIMIT 1
+                    """,
+                    [source_id, owner, brand],
+                ).fetchone():
+                    active_source = True
+                    break
+            if not active_source:
+                raise tenant_media.TenantMediaConflict("Source video was deleted")
         keys = {str(r[3] or tenant_media.asset_key(name)) for r in rows}
         if compilation:
             keys.add(str(compilation[3]))
