@@ -154,7 +154,7 @@ from app.video_shorts.services.music import (
     normalize_music_level,
     normalize_music_start_seconds,
 )
-from app.video_shorts.services.compositor import _build_static_visual_clip, _compose_trimmed_with_background, _cut_clip, _has_audio_stream, _sanitize_text_for_overlay, _trim_source_to_keep_ranges, resolve_keep_ranges_for_trim
+from app.video_shorts.services.compositor import _build_static_visual_clip, _compose_trimmed_with_background, _cut_clip, _has_audio_stream, _sanitize_text_for_overlay, resolve_keep_ranges_for_trim
 from app.video_shorts.services.compositor import _face_aware_fill_zoom_for_segment
 from app.video_shorts.services.compositor import _original_layout_target_dimensions
 from app.video_shorts.services.db import (
@@ -4163,7 +4163,25 @@ def _sample_face_presence_for_layout(
     source_path: Path,
     start_seconds: float,
     end_seconds: float,
+    source_keep_ranges: Optional[List[Dict[str, float]]] = None,
 ) -> List[Dict[str, Any]]:
+    keep_ranges = _normalize_edit_keep_ranges(source_keep_ranges)
+    if len(keep_ranges) > 1:
+        samples: List[Dict[str, Any]] = []
+        timeline_offset = 0.0
+        for item in keep_ranges:
+            part_samples = _sample_face_presence_for_layout(
+                video_id=video_id,
+                source_path=source_path,
+                start_seconds=float(item["start"]),
+                end_seconds=float(item["end"]),
+            )
+            for sample in part_samples:
+                shifted = dict(sample)
+                shifted["t"] = timeline_offset + float(sample.get("t") or 0.0)
+                samples.append(shifted)
+            timeline_offset += max(0.0, float(item["end"]) - float(item["start"]))
+        return samples
     duration = max(0.0, float(end_seconds) - float(start_seconds))
     if duration <= 0:
         return []
@@ -4249,6 +4267,7 @@ def _compute_face_aware_layout_segments(
     layout_mode: Any = None,
     static_visual_key: Any = None,
     face_track_smooth_path: Optional[Path] = None,
+    source_keep_ranges: Optional[List[Dict[str, float]]] = None,
 ) -> Dict[str, Any]:
     reason = _face_aware_layout_skip_reason(
         owner_user_id=owner_user_id,
@@ -4266,6 +4285,7 @@ def _compute_face_aware_layout_segments(
         source_path=source_path,
         start_seconds=start_seconds,
         end_seconds=end_seconds,
+        source_keep_ranges=source_keep_ranges,
     )
     if not face_track_smooth_path and samples:
         track_rows = []
@@ -4296,15 +4316,28 @@ def _compute_face_aware_layout_segments(
                 plan_index,
                 exc_info=True,
             )
-    duration = max(0.0, float(end_seconds) - float(start_seconds))
+    keep_ranges = _normalize_edit_keep_ranges(source_keep_ranges)
+    duration = (
+        sum(max(0.0, float(item["end"]) - float(item["start"])) for item in keep_ranges)
+        if len(keep_ranges) > 1
+        else max(0.0, float(end_seconds) - float(start_seconds))
+    )
     segments = _build_face_aware_layout_segments_from_samples(samples, duration_seconds=duration)
     snapped_boundaries: List[Dict[str, Any]] = []
-    if len(segments) > 1:
+    if len(segments) > 1 and len(keep_ranges) <= 1:
         segments, snapped_boundaries = _snap_face_aware_segments(
             segments,
             source_path=source_path,
             absolute_start=start_seconds,
         )
+    elif len(segments) > 1:
+        fps = _probe_video_fps(source_path)
+        for idx, segment in enumerate(segments[:-1]):
+            original_boundary = float(segment["end"])
+            snapped = _round_to_frame_time(original_boundary, fps)
+            segment["end"] = snapped
+            segments[idx + 1]["start"] = snapped
+            snapped_boundaries.append({"from": round(original_boundary, 6), "to": snapped})
     segments = _attach_face_aware_zoom_to_segments(
         segments,
         face_track_smooth_path=face_track_smooth_path,
@@ -30396,7 +30429,7 @@ def autoclip_video(video_pk):
     subtitle_overlay_specs: List[Dict[str, Any]] = []
     subtitle_overlay_events: List[Dict[str, Any]] = []
     subtitle_overlay_cleanup_paths: List[Path] = []
-    multi_range_source_path: Optional[Path] = None
+    compose_keep_ranges: list[Dict[str, float]] = []
     music_path: Optional[Path] = None
     made = 0
     missing_outputs = 0
@@ -30415,19 +30448,11 @@ def autoclip_video(video_pk):
         if duration_seconds and not podcast_audio_path:
             adj_end = min(adj_end, float(duration_seconds))
         edit_keep_ranges = _normalize_edit_keep_ranges(plan_entry.get("edit_keep_ranges"))
-        music_speech_ranges = build_final_timeline_speech_ranges(
-            segments,
-            clip_start=start,
-            clip_end=end,
-            edit_keep_ranges=edit_keep_ranges,
-            source_duration=duration_seconds,
-        )
+        music_speech_ranges: Optional[list[Dict[str, float]]] = None
         if len(edit_keep_ranges) > 1 and not podcast_audio_path:
-            multi_range_source_path = Path(tempfile.gettempdir()) / f"short_edit_ranges_{vid}_{plan_index}_{secrets.token_hex(5)}.mp4"
-            multi_range_duration = _trim_source_to_keep_ranges(
+            normalized_source_path, resolved_keep_ranges, _ = resolve_keep_ranges_for_trim(
                 src_path,
                 edit_keep_ranges,
-                multi_range_source_path,
                 media_duration_seconds=media_duration_seconds,
                 fallback_duration_seconds=_to_float(duration_seconds),
                 transcript_word_selection=(
@@ -30435,22 +30460,42 @@ def autoclip_video(video_pk):
                     or str(plan_entry.get("origin") or "").strip().lower() == "ai"
                 ),
             )
-            if multi_range_duration > 0 and multi_range_source_path.exists():
-                segments = _remap_transcript_segments_to_keep_ranges(segments or [], edit_keep_ranges)
-                src_path = multi_range_source_path
-                src_path_is_temp = True
+            multi_range_duration = sum(
+                max(0.0, float(item["end"]) - float(item["start"]))
+                for item in resolved_keep_ranges
+            )
+            if multi_range_duration > 0:
+                music_speech_ranges = build_final_timeline_speech_ranges(
+                    segments,
+                    clip_start=start,
+                    clip_end=end,
+                    edit_keep_ranges=resolved_keep_ranges,
+                    source_duration=duration_seconds,
+                )
+                src_path = normalized_source_path
+                edit_keep_ranges = resolved_keep_ranges
+                compose_keep_ranges = [dict(item) for item in resolved_keep_ranges]
+                segments = _remap_transcript_segments_to_keep_ranges(segments or [], resolved_keep_ranges)
                 start = 0.0
                 end = float(multi_range_duration)
                 adj_start = 0.0
                 adj_end = float(multi_range_duration)
                 current_app.logger.info(
-                    "Multi-range clip timeline enabled video_id=%s plan_index=%s ranges=%s duration=%.3f source=%s",
+                    "Multi-range single-pass timeline enabled video_id=%s plan_index=%s ranges=%s duration=%.3f source=%s",
                     vid,
                     plan_index,
-                    len(edit_keep_ranges),
+                    len(resolved_keep_ranges),
                     multi_range_duration,
-                    multi_range_source_path,
+                    src_path,
                 )
+        if music_speech_ranges is None:
+            music_speech_ranges = build_final_timeline_speech_ranges(
+                segments,
+                clip_start=start,
+                clip_end=end,
+                edit_keep_ranges=[],
+                source_duration=duration_seconds,
+            )
         caption_timing_started = time.monotonic()
         custom_transcript = str(plan_entry.get("transcript_full_custom") or "").strip()
         subtitle_srt = None
@@ -30915,6 +30960,7 @@ def autoclip_video(video_pk):
                         layout_mode=video_layout_mode,
                         static_visual_key=video_static_visual_key,
                         face_track_smooth_path=face_track_smooth_path,
+                        source_keep_ranges=compose_keep_ranges,
                     )
                 face_samples = list(face_aware_layout_result.get("samples") or [])
                 if face_samples:
@@ -31037,6 +31083,7 @@ def autoclip_video(video_pk):
                 music_fade_out=video_music_fade_out,
                 music_speech_ranges=music_speech_ranges,
                 outreach_layout=outreach_render,
+                source_keep_ranges=compose_keep_ranges,
                 )
             if face_aware_layout_result and face_aware_layout_result.get("enabled"):
                 resolved_layout_segments = compose_crop_settings.get("resolved_layout_segments")
@@ -31099,6 +31146,7 @@ def autoclip_video(video_pk):
                     subtitle_bg_alpha,
                     subtitle_text_alpha,
                     video_subtitle_style,
+                    source_keep_ranges=compose_keep_ranges,
                 )
             final_file = output_path
 

@@ -2661,6 +2661,7 @@ def _compose_trimmed_with_background(
     music_fade_out: bool = True,
     music_speech_ranges: Optional[list[Dict[str, float]]] = None,
     outreach_layout: bool = False,
+    source_keep_ranges: Optional[list[Dict[str, Any]]] = None,
 ):
     """Single-pass trim + compose to reduce processing time."""
     if not bg_path.exists():
@@ -2670,7 +2671,15 @@ def _compose_trimmed_with_background(
     resolved_ffmpeg = _resolve_ffmpeg()
     podcast_mode = bool(audio_override_source and Path(audio_override_source).exists())
     normalized_title_engine = DESIGN_GEOMETRY["title_engine"]  # Includes legacy drawtext designs.
-    duration = max(end - start, 1.0)
+    direct_keep_ranges = _normalize_keep_ranges_for_trim(source_keep_ranges)
+    if len(direct_keep_ranges) > 1:
+        duration = max(
+            sum(max(0.0, item["end"] - item["start"]) for item in direct_keep_ranges),
+            1.0,
+        )
+    else:
+        direct_keep_ranges = []
+        duration = max(end - start, 1.0)
     if music_only and video_override_source:
         override_duration = _probe_media_duration_seconds(video_override_source)
         if override_duration:
@@ -3005,6 +3014,40 @@ def _compose_trimmed_with_background(
     has_audio = _has_audio_stream(src_path)
     has_video = _has_video_stream(src_path)
     clip_video_source: Optional[Path] = None
+    direct_visual_override = (
+        Path(video_override_source)
+        if video_override_source
+        and Path(video_override_source).exists()
+        and _has_video_stream(Path(video_override_source))
+        and has_video
+        and not audio_override_source
+        and not podcast_mode
+        else None
+    )
+    direct_source_timeline = bool(
+        has_video
+        and (not video_override_source or direct_visual_override)
+        and not audio_override_source
+        and not podcast_mode
+    )
+    direct_source_ranges = direct_keep_ranges or [
+        {"start": max(0.0, float(start)), "end": max(float(start), float(end))}
+    ]
+    direct_source_seek = float(direct_source_ranges[0]["start"])
+    direct_source_input_duration = max(
+        0.001,
+        float(direct_source_ranges[-1]["end"]) - direct_source_seek,
+    )
+
+    if direct_source_timeline:
+        clip_video_source = src_path
+        current_app.logger.info(
+            "Direct single-pass source timeline enabled source=%s ranges=%s seek=%.3f duration=%.3f",
+            src_path.name,
+            len(direct_source_ranges),
+            direct_source_seek,
+            duration,
+        )
 
     # Audio-only fast path:
     # If source is audio-only and we already have a visual override video, skip
@@ -3350,7 +3393,8 @@ def _compose_trimmed_with_background(
             if merged_audio_override.exists():
                 clip_video_source = merged_audio_override
 
-    _log_video_dimensions("clip_scaled source", clip_video_source)
+    layout_video_source = direct_visual_override or clip_video_source
+    _log_video_dimensions("clip_scaled source", layout_video_source)
     overlay_aspect = (crop_aspect or "landscape").lower()
     original_layout_mode = overlay_aspect == "original" and not podcast_mode
     # Shorts layout behavior:
@@ -3358,7 +3402,7 @@ def _compose_trimmed_with_background(
     # - podcast: allow true horizontal canvas when landscape is selected.
     if original_layout_mode:
         try:
-            source_width, source_height = _probe_video_dimensions(clip_video_source)
+            source_width, source_height = _probe_video_dimensions(layout_video_source)
         except Exception:
             source_width, source_height = None, None
         target_width, target_height = _original_layout_target_dimensions(source_width, source_height)
@@ -3558,12 +3602,104 @@ def _compose_trimmed_with_background(
     )
     needs_background_stream = (not original_layout_mode) and (split_stack_enabled or (not face_aware_layout_active) or face_aware_has_fit_segment)
     clip_input_label = "[1:v]"
+    direct_timeline_audio_label: Optional[str] = None
     filter_parts: list[str] = []
+    if direct_source_timeline:
+        timeline_source_has_audio = bool(
+            has_audio and not (direct_visual_override and music_only)
+        )
+        relative_ranges = [
+            {
+                "start": max(0.0, float(item["start"]) - direct_source_seek),
+                "end": max(0.0, float(item["end"]) - direct_source_seek),
+            }
+            for item in direct_source_ranges
+        ]
+        if len(relative_ranges) == 1:
+            item = relative_ranges[0]
+            if not direct_visual_override:
+                filter_parts.append(
+                    f"[1:v]trim=start={item['start']:.6f}:end={item['end']:.6f},"
+                    "setpts=PTS-STARTPTS,settb=AVTB[clip_direct_v]"
+                )
+            if timeline_source_has_audio:
+                filter_parts.append(
+                    f"[1:a]atrim=start={item['start']:.6f}:end={item['end']:.6f},"
+                    "asetpts=PTS-STARTPTS,aresample=async=1:first_pts=0[clip_source_a]"
+                )
+                direct_timeline_audio_label = "[clip_source_a]"
+        else:
+            if not direct_visual_override:
+                video_split_labels = "".join(
+                    f"[clip_range_v_src_{index}]" for index in range(len(relative_ranges))
+                )
+                filter_parts.append(f"[1:v]split={len(relative_ranges)}{video_split_labels}")
+            if timeline_source_has_audio:
+                audio_split_labels = "".join(
+                    f"[clip_range_a_src_{index}]" for index in range(len(relative_ranges))
+                )
+                filter_parts.append(f"[1:a]asplit={len(relative_ranges)}{audio_split_labels}")
+            video_concat_inputs: list[str] = []
+            audio_concat_inputs: list[str] = []
+            for index, item in enumerate(relative_ranges):
+                if not direct_visual_override:
+                    filter_parts.append(
+                        f"[clip_range_v_src_{index}]trim=start={item['start']:.6f}:end={item['end']:.6f},"
+                        f"setpts=PTS-STARTPTS,settb=AVTB[clip_range_v_{index}]"
+                    )
+                    video_concat_inputs.append(f"[clip_range_v_{index}]")
+                if timeline_source_has_audio:
+                    filter_parts.append(
+                        f"[clip_range_a_src_{index}]atrim=start={item['start']:.6f}:end={item['end']:.6f},"
+                        f"asetpts=PTS-STARTPTS,aresample=async=1:first_pts=0[clip_range_a_{index}]"
+                    )
+                    audio_concat_inputs.append(f"[clip_range_a_{index}]")
+            if not direct_visual_override and timeline_source_has_audio:
+                concat_inputs = "".join(
+                    video_label + audio_label
+                    for video_label, audio_label in zip(video_concat_inputs, audio_concat_inputs)
+                )
+                filter_parts.append(
+                    concat_inputs
+                    + f"concat=n={len(relative_ranges)}:v=1:a=1[clip_direct_v][clip_source_a]"
+                )
+                direct_timeline_audio_label = "[clip_source_a]"
+            elif not direct_visual_override:
+                filter_parts.append(
+                    "".join(video_concat_inputs)
+                    + f"concat=n={len(relative_ranges)}:v=1:a=0[clip_direct_v]"
+                )
+            elif timeline_source_has_audio:
+                filter_parts.append(
+                    "".join(audio_concat_inputs)
+                    + f"concat=n={len(relative_ranges)}:v=0:a=1[clip_source_a]"
+                )
+                direct_timeline_audio_label = "[clip_source_a]"
+        if direct_visual_override:
+            filter_parts.append(
+                f"[2:v]trim=duration={duration:.6f},setpts=PTS-STARTPTS,settb=AVTB[clip_direct_v]"
+            )
+            override_has_audio = _has_audio_stream(direct_visual_override)
+            if override_has_audio:
+                filter_parts.append(
+                    f"[2:a]atrim=duration={duration:.6f},asetpts=PTS-STARTPTS,"
+                    "aresample=async=1:first_pts=0[clip_override_a]"
+                )
+                if music_only or not direct_timeline_audio_label:
+                    direct_timeline_audio_label = "[clip_override_a]"
+                else:
+                    filter_parts.append(
+                        f"{direct_timeline_audio_label}[clip_override_a]"
+                        "amix=inputs=2:duration=first:dropout_transition=0:normalize=0[clip_base_a]"
+                    )
+                    direct_timeline_audio_label = "[clip_base_a]"
+        clip_input_label = "[clip_direct_v]"
     if needs_background_stream and outreach_layout:
+        outreach_source_label = clip_input_label
         clip_input_label = "[outreach_clip_src]"
         filter_parts.extend(
             [
-                "[1:v]split=2[outreach_bg_src][outreach_clip_src]",
+                f"{outreach_source_label}split=2[outreach_bg_src][outreach_clip_src]",
                 (
                     f"[outreach_bg_src]scale={OUTREACH_BLUR_WIDTH}:{OUTREACH_BLUR_HEIGHT}:"
                     "force_original_aspect_ratio=increase,"
@@ -3947,7 +4083,7 @@ def _compose_trimmed_with_background(
     base_final_label = final_label
     title_overlay_path: Optional[Path] = None
     title_overlay_paths: List[Path] = []
-    next_video_input_index = 3 if direct_audio_source else 2
+    next_video_input_index = 3 if (direct_audio_source or direct_visual_override) else 2
     shape_overlay_path = _render_overlay_shapes(
         overlay_shapes,
         target_width=target_width,
@@ -4476,9 +4612,14 @@ def _compose_trimmed_with_background(
         voice_input_index = 2 if direct_audio_source is not None else 1
         voice_source = direct_audio_source is not None or _has_audio_stream(clip_video_source)
         if voice_source:
-            filter_parts.append(
-                f"[{voice_input_index}:a]aresample=async=1:first_pts=0[voice_main]"
-            )
+            if direct_timeline_audio_label:
+                filter_parts.append(
+                    f"{direct_timeline_audio_label}aresample=async=1:first_pts=0[voice_main]"
+                )
+            else:
+                filter_parts.append(
+                    f"[{voice_input_index}:a]aresample=async=1:first_pts=0[voice_main]"
+                )
             filter_parts.append(
                 "[voice_main][music_bg]amix=inputs=2:duration=first:dropout_transition=0:normalize=0[a_music_mix]"
             )
@@ -4503,9 +4644,22 @@ def _compose_trimmed_with_background(
         # In audio-only fast path, selected visual can be shorter than target clip.
         # Loop it so output duration is driven by requested audio segment.
         cmd.extend(["-stream_loop", "-1", "-i", str(clip_video_source)])
+    elif direct_source_timeline:
+        cmd.extend(
+            [
+                "-ss",
+                f"{direct_source_seek:.6f}",
+                "-t",
+                f"{direct_source_input_duration + 0.250:.6f}",
+                "-i",
+                str(clip_video_source),
+            ]
+        )
+        if direct_visual_override:
+            cmd.extend(["-stream_loop", "-1", "-i", str(direct_visual_override)])
     else:
         cmd.extend(["-i", str(clip_video_source)])
-    audio_map = "1:a?"
+    audio_map = direct_timeline_audio_label or "1:a?"
     if direct_audio_source is not None:
         cmd.extend(
             [
@@ -4567,9 +4721,22 @@ def _compose_trimmed_with_background(
         ]
         if direct_audio_source is not None:
             cmd.extend(["-stream_loop", "-1", "-i", str(clip_video_source)])
+        elif direct_source_timeline:
+            cmd.extend(
+                [
+                    "-ss",
+                    f"{direct_source_seek:.6f}",
+                    "-t",
+                    f"{direct_source_input_duration + 0.250:.6f}",
+                    "-i",
+                    str(clip_video_source),
+                ]
+            )
+            if direct_visual_override:
+                cmd.extend(["-stream_loop", "-1", "-i", str(direct_visual_override)])
         else:
             cmd.extend(["-i", str(clip_video_source)])
-        audio_map_music_only = "1:a?"
+        audio_map_music_only = direct_timeline_audio_label or "1:a?"
         if direct_audio_source is not None:
             cmd.extend(
                 [
@@ -4677,31 +4844,81 @@ def _cut_clip(
     subtitle_bg_alpha: Optional[int] = DEFAULT_SUBTITLE_BG_ALPHA,
     subtitle_text_alpha: Optional[int] = DEFAULT_SUBTITLE_TEXT_ALPHA,
     subtitle_style: Optional[str] = "plain",
+    source_keep_ranges: Optional[list[Dict[str, Any]]] = None,
 ):
-    duration = max(end - start, 1.0)
+    keep_ranges = _normalize_keep_ranges_for_trim(source_keep_ranges)
+    if len(keep_ranges) > 1:
+        duration = max(
+            sum(max(0.0, item["end"] - item["start"]) for item in keep_ranges),
+            1.0,
+        )
+    else:
+        keep_ranges = []
+        duration = max(end - start, 1.0)
     out_path.parent.mkdir(parents=True, exist_ok=True)
     resolved_ffmpeg = _resolve_ffmpeg()
+    seek_start = float(keep_ranges[0]["start"]) if keep_ranges else max(0.0, float(start))
+    input_duration = (
+        max(0.001, float(keep_ranges[-1]["end"]) - seek_start)
+        if keep_ranges
+        else duration
+    )
     cmd = [
         resolved_ffmpeg,
         "-y",
+        "-ss",
+        f"{seek_start:.6f}",
+        "-t",
+        f"{input_duration + 0.250:.6f}",
         "-i",
         str(src),
-        "-ss",
-        str(start),
-        "-t",
-        str(duration),
-        "-c:v",
-        "libx264",
-        "-preset",
-        "veryfast",
-        "-crf",
-        "23",
-        "-c:a",
-        "aac",
-        "-movflags",
-        "+faststart",
-        str(out_path),
     ]
+    video_map = "0:v"
+    audio_map = "0:a?"
+    filter_parts: list[str] = []
+    if keep_ranges:
+        relative_ranges = [
+            {
+                "start": max(0.0, item["start"] - seek_start),
+                "end": max(0.0, item["end"] - seek_start),
+            }
+            for item in keep_ranges
+        ]
+        has_audio = _has_audio_stream(src)
+        video_split_labels = "".join(
+            f"[cut_range_v_src_{index}]" for index in range(len(relative_ranges))
+        )
+        filter_parts.append(f"[0:v]split={len(relative_ranges)}{video_split_labels}")
+        if has_audio:
+            audio_split_labels = "".join(
+                f"[cut_range_a_src_{index}]" for index in range(len(relative_ranges))
+            )
+            filter_parts.append(f"[0:a]asplit={len(relative_ranges)}{audio_split_labels}")
+        concat_inputs: list[str] = []
+        for index, item in enumerate(relative_ranges):
+            filter_parts.append(
+                f"[cut_range_v_src_{index}]trim=start={item['start']:.6f}:end={item['end']:.6f},"
+                f"setpts=PTS-STARTPTS,settb=AVTB[cut_range_v_{index}]"
+            )
+            concat_inputs.append(f"[cut_range_v_{index}]")
+            if has_audio:
+                filter_parts.append(
+                    f"[cut_range_a_src_{index}]atrim=start={item['start']:.6f}:end={item['end']:.6f},"
+                    f"asetpts=PTS-STARTPTS,aresample=async=1:first_pts=0[cut_range_a_{index}]"
+                )
+                concat_inputs.append(f"[cut_range_a_{index}]")
+        if has_audio:
+            filter_parts.append(
+                "".join(concat_inputs)
+                + f"concat=n={len(relative_ranges)}:v=1:a=1[cut_v][cut_a]"
+            )
+            audio_map = "[cut_a]"
+        else:
+            filter_parts.append(
+                "".join(concat_inputs)
+                + f"concat=n={len(relative_ranges)}:v=1:a=0[cut_v]"
+            )
+        video_map = "[cut_v]"
     if subtitle_path:
         try:
             source_width, source_height = _probe_video_dimensions(src)
@@ -4719,7 +4936,31 @@ def _cut_clip(
             subtitle_bg_alpha=subtitle_bg_alpha,
             subtitle_style=subtitle_style,
         )
-        cmd.extend(["-vf", f"subtitles='{_escape_ass_path(subtitle_path)}':fontsdir='{_escape_ass_path(SUBTITLE_FONTS_DIR)}':force_style='{style}'"])
+        subtitle_filter = f"subtitles='{_escape_ass_path(subtitle_path)}':fontsdir='{_escape_ass_path(SUBTITLE_FONTS_DIR)}':force_style='{style}'"
+        if filter_parts:
+            filter_parts.append(f"{video_map}{subtitle_filter}[cut_sub]")
+            video_map = "[cut_sub]"
+        else:
+            cmd.extend(["-vf", subtitle_filter])
+    if filter_parts:
+        cmd.extend(["-filter_complex", ";".join(filter_parts), "-map", video_map, "-map", audio_map])
+    cmd.extend(
+        [
+            "-t",
+            f"{duration:.6f}",
+            "-c:v",
+            "libx264",
+            "-preset",
+            "veryfast",
+            "-crf",
+            "23",
+            "-c:a",
+            "aac",
+            "-movflags",
+            "+faststart",
+            str(out_path),
+        ]
+    )
     run_media_subprocess(
         cmd,
         operation="cut_clip",
