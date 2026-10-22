@@ -626,6 +626,7 @@ def _ensure_video_crop_schema(conn) -> set:
         ("static_visual_key", "VARCHAR", None),
         ("video_overlay_offset", "INTEGER", DEFAULT_VIDEO_OVERLAY_OFFSET),
         ("downloaded_at", "TIMESTAMP", None),
+        ("media_duration_seconds", "DOUBLE", None),
         ("background_visual_key", "VARCHAR", None),
         ("podcast_audio_filename", "VARCHAR", None),
         ("visual_mode", "VARCHAR", "video"),

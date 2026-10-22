@@ -144,6 +144,8 @@ from app.video_shorts.services.clip_planner_v10 import propose_clips_v10
 from app.video_shorts.services.clip_planning import _fallback_clip_plan
 from app.video_shorts.services.clip_title import generate_clip_title
 from app.video_shorts.services.clip_title import _detect_title_language
+from app.video_shorts.services.clip_ranges import ClipRangeResolution, resolve_clip_ranges
+from app.video_shorts.services.media_duration import get_or_backfill_media_duration_seconds
 from app.video_shorts.services import render_timing
 from app.video_shorts.services.music import (
     build_final_timeline_speech_ranges,
@@ -15953,6 +15955,7 @@ def download_video(video_pk):
     if locations:
         source, temporary = _resolve_source_video(video_id, video_pk=video_pk)
         if source:
+            get_or_backfill_media_duration_seconds(video_pk, video_id, source_path=source)
             _cleanup_resolved_source_video(source, temporary)
             flash("Stored video is available.", "success")
             return redirect(url_for("video_shorts_bp.generate_short", video_pk=video_pk))
@@ -16016,6 +16019,11 @@ def download_video(video_pk):
             if candidates:
                 candidates[0].rename(out_path)
         out_path = normalize_source_video_for_streaming(out_path, log=current_app.logger)
+        exact_media_duration = get_or_backfill_media_duration_seconds(
+            video_pk,
+            video_id,
+            source_path=out_path,
+        )
 
         if current_user:
             size_bytes = out_path.stat().st_size if out_path.exists() else 0
@@ -16054,12 +16062,12 @@ def download_video(video_pk):
                 """
                 UPDATE youtube_videos
                 SET download_status = 'downloaded',
-                    downloaded_at = now(), video_url = ?
+                    downloaded_at = now(), video_url = ?, media_duration_seconds = ?
                 WHERE id = ?
                   AND owner_user_id = ?
                   AND ((? IS NULL AND brand_id IS NULL) OR brand_id = ?)
                 """,
-                ["s3://" + tenant_media.storage_location(str(out_path))["storage_key"], video_pk, current_user["id"], current_brand_id(), current_brand_id()],
+                ["s3://" + tenant_media.storage_location(str(out_path))["storage_key"], exact_media_duration, video_pk, current_user["id"], current_brand_id(), current_brand_id()],
             )
             conn_w.commit()
         finally:
@@ -23909,64 +23917,54 @@ def delete_ai_suggestions(video_pk):
     return redirect(url_for("video_shorts_bp.generate_short", video_pk=video_pk))
 
 
-MANUAL_CLIP_DURATION_TOLERANCE_SECONDS = 0.5
-
-
-def _clamp_manual_clip_selection_to_duration(
-    start_time: float,
-    end_time: float,
-    keep_ranges: List[Dict[str, float]],
-    duration: Optional[float],
+def _resolve_video_clip_ranges(
     *,
-    tolerance: float = MANUAL_CLIP_DURATION_TOLERANCE_SECONDS,
-) -> Tuple[Optional[Tuple[float, float, List[Dict[str, float]]]], Optional[str]]:
-    """Clamp transcript boundary drift while rejecting materially invalid times."""
-    if duration is None:
-        if start_time < 0:
-            return None, f"Start time must be at least 0 seconds; received {start_time:.3f}s."
-        if end_time < 0:
-            return None, f"End time must be at least 0 seconds; received {end_time:.3f}s."
-        if end_time <= start_time:
-            return None, "End time must be greater than Start."
-        return (start_time, end_time, keep_ranges), None
-
-    safe_duration = max(0.0, float(duration))
-    safe_tolerance = max(0.0, float(tolerance))
-    if start_time < -safe_tolerance:
-        return None, f"Start time must be at least 0 seconds; received {start_time:.3f}s."
-    if end_time > safe_duration + safe_tolerance:
-        return None, (
-            f"Selected end time {end_time:.3f}s exceeds the video duration "
-            f"of {safe_duration:.3f}s."
+    video_pk: int,
+    video_id: str,
+    start: float,
+    end: float,
+    keep_ranges: List[Dict[str, float]],
+    db_duration_seconds: Optional[float],
+    transcript_word_selection: bool,
+    source_path: Optional[Path] = None,
+) -> Tuple[ClipRangeResolution, Optional[float]]:
+    """Use the same post-snap range resolver for request and render paths."""
+    resolved_source = source_path
+    resolved_source_is_temp = False
+    try:
+        if len(keep_ranges) > 1 and resolved_source is None:
+            resolved_source, resolved_source_is_temp = _resolve_source_video(video_id, video_pk=video_pk)
+        media_duration = get_or_backfill_media_duration_seconds(
+            video_pk,
+            video_id,
+            source_path=resolved_source,
         )
-    if start_time > safe_duration + safe_tolerance:
-        return None, (
-            f"Selected start time {start_time:.3f}s exceeds the video duration "
-            f"of {safe_duration:.3f}s."
+        if len(keep_ranges) > 1 and resolved_source is not None:
+            try:
+                _, snapped_ranges, _ = resolve_keep_ranges_for_trim(
+                    resolved_source,
+                    keep_ranges,
+                    media_duration_seconds=media_duration,
+                    fallback_duration_seconds=db_duration_seconds,
+                    transcript_word_selection=transcript_word_selection,
+                )
+            except ValueError as exc:
+                return ClipRangeResolution(False, 0.0, 0.0, [], str(exc)), media_duration
+            keep_ranges = snapped_ranges
+            start = keep_ranges[0]["start"]
+            end = keep_ranges[-1]["end"]
+        resolution = resolve_clip_ranges(
+            start=start,
+            end=end,
+            keep_ranges=keep_ranges,
+            media_duration_seconds=media_duration,
+            fallback_duration_seconds=db_duration_seconds,
+            transcript_word_selection=transcript_word_selection,
         )
-
-    clamped_ranges: List[Dict[str, float]] = []
-    for index, part in enumerate(keep_ranges, start=1):
-        part_start = float(part["start"])
-        part_end = float(part["end"])
-        if part_start < -safe_tolerance or part_end > safe_duration + safe_tolerance:
-            return None, (
-                f"Selected part {index} falls outside the video duration "
-                f"of {safe_duration:.3f}s."
-            )
-        clamped_part = {
-            "start": max(0.0, min(safe_duration, part_start)),
-            "end": max(0.0, min(safe_duration, part_end)),
-        }
-        if clamped_part["end"] <= clamped_part["start"]:
-            return None, f"Selected part {index} has no usable duration after clamping."
-        clamped_ranges.append(clamped_part)
-
-    clamped_start = max(0.0, min(safe_duration, float(start_time)))
-    clamped_end = max(0.0, min(safe_duration, float(end_time)))
-    if clamped_end <= clamped_start:
-        return None, "End time must be greater than Start after applying the video boundaries."
-    return (clamped_start, clamped_end, clamped_ranges), None
+        return resolution, media_duration
+    finally:
+        if source_path is None:
+            _cleanup_resolved_source_video(resolved_source, resolved_source_is_temp)
 
 
 @video_shorts_bp.route("/generate/<int:video_pk>/preview-keep-ranges", methods=["POST"])
@@ -23989,7 +23987,18 @@ def preview_keep_ranges(video_pk: int):
     source_path_is_temp = False
     try:
         source_path, source_path_is_temp = _resolve_source_video(str(row[0] or ""), video_pk=video_pk)
-        _, resolved_ranges, _ = resolve_keep_ranges_for_trim(source_path, ranges)
+        media_duration = get_or_backfill_media_duration_seconds(
+            video_pk,
+            str(row[0] or ""),
+            source_path=source_path,
+        )
+        _, resolved_ranges, _ = resolve_keep_ranges_for_trim(
+            source_path,
+            ranges,
+            media_duration_seconds=media_duration,
+            fallback_duration_seconds=row[1],
+            transcript_word_selection=True,
+        )
         speech_ranges = build_final_timeline_speech_ranges(
             segments,
             clip_start=resolved_ranges[0]["start"],
@@ -24003,6 +24012,8 @@ def preview_keep_ranges(video_pk: int):
             duration=round(sum(item["end"] - item["start"] for item in resolved_ranges), 6),
             music_speech_ranges=speech_ranges,
         )
+    except ValueError as exc:
+        return jsonify(success=False, message=str(exc)), 400
     except Exception as exc:
         current_app.logger.exception("Could not resolve preview ranges video_pk=%s", video_pk)
         return jsonify(success=False, message="Could not prepare the exact preview boundaries."), 500
@@ -24029,6 +24040,7 @@ def add_clip_section(video_pk):
     start_time_raw = (request.form.get("start_time") or "").strip()
     end_time_raw = (request.form.get("end_time") or "").strip()
     title = (request.form.get("title") or "").strip()[:100]
+    transcript_word_selection = (request.form.get("selection_source") or "").strip().lower() == "transcript_words"
 
     requested_keep_ranges: List[Dict[str, float]] = []
     keep_ranges_raw = str(request.form.get("keep_ranges") or request.form.get("parts") or "").strip()
@@ -24083,24 +24095,30 @@ def add_clip_section(video_pk):
         )
     video_id, duration_seconds = row
     duration = _to_float(duration_seconds) if duration_seconds is not None else None
-    clamped_selection, boundary_error = _clamp_manual_clip_selection_to_duration(
-        start_time,
-        end_time,
-        requested_keep_ranges,
-        duration,
+    had_keep_ranges = bool(requested_keep_ranges)
+    range_resolution, media_duration = _resolve_video_clip_ranges(
+        video_pk=video_pk,
+        video_id=str(video_id or ""),
+        start=start_time,
+        end=end_time,
+        keep_ranges=requested_keep_ranges,
+        db_duration_seconds=duration,
+        transcript_word_selection=transcript_word_selection,
     )
-    if boundary_error or not clamped_selection:
+    if not range_resolution.ok:
         return _respond(
-            boundary_error or "The selected clip times are invalid.",
+            range_resolution.error or "The selected clip times are invalid.",
             status=400,
             category="warning",
             extras={
                 "requested_start": start_time,
                 "requested_end": end_time,
                 "video_duration": duration,
+                "media_duration": media_duration,
             },
         )
-    start_time, end_time, requested_keep_ranges = clamped_selection
+    start_time, end_time = range_resolution.start, range_resolution.end
+    requested_keep_ranges = range_resolution.ranges if had_keep_ranges else []
     if requested_keep_ranges:
         total_keep_duration = _edit_keep_ranges_duration(requested_keep_ranges) or 0.0
         if total_keep_duration < 5.0:
@@ -24179,6 +24197,8 @@ def add_clip_section(video_pk):
         "transcript_full": transcript_full,
         "excerpt": transcript_full,
     }
+    if transcript_word_selection:
+        new_entry["selection_source"] = "transcript_words"
     if title:
         new_entry["title_user_edited_at"] = _utc_now_iso()
     if len(requested_keep_ranges) > 1:
@@ -24222,6 +24242,10 @@ def add_clip_section(video_pk):
             "title_source": title_source,
             "transcript_full": transcript_full,
             "excerpt": transcript_full,
+            "start": round(start_time, 6),
+            "end": round(end_time, 6),
+            "media_duration": media_duration,
+            "range_clamped": range_resolution.clamped,
             "edit_keep_ranges": requested_keep_ranges if len(requested_keep_ranges) > 1 else [],
         },
     )
@@ -24510,6 +24534,7 @@ def edit_clip_title_time(video_pk: int, plan_index: int):
 
     requested_keep_ranges: List[Dict[str, float]] = []
     keep_ranges_raw = str(request.form.get("keep_ranges") or "").strip()
+    transcript_word_selection = (request.form.get("selection_source") or "").strip().lower() == "transcript_words"
     if keep_ranges_raw:
         try:
             parsed_keep_ranges = json.loads(keep_ranges_raw)
@@ -24530,11 +24555,27 @@ def edit_clip_title_time(video_pk: int, plan_index: int):
         title=request.form.get("title"),
         start=validation_start,
         end=validation_end,
-        video_duration=duration_seconds,
+        video_duration=None,
         max_duration=validation_max_duration,
     )
     if not valid:
         return jsonify(success=False, message=message), 400
+    had_keep_ranges = bool(requested_keep_ranges)
+    range_resolution, _media_duration = _resolve_video_clip_ranges(
+        video_pk=video_pk,
+        video_id=str(video_id or ""),
+        start=float(cleaned["start"]),
+        end=float(cleaned["end"]),
+        keep_ranges=requested_keep_ranges,
+        db_duration_seconds=_to_float(duration_seconds),
+        transcript_word_selection=transcript_word_selection,
+    )
+    if not range_resolution.ok:
+        return jsonify(success=False, message=range_resolution.error), 400
+    cleaned["start"] = range_resolution.start
+    cleaned["end"] = range_resolution.end
+    cleaned["duration"] = round(range_resolution.end - range_resolution.start, 3)
+    requested_keep_ranges = range_resolution.ranges if had_keep_ranges else []
     if requested_keep_ranges:
         total_duration = _edit_keep_ranges_duration(requested_keep_ranges) or 0.0
         if total_duration < 5.0:
@@ -24553,6 +24594,8 @@ def edit_clip_title_time(video_pk: int, plan_index: int):
         cleaned["duration"] = _edit_keep_ranges_duration(requested_keep_ranges) or cleaned["duration"]
         plan_entry["start"] = cleaned["start"]
         plan_entry["end"] = cleaned["end"]
+        if transcript_word_selection:
+            plan_entry["selection_source"] = "transcript_words"
     elif keep_ranges_raw:
         plan_entry.pop("edit_keep_ranges", None)
         plan_entry.pop("edit_cut_count", None)
@@ -27719,11 +27762,23 @@ def _generate_clip_plan_for_video(
         )
         clip_plan = [clip for _position, clip in ranked_clips[: max(1, int(suggestion_limit))]]
 
+    media_duration_seconds = get_or_backfill_media_duration_seconds(video_pk, vid)
     timestamped_plan = []
     _emit("prepare_plan", "Preparing plan entries.", clip_count=len(clip_plan))
     for idx, clip in enumerate(clip_plan):
         plan_entry = dict(clip, plan_index=idx + 1)
         snap_clip_entry_to_sentence_boundaries(plan_entry, segments, video_id=vid)
+        range_resolution = resolve_clip_ranges(
+            start=plan_entry.get("start"),
+            end=plan_entry.get("end"),
+            media_duration_seconds=media_duration_seconds,
+            fallback_duration_seconds=computed_duration,
+            transcript_word_selection=True,
+        )
+        if range_resolution.ok:
+            plan_entry["start"] = round(range_resolution.start, 3)
+            plan_entry["end"] = round(range_resolution.end, 3)
+        plan_entry["selection_source"] = "transcript_words"
         start = plan_entry.get("start")
         end = plan_entry.get("end")
         if segments and start is not None and end is not None and "transcript_full" not in plan_entry:
@@ -29868,6 +29923,7 @@ def autoclip_video(video_pk):
         )
     podcast_audio_path = None
     podcast_audio_duration = None
+    media_duration_seconds = None
     podcast_overlay_video_sources: List[Path] = []
     if video_visual_mode == "podcast" and video_podcast_audio_filename and video_owner_user_id:
         podcast_audio_path = _resolve_user_podcast_audio_path(video_owner_user_id, video_podcast_audio_filename)
@@ -29886,8 +29942,28 @@ def autoclip_video(video_pk):
                 end = float(podcast_audio_duration)
             elif duration_seconds:
                 end = float(duration_seconds)
-    if duration_seconds and not podcast_audio_path:
-        end = min(end, float(duration_seconds))
+    if not podcast_audio_path:
+        plan_keep_ranges = _normalize_edit_keep_ranges(plan_entry.get("edit_keep_ranges"))
+        transcript_word_selection = (
+            str(plan_entry.get("selection_source") or "").strip().lower() == "transcript_words"
+            or str(plan_entry.get("origin") or "").strip().lower() == "ai"
+        )
+        range_resolution, media_duration_seconds = _resolve_video_clip_ranges(
+            video_pk=video_pk,
+            video_id=vid,
+            start=float(start),
+            end=float(end),
+            keep_ranges=plan_keep_ranges,
+            db_duration_seconds=_to_float(duration_seconds),
+            transcript_word_selection=transcript_word_selection,
+        )
+        if not range_resolution.ok:
+            return _respond(range_resolution.error, status=400, category="warning")
+        start, end = range_resolution.start, range_resolution.end
+        plan_entry["start"] = round(start, 3)
+        plan_entry["end"] = round(end, 3)
+        if plan_keep_ranges:
+            plan_entry["edit_keep_ranges"] = range_resolution.ranges
     if end <= start:
         return _respond(
             "Clip timing is invalid; please regenerate the plan.",
@@ -29980,6 +30056,8 @@ def autoclip_video(video_pk):
             )
             if edit_keep_ranges_for_job:
                 job_options["edit_keep_ranges"] = edit_keep_ranges_for_job
+            if media_duration_seconds:
+                job_options["media_duration_seconds"] = media_duration_seconds
             render_settings_hash = _render_settings_hash_from_options(job_options)
             input_hash = build_input_hash(
                 source_id=vid,
@@ -30000,6 +30078,8 @@ def autoclip_video(video_pk):
             }
             if edit_keep_ranges_for_job:
                 payload["edit_keep_ranges"] = edit_keep_ranges_for_job
+            if media_duration_seconds:
+                payload["media_duration_seconds"] = media_duration_seconds
             job_origin, job_priority = _interactive_render_origin(
                 owner_user_id=target_owner_user_id,
                 brand_id=brand_id,
@@ -30342,7 +30422,17 @@ def autoclip_video(video_pk):
         )
         if len(edit_keep_ranges) > 1 and not podcast_audio_path:
             multi_range_source_path = Path(tempfile.gettempdir()) / f"short_edit_ranges_{vid}_{plan_index}_{secrets.token_hex(5)}.mp4"
-            multi_range_duration = _trim_source_to_keep_ranges(src_path, edit_keep_ranges, multi_range_source_path)
+            multi_range_duration = _trim_source_to_keep_ranges(
+                src_path,
+                edit_keep_ranges,
+                multi_range_source_path,
+                media_duration_seconds=media_duration_seconds,
+                fallback_duration_seconds=_to_float(duration_seconds),
+                transcript_word_selection=(
+                    str(plan_entry.get("selection_source") or "").strip().lower() == "transcript_words"
+                    or str(plan_entry.get("origin") or "").strip().lower() == "ai"
+                ),
+            )
             if multi_range_duration > 0 and multi_range_source_path.exists():
                 segments = _remap_transcript_segments_to_keep_ranges(segments or [], edit_keep_ranges)
                 src_path = multi_range_source_path
@@ -31435,7 +31525,7 @@ def regenerate_clip_video(video_pk: int, plan_index: int):
     video_info = _fetch_video_with_transcript(video_pk)
     if not video_info:
         return jsonify(success=False, message="Video not found."), 404
-    source_video_id, video_title, _, _, segments = video_info
+    source_video_id, video_title, duration_seconds, _, segments = video_info
     conn = get_db_readonly()
     try:
         video_columns = table_columns(conn, "youtube_videos")
@@ -31598,6 +31688,34 @@ def regenerate_clip_video(video_pk: int, plan_index: int):
     end = _to_float(plan_entry.get("end"))
     if start is None or end is None:
         return jsonify(success=False, message="Clip timing is incomplete."), 400
+    plan_keep_ranges = _normalize_edit_keep_ranges(plan_entry.get("edit_keep_ranges"))
+    range_resolution, media_duration_seconds = _resolve_video_clip_ranges(
+        video_pk=video_pk,
+        video_id=source_video_id,
+        start=float(start),
+        end=float(end),
+        keep_ranges=plan_keep_ranges,
+        db_duration_seconds=_to_float(duration_seconds),
+        transcript_word_selection=(
+            str(plan_entry.get("selection_source") or "").strip().lower() == "transcript_words"
+            or str(plan_entry.get("origin") or "").strip().lower() == "ai"
+        ),
+    )
+    if not range_resolution.ok:
+        return jsonify(success=False, message=range_resolution.error), 400
+    start, end = range_resolution.start, range_resolution.end
+    plan_entry["start"] = round(start, 3)
+    plan_entry["end"] = round(end, 3)
+    if plan_keep_ranges:
+        plan_entry["edit_keep_ranges"] = range_resolution.ranges
+    current_hash = _compute_render_settings_hash_for_plan_entry(
+        video_pk=video_pk,
+        video=video,
+        plan_entry=plan_entry,
+        segments=segments,
+        brand_id=brand_id,
+        fallback_title=video_title,
+    )
     job_options = {
         "regenerate": True,
         "render_settings_hash": current_hash,
@@ -31620,6 +31738,8 @@ def regenerate_clip_video(video_pk: int, plan_index: int):
         "previous_youtube_video_id": str((generated_row[2] if generated_row else "") or plan_entry.get("yt_video_id") or "").strip(),
         "previous_publish_at_iso": str(plan_entry.get("publish_at_iso") or plan_entry.get("publish_at") or "").strip(),
     }
+    if media_duration_seconds:
+        payload["media_duration_seconds"] = media_duration_seconds
     enqueue_result = enqueue_render_job(
         user_id=str(target_owner_user_id),
         payload=payload,

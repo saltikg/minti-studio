@@ -55,6 +55,10 @@ from app.video_shorts.services.media_utils import (
     resolve_s3_source_video_cached,
 )
 from app.video_shorts.services.media_utils import MediaSubprocessTimeoutError
+from app.video_shorts.services.media_duration import (
+    get_or_backfill_media_duration_seconds,
+    probe_exact_media_duration_seconds,
+)
 from app.video_shorts.services.quick_short_flow import (
     STATUS_DONE,
     STATUS_FAILED,
@@ -1107,6 +1111,14 @@ def _execute_ingest_youtube_job(app, job: Dict[str, Any]) -> Dict[str, Any]:
     else:
         local_path = _download_youtube_video(video_url, video_id)
     try:
+        try:
+            exact_media_duration = probe_exact_media_duration_seconds(
+                local_path,
+                context=f"youtube_ingest video_pk={video_pk} video_id={video_id}",
+            )
+        except Exception:
+            app.logger.warning("Exact media duration probe failed video_pk=%s", video_pk, exc_info=True)
+            exact_media_duration = None
         if not source_key:
             source_key = f"videos/{video_id}{local_path.suffix or '.mp4'}"
             put_file_for_owner(local_path, source_key, owner_user_id=owner_user_id)
@@ -1117,11 +1129,12 @@ def _execute_ingest_youtube_job(app, job: Dict[str, Any]) -> Dict[str, Any]:
                 UPDATE youtube_videos
                 SET download_status = 'downloaded',
                     video_url = ?,
+                    media_duration_seconds = ?,
                     downloaded_at = CURRENT_TIMESTAMP,
                     last_checked_at = CURRENT_TIMESTAMP
                 WHERE id = ? AND owner_user_id = ? AND brand_id = ?
                 """,
-                [build_storage_reference(source_key), video_pk, owner_user_id, brand_id],
+                [build_storage_reference(source_key), exact_media_duration, video_pk, owner_user_id, brand_id],
             )
             if getattr(updated, "rowcount", 1) == 0:
                 raise PermanentRenderJobError("YouTube ingest source scope changed before S3 upload completion.")
@@ -1286,6 +1299,7 @@ def _execute_transcribe_upload_job(app, job: Dict[str, Any]) -> Dict[str, Any]:
     if not source_path or not source_path.exists():
         raise PermanentRenderJobError("Uploaded source file could not be found.")
     try:
+        get_or_backfill_media_duration_seconds(video_pk, video_id, source_path=source_path)
         _set_job_progress(job["id"], stage="transcribing", message="Preparing your transcript.", status="processing")
         transcript_text, segments = _transcribe_with_whisper(source_path)
         _save_transcript(

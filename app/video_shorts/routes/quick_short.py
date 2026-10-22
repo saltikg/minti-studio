@@ -13,7 +13,7 @@ from flask import current_app, flash, g, jsonify, redirect, render_template, req
 
 from app.video_shorts import video_shorts_bp
 from app.video_shorts.services import tenant_media
-from app.video_shorts.config import FFPROBE_TIMEOUT, VIDEOS_DIR
+from app.video_shorts.config import VIDEOS_DIR
 from app.video_shorts.routes.auth import _client_ip
 from app.video_shorts.services.auth_protection import RateLimitRule, check_rate_limits
 from app.video_shorts.services.brands import current_brand_id, ensure_brand_schema
@@ -27,8 +27,8 @@ from app.video_shorts.services.db import (
 from app.video_shorts.services.media_utils import (
     _format_time_label,
     normalize_source_video_for_streaming,
-    run_media_subprocess,
 )
+from app.video_shorts.services.media_duration import probe_exact_media_duration_seconds
 from app.video_shorts.services.disk_guard import (
     USER_FACING_DISK_GUARD_MESSAGE,
     disk_guard_triggered,
@@ -316,43 +316,12 @@ def _get_or_create_podcast_channel(conn, owner_id, brand_id):
     return row[0] if row else None
 
 
-def _resolve_ffprobe() -> Optional[str]:
-    candidates = ["ffprobe", "/usr/bin/ffprobe"]
-    for cand in candidates:
-        resolved = shutil.which(cand) or cand
-        if Path(resolved).is_file():
-            return str(Path(resolved))
-    return None
-
-
-def _probe_duration_seconds(target: Path | str, *, context: str = "") -> Optional[int]:
-    ffprobe = _resolve_ffprobe()
-    if not ffprobe:
-        return None
+def _probe_duration_seconds(target: Path | str, *, context: str = "") -> Optional[float]:
     try:
-        result = run_media_subprocess(
-            [
-                ffprobe,
-                "-v",
-                "error",
-                "-show_entries",
-                "format=duration",
-                "-of",
-                "default=nw=1:nk=1",
-                str(target),
-            ],
-            operation="quick_short_probe_duration",
+        return probe_exact_media_duration_seconds(
+            target,
             context=context or f"target={Path(str(target)).name}",
-            capture_output=True,
-            text=True,
-            check=True,
-            timeout=FFPROBE_TIMEOUT,
         )
-    except Exception:
-        return None
-    raw = (result.stdout or "").strip()
-    try:
-        return int(float(raw))
     except Exception:
         return None
 
@@ -564,6 +533,7 @@ def _create_uploaded_video_record(
     filename: str,
     source_key: str,
     duration_seconds,
+    media_duration_seconds=None,
 ):
     ensure_brand_schema(conn)
     ensure_channel_owner_schema(conn)
@@ -583,9 +553,9 @@ def _create_uploaded_video_record(
             """
             INSERT INTO youtube_videos
                 (channel_id, video_id, title, published_at, thumbnail_url, fetch_transcript,
-                 duration_seconds, view_count, like_count, comment_count, video_url, owner_user_id,
+                 duration_seconds, media_duration_seconds, view_count, like_count, comment_count, video_url, owner_user_id,
                  brand_id, download_status, downloaded_at, is_music_only, transcript_status, subtitle_style)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'pending', now(), ?, 'pending', ?)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'pending', now(), ?, 'pending', ?)
             """,
             [
                 channel_id,
@@ -594,7 +564,8 @@ def _create_uploaded_video_record(
                 datetime.utcnow().isoformat(),
                 None,
                 False,
-                duration_seconds,
+                int(float(duration_seconds)) if duration_seconds is not None else None,
+                media_duration_seconds,
                 None,
                 None,
                 None,
@@ -614,9 +585,9 @@ def _create_uploaded_video_record(
             """
             INSERT INTO youtube_videos
                 (channel_id, video_id, title, published_at, thumbnail_url, fetch_transcript,
-                 duration_seconds, view_count, like_count, comment_count, video_url, owner_user_id,
+                 duration_seconds, media_duration_seconds, view_count, like_count, comment_count, video_url, owner_user_id,
                  brand_id, download_status, downloaded_at, transcript_status, subtitle_style)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'pending', now(), 'pending', ?)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'pending', now(), 'pending', ?)
             """,
             [
                 channel_id,
@@ -625,7 +596,8 @@ def _create_uploaded_video_record(
                 datetime.utcnow().isoformat(),
                 None,
                 False,
-                duration_seconds,
+                int(float(duration_seconds)) if duration_seconds is not None else None,
+                media_duration_seconds,
                 None,
                 None,
                 None,
@@ -772,6 +744,7 @@ def _finalize_uploaded_s3_object(
             filename=filename,
             source_key=source_key,
             duration_seconds=duration_seconds,
+            media_duration_seconds=probed_duration_seconds,
         )
     finally:
         conn.close()
@@ -1584,6 +1557,7 @@ def _create_uploaded_video_session_and_enqueue(
             filename=filename,
             source_key=source_key,
             duration_seconds=duration_seconds,
+            media_duration_seconds=duration_seconds,
         )
     finally:
         conn.close()

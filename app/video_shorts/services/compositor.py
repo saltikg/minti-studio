@@ -49,6 +49,7 @@ from app.video_shorts.services.media_utils import (
 )
 from app.video_shorts.services.music import music_volume_expression, normalize_music_level
 from app.video_shorts.services import render_timing
+from app.video_shorts.services.clip_ranges import resolve_clip_ranges
 
 SUBSCRIBE_OVERLAY_SCALE = DESIGN_GEOMETRY["subscribe_scale"]
 SUBSCRIBE_OVERLAY_BOTTOM_OFFSET = DESIGN_GEOMETRY["subscribe_bottom"]
@@ -405,6 +406,10 @@ def _trim_source_to_keep_ranges(
     src_path: Path,
     keep_ranges: list[Dict[str, Any]],
     out_path: Path,
+    *,
+    media_duration_seconds: Optional[float] = None,
+    fallback_duration_seconds: Optional[float] = None,
+    transcript_word_selection: bool = False,
 ) -> float:
     """Create one clip from multiple source ranges using a single ffmpeg process.
 
@@ -412,11 +417,19 @@ def _trim_source_to_keep_ranges(
     file as a new zero-based timeline for captions, face-aware layout and compose.
     """
     ranges = _normalize_keep_ranges_for_trim(keep_ranges)
-    if len(ranges) <= 1:
-        return max(0.0, (ranges[0]["end"] - ranges[0]["start"]) if ranges else 0.0)
+    if not ranges:
+        return 0.0
     if not src_path.exists():
         raise FileNotFoundError(f"Source video not found: {src_path}")
-    src_path, ranges, has_audio = resolve_keep_ranges_for_trim(src_path, ranges)
+    src_path, ranges, has_audio = resolve_keep_ranges_for_trim(
+        src_path,
+        ranges,
+        media_duration_seconds=media_duration_seconds,
+        fallback_duration_seconds=fallback_duration_seconds,
+        transcript_word_selection=transcript_word_selection,
+    )
+    if len(ranges) <= 1:
+        return max(0.0, ranges[0]["end"] - ranges[0]["start"])
     resolved_ffmpeg = _resolve_ffmpeg()
     source_fps = _probe_video_frame_rate(src_path) or 30.0
     if has_audio:
@@ -500,6 +513,10 @@ def _trim_source_to_keep_ranges(
 def resolve_keep_ranges_for_trim(
     src_path: Path,
     keep_ranges: list[Dict[str, Any]],
+    *,
+    media_duration_seconds: Optional[float] = None,
+    fallback_duration_seconds: Optional[float] = None,
+    transcript_word_selection: bool = False,
 ) -> tuple[Path, list[dict[str, float]], bool]:
     """Resolve the exact source ranges used by the multi-range ffmpeg trim."""
     ranges = _normalize_keep_ranges_for_trim(keep_ranges)
@@ -509,6 +526,18 @@ def resolve_keep_ranges_for_trim(
     has_audio = _has_audio_stream(normalized_src_path)
     if len(ranges) > 1 and has_audio:
         ranges = _snap_keep_range_boundaries_to_audio(normalized_src_path, ranges)
+    if ranges:
+        resolution = resolve_clip_ranges(
+            start=ranges[0]["start"],
+            end=ranges[-1]["end"],
+            keep_ranges=ranges,
+            media_duration_seconds=media_duration_seconds,
+            fallback_duration_seconds=fallback_duration_seconds,
+            transcript_word_selection=transcript_word_selection,
+        )
+        if not resolution.ok:
+            raise ValueError(resolution.error)
+        ranges = resolution.ranges
     return normalized_src_path, ranges, has_audio
 
 

@@ -7220,6 +7220,7 @@
                     <input type="hidden" name="start" value="{{ row.start or 0 }}" data-edit-start-input>
                     <input type="hidden" name="end" value="{{ row.end or 0 }}" data-edit-end-input>
                     <input type="hidden" name="keep_ranges" value="" data-edit-keep-ranges-input>
+                    <input type="hidden" name="selection_source" value="">
                     <div class="clip-text-trim-editor" data-clip-text-trim-editor aria-label="Clip transcript editor"></div>
                     <div class="clip-text-trim-duration d-none" data-edit-duration-label>{{ rail_duration_label }}</div>
                     <div class="clip-text-trim-warning d-none" data-edit-duration-warning></div>
@@ -9697,6 +9698,7 @@ document.addEventListener("DOMContentLoaded", () => {
         start_time: startTime,
         end_time: endTime,
         title: submittedTitle,
+        selection_source: "transcript_words",
       });
       const normalizedKeepRanges = normalizeClipKeepRanges?.(keepRanges) || [];
       if (normalizedKeepRanges.length > 1) {
@@ -14644,7 +14646,7 @@ window.initGenerateV2TextTranscript = () => {
       render();
       hideToolbar();
     } catch (error) {
-      alert(error?.message || "Could not create clip.");
+      window.__trsClipSelectorController?.showCreateError?.(error?.message || "Could not create clip.");
     } finally {
       createBtn.disabled = false;
     }
@@ -14909,6 +14911,10 @@ const applyClipTextTrimSelection = (form, action) => {
   const keepRangesInput = form.querySelector("[data-edit-keep-ranges-input]");
   if (keepRangesInput) {
     keepRangesInput.value = JSON.stringify(nextRange.ranges);
+  }
+  const selectionSourceInput = form.querySelector("input[name='selection_source']");
+  if (selectionSourceInput) {
+    selectionSourceInput.value = "transcript_words";
   }
   window.getSelection?.()?.removeAllRanges?.();
   hideClipTextTrimToolbar();
