@@ -5717,10 +5717,12 @@
   .shape-editor-row.is-selected { border-color: #50cdb5; box-shadow: 0 0 0 1px rgba(80,205,181,.28); }
   .shape-editor-row-copy { display: grid; gap: 2px; text-align: left; }
   .shape-editor-error { color: #ff9b9b; font-size: .72rem; line-height: 1.25; }
-  .shape-editor-empty { color: rgba(255,255,255,.52); font-size: .82rem; padding: 18px 4px; }
+  .shape-editor-empty { display: grid; gap: 3px; color: rgba(255,255,255,.72); font-size: .82rem; padding: 6px 2px 10px; }
+  .shape-editor-empty span:last-child { color: rgba(255,255,255,.48); font-size: .76rem; }
   .shape-editor-controls { display: grid; gap: 14px; }
   .shape-editor-actions { display: flex; flex-wrap: wrap; gap: 8px; }
-  .overlay-editor-add-actions { display: flex; flex-wrap: wrap; justify-content: flex-end; gap: 8px; }
+  .overlay-editor-add-actions { display: grid; grid-template-columns: repeat(2, minmax(112px, 1fr)); gap: 8px; }
+  .overlay-editor-add-actions .btn { min-height: 38px; }
   .overlay-image-library { display: none; padding: 12px; border: 1px solid rgba(255,255,255,.12); border-radius: 8px; background: rgba(15,23,42,.56); }
   .overlay-image-library.is-open { display: grid; gap: 10px; }
   .overlay-image-library-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(72px, 1fr)); gap: 8px; }
@@ -5729,12 +5731,20 @@
   .overlay-image-library-use:hover { border-color: #50cdb5; }
   .overlay-image-library-use img { display: block; width: 52px; height: 42px; object-fit: contain; }
   .overlay-image-library-use span { overflow: hidden; width: 100%; font-size: .66rem; text-overflow: ellipsis; white-space: nowrap; }
-  .overlay-image-library-delete { position: absolute; top: 3px; right: 3px; width: 24px; height: 24px; padding: 0; border: 0; border-radius: 50%; background: rgba(5,10,18,.82); color: rgba(255,255,255,.72); }
+  .overlay-image-library-delete { position: absolute; top: 4px; right: 4px; display: grid; width: 28px; height: 28px; padding: 0; place-items: center; border: 1px solid rgba(255,255,255,.16); border-radius: 6px; background: rgba(5,10,18,.9); color: rgba(255,255,255,.78); opacity: 0; pointer-events: none; transition: opacity .15s ease, color .15s ease, border-color .15s ease; }
+  .overlay-image-library-item:hover .overlay-image-library-delete,
+  .overlay-image-library-item:focus-within .overlay-image-library-delete { opacity: 1; pointer-events: auto; }
+  .overlay-image-library-delete:hover,
+  .overlay-image-library-delete:focus-visible { border-color: rgba(255,105,105,.72); color: #ff9b9b; }
+  @media (hover: none), (pointer: coarse) {
+    .overlay-image-library-delete { opacity: 1; pointer-events: auto; }
+  }
   .overlay-image-library-message { min-height: 18px; font-size: .75rem; }
   .shape-editor-row-thumb { width: 34px; height: 34px; object-fit: contain; border-radius: 5px; background: rgba(255,255,255,.06); }
-  .overlay-image-position-actions { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 8px; }
   .overlay-image-opacity { display: grid; gap: 6px; }
   .overlay-image-opacity input { width: 100%; }
+  .overlay-size-control { display: grid; gap: 6px; }
+  .overlay-size-control input { width: 100%; }
   .preview-shapes-layer { position: absolute; inset: 0; z-index: 2; overflow: hidden; pointer-events: none; }
   .preview-shape { position: absolute; pointer-events: auto; touch-action: none; cursor: grab; }
   .preview-shape > img { display: block; width: 100%; height: 100%; object-fit: fill; pointer-events: none; user-select: none; }
@@ -5751,6 +5761,9 @@
   .preview-shape-handle[data-handle="e"], .preview-shape-handle[data-handle="w"] { cursor: ew-resize; }
   .preview-shape-handle[data-handle="nw"], .preview-shape-handle[data-handle="se"] { cursor: nwse-resize; }
   .preview-shape-handle[data-handle="ne"], .preview-shape-handle[data-handle="sw"] { cursor: nesw-resize; }
+  .preview-shape-snap-guide { position: absolute; z-index: 4; pointer-events: none; background: rgba(80,205,181,.9); box-shadow: 0 0 0 1px rgba(15,23,42,.32); }
+  .preview-shape-snap-guide.is-vertical { top: 0; bottom: 0; width: 1px; transform: translateX(-.5px); }
+  .preview-shape-snap-guide.is-horizontal { left: 0; right: 0; height: 1px; transform: translateY(-.5px); }
   .shorts-preview-title-band, .shorts-preview-subtitle-band, .shorts-preview-date, .orig-preview__title, .orig-preview__caption { z-index: 3; }
   .short-bg-popover { width: 288px; max-width: min(288px, calc(100vw - 24px)); padding: 16px; gap: 14px; box-sizing: border-box; }
   .short-bg-popover.closed { display: none !important; visibility: hidden; pointer-events: none; }
@@ -8738,8 +8751,8 @@
                         <div class="design-panel-hint">Add a fixed shape or logo over the video.</div>
                       </div>
                       <div class="overlay-editor-add-actions">
-                        <button type="button" class="btn btn-sm btn-primary" id="shape-add-btn"><i class="bi bi-plus-lg me-1"></i>Shape</button>
-                        <button type="button" class="btn btn-sm btn-outline-light" id="overlay-image-add-btn"><i class="bi bi-image me-1"></i>Image</button>
+                        <button type="button" class="btn btn-sm btn-outline-light" id="overlay-image-add-btn"><i class="bi bi-image me-1"></i>Add image</button>
+                        <button type="button" class="btn btn-sm btn-outline-light" id="shape-add-btn"><i class="bi bi-plus-lg me-1"></i>Add shape</button>
                       </div>
                     </div>
                     <div class="overlay-image-library mb-3" id="overlay-image-library"
@@ -8753,7 +8766,7 @@
                       <div class="small text-white-50">PNG, JPG, WEBP or SVG · max 2 MB</div>
                     </div>
                     <div class="shape-editor-list" id="shape-editor-list"></div>
-                    <div class="shape-editor-empty" id="shape-editor-empty">No overlays yet.</div>
+                    <div class="shape-editor-empty" id="shape-editor-empty"><span>No overlays yet.</span><span>Add your logo to show it on every clip.</span></div>
                     <div class="shape-editor-controls d-none" id="shape-editor-controls">
                       <div class="design-panel-section-label"><span>Appearance</span></div>
                       <div class="shape-controls-shape-only">
@@ -8781,14 +8794,9 @@
                         <div class="d-flex justify-content-between small text-white-50"><label for="overlay-image-opacity">Opacity</label><span id="overlay-image-opacity-label">100%</span></div>
                         <input type="range" class="form-range" id="overlay-image-opacity" min="0" max="100" value="100">
                       </div>
-                      <div class="shape-controls-image-only d-none">
-                        <div class="small text-white-50 mb-2">Quick position</div>
-                        <div class="overlay-image-position-actions">
-                          <button type="button" class="btn btn-sm btn-outline-light" data-overlay-position="top-left">Top left</button>
-                          <button type="button" class="btn btn-sm btn-outline-light" data-overlay-position="top-right">Top right</button>
-                          <button type="button" class="btn btn-sm btn-outline-light" data-overlay-position="bottom-left">Bottom left</button>
-                          <button type="button" class="btn btn-sm btn-outline-light" data-overlay-position="bottom-right">Bottom right</button>
-                        </div>
+                      <div class="overlay-size-control">
+                        <div class="d-flex justify-content-between small text-white-50"><label for="overlay-size">Size</label><span id="overlay-size-label">17%</span></div>
+                        <input type="range" class="form-range" id="overlay-size" min="1" max="100" value="17" aria-label="Overlay width as a percentage of the frame">
                       </div>
                       <button type="button" class="design-panel-more-toggle" id="shape-more-toggle" aria-expanded="false">▸ More options</button>
                       <div class="design-panel-more-options" id="shape-more-options">
@@ -8798,7 +8806,7 @@
                           {% endfor %}
                         </div>
                       </div>
-                      <div class="shape-editor-actions"><button type="button" class="btn btn-sm btn-outline-light" id="shape-duplicate-btn"><i class="bi bi-copy me-1"></i>Duplicate</button><button type="button" class="btn btn-sm btn-outline-danger" id="shape-delete-btn"><i class="bi bi-trash me-1"></i>Delete</button></div>
+                      <div class="shape-editor-actions"><button type="button" class="btn btn-sm btn-outline-light" id="shape-duplicate-btn"><i class="bi bi-copy me-1"></i>Duplicate</button><button type="button" class="btn btn-sm btn-outline-danger" id="shape-delete-btn"><i class="bi bi-x-lg me-1"></i>Remove from video</button></div>
                     </div>
                   </div>
                   <div class="crop-modal-tab-panel crop-modal-settings-panel" data-crop-modal-panel="music" hidden>
@@ -23406,6 +23414,8 @@ document.addEventListener("DOMContentLoaded", function () {
   const imageUpload = document.getElementById("overlay-image-upload");
   const imageOpacity = document.getElementById("overlay-image-opacity");
   const imageOpacityLabel = document.getElementById("overlay-image-opacity-label");
+  const overlaySize = document.getElementById("overlay-size");
+  const overlaySizeLabel = document.getElementById("overlay-size-label");
   const shapeDuplicate = document.getElementById("shape-duplicate-btn");
   const shapeDelete = document.getElementById("shape-delete-btn");
   const shapeRadius = document.getElementById("shape-radius");
@@ -23416,6 +23426,7 @@ document.addEventListener("DOMContentLoaded", function () {
   let selectedShapeId = null;
   let shapePointerState = null;
   let overlayImageAssets = [];
+  let activeShapeSnapGuides = [];
   const shapeValidationErrors = new Map();
   const shapeHandles = ["nw", "n", "ne", "e", "se", "s", "sw", "w"];
   const shapeCoordinateMin = Number(DESIGN_GEOMETRY.shape_coordinate_min);
@@ -23475,6 +23486,15 @@ document.addEventListener("DOMContentLoaded", function () {
     }
   };
   const shapeLayerElements = () => [document.getElementById("shorts-preview-shapes"), document.getElementById("orig-preview-shapes")].filter(Boolean);
+  const appendShapeSnapGuides = (layer) => {
+    activeShapeSnapGuides.forEach((guide) => {
+      const element = document.createElement("span");
+      element.className = `preview-shape-snap-guide is-${guide.axis}`;
+      if (guide.axis === "vertical") element.style.left = `${guide.position / 10.8}%`;
+      else element.style.top = `${guide.position / 19.2}%`;
+      layer.appendChild(element);
+    });
+  };
   const renderShapeLayers = () => {
     shapeLayerElements().forEach((layer) => {
       layer.innerHTML = "";
@@ -23512,6 +23532,7 @@ document.addEventListener("DOMContentLoaded", function () {
         }
         layer.appendChild(element);
       });
+      appendShapeSnapGuides(layer);
     });
   };
   const syncShapeControls = () => {
@@ -23529,6 +23550,9 @@ document.addEventListener("DOMContentLoaded", function () {
     if (shapeRadius && !image) shapeRadius.value = String(shape.radius);
     if (imageOpacity) imageOpacity.value = String(shape.alpha);
     if (imageOpacityLabel) imageOpacityLabel.textContent = `${shape.alpha}%`;
+    const widthPercent = Math.max(1, Math.min(100, Math.round(shape.w / 10.8)));
+    if (overlaySize) overlaySize.value = String(widthPercent);
+    if (overlaySizeLabel) overlaySizeLabel.textContent = `${widthPercent}%`;
     Object.entries(shapeGeometry).forEach(([key, field]) => { if (field) field.value = String(shape[key]); });
     if (!image) syncDesignChip("shapeColorValue", shape.color, shape.alpha);
     const native = document.querySelector("#shapeColorPopover input[type='color']");
@@ -23617,10 +23641,11 @@ document.addEventListener("DOMContentLoaded", function () {
       const image = document.createElement("img"); image.src = asset.url; image.alt = "";
       const label = document.createElement("span"); label.textContent = asset.label || "Image";
       use.append(image, label); use.addEventListener("click", () => addImageOverlay(asset));
-      const remove = document.createElement("button"); remove.type = "button"; remove.className = "overlay-image-library-delete"; remove.title = "Delete uploaded image"; remove.setAttribute("aria-label", `Delete ${asset.label || "image"}`); remove.innerHTML = '<i class="bi bi-x-lg"></i>';
+      const remove = document.createElement("button"); remove.type = "button"; remove.className = "overlay-image-library-delete"; remove.title = "Delete from library"; remove.setAttribute("aria-label", `Delete ${asset.label || "image"} from library`); remove.innerHTML = '<i class="bi bi-trash3" aria-hidden="true"></i>';
       remove.addEventListener("click", async () => {
+        if (!window.confirm("Delete this image from your library?")) return;
         if (overlayShapes.some((shape) => isImageOverlay(shape) && String(shape.asset_id) === String(asset.id))) {
-          setImageLibraryMessage("Used in 1 designs", true);
+          setImageLibraryMessage("This image is used in 1 designs (including your default). Remove it there first.", true);
           return;
         }
         setImageLibraryMessage("Deleting…");
@@ -23670,13 +23695,16 @@ document.addEventListener("DOMContentLoaded", function () {
   });
   shapeRadius?.addEventListener("input", () => { const shape = selectedShape(); if (shape) { shape.radius = shapeRadius.value; syncShapesUi(); } });
   imageOpacity?.addEventListener("input", () => { const shape = selectedShape(); if (isImageOverlay(shape)) { shape.alpha = Number(imageOpacity.value); syncShapesUi(); } });
-  document.querySelectorAll("[data-overlay-position]").forEach((button) => button.addEventListener("click", () => {
-    const shape = selectedShape(); if (!isImageOverlay(shape)) return;
-    const margin = 40; const bottomY = Math.max(0, Math.min(1920 - margin - shape.h, 1536 - shape.h));
-    const rightX = Math.max(0, 1080 - margin - shape.w);
-    const positions = { "top-left": [margin, margin], "top-right": [rightX, margin], "bottom-left": [margin, bottomY], "bottom-right": [rightX, bottomY] };
-    const [x, y] = positions[button.dataset.overlayPosition] || [shape.x, shape.y]; shape.x = x; shape.y = y; syncShapesUi();
-  }));
+  overlaySize?.addEventListener("input", () => {
+    const shape = selectedShape(); if (!shape) return;
+    const nextWidth = Math.max(1, Math.min(1080, Math.round(Number(overlaySize.value) * 10.8)));
+    if (isImageOverlay(shape) && shape.aspect_locked) {
+      const ratio = shape.w / Math.max(1, shape.h);
+      shape.h = Math.max(1, Math.round(nextWidth / Math.max(0.001, ratio)));
+    }
+    shape.w = nextWidth;
+    syncShapesUi();
+  });
   Object.entries(shapeGeometry).forEach(([key, field]) => field?.addEventListener("input", () => { const shape = selectedShape(); if (shape) { shape[key] = field.value; syncShapesUi(); } }));
   document.getElementById("shape-more-toggle")?.addEventListener("click", (event) => {
     const options = document.getElementById("shape-more-options");
@@ -23690,6 +23718,7 @@ document.addEventListener("DOMContentLoaded", function () {
     const shape = overlayShapes.find((item) => item.id === element.dataset.shapeId);
     if (!shape || !layer) return;
     selectedShapeId = shape.id;
+    activeShapeSnapGuides = [];
     shapePointerState = { startX: event.clientX, startY: event.clientY, shape: { ...shape }, handle: event.target.dataset.handle || "move", width: layer.clientWidth, height: layer.clientHeight };
     document.body.classList.toggle("is-shape-moving", shapePointerState.handle === "move");
     event.preventDefault(); syncShapesUi();
@@ -23701,7 +23730,34 @@ document.addEventListener("DOMContentLoaded", function () {
     const dx = (event.clientX - shapePointerState.startX) * 1080 / Math.max(1, shapePointerState.width);
     const dy = (event.clientY - shapePointerState.startY) * 1920 / Math.max(1, shapePointerState.height);
     const base = shapePointerState.shape; const handle = shapePointerState.handle;
-    if (handle === "move") { shape.x = base.x + dx; shape.y = base.y + dy; }
+    if (handle === "move") {
+      shape.x = base.x + dx;
+      shape.y = base.y + dy;
+      activeShapeSnapGuides = [];
+      if (!event.altKey) {
+        const threshold = 24;
+        const safeMargin = 40;
+        const centerX = shape.x + shape.w / 2;
+        const bottom = shape.y + shape.h;
+        const xTargets = [
+          { distance: Math.abs(shape.x), value: safeMargin, position: safeMargin },
+          { distance: Math.abs(shape.x + shape.w - 1080), value: 1080 - safeMargin - shape.w, position: 1080 - safeMargin },
+          { distance: Math.abs(centerX - 540), value: 540 - shape.w / 2, position: 540 },
+        ].filter((target) => target.distance <= threshold).sort((a, b) => a.distance - b.distance);
+        const yTargets = [
+          { distance: Math.abs(shape.y), value: safeMargin, position: safeMargin },
+          { distance: Math.min(Math.abs(bottom - 1920), Math.abs(bottom - 1536)), value: 1536 - shape.h, position: 1536 },
+        ].filter((target) => target.distance <= threshold).sort((a, b) => a.distance - b.distance);
+        if (xTargets[0]) {
+          shape.x = xTargets[0].value;
+          activeShapeSnapGuides.push({ axis: "vertical", position: xTargets[0].position });
+        }
+        if (yTargets[0]) {
+          shape.y = yTargets[0].value;
+          activeShapeSnapGuides.push({ axis: "horizontal", position: yTargets[0].position });
+        }
+      }
+    }
     else if (isImageOverlay(shape) && shape.aspect_locked && !event.shiftKey && ["nw", "ne", "se", "sw"].includes(handle)) {
       const rawW = Math.max(20, base.w + (handle.includes("e") ? dx : -dx));
       const rawH = Math.max(20, base.h + (handle.includes("s") ? dy : -dy));
@@ -23721,7 +23777,9 @@ document.addEventListener("DOMContentLoaded", function () {
   });
   const finishShapePointerInteraction = () => {
     shapePointerState = null;
+    activeShapeSnapGuides = [];
     document.body.classList.remove("is-shape-moving");
+    renderShapeLayers();
   };
   document.addEventListener("pointerup", finishShapePointerInteraction);
   document.addEventListener("pointercancel", finishShapePointerInteraction);

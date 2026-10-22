@@ -2373,7 +2373,11 @@ def delete_overlay_image_asset(video_pk: int, asset_id: str):
         )
         return jsonify(ok=False, error="The image could not be deleted."), 500
     if uses:
-        return jsonify(ok=False, error=f"Used in {uses} designs", used_in=uses), 409
+        return jsonify(
+            ok=False,
+            error=f"This image is used in {uses} designs (including your default). Remove it there first.",
+            used_in=uses,
+        ), 409
     return jsonify(ok=True)
 
 

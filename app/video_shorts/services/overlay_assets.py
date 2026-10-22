@@ -300,9 +300,9 @@ def count_overlay_image_uses(*, asset_id: str, owner_user_id: str, brand_id: str
         preferences = conn.execute(
             """
             SELECT preference_value FROM shorts_user_preferences
-            WHERE user_id = ? AND preference_key LIKE 'short_editor_defaults%'
+            WHERE user_id = ? AND preference_key LIKE ?
             """,
-            [owner_user_id],
+            [owner_user_id, "short_editor_defaults%"],
         ).fetchall()
     finally:
         conn.close()
