@@ -2351,11 +2351,21 @@ def overlay_image_assets(video_pk: int):
     return jsonify(ok=True, image=image), 201
 
 
-@video_shorts_bp.route("/generate/<int:video_pk>/overlay-images/<asset_id>", methods=["DELETE"])
+@video_shorts_bp.route("/generate/<int:video_pk>/overlay-images/<asset_id>", methods=["GET", "DELETE"])
 def delete_overlay_image_asset(video_pk: int, asset_id: str):
     context, _ = _overlay_image_editor_scope(video_pk)
     owner_user_id = str(context.get("owner_user_id") or "").strip()
     brand_id = context.get("brand_id")
+    if request.method == "GET":
+        try:
+            uses = overlay_assets.count_overlay_image_uses(
+                asset_id=str(asset_id),
+                owner_user_id=owner_user_id,
+                brand_id=brand_id,
+            )
+        except overlay_assets.OverlayAssetError as exc:
+            return jsonify(ok=False, error=str(exc)), 404
+        return jsonify(ok=True, used_in=uses)
     try:
         uses = overlay_assets.delete_overlay_image_asset(
             asset_id=str(asset_id),
@@ -2372,13 +2382,7 @@ def delete_overlay_image_asset(video_pk: int, asset_id: str):
             brand_id,
         )
         return jsonify(ok=False, error="The image could not be deleted."), 500
-    if uses:
-        return jsonify(
-            ok=False,
-            error=f"This image is used in {uses} designs (including your default). Remove it there first.",
-            used_in=uses,
-        ), 409
-    return jsonify(ok=True)
+    return jsonify(ok=True, removed_from=uses)
 
 
 @video_shorts_bp.route("/api/static-audios", methods=["GET"])

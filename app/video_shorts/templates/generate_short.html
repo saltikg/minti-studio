@@ -5740,6 +5740,12 @@
     .overlay-image-library-delete { opacity: 1; pointer-events: auto; }
   }
   .overlay-image-library-message { min-height: 18px; font-size: .75rem; }
+  .overlay-image-delete-dialog { position: fixed; inset: 0; z-index: 3000; display: grid; place-items: center; padding: 20px; background: rgba(2,6,12,.72); }
+  .overlay-image-delete-dialog[hidden] { display: none !important; }
+  .overlay-image-delete-dialog-card { width: min(440px, 100%); padding: 20px; border: 1px solid rgba(255,255,255,.16); border-radius: 10px; background: #121b2a; box-shadow: 0 24px 70px rgba(0,0,0,.5); color: #fff; }
+  .overlay-image-delete-dialog-title { margin: 0 0 8px; font-size: 1rem; font-weight: 700; }
+  .overlay-image-delete-dialog-copy { margin: 0; color: rgba(255,255,255,.7); font-size: .86rem; line-height: 1.5; white-space: pre-line; }
+  .overlay-image-delete-dialog-actions { display: flex; justify-content: flex-end; gap: 8px; margin-top: 18px; }
   .shape-editor-row-thumb { width: 34px; height: 34px; object-fit: contain; border-radius: 5px; background: rgba(255,255,255,.06); }
   .overlay-image-opacity { display: grid; gap: 6px; }
   .overlay-image-opacity input { width: 100%; }
@@ -23616,6 +23622,66 @@ document.addEventListener("DOMContentLoaded", function () {
     imageLibraryMessage.classList.toggle("text-danger", !!error);
     imageLibraryMessage.classList.toggle("text-white-50", !error);
   };
+  const requestOverlayImageDeleteConfirm = (usedIn) => new Promise((resolve) => {
+    const count = Math.max(0, Number(usedIn) || 0);
+    const dialog = document.createElement("div");
+    dialog.className = "overlay-image-delete-dialog";
+    dialog.setAttribute("role", "dialog");
+    dialog.setAttribute("aria-modal", "true");
+    const card = document.createElement("div");
+    card.className = "overlay-image-delete-dialog-card";
+    const title = document.createElement("h3");
+    title.className = "overlay-image-delete-dialog-title";
+    title.textContent = count ? "Delete this image?" : "Delete this image from your library?";
+    const copy = document.createElement("p");
+    copy.className = "overlay-image-delete-dialog-copy";
+    if (count) {
+      const designLabel = `${count} ${count === 1 ? "design" : "designs"}`;
+      copy.textContent = `It's used in ${designLabel} (including your default). It will be removed from them.\nClips you already created keep it; new and regenerated clips won't have it.`;
+    }
+    const actions = document.createElement("div");
+    actions.className = "overlay-image-delete-dialog-actions";
+    const cancel = document.createElement("button");
+    cancel.type = "button";
+    cancel.className = "btn btn-sm btn-outline-light";
+    cancel.textContent = "Cancel";
+    const confirmDelete = document.createElement("button");
+    confirmDelete.type = "button";
+    confirmDelete.className = "btn btn-sm btn-danger";
+    confirmDelete.textContent = "Delete";
+    actions.append(cancel, confirmDelete);
+    card.append(title);
+    if (count) card.append(copy);
+    card.append(actions);
+    dialog.append(card);
+    document.body.append(dialog);
+    let settled = false;
+    const finish = (result) => {
+      if (settled) return;
+      settled = true;
+      document.removeEventListener("keydown", onKeydown, true);
+      dialog.remove();
+      resolve(result);
+    };
+    const onKeydown = (event) => {
+      if (event.key === "Escape") {
+        event.preventDefault();
+        finish(false);
+      }
+    };
+    cancel.addEventListener("click", () => finish(false));
+    confirmDelete.addEventListener("click", () => finish(true));
+    dialog.addEventListener("pointerdown", (event) => { if (event.target === dialog) finish(false); });
+    document.addEventListener("keydown", onKeydown, true);
+    window.requestAnimationFrame(() => cancel.focus());
+  });
+  const removeOverlayAssetFromSavedSnapshot = (assetId) => {
+    const shapes = savedDesignSnapshot?.fields?.overlay_shapes;
+    if (!Array.isArray(shapes)) return;
+    savedDesignSnapshot.fields.overlay_shapes = shapes.filter(
+      (shape) => !(isImageOverlay(shape) && String(shape.asset_id) === String(assetId)),
+    );
+  };
   const addImageOverlay = (asset) => {
     if (!asset || overlayShapes.length >= 5) return;
     const place = (naturalWidth, naturalHeight) => {
@@ -23643,16 +23709,33 @@ document.addEventListener("DOMContentLoaded", function () {
       use.append(image, label); use.addEventListener("click", () => addImageOverlay(asset));
       const remove = document.createElement("button"); remove.type = "button"; remove.className = "overlay-image-library-delete"; remove.title = "Delete from library"; remove.setAttribute("aria-label", `Delete ${asset.label || "image"} from library`); remove.innerHTML = '<i class="bi bi-trash3" aria-hidden="true"></i>';
       remove.addEventListener("click", async () => {
-        if (!window.confirm("Delete this image from your library?")) return;
-        if (overlayShapes.some((shape) => isImageOverlay(shape) && String(shape.asset_id) === String(asset.id))) {
-          setImageLibraryMessage("This image is used in 1 designs (including your default). Remove it there first.", true);
-          return;
+        remove.disabled = true;
+        setImageLibraryMessage("Checking image use…");
+        try {
+          const usageResponse = await fetch(overlayImageItemUrl(asset.id), { headers: { Accept: "application/json", "X-Requested-With": "XMLHttpRequest" } });
+          const usagePayload = await usageResponse.json().catch(() => ({}));
+          if (!usageResponse.ok) throw new Error(usagePayload.error || "Image use could not be checked.");
+          const usedIn = Math.max(0, Number(usagePayload.used_in) || 0);
+          const confirmed = await requestOverlayImageDeleteConfirm(usedIn);
+          if (!confirmed) { setImageLibraryMessage(""); return; }
+          setImageLibraryMessage("Deleting…");
+          const response = await fetch(overlayImageItemUrl(asset.id), { method: "DELETE", headers: { Accept: "application/json", "X-Requested-With": "XMLHttpRequest" } });
+          const payload = await response.json().catch(() => ({}));
+          if (!response.ok) throw new Error(payload.error || "The image could not be deleted.");
+          overlayImageAssets = overlayImageAssets.filter((candidate) => candidate.id !== asset.id);
+          overlayShapes = overlayShapes.filter((shape) => !(isImageOverlay(shape) && String(shape.asset_id) === String(asset.id)));
+          if (!overlayShapes.some((shape) => shape.id === selectedShapeId)) selectedShapeId = overlayShapes[0]?.id || null;
+          removeOverlayAssetFromSavedSnapshot(asset.id);
+          syncShapesUi();
+          renderImageLibrary();
+          const removedFrom = Math.max(0, Number(payload.removed_from) || 0);
+          const designLabel = `${removedFrom} ${removedFrom === 1 ? "design" : "designs"}`;
+          setImageLibraryMessage(removedFrom ? `Image deleted and removed from ${designLabel}.` : "Image deleted.");
+        } catch (error) {
+          setImageLibraryMessage(error.message || "The image could not be deleted.", true);
+        } finally {
+          remove.disabled = false;
         }
-        setImageLibraryMessage("Deleting…");
-        const response = await fetch(overlayImageItemUrl(asset.id), { method: "DELETE", headers: { Accept: "application/json", "X-Requested-With": "XMLHttpRequest" } });
-        const payload = await response.json().catch(() => ({}));
-        if (!response.ok) { setImageLibraryMessage(payload.error || "The image could not be deleted.", true); return; }
-        overlayImageAssets = overlayImageAssets.filter((candidate) => candidate.id !== asset.id); renderImageLibrary(); setImageLibraryMessage("Image deleted.");
       });
       item.append(use, remove); imageLibraryGrid.appendChild(item);
     });

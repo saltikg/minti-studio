@@ -286,33 +286,94 @@ def _payload_uses_asset(payload: Any, asset_id: str) -> bool:
     )
 
 
+def _default_preference_keys(brand_id: str | None) -> list[str]:
+    keys = ["short_editor_defaults"]
+    normalized_brand = str(brand_id or "").strip()
+    if normalized_brand:
+        keys.append(f"short_editor_defaults:{normalized_brand}")
+    return keys
+
+
+def _design_rows(
+    conn: Any,
+    *,
+    owner_user_id: str,
+    brand_id: str | None,
+    lock: bool = False,
+) -> tuple[list[Any], list[Any]]:
+    lock_clause = " FOR UPDATE" if lock else ""
+    videos = conn.execute(
+        f"""
+        SELECT id, overlay_shapes FROM youtube_videos
+        WHERE owner_user_id = ? AND brand_id IS NOT DISTINCT FROM ?
+          AND deleted_at IS NULL AND overlay_shapes IS NOT NULL
+        {lock_clause}
+        """,
+        [owner_user_id, brand_id],
+    ).fetchall()
+    preference_keys = _default_preference_keys(brand_id)
+    placeholders = ",".join("?" for _ in preference_keys)
+    preferences = conn.execute(
+        f"""
+        SELECT id, preference_key, preference_value FROM shorts_user_preferences
+        WHERE user_id = ? AND preference_key IN ({placeholders})
+        {lock_clause}
+        """,
+        [owner_user_id, *preference_keys],
+    ).fetchall()
+    return videos, preferences
+
+
+def _remove_asset_from_shapes(raw_shapes: Any, asset_id: str) -> tuple[list[Any], bool]:
+    shapes = raw_shapes
+    if isinstance(shapes, str):
+        try:
+            shapes = json.loads(shapes)
+        except Exception:
+            return [], False
+    if not isinstance(shapes, list):
+        return [], False
+    filtered = [
+        item
+        for item in shapes
+        if not (
+            isinstance(item, dict)
+            and str(item.get("type") or "shape") == "image"
+            and str(item.get("asset_id") or "") == asset_id
+        )
+    ]
+    return filtered, len(filtered) != len(shapes)
+
+
+def _count_asset_uses_in_rows(videos: Iterable[Any], preferences: Iterable[Any], asset_id: str) -> int:
+    return sum(_payload_uses_asset(row[-1], asset_id) for row in [*videos, *preferences])
+
+
 def count_overlay_image_uses(*, asset_id: str, owner_user_id: str, brand_id: str | None) -> int:
     conn = get_db_readonly()
     try:
-        videos = conn.execute(
+        asset = conn.execute(
             """
-            SELECT overlay_shapes FROM youtube_videos
-            WHERE owner_user_id = ? AND brand_id IS NOT DISTINCT FROM ?
-              AND deleted_at IS NULL AND overlay_shapes IS NOT NULL
+            SELECT 1 FROM shorts_static_images
+            WHERE id = ? AND user_id = ? AND brand_id IS NOT DISTINCT FROM ?
+              AND asset_kind = ? AND COALESCE(is_active, true) = true
+            LIMIT 1
             """,
-            [owner_user_id, brand_id],
-        ).fetchall()
-        preferences = conn.execute(
-            """
-            SELECT preference_value FROM shorts_user_preferences
-            WHERE user_id = ? AND preference_key LIKE ?
-            """,
-            [owner_user_id, "short_editor_defaults%"],
-        ).fetchall()
+            [asset_id, owner_user_id, brand_id, OVERLAY_IMAGE_ASSET_KIND],
+        ).fetchone()
+        if not asset:
+            raise OverlayAssetError("Overlay image was not found.")
+        videos, preferences = _design_rows(
+            conn,
+            owner_user_id=owner_user_id,
+            brand_id=brand_id,
+        )
+        return _count_asset_uses_in_rows(videos, preferences, asset_id)
     finally:
         conn.close()
-    return sum(_payload_uses_asset(row[0], asset_id) for row in [*videos, *preferences])
 
 
 def delete_overlay_image_asset(*, asset_id: str, owner_user_id: str, brand_id: str | None) -> int:
-    uses = count_overlay_image_uses(asset_id=asset_id, owner_user_id=owner_user_id, brand_id=brand_id)
-    if uses:
-        return uses
     conn = get_db()
     try:
         row = conn.execute(
@@ -320,12 +381,46 @@ def delete_overlay_image_asset(*, asset_id: str, owner_user_id: str, brand_id: s
             SELECT filename FROM shorts_static_images
             WHERE id = ? AND user_id = ? AND brand_id IS NOT DISTINCT FROM ?
               AND asset_kind = ? AND COALESCE(is_active, true) = true
-            LIMIT 1
+            LIMIT 1 FOR UPDATE
             """,
             [asset_id, owner_user_id, brand_id, OVERLAY_IMAGE_ASSET_KIND],
         ).fetchone()
         if not row:
             raise OverlayAssetError("Overlay image was not found.")
+        videos, preferences = _design_rows(
+            conn,
+            owner_user_id=owner_user_id,
+            brand_id=brand_id,
+            lock=True,
+        )
+        uses = _count_asset_uses_in_rows(videos, preferences, asset_id)
+        for video_id, raw_shapes in videos:
+            shapes, changed = _remove_asset_from_shapes(raw_shapes, asset_id)
+            if changed:
+                conn.execute(
+                    """
+                    UPDATE youtube_videos SET overlay_shapes = ?
+                    WHERE id = ? AND owner_user_id = ? AND brand_id IS NOT DISTINCT FROM ?
+                    """,
+                    [json.dumps(shapes, ensure_ascii=False, separators=(",", ":")), video_id, owner_user_id, brand_id],
+                )
+        for preference_id, _preference_key, raw_preference in preferences:
+            try:
+                preference = json.loads(raw_preference or "{}")
+            except Exception:
+                continue
+            if not isinstance(preference, dict):
+                continue
+            shapes, changed = _remove_asset_from_shapes(preference.get("overlay_shapes"), asset_id)
+            if changed:
+                preference["overlay_shapes"] = shapes
+                conn.execute(
+                    """
+                    UPDATE shorts_user_preferences SET preference_value = ?, updated_at = now()
+                    WHERE id = ? AND user_id = ?
+                    """,
+                    [json.dumps(preference, ensure_ascii=False, sort_keys=True), preference_id, owner_user_id],
+                )
         conn.execute(
             "UPDATE shorts_static_images SET is_active = false, updated_at = now() WHERE id = ?",
             [asset_id],
@@ -334,8 +429,14 @@ def delete_overlay_image_asset(*, asset_id: str, owner_user_id: str, brand_id: s
             "UPDATE shorts_storage_assets SET status = 'deleted', updated_at = now() WHERE file_key = ? AND user_id = ? AND brand_id IS NOT DISTINCT FROM ?",
             [_asset_file_key(asset_id), owner_user_id, brand_id],
         )
+        get_media_storage().delete(_storage_key(owner_user_id, str(row[0])))
         conn.commit()
+    except Exception:
+        try:
+            conn.rollback()
+        except Exception:
+            pass
+        raise
     finally:
         conn.close()
-    get_media_storage().delete(_storage_key(owner_user_id, str(row[0])))
-    return 0
+    return uses
