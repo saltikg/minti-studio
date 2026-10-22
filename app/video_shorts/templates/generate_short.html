@@ -12270,6 +12270,24 @@ const syncGenerateV2InlinePreviewScale = () => {
   slot.style.setProperty("--generate-v2-preview-frame-source-width", `${sourceWidth}px`);
   slot.style.setProperty("--generate-v2-preview-frame-scale", String(scale));
   slot.style.height = `${Math.round(Math.min(targetHeight, sourceHeight * scale))}px`;
+  window.requestAnimationFrame(() => {
+    window.refreshMeasuredDesignPreview?.({
+      kinds: ["title", "caption"],
+      repaintIfUnchanged: true,
+    });
+  });
+};
+window.syncGenerateV2InlinePreviewScale = syncGenerateV2InlinePreviewScale;
+
+const syncGenerateV2MountedSectionPanels = (activeSection) => {
+  const root = getGenerateV2Root();
+  root?.querySelectorAll("[data-v2-editor-section-panel]").forEach((section) => {
+    const isActive = section.dataset.v2EditorSectionPanel === activeSection;
+    section.querySelectorAll(":scope > [data-crop-modal-panel]").forEach((panel) => {
+      panel.hidden = false;
+      panel.classList.toggle("generate-v2-editor-pane-hidden", !isActive);
+    });
+  });
 };
 
 const setGenerateV2EditorSection = (section = "style") => {
@@ -12287,6 +12305,7 @@ const setGenerateV2EditorSection = (section = "style") => {
   if (["layout", "caption", "title", "shapes", "music", "background"].includes(normalized)) {
     window.setCropEditorModalTab?.(normalized);
   }
+  syncGenerateV2MountedSectionPanels(normalized);
   window.requestAnimationFrame(() => {
     window.activateCropEditor?.();
     syncGenerateV2InlinePreviewScale();
@@ -12328,6 +12347,7 @@ const mountGenerateV2EditorNodes = () => {
   moveGenerateV2Node(modal?.querySelector("[data-crop-modal-panel='music']"), musicTarget);
   moveGenerateV2Node(modal?.querySelector("[data-crop-modal-panel='background']"), backgroundTarget);
   moveGenerateV2Node(modal?.querySelector(".cropper-preview-card"), previewTarget);
+  syncGenerateV2MountedSectionPanels(generateV2EditState.section || "style");
 };
 
 const enterGenerateV2EditMode = ({ section = "style" } = {}) => {
@@ -12476,6 +12496,9 @@ document.addEventListener("DOMContentLoaded", () => {
       syncGenerateV2InlinePreviewScale();
       clampGenerateV2ColorPopovers();
     }
+  });
+  window.visualViewport?.addEventListener("resize", () => {
+    if (generateV2EditState.active) syncGenerateV2InlinePreviewScale();
   });
 });
 
@@ -20443,6 +20466,13 @@ document.addEventListener("DOMContentLoaded", () => {
     if (kind === "title") return isOriginalCropAspect() ? origPreviewTitle : previewTitle;
     return isOriginalCropAspect() ? origPreviewCaption : previewSubtitle;
   };
+  const renderedPreviewScaleSignature = () => {
+    const frame = getMeasuredPreviewFrame();
+    const rect = frame?.getBoundingClientRect?.();
+    const scaleX = Number(rect?.width || 0) / Math.max(1, getActiveRenderFrameWidth());
+    const scaleY = Number(rect?.height || 0) / Math.max(1, getActiveRenderFrameHeight());
+    return `${scaleX.toFixed(4)}:${scaleY.toFixed(4)}`;
+  };
   const measuredLayerHasVisiblePaint = (element) => {
     if (!element?.isConnected || element.classList.contains("is-caption-paint-inactive")) return false;
     const style = window.getComputedStyle(element);
@@ -20468,24 +20498,32 @@ document.addEventListener("DOMContentLoaded", () => {
       syncCaptionPaintOwners();
       if (isTitleVisible()) activeTitleLayer?.classList.remove("is-hidden");
       if (isSubtitleVisible()) activeCaptionLayer?.classList.remove("is-hidden");
+      const currentScale = renderedPreviewScaleSignature();
       const missingKinds = [
         ...(isTitleVisible() && !measuredLayerHasVisiblePaint(activeTitleLayer) ? ["title"] : []),
         ...(isSubtitleVisible() && !measuredLayerHasVisiblePaint(activeCaptionLayer) ? ["caption"] : []),
       ];
-      if (!missingKinds.length && !repairedVisibility) return;
+      const scaleMismatchKinds = [
+        ...(isTitleVisible() && activeTitleLayer?.dataset.captionDomOwner === "measured-svg"
+          && activeTitleLayer.dataset.previewScale !== currentScale ? ["title"] : []),
+        ...(isSubtitleVisible() && activeCaptionLayer?.dataset.captionDomOwner === "measured-svg"
+          && activeCaptionLayer.dataset.previewScale !== currentScale ? ["caption"] : []),
+      ];
+      const repaintKinds = Array.from(new Set([...missingKinds, ...scaleMismatchKinds]));
+      if (!repaintKinds.length && !repairedVisibility) return;
       if (!previewLayerSafetyReported) {
         previewLayerSafetyReported = true;
         window.MintiErrorReporter?.report?.({
           error_type: "design_preview_layer_repair",
-          message: `Recovered ${missingKinds.length ? `missing ${missingKinds.join("+")} paint` : "hidden preview layer"} after ${source}`,
+          message: `Recovered ${missingKinds.length ? `missing ${missingKinds.join("+")} paint` : (scaleMismatchKinds.length ? `stale ${scaleMismatchKinds.join("+")} scale` : "hidden preview layer")} after ${source}`,
           source: window.location.pathname,
         });
       }
-      if (!missingKinds.length) return;
+      if (!repaintKinds.length) return;
       if (measuredDesign) {
-        repaintMeasuredDesign(missingKinds);
+        repaintMeasuredDesign(repaintKinds);
       } else {
-        requestMeasuredDesign({ force: true, kinds: missingKinds });
+        requestMeasuredDesign({ force: true, kinds: repaintKinds });
       }
     });
   };
@@ -20580,6 +20618,7 @@ document.addEventListener("DOMContentLoaded", () => {
       Object.assign(element.style, nextStyles);
       element.dataset.renderBbox = JSON.stringify(spec.box);
       element.dataset.lineCount = String(spec.lines);
+      element.dataset.previewScale = renderedPreviewScaleSignature();
       element.replaceChildren(svg);
       element.dataset.captionDomOwner = "measured-svg";
       schedulePreviewLayerSafetyCheck(`${kind}_repaint`);
@@ -20770,12 +20809,33 @@ document.addEventListener("DOMContentLoaded", () => {
   };
   window.refreshMeasuredDesignPreview = scheduleMeasuredDesignRefresh;
   window.hasMeasuredDesignPreview = () => !!measuredDesign;
+  const refreshMeasuredLayersForScale = () => scheduleMeasuredDesignRefresh({
+    kinds: ["title", "caption"],
+    repaintIfUnchanged: true,
+  });
+  document.fonts?.ready?.then(refreshMeasuredLayersForScale).catch(() => {});
+  document.fonts?.addEventListener?.("loadingdone", refreshMeasuredLayersForScale);
+  window.addEventListener("resize", refreshMeasuredLayersForScale);
+  window.visualViewport?.addEventListener("resize", refreshMeasuredLayersForScale);
   if (typeof ResizeObserver !== "undefined") {
-    const measuredPreviewResizeObserver = new ResizeObserver(() => {
-      if (isMeasuredPreviewVisible()) scheduleMeasuredDesignRefresh({ force: designNeedsVisibleRefresh });
+    const measuredPreviewResizeObserver = new ResizeObserver((entries) => {
+      if (entries.some((entry) => entry.target.id === "generate-v2-preview-mount") && window.__generateV2EditModeActive) {
+        window.syncGenerateV2InlinePreviewScale?.();
+      }
+      if (isMeasuredPreviewVisible()) {
+        if (designNeedsVisibleRefresh) {
+          scheduleMeasuredDesignRefresh({ force: true, kinds: ["title", "caption"] });
+        } else {
+          refreshMeasuredLayersForScale();
+        }
+      }
     });
-    if (previewFrame) measuredPreviewResizeObserver.observe(previewFrame);
-    if (origPreviewFrame) measuredPreviewResizeObserver.observe(origPreviewFrame);
+    [
+      previewFrame,
+      origPreviewFrame,
+      document.getElementById("generate-v2-preview-slot"),
+      document.getElementById("generate-v2-preview-mount"),
+    ].filter(Boolean).forEach((element) => measuredPreviewResizeObserver.observe(element));
   }
   let subscribeStillKey = "";
   let subscribeStill = null;
