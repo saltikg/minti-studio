@@ -3,6 +3,7 @@
 {% block title %}My Videos – Video Shorts{% endblock %}
 
 {% block extra_styles %}
+<link rel="stylesheet" href="{{ url_for('video_shorts_bp.static', filename='css/ingestion_progress.css') }}">
 <style>
   .mv-shell {
     display: grid;
@@ -1422,11 +1423,11 @@
           </div>
           <div class="mv-status-cell">
             {% if item.is_ready_for_editing %}
-              <span class="mv-status-pill mv-status-pill--ready">Ready</span>
+              <span class="mv-status-pill mv-status-pill--ready" data-ingestion-pill>Ready</span>
             {% elif item.is_failed %}
-              <span class="mv-status-pill mv-status-pill--failed">Failed</span>
+              <span class="mv-status-pill mv-status-pill--failed" data-ingestion-pill>Failed</span>
             {% else %}
-              <span class="mv-status-pill mv-status-pill--processing">Processing</span>
+              <span class="mv-status-pill mv-status-pill--processing" data-ingestion-pill>Processing</span>
               <span
                 class="mv-status-detail"
                 data-processing-started-at="{{ item.processing_started_at_iso }}"
@@ -1435,6 +1436,16 @@
                 <span data-processing-detail>{{ item.processing_attempt_label }}</span>
               </span>
             {% endif %}
+            <div
+              class="vs-ingestion-progress"
+              data-ingestion-progress
+              data-video-pk="{{ item.id }}"
+              data-status-url="{{ url_for('video_shorts_bp.my_videos_processing_status') }}"
+              data-retry-url="{{ url_for('video_shorts_bp.retry_my_video_processing', video_pk=item.id) }}"
+              data-reload-on-ready="1"
+              data-was-active="{{ '1' if item.is_processing else '0' }}"
+              {% if item.is_ready_for_editing %}hidden{% endif %}
+            ></div>
           </div>
           <div class="mv-row-actions mv-coachmark-anchor mv-coachmark-anchor--button" {% if loop.first %}id="mv-first-video-action"{% endif %}>
             {% if item.is_ready_for_editing %}
@@ -1513,6 +1524,7 @@
   {% include "_billing_embedded_checkout_script.html" %}
 {% endif %}
 <script src="{{ url_for('video_shorts_bp.static', filename='js/delete_video_modal.js') }}"></script>
+<script src="{{ url_for('video_shorts_bp.static', filename='js/ingestion_progress.js') }}"></script>
 <script>
 (() => {
   const coachmarkShell = document.getElementById('mv-shell');
@@ -2032,6 +2044,22 @@
     uploadProgress?.classList.remove('is-server-processing');
   };
 
+  const setServerStageProgress = (percent, message) => {
+    if (!uploadProgress || !uploadProgressBar) return;
+    const value = Number(percent);
+    const hasValue = percent !== null && percent !== '' && Number.isFinite(value);
+    uploadProgress.classList.add('is-visible');
+    uploadProgress.classList.toggle('is-server-processing', !hasValue);
+    uploadProgress.setAttribute('aria-hidden', 'false');
+    if (hasValue) {
+      currentUploadProgressValue = Math.max(0, Math.min(100, value));
+      uploadProgressBar.style.width = `${currentUploadProgressValue}%`;
+    } else {
+      uploadProgressBar.style.width = '44%';
+    }
+    setFeedback(message);
+  };
+
   const setSelectedFile = (file) => {
     selectedFile = file || null;
     if (!uploadMeta) return;
@@ -2128,7 +2156,6 @@
 
   const sleep = (ms) => new Promise((resolve) => window.setTimeout(resolve, ms));
   const uploadSessionPollIntervalMs = 2000;
-  const uploadSessionTimeoutMs = 45 * 60 * 1000;
   const generateUrlTemplate = {{ url_for('video_shorts_bp.generate_short', video_pk=0)|tojson }};
   const generateUrlForVideo = (videoPk) => generateUrlTemplate.replace(/0$/, String(videoPk || ""));
 
@@ -2430,7 +2457,9 @@
       payload = {};
     }
     if (!response.ok || !payload.ok) {
-      throw new Error(payload.message || payload.error || 'We could not check your upload status right now.');
+      const error = new Error(payload.message || payload.error || 'We could not check your upload status right now.');
+      error.stopPolling = response.status >= 400 && response.status < 500;
+      throw error;
     }
     return payload.session || null;
   };
@@ -2458,20 +2487,48 @@
       setFeedback('Your video is ready.');
       return true;
     }
-    setServerProcessingState("Processing your video — this can take a few minutes. You can leave this page; we'll keep working and it'll be ready when you come back.");
+    const progress = session?.job?.result || {};
+    const stage = String(progress.stage || '').trim().toLowerCase();
+    const rawPercent = progress.percent;
+    const percent = Number(rawPercent);
+    const hasPercent = rawPercent !== null && rawPercent !== '' && Number.isFinite(percent);
+    const updatedAtMs = Date.parse(session?.job?.updated_at || '');
+    if (Number.isFinite(updatedAtMs) && (Date.now() - updatedAtMs) >= 60000) {
+      setServerStageProgress(null, 'Still working…');
+    } else if (stage === 'downloading') {
+      const etaSeconds = Number(progress.eta_seconds);
+      const etaLabel = Number.isFinite(etaSeconds)
+        ? (etaSeconds < 60 ? '<1 min left' : `~${Math.max(1, Math.round(etaSeconds / 60))} min left`)
+        : '';
+      const percentLabel = hasPercent ? ` ${Math.round(percent)}%` : '';
+      setServerStageProgress(
+        hasPercent ? percent : null,
+        `Downloading from YouTube…${percentLabel}${etaLabel ? ` · ${etaLabel}` : ''}`,
+      );
+    } else if (stage === 'transcribing') {
+      setServerStageProgress(hasPercent ? percent : null, 'Transcribing…');
+    } else {
+      setServerProcessingState("Processing your video — this can take a few minutes. You can leave this page; we'll keep working and it'll be ready when you come back.");
+    }
     return false;
   };
 
   const waitForUploadSessionReady = async (sessionId) => {
     const startedAt = Date.now();
-    while ((Date.now() - startedAt) < uploadSessionTimeoutMs) {
-      const session = await fetchQuickUploadSession(sessionId);
-      if (syncUploadSessionProgress(session)) {
-        return session;
+    while (true) {
+      try {
+        const session = await fetchQuickUploadSession(sessionId);
+        if (syncUploadSessionProgress(session)) {
+          return session;
+        }
+      } catch (error) {
+        if (error?.stopPolling) throw error;
+        if ((Date.now() - startedAt) >= 60000) {
+          setServerStageProgress(null, 'Still working…');
+        }
       }
       await sleep(uploadSessionPollIntervalMs);
     }
-    throw new Error('Preparing your video is taking longer than expected. Please refresh in a moment.');
   };
 
   const redirectToGeneratedVideo = (session) => {

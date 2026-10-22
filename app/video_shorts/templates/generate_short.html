@@ -68,6 +68,7 @@
 {% block content %}
 <link rel="stylesheet" href="https://fonts.googleapis.com/icon?family=Material+Icons+Outlined">
 <link rel="stylesheet" href="{{ url_for('video_shorts_bp.static', filename='vendor/cropper/cropper.min.css') }}">
+<link rel="stylesheet" href="{{ url_for('video_shorts_bp.static', filename='css/ingestion_progress.css') }}">
 <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Roboto:wght@400;700&family=Merriweather:wght@700&family=Source+Code+Pro:wght@700&family=Arimo:wght@400;700&family=Open+Sans+Condensed:wght@400;700&display=swap">
 <style>
   {% for font in preview_font_faces or [] %}
@@ -6529,7 +6530,24 @@
 
 {% if editor_processing %}
   <div class="alert alert-info">
-    Processing your video — this can take a few minutes. You can leave this page; we'll keep working and it'll be ready when you come back.
+    <div class="vs-ingestion-progress"
+         data-ingestion-progress
+         data-video-pk="{{ video.id }}"
+         data-status-url="{{ url_for('video_shorts_bp.my_videos_processing_status') }}"
+         data-retry-url="{{ url_for('video_shorts_bp.retry_my_video_processing', video_pk=video.id) }}"
+         data-reload-on-ready="1"
+         data-was-active="1">Processing…</div>
+  </div>
+{% endif %}
+{% if not editor_processing and auto_suggest_render_state and auto_suggest_render_state.active %}
+  <div class="alert alert-info">
+    <div class="vs-ingestion-progress"
+         data-ingestion-progress
+         data-video-pk="{{ video.id }}"
+         data-status-url="{{ url_for('video_shorts_bp.my_videos_processing_status') }}"
+         data-retry-url="{{ url_for('video_shorts_bp.retry_my_video_processing', video_pk=video.id) }}"
+         data-reload-on-ready="1"
+         data-was-active="1">Finding the best clips…</div>
   </div>
 {% endif %}
 
@@ -7269,7 +7287,7 @@
                     <div class="generate-v2-auto-empty" aria-live="polite">
                         <span class="spinner-border spinner-border-sm" role="status" aria-hidden="true"></span>
                         <span class="clip-rail-copy">
-                          <span class="clip-rail-title">Finding the best moments…</span>
+                          <span class="clip-rail-title">Finding the best clips…</span>
                         </span>
                     </div>
                   {% elif generate_v2 and auto_suggest_render_state and auto_suggest_render_state.no_strong %}
@@ -7846,7 +7864,7 @@
                   <div class="clip-management-panel">
                     <div class="generate-v2-clip-editor-empty">
                       <span class="spinner-border spinner-border-sm me-2" aria-hidden="true"></span>
-                      Finding the best moments…
+                      Finding the best clips…
                     </div>
                   </div>
                 </div>
@@ -9210,6 +9228,7 @@
 
 {% block scripts %}
 <script src="{{ url_for('video_shorts_bp.static', filename='vendor/cropper/cropper.min.js') }}"></script>
+<script src="{{ url_for('video_shorts_bp.static', filename='js/ingestion_progress.js') }}"></script>
 {% if not editor_is_admin_operation %}
 <script src="{{ url_for('video_shorts_bp.static', filename='js/delete_video_modal.js') }}"></script>
 {% endif %}

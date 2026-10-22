@@ -697,6 +697,61 @@ def _set_job_progress(job_id: str, *, stage: str, message: str, status: Optional
     update_job_result(job_id, payload)
 
 
+def _transcription_progress_callback(
+    job_id: str,
+    *,
+    session_id: str = "",
+    user_id: str = "",
+):
+    stage_percent = {
+        "start": 2,
+        "language_probe": 5,
+        "language_mode": 8,
+        "prepare_audio": 10,
+        "prepare_audio_done": 15,
+        "prepare_chunks": 10,
+        "prepare_chunks_done": 15,
+        "whisper_start": 20,
+        "language_passthrough": 96,
+        "tagging": 97,
+        "db_write": 99,
+        "cleanup": 99,
+        "done": 100,
+    }
+
+    def _progress(stage: str, message: str, extra: Dict[str, Any]) -> None:
+        percent = stage_percent.get(str(stage or "").strip().lower())
+        chunk_count = int((extra or {}).get("chunk_count") or 0)
+        chunk_index = int((extra or {}).get("chunk_index") or 0)
+        if chunk_count > 0 and chunk_index > 0:
+            completed = chunk_index if str(stage).endswith("_done") else max(0, chunk_index - 1)
+            percent = 20 + int(round(75 * min(completed, chunk_count) / chunk_count))
+        progress = {
+            "percent": percent,
+            "transcription_stage": stage,
+            **(extra or {}),
+        }
+        _set_job_progress(
+            job_id,
+            stage="transcribing",
+            message=message or "Transcribing source audio.",
+            status="processing",
+            extra=progress,
+        )
+        if session_id:
+            _update_upload_session_progress(
+                session_id,
+                user_id=user_id,
+                transcript={
+                    "status": "processing",
+                    "message": message or "Preparing your transcript...",
+                    "percent": _normalize_percent_payload(percent),
+                },
+            )
+
+    return _progress
+
+
 def _worker_should_wait_before_claim(app) -> bool:
     processing_jobs = count_processing_jobs()
     if processing_jobs >= int(MAX_GLOBAL_CONCURRENT_JOBS):
@@ -760,20 +815,77 @@ def _inject_sessid(proxy_url: str, sessid: str) -> str:
     except Exception:
         return proxy_url
 
-def _download_youtube_video(video_url: str, video_id: str) -> Path:
+def _download_youtube_video(
+    video_url: str,
+    video_id: str,
+    *,
+    progress_cb=None,
+) -> Path:
     if yt_dlp is None:
         raise PermanentRenderJobError("yt_dlp is not installed on the worker.")
     work_dir = Path(tempfile.mkdtemp(prefix=f"vs_quick_{video_id}_"))
     target = work_dir / f"{video_id}.mp4"
     proxy_url = str(os.getenv("INGEST_PROXY_URL") or "").strip()
     cookies_path = str(os.getenv("INGEST_PROXY_COOKIES") or "").strip()
+    download_parts: Dict[str, Dict[str, float]] = {}
+    last_progress_write = 0.0
+
+    def _download_progress(update: Dict[str, Any]) -> None:
+        """Collapse yt-dlp's separate video/audio transfers into one progress value."""
+        nonlocal last_progress_write
+        if not progress_cb or not isinstance(update, dict):
+            return
+        info = update.get("info_dict") or {}
+        for requested in info.get("requested_formats") or []:
+            if not isinstance(requested, dict):
+                continue
+            part_id = str(requested.get("format_id") or requested.get("url") or len(download_parts))
+            known_total = requested.get("filesize") or requested.get("filesize_approx") or 0
+            part = download_parts.setdefault(part_id, {"downloaded": 0.0, "total": 0.0})
+            if known_total:
+                part["total"] = max(part["total"], float(known_total))
+
+        part_id = str(info.get("format_id") or update.get("filename") or "download")
+        part = download_parts.setdefault(part_id, {"downloaded": 0.0, "total": 0.0})
+        downloaded = float(update.get("downloaded_bytes") or 0)
+        total = float(update.get("total_bytes") or update.get("total_bytes_estimate") or 0)
+        part["downloaded"] = max(part["downloaded"], downloaded)
+        if total:
+            part["total"] = max(part["total"], total)
+        if update.get("status") == "finished" and part["total"]:
+            part["downloaded"] = max(part["downloaded"], part["total"])
+
+        now = time.monotonic()
+        if (now - last_progress_write) < 2.0:
+            return
+        known_parts = [value for value in download_parts.values() if value["total"] > 0]
+        total_bytes = sum(value["total"] for value in known_parts)
+        downloaded_bytes = sum(min(value["downloaded"], value["total"]) for value in known_parts)
+        percent = round((downloaded_bytes / total_bytes) * 100, 1) if total_bytes else None
+        speed = update.get("speed")
+        eta = update.get("eta")
+        if speed and total_bytes and downloaded_bytes < total_bytes:
+            eta = max(0, int(round((total_bytes - downloaded_bytes) / float(speed))))
+        last_progress_write = now
+        progress_cb(
+            {
+                "percent": percent,
+                "downloaded_bytes": int(downloaded_bytes or downloaded),
+                "total_bytes": int(total_bytes or total),
+                "speed_bps": int(float(speed)) if speed else None,
+                "eta_seconds": int(float(eta)) if eta is not None else None,
+                "transfer_status": str(update.get("status") or "downloading"),
+            }
+        )
+
     opts = {
         "outtmpl": str(work_dir / f"{video_id}.%(ext)s"),
         "merge_output_format": "mp4",
         "format": (
-            "bestvideo[vcodec^=avc1][height<=1080]+bestaudio[ext=m4a]/"
-            "bestvideo[vcodec^=avc1][height<=1080]+bestaudio/"
-            "bestvideo*+bestaudio/best"
+            "bestvideo[vcodec^=avc1][height<=1080][fps<=30]+bestaudio[ext=m4a]/"
+            "bestvideo[vcodec^=avc1][height<=1080][fps<=30]+bestaudio/"
+            "bestvideo[height<=1080][fps<=30]+bestaudio/"
+            "best[height<=1080][fps<=30]"
         ),
         "quiet": True,
         "noprogress": True,
@@ -781,6 +893,7 @@ def _download_youtube_video(video_url: str, video_id: str) -> Path:
         "nocheckcertificate": True,
         "retries": 5,
         "fragment_retries": 5,
+        "progress_hooks": [_download_progress],
 
         "extractor_args": {
             "youtube": {
@@ -1110,7 +1223,20 @@ def _execute_ingest_youtube_job(app, job: Dict[str, Any]) -> Dict[str, Any]:
             shutil.copyfile(local_path, copied)
             local_path = copied
     else:
-        local_path = _download_youtube_video(video_url, video_id)
+        def _record_download_progress(progress: Dict[str, Any]) -> None:
+            _set_job_progress(
+                job["id"],
+                stage="downloading",
+                message="Downloading from YouTube.",
+                status="processing",
+                extra=progress,
+            )
+
+        local_path = _download_youtube_video(
+            video_url,
+            video_id,
+            progress_cb=_record_download_progress,
+        )
     try:
         try:
             exact_media_duration = probe_exact_media_duration_seconds(
@@ -1181,7 +1307,14 @@ def _execute_ingest_youtube_job(app, job: Dict[str, Any]) -> Dict[str, Any]:
             app.logger.info("free_tool_text_cache transcript HIT video_id=%s video_pk=%s", video_id, video_pk)
         else:
             _set_job_progress(job["id"], stage="transcribing", message="Transcribing with Whisper.", status="processing")
-            transcript_text, segments = _transcribe_with_whisper(local_path)
+            transcript_text, segments = _transcribe_with_whisper(
+                local_path,
+                progress_cb=_transcription_progress_callback(
+                    job["id"],
+                    session_id=session_id,
+                    user_id=owner_user_id,
+                ),
+            )
             _save_transcript(
                 video_id,
                 full_text=transcript_text,
@@ -1302,7 +1435,14 @@ def _execute_transcribe_upload_job(app, job: Dict[str, Any]) -> Dict[str, Any]:
     try:
         get_or_backfill_media_duration_seconds(video_pk, video_id, source_path=source_path)
         _set_job_progress(job["id"], stage="transcribing", message="Preparing your transcript.", status="processing")
-        transcript_text, segments = _transcribe_with_whisper(source_path)
+        transcript_text, segments = _transcribe_with_whisper(
+            source_path,
+            progress_cb=_transcription_progress_callback(
+                job["id"],
+                session_id=session_id,
+                user_id=owner_user_id,
+            ),
+        )
         _save_transcript(
             video_id,
             full_text=transcript_text,
@@ -1814,6 +1954,12 @@ def process_next_job(
         if job.get("type") == JOB_TYPE_INGEST_YOUTUBE:
             result = _execute_ingest_youtube_job(app, job)
         elif job.get("type") == JOB_TYPE_AUTO_SUGGEST_RENDER:
+            _set_job_progress(
+                job["id"],
+                stage="finding_clips",
+                message="Finding the best clips.",
+                status="processing",
+            )
             result = generation.execute_auto_suggest_render_job(job.get("payload") or {})
         elif job.get("type") == JOB_TYPE_ADMIN_PROXY_TRANSCRIPT:
             result = _execute_admin_proxy_transcript_job(app, job)

@@ -5666,6 +5666,62 @@ def _auto_suggest_render_state_for_video(
             ).fetchone()
         if row:
             state.update({"active": True, "job_id": str(row[0] or ""), "status": str(row[1] or "")})
+        elif getattr(conn, "backend_name", "") == "postgres":
+            render_row = conn.execute(
+                """
+                SELECT id, status
+                FROM shorts_render_jobs
+                WHERE type = 'render_short'
+                  AND user_id = ?
+                  AND status IN ('queued', 'processing')
+                  AND payload_json->>'video_pk' = ?
+                  AND payload_json->>'brand_id' = ?
+                  AND (
+                    payload_json->>'job_origin' IN ('auto', 'auto_suggest')
+                    OR COALESCE((payload_json->>'auto_suggest_default')::boolean, FALSE)
+                  )
+                ORDER BY created_at DESC
+                LIMIT 1
+                """,
+                [clean_owner, str(clean_video_pk), clean_brand],
+            ).fetchone()
+            if render_row:
+                state.update(
+                    {
+                        "active": True,
+                        "auto_render_active": True,
+                        "job_id": str(render_row[0] or ""),
+                        "status": str(render_row[1] or ""),
+                    }
+                )
+        else:
+            render_row = conn.execute(
+                """
+                SELECT id, status
+                FROM shorts_render_jobs
+                WHERE type = 'render_short'
+                  AND user_id = ?
+                  AND status IN ('queued', 'processing')
+                  AND payload_json LIKE ?
+                  AND (
+                    payload_json LIKE '%"job_origin": "auto"%'
+                    OR payload_json LIKE '%"job_origin": "auto_suggest"%'
+                    OR payload_json LIKE '%"auto_suggest_default": true%'
+                  )
+                ORDER BY created_at DESC
+                LIMIT 1
+                """,
+                [clean_owner, f'%"video_pk": {clean_video_pk}%'],
+            ).fetchone()
+            if render_row:
+                state.update(
+                    {
+                        "active": True,
+                        "auto_render_active": True,
+                        "job_id": str(render_row[0] or ""),
+                        "status": str(render_row[1] or ""),
+                    }
+                )
     except Exception:
         return state
     return state

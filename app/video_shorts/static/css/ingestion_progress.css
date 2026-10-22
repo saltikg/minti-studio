@@ -1,0 +1,46 @@
+.vs-ingestion-progress {
+  min-width: 150px;
+  margin-top: 6px;
+  color: rgba(226, 232, 240, 0.78);
+  font-size: 0.78rem;
+  line-height: 1.35;
+}
+.vs-ingestion-progress[hidden] { display: none !important; }
+.vs-ingestion-progress-copy {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+.vs-ingestion-progress-track {
+  height: 3px;
+  margin-top: 6px;
+  overflow: hidden;
+  border-radius: 999px;
+  background: rgba(148, 163, 184, 0.2);
+}
+.vs-ingestion-progress-bar {
+  width: 0;
+  height: 100%;
+  border-radius: inherit;
+  background: #2dd4bf;
+  transition: width 0.25s ease;
+}
+.vs-ingestion-progress.is-indeterminate .vs-ingestion-progress-bar {
+  width: 38% !important;
+  animation: vs-ingestion-indeterminate 1.25s ease-in-out infinite;
+}
+.vs-ingestion-progress.is-failed { color: #fca5a5; }
+.vs-ingestion-progress-retry {
+  margin-top: 6px;
+  padding: 2px 8px;
+  border: 1px solid rgba(248, 113, 113, 0.5);
+  border-radius: 999px;
+  background: transparent;
+  color: #fecaca;
+  font: inherit;
+  font-weight: 700;
+}
+@keyframes vs-ingestion-indeterminate {
+  from { transform: translateX(-120%); }
+  to { transform: translateX(300%); }
+}

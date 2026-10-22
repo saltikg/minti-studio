@@ -19,6 +19,7 @@ from app.video_shorts.services.db import (
     ensure_channel_owner_schema,
 )
 from app.video_shorts.services.media_utils import purge_source_cache_for_video
+from app.video_shorts.services.ingestion_progress import get_video_ingestion_statuses
 from app.video_shorts.services.render_jobs import clear_done_job_cache_for_videos
 from app.video_shorts.services.storage import get_media_storage
 from app.video_shorts.services.user_events import track_event
@@ -1034,6 +1035,141 @@ def my_videos_page():
             current_user["id"], HIDE_MY_VIDEOS_COACHMARK_PREFERENCE_KEY, default=False
         ),
     )
+
+
+@video_shorts_bp.route("/my-videos/processing-status", methods=["GET"])
+def my_videos_processing_status():
+    current_user = getattr(g, "vs_current_user", None)
+    if not current_user:
+        return jsonify(ok=False, message="Authentication required."), 401
+    raw_ids = request.args.get("video_ids") or ""
+    video_ids = []
+    for raw_value in raw_ids.split(",")[:100]:
+        try:
+            video_ids.append(int(raw_value))
+        except (TypeError, ValueError):
+            continue
+    statuses = get_video_ingestion_statuses(
+        owner_user_id=str(current_user["id"]),
+        brand_id=current_brand_id(),
+        video_pks=video_ids,
+    )
+    return jsonify(ok=True, statuses=statuses)
+
+
+@video_shorts_bp.route("/my-videos/<int:video_pk>/retry-processing", methods=["POST"])
+def retry_my_video_processing(video_pk: int):
+    current_user = getattr(g, "vs_current_user", None)
+    if not current_user:
+        return jsonify(ok=False, message="Authentication required."), 401
+    brand_id = current_brand_id()
+    conn = get_db_readonly()
+    try:
+        brand_clause = "v.brand_id = ?" if brand_id else "v.brand_id IS NULL"
+        params = [video_pk, str(current_user["id"])]
+        if brand_id:
+            params.append(str(brand_id))
+        row = conn.execute(
+            f"""
+            SELECT v.video_id, v.title, v.thumbnail_url, v.duration_seconds,
+                   v.video_url, v.transcript_status, COALESCE(c.channel_url, '')
+            FROM youtube_videos v
+            LEFT JOIN youtube_channels c ON c.channel_id = v.channel_id
+            WHERE v.id = ?
+              AND CAST(v.owner_user_id AS VARCHAR) = CAST(? AS VARCHAR)
+              AND {brand_clause}
+              AND v.deleted_at IS NULL
+            LIMIT 1
+            """,
+            params,
+        ).fetchone()
+    finally:
+        conn.close()
+    if not row:
+        return jsonify(ok=False, message="Video not found."), 404
+
+    status = get_video_ingestion_statuses(
+        owner_user_id=str(current_user["id"]),
+        brand_id=brand_id,
+        video_pks=[video_pk],
+    ).get(str(video_pk), {})
+    if status.get("active"):
+        return jsonify(ok=True, status=status, message="Processing is already running."), 202
+
+    video_id = str(row[0] or "").strip()
+    transcript_ready = str(row[5] or "").strip().lower() in {"done", "ready", "complete", "completed"}
+    try:
+        if transcript_ready:
+            from app.video_shorts.routes import generation
+
+            queued = generation.enqueue_auto_suggest_render_job_after_transcript(
+                owner_user_id=str(current_user["id"]),
+                brand_id=brand_id,
+                video_pk=video_pk,
+                video_id=video_id,
+                ingest_source="user_local_upload" if str(row[6] or "") == "local://uploads" else "user_youtube_import",
+            )
+            if not queued:
+                return jsonify(ok=False, message="There is no failed processing step to retry."), 409
+        elif str(row[6] or "") == "local://uploads" or video_id.startswith("local_"):
+            from app.video_shorts.services.quick_short_flow import STATUS_INGESTING, create_session, update_session
+            from app.video_shorts.services.render_jobs import JOB_TYPE_TRANSCRIBE_UPLOAD, enqueue_job
+            from app.video_shorts.services.storage import storage_reference_key
+
+            source_key = storage_reference_key(str(row[4] or ""))
+            if not source_key:
+                return jsonify(ok=False, message="The uploaded source file could not be found."), 409
+            retry_session = create_session(
+                user_id=str(current_user["id"]),
+                brand_id=brand_id,
+                source_type="upload",
+                source_filename=str(row[1] or video_id),
+                payload={"upload": {"video_id": video_id, "source_key": source_key}},
+            )
+            retry_payload = {
+                "quick_session_id": str(retry_session["id"]),
+                "video_pk": video_pk,
+                "video_id": video_id,
+                "source_key": source_key,
+                "owner_user_id": str(current_user["id"]),
+                "brand_id": brand_id,
+                "duration_seconds": row[3],
+                "ingest_source": "user_local_upload",
+            }
+            queued = enqueue_job(
+                user_id=str(current_user["id"]),
+                job_type=JOB_TYPE_TRANSCRIBE_UPLOAD,
+                payload=retry_payload,
+                input_hash=hashlib.sha256(
+                    f"retry-upload:{current_user['id']}:{brand_id}:{video_id}:{retry_session['id']}".encode("utf-8")
+                ).hexdigest(),
+            )
+            update_session(
+                str(retry_session["id"]),
+                status=STATUS_INGESTING,
+                video_pk=video_pk,
+                video_id=video_id,
+                ingest_job_id=(queued.get("job") or {}).get("id"),
+                result={"stage": "transcribing", "message": "Preparing your transcript..."},
+            )
+        else:
+            from app.video_shorts.routes.quick_short import create_youtube_ingest_session_for_user
+
+            create_youtube_ingest_session_for_user(
+                user_id=str(current_user["id"]),
+                brand_id=brand_id,
+                video_url=f"https://www.youtube.com/watch?v={video_id}",
+                meta={
+                    "video_id": video_id,
+                    "title": row[1],
+                    "thumbnail_url": row[2],
+                    "duration_seconds": row[3],
+                },
+            )
+    except Exception:
+        current_app.logger.exception("Video processing retry failed video_pk=%s", video_pk)
+        return jsonify(ok=False, message="We couldn't restart processing right now. Please try again."), 500
+    return jsonify(ok=True, message="Processing restarted."), 202
 
 
 @video_shorts_bp.route("/my-videos/<int:video_pk>/delete-summary", methods=["GET"])
