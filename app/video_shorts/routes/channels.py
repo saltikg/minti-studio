@@ -19,8 +19,12 @@ from app.video_shorts.services.db import (
     ensure_channel_owner_schema,
 )
 from app.video_shorts.services.media_utils import purge_source_cache_for_video
-from app.video_shorts.services.ingestion_progress import get_video_ingestion_statuses
-from app.video_shorts.services.render_jobs import clear_done_job_cache_for_videos
+from app.video_shorts.services.ingestion_progress import (
+    IMPORT_PROGRESS_MAX_AGE_HOURS,
+    IMPORT_STALE_AFTER_MINUTES,
+    get_video_ingestion_statuses,
+)
+from app.video_shorts.services.render_jobs import cancel_job, clear_done_job_cache_for_videos
 from app.video_shorts.services.storage import get_media_storage
 from app.video_shorts.services.user_events import track_event
 from app.video_shorts.services.user_preferences import load_user_bool_preference, save_user_bool_preference
@@ -823,6 +827,29 @@ def my_videos_page():
         "v.owner_user_id = ?",
         "(v.channel_id IS NULL OR lower(coalesce(c.channel_url, '')) = 'local://uploads')",
         "v.deleted_at IS NULL",
+        """
+        NOT EXISTS (
+            SELECT 1
+            FROM autopilot_leads hidden_lead
+            WHERE hidden_lead.first_video_id = v.id
+              AND hidden_lead.converted_at IS NULL
+        )
+        """,
+        """
+        NOT EXISTS (
+            SELECT 1
+            FROM discovery_leads hidden_discovery
+            WHERE hidden_discovery.promoted_source_video_id = v.id
+        )
+        """,
+        """
+        NOT EXISTS (
+            SELECT 1
+            FROM shorts_render_jobs hidden_discovery_job
+            WHERE hidden_discovery_job.payload_json ->> 'video_pk' = CAST(v.id AS VARCHAR)
+              AND lower(coalesce(hidden_discovery_job.payload_json ->> 'job_origin', '')) = 'discovery_demo'
+        )
+        """,
     ]
     if brand_id:
         where_clauses.append("v.brand_id = ?")
@@ -868,7 +895,8 @@ def my_videos_page():
             completed_job.started_at AS completed_source_job_started_at,
             completed_job.finished_at AS completed_source_job_finished_at,
             completed_job.attempts AS completed_source_job_attempts,
-            completed_job.max_attempts AS completed_source_job_max_attempts
+            completed_job.max_attempts AS completed_source_job_max_attempts,
+            (stale_job.id IS NOT NULL) AS has_stale_source_job
         FROM youtube_videos v
         LEFT JOIN youtube_channels c ON c.channel_id = v.channel_id
         LEFT JOIN LATERAL (
@@ -881,9 +909,22 @@ def my_videos_page():
         LEFT JOIN LATERAL (
             SELECT j.id, j.started_at, j.attempts, j.max_attempts
             FROM shorts_render_jobs j
-            WHERE j.type IN ('normalize_upload', 'transcribe_upload', 'ingest_youtube')
-              AND j.status IN ('queued', 'processing', 'running')
+            WHERE (
+                    j.type IN ('normalize_upload', 'transcribe_upload', 'ingest_youtube', 'auto_suggest_render')
+                    OR (
+                        j.type = 'render_short'
+                        AND (
+                            lower(coalesce(j.payload_json ->> 'job_origin', '')) IN ('auto', 'auto_suggest')
+                            OR lower(coalesce(j.payload_json ->> 'auto_suggest_default', '')) IN ('true', '1', 'yes')
+                        )
+                    )
+                  )
+              AND j.status IN ('queued', 'processing', 'running', 'claimed')
               AND j.payload_json ->> 'video_pk' = CAST(v.id AS VARCHAR)
+              AND CAST(j.user_id AS VARCHAR) = CAST(v.owner_user_id AS VARCHAR)
+              AND coalesce(j.payload_json ->> 'brand_id', '') = coalesce(CAST(v.brand_id AS VARCHAR), '')
+              AND lower(coalesce(j.payload_json ->> 'job_origin', '')) <> 'discovery_demo'
+              AND j.created_at >= CURRENT_TIMESTAMP - INTERVAL '{IMPORT_PROGRESS_MAX_AGE_HOURS} hours'
             ORDER BY j.created_at DESC
             LIMIT 1
         ) active_job ON TRUE
@@ -896,6 +937,29 @@ def my_videos_page():
             ORDER BY j.finished_at DESC NULLS LAST, j.created_at DESC
             LIMIT 1
         ) completed_job ON TRUE
+        LEFT JOIN LATERAL (
+            SELECT j.id
+            FROM shorts_render_jobs j
+            WHERE (
+                    j.type IN ('normalize_upload', 'transcribe_upload', 'ingest_youtube', 'auto_suggest_render')
+                    OR (
+                        j.type = 'render_short'
+                        AND (
+                            lower(coalesce(j.payload_json ->> 'job_origin', '')) IN ('auto', 'auto_suggest')
+                            OR lower(coalesce(j.payload_json ->> 'auto_suggest_default', '')) IN ('true', '1', 'yes')
+                        )
+                    )
+                  )
+              AND j.status IN ('queued', 'processing', 'running', 'claimed')
+              AND j.payload_json ->> 'video_pk' = CAST(v.id AS VARCHAR)
+              AND CAST(j.user_id AS VARCHAR) = CAST(v.owner_user_id AS VARCHAR)
+              AND coalesce(j.payload_json ->> 'brand_id', '') = coalesce(CAST(v.brand_id AS VARCHAR), '')
+              AND lower(coalesce(j.payload_json ->> 'job_origin', '')) <> 'discovery_demo'
+              AND j.created_at < CURRENT_TIMESTAMP - INTERVAL '{IMPORT_PROGRESS_MAX_AGE_HOURS} hours'
+              AND coalesce(j.updated_at, j.created_at) < CURRENT_TIMESTAMP - INTERVAL '{IMPORT_STALE_AFTER_MINUTES} minutes'
+            ORDER BY j.created_at DESC
+            LIMIT 1
+        ) stale_job ON TRUE
         WHERE {where_sql}
         ORDER BY added_at DESC NULLS LAST, v.id DESC
         """,
@@ -975,9 +1039,8 @@ def my_videos_page():
         item["is_ready_for_editing"] = (
             str(item["transcript_status"]).strip().lower() == "done" and bool(row[14])
         )
-        item["is_processing"] = not item["is_ready_for_editing"] and (
-            str(row[15]).strip().lower() == "ingesting" and bool(row[16])
-        )
+        item["is_processing"] = bool(row[16])
+        item["show_import_card"] = item["is_processing"]
         active_started_at = row[17]
         active_attempts = int(row[18] or 0)
         active_max_attempts = int(row[19] or 0)
@@ -1001,11 +1064,14 @@ def my_videos_page():
                 completed_attempt_label,
             ] if part
         )
+        item["has_stale_import_job"] = bool(row[24])
         item["is_failed"] = not item["is_ready_for_editing"] and not item["is_processing"] and (
             str(item["download_status"]).strip().lower() in {"download_failed", "failed"}
             or str(row[15]).strip().lower() == "failed"
         )
-        if item["is_ready_for_editing"]:
+        if item["has_stale_import_job"]:
+            item["status_filter"] = "failed"
+        elif item["is_ready_for_editing"]:
             item["status_filter"] = "ready"
         elif item["is_failed"]:
             item["status_filter"] = "failed"
@@ -1087,6 +1153,43 @@ def retry_my_video_processing(video_pk: int):
         conn.close()
     if not row:
         return jsonify(ok=False, message="Video not found."), 404
+
+    stale_conn = get_db_readonly()
+    try:
+        stale_brand_clause = (
+            "coalesce(payload_json ->> 'brand_id', '') = ?" if brand_id
+            else "coalesce(payload_json ->> 'brand_id', '') = ''"
+        )
+        stale_params = [str(current_user["id"]), str(video_pk)]
+        if brand_id:
+            stale_params.append(str(brand_id))
+        stale_rows = stale_conn.execute(
+            f"""
+            SELECT id
+            FROM shorts_render_jobs
+            WHERE CAST(user_id AS VARCHAR) = CAST(? AS VARCHAR)
+              AND payload_json ->> 'video_pk' = ?
+              AND {stale_brand_clause}
+              AND status IN ('queued', 'processing', 'running', 'claimed')
+              AND created_at < CURRENT_TIMESTAMP - INTERVAL '{IMPORT_PROGRESS_MAX_AGE_HOURS} hours'
+              AND coalesce(updated_at, created_at) < CURRENT_TIMESTAMP - INTERVAL '{IMPORT_STALE_AFTER_MINUTES} minutes'
+              AND (
+                    type IN ('normalize_upload', 'transcribe_upload', 'ingest_youtube', 'auto_suggest_render')
+                    OR (
+                        type = 'render_short'
+                        AND (
+                            lower(coalesce(payload_json ->> 'job_origin', '')) IN ('auto', 'auto_suggest')
+                            OR lower(coalesce(payload_json ->> 'auto_suggest_default', '')) IN ('true', '1', 'yes')
+                        )
+                    )
+                  )
+            """,
+            stale_params,
+        ).fetchall()
+    finally:
+        stale_conn.close()
+    for stale_row in stale_rows:
+        cancel_job(str(stale_row[0]), "Superseded by an explicit retry after the import became stale.")
 
     status = get_video_ingestion_statuses(
         owner_user_id=str(current_user["id"]),

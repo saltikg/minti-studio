@@ -11,6 +11,8 @@ from app.video_shorts.services.db import get_db_readonly
 _SOURCE_JOB_TYPES = {"ingest_youtube", "transcribe_upload", "normalize_upload"}
 _ACTIVE_STATUSES = {"queued", "processing", "running", "claimed"}
 _TERMINAL_STATUSES = {"done", "failed", "cancelled"}
+IMPORT_PROGRESS_MAX_AGE_HOURS = 6
+IMPORT_STALE_AFTER_MINUTES = 30
 
 _AUTO_RENDER_SKIP_MESSAGES = {
     "daily_auto_render_cap": "Daily auto-clip limit reached",
@@ -252,8 +254,8 @@ def _status_payload(
             stage, message = "failed", "Processing failed"
             error = failed_job.get("error") or "We couldn't finish processing this video."
         elif not transcript_ready:
-            stage, message = "processing", "Processing…"
-            active = True
+            stage, message = "failed", "Processing stopped"
+            error = "Processing is not active. Retry to continue."
 
     if transcript_ready and latest_suggest and latest_suggest.get("status") == "done":
         if latest_render and latest_render.get("status") == "done" and auto_render_clip_exists:
@@ -425,9 +427,12 @@ def get_video_ingestion_statuses(
               AND type IN ('ingest_youtube', 'transcribe_upload', 'normalize_upload',
                            'auto_suggest_render', 'render_short')
               AND payload_json->>'video_pk' IN ({job_placeholders})
+              AND COALESCE(payload_json->>'brand_id', '') = ?
+              AND lower(COALESCE(payload_json->>'job_origin', '')) <> 'discovery_demo'
+              AND created_at >= CURRENT_TIMESTAMP - INTERVAL '{IMPORT_PROGRESS_MAX_AGE_HOURS} hours'
             ORDER BY created_at DESC
             """,
-            [str(owner_user_id), *[str(value) for value in scoped_ids]],
+            [str(owner_user_id), *[str(value) for value in scoped_ids], str(brand_id or "")],
         ).fetchall()
         render_history_rows = conn.execute(
             """

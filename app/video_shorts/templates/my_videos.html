@@ -1320,7 +1320,7 @@
       data-status-url="{{ url_for('video_shorts_bp.my_videos_processing_status') }}"
     >
       {% for item in videos %}
-        {% if not item.is_ready_for_editing %}
+        {% if item.show_import_card %}
           <article
             class="vs-ingestion-card"
             data-ingestion-card
@@ -1485,7 +1485,9 @@
             <div class="mv-table-sub" data-published-total hidden></div>
           </div>
           <div class="mv-status-cell">
-            {% if item.is_ready_for_editing %}
+            {% if item.has_stale_import_job %}
+              <span class="mv-status-pill mv-status-pill--failed" data-ingestion-pill>Failed — Retry</span>
+            {% elif item.is_ready_for_editing %}
               <span class="mv-status-pill mv-status-pill--ready" data-ingestion-pill>Ready</span>
             {% elif item.is_failed %}
               <span class="mv-status-pill mv-status-pill--failed" data-ingestion-pill>Failed</span>
@@ -1501,7 +1503,14 @@
             {% endif %}
           </div>
           <div class="mv-row-actions mv-coachmark-anchor mv-coachmark-anchor--button" {% if loop.first %}id="mv-first-video-action"{% endif %}>
-            {% if item.is_ready_for_editing %}
+            {% if item.has_stale_import_job %}
+              <button
+                type="button"
+                class="btn btn-outline-danger btn-sm"
+                data-processing-retry
+                data-retry-url="{{ url_for('video_shorts_bp.retry_my_video_processing', video_pk=item.id) }}"
+              >Retry</button>
+            {% elif item.is_ready_for_editing %}
               <a href="{{ url_for('video_shorts_bp.generate_short', video_pk=item.id) }}" class="btn btn-primary btn-sm" {% if loop.first %}data-first-video-action="true"{% endif %}>Create clip</a>
             {% elif item.is_processing %}
               <span class="btn btn-secondary btn-sm mv-action-processing" aria-disabled="true">Processing…</span>
@@ -1605,6 +1614,28 @@
   const initialServiceMode = {{ ((vs_current_user.get('service_mode') if vs_current_user else '') or '')|tojson }};
   const showAutopilotFraming = {{ show_autopilot_framing|tojson }};
   const canHoverShortPreviews = window.matchMedia('(hover: hover) and (pointer: fine)').matches;
+
+  document.addEventListener('click', async (event) => {
+    const retryButton = event.target.closest('[data-processing-retry]');
+    if (!retryButton || retryButton.disabled) return;
+    const retryUrl = String(retryButton.dataset.retryUrl || '');
+    if (!retryUrl) return;
+    retryButton.disabled = true;
+    retryButton.textContent = 'Retrying…';
+    try {
+      const response = await fetch(retryUrl, {
+        method: 'POST',
+        credentials: 'same-origin',
+        headers: { 'X-Requested-With': 'XMLHttpRequest' },
+      });
+      const payload = await response.json().catch(() => ({}));
+      if (!response.ok || !payload.ok) throw new Error(payload.message || 'Retry failed.');
+      window.location.reload();
+    } catch (error) {
+      retryButton.disabled = false;
+      retryButton.textContent = error?.message || 'Retry';
+    }
+  });
 	  let selectedFile = null;
 	  let youtubePreviewTimer = null;
 	  let youtubePreviewController = null;
