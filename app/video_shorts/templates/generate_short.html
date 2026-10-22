@@ -19384,6 +19384,16 @@ document.addEventListener("DOMContentLoaded", () => {
     savedDesignSnapshot = collectSerializedDesignState();
     syncCropEditorDirtyUi();
   };
+  window.removeOverlayAssetFromSavedDesignState = (assetId) => {
+    const shapes = savedDesignSnapshot?.fields?.overlay_shapes;
+    if (!Array.isArray(shapes)) return;
+    savedDesignSnapshot.fields.overlay_shapes = shapes.filter(
+      (shape) => !(
+        String(shape?.type || "shape") === "image"
+        && String(shape?.asset_id || "") === String(assetId)
+      ),
+    );
+  };
   window.restoreCropEditorDesignState = restoreCropEditorDesignState;
   document.addEventListener("input", (event) => {
     if (event.target?.dataset?.deferDesignDirty !== "1" && event.target?.name && getEditorRoots().some((root) => root.contains(event.target))) {
@@ -23675,13 +23685,6 @@ document.addEventListener("DOMContentLoaded", function () {
     document.addEventListener("keydown", onKeydown, true);
     window.requestAnimationFrame(() => cancel.focus());
   });
-  const removeOverlayAssetFromSavedSnapshot = (assetId) => {
-    const shapes = savedDesignSnapshot?.fields?.overlay_shapes;
-    if (!Array.isArray(shapes)) return;
-    savedDesignSnapshot.fields.overlay_shapes = shapes.filter(
-      (shape) => !(isImageOverlay(shape) && String(shape.asset_id) === String(assetId)),
-    );
-  };
   const addImageOverlay = (asset) => {
     if (!asset || overlayShapes.length >= 5) return;
     const place = (naturalWidth, naturalHeight) => {
@@ -23725,7 +23728,7 @@ document.addEventListener("DOMContentLoaded", function () {
           overlayImageAssets = overlayImageAssets.filter((candidate) => candidate.id !== asset.id);
           overlayShapes = overlayShapes.filter((shape) => !(isImageOverlay(shape) && String(shape.asset_id) === String(asset.id)));
           if (!overlayShapes.some((shape) => shape.id === selectedShapeId)) selectedShapeId = overlayShapes[0]?.id || null;
-          removeOverlayAssetFromSavedSnapshot(asset.id);
+          window.removeOverlayAssetFromSavedDesignState?.(asset.id);
           syncShapesUi();
           renderImageLibrary();
           const removedFrom = Math.max(0, Number(payload.removed_from) || 0);
