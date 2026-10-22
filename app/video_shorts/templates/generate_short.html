@@ -5713,9 +5713,19 @@
   .design-more-subheading { grid-column: 1 / -1; padding-top: 4px; color: rgba(255,255,255,.58); font-size: .72rem; font-weight: 700; text-transform: uppercase; letter-spacing: .08em; }
   .design-panel-hint { color: rgba(255,255,255,.52); font-size: .76rem; }
   .shape-editor-list { display: grid; gap: 8px; }
-  .shape-editor-row { display: flex; align-items: center; justify-content: space-between; min-height: 44px; padding: 8px 10px; border: 1px solid rgba(255,255,255,.12); border-radius: 8px; background: rgba(15,23,42,.45); color: #fff; }
+  .shape-editor-row { position: relative; display: grid; grid-template-columns: 24px 36px minmax(0, 1fr) auto; align-items: center; gap: 8px; min-height: 52px; padding: 7px 8px; border: 1px solid rgba(255,255,255,.12); border-radius: 8px; background: rgba(15,23,42,.45); color: #fff; cursor: pointer; }
   .shape-editor-row.is-selected { border-color: #50cdb5; box-shadow: 0 0 0 1px rgba(80,205,181,.28); }
+  .shape-editor-row.is-dragging { opacity: .45; }
+  .shape-editor-row.is-drop-before::before,
+  .shape-editor-row.is-drop-after::after { content: ""; position: absolute; right: 4px; left: 4px; height: 2px; border-radius: 2px; background: #50cdb5; }
+  .shape-editor-row.is-drop-before::before { top: -5px; }
+  .shape-editor-row.is-drop-after::after { bottom: -5px; }
+  .overlay-layer-grip { display: grid; width: 24px; height: 36px; place-items: center; color: rgba(255,255,255,.42); cursor: grab; }
+  .shape-editor-row:active .overlay-layer-grip { cursor: grabbing; }
   .shape-editor-row-copy { display: grid; gap: 2px; text-align: left; }
+  .shape-editor-row-copy > span:first-child { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .overlay-layer-order-actions { display: flex; gap: 3px; }
+  .overlay-layer-order-actions .btn { display: grid; width: 30px; height: 30px; padding: 0; place-items: center; }
   .shape-editor-error { color: #ff9b9b; font-size: .72rem; line-height: 1.25; }
   .shape-editor-empty { display: grid; gap: 3px; color: rgba(255,255,255,.72); font-size: .82rem; padding: 6px 2px 10px; }
   .shape-editor-empty span:last-child { color: rgba(255,255,255,.48); font-size: .76rem; }
@@ -8771,7 +8781,7 @@
                       <div class="overlay-image-library-message text-white-50" id="overlay-image-library-message" aria-live="polite"></div>
                       <div class="small text-white-50">PNG, JPG, WEBP or SVG · max 2 MB</div>
                     </div>
-                    <div class="shape-editor-list" id="shape-editor-list"></div>
+                    <div class="shape-editor-list" id="shape-editor-list" role="listbox" aria-label="Overlay layers; top item is in front"></div>
                     <div class="shape-editor-empty" id="shape-editor-empty"><span>No overlays yet.</span><span>Add your logo to show it on every clip.</span></div>
                     <div class="shape-editor-controls d-none" id="shape-editor-controls">
                       <div class="design-panel-section-label"><span>Appearance</span></div>
@@ -8803,6 +8813,10 @@
                       <div class="overlay-size-control">
                         <div class="d-flex justify-content-between small text-white-50"><label for="overlay-size">Size</label><span id="overlay-size-label">17%</span></div>
                         <input type="range" class="form-range" id="overlay-size" min="1" max="100" value="17" aria-label="Overlay width as a percentage of the frame">
+                      </div>
+                      <div class="shape-editor-actions">
+                        <button type="button" class="btn btn-sm btn-outline-light" id="shape-bring-front-btn"><i class="bi bi-front me-1"></i>Bring to front</button>
+                        <button type="button" class="btn btn-sm btn-outline-light" id="shape-send-back-btn"><i class="bi bi-back me-1"></i>Send to back</button>
                       </div>
                       <button type="button" class="design-panel-more-toggle" id="shape-more-toggle" aria-expanded="false">▸ More options</button>
                       <div class="design-panel-more-options" id="shape-more-options">
@@ -23434,6 +23448,8 @@ document.addEventListener("DOMContentLoaded", function () {
   const overlaySizeLabel = document.getElementById("overlay-size-label");
   const shapeDuplicate = document.getElementById("shape-duplicate-btn");
   const shapeDelete = document.getElementById("shape-delete-btn");
+  const shapeBringFront = document.getElementById("shape-bring-front-btn");
+  const shapeSendBack = document.getElementById("shape-send-back-btn");
   const shapeRadius = document.getElementById("shape-radius");
   const shapeColor = document.getElementById("shapeColorValue");
   const shapeAlpha = document.getElementById("shapeAlphaValue");
@@ -23443,6 +23459,7 @@ document.addEventListener("DOMContentLoaded", function () {
   let shapePointerState = null;
   let overlayImageAssets = [];
   let activeShapeSnapGuides = [];
+  let draggedOverlayId = null;
   const shapeValidationErrors = new Map();
   const shapeHandles = ["nw", "n", "ne", "e", "se", "s", "sw", "w"];
   const shapeCoordinateMin = Number(DESIGN_GEOMETRY.shape_coordinate_min);
@@ -23494,6 +23511,21 @@ document.addEventListener("DOMContentLoaded", function () {
     return shape;
   };
   const selectedShape = () => overlayShapes.find((shape) => shape.id === selectedShapeId) || null;
+  const frontOrderedOverlays = () => [...overlayShapes].reverse();
+  const applyFrontOrderedOverlays = (frontOrder) => {
+    overlayShapes = [...frontOrder].reverse();
+    syncShapesUi();
+  };
+  const moveOverlayToFrontIndex = (shapeId, nextIndex) => {
+    const frontOrder = frontOrderedOverlays();
+    const currentIndex = frontOrder.findIndex((shape) => shape.id === shapeId);
+    if (currentIndex < 0) return;
+    const [shape] = frontOrder.splice(currentIndex, 1);
+    const clampedIndex = Math.max(0, Math.min(frontOrder.length, nextIndex));
+    frontOrder.splice(clampedIndex, 0, shape);
+    selectedShapeId = shape.id;
+    applyFrontOrderedOverlays(frontOrder);
+  };
   const persistShapes = () => {
     overlayShapes = overlayShapes.slice(0, 5).map(clampShape);
     if (overlayShapesField) {
@@ -23569,6 +23601,9 @@ document.addEventListener("DOMContentLoaded", function () {
     const widthPercent = Math.max(1, Math.min(100, Math.round(shape.w / 10.8)));
     if (overlaySize) overlaySize.value = String(widthPercent);
     if (overlaySizeLabel) overlaySizeLabel.textContent = `${widthPercent}%`;
+    const shapeIndex = overlayShapes.findIndex((item) => item.id === shape.id);
+    if (shapeBringFront) shapeBringFront.disabled = shapeIndex === overlayShapes.length - 1;
+    if (shapeSendBack) shapeSendBack.disabled = shapeIndex === 0;
     Object.entries(shapeGeometry).forEach(([key, field]) => { if (field) field.value = String(shape[key]); });
     if (!image) syncDesignChip("shapeColorValue", shape.color, shape.alpha);
     const native = document.querySelector("#shapeColorPopover input[type='color']");
@@ -23577,11 +23612,20 @@ document.addEventListener("DOMContentLoaded", function () {
   const renderShapeList = () => {
     if (!shapeList) return;
     shapeList.innerHTML = "";
-    overlayShapes.forEach((shape, index) => {
-      const row = document.createElement("button");
-      row.type = "button";
+    const frontOrder = frontOrderedOverlays();
+    frontOrder.forEach((shape, index) => {
+      const row = document.createElement("div");
       row.className = `shape-editor-row${shape.id === selectedShapeId ? " is-selected" : ""}`;
+      row.dataset.shapeId = shape.id;
+      row.draggable = true;
+      row.tabIndex = 0;
+      row.setAttribute("role", "option");
+      row.setAttribute("aria-selected", shape.id === selectedShapeId ? "true" : "false");
       const error = shapeValidationErrors.get(String(shape.id)) || "";
+      const grip = document.createElement("span");
+      grip.className = "overlay-layer-grip";
+      grip.title = "Drag to reorder";
+      grip.innerHTML = '<i class="bi bi-grip-vertical" aria-hidden="true"></i>';
       const copy = document.createElement("span");
       copy.className = "shape-editor-row-copy";
       const title = document.createElement("span");
@@ -23589,13 +23633,59 @@ document.addEventListener("DOMContentLoaded", function () {
       title.textContent = isImageOverlay(shape) ? (asset?.label || `Image ${index + 1}`) : `Shape ${index + 1}`;
       copy.appendChild(title);
       if (error) { const errorNode = document.createElement("span"); errorNode.className = "shape-editor-error"; errorNode.role = "alert"; errorNode.textContent = error; copy.appendChild(errorNode); }
-      row.appendChild(copy);
+      let visual;
       if (isImageOverlay(shape) && asset?.url) {
-        const thumbnail = document.createElement("img"); thumbnail.className = "shape-editor-row-thumb"; thumbnail.src = asset.url; thumbnail.alt = ""; row.appendChild(thumbnail);
+        visual = document.createElement("img"); visual.className = "shape-editor-row-thumb"; visual.src = asset.url; visual.alt = "";
       } else {
-        const swatch = document.createElement("span"); swatch.className = "short-bg-swatch"; swatch.style.background = hexToRgba(shape.color, shape.alpha / 100); row.appendChild(swatch);
+        visual = document.createElement("span"); visual.className = "short-bg-swatch"; visual.style.background = hexToRgba(shape.color, shape.alpha / 100);
       }
+      const orderActions = document.createElement("span");
+      orderActions.className = "overlay-layer-order-actions";
+      const moveUp = document.createElement("button");
+      moveUp.type = "button"; moveUp.className = "btn btn-sm btn-outline-light"; moveUp.title = "Move forward"; moveUp.setAttribute("aria-label", `Move ${title.textContent} forward`); moveUp.disabled = index === 0; moveUp.innerHTML = '<i class="bi bi-chevron-up" aria-hidden="true"></i>';
+      const moveDown = document.createElement("button");
+      moveDown.type = "button"; moveDown.className = "btn btn-sm btn-outline-light"; moveDown.title = "Move backward"; moveDown.setAttribute("aria-label", `Move ${title.textContent} backward`); moveDown.disabled = index === frontOrder.length - 1; moveDown.innerHTML = '<i class="bi bi-chevron-down" aria-hidden="true"></i>';
+      moveUp.addEventListener("click", (event) => { event.stopPropagation(); moveOverlayToFrontIndex(shape.id, index - 1); });
+      moveDown.addEventListener("click", (event) => { event.stopPropagation(); moveOverlayToFrontIndex(shape.id, index + 1); });
+      orderActions.append(moveUp, moveDown);
+      row.append(grip, visual, copy, orderActions);
       row.addEventListener("click", () => { selectedShapeId = shape.id; syncShapesUi(); });
+      row.addEventListener("keydown", (event) => {
+        if (event.target !== row || !["Enter", " "].includes(event.key)) return;
+        event.preventDefault(); selectedShapeId = shape.id; syncShapesUi();
+      });
+      row.addEventListener("dragstart", (event) => {
+        draggedOverlayId = shape.id;
+        row.classList.add("is-dragging");
+        event.dataTransfer.effectAllowed = "move";
+        event.dataTransfer.setData("text/plain", shape.id);
+      });
+      row.addEventListener("dragover", (event) => {
+        if (!draggedOverlayId || draggedOverlayId === shape.id) return;
+        event.preventDefault();
+        const before = event.clientY < row.getBoundingClientRect().top + row.offsetHeight / 2;
+        row.classList.toggle("is-drop-before", before);
+        row.classList.toggle("is-drop-after", !before);
+      });
+      row.addEventListener("dragleave", () => row.classList.remove("is-drop-before", "is-drop-after"));
+      row.addEventListener("drop", (event) => {
+        event.preventDefault();
+        const draggedId = draggedOverlayId || event.dataTransfer.getData("text/plain");
+        const order = frontOrderedOverlays();
+        const fromIndex = order.findIndex((item) => item.id === draggedId);
+        if (fromIndex < 0) return;
+        const [dragged] = order.splice(fromIndex, 1);
+        const targetIndex = order.findIndex((item) => item.id === shape.id);
+        const after = event.clientY >= row.getBoundingClientRect().top + row.offsetHeight / 2;
+        order.splice(Math.max(0, targetIndex + (after ? 1 : 0)), 0, dragged);
+        selectedShapeId = dragged.id;
+        draggedOverlayId = null;
+        applyFrontOrderedOverlays(order);
+      });
+      row.addEventListener("dragend", () => {
+        draggedOverlayId = null;
+        shapeList.querySelectorAll(".shape-editor-row").forEach((item) => item.classList.remove("is-dragging", "is-drop-before", "is-drop-after"));
+      });
       shapeList.appendChild(row);
     });
   };
@@ -23610,7 +23700,7 @@ document.addEventListener("DOMContentLoaded", function () {
     try { overlayShapes = JSON.parse(overlayShapesField?.value || "[]"); } catch (_) { overlayShapes = []; }
     if (!Array.isArray(overlayShapes)) overlayShapes = [];
     overlayShapes = overlayShapes.slice(0, 5).filter((shape) => shape && typeof shape === "object").map((shape, index) => clampShape({ id: String(shape.id || `shape-${index + 1}`), ...shape }));
-    if (!overlayShapes.some((shape) => shape.id === selectedShapeId)) selectedShapeId = overlayShapes[0]?.id || null;
+    if (!overlayShapes.some((shape) => shape.id === selectedShapeId)) selectedShapeId = overlayShapes.at(-1)?.id || null;
     syncShapesUi();
   };
   overlayShapesField?.addEventListener("change", () => window.syncOverlayShapesFromField());
@@ -23727,7 +23817,7 @@ document.addEventListener("DOMContentLoaded", function () {
           if (!response.ok) throw new Error(payload.error || "The image could not be deleted.");
           overlayImageAssets = overlayImageAssets.filter((candidate) => candidate.id !== asset.id);
           overlayShapes = overlayShapes.filter((shape) => !(isImageOverlay(shape) && String(shape.asset_id) === String(asset.id)));
-          if (!overlayShapes.some((shape) => shape.id === selectedShapeId)) selectedShapeId = overlayShapes[0]?.id || null;
+          if (!overlayShapes.some((shape) => shape.id === selectedShapeId)) selectedShapeId = overlayShapes.at(-1)?.id || null;
           window.removeOverlayAssetFromSavedDesignState?.(asset.id);
           syncShapesUi();
           renderImageLibrary();
@@ -23774,10 +23864,18 @@ document.addEventListener("DOMContentLoaded", function () {
     const copy = clampShape({ ...source, id: `shape-${Date.now()}-${overlayShapes.length + 1}`, x: source.x + 20, y: source.y + 20 });
     overlayShapes.push(copy); selectedShapeId = copy.id; syncShapesUi();
   });
+  shapeBringFront?.addEventListener("click", () => {
+    if (!selectedShapeId) return;
+    moveOverlayToFrontIndex(selectedShapeId, 0);
+  });
+  shapeSendBack?.addEventListener("click", () => {
+    if (!selectedShapeId) return;
+    moveOverlayToFrontIndex(selectedShapeId, Math.max(0, overlayShapes.length - 1));
+  });
   shapeDelete?.addEventListener("click", () => {
     const index = overlayShapes.findIndex((shape) => shape.id === selectedShapeId);
     if (index < 0) return;
-    overlayShapes.splice(index, 1); selectedShapeId = overlayShapes[Math.min(index, overlayShapes.length - 1)]?.id || null; syncShapesUi();
+    overlayShapes.splice(index, 1); selectedShapeId = overlayShapes.at(-1)?.id || null; syncShapesUi();
   });
   shapeRadius?.addEventListener("input", () => { const shape = selectedShape(); if (shape) { shape.radius = shapeRadius.value; syncShapesUi(); } });
   imageOpacity?.addEventListener("input", () => { const shape = selectedShape(); if (isImageOverlay(shape)) { shape.alpha = Number(imageOpacity.value); syncShapesUi(); } });
