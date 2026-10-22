@@ -1,0 +1,90 @@
+<style>
+  .delete-video-meta {
+    display: flex;
+    align-items: center;
+    gap: 0.85rem;
+    min-width: 0;
+    margin-bottom: 1rem;
+    padding: 0.65rem;
+    border: 1px solid rgba(148, 163, 184, 0.3);
+    border-radius: 0.75rem;
+    background: rgba(15, 23, 42, 0.5);
+  }
+  .delete-video-thumb {
+    width: 112px;
+    aspect-ratio: 16 / 9;
+    flex: 0 0 auto;
+    overflow: hidden;
+    border-radius: 0.55rem;
+    background: #111827;
+  }
+  .delete-video-thumb img {
+    width: 100%;
+    height: 100%;
+    object-fit: cover;
+  }
+  .delete-video-thumb-placeholder {
+    display: grid;
+    width: 100%;
+    height: 100%;
+    place-items: center;
+    color: rgba(226, 232, 240, 0.65);
+    font-size: 1.25rem;
+  }
+  .delete-video-meta-copy {
+    min-width: 0;
+  }
+  .delete-video-meta-title {
+    overflow: hidden;
+    color: #f8fafc;
+    font-weight: 700;
+    line-height: 1.25;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+  .delete-video-meta-detail {
+    margin-top: 0.3rem;
+    color: rgba(226, 232, 240, 0.68);
+    font-size: 0.82rem;
+  }
+</style>
+
+<div
+  class="modal fade"
+  id="{{ delete_video_modal_id }}"
+  tabindex="-1"
+  aria-labelledby="{{ delete_video_modal_label_id }}"
+  aria-hidden="true"
+  data-delete-video-modal
+  data-delete-fallback-url="{{ url_for('video_shorts_bp.my_videos_page') }}">
+  <div class="modal-dialog modal-dialog-centered">
+    <div class="modal-content bg-dark text-light border-secondary">
+      <div class="modal-header border-secondary">
+        <h5 class="modal-title" id="{{ delete_video_modal_label_id }}">Delete video?</h5>
+        <button type="button" class="btn-close btn-close-white" data-bs-dismiss="modal" aria-label="Close"></button>
+      </div>
+      <div class="modal-body">
+        <div class="delete-video-meta" data-delete-video-meta>
+          <div class="delete-video-thumb">
+            <img class="d-none" data-delete-video-thumbnail alt="">
+            <span class="delete-video-thumb-placeholder" data-delete-video-thumbnail-placeholder aria-hidden="true">
+              <i class="bi bi-film"></i>
+            </span>
+          </div>
+          <div class="delete-video-meta-copy">
+            <div class="delete-video-meta-title" data-delete-video-title>Loading video…</div>
+            <div class="delete-video-meta-detail" data-delete-video-detail>Loading details…</div>
+          </div>
+        </div>
+        <p class="mb-2" data-delete-summary>Loading deletion details…</p>
+        <p class="mb-2 text-warning d-none" data-delete-scheduled></p>
+        <p class="mb-0 text-warning d-none" data-delete-youtube-warning></p>
+        <div class="alert alert-danger mt-3 mb-0 d-none" data-delete-error role="alert"></div>
+      </div>
+      <div class="modal-footer border-secondary">
+        <button type="button" class="btn btn-outline-light" data-bs-dismiss="modal">Cancel</button>
+        <button type="button" class="btn btn-danger" data-delete-confirm disabled>Delete</button>
+      </div>
+    </div>
+  </div>
+</div>

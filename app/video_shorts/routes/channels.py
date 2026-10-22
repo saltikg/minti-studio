@@ -1047,6 +1047,9 @@ def my_video_delete_summary(video_pk: int):
             owner_user_id=str(current_user["id"]),
             brand_id=current_brand_id(),
         )
+        source_video_id = str(summary.pop("source_video_id", "") or "")
+        if not summary.get("thumbnail_url") and source_video_id:
+            summary["thumbnail_url"] = _cached_preview_frame_url(source_video_id)
         return jsonify(ok=True, summary=summary)
     except VideoDeletionNotFound:
         return jsonify(ok=False, message="Video not found."), 404

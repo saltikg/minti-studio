@@ -79,6 +79,16 @@ def _is_future_timestamp(value: Any) -> bool:
         return False
 
 
+def _iso_utc(value: Any) -> str:
+    if not value:
+        return ""
+    if not isinstance(value, datetime):
+        return str(value)
+    if value.tzinfo is None:
+        value = value.replace(tzinfo=timezone.utc)
+    return value.astimezone(timezone.utc).isoformat()
+
+
 def ensure_video_deletion_schema(conn) -> None:
     video_columns = table_columns(conn, "youtube_videos")
     if "deleted_at" not in video_columns:
@@ -141,7 +151,9 @@ def _scope_row(conn, video_pk: int, *, owner_user_id: str, brand_id: Optional[st
     suffix = " FOR UPDATE" if lock and getattr(conn, "backend_name", "") == "postgres" else ""
     return conn.execute(
         f"""
-        SELECT id, video_id, title, owner_user_id, brand_id, deleted_at
+        SELECT id, video_id, title, owner_user_id, brand_id, deleted_at,
+               thumbnail_url, duration_seconds,
+               COALESCE(downloaded_at, created_at, published_at) AS added_at
         FROM youtube_videos
         WHERE id = ?
           AND CAST(owner_user_id AS VARCHAR) = CAST(? AS VARCHAR)
@@ -246,6 +258,96 @@ def _clip_names(generated_rows: Iterable[dict[str, Any]]) -> set[str]:
     }
 
 
+def _rendered_clip_rows(
+    conn,
+    *,
+    video_pk: int,
+    source_video_id: str,
+    owner_user_id: str,
+    brand_id: Optional[str],
+) -> list[dict[str, Any]]:
+    """Use the same durable-media rule as the My Videos SHORTS column."""
+    if not table_columns(conn, "shorts_generated_videos"):
+        return []
+    rows = conn.execute(
+        """
+        SELECT gv.clip_filename, gv.output_filename, gv.raw_plan_entry_json
+        FROM shorts_generated_videos gv
+        JOIN shorts_storage_assets render_asset
+          ON render_asset.file_key = gv.storage_file_key
+         AND CAST(render_asset.user_id AS VARCHAR) = CAST(gv.user_id AS VARCHAR)
+         AND render_asset.brand_id IS NOT DISTINCT FROM gv.brand_id
+         AND lower(coalesce(render_asset.status, 'active')) = 'active'
+         AND render_asset.size_bytes > 0
+        JOIN youtube_videos source_video
+          ON source_video.id = ?
+         AND source_video.video_id = gv.source_video_id
+         AND source_video.owner_user_id = gv.user_id
+         AND source_video.brand_id IS NOT DISTINCT FROM gv.brand_id
+         AND source_video.deleted_at IS NULL
+        WHERE gv.source_video_id = ?
+          AND CAST(gv.user_id AS VARCHAR) = CAST(? AS VARCHAR)
+          AND gv.brand_id IS NOT DISTINCT FROM ?
+          AND NULLIF(trim(coalesce(gv.clip_filename, '')), '') IS NOT NULL
+          AND NULLIF(trim(coalesce(gv.storage_file_key, '')), '') IS NOT NULL
+          AND lower(coalesce(gv.generation_status, '')) NOT IN
+              ('pending', 'queued', 'processing', 'rendering')
+        """,
+        [int(video_pk), source_video_id, owner_user_id, brand_id],
+    ).fetchall()
+    return [
+        {
+            "clip_filename": row[0],
+            "output_filename": row[1],
+            "raw_plan_entry_json": row[2],
+        }
+        for row in rows
+    ]
+
+
+def _plan_entries(source_video_id: str, *, video_pk: int) -> list[dict[str, Any]]:
+    try:
+        payload = tenant_media.load_state(
+            source_video_id,
+            "plan",
+            video_pk=video_pk,
+            migrate=False,
+        )
+    except (OSError, ValueError, TypeError):
+        return []
+    entries = payload.get("plan") or payload.get("clips") or []
+    if not isinstance(entries, list):
+        return []
+    return [dict(entry) for entry in entries if isinstance(entry, dict)]
+
+
+def _unrendered_plan_count(
+    plan_entries: Iterable[dict[str, Any]],
+    rendered_rows: Iterable[dict[str, Any]],
+) -> int:
+    rendered_names = _clip_names(rendered_rows)
+    rendered_indexes: set[str] = set()
+    for row in rendered_rows:
+        snapshot = _parse_json(row.get("raw_plan_entry_json"))
+        plan_index = snapshot.get("plan_index")
+        if plan_index is not None and str(plan_index).strip():
+            rendered_indexes.add(str(plan_index).strip())
+
+    count = 0
+    for entry in plan_entries:
+        entry_names = {
+            Path(str(entry.get(key) or "")).name
+            for key in ("clip_filename", "output_filename")
+            if str(entry.get(key) or "").strip()
+        }
+        plan_index = entry.get("plan_index")
+        index_key = str(plan_index).strip() if plan_index is not None else ""
+        if entry_names.intersection(rendered_names) or (index_key and index_key in rendered_indexes):
+            continue
+        count += 1
+    return count
+
+
 def _compilation_rows(conn, *, video_pk: int, owner_user_id: str, brand_id: Optional[str]) -> list[dict[str, Any]]:
     if not table_columns(conn, "shorts_compilations"):
         return []
@@ -322,6 +424,17 @@ def _build_snapshot(conn, row, *, video_pk: int) -> dict[str, Any]:
         brand_id=brand_id,
     )
     clips = _clip_names(generated)
+    rendered = _rendered_clip_rows(
+        conn,
+        video_pk=video_pk,
+        source_video_id=source_video_id,
+        owner_user_id=owner_user_id,
+        brand_id=brand_id,
+    )
+    suggestions = _unrendered_plan_count(
+        _plan_entries(source_video_id, video_pk=video_pk),
+        rendered,
+    )
     posters = _poster_names(generated)
     compilations = _compilation_rows(
         conn,
@@ -383,7 +496,12 @@ def _build_snapshot(conn, row, *, video_pk: int) -> dict[str, Any]:
         "summary": {
             "video_pk": int(video_pk),
             "title": str(row[2] or "Untitled video"),
-            "clip_count": len(clips),
+            "source_video_id": source_video_id,
+            "thumbnail_url": str(row[6] or ""),
+            "duration_seconds": float(row[7] or 0),
+            "added_at": _iso_utc(row[8]),
+            "clip_count": len(rendered),
+            "suggestion_count": suggestions,
             "scheduled_post_count": scheduled_social + pending_youtube,
             "remote_youtube_schedule_count": remote_youtube,
             "asset_bytes": sum(
