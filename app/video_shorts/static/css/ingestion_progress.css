@@ -40,7 +40,70 @@
   font: inherit;
   font-weight: 700;
 }
+.vs-ingestion-card-stack {
+  display: grid;
+  gap: 10px;
+  width: min(100%, 720px);
+  margin: 14px auto 0;
+}
+.vs-ingestion-card {
+  padding: 14px;
+  border: 1px solid rgba(148, 163, 184, 0.18);
+  border-radius: 14px;
+  background: rgba(8, 13, 21, 0.92);
+  color: #e2e8f0;
+  box-shadow: 0 12px 30px rgba(2, 6, 23, 0.2);
+}
+.vs-ingestion-card-head {
+  display: grid;
+  grid-template-columns: 96px minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 12px;
+}
+.vs-ingestion-card-thumb {
+  position: relative;
+  display: grid;
+  width: 96px;
+  aspect-ratio: 16 / 9;
+  place-items: center;
+  overflow: hidden;
+  border-radius: 9px;
+  background: rgba(30, 41, 59, 0.9);
+  color: rgba(148, 163, 184, 0.68);
+}
+.vs-ingestion-card-thumb img { position: absolute; inset: 0; width: 100%; height: 100%; object-fit: cover; }
+.vs-ingestion-card-copy { min-width: 0; }
+.vs-ingestion-card-title { overflow: hidden; color: #f8fafc; font-size: 0.92rem; font-weight: 750; text-overflow: ellipsis; white-space: nowrap; }
+.vs-ingestion-card-meta { margin-top: 3px; overflow: hidden; color: rgba(226, 232, 240, 0.58); font-size: 0.78rem; text-overflow: ellipsis; white-space: nowrap; }
+.vs-ingestion-card-ready { display: flex; align-items: center; gap: 10px; color: #5eead4; font-size: 0.82rem; font-weight: 800; white-space: nowrap; }
+.vs-ingestion-card-ready[hidden] { display: none; }
+.vs-ingestion-open { padding: 7px 13px; border-radius: 9px; background: #2dd4bf; color: #04211d; font-weight: 800; text-decoration: none; }
+.vs-ingestion-open:hover { background: #5eead4; color: #04211d; }
+.vs-ingestion-steps { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 8px; margin-top: 13px; }
+.vs-ingestion-step { display: flex; align-items: center; gap: 6px; min-width: 0; color: rgba(148, 163, 184, 0.55); font-size: 0.72rem; font-weight: 700; white-space: nowrap; }
+.vs-ingestion-step-dot { flex: 0 0 8px; width: 8px; height: 8px; border-radius: 999px; background: currentColor; }
+.vs-ingestion-step.is-done { color: #5eead4; }
+.vs-ingestion-step.is-done .vs-ingestion-step-dot { display: grid; width: 14px; height: 14px; place-items: center; background: rgba(45, 212, 191, 0.16); font-size: 0.62rem; }
+.vs-ingestion-step.is-done .vs-ingestion-step-dot::before { content: "✓"; }
+.vs-ingestion-step.is-active { color: #fbbf24; }
+.vs-ingestion-step.is-active .vs-ingestion-step-dot { animation: vs-ingestion-pulse 1.2s ease-in-out infinite; }
+.vs-ingestion-step.is-failed { color: #f87171; }
+.vs-ingestion-active-row { display: grid; grid-template-columns: minmax(110px, 1fr) auto; align-items: center; gap: 10px; margin-top: 11px; }
+.vs-ingestion-active-row[hidden] { display: none; }
+.vs-ingestion-card .vs-ingestion-progress-track { margin: 0; height: 5px; }
+.vs-ingestion-card .vs-ingestion-progress-copy { color: rgba(226, 232, 240, 0.76); font-size: 0.78rem; white-space: nowrap; }
+.vs-ingestion-card.is-failed .vs-ingestion-progress-copy { color: #fca5a5; }
+.vs-ingestion-card .vs-ingestion-progress-retry { margin-top: 10px; }
+@keyframes vs-ingestion-pulse { 50% { opacity: .35; transform: scale(.8); } }
 @keyframes vs-ingestion-indeterminate {
   from { transform: translateX(-120%); }
   to { transform: translateX(300%); }
+}
+@media (max-width: 560px) {
+  .vs-ingestion-card-head { grid-template-columns: 82px minmax(0, 1fr); }
+  .vs-ingestion-card-thumb { width: 82px; }
+  .vs-ingestion-card-ready { grid-column: 1 / 3; justify-content: space-between; }
+  .vs-ingestion-steps { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .vs-ingestion-active-row { grid-template-columns: 1fr; gap: 6px; }
+  .vs-ingestion-card .vs-ingestion-progress-copy { white-space: normal; }
 }

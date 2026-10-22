@@ -857,10 +857,14 @@
   .mv-pane.is-active {
     display: block;
   }
+  .mv-pane-inner {
+    width: min(100%, 720px);
+    margin-inline: auto;
+  }
   .mv-url-row {
     display: grid;
     grid-template-columns: minmax(0, 1fr) auto;
-    gap: 12px;
+    gap: 0;
   }
   .mv-url-field {
     position: relative;
@@ -877,7 +881,7 @@
     min-height: 58px;
     padding: 0 18px 0 46px;
     border-color: rgba(40, 57, 77, 0.95);
-    border-radius: 12px;
+    border-radius: 12px 0 0 12px;
     background: rgba(8, 13, 21, 0.96);
     font-size: 1rem;
   }
@@ -885,7 +889,7 @@
     min-height: 58px;
     padding: 0 30px;
     border: 0;
-    border-radius: 12px;
+    border-radius: 0 12px 12px 0;
     background: #2dd4bf;
     color: #04211d;
     font-weight: 800;
@@ -894,6 +898,23 @@
   .mv-youtube-submit:hover {
     background: #3ee0cc;
     color: #04211d;
+  }
+  .mv-add-hint {
+    margin-top: 8px;
+    color: rgba(148, 163, 184, 0.72);
+    font-size: 0.78rem;
+  }
+  .mv-upload-actions-row {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) auto;
+    align-items: stretch;
+    gap: 10px;
+  }
+  .mv-upload-actions-row .mv-dropzone {
+    min-height: 118px;
+  }
+  .mv-upload-actions-row .btn {
+    min-width: 138px;
   }
   .mv-youtube-preview {
     display: none;
@@ -1192,12 +1213,19 @@
       padding: 20px;
     }
     .mv-url-row,
+    .mv-upload-actions-row,
     .mv-toolbar-grid {
       grid-template-columns: 1fr;
     }
+    .mv-youtube-input {
+      border-radius: 12px;
+    }
     .mv-youtube-submit {
       width: 100%;
+      margin-top: 8px;
+      border-radius: 12px;
     }
+    .mv-upload-actions-row .btn { width: 100%; min-height: 48px; }
     .mv-row {
       grid-template-columns: 1fr;
     }
@@ -1254,29 +1282,56 @@
           <button type="button" class="mv-tab" id="mv-tab-upload" data-mv-tab="upload" role="tab" aria-selected="false" aria-controls="mv-pane-upload">Upload a file</button>
         </div>
         <div class="mv-pane is-active" id="mv-pane-url" role="tabpanel" aria-labelledby="mv-tab-url">
-          {{ mv_components.youtube_paste_box() }}
-        </div>
-        <div class="mv-pane" id="mv-pane-upload" role="tabpanel" aria-labelledby="mv-tab-upload" hidden>
-          <input id="mv-upload-file" type="file" class="mv-hidden-input" accept=".mp4,.mov,.mkv,video/*" />
-          <label for="mv-upload-file" class="mv-dropzone" id="mv-upload-dropzone">
-            <i class="bi bi-upload fs-3 text-secondary" aria-hidden="true"></i>
-            <span class="mv-dropzone-copy">Choose a file or drag it here</span>
-            <span class="mv-dropzone-meta">Up to 3GB. Smaller files upload faster.</span>
-          </label>
-          <div class="mt-3">
-            <button type="button" id="mv-upload-submit" class="btn btn-primary">Upload video</button>
+          <div class="mv-pane-inner">
+            {{ mv_components.youtube_paste_box() }}
+            <div class="mv-add-hint">Works with any public YouTube video.</div>
           </div>
         </div>
-        <div class="px-4 pb-4">
-          <div id="mv-upload-meta" class="mv-upload-meta"></div>
-          <div id="mv-upload-note" class="mv-upload-note mt-2"></div>
-          <div id="mv-upload-progress" class="mv-progress mt-3" aria-hidden="true">
-            <div id="mv-upload-progress-bar" class="mv-progress-bar"></div>
+        <div class="mv-pane" id="mv-pane-upload" role="tabpanel" aria-labelledby="mv-tab-upload" hidden>
+          <div class="mv-pane-inner">
+            <input id="mv-upload-file" type="file" class="mv-hidden-input" accept=".mp4,.mov,.mkv,video/*" />
+            <div class="mv-upload-actions-row">
+              <label for="mv-upload-file" class="mv-dropzone" id="mv-upload-dropzone">
+                <i class="bi bi-upload fs-3 text-secondary" aria-hidden="true"></i>
+                <span class="mv-dropzone-copy">Choose a file or drag it here</span>
+                <span class="mv-dropzone-meta">Up to 3GB. Smaller files upload faster.</span>
+              </label>
+              <button type="button" id="mv-upload-submit" class="btn btn-primary">Upload video</button>
+            </div>
+            <div class="mv-add-hint">MP4, MOV or MKV · up to 3GB.</div>
+            <div id="mv-upload-meta" class="mv-upload-meta mt-2"></div>
+            <div id="mv-upload-note" class="mv-upload-note mt-2"></div>
           </div>
         </div>
       </div>
       <div id="mv-upload-feedback" class="mv-upload-feedback mt-3" aria-live="polite"></div>
     {% endif %}
+    <div
+      class="vs-ingestion-card-stack"
+      data-ingestion-card-stack
+      data-status-url="{{ url_for('video_shorts_bp.my_videos_processing_status') }}"
+    >
+      {% for item in videos %}
+        {% if not item.is_ready_for_editing %}
+          <article
+            class="vs-ingestion-card"
+            data-ingestion-card
+            data-video-pk="{{ item.id }}"
+            data-status-url="{{ url_for('video_shorts_bp.my_videos_processing_status') }}"
+            data-retry-url="{{ url_for('video_shorts_bp.retry_my_video_processing', video_pk=item.id) }}"
+            data-open-url="{{ url_for('video_shorts_bp.generate_short', video_pk=item.id) }}"
+            data-video-title="{{ item.title|e }}"
+            data-video-thumbnail="{{ (item.thumbnail_url or item.preview_image_url or '')|e }}"
+            data-video-duration="{{ (item.duration_label or '')|e }}"
+            data-video-channel="{{ (item.channel_name or '')|e }}"
+            data-source-kind="{{ item.source_kind }}"
+            data-initial-stage="{{ 'failed' if item.is_failed else 'processing' }}"
+            data-initial-failed="{{ '1' if item.is_failed else '0' }}"
+            data-was-active="{{ '1' if item.is_processing else '0' }}"
+          ></article>
+        {% endif %}
+      {% endfor %}
+    </div>
   </section>
 
 	  <section
@@ -1436,16 +1491,6 @@
                 <span data-processing-detail>{{ item.processing_attempt_label }}</span>
               </span>
             {% endif %}
-            <div
-              class="vs-ingestion-progress"
-              data-ingestion-progress
-              data-video-pk="{{ item.id }}"
-              data-status-url="{{ url_for('video_shorts_bp.my_videos_processing_status') }}"
-              data-retry-url="{{ url_for('video_shorts_bp.retry_my_video_processing', video_pk=item.id) }}"
-              data-reload-on-ready="1"
-              data-was-active="{{ '1' if item.is_processing else '0' }}"
-              {% if item.is_ready_for_editing %}hidden{% endif %}
-            ></div>
           </div>
           <div class="mv-row-actions mv-coachmark-anchor mv-coachmark-anchor--button" {% if loop.first %}id="mv-first-video-action"{% endif %}>
             {% if item.is_ready_for_editing %}
@@ -1559,6 +1604,8 @@
 	  let youtubePreviewTimer = null;
 	  let youtubePreviewController = null;
 	  let youtubePreviewRequestId = 0;
+  let youtubePreviewData = null;
+  let activeUploadClientId = '';
   let coachmarkEl = null;
   let currentCoachmarkStep = null;
   let serviceModeModalOpen = Boolean(window.__vsServiceModeModalOpen);
@@ -2097,6 +2144,14 @@
 
   const setUploadPhaseProgress = (percent) => {
     setProgress(percent);
+    if (activeUploadClientId) {
+      window.MintiIngestionProgress?.updatePending(activeUploadClientId, {
+        stage: 'uploading',
+        active: true,
+        percent,
+        message: `Uploading… ${formatProgressPercent(percent)}`,
+      });
+    }
   };
 
   const resetProgress = () => {
@@ -2157,7 +2212,21 @@
   const sleep = (ms) => new Promise((resolve) => window.setTimeout(resolve, ms));
   const uploadSessionPollIntervalMs = 2000;
   const generateUrlTemplate = {{ url_for('video_shorts_bp.generate_short', video_pk=0)|tojson }};
+  const processingStatusUrl = {{ url_for('video_shorts_bp.my_videos_processing_status')|tojson }};
+  const retryProcessingUrlTemplate = {{ url_for('video_shorts_bp.retry_my_video_processing', video_pk=0)|tojson }};
   const generateUrlForVideo = (videoPk) => generateUrlTemplate.replace(/0$/, String(videoPk || ""));
+  const retryUrlForVideo = (videoPk) => retryProcessingUrlTemplate.replace(/0(?=\/retry-processing$)/, String(videoPk || ""));
+  const progressCardOptions = (videoPk, video = {}, sourceKind = 'url') => ({
+    videoPk,
+    title: String(video.title || (sourceKind === 'upload' ? selectedFile?.name : '') || 'Video'),
+    thumbnail: String(video.thumbnail_url || ''),
+    duration: String(video.duration_label || ''),
+    channel: String(video.channel_title || video.channel_name || ''),
+    sourceKind,
+    statusUrl: processingStatusUrl,
+    retryUrl: retryUrlForVideo(videoPk),
+    openUrl: generateUrlForVideo(videoPk),
+  });
 
   const activateAddTab = (name) => {
     addTabs.forEach((tab) => {
@@ -2255,6 +2324,7 @@
 
   const setYoutubePreview = (state, payload = {}) => {
     if (!youtubePreview) return;
+    youtubePreviewData = state === 'ready' ? (payload.video || {}) : null;
     youtubePreview.classList.toggle('is-visible', Boolean(state));
     youtubePreview.classList.toggle('is-error', state === 'error');
     if (!state) {
@@ -2550,10 +2620,11 @@
       if (!totalParts) return;
       const percent = Math.round((completedCount / totalParts) * 100);
       setUploadPhaseProgress(percent);
-      const nextPart = Math.min(totalParts, completedCount + 1);
-      setFeedback(completedCount >= totalParts
-        ? 'Finalizing upload…'
-        : `Uploading part ${nextPart} of ${totalParts}… ${formatProgressPercent(percent)}`);
+      if (completedCount >= totalParts && activeUploadClientId) {
+        window.MintiIngestionProgress?.updatePending(activeUploadClientId, {
+          stage: 'uploading', active: true, percent: 100, message: 'Finalizing upload…',
+        });
+      }
     };
 
     try {
@@ -2616,6 +2687,14 @@
     setUploadControlsDisabled(true);
     setUploadPhaseFeedback('Uploading…');
     resetProgress();
+    activeUploadClientId = `upload-${Date.now()}`;
+    window.MintiIngestionProgress?.addCard({
+      clientId: activeUploadClientId,
+      title: selectedFile.name,
+      sourceKind: 'upload',
+      status: { stage: 'uploading', active: true, percent: 0, message: 'Uploading… 0%' },
+    });
+    setFeedback('');
     try {
       setUploadPhaseProgress(0);
       const uploadPayload = await uploadViaMultipart(selectedFile);
@@ -2623,20 +2702,31 @@
       if (!uploadedSessionId) {
         throw new Error('Upload finished, but we could not track server processing.');
       }
-      setServerProcessingState("Processing your video — this can take a few minutes. You can leave this page; we'll keep working and it'll be ready when you come back.");
-      const readySession = await waitForUploadSessionReady(uploadedSessionId);
+      const video = uploadPayload?.session?.video || {};
+      const videoPk = video.id || uploadPayload?.session?.video_pk || uploadPayload?.video_pk;
+      if (!videoPk) throw new Error('Upload finished, but the video could not be tracked.');
+      window.MintiIngestionProgress?.promotePending(activeUploadClientId, {
+        ...progressCardOptions(videoPk, video, 'upload'),
+        status: { stage: 'transcribing', active: true, message: 'Transcribing…' },
+      });
       setCoachmarkState('uploaded');
-      window.setTimeout(() => {
-        if (!redirectToGeneratedVideo(readySession)) window.location.reload();
-      }, 700);
+      setFeedback('');
+      setSelectedFile(null);
+      if (uploadInput) uploadInput.value = '';
     } catch (error) {
       clearServerProcessingState();
       setCoachmarkState('');
       syncCoachmark();
       const message = error?.message || 'Upload failed before processing started. Please retry.';
+      if (activeUploadClientId) {
+        window.MintiIngestionProgress?.updatePending(activeUploadClientId, {
+          stage: 'uploading', failed: true, error: message, message,
+        });
+      }
       reportUploadFailed(message);
       setFeedback(message, true);
     } finally {
+      activeUploadClientId = '';
       setUploadControlsDisabled(false);
     }
   };
@@ -2661,12 +2751,17 @@
       if (!sessionId) {
         throw new Error('Video was added, but we could not track server processing.');
       }
-      setServerProcessingState("Processing your video — this can take a few minutes. You can leave this page; we'll keep working and it'll be ready when you come back.");
-      const readySession = await waitForUploadSessionReady(sessionId);
+      const video = { ...(youtubePreviewData || {}), ...(ingestPayload?.session?.video || {}) };
+      const videoPk = video.id || ingestPayload?.session?.video_pk || ingestPayload?.video_pk;
+      if (!videoPk) throw new Error('Video was added, but the import could not be tracked.');
+      window.MintiIngestionProgress?.addCard({
+        ...progressCardOptions(videoPk, video, 'url'),
+        status: { stage: 'downloading', active: true, message: 'Downloading from YouTube…' },
+      });
       setCoachmarkState('uploaded');
-      window.setTimeout(() => {
-        if (!redirectToGeneratedVideo(readySession)) window.location.reload();
-      }, 700);
+      setFeedback('');
+      if (youtubeUrlInput) youtubeUrlInput.value = '';
+      setYoutubePreview('');
     } catch (error) {
       clearServerProcessingState();
       setCoachmarkState('');
