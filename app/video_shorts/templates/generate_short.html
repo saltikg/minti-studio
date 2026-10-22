@@ -20406,6 +20406,8 @@ document.addEventListener("DOMContentLoaded", () => {
   let designMeasureVersion = 0;
   let designRefreshFrame = null;
   let designNeedsVisibleRefresh = false;
+  let previewLayerSafetyFrame = null;
+  let previewLayerSafetyReported = false;
   const getMeasuredPreviewFrame = () => isOriginalCropAspect() ? origPreviewFrame : previewFrame;
   const isMeasuredPreviewVisible = () => {
     const frame = getMeasuredPreviewFrame();
@@ -20430,6 +20432,64 @@ document.addEventListener("DOMContentLoaded", () => {
     Object.entries(attrs).forEach(([key, value]) => node.setAttribute(key, String(value)));
     return node;
   };
+  const syncCaptionPaintOwners = () => {
+    const originalPreview = isOriginalCropAspect();
+    previewSubtitle?.classList.toggle("is-caption-paint-inactive", originalPreview);
+    previewSubtitle?.setAttribute("aria-hidden", originalPreview ? "true" : "false");
+    origPreviewCaption?.classList.toggle("is-caption-paint-inactive", !originalPreview);
+    origPreviewCaption?.setAttribute("aria-hidden", originalPreview ? "false" : "true");
+  };
+  const activeMeasuredLayer = (kind) => {
+    if (kind === "title") return isOriginalCropAspect() ? origPreviewTitle : previewTitle;
+    return isOriginalCropAspect() ? origPreviewCaption : previewSubtitle;
+  };
+  const measuredLayerHasVisiblePaint = (element) => {
+    if (!element?.isConnected || element.classList.contains("is-caption-paint-inactive")) return false;
+    const style = window.getComputedStyle(element);
+    const rect = element.getBoundingClientRect();
+    const text = String(element.textContent || "").trim();
+    return Boolean(text) && style.display !== "none" && style.visibility !== "hidden"
+      && Number(style.opacity || 1) > 0 && rect.width > 0 && rect.height > 0;
+  };
+  const schedulePreviewLayerSafetyCheck = (source = "unknown") => {
+    if (previewLayerSafetyFrame) window.cancelAnimationFrame(previewLayerSafetyFrame);
+    previewLayerSafetyFrame = window.requestAnimationFrame(() => {
+      previewLayerSafetyFrame = null;
+      if (!isMeasuredPreviewVisible()) return;
+      const activeTitleLayer = activeMeasuredLayer("title");
+      const activeCaptionLayer = activeMeasuredLayer("caption");
+      const repairedVisibility = Boolean(
+        (isTitleVisible() && activeTitleLayer?.classList.contains("is-hidden"))
+        || (isSubtitleVisible() && (
+          activeCaptionLayer?.classList.contains("is-hidden")
+          || activeCaptionLayer?.classList.contains("is-caption-paint-inactive")
+        ))
+      );
+      syncCaptionPaintOwners();
+      if (isTitleVisible()) activeTitleLayer?.classList.remove("is-hidden");
+      if (isSubtitleVisible()) activeCaptionLayer?.classList.remove("is-hidden");
+      const missingKinds = [
+        ...(isTitleVisible() && !measuredLayerHasVisiblePaint(activeTitleLayer) ? ["title"] : []),
+        ...(isSubtitleVisible() && !measuredLayerHasVisiblePaint(activeCaptionLayer) ? ["caption"] : []),
+      ];
+      if (!missingKinds.length && !repairedVisibility) return;
+      if (!previewLayerSafetyReported) {
+        previewLayerSafetyReported = true;
+        window.MintiErrorReporter?.report?.({
+          error_type: "design_preview_layer_repair",
+          message: `Recovered ${missingKinds.length ? `missing ${missingKinds.join("+")} paint` : "hidden preview layer"} after ${source}`,
+          source: window.location.pathname,
+        });
+      }
+      if (!missingKinds.length) return;
+      if (measuredDesign) {
+        repaintMeasuredDesign(missingKinds);
+      } else {
+        requestMeasuredDesign({ force: true, kinds: missingKinds });
+      }
+    });
+  };
+  window.verifyCropEditorPaintLayers = schedulePreviewLayerSafetyCheck;
   const positionedMeasuredSpec = (spec, kind) => {
     if (measuredPlacement[kind] == null) return spec;
     const targetTop = Number(measuredPlacement[kind]);
@@ -20522,6 +20582,7 @@ document.addEventListener("DOMContentLoaded", () => {
       element.dataset.lineCount = String(spec.lines);
       element.replaceChildren(svg);
       element.dataset.captionDomOwner = "measured-svg";
+      schedulePreviewLayerSafetyCheck(`${kind}_repaint`);
     });
   };
   const normalizeMeasuredKinds = (kinds) => {
@@ -20771,10 +20832,7 @@ document.addEventListener("DOMContentLoaded", () => {
   const applyPreviewLayout = ({ measure = true, measureKinds = null, repaintIfUnchanged = false } = {}) => {
     const dims = getOverlayDims();
     const originalPreview = isOriginalCropAspect();
-    previewSubtitle?.classList.toggle("is-caption-paint-inactive", originalPreview);
-    previewSubtitle?.setAttribute("aria-hidden", originalPreview ? "true" : "false");
-    origPreviewCaption?.classList.toggle("is-caption-paint-inactive", !originalPreview);
-    origPreviewCaption?.setAttribute("aria-hidden", originalPreview ? "false" : "true");
+    syncCaptionPaintOwners();
     reframeSection?.classList.toggle("is-original-layout", originalPreview);
     if (previewFrame) {
       previewFrame.classList.toggle("is-original-layout", originalPreview);
@@ -20925,13 +20983,19 @@ document.addEventListener("DOMContentLoaded", () => {
       origPreviewCaption.dataset.previewElement = "subtitle";
       previewSubtitle?.classList.forEach((className) => {
         if (
-          className.startsWith("is-") ||
+          (className.startsWith("is-") && ![
+            "is-caption-paint-inactive",
+            "is-dragging",
+            "is-selected",
+            "is-hidden",
+          ].includes(className)) ||
           className.startsWith("word-highlight") ||
           className.startsWith("caption-template")
         ) {
           origPreviewCaption.classList.add(className);
         }
       });
+      syncCaptionPaintOwners();
       origPreviewCaption.classList.toggle("is-hidden", !isSubtitleVisible());
       origPreviewCaption.style.top = subtitleTop * scaleY + "px";
       origPreviewCaption.style.height = subtitleHeight * scaleY + "px";
@@ -20973,6 +21037,7 @@ document.addEventListener("DOMContentLoaded", () => {
     measuredPlacement.caption = Number.isFinite(renderedCaptionTop) ? renderedCaptionTop / Math.max(scaleY, 0.0001) : subtitleTop;
     drawOriginalResultPreview();
     if (measure) requestMeasuredDesign({ kinds: measureKinds, repaintIfUnchanged });
+    else schedulePreviewLayerSafetyCheck("position_commit");
     syncSubscribeStill();
     syncOverlayVisibilityUi();
     if (selectedPreviewElement === "video" && !isPreviewElementDraggable("video")) {
@@ -21684,13 +21749,13 @@ document.addEventListener("DOMContentLoaded", () => {
   previewFrame?.addEventListener("pointermove", handlePreviewPointerMove);
   origPreviewFrame?.addEventListener("pointermove", handlePreviewPointerMove);
 
-  const endPreviewDrag = (event) => {
+  const endPreviewDrag = (event, { commit = true } = {}) => {
     const completedDragState = dragState;
     if (completedDragState?.element) {
       completedDragState.element.style.removeProperty("transform");
       completedDragState.element.style.removeProperty("will-change");
     }
-    if (completedDragState?.moved) {
+    if (commit && completedDragState?.moved) {
       const deltaRenderY = completedDragState.previewDeltaY * completedDragState.renderUnitsPerClientY;
       applyElementDelta(completedDragState.kind, deltaRenderY);
     }
@@ -21704,15 +21769,17 @@ document.addEventListener("DOMContentLoaded", () => {
     previewFrame?.classList.remove("show-ui-safe-guides");
     origPreviewFrame?.classList.remove("is-dragging");
     dragState = null;
+    syncCaptionPaintOwners();
+    schedulePreviewLayerSafetyCheck(commit ? "drag_drop" : "drag_cancel");
     if (completedDragState && !completedDragState.moved) {
       window.focusCropModalTabForPreviewKind?.(completedDragState.kind);
     }
   };
 
-  previewFrame?.addEventListener("pointerup", endPreviewDrag);
-  previewFrame?.addEventListener("pointercancel", endPreviewDrag);
-  origPreviewFrame?.addEventListener("pointerup", endPreviewDrag);
-  origPreviewFrame?.addEventListener("pointercancel", endPreviewDrag);
+  previewFrame?.addEventListener("pointerup", (event) => endPreviewDrag(event));
+  previewFrame?.addEventListener("pointercancel", (event) => endPreviewDrag(event, { commit: false }));
+  origPreviewFrame?.addEventListener("pointerup", (event) => endPreviewDrag(event));
+  origPreviewFrame?.addEventListener("pointercancel", (event) => endPreviewDrag(event, { commit: false }));
   previewFrame?.addEventListener("pointerleave", (event) => {
     if (dragState && !(event.buttons & 1)) {
       endPreviewDrag(event);
@@ -21735,6 +21802,7 @@ document.addEventListener("DOMContentLoaded", () => {
   });
   const handlePreviewKeydown = (event) => {
     if (event.key === "Escape") {
+      if (dragState) endPreviewDrag(event, { commit: false });
       setSelectedPreviewElement("");
       return;
     }
@@ -24155,6 +24223,7 @@ document.addEventListener("DOMContentLoaded", function () {
     activeShapeSnapGuides = [];
     document.body.classList.remove("is-shape-moving");
     if (hadInteraction) syncShapesUi();
+    if (hadInteraction) window.verifyCropEditorPaintLayers?.("overlay_drop");
   };
   document.addEventListener("pointerup", finishShapePointerInteraction);
   document.addEventListener("pointercancel", finishShapePointerInteraction);
