@@ -50,9 +50,9 @@
           </div>
         </div>
         <div class="vs-ingestion-steps" data-ingestion-steps>
-          <div class="vs-ingestion-step" data-ingestion-step="source"><span class="vs-ingestion-step-dot"></span><span data-ingestion-source-label>Download</span></div>
-          <div class="vs-ingestion-step" data-ingestion-step="transcribing"><span class="vs-ingestion-step-dot"></span><span>Transcribe</span></div>
-          <div class="vs-ingestion-step" data-ingestion-step="finding_clips"><span class="vs-ingestion-step-dot"></span><span>Find clips</span></div>
+          <div class="vs-ingestion-step" data-ingestion-step="source"><span class="vs-ingestion-step-dot"></span><span data-ingestion-source-label>Import</span></div>
+          <div class="vs-ingestion-step" data-ingestion-step="transcribing"><span class="vs-ingestion-step-dot"></span><span>AI analysis</span></div>
+          <div class="vs-ingestion-step" data-ingestion-step="finding_clips"><span class="vs-ingestion-step-dot"></span><span>Best moments</span></div>
           <div class="vs-ingestion-step" data-ingestion-step="creating_clip"><span class="vs-ingestion-step-dot"></span><span>First clip</span></div>
         </div>
         <div class="vs-ingestion-active-row" data-ingestion-active-row>
@@ -61,7 +61,7 @@
         </div>
         <button type="button" class="vs-ingestion-progress-retry" data-ingestion-retry hidden>Retry</button>`;
       const sourceLabel = node.querySelector("[data-ingestion-source-label]");
-      if (sourceLabel) sourceLabel.textContent = node.dataset.sourceKind === "upload" ? "Upload" : "Download";
+      if (sourceLabel) sourceLabel.textContent = node.dataset.sourceKind === "upload" ? "Upload" : "Import";
       const open = node.querySelector("[data-ingestion-open]");
       if (open) open.href = node.dataset.openUrl || "#";
       cardMeta(node);
@@ -109,16 +109,7 @@
     return "bi-gear";
   };
 
-  const ringLabelForStage = (stage, copy) => ({
-    uploading: "Uploading",
-    downloading: "Downloading from YouTube",
-    transcribing: "Transcribing",
-    finding_clips: "Finding the best clips",
-    creating_clip: "Creating your first clip",
-    processing: "Processing",
-  }[stage] || copy || "Processing");
-
-  const updateRing = (node, { stage, hasPercent, percentValue, failed, ready, autoRenderStatus, copy }) => {
+  const updateRing = (node, { stage, hasPercent, percentValue, failed, ready, autoRenderStatus, copy, readyCopy }) => {
     const ring = node.querySelector("[data-ingestion-ring]");
     if (!ring) return;
     const value = ring.querySelector("[data-ingestion-ring-value]");
@@ -146,7 +137,7 @@
     if (label) {
       label.textContent = ringFailed
         ? "Processing failed"
-        : (skipped ? "First clip skipped" : (done ? "Ready" : `${ringLabelForStage(stage, copy)}${determinate ? ` ${Math.round(clamped)} percent` : ""}`));
+        : (skipped ? copy : (done ? readyCopy : copy));
     }
   };
 
@@ -168,10 +159,15 @@
     const autoRenderFailed = autoRenderStatus === "failed";
     const eta = formatEta(status.eta_seconds);
     const renderEta = formatRenderEta(status.render_eta_seconds);
-    let copy = String((ready && status.detail_message) || status.message || (ready ? "Ready" : "Processing…"));
-    if (hasPercent && stage === "downloading" && !copy.includes("%")) copy += ` ${Math.round(percentValue)}%`;
-    if (eta && stage === "downloading" && !copy.includes("left")) copy += ` · ${eta}`;
-    if (renderEta && stage === "creating_clip" && !copy.includes(renderEta)) copy += ` · ${renderEta}`;
+    const readyCopy = String(status.ready_text || "Ready");
+    let copy = String((ready && status.detail_message) || status.message || (ready ? readyCopy : "Processing…"));
+    if (!ready && !failed && !status.stale) {
+      if (stage === "uploading") copy = `Uploading your video…${hasPercent ? ` ${Math.round(percentValue)}%` : ""}${eta ? ` · ${eta}` : ""}`;
+      else if (stage === "downloading") copy = `Bringing in your video…${hasPercent ? ` ${Math.round(percentValue)}%` : ""}${eta ? ` · ${eta}` : ""}`;
+      else if (stage === "transcribing") copy = "AI is listening to your video…";
+      else if (stage === "finding_clips") copy = "Finding your best moments…";
+      else if (stage === "creating_clip") copy = `Creating your first clip…${renderEta ? ` ${renderEta}` : ""}`;
+    }
     if (failed && status.error) copy = String(status.error);
     if (message) message.textContent = copy;
     node.classList.toggle("is-failed", failed);
@@ -185,7 +181,7 @@
     node.querySelector("[data-ingestion-ready]")?.toggleAttribute("hidden", !ready);
     const readyText = node.querySelector("[data-ingestion-ready-text]");
     if (readyText) readyText.textContent = status.ready_text || "Ready ✓";
-    updateRing(node, { stage, hasPercent, percentValue, failed, ready, autoRenderStatus, copy });
+    updateRing(node, { stage, hasPercent, percentValue, failed, ready, autoRenderStatus, copy, readyCopy });
     updateSteps(node, failed && node.dataset.lastStage ? node.dataset.lastStage : stage, failed, autoRenderStatus);
     node.dataset.wasActive = isActive ? "1" : node.dataset.wasActive || "0";
     node.dataset.lastStage = stage;
@@ -336,7 +332,7 @@
     node.removeAttribute("hidden");
     node.dataset.ingestionReady = "0";
     ensureContents(node);
-    updateNode(node, options.status || { stage: node.dataset.sourceKind === "upload" ? "uploading" : "downloading", active: true, message: node.dataset.sourceKind === "upload" ? "Uploading…" : "Downloading from YouTube…" });
+    updateNode(node, options.status || { stage: node.dataset.sourceKind === "upload" ? "uploading" : "downloading", active: true, message: node.dataset.sourceKind === "upload" ? "Uploading your video…" : "Bringing in your video…" });
     if (videoPk) wakePolling();
     return node;
   };
@@ -355,7 +351,7 @@
     node.dataset.openUrl = options.openUrl || "";
     const open = node.querySelector("[data-ingestion-open]");
     if (open) open.href = node.dataset.openUrl || "#";
-    updateNode(node, options.status || { stage: "transcribing", active: true, message: "Transcribing…" });
+    updateNode(node, options.status || { stage: "transcribing", active: true, message: "AI is listening to your video…" });
     wakePolling();
     return node;
   };

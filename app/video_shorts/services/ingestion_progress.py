@@ -224,17 +224,17 @@ def _status_payload(
         stage, message, active = "creating_clip", "Creating your first clip…", True
         auto_render_status = "active"
     elif active_suggest:
-        stage, message, active = "finding_clips", "Finding the best clips…", True
+        stage, message, active = "finding_clips", "Finding your best moments…", True
     elif active_source:
         result = active_source.get("result") or {}
         raw_stage = str(result.get("stage") or "").strip().lower()
         if active_source["type"] == "ingest_youtube" and raw_stage == "downloading":
-            stage, message = "downloading", "Downloading from YouTube…"
+            stage, message = "downloading", "Bringing in your video…"
             percent = result.get("percent")
             eta_seconds = result.get("eta_seconds")
             speed_bps = result.get("speed_bps")
         elif active_source["type"] == "transcribe_upload" or raw_stage == "transcribing":
-            stage, message = "transcribing", "Transcribing…"
+            stage, message = "transcribing", "AI is listening to your video…"
             percent = result.get("percent")
         else:
             stage = "processing"

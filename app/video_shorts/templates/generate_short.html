@@ -6547,7 +6547,7 @@
          data-status-url="{{ url_for('video_shorts_bp.my_videos_processing_status') }}"
          data-retry-url="{{ url_for('video_shorts_bp.retry_my_video_processing', video_pk=video.id) }}"
          data-reload-on-ready="1"
-         data-was-active="1">Finding the best clips…</div>
+         data-was-active="1">Finding your best moments…</div>
   </div>
 {% endif %}
 
@@ -7287,7 +7287,7 @@
                     <div class="generate-v2-auto-empty" aria-live="polite">
                         <span class="spinner-border spinner-border-sm" role="status" aria-hidden="true"></span>
                         <span class="clip-rail-copy">
-                          <span class="clip-rail-title">Finding the best clips…</span>
+                          <span class="clip-rail-title">Finding your best moments…</span>
                         </span>
                     </div>
                   {% elif generate_v2 and auto_suggest_render_state and auto_suggest_render_state.no_strong %}
@@ -7864,7 +7864,7 @@
                   <div class="clip-management-panel">
                     <div class="generate-v2-clip-editor-empty">
                       <span class="spinner-border spinner-border-sm me-2" aria-hidden="true"></span>
-                      Finding the best clips…
+                      Finding your best moments…
                     </div>
                   </div>
                 </div>

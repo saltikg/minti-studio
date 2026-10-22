@@ -2148,7 +2148,8 @@
         stage: 'uploading',
         active: true,
         percent,
-        message: `Uploading… ${formatProgressPercent(percent)}${eta ? ` · ${eta}` : ''}`,
+        eta_seconds: etaSeconds,
+        message: `Uploading your video… ${formatProgressPercent(percent)}${eta ? ` · ${eta}` : ''}`,
       });
     }
   };
@@ -2571,10 +2572,10 @@
       const percentLabel = hasPercent ? ` ${Math.round(percent)}%` : '';
       setServerStageProgress(
         hasPercent ? percent : null,
-        `Downloading from YouTube…${percentLabel}${etaLabel ? ` · ${etaLabel}` : ''}`,
+        `Bringing in your video…${percentLabel}${etaLabel ? ` · ${etaLabel}` : ''}`,
       );
     } else if (stage === 'transcribing') {
-      setServerStageProgress(hasPercent ? percent : null, 'Transcribing…');
+      setServerStageProgress(hasPercent ? percent : null, 'AI is listening to your video…');
     } else {
       setServerProcessingState("Processing your video — this can take a few minutes. You can leave this page; we'll keep working and it'll be ready when you come back.");
     }
@@ -2694,7 +2695,7 @@
     setCoachmarkState('uploading');
     renderCoachmark(2);
     setUploadControlsDisabled(true);
-    setUploadPhaseFeedback('Uploading…');
+    setUploadPhaseFeedback('Uploading your video…');
     resetProgress();
     activeUploadClientId = `upload-${Date.now()}`;
     window.MintiIngestionProgress?.addCard({
@@ -2702,7 +2703,7 @@
       title: selectedFile.name,
       sourceKind: 'upload',
       autoOpen: true,
-      status: { stage: 'uploading', active: true, percent: 0, message: 'Uploading… 0%' },
+      status: { stage: 'uploading', active: true, percent: 0, message: 'Uploading your video… 0%' },
     });
     setFeedback('');
     try {
@@ -2717,7 +2718,7 @@
       if (!videoPk) throw new Error('Upload finished, but the video could not be tracked.');
       window.MintiIngestionProgress?.promotePending(activeUploadClientId, {
         ...progressCardOptions(videoPk, video, 'upload'),
-        status: { stage: 'transcribing', active: true, message: 'Transcribing…' },
+        status: { stage: 'transcribing', active: true, message: 'AI is listening to your video…' },
       });
       setCoachmarkState('uploaded');
       setFeedback('');
@@ -2769,7 +2770,7 @@
       window.MintiIngestionProgress?.addCard({
         ...progressCardOptions(videoPk, video, 'url'),
         autoOpen: true,
-        status: { stage: 'downloading', active: true, message: 'Downloading from YouTube…' },
+        status: { stage: 'downloading', active: true, message: 'Bringing in your video…' },
       });
       setCoachmarkState('uploaded');
       setFeedback('');
