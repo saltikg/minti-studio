@@ -398,12 +398,8 @@
     color: rgba(226, 232, 240, 0.68);
     font-size: 0.92rem;
   }
-  .mv-upload-meta,
   .mv-upload-feedback {
-    color: rgba(226, 232, 240, 0.76);
-    font-size: 0.92rem;
-  }
-  .mv-upload-note {
+    width: min(100%, 720px);
     color: rgba(226, 232, 240, 0.76);
     font-size: 0.92rem;
   }
@@ -788,6 +784,7 @@
     }
   }
   .mv-add-panel {
+    width: min(100%, 720px);
     background: transparent;
     border: 0;
     border-radius: 0;
@@ -858,8 +855,8 @@
     display: block;
   }
   .mv-pane-inner {
-    width: min(100%, 720px);
-    margin-inline: auto;
+    width: 100%;
+    margin-inline: 0;
   }
   .mv-url-row {
     display: grid;
@@ -903,18 +900,6 @@
     margin-top: 8px;
     color: rgba(148, 163, 184, 0.72);
     font-size: 0.78rem;
-  }
-  .mv-upload-actions-row {
-    display: grid;
-    grid-template-columns: minmax(0, 1fr) auto;
-    align-items: stretch;
-    gap: 10px;
-  }
-  .mv-upload-actions-row .mv-dropzone {
-    min-height: 118px;
-  }
-  .mv-upload-actions-row .btn {
-    min-width: 138px;
   }
   .mv-youtube-preview {
     display: none;
@@ -986,12 +971,31 @@
     }
   }
   .mv-dropzone {
-    min-height: 150px;
+    box-sizing: border-box;
+    width: 100%;
+    min-height: 110px;
     align-items: center;
     border-color: rgba(40, 57, 77, 0.95);
     border-radius: 14px;
     background: rgba(8, 13, 21, 0.96);
     text-align: center;
+  }
+  .mv-dropzone:focus-visible {
+    border-color: #5eead4;
+    outline: 3px solid rgba(45, 212, 191, 0.18);
+    outline-offset: 2px;
+  }
+  .mv-dropzone-main {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    gap: 9px;
+    font-weight: 700;
+  }
+  .mv-dropzone-browse {
+    color: #5eead4;
+    text-decoration: underline;
+    text-underline-offset: 3px;
   }
   .mv-dropzone:hover,
   .mv-dropzone.is-dragover {
@@ -1210,10 +1214,9 @@
   }
   @media (max-width: 700px) {
     .mv-pane {
-      padding: 20px;
+      padding: 20px 0 0;
     }
     .mv-url-row,
-    .mv-upload-actions-row,
     .mv-toolbar-grid {
       grid-template-columns: 1fr;
     }
@@ -1225,7 +1228,9 @@
       margin-top: 8px;
       border-radius: 12px;
     }
-    .mv-upload-actions-row .btn { width: 100%; min-height: 48px; }
+    .mv-add-panel,
+    .mv-pane-inner,
+    .mv-dropzone { width: 100%; max-width: 100%; }
     .mv-row {
       grid-template-columns: 1fr;
     }
@@ -1290,17 +1295,20 @@
         <div class="mv-pane" id="mv-pane-upload" role="tabpanel" aria-labelledby="mv-tab-upload" hidden>
           <div class="mv-pane-inner">
             <input id="mv-upload-file" type="file" class="mv-hidden-input" accept=".mp4,.mov,.mkv,video/*" />
-            <div class="mv-upload-actions-row">
-              <label for="mv-upload-file" class="mv-dropzone" id="mv-upload-dropzone">
-                <i class="bi bi-upload fs-3 text-secondary" aria-hidden="true"></i>
-                <span class="mv-dropzone-copy">Choose a file or drag it here</span>
-                <span class="mv-dropzone-meta">Up to 3GB. Smaller files upload faster.</span>
-              </label>
-              <button type="button" id="mv-upload-submit" class="btn btn-primary">Upload video</button>
-            </div>
-            <div class="mv-add-hint">MP4, MOV or MKV · up to 3GB.</div>
-            <div id="mv-upload-meta" class="mv-upload-meta mt-2"></div>
-            <div id="mv-upload-note" class="mv-upload-note mt-2"></div>
+            <label
+              for="mv-upload-file"
+              class="mv-dropzone"
+              id="mv-upload-dropzone"
+              role="button"
+              tabindex="0"
+              aria-label="Upload a video file. Drag a video here or browse."
+            >
+              <span class="mv-dropzone-main">
+                <i class="bi bi-upload text-secondary" aria-hidden="true"></i>
+                <span>Drag a video here or <span class="mv-dropzone-browse">browse</span></span>
+              </span>
+              <span class="mv-dropzone-meta">MP4, MOV or MKV · up to 3 GB</span>
+            </label>
           </div>
         </div>
       </div>
@@ -1575,10 +1583,7 @@
   const coachmarkShell = document.getElementById('mv-shell');
   const uploadInput = document.getElementById('mv-upload-file');
   const dropzone = document.getElementById('mv-upload-dropzone');
-  const uploadMeta = document.getElementById('mv-upload-meta');
-  const uploadNote = document.getElementById('mv-upload-note');
   const uploadFeedback = document.getElementById('mv-upload-feedback');
-  const uploadSubmit = document.getElementById('mv-upload-submit');
   const uploadProgress = document.getElementById('mv-upload-progress');
 	  const uploadProgressBar = document.getElementById('mv-upload-progress-bar');
 		  const youtubeUrlInput = document.getElementById('mv-youtube-url');
@@ -2109,20 +2114,6 @@
 
   const setSelectedFile = (file) => {
     selectedFile = file || null;
-    if (!uploadMeta) return;
-    if (!selectedFile) {
-      uploadMeta.textContent = '';
-      if (uploadNote) uploadNote.textContent = '';
-      return;
-    }
-    const sizeMb = (selectedFile.size / (1024 * 1024)).toFixed(1);
-    const sizeGb = selectedFile.size / (1024 * 1024 * 1024);
-    uploadMeta.textContent = `${selectedFile.name} · ${sizeMb} MB · ${selectedFile.type || 'video'}`;
-    if (uploadNote) {
-      uploadNote.textContent = sizeGb > 1
-        ? `Oops, your video is ${sizeGb.toFixed(1)}GB. Smaller files upload faster.`
-        : '';
-    }
   };
 
   const isLikelyMobileDevice = () => {
@@ -2142,14 +2133,22 @@
 
   let currentUploadProgressValue = 0;
 
-  const setUploadPhaseProgress = (percent) => {
+  const formatUploadEta = (seconds) => {
+    const value = Number(seconds);
+    if (!Number.isFinite(value) || value < 0) return '';
+    if (value < 60) return '<1 min left';
+    return `~${Math.max(1, Math.ceil(value / 60))} min left`;
+  };
+
+  const setUploadPhaseProgress = (percent, etaSeconds = null) => {
     setProgress(percent);
     if (activeUploadClientId) {
+      const eta = formatUploadEta(etaSeconds);
       window.MintiIngestionProgress?.updatePending(activeUploadClientId, {
         stage: 'uploading',
         active: true,
         percent,
-        message: `Uploading… ${formatProgressPercent(percent)}`,
+        message: `Uploading… ${formatProgressPercent(percent)}${eta ? ` · ${eta}` : ''}`,
       });
     }
   };
@@ -2187,12 +2186,6 @@
     isUploading = Boolean(disabled);
     if (uploadInput) {
       uploadInput.disabled = isUploading;
-    }
-    if (uploadSubmit) {
-      uploadSubmit.disabled = isUploading;
-      uploadSubmit.textContent = isUploading
-        ? (phase === 'processing' ? 'Processing…' : 'Uploading…')
-        : 'Upload video';
     }
     if (youtubeUrlInput) {
       youtubeUrlInput.disabled = isUploading;
@@ -2424,9 +2417,14 @@
     }, 450);
   };
 
-  const uploadPart = (url, blob) => new Promise((resolve, reject) => {
+  const uploadPart = (url, blob, onProgress = null) => new Promise((resolve, reject) => {
     const xhr = new XMLHttpRequest();
     xhr.open('PUT', url, true);
+    xhr.upload.onprogress = (event) => {
+      if (event.lengthComputable && typeof onProgress === 'function') {
+        onProgress(event.loaded, event.total);
+      }
+    };
     xhr.onerror = () => reject(new Error('Network error while uploading a part.'));
     xhr.onload = () => {
       if (xhr.status < 200 || xhr.status >= 300) {
@@ -2614,12 +2612,20 @@
     const startPayload = await startMultipartUpload(file);
     const completedParts = [];
     const totalParts = Array.isArray(startPayload.parts) ? startPayload.parts.length : 0;
+    const uploadStartedAt = performance.now();
+    let completedBytes = 0;
+    let lastReportedBytes = 0;
     let aborted = false;
 
-    const updatePartProgress = (completedCount) => {
-      if (!totalParts) return;
-      const percent = Math.round((completedCount / totalParts) * 100);
-      setUploadPhaseProgress(percent);
+    const updatePartProgress = (completedCount, currentPartBytes = 0) => {
+      if (!totalParts || !file.size) return;
+      const uploadedBytes = Math.max(lastReportedBytes, Math.min(file.size, completedBytes + currentPartBytes));
+      lastReportedBytes = uploadedBytes;
+      const percent = Math.round((uploadedBytes / file.size) * 100);
+      const elapsedSeconds = Math.max(0.25, (performance.now() - uploadStartedAt) / 1000);
+      const bytesPerSecond = uploadedBytes / elapsedSeconds;
+      const etaSeconds = bytesPerSecond > 0 ? (file.size - uploadedBytes) / bytesPerSecond : null;
+      setUploadPhaseProgress(percent, etaSeconds);
       if (completedCount >= totalParts && activeUploadClientId) {
         window.MintiIngestionProgress?.updatePending(activeUploadClientId, {
           stage: 'uploading', active: true, percent: 100, message: 'Finalizing upload…',
@@ -2638,7 +2644,9 @@
         let attempt = 0;
         while (attempt < 3 && !etag) {
           try {
-            etag = await uploadPart(part.presigned_url, chunk);
+            etag = await uploadPart(part.presigned_url, chunk, (loadedBytes) => {
+              updatePartProgress(completedParts.length, loadedBytes);
+            });
           } catch (error) {
             attempt += 1;
             if (attempt >= 3) {
@@ -2649,6 +2657,7 @@
           }
         }
         completedParts.push({ part_number: partNumber, etag });
+        completedBytes += chunk.size;
         updatePartProgress(completedParts.length);
       }
       return await completeMultipartUpload({
@@ -2725,6 +2734,8 @@
       }
       reportUploadFailed(message);
       setFeedback(message, true);
+      setSelectedFile(null);
+      if (uploadInput) uploadInput.value = '';
     } finally {
       activeUploadClientId = '';
       setUploadControlsDisabled(false);
@@ -2780,9 +2791,12 @@
     setSelectedFile(file || null);
     if (file && isFileOverPerFileLimit(file)) {
       setFeedback(`This file is over the ${formatBytesLabel(maxUploadBytesPerFile)} upload limit. Please choose a smaller file.`, true);
+      setSelectedFile(null);
+      if (uploadInput) uploadInput.value = '';
       return;
     }
     setFeedback('');
+    if (file) void uploadFile();
   });
 
   ['dragenter', 'dragover'].forEach((eventName) => {
@@ -2811,10 +2825,19 @@
       setSelectedFile(file);
       if (isFileOverPerFileLimit(file)) {
         setFeedback(`This file is over the ${formatBytesLabel(maxUploadBytesPerFile)} upload limit. Please choose a smaller file.`, true);
+        setSelectedFile(null);
+        if (uploadInput) uploadInput.value = '';
         return;
       }
       setFeedback('');
+      void uploadFile();
     }
+  });
+
+  dropzone?.addEventListener('keydown', (event) => {
+    if (isUploading || !['Enter', ' '].includes(event.key)) return;
+    event.preventDefault();
+    uploadInput?.click();
   });
 
 	  if (mobileNotice && isLikelyMobileDevice()) {
@@ -2833,7 +2856,6 @@
 	  addedFilter?.addEventListener('change', applyVideoFilters);
 	  applyVideoFilters();
 
-	  uploadSubmit?.addEventListener('click', uploadFile);
 	  youtubeSubmit?.addEventListener('click', ingestYoutubeUrl);
 	  youtubeUrlInput?.addEventListener('keydown', (event) => {
 	    if (event.key === 'Enter') {

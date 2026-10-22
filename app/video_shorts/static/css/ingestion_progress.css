@@ -44,7 +44,7 @@
   display: grid;
   gap: 10px;
   width: min(100%, 720px);
-  margin: 14px auto 0;
+  margin: 14px 0 0;
 }
 .vs-ingestion-card {
   padding: 14px;
