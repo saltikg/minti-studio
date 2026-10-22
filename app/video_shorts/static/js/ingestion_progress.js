@@ -13,6 +13,13 @@
     return value < 60 ? "<1 min left" : `~${Math.max(1, Math.round(value / 60))} min left`;
   };
 
+  const formatRenderEta = (seconds) => {
+    const value = Number(seconds);
+    if (!Number.isFinite(value) || value <= 0) return "";
+    if (value < 45) return "<1 min";
+    return `~${Math.max(1, Math.round(value / 60))} min`;
+  };
+
   const cardMeta = (node) => {
     const title = node.querySelector("[data-ingestion-card-title]");
     const meta = node.querySelector("[data-ingestion-card-meta]");
@@ -36,6 +43,11 @@
           <div class="vs-ingestion-card-thumb"><img data-ingestion-card-image alt="" hidden><i class="bi bi-film" aria-hidden="true"></i></div>
           <div class="vs-ingestion-card-copy"><div class="vs-ingestion-card-title" data-ingestion-card-title></div><div class="vs-ingestion-card-meta" data-ingestion-card-meta></div></div>
           <div class="vs-ingestion-card-ready" data-ingestion-ready hidden><span data-ingestion-ready-text>Ready ✓</span><a class="vs-ingestion-open" data-ingestion-open>Open</a></div>
+          <div class="vs-ingestion-status-ring is-indeterminate" data-ingestion-ring role="status" aria-live="polite" aria-atomic="true">
+            <svg viewBox="0 0 48 48" aria-hidden="true"><circle class="vs-ingestion-ring-track" cx="24" cy="24" r="19" pathLength="100"></circle><circle class="vs-ingestion-ring-value" data-ingestion-ring-value cx="24" cy="24" r="19" pathLength="100"></circle></svg>
+            <span class="vs-ingestion-ring-center" aria-hidden="true"><span data-ingestion-ring-percent></span><i class="bi bi-gear" data-ingestion-ring-icon></i></span>
+            <span class="visually-hidden" data-ingestion-ring-label>Processing</span>
+          </div>
         </div>
         <div class="vs-ingestion-steps" data-ingestion-steps>
           <div class="vs-ingestion-step" data-ingestion-step="source"><span class="vs-ingestion-step-dot"></span><span data-ingestion-source-label>Download</span></div>
@@ -87,6 +99,57 @@
     return Array.from(document.querySelectorAll("[data-video-row]")).find((row) => String(row.dataset.videoId || "") === id);
   };
 
+  const ringIconForStage = (stage, node) => {
+    if (stage === "uploading") return "bi-upload";
+    if (stage === "downloading") return "bi-download";
+    if (stage === "transcribing") return "bi-mic";
+    if (stage === "finding_clips") return "bi-stars";
+    if (stage === "creating_clip") return "bi-camera-reels";
+    if (stage === "processing") return node.dataset.sourceKind === "upload" ? "bi-upload" : "bi-gear";
+    return "bi-gear";
+  };
+
+  const ringLabelForStage = (stage, copy) => ({
+    uploading: "Uploading",
+    downloading: "Downloading from YouTube",
+    transcribing: "Transcribing",
+    finding_clips: "Finding the best clips",
+    creating_clip: "Creating your first clip",
+    processing: "Processing",
+  }[stage] || copy || "Processing");
+
+  const updateRing = (node, { stage, hasPercent, percentValue, failed, ready, autoRenderStatus, copy }) => {
+    const ring = node.querySelector("[data-ingestion-ring]");
+    if (!ring) return;
+    const value = ring.querySelector("[data-ingestion-ring-value]");
+    const percent = ring.querySelector("[data-ingestion-ring-percent]");
+    const icon = ring.querySelector("[data-ingestion-ring-icon]");
+    const label = ring.querySelector("[data-ingestion-ring-label]");
+    const autoRenderFailed = autoRenderStatus === "failed";
+    const skipped = ready && autoRenderStatus === "skipped";
+    const ringFailed = failed || autoRenderFailed;
+    const done = ready && !ringFailed && !skipped;
+    const determinate = !ringFailed && !done && !skipped && hasPercent;
+    const indeterminate = !ringFailed && !done && !skipped && !hasPercent;
+    ring.classList.toggle("is-failed", ringFailed);
+    ring.classList.toggle("is-done", done);
+    ring.classList.toggle("is-skipped", skipped);
+    ring.classList.toggle("is-determinate", determinate);
+    ring.classList.toggle("is-indeterminate", indeterminate);
+    const clamped = Math.max(0, Math.min(100, percentValue));
+    if (value) value.style.strokeDashoffset = determinate ? String(100 - clamped) : "0";
+    if (percent) percent.textContent = determinate ? `${Math.round(clamped)}%` : (done ? "✓" : (ringFailed ? "!" : (skipped ? "–" : "")));
+    if (icon) {
+      icon.className = `bi ${ringIconForStage(stage, node)}`;
+      icon.hidden = !indeterminate;
+    }
+    if (label) {
+      label.textContent = ringFailed
+        ? "Processing failed"
+        : (skipped ? "First clip skipped" : (done ? "Ready" : `${ringLabelForStage(stage, copy)}${determinate ? ` ${Math.round(clamped)} percent` : ""}`));
+    }
+  };
+
   const updateNode = (node, status = {}) => {
     ensureContents(node);
     const message = node.querySelector("[data-ingestion-message]");
@@ -104,9 +167,11 @@
     const autoRenderStatus = String(status.auto_render_status || "");
     const autoRenderFailed = autoRenderStatus === "failed";
     const eta = formatEta(status.eta_seconds);
+    const renderEta = formatRenderEta(status.render_eta_seconds);
     let copy = String((ready && status.detail_message) || status.message || (ready ? "Ready" : "Processing…"));
     if (hasPercent && stage === "downloading" && !copy.includes("%")) copy += ` ${Math.round(percentValue)}%`;
     if (eta && stage === "downloading" && !copy.includes("left")) copy += ` · ${eta}`;
+    if (renderEta && stage === "creating_clip" && !copy.includes(renderEta)) copy += ` · ${renderEta}`;
     if (failed && status.error) copy = String(status.error);
     if (message) message.textContent = copy;
     node.classList.toggle("is-failed", failed);
@@ -120,6 +185,7 @@
     node.querySelector("[data-ingestion-ready]")?.toggleAttribute("hidden", !ready);
     const readyText = node.querySelector("[data-ingestion-ready-text]");
     if (readyText) readyText.textContent = status.ready_text || "Ready ✓";
+    updateRing(node, { stage, hasPercent, percentValue, failed, ready, autoRenderStatus, copy });
     updateSteps(node, failed && node.dataset.lastStage ? node.dataset.lastStage : stage, failed, autoRenderStatus);
     node.dataset.wasActive = isActive ? "1" : node.dataset.wasActive || "0";
     node.dataset.lastStage = stage;

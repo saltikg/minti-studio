@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 from datetime import datetime, timezone
+from statistics import median
 from typing import Any, Dict, Iterable, Optional
 
 from app.video_shorts.services.db import get_db_readonly
@@ -81,6 +82,74 @@ def _is_auto_render(job: Dict[str, Any]) -> bool:
     )
 
 
+def _as_positive_float(value: Any) -> Optional[float]:
+    try:
+        number = float(value)
+    except (TypeError, ValueError):
+        return None
+    return number if number > 0 else None
+
+
+def _clip_duration_from_payload(payload: Dict[str, Any]) -> Optional[float]:
+    ranges = payload.get("edit_keep_ranges") or (payload.get("options") or {}).get("edit_keep_ranges")
+    if isinstance(ranges, list):
+        total = 0.0
+        for item in ranges:
+            if not isinstance(item, dict):
+                continue
+            start = _as_positive_float(item.get("start")) or 0.0
+            end = _as_positive_float(item.get("end"))
+            if end is not None and end > start:
+                total += end - start
+        if total > 0:
+            return total
+    start = _as_positive_float(payload.get("start")) or 0.0
+    end = _as_positive_float(payload.get("end"))
+    if end is not None and end > start:
+        return end - start
+    return None
+
+
+def _render_history_sample(row: Any) -> Optional[tuple[float, float]]:
+    timing = _json_object(row[0])
+    clip_duration = _as_positive_float(timing.get("clip_duration_s"))
+    if clip_duration is None:
+        return None
+    stages = timing.get("stages_ms") if isinstance(timing.get("stages_ms"), dict) else {}
+    stage_total_ms = sum(
+        value
+        for value in (_as_positive_float(raw_value) for raw_value in stages.values())
+        if value is not None
+    )
+    total_seconds = stage_total_ms / 1000.0 if stage_total_ms > 0 else None
+    if total_seconds is None and isinstance(row[1], datetime) and isinstance(row[2], datetime):
+        total_seconds = max(0.0, (row[2] - row[1]).total_seconds())
+    if not total_seconds:
+        return None
+    return clip_duration, total_seconds
+
+
+def _estimated_render_seconds(
+    active_render: Optional[Dict[str, Any]],
+    render_history: list[tuple[float, float]],
+) -> Optional[int]:
+    if not active_render:
+        return None
+    target_duration = _clip_duration_from_payload(active_render.get("payload") or {})
+    if target_duration is None:
+        return None
+    lower = max(1.0, target_duration * (2.0 / 3.0))
+    upper = target_duration * 1.5
+    similar_totals = [
+        total_seconds
+        for clip_duration, total_seconds in render_history
+        if lower <= clip_duration <= upper
+    ]
+    if len(similar_totals) < 3:
+        return None
+    return max(1, int(round(median(similar_totals))))
+
+
 def _skip_reason_message(reason: str) -> str:
     clean = str(reason or "").strip()
     if not clean:
@@ -106,6 +175,7 @@ def _ready_text(rendered_clip_count: int, suggestion_count: int) -> str:
 def _status_payload(
     video: Dict[str, Any],
     jobs: list[Dict[str, Any]],
+    render_history: Optional[list[tuple[float, float]]] = None,
 ) -> Dict[str, Any]:
     source_jobs = [job for job in jobs if job["type"] in _SOURCE_JOB_TYPES]
     suggest_jobs = [job for job in jobs if job["type"] == "auto_suggest_render"]
@@ -259,6 +329,7 @@ def _status_payload(
         "auto_render_reason": auto_render_reason,
         "auto_render_error": auto_render_error,
         "auto_render_plan_index": auto_render_plan_index,
+        "render_eta_seconds": _estimated_render_seconds(active_render, render_history or []),
     }
 
 
@@ -358,8 +429,25 @@ def get_video_ingestion_statuses(
             """,
             [str(owner_user_id), *[str(value) for value in scoped_ids]],
         ).fetchall()
+        render_history_rows = conn.execute(
+            """
+            SELECT timing_json, started_at, finished_at
+            FROM shorts_render_jobs
+            WHERE type = 'render_short'
+              AND status = 'done'
+              AND timing_json IS NOT NULL
+            ORDER BY finished_at DESC
+            LIMIT 50
+            """
+        ).fetchall()
     finally:
         conn.close()
+
+    render_history = [
+        sample
+        for sample in (_render_history_sample(row) for row in render_history_rows)
+        if sample is not None
+    ]
 
     jobs_by_video: Dict[int, list[Dict[str, Any]]] = {video_pk: [] for video_pk in videos}
     for row in job_rows:
@@ -371,6 +459,6 @@ def get_video_ingestion_statuses(
         if video_pk in jobs_by_video:
             jobs_by_video[video_pk].append(job)
     return {
-        str(video_pk): _status_payload(video, jobs_by_video.get(video_pk, []))
+        str(video_pk): _status_payload(video, jobs_by_video.get(video_pk, []), render_history)
         for video_pk, video in videos.items()
     }
