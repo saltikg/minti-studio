@@ -1102,6 +1102,35 @@ def retry_my_video_processing(video_pk: int):
         if transcript_ready:
             from app.video_shorts.routes import generation
 
+            if status.get("auto_render_status") == "failed":
+                try:
+                    failed_plan_index = int(status.get("auto_render_plan_index"))
+                except (TypeError, ValueError):
+                    return jsonify(ok=False, message="We couldn't identify the failed first clip."), 409
+                retry_result = generation._enqueue_auto_render_for_plan_entry(
+                    owner_user_id=str(current_user["id"]),
+                    brand_id=str(brand_id or ""),
+                    video_pk=video_pk,
+                    plan_index=failed_plan_index,
+                    default_customer=True,
+                )
+                if not retry_result.get("ok"):
+                    return jsonify(
+                        ok=False,
+                        message=retry_result.get("message") or "We couldn't retry the first clip right now.",
+                    ), int(retry_result.get("status_code") or 409)
+                return jsonify(
+                    ok=True,
+                    message="First clip restarted.",
+                    status={
+                        "stage": "creating_clip",
+                        "active": True,
+                        "failed": False,
+                        "message": "Creating your first clip…",
+                        "auto_render_status": "active",
+                    },
+                ), 202
+
             queued = generation.enqueue_auto_suggest_render_job_after_transcript(
                 owner_user_id=str(current_user["id"]),
                 brand_id=brand_id,

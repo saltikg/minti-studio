@@ -3,6 +3,8 @@
   const nodeSelector = "[data-ingestion-progress][data-video-pk], [data-ingestion-card]";
   let timer = null;
   let requestRunning = false;
+  let autoOpenClaimed = false;
+  let autoOpenSequence = 0;
   const nodes = () => Array.from(document.querySelectorAll(nodeSelector));
 
   const formatEta = (seconds) => {
@@ -33,7 +35,7 @@
         <div class="vs-ingestion-card-head">
           <div class="vs-ingestion-card-thumb"><img data-ingestion-card-image alt="" hidden><i class="bi bi-film" aria-hidden="true"></i></div>
           <div class="vs-ingestion-card-copy"><div class="vs-ingestion-card-title" data-ingestion-card-title></div><div class="vs-ingestion-card-meta" data-ingestion-card-meta></div></div>
-          <div class="vs-ingestion-card-ready" data-ingestion-ready hidden><span>Ready ✓</span><a class="vs-ingestion-open" data-ingestion-open>Open</a></div>
+          <div class="vs-ingestion-card-ready" data-ingestion-ready hidden><span data-ingestion-ready-text>Ready ✓</span><a class="vs-ingestion-open" data-ingestion-open>Open</a></div>
         </div>
         <div class="vs-ingestion-steps" data-ingestion-steps>
           <div class="vs-ingestion-step" data-ingestion-step="source"><span class="vs-ingestion-step-dot"></span><span data-ingestion-source-label>Download</span></div>
@@ -60,13 +62,23 @@
 
   const stageIndex = (stage) => ({ transcribing: 1, finding_clips: 2, creating_clip: 3, ready: 4 }[stage] ?? 0);
 
-  const updateSteps = (node, stage, failed) => {
+  const updateSteps = (node, stage, failed, autoRenderStatus = "") => {
     if (!node.hasAttribute("data-ingestion-card")) return;
     const index = stageIndex(stage);
     node.querySelectorAll("[data-ingestion-step]").forEach((step, stepIndex) => {
-      step.classList.toggle("is-done", !failed && (stage === "ready" || stepIndex < index));
+      const isFirstClip = stepIndex === 3;
+      const readyFirstClip = stage === "ready" && isFirstClip;
+      const skipped = readyFirstClip && !failed && !["done", "failed"].includes(autoRenderStatus);
+      const stepFailed = (readyFirstClip && autoRenderStatus === "failed") || (failed && stepIndex === Math.min(index, 3));
+      const done = !failed && (
+        (stage === "ready" && !isFirstClip)
+        || (readyFirstClip && autoRenderStatus === "done")
+        || (stage !== "ready" && stepIndex < index)
+      );
+      step.classList.toggle("is-done", done);
       step.classList.toggle("is-active", !failed && stage !== "ready" && stepIndex === index);
-      step.classList.toggle("is-failed", failed && stepIndex === Math.min(index, 3));
+      step.classList.toggle("is-failed", stepFailed);
+      step.classList.toggle("is-skipped", skipped);
     });
   };
 
@@ -88,22 +100,27 @@
     const hasPercent = status.percent !== null && status.percent !== "" && Number.isFinite(percentValue) && percentValue >= 0;
     const isActive = Boolean(status.active);
     const failed = Boolean(status.failed);
-    const ready = stage === "ready" && !isActive && !failed;
+    const ready = Boolean(status.ready ?? (stage === "ready" && !isActive && !failed));
+    const autoRenderStatus = String(status.auto_render_status || "");
+    const autoRenderFailed = autoRenderStatus === "failed";
     const eta = formatEta(status.eta_seconds);
-    let copy = String(status.message || (ready ? "Ready" : "Processing…"));
+    let copy = String((ready && status.detail_message) || status.message || (ready ? "Ready" : "Processing…"));
     if (hasPercent && stage === "downloading" && !copy.includes("%")) copy += ` ${Math.round(percentValue)}%`;
     if (eta && stage === "downloading" && !copy.includes("left")) copy += ` · ${eta}`;
     if (failed && status.error) copy = String(status.error);
     if (message) message.textContent = copy;
     node.classList.toggle("is-failed", failed);
+    node.classList.toggle("is-auto-render-failed", autoRenderFailed);
     node.classList.toggle("is-ready", ready);
     node.classList.toggle("is-indeterminate", isActive && !hasPercent);
     if (track) track.hidden = !isActive;
-    if (activeRow) activeRow.hidden = ready;
+    if (activeRow) activeRow.hidden = ready && !status.detail_message;
     if (bar) bar.style.width = hasPercent ? `${Math.max(0, Math.min(100, percentValue))}%` : "0%";
-    if (retry) retry.hidden = !failed || !node.dataset.retryUrl;
+    if (retry) retry.hidden = (!failed && !autoRenderFailed) || !node.dataset.retryUrl;
     node.querySelector("[data-ingestion-ready]")?.toggleAttribute("hidden", !ready);
-    updateSteps(node, failed && node.dataset.lastStage ? node.dataset.lastStage : stage, failed);
+    const readyText = node.querySelector("[data-ingestion-ready-text]");
+    if (readyText) readyText.textContent = status.ready_text || "Ready ✓";
+    updateSteps(node, failed && node.dataset.lastStage ? node.dataset.lastStage : stage, failed, autoRenderStatus);
     node.dataset.wasActive = isActive ? "1" : node.dataset.wasActive || "0";
     node.dataset.lastStage = stage;
     node.dataset.lastSuccessfulPollAt = String(Date.now());
@@ -111,6 +128,18 @@
     if (pill) {
       pill.textContent = failed ? "Failed" : (isActive ? "Processing" : "Ready");
       pill.className = `mv-status-pill mv-status-pill--${failed ? "failed" : (isActive ? "processing" : "ready")}`;
+    }
+    if (
+      ready
+      && autoRenderStatus !== "failed"
+      && node.hasAttribute("data-ingestion-card")
+      && node.dataset.autoOpen === "1"
+      && node.dataset.openUrl
+      && !autoOpenClaimed
+    ) {
+      autoOpenClaimed = true;
+      node.dataset.autoOpen = "0";
+      window.setTimeout(() => window.location.assign(node.dataset.openUrl), 250);
     }
   };
 
@@ -155,7 +184,11 @@
             continue;
           }
           if (!response.ok || !payload.ok) throw new Error(payload.message || "Progress check failed.");
-          groupNodes.forEach((node) => {
+          [...groupNodes].sort((left, right) => {
+            const leftOrder = Number(left.dataset.autoOpenOrder || Number.MAX_SAFE_INTEGER);
+            const rightOrder = Number(right.dataset.autoOpenOrder || Number.MAX_SAFE_INTEGER);
+            return leftOrder - rightOrder;
+          }).forEach((node) => {
             const status = payload.statuses?.[String(node.dataset.videoPk)];
             if (!status) return;
             anyActive = anyActive || Boolean(status.active);
@@ -228,6 +261,11 @@
     node.dataset.videoDuration = options.duration || node.dataset.videoDuration || "";
     node.dataset.videoChannel = options.channel || node.dataset.videoChannel || "";
     node.dataset.sourceKind = options.sourceKind || node.dataset.sourceKind || "url";
+    if (options.autoOpen === true && node.dataset.autoOpen !== "1") {
+      autoOpenSequence += 1;
+      node.dataset.autoOpen = "1";
+      node.dataset.autoOpenOrder = String(autoOpenSequence);
+    }
     node.dataset.wasActive = "1";
     node.removeAttribute("hidden");
     node.dataset.ingestionReady = "0";

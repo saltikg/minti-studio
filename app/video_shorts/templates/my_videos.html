@@ -2701,6 +2701,7 @@
       clientId: activeUploadClientId,
       title: selectedFile.name,
       sourceKind: 'upload',
+      autoOpen: true,
       status: { stage: 'uploading', active: true, percent: 0, message: 'Uploading… 0%' },
     });
     setFeedback('');
@@ -2767,6 +2768,7 @@
       if (!videoPk) throw new Error('Video was added, but the import could not be tracked.');
       window.MintiIngestionProgress?.addCard({
         ...progressCardOptions(videoPk, video, 'url'),
+        autoOpen: true,
         status: { stage: 'downloading', active: true, message: 'Downloading from YouTube…' },
       });
       setCoachmarkState('uploaded');

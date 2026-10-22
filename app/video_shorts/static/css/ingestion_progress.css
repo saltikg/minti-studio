@@ -88,11 +88,22 @@
 .vs-ingestion-step.is-active { color: #fbbf24; }
 .vs-ingestion-step.is-active .vs-ingestion-step-dot { animation: vs-ingestion-pulse 1.2s ease-in-out infinite; }
 .vs-ingestion-step.is-failed { color: #f87171; }
+.vs-ingestion-step.is-skipped { color: rgba(148, 163, 184, 0.58); }
+.vs-ingestion-step.is-skipped .vs-ingestion-step-dot {
+  display: grid;
+  width: 14px;
+  height: 14px;
+  place-items: center;
+  background: rgba(148, 163, 184, 0.12);
+  font-size: 0.65rem;
+}
+.vs-ingestion-step.is-skipped .vs-ingestion-step-dot::before { content: "–"; }
 .vs-ingestion-active-row { display: grid; grid-template-columns: minmax(110px, 1fr) auto; align-items: center; gap: 10px; margin-top: 11px; }
 .vs-ingestion-active-row[hidden] { display: none; }
 .vs-ingestion-card .vs-ingestion-progress-track { margin: 0; height: 5px; }
 .vs-ingestion-card .vs-ingestion-progress-copy { color: rgba(226, 232, 240, 0.76); font-size: 0.78rem; white-space: nowrap; }
 .vs-ingestion-card.is-failed .vs-ingestion-progress-copy { color: #fca5a5; }
+.vs-ingestion-card.is-auto-render-failed .vs-ingestion-progress-copy { color: #fca5a5; }
 .vs-ingestion-card .vs-ingestion-progress-retry { margin-top: 10px; }
 @keyframes vs-ingestion-pulse { 50% { opacity: .35; transform: scale(.8); } }
 @keyframes vs-ingestion-indeterminate {

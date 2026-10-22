@@ -11,6 +11,17 @@ _SOURCE_JOB_TYPES = {"ingest_youtube", "transcribe_upload", "normalize_upload"}
 _ACTIVE_STATUSES = {"queued", "processing", "running", "claimed"}
 _TERMINAL_STATUSES = {"done", "failed", "cancelled"}
 
+_AUTO_RENDER_SKIP_MESSAGES = {
+    "daily_auto_render_cap": "Daily auto-clip limit reached",
+    "storage_full": "Storage is full",
+    "account_suspended": "Account is suspended",
+    "suggestions_only_import": "Bulk import: suggestions only",
+    "gate_disabled": "Auto-clip is not enabled for this account",
+    "discovery_or_lead_video": "Suggestions only for this import",
+    "ai_entries_exist": "Suggestions already existed",
+    "already_ran": "Auto-clip was already processed",
+}
+
 
 def _json_object(value: Any) -> Dict[str, Any]:
     if isinstance(value, dict):
@@ -70,6 +81,28 @@ def _is_auto_render(job: Dict[str, Any]) -> bool:
     )
 
 
+def _skip_reason_message(reason: str) -> str:
+    clean = str(reason or "").strip()
+    if not clean:
+        return ""
+    if clean.startswith("no_clips_above_") or clean == "no_strong_moments":
+        return "No suggestion met the auto-clip threshold"
+    return _AUTO_RENDER_SKIP_MESSAGES.get(clean, "Auto-clip was skipped")
+
+
+def _count_label(count: int, singular: str, plural: str) -> str:
+    return f"{count} {singular if count == 1 else plural}"
+
+
+def _ready_text(rendered_clip_count: int, suggestion_count: int) -> str:
+    parts = []
+    if rendered_clip_count:
+        parts.append(_count_label(rendered_clip_count, "clip", "clips"))
+    if suggestion_count:
+        parts.append(_count_label(suggestion_count, "suggestion", "suggestions"))
+    return "Ready" if not parts else f"Ready · {' + '.join(parts)}"
+
+
 def _status_payload(
     video: Dict[str, Any],
     jobs: list[Dict[str, Any]],
@@ -82,6 +115,28 @@ def _status_payload(
     active_render = next((job for job in render_jobs if _active(job)), None)
     latest_source = source_jobs[0] if source_jobs else None
     latest_suggest = suggest_jobs[0] if suggest_jobs else None
+    latest_render = render_jobs[0] if render_jobs else None
+    rendered_clip_count = int(video.get("rendered_clip_count") or 0)
+    rendered_clip_filenames = {
+        str(value or "").strip()
+        for value in (video.get("rendered_clip_filenames") or [])
+        if str(value or "").strip()
+    }
+    auto_render_clip_filename = str((latest_render or {}).get("result", {}).get("clip_filename") or "").strip()
+    auto_render_clip_exists = bool(
+        auto_render_clip_filename and auto_render_clip_filename in rendered_clip_filenames
+    )
+    suggest_result = (latest_suggest or {}).get("result") or {}
+    try:
+        entries_generated = max(0, int(suggest_result.get("entries_generated") or 0))
+    except (TypeError, ValueError):
+        entries_generated = 0
+    suggestion_count = max(0, entries_generated - rendered_clip_count)
+    skip_reason = str(suggest_result.get("skip_reason") or "").strip()
+    auto_render_status = ""
+    auto_render_reason = ""
+    auto_render_error = ""
+    auto_render_plan_index = (latest_render or {}).get("payload", {}).get("plan_index")
     transcript_ready = str(video.get("transcript_status") or "").strip().lower() in {
         "done", "ready", "complete", "completed",
     }
@@ -97,6 +152,7 @@ def _status_payload(
 
     if active_render:
         stage, message, active = "creating_clip", "Creating your first clip…", True
+        auto_render_status = "active"
     elif active_suggest:
         stage, message, active = "finding_clips", "Finding the best clips…", True
     elif active_source:
@@ -129,6 +185,51 @@ def _status_payload(
             stage, message = "processing", "Processing…"
             active = True
 
+    if transcript_ready and latest_suggest and latest_suggest.get("status") == "done":
+        if latest_render and latest_render.get("status") == "done" and auto_render_clip_exists:
+            auto_render_status = "done"
+        elif latest_render and latest_render.get("status") == "failed":
+            auto_render_status = "failed"
+            auto_render_error = latest_render.get("error") or "The first clip could not be created."
+        elif latest_render and latest_render.get("status") == "done":
+            auto_render_status = "failed"
+            auto_render_error = "The render finished without a saved clip."
+        elif skip_reason:
+            auto_render_status = "skipped"
+            auto_render_reason = _skip_reason_message(skip_reason)
+        elif rendered_clip_count > 0:
+            auto_render_status = "skipped"
+            auto_render_reason = "No auto-created clip was recorded"
+        elif entries_generated > 0 and not active_render:
+            failed_enqueue = next(
+                (
+                    item for item in (suggest_result.get("enqueued") or [])
+                    if isinstance(item, dict) and not item.get("ok", True)
+                ),
+                None,
+            )
+            if failed_enqueue:
+                auto_render_status = "failed"
+                auto_render_error = str(failed_enqueue.get("message") or "The first clip could not be queued.")
+                auto_render_plan_index = failed_enqueue.get("plan_index") or auto_render_plan_index
+            else:
+                auto_render_status = "skipped"
+                auto_render_reason = "Auto-clip was not created"
+    elif transcript_ready and not active_suggest and not active_render and not auto_render_status:
+        auto_render_status = "skipped"
+        auto_render_reason = "Auto-clip was not requested"
+
+    ready = stage == "ready" and not active
+    ready_label = _ready_text(rendered_clip_count, suggestion_count) if ready else ""
+    detail_message = ""
+    if ready and auto_render_status == "skipped":
+        suggested_label = _count_label(entries_generated, "clip suggested", "clips suggested") if entries_generated else "Suggestions ready"
+        detail_message = " · ".join(part for part in [suggested_label, auto_render_reason] if part)
+    elif ready and auto_render_status == "failed":
+        detail_message = " · ".join(part for part in ["First clip failed", auto_render_error] if part)
+    if ready_label:
+        message = ready_label
+
     updated_at = (job or {}).get("updated_at")
     stale = bool(active and (job is None or (_age_seconds(updated_at) or 0) >= 60))
     if stale:
@@ -147,6 +248,17 @@ def _status_payload(
         "stale": stale,
         "job_id": (job or {}).get("id") or "",
         "updated_at": _iso(updated_at),
+        "ready": ready,
+        "ready_text": ready_label,
+        "detail_message": detail_message,
+        "rendered_clip_count": rendered_clip_count,
+        "suggestion_count": suggestion_count,
+        "entries_generated": entries_generated,
+        "auto_render_status": auto_render_status,
+        "auto_render_skip_reason": skip_reason,
+        "auto_render_reason": auto_render_reason,
+        "auto_render_error": auto_render_error,
+        "auto_render_plan_index": auto_render_plan_index,
     }
 
 
@@ -176,7 +288,7 @@ def get_video_ingestion_statuses(
             video_params.append(str(brand_id))
         video_rows = conn.execute(
             f"""
-            SELECT v.id, v.transcript_status, v.download_status
+            SELECT v.id, v.video_id, v.transcript_status, v.download_status
             FROM youtube_videos v
             WHERE v.id IN ({placeholders})
               AND CAST(v.owner_user_id AS VARCHAR) = CAST(? AS VARCHAR)
@@ -188,8 +300,9 @@ def get_video_ingestion_statuses(
         videos = {
             int(row[0]): {
                 "id": int(row[0]),
-                "transcript_status": row[1],
-                "download_status": row[2],
+                "video_id": row[1],
+                "transcript_status": row[2],
+                "download_status": row[3],
             }
             for row in video_rows
         }
@@ -197,6 +310,41 @@ def get_video_ingestion_statuses(
             return {}
         scoped_ids = sorted(videos)
         job_placeholders = ", ".join("?" for _ in scoped_ids)
+        clip_rows = conn.execute(
+            f"""
+            SELECT source_video.id, gv.clip_filename
+            FROM shorts_generated_videos gv
+            JOIN shorts_storage_assets render_asset
+              ON render_asset.file_key = gv.storage_file_key
+             AND CAST(render_asset.user_id AS VARCHAR) = CAST(gv.user_id AS VARCHAR)
+             AND render_asset.brand_id IS NOT DISTINCT FROM gv.brand_id
+             AND lower(coalesce(render_asset.status, 'active')) = 'active'
+             AND render_asset.size_bytes > 0
+            JOIN youtube_videos source_video
+              ON source_video.video_id = gv.source_video_id
+             AND CAST(source_video.owner_user_id AS VARCHAR) = CAST(gv.user_id AS VARCHAR)
+             AND source_video.brand_id IS NOT DISTINCT FROM gv.brand_id
+             AND source_video.deleted_at IS NULL
+            WHERE source_video.id IN ({job_placeholders})
+              AND CAST(gv.user_id AS VARCHAR) = CAST(? AS VARCHAR)
+              AND gv.brand_id IS NOT DISTINCT FROM ?
+              AND NULLIF(trim(coalesce(gv.clip_filename, '')), '') IS NOT NULL
+              AND NULLIF(trim(coalesce(gv.storage_file_key, '')), '') IS NOT NULL
+              AND lower(coalesce(gv.generation_status, '')) NOT IN
+                  ('pending', 'queued', 'processing', 'rendering')
+            """,
+            [*[int(value) for value in scoped_ids], str(owner_user_id), brand_id],
+        ).fetchall()
+        for row in clip_rows:
+            video_pk = int(row[0])
+            if video_pk not in videos:
+                continue
+            filenames = videos[video_pk].setdefault("rendered_clip_filenames", [])
+            filename = str(row[1] or "").strip()
+            if filename and filename not in filenames:
+                filenames.append(filename)
+        for video in videos.values():
+            video["rendered_clip_count"] = len(video.get("rendered_clip_filenames") or [])
         job_rows = conn.execute(
             f"""
             SELECT id, type, status, payload_json, result_json, error,
