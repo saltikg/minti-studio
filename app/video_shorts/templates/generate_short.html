@@ -20517,13 +20517,17 @@ document.addEventListener("DOMContentLoaded", () => {
     const bandRect = element.getBoundingClientRect();
     const actualX = bandRect.width / viewBox.width;
     const actualY = bandRect.height / viewBox.height;
+    const bandAspect = bandRect.width / Math.max(0.001, bandRect.height);
+    const viewBoxAspect = viewBox.width / Math.max(0.001, viewBox.height);
+    const aspectMismatch = Math.abs(bandAspect - viewBoxAspect) / viewBoxAspect > 0.01;
     const mismatch = Math.abs(actualX - geometry.renderedScaleX) / geometry.renderedScaleX > 0.01
-      || Math.abs(actualY - geometry.renderedScaleY) / geometry.renderedScaleY > 0.01;
+      || Math.abs(actualY - geometry.renderedScaleY) / geometry.renderedScaleY > 0.01
+      || aspectMismatch;
     if (!mismatch || previewBandScaleReported) return;
     previewBandScaleReported = true;
     window.MintiErrorReporter?.report?.({
       error_type: "design_preview_band_scale_mismatch",
-      message: `${kind} band scale ${actualX.toFixed(4)}:${actualY.toFixed(4)} does not match frame ${geometry.renderedScaleX.toFixed(4)}:${geometry.renderedScaleY.toFixed(4)}`,
+      message: `${kind} band scale ${actualX.toFixed(4)}:${actualY.toFixed(4)} aspect ${bandAspect.toFixed(4)} does not match frame ${geometry.renderedScaleX.toFixed(4)}:${geometry.renderedScaleY.toFixed(4)} viewBox aspect ${viewBoxAspect.toFixed(4)}`,
       source: window.location.pathname,
     });
   };
@@ -20606,7 +20610,7 @@ document.addEventListener("DOMContentLoaded", () => {
       width: `${(right-left)*scaleX}px`, height: `${(bottom-top)*scaleY}px`, padding: "0",
       minHeight: "0", display: (kind === "title" ? isTitleVisible() : isSubtitleVisible()) ? "block" : "none", lineHeight: "normal", letterSpacing: `${DESIGN_GEOMETRY.letter_spacing}px`,
       borderRadius: `${Math.max(DESIGN_GEOMETRY.box_radius_min, Math.round(spec.font_size*DESIGN_GEOMETRY.box_radius))*scaleX}px`};
-    const svg = svgNode("svg", {viewBox: `${left} ${top} ${right-left} ${bottom-top}`, width: "100%", height: "100%", "aria-hidden": "true"});
+    const svg = svgNode("svg", {viewBox: `${left} ${top} ${right-left} ${bottom-top}`, width: "100%", height: "100%", preserveAspectRatio: "xMinYMin meet", "aria-hidden": "true"});
     svg.style.overflow = "visible";
     svg.style.display = "block";
     svg.style.position = "absolute";
@@ -20977,14 +20981,16 @@ document.addEventListener("DOMContentLoaded", () => {
     const subtitleFontSize = originalPreview
       ? Math.max(20, activeRenderHeight * DESIGN_GEOMETRY.original_caption_scale)
       : Math.max(10, getNumericFieldValue(subtitleFontSizeInput, previewConfig.subtitleHeight * 0.4));
-    if (previewTitle) {
+    const previewTitleIsMeasured = previewTitle?.dataset.captionDomOwner === "measured-svg";
+    const previewSubtitleIsMeasured = previewSubtitle?.dataset.captionDomOwner === "measured-svg";
+    if (previewTitle && !previewTitleIsMeasured) {
       previewTitle.style.fontSize = titleFontSize * elementScale + "px";
       previewTitle.style.left = titleSideMargin * scaleX + "px";
       previewTitle.style.right = titleSideMargin * scaleX + "px";
       previewTitle.style.padding = "0";
       previewTitle.style.height = "auto";
     }
-    if (previewSubtitle) {
+    if (previewSubtitle && !previewSubtitleIsMeasured) {
       previewSubtitle.style.fontSize = subtitleFontSize * elementScale + "px";
       previewSubtitle.style.height = "auto";
     }
@@ -21045,15 +21051,17 @@ document.addEventListener("DOMContentLoaded", () => {
     }
     if (previewTitle) {
       previewTitle.classList.toggle("is-hidden", !isTitleVisible());
-      const minTitleHeightPx = baseTitleHeight * scaleY;
-      const contentHeightPx = previewTitle.scrollHeight || minTitleHeightPx;
-      const effectiveTitleHeightPx = Math.max(minTitleHeightPx, contentHeightPx);
-      previewTitle.style.height = effectiveTitleHeightPx + "px";
-      if (titleUsesPillowLayout) {
-        previewTitle.style.top = Math.max(0, titleTop * scaleY) + "px";
-      } else {
-        const titleBottomPx = (titleTop + baseTitleHeight) * scaleY;
-        previewTitle.style.top = Math.max(0, titleBottomPx - effectiveTitleHeightPx) + "px";
+      if (!previewTitleIsMeasured) {
+        const minTitleHeightPx = baseTitleHeight * scaleY;
+        const contentHeightPx = previewTitle.scrollHeight || minTitleHeightPx;
+        const effectiveTitleHeightPx = Math.max(minTitleHeightPx, contentHeightPx);
+        previewTitle.style.height = effectiveTitleHeightPx + "px";
+        if (titleUsesPillowLayout) {
+          previewTitle.style.top = Math.max(0, titleTop * scaleY) + "px";
+        } else {
+          const titleBottomPx = (titleTop + baseTitleHeight) * scaleY;
+          previewTitle.style.top = Math.max(0, titleBottomPx - effectiveTitleHeightPx) + "px";
+        }
       }
     }
     if (previewVideo) {
@@ -21072,17 +21080,20 @@ document.addEventListener("DOMContentLoaded", () => {
     }
     if (previewSubtitle) {
       previewSubtitle.classList.toggle("is-hidden", !isSubtitleVisible());
-      previewSubtitle.style.top = subtitleTop * scaleY + "px";
-      previewSubtitle.style.height = "auto";
+      if (!previewSubtitleIsMeasured) {
+        previewSubtitle.style.top = subtitleTop * scaleY + "px";
+        previewSubtitle.style.height = "auto";
+      }
     }
     if (origPreviewTitle) {
-      if (origPreviewTitle.dataset.captionDomOwner !== "measured-svg") {
+      const origTitleIsMeasured = origPreviewTitle.dataset.captionDomOwner === "measured-svg";
+      if (!origTitleIsMeasured) {
         origPreviewTitle.textContent = previewTitle?.textContent || "Life is full of fun";
+        origPreviewTitle.style.top = titleTop * scaleY + "px";
+        origPreviewTitle.style.height = baseTitleHeight * scaleY + "px";
+        origPreviewTitle.style.fontSize = titleFontSize * elementScale + "px";
       }
       origPreviewTitle.classList.toggle("is-hidden", !isTitleVisible());
-      origPreviewTitle.style.top = titleTop * scaleY + "px";
-      origPreviewTitle.style.height = baseTitleHeight * scaleY + "px";
-      origPreviewTitle.style.fontSize = titleFontSize * elementScale + "px";
       origPreviewTitle.style.lineHeight = previewTitle?.style.lineHeight || "1.1";
       origPreviewTitle.style.fontFamily = previewTitle?.style.fontFamily || "";
       origPreviewTitle.style.fontWeight = previewTitle?.style.fontWeight || "";
@@ -21092,8 +21103,12 @@ document.addEventListener("DOMContentLoaded", () => {
       origPreviewTitle.style.textTransform = previewTitle?.style.textTransform || "";
     }
     if (origPreviewCaption) {
-      if (origPreviewCaption.dataset.captionDomOwner !== "measured-svg") {
+      const origCaptionIsMeasured = origPreviewCaption.dataset.captionDomOwner === "measured-svg";
+      if (!origCaptionIsMeasured) {
         origPreviewCaption.innerHTML = previewSubtitle?.innerHTML || "Sample subtitle line";
+        origPreviewCaption.style.top = subtitleTop * scaleY + "px";
+        origPreviewCaption.style.height = subtitleHeight * scaleY + "px";
+        origPreviewCaption.style.fontSize = subtitleFontSize * elementScale + "px";
       }
       origPreviewCaption.className = "orig-preview__caption";
       origPreviewCaption.dataset.previewElement = "subtitle";
@@ -21113,9 +21128,6 @@ document.addEventListener("DOMContentLoaded", () => {
       });
       syncCaptionPaintOwners();
       origPreviewCaption.classList.toggle("is-hidden", !isSubtitleVisible());
-      origPreviewCaption.style.top = subtitleTop * scaleY + "px";
-      origPreviewCaption.style.height = subtitleHeight * scaleY + "px";
-      origPreviewCaption.style.fontSize = subtitleFontSize * elementScale + "px";
       origPreviewCaption.style.lineHeight = previewSubtitle?.style.lineHeight || "1.1";
       origPreviewCaption.style.fontFamily = previewSubtitle?.style.fontFamily || "";
       origPreviewCaption.style.fontWeight = previewSubtitle?.style.fontWeight || "";
