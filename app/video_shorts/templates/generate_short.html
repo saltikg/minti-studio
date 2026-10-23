@@ -9091,7 +9091,7 @@
                         </div>
                         <div class="design-panel-hint mt-1">Top keeps the first line in place; extra lines grow downward.</div>
                       </div>
-                      <div class="design-panel-hint">Drag the caption in the preview to move it, or use the ↑ ↓ keys.</div>
+                      <div class="design-panel-hint">Drag to move, or use the arrow keys (Shift for bigger steps).</div>
                       <button type="button" class="design-panel-more-toggle" data-design-more-toggle="caption" aria-expanded="false">▸ More options</button>
                       <div class="design-panel-more-options" data-design-more-options="caption">
                         <div class="design-panel-more-grid">
@@ -9211,7 +9211,7 @@
                         </div>
                       </div>
                       <input type="range" name="title_bg_alpha" id="titleBgAlphaValue" class="d-none" min="0" max="100" step="1" value="{{ selected_title_bg_alpha if selected_title_bg_alpha is not none else 0 }}">
-                      <div class="design-panel-hint">Drag the title in the preview to move it, or use the ↑ ↓ keys.</div>
+                      <div class="design-panel-hint">Drag to move, or use the arrow keys (Shift for bigger steps).</div>
                       <button type="button" class="design-panel-more-toggle" data-design-more-toggle="title" aria-expanded="false">▸ More options</button>
                       <div class="design-panel-more-options" data-design-more-options="title">
                         <div class="design-panel-more-grid">
@@ -20346,6 +20346,9 @@ document.addEventListener("DOMContentLoaded", () => {
       kind = "";
     }
     selectedPreviewElement = (kind === "video" && !isPreviewElementDraggable("video")) ? "" : (kind || "");
+    if (selectedPreviewElement) {
+      window.deselectCropEditorOverlay?.();
+    }
     const isTitle = selectedPreviewElement === "title";
     const isSubtitle = selectedPreviewElement === "subtitle";
     previewToolbar?.classList.toggle("is-hidden", !isTitle);
@@ -20364,6 +20367,8 @@ document.addEventListener("DOMContentLoaded", () => {
       (isOriginalCropAspect() ? origPreviewFrame : previewFrame)?.focus({ preventScroll: true });
     }
   };
+  window.setCropEditorPreviewSelection = (kind = "") => setSelectedPreviewElement(kind);
+  window.getCropEditorPreviewSelection = () => selectedPreviewElement;
   const applyElementDelta = (kind, deltaRenderY) => {
     if (!kind || !Number.isFinite(deltaRenderY)) {
       return;
@@ -21960,33 +21965,54 @@ document.addEventListener("DOMContentLoaded", () => {
     }
   });
   previewFrame?.addEventListener("pointerdown", (event) => {
-    if (event.target === previewFrame) {
+    if (!event.target.closest?.("[data-preview-element], .preview-shape")) {
       setSelectedPreviewElement("");
+      window.deselectCropEditorOverlay?.();
     }
   });
   origPreviewFrame?.addEventListener("pointerdown", (event) => {
-    if (event.target === origPreviewFrame) {
+    if (!event.target.closest?.("[data-preview-element], .preview-shape")) {
       setSelectedPreviewElement("");
+      window.deselectCropEditorOverlay?.();
     }
   });
+  const isEditableKeyboardTarget = (target) => Boolean(
+    target?.closest?.("input, textarea, select, [contenteditable]:not([contenteditable='false'])")
+  );
   const handlePreviewKeydown = (event) => {
+    if (isEditableKeyboardTarget(event.target)) {
+      return;
+    }
     if (event.key === "Escape") {
+      const hadSelection = Boolean(dragState || selectedPreviewElement || window.hasSelectedCropEditorOverlay?.());
       if (dragState) endPreviewDrag(event, { commit: false });
+      window.cancelCropEditorOverlayInteraction?.();
       setSelectedPreviewElement("");
+      window.deselectCropEditorOverlay?.();
+      if (hadSelection) event.preventDefault();
       return;
     }
-    if (!selectedPreviewElement) {
+    const selectedOverlay = window.hasSelectedCropEditorOverlay?.() === true;
+    if (!selectedPreviewElement && !selectedOverlay) {
       return;
     }
-    if (event.key !== "ArrowUp" && event.key !== "ArrowDown") {
+    if (!["ArrowLeft", "ArrowRight", "ArrowUp", "ArrowDown"].includes(event.key)) {
       return;
     }
     event.preventDefault();
-    const step = event.shiftKey ? 10 : 1;
-    applyElementDelta(selectedPreviewElement, event.key === "ArrowDown" ? step : -step);
+    const step = 4 * (event.shiftKey ? 10 : 1);
+    if (selectedOverlay) {
+      window.nudgeSelectedCropEditorOverlay?.(event.key, step);
+      return;
+    }
+    if (!["title", "subtitle"].includes(selectedPreviewElement)) {
+      return;
+    }
+    if (event.key === "ArrowUp" || event.key === "ArrowDown") {
+      applyElementDelta(selectedPreviewElement, event.key === "ArrowDown" ? step : -step);
+    }
   };
-  previewFrame?.addEventListener("keydown", handlePreviewKeydown);
-  origPreviewFrame?.addEventListener("keydown", handlePreviewKeydown);
+  document.addEventListener("keydown", handlePreviewKeydown);
   [titleMarginInput, subtitleMarginInput, videoDateTopInput].forEach((field) => {
     field?.addEventListener("focus", () => previewFrame?.classList.add("show-ui-safe-guides"));
     field?.addEventListener("blur", () => previewFrame?.classList.remove("show-ui-safe-guides"));
@@ -24071,10 +24097,10 @@ document.addEventListener("DOMContentLoaded", function () {
       moveDown.addEventListener("click", (event) => { event.stopPropagation(); moveOverlayToFrontIndex(shape.id, index + 1); });
       orderActions.append(moveUp, moveDown);
       row.append(grip, visual, copy, orderActions);
-      row.addEventListener("click", () => { selectedShapeId = shape.id; syncShapesUi(); });
+      row.addEventListener("click", () => selectOverlay(shape.id));
       row.addEventListener("keydown", (event) => {
         if (event.target !== row || !["Enter", " "].includes(event.key)) return;
-        event.preventDefault(); selectedShapeId = shape.id; syncShapesUi();
+        event.preventDefault(); selectOverlay(shape.id);
       });
       row.addEventListener("dragstart", (event) => {
         draggedOverlayId = shape.id;
@@ -24117,6 +24143,16 @@ document.addEventListener("DOMContentLoaded", function () {
     syncShapeControls();
     renderShapeLayers();
     window.notifyCropEditorDesignChanged?.();
+  };
+  const syncShapeSelectionUi = () => {
+    renderShapeList();
+    syncShapeControls();
+    renderShapeLayers();
+  };
+  const selectOverlay = (shapeId) => {
+    selectedShapeId = overlayShapes.some((shape) => shape.id === shapeId) ? shapeId : null;
+    if (selectedShapeId) window.setCropEditorPreviewSelection?.("");
+    syncShapeSelectionUi();
   };
   window.syncOverlayShapesFromField = () => {
     try { overlayShapes = JSON.parse(overlayShapesField?.value || "[]"); } catch (_) { overlayShapes = []; }
@@ -24319,11 +24355,19 @@ document.addEventListener("DOMContentLoaded", function () {
   });
   document.addEventListener("pointerdown", (event) => {
     const element = event.target.closest?.(".preview-shape");
-    if (!element) return;
+    if (!element) {
+      if (shapeLayerElements().some((layer) => layer === event.target)) {
+        selectedShapeId = null;
+        window.setCropEditorPreviewSelection?.("");
+        syncShapeSelectionUi();
+      }
+      return;
+    }
     const layer = element.parentElement;
     const shape = overlayShapes.find((item) => item.id === element.dataset.shapeId);
     if (!shape || !layer) return;
     selectedShapeId = shape.id;
+    window.setCropEditorPreviewSelection?.("");
     activeShapeSnapGuides = [];
     const layerRect = layer.getBoundingClientRect();
     shapePointerState = {
@@ -24335,7 +24379,7 @@ document.addEventListener("DOMContentLoaded", function () {
       height: layerRect.height || layer.clientHeight,
     };
     document.body.classList.toggle("is-shape-moving", shapePointerState.handle === "move");
-    event.preventDefault(); syncShapesUi();
+    event.preventDefault(); syncShapeSelectionUi();
     window.requestAnimationFrame(() => document.querySelector(`.preview-shape[data-shape-id="${CSS.escape(shape.id)}"]`)?.focus({ preventScroll: true }));
   });
   document.addEventListener("pointermove", (event) => {
@@ -24407,6 +24451,29 @@ document.addEventListener("DOMContentLoaded", function () {
     }
     if (hadInteraction) window.verifyCropEditorPaintLayers?.("overlay_drop");
   };
+  window.hasSelectedCropEditorOverlay = () => Boolean(selectedShape());
+  window.deselectCropEditorOverlay = () => {
+    if (!selectedShapeId) return;
+    selectedShapeId = null;
+    activeShapeSnapGuides = [];
+    syncShapeSelectionUi();
+  };
+  window.cancelCropEditorOverlayInteraction = () => {
+    if (shapePointerState) finishShapePointerInteraction({ commit: false });
+  };
+  window.nudgeSelectedCropEditorOverlay = (key, step) => {
+    const shape = selectedShape();
+    const delta = Math.max(1, Math.round(Number(step) || 4));
+    if (!shape || !["ArrowLeft", "ArrowRight", "ArrowUp", "ArrowDown"].includes(key)) return false;
+    if (key === "ArrowLeft") shape.x -= delta;
+    if (key === "ArrowRight") shape.x += delta;
+    if (key === "ArrowUp") shape.y -= delta;
+    if (key === "ArrowDown") shape.y += delta;
+    activeShapeSnapGuides = [];
+    clampShape(shape);
+    syncShapesUi();
+    return true;
+  };
   document.addEventListener("pointerup", () => finishShapePointerInteraction());
   document.addEventListener("pointercancel", () => finishShapePointerInteraction({ commit: false }));
   document.addEventListener("keydown", (event) => {
@@ -24414,16 +24481,6 @@ document.addEventListener("DOMContentLoaded", function () {
     event.preventDefault();
     finishShapePointerInteraction({ commit: false });
   });
-  shapeLayerElements().forEach((layer) => layer.addEventListener("keydown", (event) => {
-    if (!["ArrowLeft", "ArrowRight", "ArrowUp", "ArrowDown"].includes(event.key)) return;
-    const shape = selectedShape(); if (!shape) return;
-    const step = event.shiftKey ? 10 : 1;
-    if (event.key === "ArrowLeft") shape.x -= step;
-    if (event.key === "ArrowRight") shape.x += step;
-    if (event.key === "ArrowUp") shape.y -= step;
-    if (event.key === "ArrowDown") shape.y += step;
-    event.preventDefault(); syncShapesUi();
-  }));
   window.syncOverlayShapesFromField();
   void loadOverlayImages();
   if (window.ResizeObserver) {
