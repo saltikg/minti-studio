@@ -20468,6 +20468,7 @@ document.addEventListener("DOMContentLoaded", () => {
     }
   }
   let measuredDesign = null;
+  const measuredPaintInputs = { title: null, caption: null };
   const measuredDesignKeys = { title: "", caption: "" };
   const measuredPlacement = { title: null, caption: null };
   let pendingDesignKey = "";
@@ -20521,6 +20522,23 @@ document.addEventListener("DOMContentLoaded", () => {
     const node = document.createElementNS("http://www.w3.org/2000/svg", tag);
     Object.entries(attrs).forEach(([key, value]) => node.setAttribute(key, String(value)));
     return node;
+  };
+  const rendererSubtitlePresets = {{ subtitle_presets|tojson }};
+  const snapshotMeasuredPaintInput = (kind, spec, data) => {
+    const element = activeMeasuredLayer(kind);
+    const font = measuredFontSpec(kind);
+    const preset = rendererSubtitlePresets[data?.preset] || {};
+    const computed = window.getComputedStyle(element);
+    return {
+      spec,
+      preset: { ...preset },
+      presetKey: String(data?.preset || ""),
+      activeWord: Number(data?.active_word || 0),
+      captionStyle: String(data?.caption_style || "plain"),
+      fontFamily: font.family || computed.fontFamily || "sans-serif",
+      fontWeight: font.weight || computed.fontWeight || "400",
+      textColor: element?.style?.color || computed.color || "#FFFFFF",
+    };
   };
   const syncCaptionPaintOwners = () => {
     const originalPreview = isOriginalCropAspect();
@@ -20648,8 +20666,8 @@ document.addEventListener("DOMContentLoaded", () => {
       runs: (spec.runs || []).map((run) => ({ ...run, y: Number(run.y) + deltaY })),
     };
   };
-  const paintMeasuredText = (element, rawSpec, kind, scaleX, scaleY) => {
-    const spec = positionedMeasuredSpec(rawSpec, kind);
+  const paintMeasuredText = (element, paintInput, kind, scaleX, scaleY) => {
+    const spec = positionedMeasuredSpec(paintInput?.spec, kind);
     if (!element || !spec) return;
     const [left, top, right, bottom] = spec.box;
     const nextStyles = {left: `${left*scaleX}px`, right: "auto", top: `${top*scaleY}px`,
@@ -20662,8 +20680,8 @@ document.addEventListener("DOMContentLoaded", () => {
     svg.style.position = "absolute";
     svg.style.inset = "0";
     svg.style.pointerEvents = "none";
-    const preset = {{ subtitle_presets|tojson }}[subtitlePresetField?.value] || {};
-    const inheritedTextColor = element.style.color || window.getComputedStyle(element).color || "#FFFFFF";
+    const preset = paintInput.preset || {};
+    const inheritedTextColor = paintInput.textColor || "#FFFFFF";
     const defs = svgNode("defs");
     svg.appendChild(defs);
     const shadow = kind === "title" ? spec.shadow : preset;
@@ -20676,7 +20694,8 @@ document.addEventListener("DOMContentLoaded", () => {
       const text = svgNode("text", {x: run.x, y: run.y, "font-size": run.size,
         "letter-spacing": DESIGN_GEOMETRY.letter_spacing, "font-weight": "normal",
         "paint-order": "stroke fill", "stroke-linejoin": "round"});
-      text.style.fontFamily = element.style.fontFamily;
+      text.style.fontFamily = paintInput.fontFamily || "sans-serif";
+      text.style.fontWeight = paintInput.fontWeight || "400";
       text.style.fontSynthesis = "none";
       text.style.textTransform = "none";
       text.style.textShadow = "none";
@@ -20742,11 +20761,15 @@ document.addEventListener("DOMContentLoaded", () => {
     const titleEl = isOriginalCropAspect() ? origPreviewTitle : previewTitle;
     const captionEl = isOriginalCropAspect() ? origPreviewCaption : previewSubtitle;
     const selectedKinds = normalizeMeasuredKinds(kinds);
+    const missingKinds = selectedKinds.filter((kind) => !measuredPaintInputs[kind]);
+    if (missingKinds.length) {
+      requestMeasuredDesign({ force: true, kinds: missingKinds });
+    }
     if (selectedKinds.includes("title")) {
-      paintMeasuredText(titleEl, measuredDesign.title, "title", getActivePreviewScaleX(), getActivePreviewScaleY());
+      paintMeasuredText(titleEl, measuredPaintInputs.title, "title", getActivePreviewScaleX(), getActivePreviewScaleY());
     }
     if (selectedKinds.includes("caption")) {
-      paintMeasuredText(captionEl, measuredDesign.caption, "caption", getActivePreviewScaleX(), getActivePreviewScaleY());
+      paintMeasuredText(captionEl, measuredPaintInputs.caption, "caption", getActivePreviewScaleX(), getActivePreviewScaleY());
     }
     designNeedsVisibleRefresh = false;
     return true;
@@ -20893,8 +20916,12 @@ document.addEventListener("DOMContentLoaded", () => {
           designNeedsVisibleRefresh = true;
           return;
         }
-        measuredDesign = result;
-        changedKinds.forEach((kind) => { measuredDesignKeys[kind] = nextKeys[kind]; });
+        measuredDesign = measuredDesign || {};
+        changedKinds.forEach((kind) => {
+          measuredDesign[kind] = result[kind];
+          measuredPaintInputs[kind] = snapshotMeasuredPaintInput(kind, result[kind], data);
+          measuredDesignKeys[kind] = nextKeys[kind];
+        });
         pendingDesignKey = "";
         repaintMeasuredDesign(changedKinds);
       } catch (error) {
@@ -20913,7 +20940,7 @@ document.addEventListener("DOMContentLoaded", () => {
     });
   };
   window.refreshMeasuredDesignPreview = scheduleMeasuredDesignRefresh;
-  window.hasMeasuredDesignPreview = () => !!measuredDesign;
+  window.hasMeasuredDesignPreview = () => !!measuredPaintInputs.caption;
   const refreshMeasuredLayersForScale = () => scheduleMeasuredDesignRefresh({
     force: true,
     kinds: ["title", "caption"],
