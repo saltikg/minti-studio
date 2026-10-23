@@ -20504,6 +20504,23 @@ document.addEventListener("DOMContentLoaded", () => {
     if (kind === "title") return isOriginalCropAspect() ? origPreviewTitle : previewTitle;
     return isOriginalCropAspect() ? origPreviewCaption : previewSubtitle;
   };
+  const positionMeasuredLayer = (kind, top, scaleY = getActivePreviewScaleY()) => {
+    const element = activeMeasuredLayer(kind);
+    if (!element || element.dataset.captionDomOwner !== "measured-svg" || !Number.isFinite(Number(top))) return;
+    const nextTop = Number(top);
+    element.style.top = `${nextTop * scaleY}px`;
+    try {
+      const box = JSON.parse(element.dataset.renderBbox || "[]");
+      if (Array.isArray(box) && box.length === 4) {
+        const height = Number(box[3]) - Number(box[1]);
+        if (Number.isFinite(height)) {
+          element.dataset.renderBbox = JSON.stringify([Number(box[0]), nextTop, Number(box[2]), nextTop + height]);
+        }
+      }
+    } catch (_) {
+      // The measured paint remains valid; the next paint will restore its bbox metadata.
+    }
+  };
   const renderedPreviewScaleSignature = () => {
     const geometry = getActivePreviewGeometry();
     return `${geometry.renderedScaleX.toFixed(4)}:${geometry.renderedScaleY.toFixed(4)}`;
@@ -21157,12 +21174,12 @@ document.addEventListener("DOMContentLoaded", () => {
         }
       });
     }
-    const activeMeasuredTitle = originalPreview ? origPreviewTitle : previewTitle;
-    const activeMeasuredCaption = originalPreview ? origPreviewCaption : previewSubtitle;
-    const renderedTitleTop = Number.parseFloat(activeMeasuredTitle?.style.top || "");
-    const renderedCaptionTop = Number.parseFloat(activeMeasuredCaption?.style.top || "");
-    measuredPlacement.title = Number.isFinite(renderedTitleTop) ? renderedTitleTop / Math.max(scaleY, 0.0001) : titleTop;
-    measuredPlacement.caption = Number.isFinite(renderedCaptionTop) ? renderedCaptionTop / Math.max(scaleY, 0.0001) : subtitleTop;
+    // Design state is the sole position source. Reading the old DOM top here made a
+    // drop overwrite its newly committed margin and snap back to the prior position.
+    measuredPlacement.title = titleTop;
+    measuredPlacement.caption = subtitleTop;
+    positionMeasuredLayer("title", titleTop, scaleY);
+    positionMeasuredLayer("caption", subtitleTop, scaleY);
     drawOriginalResultPreview();
     if (measure) requestMeasuredDesign({ kinds: measureKinds, repaintIfUnchanged });
     else schedulePreviewLayerSafetyCheck("position_commit");
@@ -21879,13 +21896,13 @@ document.addEventListener("DOMContentLoaded", () => {
 
   const endPreviewDrag = (event, { commit = true } = {}) => {
     const completedDragState = dragState;
-    if (completedDragState?.element) {
-      completedDragState.element.style.removeProperty("transform");
-      completedDragState.element.style.removeProperty("will-change");
-    }
     if (commit && completedDragState?.moved) {
       const deltaRenderY = completedDragState.previewDeltaY * completedDragState.renderUnitsPerClientY;
       applyElementDelta(completedDragState.kind, deltaRenderY);
+    }
+    if (completedDragState?.element) {
+      completedDragState.element.style.removeProperty("transform");
+      completedDragState.element.style.removeProperty("will-change");
     }
     if (event?.target && event.target.classList?.remove) {
       event.target.classList.remove("is-dragging");
@@ -24349,16 +24366,29 @@ document.addEventListener("DOMContentLoaded", function () {
     else paintShapeGeometryWithoutRebuild(shape);
     repaintShapeSnapGuides();
   });
-  const finishShapePointerInteraction = () => {
+  const finishShapePointerInteraction = ({ commit = true } = {}) => {
     const hadInteraction = Boolean(shapePointerState);
+    if (hadInteraction && !commit) {
+      const shape = selectedShape();
+      if (shape) Object.assign(shape, shapePointerState.shape);
+    }
     shapePointerState = null;
     activeShapeSnapGuides = [];
     document.body.classList.remove("is-shape-moving");
-    if (hadInteraction) syncShapesUi();
+    if (hadInteraction && commit) syncShapesUi();
+    if (hadInteraction && !commit) {
+      renderShapeLayers();
+      syncShapeControls();
+    }
     if (hadInteraction) window.verifyCropEditorPaintLayers?.("overlay_drop");
   };
-  document.addEventListener("pointerup", finishShapePointerInteraction);
-  document.addEventListener("pointercancel", finishShapePointerInteraction);
+  document.addEventListener("pointerup", () => finishShapePointerInteraction());
+  document.addEventListener("pointercancel", () => finishShapePointerInteraction({ commit: false }));
+  document.addEventListener("keydown", (event) => {
+    if (event.key !== "Escape" || !shapePointerState) return;
+    event.preventDefault();
+    finishShapePointerInteraction({ commit: false });
+  });
   shapeLayerElements().forEach((layer) => layer.addEventListener("keydown", (event) => {
     if (!["ArrowLeft", "ArrowRight", "ArrowUp", "ArrowDown"].includes(event.key)) return;
     const shape = selectedShape(); if (!shape) return;
