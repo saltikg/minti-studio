@@ -112,7 +112,7 @@ def _select_style(page: Page, key: str) -> None:
 
 def _caption_effect(page: Page) -> dict:
     return page.evaluate(
-        """() => {
+        r"""() => {
           const band = ['shorts-preview-subtitle-band', 'orig-preview-caption']
             .map(id => document.getElementById(id))
             .find(el => el?.querySelector('svg') && getComputedStyle(el).display !== 'none'
@@ -146,7 +146,8 @@ def run(video_id: int | None, headed: bool) -> None:
     with client.session_transaction(base_url="http://127.0.0.1") as session:
         session["vs_user_id"] = user_id
         session["vs_brand_id"] = brand_id
-    cookie = client.get_cookie(app.config.get("SESSION_COOKIE_NAME", "session"))
+    cookie_name = app.config.get("SESSION_COOKIE_NAME", "session")
+    cookie = client.get_cookie(cookie_name, domain="127.0.0.1") or client.get_cookie(cookie_name)
     if not cookie:
         raise RuntimeError("Could not create the smoke-test session cookie")
 
