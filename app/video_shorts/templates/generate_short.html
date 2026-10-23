@@ -19562,7 +19562,7 @@ document.addEventListener("DOMContentLoaded", () => {
       ? nextPosition / Math.max(1, activeHeight) * renderFrameHeight
       : nextPosition);
     syncCaptionPositionLabel();
-    applyPreviewLayout({ measure: false });
+    applyPreviewLayout();
   }));
   syncCaptionPositionLabel();
   const showTitleToggle = getEditorField("show_title");
@@ -20467,13 +20467,11 @@ document.addEventListener("DOMContentLoaded", () => {
       // Keep the dark background if the source frame is not drawable yet.
     }
   }
-  let measuredDesign = null;
-  const measuredPaintInputs = { title: null, caption: null };
-  const measuredDesignKeys = { title: "", caption: "" };
+  const designMeasurementCache = new Map();
+  const designMeasurementInFlight = new Map();
   const measuredPlacement = { title: null, caption: null };
-  let pendingDesignKey = "";
   let designMeasureTimer = null;
-  let designMeasureVersion = 0;
+  let designPaintRequestVersion = 0;
   let designRefreshFrame = null;
   let designNeedsVisibleRefresh = false;
   let previewLayerSafetyFrame = null;
@@ -20560,22 +20558,6 @@ document.addEventListener("DOMContentLoaded", () => {
     });
   };
   const rendererSubtitlePresets = {{ subtitle_presets|tojson }};
-  const snapshotMeasuredPaintInput = (kind, spec, data) => {
-    const element = activeMeasuredLayer(kind);
-    const font = measuredFontSpec(kind);
-    const preset = rendererSubtitlePresets[data?.preset] || {};
-    const computed = window.getComputedStyle(element);
-    return {
-      spec,
-      preset: { ...preset },
-      presetKey: String(data?.preset || ""),
-      activeWord: Number(data?.active_word || 0),
-      captionStyle: String(data?.caption_style || "plain"),
-      fontFamily: font.family || computed.fontFamily || "sans-serif",
-      fontWeight: font.weight || computed.fontWeight || "400",
-      textColor: element?.style?.color || computed.color || "#FFFFFF",
-    };
-  };
   const syncCaptionPaintOwners = () => {
     const originalPreview = isOriginalCropAspect();
     previewSubtitle?.classList.toggle("is-caption-paint-inactive", originalPreview);
@@ -20677,12 +20659,7 @@ document.addEventListener("DOMContentLoaded", () => {
           source: window.location.pathname,
         });
       }
-      if (!repaintKinds.length) return;
-      if (measuredDesign) {
-        repaintMeasuredDesign(repaintKinds);
-      } else {
-        requestMeasuredDesign({ force: true, kinds: repaintKinds });
-      }
+      if (repaintKinds.length) scheduleMeasuredDesignRefresh({ force: true });
     });
   };
   window.verifyCropEditorPaintLayers = schedulePreviewLayerSafetyCheck;
@@ -20702,6 +20679,44 @@ document.addEventListener("DOMContentLoaded", () => {
       runs: (spec.runs || []).map((run) => ({ ...run, y: Number(run.y) + deltaY })),
     };
   };
+  const designHex = (value, fallback) => {
+    const normalized = String(value || "").trim().toUpperCase();
+    return /^#[0-9A-F]{6}$/.test(normalized) ? normalized : fallback;
+  };
+  const designAlpha = (value, fallback = 100) => Math.max(0, Math.min(100,
+    Number.isFinite(Number(value)) ? Number(value) : fallback));
+  const designRgba = (hex, alpha) => {
+    const value = designHex(hex, "#FFFFFF").slice(1);
+    const red = Number.parseInt(value.slice(0, 2), 16);
+    const green = Number.parseInt(value.slice(2, 4), 16);
+    const blue = Number.parseInt(value.slice(4, 6), 16);
+    return `rgba(${red}, ${green}, ${blue}, ${designAlpha(alpha) / 100})`;
+  };
+  const buildCurrentPaintInput = (kind, spec, measurementData) => {
+    const preset = rendererSubtitlePresets[String(measurementData?.preset || "")] || {};
+    const font = measuredFontSpec(kind);
+    const isTitle = kind === "title";
+    const textColor = isTitle
+      ? designHex(getEditorField("title_text_color")?.value, "#FFFFFF")
+      : designRgba(
+          getEditorField("subtitle_text_color")?.value,
+          getEditorField("subtitle_text_alpha")?.value,
+        );
+    const backgroundColor = isTitle
+      ? designRgba(getEditorField("title_bg_color")?.value, getEditorField("title_bg_alpha")?.value)
+      : designRgba(getEditorField("subtitle_bg_color")?.value, getEditorField("subtitle_bg_alpha")?.value);
+    return {
+      spec,
+      preset,
+      presetKey: String(measurementData?.preset || ""),
+      captionStyle: String(measurementData?.caption_style || "plain"),
+      activeWord: Number(measurementData?.active_word || 0),
+      fontFamily: font.family || "sans-serif",
+      fontWeight: font.weight || (isTitle ? "700" : "400"),
+      textColor,
+      backgroundColor,
+    };
+  };
   const paintMeasuredText = (element, paintInput, kind, scaleX, scaleY) => {
     const spec = positionedMeasuredSpec(paintInput?.spec, kind);
     if (!element || !spec) return;
@@ -20709,7 +20724,8 @@ document.addEventListener("DOMContentLoaded", () => {
     const nextStyles = {left: `${left*scaleX}px`, right: "auto", top: `${top*scaleY}px`,
       width: `${(right-left)*scaleX}px`, height: `${(bottom-top)*scaleY}px`, padding: "0",
       minHeight: "0", display: (kind === "title" ? isTitleVisible() : isSubtitleVisible()) ? "block" : "none", lineHeight: "normal", letterSpacing: `${DESIGN_GEOMETRY.letter_spacing}px`,
-      borderRadius: `${Math.max(DESIGN_GEOMETRY.box_radius_min, Math.round(spec.font_size*DESIGN_GEOMETRY.box_radius))*scaleX}px`};
+      borderRadius: `${Math.max(DESIGN_GEOMETRY.box_radius_min, Math.round(spec.font_size*DESIGN_GEOMETRY.box_radius))*scaleX}px`,
+      backgroundColor: paintInput.backgroundColor || "transparent"};
     const svg = svgNode("svg", {viewBox: `${left} ${top} ${right-left} ${bottom-top}`, width: "100%", height: "100%", preserveAspectRatio: "xMinYMin meet", "aria-hidden": "true"});
     svg.style.overflow = "visible";
     svg.style.display = "block";
@@ -20730,7 +20746,8 @@ document.addEventListener("DOMContentLoaded", () => {
     for (const run of spec.runs) {
       const text = svgNode("text", {x: run.x, y: run.y, "font-size": run.size,
         "letter-spacing": DESIGN_GEOMETRY.letter_spacing, "font-weight": "normal",
-        "paint-order": "stroke fill", "stroke-linejoin": "round"});
+        "paint-order": "stroke fill", "stroke-linejoin": "round",
+        "data-preview-run-active": run.active ? "1" : "0"});
       text.style.fontFamily = paintInput.fontFamily || "sans-serif";
       text.style.fontWeight = paintInput.fontWeight || "400";
       text.style.fontSynthesis = "none";
@@ -20779,6 +20796,7 @@ document.addEventListener("DOMContentLoaded", () => {
       element.dataset.renderBbox = JSON.stringify(spec.box);
       element.dataset.lineCount = String(spec.lines);
       element.dataset.previewScale = renderedPreviewScaleSignature();
+      element.dataset.paintPreset = String(paintInput.presetKey || "");
       element.replaceChildren(svg);
       element.dataset.captionDomOwner = "measured-svg";
       verifyMeasuredBandScale(element, kind);
@@ -20790,28 +20808,20 @@ document.addEventListener("DOMContentLoaded", () => {
     const values = Array.isArray(kinds) && kinds.length ? kinds : ["title", "caption"];
     return values.filter((kind, index) => ["title", "caption"].includes(kind) && values.indexOf(kind) === index);
   };
-  const repaintMeasuredDesign = (kinds = ["title", "caption"]) => {
-    if (!measuredDesign) return false;
-    if (!isMeasuredPreviewVisible()) {
-      designNeedsVisibleRefresh = true;
-      return false;
-    }
-    const titleEl = isOriginalCropAspect() ? origPreviewTitle : previewTitle;
-    const captionEl = isOriginalCropAspect() ? origPreviewCaption : previewSubtitle;
-    const selectedKinds = normalizeMeasuredKinds(kinds);
-    const missingKinds = selectedKinds.filter((kind) => !measuredPaintInputs[kind]);
-    if (missingKinds.length) {
-      requestMeasuredDesign({ force: true, kinds: missingKinds });
-    }
-    if (selectedKinds.includes("title")) {
-      paintMeasuredText(titleEl, measuredPaintInputs.title, "title", getActivePreviewScaleX(), getActivePreviewScaleY());
-    }
-    if (selectedKinds.includes("caption")) {
-      paintMeasuredText(captionEl, measuredPaintInputs.caption, "caption", getActivePreviewScaleX(), getActivePreviewScaleY());
-    }
-    designNeedsVisibleRefresh = false;
-    return true;
-  };
+  const paintCurrentTitlePreview = (measurement, measurementData) => paintMeasuredText(
+    activeMeasuredLayer("title"),
+    buildCurrentPaintInput("title", measurement?.title, measurementData),
+    "title",
+    getActivePreviewScaleX(),
+    getActivePreviewScaleY(),
+  );
+  const paintCurrentCaptionPreview = (measurement, measurementData) => paintMeasuredText(
+    activeMeasuredLayer("caption"),
+    buildCurrentPaintInput("caption", measurement?.caption, measurementData),
+    "caption",
+    getActivePreviewScaleX(),
+    getActivePreviewScaleY(),
+  );
   const getActiveClipCard = () => {
     const activeIndex = document.getElementById("clip-management-panel")?.dataset.activePlanIndex;
     return (activeIndex && document.querySelector(`.clip-card[data-plan-index="${CSS.escape(activeIndex)}"]`)) || document.querySelector(".clip-card");
@@ -20888,11 +20898,7 @@ document.addEventListener("DOMContentLoaded", () => {
   };
   window.getHonestCaptionPreviewText = longestRenderedCaptionGroup;
   window.buildCaptionPreviewMarkup = captionPreviewMarkup;
-  const requestMeasuredDesign = ({ force = false, kinds = null, repaintIfUnchanged = false } = {}) => {
-    if (!isMeasuredPreviewVisible()) {
-      designNeedsVisibleRefresh = true;
-      return;
-    }
+  const buildCurrentMeasurementData = () => {
     const original = isOriginalCropAspect();
     const height = getActiveRenderFrameHeight();
     const captionText = longestRenderedCaptionGroup();
@@ -20915,70 +20921,80 @@ document.addEventListener("DOMContentLoaded", () => {
     if (original && getCaptionAnchor() === "bottom" && !initialSubtitleMarginCustom && !dirtyOverlayFields.has("sub_margin")) {
       data.caption_margin = Math.round(height-height*DESIGN_GEOMETRY.original_caption_center-data.caption_size);
     }
-    const requestedKinds = normalizeMeasuredKinds(kinds);
-    const nextKeys = {
-      title: JSON.stringify({
-        width: data.width, height: data.height, title: data.title, title_font: data.title_font,
-        title_size: data.title_size, line_spacing: data.line_spacing, preset: data.preset,
-        language: data.language,
-      }),
-      caption: JSON.stringify({
-        width: data.width, height: data.height, caption: data.caption, caption_source: data.caption_source,
-        caption_font: data.caption_font, caption_size: data.caption_size, preset: data.preset,
-        caption_style: data.caption_style, language: data.language, active_word: data.active_word,
-      }),
-    };
-    const changedKinds = requestedKinds.filter((kind) => force || nextKeys[kind] !== measuredDesignKeys[kind]);
-    if (!changedKinds.length) {
-      if (repaintIfUnchanged) repaintMeasuredDesign(requestedKinds);
+    return data;
+  };
+  const designMeasurementKey = (data) => JSON.stringify({
+    data,
+    letter_spacing: DESIGN_GEOMETRY.letter_spacing,
+    wrap_width: Number(data.width) - (2 * Number(DESIGN_GEOMETRY.caption_side_margin || 0)),
+    preset_effects: rendererSubtitlePresets[String(data.preset || "")] || {},
+  });
+  const fetchDesignMeasurement = (data, key) => {
+    if (designMeasurementCache.has(key)) return Promise.resolve(designMeasurementCache.get(key));
+    if (designMeasurementInFlight.has(key)) return designMeasurementInFlight.get(key);
+    const body = JSON.stringify(data);
+    const request = fetch(previewConfig.metricsUrl, {method: "POST", credentials: "same-origin",
+      headers: {"Content-Type": "application/json"}, body})
+      .then((response) => {
+        if (!response.ok) throw new Error(`Design metrics ${response.status}`);
+        return response.json();
+      })
+      .then((result) => {
+        designMeasurementCache.set(key, result);
+        while (designMeasurementCache.size > 40) {
+          designMeasurementCache.delete(designMeasurementCache.keys().next().value);
+        }
+        return result;
+      })
+      .finally(() => designMeasurementInFlight.delete(key));
+    designMeasurementInFlight.set(key, request);
+    return request;
+  };
+  const requestMeasuredDesign = ({ force = false } = {}) => {
+    if (!isMeasuredPreviewVisible()) {
+      designNeedsVisibleRefresh = true;
       return;
     }
-    const body = JSON.stringify(data);
-    const key = JSON.stringify({ body, changedKinds });
-    if (!force && key === pendingDesignKey) return;
-    const requestVersion = ++designMeasureVersion;
-    pendingDesignKey = key;
+    const data = buildCurrentMeasurementData();
+    const key = designMeasurementKey(data);
+    const requestVersion = ++designPaintRequestVersion;
     clearTimeout(designMeasureTimer);
     designMeasureTimer = setTimeout(async () => {
       try {
-        await waitForMeasuredFonts(changedKinds, { title: titleText, caption: captionText });
-        if (requestVersion !== designMeasureVersion || !isMeasuredPreviewVisible()) {
+        await waitForMeasuredFonts(["title", "caption"], { title: data.title, caption: data.caption });
+        if (requestVersion !== designPaintRequestVersion || !isMeasuredPreviewVisible()) {
           designNeedsVisibleRefresh = true;
           return;
         }
-        const response = await fetch(previewConfig.metricsUrl, {method: "POST", credentials: "same-origin",
-          headers: {"Content-Type": "application/json"}, body});
-        if (!response.ok) throw new Error(`Design metrics ${response.status}`);
-        const result = await response.json();
-        if (requestVersion !== designMeasureVersion || pendingDesignKey !== key || !isMeasuredPreviewVisible()) {
+        const result = await fetchDesignMeasurement(data, key);
+        if (requestVersion !== designPaintRequestVersion || !isMeasuredPreviewVisible()) {
           designNeedsVisibleRefresh = true;
           return;
         }
-        measuredDesign = measuredDesign || {};
-        changedKinds.forEach((kind) => {
-          measuredDesign[kind] = result[kind];
-          measuredPaintInputs[kind] = snapshotMeasuredPaintInput(kind, result[kind], data);
-          measuredDesignKeys[kind] = nextKeys[kind];
-        });
-        pendingDesignKey = "";
-        repaintMeasuredDesign(changedKinds);
+        const currentData = buildCurrentMeasurementData();
+        if (designMeasurementKey(currentData) !== key) {
+          scheduleMeasuredDesignRefresh({ force: true });
+          return;
+        }
+        paintCurrentTitlePreview(result, currentData);
+        paintCurrentCaptionPreview(result, currentData);
+        designNeedsVisibleRefresh = false;
       } catch (error) {
-        if (requestVersion === designMeasureVersion && pendingDesignKey === key) pendingDesignKey = "";
         console.warn("Unable to measure Final Preview", error);
       }
     }, force ? 0 : 80);
   };
-  const scheduleMeasuredDesignRefresh = ({ force = false, kinds = null, repaintIfUnchanged = true } = {}) => {
+  const scheduleMeasuredDesignRefresh = ({ force = false } = {}) => {
     if (designRefreshFrame) window.cancelAnimationFrame(designRefreshFrame);
     designRefreshFrame = window.requestAnimationFrame(() => {
       designRefreshFrame = window.requestAnimationFrame(() => {
         designRefreshFrame = null;
-        requestMeasuredDesign({ force, kinds, repaintIfUnchanged });
+        requestMeasuredDesign({ force });
       });
     });
   };
   window.refreshMeasuredDesignPreview = scheduleMeasuredDesignRefresh;
-  window.hasMeasuredDesignPreview = () => !!measuredPaintInputs.caption;
+  window.hasMeasuredDesignPreview = () => activeMeasuredLayer("caption")?.dataset.captionDomOwner === "measured-svg";
   const refreshMeasuredLayersForScale = () => scheduleMeasuredDesignRefresh({
     force: true,
     kinds: ["title", "caption"],
@@ -21280,7 +21296,7 @@ document.addEventListener("DOMContentLoaded", () => {
     positionMeasuredLayer("title", titleTop, scaleY);
     positionMeasuredLayer("caption", subtitleTop, scaleY);
     drawOriginalResultPreview();
-    if (measure) requestMeasuredDesign({ kinds: measureKinds, repaintIfUnchanged });
+    if (measure) requestMeasuredDesign();
     else schedulePreviewLayerSafetyCheck("position_commit");
     syncSubscribeStill();
     syncOverlayVisibilityUi();
@@ -21918,11 +21934,11 @@ document.addEventListener("DOMContentLoaded", () => {
   [titleMarginInput, subtitleMarginInput, videoOverlayOffsetInput, videoDateTopInput, videoDateTextInput, showTitleToggle, showSubtitleToggle].forEach((field) => {
     field?.addEventListener("input", () => {
       markOverlayFieldDirty(field);
-      applyPreviewLayout({ measure: false });
+      applyPreviewLayout();
     });
     field?.addEventListener("change", () => {
       markOverlayFieldDirty(field);
-      applyPreviewLayout({ measure: false });
+      applyPreviewLayout();
     });
   });
   titleFontSizeInput?.addEventListener("input", () => {
@@ -22014,6 +22030,9 @@ document.addEventListener("DOMContentLoaded", () => {
     origPreviewFrame?.classList.remove("is-dragging");
     dragState = null;
     syncCaptionPaintOwners();
+    if (commit && completedDragState?.moved) {
+      scheduleMeasuredDesignRefresh({ force: true });
+    }
     schedulePreviewLayerSafetyCheck(commit ? "drag_drop" : "drag_cancel");
     if (completedDragState && !completedDragState.moved) {
       window.focusCropModalTabForPreviewKind?.(completedDragState.kind);
