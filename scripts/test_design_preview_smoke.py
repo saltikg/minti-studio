@@ -99,7 +99,7 @@ def _wait_for_preset(page: Page, preset: str) -> None:
             .find(node => node?.dataset.paintPreset === preset && node.querySelector('svg'));
           return !!el;
         }""",
-        preset,
+        arg=preset,
         timeout=10_000,
     )
 
@@ -213,7 +213,7 @@ def run(video_id: int | None, headed: bool) -> None:
                   && getComputedStyle(el).display !== 'none');
               return band && Math.abs(band.getBoundingClientRect().height - oldHeight) > 1;
             }""",
-            before_height,
+            arg=before_height,
         )
         _print_pass("caption font-size change updates measured band height")
 
