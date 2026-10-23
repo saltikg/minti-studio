@@ -20479,6 +20479,10 @@ document.addEventListener("DOMContentLoaded", () => {
   let previewLayerSafetyFrame = null;
   let previewLayerSafetyReported = false;
   let previewBandScaleReported = false;
+  let measuredSvgNamespaceSequence = 0;
+  let duplicateSvgIdCheckFrame = null;
+  let duplicateSvgIdReported = false;
+  const measuredSvgNamespaces = new WeakMap();
   const getMeasuredPreviewFrame = () => isOriginalCropAspect() ? origPreviewFrame : previewFrame;
   const isMeasuredPreviewVisible = () => {
     const frame = getMeasuredPreviewFrame();
@@ -20522,6 +20526,38 @@ document.addEventListener("DOMContentLoaded", () => {
     const node = document.createElementNS("http://www.w3.org/2000/svg", tag);
     Object.entries(attrs).forEach(([key, value]) => node.setAttribute(key, String(value)));
     return node;
+  };
+  const measuredSvgNamespace = (element, kind) => {
+    if (measuredSvgNamespaces.has(element)) return measuredSvgNamespaces.get(element);
+    measuredSvgNamespaceSequence += 1;
+    const base = String(element?.id || kind || "preview")
+      .replace(/[^a-zA-Z0-9_-]+/g, "-")
+      .replace(/^-+|-+$/g, "") || "preview";
+    const namespace = `${base}-${kind}-paint-${measuredSvgNamespaceSequence}`;
+    measuredSvgNamespaces.set(element, namespace);
+    return namespace;
+  };
+  const scheduleDuplicateSvgIdCheck = () => {
+    if (duplicateSvgIdReported || duplicateSvgIdCheckFrame) return;
+    duplicateSvgIdCheckFrame = window.requestAnimationFrame(() => {
+      duplicateSvgIdCheckFrame = null;
+      const owners = new Map();
+      let duplicate = null;
+      document.querySelectorAll("[id]").forEach((node) => {
+        if (duplicate) return;
+        const id = String(node.id || "");
+        if (!id) return;
+        if (owners.has(id)) duplicate = { id, first: owners.get(id), second: node };
+        else owners.set(id, node);
+      });
+      if (!duplicate) return;
+      duplicateSvgIdReported = true;
+      window.MintiErrorReporter?.report?.({
+        error_type: "design_preview_duplicate_id",
+        message: `Duplicate DOM id ${duplicate.id}`,
+        source: window.location.pathname,
+      });
+    });
   };
   const rendererSubtitlePresets = {{ subtitle_presets|tojson }};
   const snapshotMeasuredPaintInput = (kind, spec, data) => {
@@ -20682,6 +20718,7 @@ document.addEventListener("DOMContentLoaded", () => {
     svg.style.pointerEvents = "none";
     const preset = paintInput.preset || {};
     const inheritedTextColor = paintInput.textColor || "#FFFFFF";
+    const svgNamespace = measuredSvgNamespace(element, kind);
     const defs = svgNode("defs");
     svg.appendChild(defs);
     const shadow = kind === "title" ? spec.shadow : preset;
@@ -20707,8 +20744,8 @@ document.addEventListener("DOMContentLoaded", () => {
       text.setAttribute("stroke-width", 2*(stroke || 0));
       const fillKind = run.active ? "active" : "inactive";
       if (kind === "caption" && (preset[`${fillKind}_fill_mode`] || preset.fill_mode) === "gradient") {
-        const gradientId = `${element.id}-${fillKind}-gradient`;
-        if (!defs.querySelector(`#${CSS.escape(gradientId)}`)) {
+        const gradientId = `${svgNamespace}-${fillKind}-gradient`;
+        if (!svg.querySelector(`#${CSS.escape(gradientId)}`)) {
           const gradient = svgNode("linearGradient", {id: gradientId, x1: 0, y1: 0, x2: 0, y2: 1});
           for (const [stop, offset] of [["top", 0], ["mid", DESIGN_GEOMETRY.gradient_mid], ["bottom", 1]]) {
             gradient.appendChild(svgNode("stop", {offset, "stop-color": preset[`${fillKind}_gradient_${stop}`] || preset[`${fillKind}_color`]}));
@@ -20745,6 +20782,7 @@ document.addEventListener("DOMContentLoaded", () => {
       element.replaceChildren(svg);
       element.dataset.captionDomOwner = "measured-svg";
       verifyMeasuredBandScale(element, kind);
+      scheduleDuplicateSvgIdCheck();
       schedulePreviewLayerSafetyCheck(`${kind}_repaint`);
     });
   };
@@ -21178,7 +21216,12 @@ document.addEventListener("DOMContentLoaded", () => {
     if (origPreviewCaption) {
       const origCaptionIsMeasured = origPreviewCaption.dataset.captionDomOwner === "measured-svg";
       if (!origCaptionIsMeasured) {
-        origPreviewCaption.innerHTML = previewSubtitle?.innerHTML || "Sample subtitle line";
+        if (previewSubtitle?.dataset.captionDomOwner === "measured-svg") {
+          origPreviewCaption.textContent = previewSubtitle.dataset.captionText || "Sample subtitle line";
+          origPreviewCaption.dataset.captionDomOwner = "html-fallback";
+        } else {
+          origPreviewCaption.replaceChildren(...Array.from(previewSubtitle?.childNodes || []).map((node) => node.cloneNode(true)));
+        }
         origPreviewCaption.style.top = subtitleTop * scaleY + "px";
         origPreviewCaption.style.height = subtitleHeight * scaleY + "px";
         origPreviewCaption.style.fontSize = subtitleFontSize * elementScale + "px";
