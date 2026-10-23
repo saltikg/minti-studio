@@ -22692,13 +22692,7 @@ document.addEventListener("DOMContentLoaded", () => {
       window.updateShortDesignStrip?.(currentShortDesignDetails());
       if (getGenerateV2Root()) {
         window.setGenerateV2EditorBusy?.(false);
-        window.setGenerateV2EditorStatus?.("Saved ✓", "success");
-        window.setTimeout(() => {
-          const editorStatus = document.getElementById("generate-v2-editor-status");
-          if (generateV2EditState.active && editorStatus?.textContent === "Saved ✓") {
-            window.setGenerateV2EditorStatus?.("", "");
-          }
-        }, 2000);
+        window.setGenerateV2EditorStatus?.("", "");
         return;
       }
       continueAfterSave();
