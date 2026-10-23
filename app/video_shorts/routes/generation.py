@@ -9422,9 +9422,22 @@ def _build_render_job_options(
     }
 
 
+RENDER_SETTINGS_HASH_VERSION = 2
+RENDER_SETTINGS_HASH_PREFIX = f"v{RENDER_SETTINGS_HASH_VERSION}:"
+_LEGACY_OVERLAY_HASH_FIELDS = ("overlay_shapes",)
+_LEGACY_MUSIC_HASH_FIELDS = (
+    "music_audio_id",
+    "music_level",
+    "music_start_seconds",
+    "music_duck",
+    "music_fade_out",
+    "music_speech_ranges",
+)
+
+
 def _render_settings_hash_from_options(options: Dict[str, Any]) -> str:
     payload = canonical_render_settings(options or {})
-    return _raw_render_settings_hash_from_options(payload)
+    return f"{RENDER_SETTINGS_HASH_PREFIX}{_raw_render_settings_hash_from_options(payload)}"
 
 
 def _raw_render_settings_hash_from_options(options: Dict[str, Any]) -> str:
@@ -9435,9 +9448,41 @@ def _raw_render_settings_hash_from_options(options: Dict[str, Any]) -> str:
     return sha256(raw.encode("utf-8")).hexdigest()
 
 
+def _normalize_render_hash_numbers(value: Any) -> Any:
+    if isinstance(value, dict):
+        return {key: _normalize_render_hash_numbers(item) for key, item in value.items()}
+    if isinstance(value, list):
+        return [_normalize_render_hash_numbers(item) for item in value]
+    if isinstance(value, float):
+        normalized = round(value, 6)
+        return 0.0 if normalized == 0 else normalized
+    return value
+
+
 def canonical_render_settings(options: Dict[str, Any]) -> Dict[str, Any]:
     """Normalize render settings so enqueue-time and current comparisons hash the same values."""
     payload = dict(options or {})
+    payload["overlay_shapes"] = _normalize_overlay_shapes(payload.get("overlay_shapes"))
+    payload["music_audio_id"] = _normalize_music_audio_id(payload.get("music_audio_id"))
+    payload["music_level"] = normalize_music_level(payload.get("music_level"))
+    payload["music_start_seconds"] = round(normalize_music_start_seconds(payload.get("music_start_seconds")), 3)
+    payload["music_duck"] = _normalize_optional_bool(payload.get("music_duck"), default=True)
+    payload["music_fade_out"] = _normalize_optional_bool(payload.get("music_fade_out"), default=True)
+    payload["music_speech_ranges"] = [
+        {
+            "start": round(float(item.get("start") or 0.0), 3),
+            "end": round(float(item.get("end") or 0.0), 3),
+        }
+        for item in (payload.get("music_speech_ranges") or [])
+        if isinstance(item, dict)
+    ]
+    edit_keep_ranges = _normalize_edit_keep_ranges(payload.get("edit_keep_ranges"))
+    if edit_keep_ranges:
+        payload["edit_keep_ranges"] = edit_keep_ranges
+    else:
+        payload.pop("edit_keep_ranges", None)
+    # Source duration is an execution guard, not a user-visible design setting.
+    payload.pop("media_duration_seconds", None)
     crop_ratios = dict(payload.get("crop_ratios") or {})
     if crop_ratios:
         for key in (
@@ -9469,7 +9514,35 @@ def canonical_render_settings(options: Dict[str, Any]) -> Dict[str, Any]:
         payload.pop("subtitle_margin_custom", None)
     if str(payload.get("caption_anchor") or "bottom").strip().lower() == "bottom":
         payload.pop("caption_anchor", None)
-    return payload
+    return _normalize_render_hash_numbers(payload)
+
+
+def _legacy_render_settings_hash_aliases(options: Dict[str, Any]) -> List[str]:
+    """Accept pre-version hashes only when omitted fields still have legacy defaults."""
+    canonical = canonical_render_settings(options or {})
+    aliases = [
+        _raw_render_settings_hash_from_options(canonical),
+        _raw_render_settings_hash_from_options(options or {}),
+    ]
+    variants = [canonical]
+    legacy_media_duration = _to_float((options or {}).get("media_duration_seconds"))
+    if legacy_media_duration and legacy_media_duration > 0:
+        variants.append({**canonical, "media_duration_seconds": legacy_media_duration})
+    if not canonical.get("overlay_shapes"):
+        variants += [
+            {key: value for key, value in variant.items() if key not in _LEGACY_OVERLAY_HASH_FIELDS}
+            for variant in list(variants)
+        ]
+    if not canonical.get("music_audio_id"):
+        variants += [
+            {key: value for key, value in variant.items() if key not in _LEGACY_MUSIC_HASH_FIELDS}
+            for variant in list(variants)
+        ]
+    for variant in variants:
+        value = _raw_render_settings_hash_from_options(variant)
+        if value not in aliases:
+            aliases.append(value)
+    return aliases
 
 
 def _video_crop_ratios_from_mapping(video: Dict[str, Any]) -> Dict[str, Any]:
@@ -9631,7 +9704,7 @@ def _parse_podcast_overlay_short_ids(raw_value: Any) -> List[str]:
     ][:2]
 
 
-def _compute_render_settings_hash_for_plan_entry(
+def _render_settings_options_for_plan_entry(
     *,
     video_pk: int,
     video: Dict[str, Any],
@@ -9639,13 +9712,21 @@ def _compute_render_settings_hash_for_plan_entry(
     segments: List[Dict[str, Any]],
     brand_id: Optional[str],
     fallback_title: str,
-    canonical: bool = True,
-) -> str:
+) -> Dict[str, Any]:
     start = _to_float(plan_entry.get("start")) or 0.0
     end = _to_float(plan_entry.get("end")) or start
     owner_user_id = str(video.get("owner_user_id") or "").strip() or None
+    edit_keep_ranges = _normalize_edit_keep_ranges(plan_entry.get("edit_keep_ranges"))
     subtitle_text = (
         str(plan_entry.get("transcript_full_custom") or "").strip()
+        or (
+            " ".join(
+                str(segment.get("text") or "").strip()
+                for segment in _remap_transcript_segments_to_keep_ranges(segments, edit_keep_ranges)
+            ).strip()
+            if edit_keep_ranges
+            else ""
+        )
         or build_transcript_for_range(segments, start, end, prefer_tr=True)
         or ""
     )
@@ -9723,6 +9804,32 @@ def _compute_render_settings_hash_for_plan_entry(
             source_duration=video.get("duration_seconds"),
         ),
     )
+    if edit_keep_ranges:
+        options["edit_keep_ranges"] = edit_keep_ranges
+    media_duration_seconds = _to_float(video.get("duration_seconds"))
+    if media_duration_seconds and media_duration_seconds > 0:
+        options["media_duration_seconds"] = round(media_duration_seconds, 3)
+    return options
+
+
+def _compute_render_settings_hash_for_plan_entry(
+    *,
+    video_pk: int,
+    video: Dict[str, Any],
+    plan_entry: Dict[str, Any],
+    segments: List[Dict[str, Any]],
+    brand_id: Optional[str],
+    fallback_title: str,
+    canonical: bool = True,
+) -> str:
+    options = _render_settings_options_for_plan_entry(
+        video_pk=video_pk,
+        video=video,
+        plan_entry=plan_entry,
+        segments=segments,
+        brand_id=brand_id,
+        fallback_title=fallback_title,
+    )
     if canonical:
         return _render_settings_hash_from_options(options)
     return _raw_render_settings_hash_from_options(options)
@@ -9737,20 +9844,19 @@ def _compute_render_settings_hash_aliases_for_plan_entry(
     brand_id: Optional[str],
     fallback_title: str,
 ) -> List[str]:
-    aliases: List[str] = []
-    for canonical in (True, False):
-        try:
-            value = _compute_render_settings_hash_for_plan_entry(
-                video_pk=video_pk,
-                video=video,
-                plan_entry=plan_entry,
-                segments=segments,
-                brand_id=brand_id,
-                fallback_title=fallback_title,
-                canonical=canonical,
-            )
-        except Exception:
-            continue
+    try:
+        options = _render_settings_options_for_plan_entry(
+            video_pk=video_pk,
+            video=video,
+            plan_entry=plan_entry,
+            segments=segments,
+            brand_id=brand_id,
+            fallback_title=fallback_title,
+        )
+    except Exception:
+        return []
+    aliases = [_render_settings_hash_from_options(options)]
+    for value in _legacy_render_settings_hash_aliases(options):
         if value and value not in aliases:
             aliases.append(value)
     return aliases
@@ -29607,6 +29713,12 @@ def autoclip_video(video_pk):
     auto_suggest_default = auto_render_job and bool(internal_auto_context.get("default_customer"))
     discovery_pipeline_job = (request.form.get("_discovery_pipeline_job") or "").strip() in {"1", "true", "yes"}
     queued_render_settings_hash = (request.form.get("_render_settings_hash") or "").strip() or None
+    try:
+        queued_render_settings_options = json.loads(request.form.get("_render_settings_options") or "{}")
+    except (TypeError, ValueError):
+        queued_render_settings_options = {}
+    if not isinstance(queued_render_settings_options, dict):
+        queued_render_settings_options = {}
 
     def _respond(message, success=False, status=200, category="info", extras=None, redirect_to=None):
         if is_ajax:
@@ -31736,6 +31848,13 @@ def autoclip_video(video_pk):
                     "music_fade_out": bool(video_music_fade_out),
                 }
             )
+            if queued_render_settings_options:
+                rendered_plan_snapshot.update(
+                    {
+                        "render_settings_hash_version": RENDER_SETTINGS_HASH_VERSION,
+                        "render_settings_snapshot": canonical_render_settings(queued_render_settings_options),
+                    }
+                )
             _record_successful_short_render(
                 source_video_id=vid,
                 clip_filename=clip_filename,
@@ -32143,14 +32262,6 @@ def regenerate_clip_video(video_pk: int, plan_index: int):
         return jsonify(success=False, message="Publishing soon — editing is locked."), 409
     if not stored_hash:
         return jsonify(success=False, message="This Short needs one fresh render before it can be regenerated."), 409
-    current_hash = _compute_render_settings_hash_for_plan_entry(
-        video_pk=video_pk,
-        video=video,
-        plan_entry=plan_entry,
-        segments=segments,
-        brand_id=brand_id,
-        fallback_title=video_title,
-    )
     current_hash_aliases = _compute_render_settings_hash_aliases_for_plan_entry(
         video_pk=video_pk,
         video=video,
@@ -32185,7 +32296,7 @@ def regenerate_clip_video(video_pk: int, plan_index: int):
     plan_entry["end"] = round(end, 3)
     if plan_keep_ranges:
         plan_entry["edit_keep_ranges"] = range_resolution.ranges
-    current_hash = _compute_render_settings_hash_for_plan_entry(
+    current_options = _render_settings_options_for_plan_entry(
         video_pk=video_pk,
         video=video,
         plan_entry=plan_entry,
@@ -32193,6 +32304,7 @@ def regenerate_clip_video(video_pk: int, plan_index: int):
         brand_id=brand_id,
         fallback_title=video_title,
     )
+    current_hash = _render_settings_hash_from_options(current_options)
     job_options = {
         "regenerate": True,
         "render_settings_hash": current_hash,
@@ -32200,7 +32312,7 @@ def regenerate_clip_video(video_pk: int, plan_index: int):
         "video_pk": int(video_pk),
         "brand_id": brand_id,
     }
-    input_hash = build_input_hash(source_id=source_video_id, start=start, end=end, options=job_options)
+    input_hash = build_input_hash(source_id=source_video_id, start=start, end=end, options=current_options)
     payload = {
         "video_pk": int(video_pk),
         "source_video_id": source_video_id,
@@ -32212,6 +32324,7 @@ def regenerate_clip_video(video_pk: int, plan_index: int):
         "regenerate": True,
         "job_origin": CUSTOMER_JOB_ORIGIN,
         "render_settings_hash": current_hash,
+        "options": current_options,
         "previous_youtube_video_id": str((generated_row[2] if generated_row else "") or plan_entry.get("yt_video_id") or "").strip(),
         "previous_publish_at_iso": str(plan_entry.get("publish_at_iso") or plan_entry.get("publish_at") or "").strip(),
     }

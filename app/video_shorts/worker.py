@@ -1788,6 +1788,7 @@ def _execute_render_job(app, job: Dict[str, Any]) -> Dict[str, Any]:
                 "_queued_job": "1",
                 "_regenerate_job": "1" if payload.get("regenerate") else "",
                 "_render_settings_hash": str(payload.get("render_settings_hash") or ""),
+                "_render_settings_options": json.dumps(payload.get("options") or {}, separators=(",", ":")),
             },
             headers={"X-Requested-With": "XMLHttpRequest"},
         ):
