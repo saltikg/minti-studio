@@ -16232,6 +16232,30 @@ const applyServerClipFreshness = (planIndex, freshness) => {
   }
 };
 
+const refreshServerClipFreshness = async () => {
+  try {
+    const response = await fetch(window.location.href, {
+      credentials: "same-origin",
+      cache: "no-store",
+    });
+    if (!response.ok) return false;
+    const html = await response.text();
+    const doc = new DOMParser().parseFromString(html, "text/html");
+    doc.querySelectorAll(".clip-card[data-plan-index]").forEach((serverCard) => {
+      const planIndex = String(serverCard.dataset.planIndex || "").trim();
+      if (!planIndex) return;
+      applyServerClipFreshness(planIndex, {
+        needs_regenerate: serverCard.dataset.needsRegenerate === "1",
+        regenerate_reason: serverCard.dataset.regenerateReason || "",
+      });
+    });
+    return true;
+  } catch (error) {
+    console.error("Failed to refresh clip design freshness", error);
+    return false;
+  }
+};
+
 const finalizeClipJobSuccess = async (planIndex, { cached = false, freshness = null } = {}) => {
   applyServerClipFreshness(planIndex, freshness);
   stopClipJobPolling(planIndex, { clearStored: true });
@@ -22612,6 +22636,7 @@ document.addEventListener("DOMContentLoaded", () => {
       cropDirty = false;
       userEditedCropBoxes.clear();
       window.rememberCropEditorSavedDesignState?.();
+      await refreshServerClipFreshness();
       if (statusText) {
         if (cropStatusTimer) {
           window.clearTimeout(cropStatusTimer);
