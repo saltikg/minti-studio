@@ -20781,6 +20781,7 @@ document.addEventListener("DOMContentLoaded", () => {
         shadowText.setAttribute("fill", shadow.shadow_color);
         shadowText.setAttribute("fill-opacity", Number(shadow.shadow_opacity));
         shadowText.setAttribute("stroke", "none");
+        shadowText.setAttribute("data-preview-shadow", "1");
         shadowText.removeAttribute("filter");
         shadowText.style.fill = shadow.shadow_color;
         shadowText.textContent = run.text;

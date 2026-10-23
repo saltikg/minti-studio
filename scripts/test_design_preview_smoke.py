@@ -118,7 +118,7 @@ def _caption_effect(page: Page) -> dict:
             .find(el => el?.querySelector('svg') && getComputedStyle(el).display !== 'none'
               && !el.classList.contains('is-caption-paint-inactive'));
           const svg = band?.querySelector(':scope > svg');
-          const active = svg?.querySelector('text[data-preview-run-active="1"]');
+          const active = svg?.querySelector('text[data-preview-run-active="1"]:not([data-preview-shadow="1"])');
           const fill = active?.getAttribute('fill') || '';
           const match = fill.match(/^url\(#(.+)\)$/);
           const gradient = match ? svg.querySelector(`#${CSS.escape(match[1])}`) : null;
