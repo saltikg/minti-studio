@@ -370,7 +370,7 @@
       grid-template-columns: repeat(4, minmax(0, 1fr));
       gap: 0.85rem;
     }
-    {% if is_tr %}
+{% if is_tr %}
     .free-tool-content-grid {
       display: grid;
       grid-template-columns: repeat(3, minmax(0, 1fr));
@@ -395,8 +395,7 @@
     .free-tool-content-card strong {
       color: rgba(248, 250, 252, 0.96);
     }
-    {% endif %}
-    .free-tool-feature-card,
+{% endif %}    .free-tool-feature-card,
     .free-tool-compare-card {
       border: 1px solid rgba(255, 255, 255, 0.1);
       border-radius: 16px;
@@ -515,9 +514,10 @@
     @media (max-width: 720px) {
       .mv-url-row,
       .free-tool-feature-grid,
-      {% if is_tr %}.free-tool-content-grid,
-      .free-tool-content-grid.is-audience,{% endif %}
-      .free-tool-compare {
+{% if is_tr -%}
+      .free-tool-content-grid,
+      .free-tool-content-grid.is-audience,
+{% endif %}      .free-tool-compare {
         grid-template-columns: 1fr;
         display: grid;
       }
@@ -573,7 +573,7 @@
       </div>
     </section>
 
-    {% if is_tr %}
+{% if is_tr %}
       <section class="free-tool-section" aria-labelledby="free-tool-how-title">
         <div class="free-tool-section-head">
           <h2 id="free-tool-how-title">Nasıl çalışır?</h2>
@@ -596,9 +596,8 @@
           <li class="free-tool-content-card"><strong>Danışmanlar ve uzmanlar</strong> — Uzun anlatımlardan paylaşılabilir tavsiye kesitleri.</li>
         </ul>
       </section>
-    {% endif %}
 
-    <section class="free-tool-section" aria-labelledby="free-tool-get-title">
+{% endif %}    <section class="free-tool-section" aria-labelledby="free-tool-get-title">
       <div class="free-tool-section-head">
         <h2 id="free-tool-get-title">{{ "Neler alırsın" if is_tr else "What you get" }}</h2>
       </div>
