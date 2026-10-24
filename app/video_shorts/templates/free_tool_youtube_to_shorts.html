@@ -8,40 +8,27 @@
 {% set canonical_path = '/tr/araclar/youtube-shorts' if is_tr else '/tools/youtube-to-shorts' %}
 {% set alternate_path = '/tools/youtube-to-shorts' if is_tr else '/tr/araclar/youtube-shorts' %}
 {% set site_origin = request.url_root.rstrip('/') %}
-{% set faq_items = [
-  (
-    'Bu YouTube’dan Shorts aracı gerçekten ücretsiz mi?' if is_tr else 'Is this YouTube to Shorts tool really free?',
-    'Evet. 30 dakikaya kadar bir YouTube videosu yapıştır; Minti en iyi Short’unu otomatik oluşturur — kayıt yok, kredi kartı yok. Düzenleyebilir ve 2 tane daha yapabilirsin. Ücretsiz hesap indirme, planlama, daha uzun videolar ve daha fazla klip açar.' if is_tr else 'Yes. Paste a YouTube video up to 30 minutes and Minti creates your best Short automatically — no sign-up, no credit card. You can edit it and make up to 2 more. A free account unlocks downloads, scheduling, longer videos and more clips.'
-  ),
-  (
-    'Uzun bir YouTube videosunu Shorts’a nasıl çeviririm?' if is_tr else 'How do I turn a long YouTube video into Shorts?',
-    'Video bağlantısını kopyala, yukarıya yapıştır ve Short bul’a tıkla. Minti videoyu yazıya döker, tek başına güçlü duran anı bulur, dikey 9:16 kadraja alır ve altyazı ekler. Sonra düzenleyicide ince ayar yaparsın.' if is_tr else 'Copy the video link, paste it above and click Find Shorts. Minti transcribes the video, finds the strongest self-contained moment, reframes it to vertical 9:16 and adds captions. You land in the editor to fine-tune it.'
-  ),
-  (
-    'Önce videoyu indirmem gerekir mi?' if is_tr else 'Do I need to download the video first?',
-    'Hayır. Sadece YouTube bağlantısını yapıştır — Minti videoyu senin için alır. Kurulum yok; tarayıcında çalışır.' if is_tr else 'No. Just paste the YouTube link — Minti fetches the video for you. Nothing to install, it runs in your browser.'
-  ),
-  (
-    'AI en iyi anları nasıl seçiyor?' if is_tr else 'How does the AI pick the best moments?',
-    'Minti tüm videoyu kendi konuşma modeliyle yazıya döker (YouTube otomatik altyazıları değil), sonra her bölümü güçlü bir giriş, netlik ve videonun geri kalanı olmadan anlaşılma açısından puanlar. En yüksek puanlı an ilk Short’un olur.' if is_tr else "Minti transcribes the full video with its own speech model (not YouTube's auto-captions), then scores each passage for a strong hook, clarity and whether it makes sense without the rest of the video. The highest-scoring moment becomes your first Short."
-  ),
-  (
-    'Short’lar ne kadar uzun olur?' if is_tr else 'How long are the Shorts?',
-    'AI’ın seçtiği klipler genelde 25–60 saniyedir. Düzenleyicide transkriptten kelime ekleyip çıkararak klibi 5–90 saniye aralığında uzatabilir veya kısaltabilirsin.' if is_tr else 'AI-picked clips are usually 25–60 seconds. In the editor, you can lengthen or shorten a clip between 5 and 90 seconds by adding or removing words from the transcript.'
-  ),
-  (
-    'Altyazıları ve klibi düzenleyebilir miyim?' if is_tr else 'Can I edit the captions and the clip?',
-    'Evet. Videodan kesmek için transkriptten kelime çıkarabilir, altyazı metnini düzeltebilir, başlığı, altyazı stilini ve yerleşimi değiştirebilir (yüz odaklı dikey ya da orijinal 16:9), sonra tek tıkla yeniden oluşturabilirsin.' if is_tr else 'Yes. Remove words from the transcript to cut them from the video, fix caption text, change the title, caption style and layout (face-aware vertical or the original 16:9), then regenerate in one click.'
-  ),
-  (
-    'Hangi videolar daha iyi çalışır?' if is_tr else 'Which videos work best?',
-    'İnsanların konuştuğu videolar: podcast’ler, röportajlar, dersler, sohbetler, vaazlar, incelemeler ve vloglar. Müzik videoları veya konuşma olmayan görüntüler AI’a fazla malzeme vermez.' if is_tr else "Videos where people talk: podcasts, interviews, lessons, talks, sermons, reviews and vlogs. Music videos or footage without speech don't give the AI much to work with."
-  ),
-  (
-    'Başkasının YouTube videosunu kullanabilir miyim?' if is_tr else "Can I use someone else's YouTube video?",
-    'Sahibi olduğun veya yeniden kullanma iznin olan videoları kullan. Başka üreticilerin içeriklerinden izinsiz klip paylaşmak kanalında telif taleplerine yol açabilir.' if is_tr else "Use videos you own or have permission to repurpose. Posting clips of other creators' content without permission can lead to copyright claims on your channel."
-  )
-] %}
+{% if is_tr %}
+  {% set faq_items = [
+    ('Gerçekten ücretsiz mi?', 'Evet. Hesap açmadan bir video deneyebilirsin. İndirmek için ücretsiz hesap yeterli, kart bilgisi istenmez.'),
+    ('Videom en fazla kaç dakika olabilir?', 'Ücretsiz denemede 30 dakikaya kadar. Daha uzun videolar için hesap aç.'),
+    ('Türkçe videolarda çalışıyor mu?', "Evet. Konuşmayı kendi sistemimizle yazıya dökeriz, YouTube'un otomatik altyazısına bağlı kalmayız. Türkçe altyazılar buna göre oluşur."),
+    ("Shorts'larda filigran olur mu?", 'Hayır. Ücretsiz hesapla indirdiğin Shorts tamamen temizdir.'),
+    ('Kaç Short çıkarabilirim?', 'Yapay zekâ birçok kesit önerir. İlki otomatik hazırlanır, iki tane daha ücretsiz oluşturabilirsin. Fazlası için ücretsiz hesap aç.'),
+    ('Kanalımı bağlamam gerekiyor mu?', 'Hayır. Herkese açık video linki yeterli, kanal erişimi istemeyiz.')
+  ] %}
+{% else %}
+  {% set faq_items = [
+    ('Is this YouTube to Shorts tool really free?', 'Yes. Paste a YouTube video up to 30 minutes and Minti creates your best Short automatically — no sign-up, no credit card. You can edit it and make up to 2 more. A free account unlocks downloads, scheduling, longer videos and more clips.'),
+    ('How do I turn a long YouTube video into Shorts?', 'Copy the video link, paste it above and click Find Shorts. Minti transcribes the video, finds the strongest self-contained moment, reframes it to vertical 9:16 and adds captions. You land in the editor to fine-tune it.'),
+    ('Do I need to download the video first?', 'No. Just paste the YouTube link — Minti fetches the video for you. Nothing to install, it runs in your browser.'),
+    ('How does the AI pick the best moments?', "Minti transcribes the full video with its own speech model (not YouTube's auto-captions), then scores each passage for a strong hook, clarity and whether it makes sense without the rest of the video. The highest-scoring moment becomes your first Short."),
+    ('How long are the Shorts?', 'AI-picked clips are usually 25–60 seconds. In the editor, you can lengthen or shorten a clip between 5 and 90 seconds by adding or removing words from the transcript.'),
+    ('Can I edit the captions and the clip?', 'Yes. Remove words from the transcript to cut them from the video, fix caption text, change the title, caption style and layout (face-aware vertical or the original 16:9), then regenerate in one click.'),
+    ('Which videos work best?', "Videos where people talk: podcasts, interviews, lessons, talks, sermons, reviews and vlogs. Music videos or footage without speech don't give the AI much to work with."),
+    ("Can I use someone else's YouTube video?", "Use videos you own or have permission to repurpose. Posting clips of other creators' content without permission can lead to copyright claims on your channel.")
+  ] %}
+{% endif %}
 
 {% block title %}{{ page_title }}{% endblock %}
 {% block meta_description %}{{ page_description }}{% endblock %}
@@ -383,6 +370,32 @@
       grid-template-columns: repeat(4, minmax(0, 1fr));
       gap: 0.85rem;
     }
+    {% if is_tr %}
+    .free-tool-content-grid {
+      display: grid;
+      grid-template-columns: repeat(3, minmax(0, 1fr));
+      gap: 0.85rem;
+      margin: 0;
+      padding: 0;
+      list-style: none;
+    }
+    .free-tool-content-grid.is-audience {
+      grid-template-columns: repeat(2, minmax(0, 1fr));
+    }
+    .free-tool-content-card {
+      padding: 1rem;
+      border: 1px solid rgba(255, 255, 255, 0.1);
+      border-radius: 16px;
+      background: rgba(15, 23, 42, 0.56);
+      box-shadow: 0 18px 46px rgba(0, 0, 0, 0.16);
+      color: rgba(203, 213, 225, 0.82);
+      font-size: 0.95rem;
+      line-height: 1.65;
+    }
+    .free-tool-content-card strong {
+      color: rgba(248, 250, 252, 0.96);
+    }
+    {% endif %}
     .free-tool-feature-card,
     .free-tool-compare-card {
       border: 1px solid rgba(255, 255, 255, 0.1);
@@ -502,6 +515,8 @@
     @media (max-width: 720px) {
       .mv-url-row,
       .free-tool-feature-grid,
+      {% if is_tr %}.free-tool-content-grid,
+      .free-tool-content-grid.is-audience,{% endif %}
       .free-tool-compare {
         grid-template-columns: 1fr;
         display: grid;
@@ -557,6 +572,31 @@
         {% endif %}
       </div>
     </section>
+
+    {% if is_tr %}
+      <section class="free-tool-section" aria-labelledby="free-tool-how-title">
+        <div class="free-tool-section-head">
+          <h2 id="free-tool-how-title">Nasıl çalışır?</h2>
+        </div>
+        <ol class="free-tool-content-grid">
+          <li class="free-tool-content-card"><strong>YouTube linkini yapıştır</strong> — Video herkese açık olmalı, en fazla 30 dakika.</li>
+          <li class="free-tool-content-card"><strong>Yapay zekâ en güçlü anları bulur</strong> — Konuşmayı yazıya döker, tek başına anlam taşıyan ve dikkat çeken bölümleri seçip puanlar.</li>
+          <li class="free-tool-content-card"><strong>Düzenle ve indir</strong> — İlk Short otomatik hazırlanır. Altyazıyı ve kadrajı editörde düzenle, ücretsiz hesapla filigransız indir.</li>
+        </ol>
+      </section>
+
+      <section class="free-tool-section" aria-labelledby="free-tool-audience-title">
+        <div class="free-tool-section-head">
+          <h2 id="free-tool-audience-title">Kimler için?</h2>
+        </div>
+        <ul class="free-tool-content-grid is-audience">
+          <li class="free-tool-content-card"><strong>Sohbet ve vaaz kanalları</strong> — Uzun sohbetlerden tek bir fikri anlatan 30-60 saniyelik kesitler.</li>
+          <li class="free-tool-content-card"><strong>Eğitmenler ve öğretmenler</strong> — Ders videolarından tek konuyu anlatan kısa anlatımlar.</li>
+          <li class="free-tool-content-card"><strong>Podcast ve röportaj yapanlar</strong> — Konuşmanın en çarpıcı cevaplarını ayrı Shorts'lara dönüştür.</li>
+          <li class="free-tool-content-card"><strong>Danışmanlar ve uzmanlar</strong> — Uzun anlatımlardan paylaşılabilir tavsiye kesitleri.</li>
+        </ul>
+      </section>
+    {% endif %}
 
     <section class="free-tool-section" aria-labelledby="free-tool-get-title">
       <div class="free-tool-section-head">
