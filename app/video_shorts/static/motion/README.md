@@ -1,0 +1,1 @@
+One shared folder for all blog animations. Each animation = <name>.webm + <name>.mp4 + <name>.jpg (poster). Names are unique kebab-case and reusable across posts. Insert in a post with :::motion <name>.

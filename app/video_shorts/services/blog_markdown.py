@@ -6,6 +6,7 @@ from urllib.parse import parse_qs, urlparse
 
 import bleach
 import markdown
+from flask import url_for
 
 
 _YOUTUBE_ID_RE = re.compile(r"^[A-Za-z0-9_-]{11}$")
@@ -25,6 +26,7 @@ _SPECIMEN_TAGS = {"short": "Short", "long": "Long-form"}
 _PLACEHOLDER_ALT_VALUES = {"alt text", "image", "placeholder"}
 _INTERNAL_LINK_HOSTS = {"mintistudio.com", "www.mintistudio.com"}
 _HEADING_ID_RE = re.compile(r"^[a-z0-9-]+$")
+_MOTION_NAME_RE = re.compile(r"^[a-z0-9-]{1,60}$")
 
 _ALLOWED_TAGS = [
     "a",
@@ -145,6 +147,36 @@ def _youtube_embed_html(video_id: str) -> str:
         'title="YouTube video" loading="lazy" frameborder="0" '
         'allow="accelerator; encrypted-media; picture-in-picture" allowfullscreen></iframe>'
         "</div>"
+    )
+
+
+def _motion_html(name: str, caption: str) -> str:
+    motion_name = (name or "").strip()
+    motion_caption = (caption or "").strip()
+    if not _MOTION_NAME_RE.fullmatch(motion_name) or "\n" in motion_caption:
+        return ""
+
+    webm_url = escape(
+        url_for("video_shorts_bp.static", filename=f"motion/{motion_name}.webm"),
+        quote=True,
+    )
+    mp4_url = escape(
+        url_for("video_shorts_bp.static", filename=f"motion/{motion_name}.mp4"),
+        quote=True,
+    )
+    poster_url = escape(
+        url_for("video_shorts_bp.static", filename=f"motion/{motion_name}.jpg"),
+        quote=True,
+    )
+    safe_caption = escape(motion_caption)
+    aria_label = escape(motion_caption or "Animation", quote=True)
+    caption_html = f"<figcaption>{safe_caption}</figcaption>" if motion_caption else ""
+    return (
+        '<figure class="blog-motion"><video autoplay muted loop playsinline preload="metadata" '
+        f'poster="{poster_url}" aria-label="{aria_label}">'
+        f'<source src="{webm_url}" type="video/webm">'
+        f'<source src="{mp4_url}" type="video/mp4">'
+        f"</video>{caption_html}</figure>"
     )
 
 
@@ -352,6 +384,8 @@ def _compare_html(body: str, caption: str) -> str:
 
 
 def _component_html(component_type: str, title: str, body: str) -> str:
+    if component_type == "motion":
+        return _motion_html(title, body)
     safe_title = escape((title or "").strip())
     if component_type == "flow":
         return _flow_html(body, title)
@@ -404,7 +438,13 @@ def _extract_component_blocks(markdown_text: str) -> tuple[str, list[str]]:
             continue
 
         component_type = start_match.group("type").lower()
-        if component_type not in _CALLOUT_TYPES | _DIAGRAM_TYPES | {"key", "action", "steps"} | set(_SPECIMEN_TAGS):
+        supported_types = (
+            _CALLOUT_TYPES
+            | _DIAGRAM_TYPES
+            | {"key", "action", "steps", "motion"}
+            | set(_SPECIMEN_TAGS)
+        )
+        if component_type not in supported_types:
             output.append(lines[index])
             index += 1
             continue
