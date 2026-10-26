@@ -130,6 +130,7 @@
       display: none;
       gap: 6px;
       align-items: center;
+      flex-wrap: wrap;
       margin-top: 6px;
     }
     .discovery-greeting-edit.is-open {
@@ -137,6 +138,10 @@
     }
     .discovery-greeting-edit input {
       max-width: 150px;
+    }
+    .discovery-greeting-edit input[type="email"] {
+      max-width: 260px;
+      min-width: 220px;
     }
     .discovery-daily-keywords {
       color: rgba(255, 255, 255, 0.9);
@@ -870,7 +875,7 @@
                 {% if lead.creator_email %}
                   <div class="discovery-greeting-preview {{ 'is-generic' if lead.outreach_greeting_is_generic else '' }}" data-greeting-preview="{{ lead.id }}">
                     <span data-greeting-label="{{ lead.id }}">Greeting: {{ lead.outreach_greeting_text }}</span>
-                    <span class="discovery-muted">{{ lead.creator_email }}</span>
+                    <span class="discovery-muted" data-creator-email-label="{{ lead.id }}">{{ lead.creator_email }}</span>
                     {% if lead.outreach_first_name_edited_by_admin %}
                       <span class="discovery-muted">edited</span>
                     {% endif %}
@@ -893,6 +898,16 @@
                       value="{{ lead.outreach_greeting_name }}"
                       placeholder="First name"
                       aria-label="Greeting first name"
+                    >
+                    <input
+                      type="email"
+                      class="form-control form-control-sm"
+                      name="creator_email"
+                      value="{{ lead.creator_email }}"
+                      placeholder="Email address"
+                      aria-label="Recipient email address"
+                      autocomplete="off"
+                      required
                     >
                     <button type="submit" class="btn btn-sm btn-outline-info">Save</button>
                     <button type="button" class="btn btn-sm btn-outline-light" data-greeting-edit-cancel="{{ lead.id }}">Cancel</button>
@@ -1164,19 +1179,26 @@
           event.preventDefault();
           const leadId = form.getAttribute('data-greeting-edit-form');
           const status = document.querySelector(`[data-greeting-edit-status="${leadId}"]`);
-          const input = form.querySelector('input[name="outreach_first_name"]');
+          const nameInput = form.querySelector('input[name="outreach_first_name"]');
+          const emailInput = form.querySelector('input[name="creator_email"]');
           const submit = form.querySelector('button[type="submit"]');
           const url = form.getAttribute('data-update-url') || '';
-          if (!url || !input) return;
+          if (!url || !nameInput || !emailInput) return;
           if (status) status.textContent = 'Saving...';
           if (submit) submit.disabled = true;
           try {
-            const data = await postJson(url, { outreach_first_name: input.value || '' });
+            const data = await postJson(url, {
+              outreach_first_name: nameInput.value || '',
+              creator_email: emailInput.value || ''
+            });
             const preview = document.querySelector(`[data-greeting-preview="${leadId}"]`);
             const label = document.querySelector(`[data-greeting-label="${leadId}"]`);
+            const emailLabel = document.querySelector(`[data-creator-email-label="${leadId}"]`);
             if (label) label.textContent = `Greeting: ${data.outreach_greeting_text || 'Hi'}`;
+            if (emailLabel) emailLabel.textContent = data.creator_email || '';
             if (preview) preview.classList.toggle('is-generic', Boolean(data.outreach_greeting_is_generic));
-            input.value = data.outreach_greeting_name || '';
+            nameInput.value = data.outreach_greeting_name || '';
+            emailInput.value = data.creator_email || '';
             if (status) status.textContent = 'Saved.';
             form.classList.remove('is-open');
           } catch (error) {

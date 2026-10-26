@@ -22824,9 +22824,13 @@ def admin_update_discovery_lead_outreach_first_name(lead_id: str):
     payload = payload or {}
     raw_name = str(payload.get("outreach_first_name") or "").strip()
     stored_value = raw_name or NO_GREETING_NAME_MARKER
+    email_was_supplied = "creator_email" in payload
+    creator_email = str(payload.get("creator_email") or "").strip().lower()
     normalized_lead_id = str(lead_id or "").strip()
     if not normalized_lead_id:
         return jsonify({"success": False, "errors": [{"message": "Lead is required."}]}), 400
+    if email_was_supplied and not re.fullmatch(r"[^\s@]+@[^\s@]+\.[^\s@]+", creator_email):
+        return jsonify({"success": False, "errors": [{"message": "Enter a valid email address."}]}), 400
 
     conn = get_db()
     try:
@@ -22836,7 +22840,7 @@ def admin_update_discovery_lead_outreach_first_name(lead_id: str):
             return jsonify({"success": False, "errors": [{"message": "Greeting storage is not available."}]}), 503
         row = conn.execute(
             """
-            SELECT id
+            SELECT id, creator_email
             FROM discovery_leads
             WHERE CAST(id AS VARCHAR) = ?
             LIMIT 1
@@ -22845,20 +22849,35 @@ def admin_update_discovery_lead_outreach_first_name(lead_id: str):
         ).fetchone()
         if not row:
             return jsonify({"success": False, "errors": [{"message": "Lead not found."}]}), 404
+        if not email_was_supplied:
+            creator_email = str(row[1] or "").strip().lower()
+        assignments = [
+            "outreach_first_name = ?",
+            "outreach_first_name_edited_by_admin = true",
+        ]
+        params: List[Any] = [stored_value]
+        if email_was_supplied:
+            assignments.append("creator_email = ?")
+            params.append(creator_email)
+            if "email_source" in columns:
+                assignments.append("email_source = ?")
+                params.append("manual_admin")
+            if "email_enrichment_error" in columns:
+                assignments.append("email_enrichment_error = NULL")
+        params.append(normalized_lead_id)
         conn.execute(
-            """
+            f"""
             UPDATE discovery_leads
-               SET outreach_first_name = ?,
-                   outreach_first_name_edited_by_admin = true
+               SET {", ".join(assignments)}
              WHERE CAST(id AS VARCHAR) = ?
             """,
-            [stored_value, normalized_lead_id],
+            params,
         )
         conn.commit()
     except Exception:
         conn.rollback()
-        current_app.logger.exception("Failed to update discovery outreach first name lead_id=%s", normalized_lead_id)
-        return jsonify({"success": False, "errors": [{"message": "Greeting name could not be saved."}]}), 500
+        current_app.logger.exception("Failed to update discovery outreach contact lead_id=%s", normalized_lead_id)
+        return jsonify({"success": False, "errors": [{"message": "Greeting name and email could not be saved."}]}), 500
     finally:
         conn.close()
 
@@ -22867,6 +22886,7 @@ def admin_update_discovery_lead_outreach_first_name(lead_id: str):
         {
             "success": True,
             "lead_id": normalized_lead_id,
+            "creator_email": creator_email,
             "outreach_first_name": stored_value,
             "outreach_greeting_name": greeting_name,
             "outreach_greeting_text": f"Hi {greeting_name}," if greeting_name else "Hi",
