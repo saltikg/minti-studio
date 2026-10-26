@@ -23134,56 +23134,122 @@ def admin_enqueue_autopilot_discovery_email_enrichment():
 @video_shorts_bp.route("/admin/leads/<lead_id>/recipient-name", methods=["POST"])
 @require_admin
 def admin_update_lead_recipient_name(lead_id: str):
-    """Save the greeting name used when future lead share links are created."""
+    """Save the greeting name and contact email used for lead outreach."""
     payload = request.get_json(silent=True) if request.is_json else request.form
     payload = payload or {}
     recipient_name = str(payload.get("recipient_name") or "").strip()
     stored_value = recipient_name or None
+    email_was_supplied = "creator_email" in payload
+    creator_email = str(payload.get("creator_email") or "").strip().lower()
     wants_json = (request.headers.get("X-Requested-With") or "").strip().lower() == "xmlhttprequest" or request.is_json
+    normalized_lead_id = str(lead_id or "").strip()
+    if email_was_supplied and not re.fullmatch(r"[^\s@]+@[^\s@]+\.[^\s@]+", creator_email):
+        if wants_json:
+            return jsonify({"ok": False, "error": "Enter a valid email address."}), 400
+        flash("Enter a valid email address.", "error")
+        return redirect(url_for("video_shorts_bp.admin_leads"))
 
     conn = get_db()
     try:
-        if "recipient_name" not in table_columns(conn, "autopilot_leads"):
+        lead_columns = table_columns(conn, "autopilot_leads")
+        if "recipient_name" not in lead_columns:
             if wants_json:
                 return jsonify({"ok": False, "error": "recipient_name_unavailable"}), 503
             flash("Greeting-name storage is not available until the database migration is applied.", "error")
             return redirect(url_for("video_shorts_bp.admin_leads"))
         row = conn.execute(
             """
-            SELECT 1
+            SELECT creator_email
             FROM autopilot_leads
             WHERE CAST(id AS VARCHAR) = ?
             LIMIT 1
             """,
-            [str(lead_id or "").strip()],
+            [normalized_lead_id],
         ).fetchone()
         if not row:
             if wants_json:
                 return jsonify({"ok": False, "error": "not_found"}), 404
             abort(404)
+        if not email_was_supplied:
+            creator_email = str(row[0] or "").strip().lower()
+        elif "creator_email" not in lead_columns:
+            if wants_json:
+                return jsonify({"ok": False, "error": "creator_email_unavailable"}), 503
+            flash("Lead email storage is not available.", "error")
+            return redirect(url_for("video_shorts_bp.admin_leads"))
+
+        assignments = ["recipient_name = ?"]
+        params: List[Any] = [stored_value]
+        if email_was_supplied:
+            duplicate = conn.execute(
+                """
+                SELECT 1
+                FROM autopilot_leads
+                WHERE lower(trim(COALESCE(creator_email, ''))) = ?
+                  AND CAST(id AS VARCHAR) <> ?
+                LIMIT 1
+                """,
+                [creator_email, normalized_lead_id],
+            ).fetchone()
+            if duplicate:
+                if wants_json:
+                    return jsonify({"ok": False, "error": "Another lead already uses this email address."}), 409
+                flash("Another lead already uses this email address.", "error")
+                return redirect(url_for("video_shorts_bp.admin_leads"))
+            assignments.append("creator_email = ?")
+            params.append(creator_email)
+        params.append(normalized_lead_id)
         conn.execute(
-            """
+            f"""
             UPDATE autopilot_leads
-               SET recipient_name = ?
+               SET {", ".join(assignments)}
              WHERE CAST(id AS VARCHAR) = ?
             """,
-            [stored_value, str(lead_id or "").strip()],
+            params,
         )
+        if email_was_supplied:
+            share_columns = table_columns(conn, "short_share_links")
+            if {"autopilot_lead_id", "recipient_email"}.issubset(share_columns):
+                active_filters = []
+                if "archived" in share_columns:
+                    active_filters.append("COALESCE(archived, false) = false")
+                if "declined" in share_columns:
+                    active_filters.append("COALESCE(declined, false) = false")
+                active_clause = "" if not active_filters else f"AND {' AND '.join(active_filters)}"
+                conn.execute(
+                    f"""
+                    UPDATE short_share_links
+                       SET recipient_email = ?
+                     WHERE CAST(autopilot_lead_id AS VARCHAR) = ?
+                       {active_clause}
+                    """,
+                    [creator_email, normalized_lead_id],
+                )
+            discovery_columns = table_columns(conn, "discovery_leads")
+            if {"autopilot_lead_id", "creator_email"}.issubset(discovery_columns):
+                conn.execute(
+                    """
+                    UPDATE discovery_leads
+                       SET creator_email = ?
+                     WHERE CAST(autopilot_lead_id AS VARCHAR) = ?
+                    """,
+                    [creator_email, normalized_lead_id],
+                )
         conn.commit()
     except HTTPException:
         raise
     except Exception:
         conn.rollback()
-        current_app.logger.exception("Failed to update recipient_name for autopilot lead %s", lead_id)
+        current_app.logger.exception("Failed to update outreach contact for autopilot lead %s", lead_id)
         if wants_json:
             return jsonify({"ok": False, "error": "update_failed"}), 500
-        flash("Greeting name could not be saved.", "error")
+        flash("Greeting name and email could not be saved.", "error")
     finally:
         conn.close()
 
     if wants_json:
-        return jsonify({"ok": True, "lead_id": str(lead_id or "").strip(), "recipient_name": recipient_name})
-    flash("Greeting name saved.", "success")
+        return jsonify({"ok": True, "lead_id": normalized_lead_id, "recipient_name": recipient_name, "creator_email": creator_email})
+    flash("Greeting name and email saved.", "success")
     return redirect(url_for("video_shorts_bp.admin_leads"))
 
 

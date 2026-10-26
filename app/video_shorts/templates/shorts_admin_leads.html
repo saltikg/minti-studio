@@ -31,7 +31,7 @@
     .admin-leads-email-row { display:flex; align-items:center; gap:6px; }
     .admin-leads-email-edit { width:26px; height:26px; padding:0; display:inline-flex; align-items:center; justify-content:center; color:rgba(255,255,255,.6); border-color:rgba(255,255,255,.18); }
     .admin-leads-email-edit:hover, .admin-leads-email-edit:focus { color:#8ff3d8; border-color:rgba(45,212,191,.5); }
-    .admin-leads-email-form { display:none; gap:8px; min-width:245px; margin-top:8px; }
+    .admin-leads-email-form { display:none; gap:8px; min-width:245px; margin-top:8px; flex-wrap:wrap; }
     .admin-leads-email-form.is-open { display:flex; }
     .admin-leads-email-form .form-control { min-width:0; }
     .admin-leads-watch { min-width:220px; }
@@ -273,10 +273,13 @@
                 {% set effective_recipient_name = lead.recipient_name or lead.creator_name %}
                 <div class="admin-leads-muted admin-leads-email-row">
                   <span data-recipient-name-label="{{ lead.id }}">Email greeting: {{ effective_recipient_name }}</span>
-                  <button type="button" class="btn btn-sm btn-outline-secondary admin-leads-email-edit" data-recipient-name-edit="{{ lead.id }}" aria-label="Edit email greeting name" title="Edit email greeting name"><i class="bi bi-pencil" aria-hidden="true"></i></button>
+                  <button type="button" class="btn btn-sm btn-outline-secondary admin-leads-email-edit" data-recipient-name-edit="{{ lead.id }}" aria-label="Edit email greeting and address" title="Edit email greeting and address"><i class="bi bi-pencil" aria-hidden="true"></i></button>
                 </div>
                 <form method="post" action="{{ url_for('video_shorts_bp.admin_update_lead_recipient_name', lead_id=lead.id) }}" class="admin-leads-email-form" data-recipient-name-form="{{ lead.id }}" data-recipient-name-fallback="{{ lead.creator_name }}">
                   <input type="text" name="recipient_name" class="form-control form-control-sm" value="{{ effective_recipient_name }}" placeholder="Email greeting name" aria-label="Email greeting name">
+                  {% if lead.creator_email %}
+                    <input type="email" name="creator_email" class="form-control form-control-sm" value="{{ lead.creator_email }}" placeholder="creator@example.com" aria-label="Creator email" required>
+                  {% endif %}
                   <button type="submit" class="btn btn-sm btn-primary">Save</button>
                 </form>
                 {% if not lead.has_owner and not lead.converted %}
@@ -298,7 +301,7 @@
                     <button type="submit" class="btn btn-sm btn-primary">Save</button>
                   </form>
                 {% else %}
-                  <div class="admin-leads-muted">Email: {{ lead.creator_email }}</div>
+                  <div class="admin-leads-muted">Email: <span data-creator-email-label="{{ lead.id }}">{{ lead.creator_email }}</span></div>
                 {% endif %}
               </td>
               <td>
@@ -611,9 +614,11 @@
         form.addEventListener("submit", async (event) => {
           event.preventDefault();
           const leadId = form.dataset.recipientNameForm;
-          const input = form.querySelector("input[name='recipient_name']");
+          const nameInput = form.querySelector("input[name='recipient_name']");
+          const emailInput = form.querySelector("input[name='creator_email']");
           const button = form.querySelector("button[type='submit']");
           const label = document.querySelector(`[data-recipient-name-label="${leadId}"]`);
+          const emailLabel = document.querySelector(`[data-creator-email-label="${leadId}"]`);
           const fallbackName = form.dataset.recipientNameFallback || "";
           const originalText = button?.textContent || "Save";
           if (button) {
@@ -635,7 +640,9 @@
             const savedName = (data.recipient_name || "").trim();
             const effectiveName = savedName || fallbackName;
             if (label) label.textContent = `Email greeting: ${effectiveName}`;
-            if (input) input.value = effectiveName;
+            if (nameInput) nameInput.value = effectiveName;
+            if (emailInput && data.creator_email) emailInput.value = data.creator_email;
+            if (emailLabel && data.creator_email) emailLabel.textContent = data.creator_email;
             form.classList.remove("is-open");
           } catch (error) {
             alert(error.message || "Greeting name could not be saved.");
