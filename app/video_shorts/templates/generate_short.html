@@ -16197,6 +16197,78 @@ const stopClipJobPolling = (planIndex, { clearStored = false } = {}) => {
   }
 };
 
+const syncClipJobDomState = (planIndex, { jobId = null, status = null } = {}) => {
+  const normalizedPlanIndex = String(planIndex || "").trim();
+  if (!normalizedPlanIndex) return;
+  const elements = [
+    getClipCardByPlanIndex(normalizedPlanIndex),
+    document.querySelector(`.clip-rail-item[data-plan-index="${CSS.escape(normalizedPlanIndex)}"]`),
+  ];
+  elements.forEach((element) => {
+    if (!element) return;
+    if (jobId !== null) element.dataset.renderJobId = String(jobId || "");
+    if (status !== null) element.dataset.renderJobStatus = String(status || "");
+  });
+};
+
+const reportClipPostDoneError = (planIndex, step, error) => {
+  const message = error?.message || String(error || "Unknown post-render error");
+  const stack = String(error?.stack || "").trim();
+  console.error(`Clip ${planIndex} post-done step failed: ${step}`, error);
+  window.MintiErrorReporter?.report?.({
+    error_type: "clip_regenerate_done_step_error",
+    message: `${step}: ${message}${stack ? `\n${stack}` : ""}`,
+    source: window.location.pathname,
+    dedupe: false,
+  });
+};
+
+const runClipPostDoneStep = async (planIndex, step, action, fallback = null) => {
+  try {
+    return await action();
+  } catch (error) {
+    reportClipPostDoneError(planIndex, step, error);
+    return fallback;
+  }
+};
+
+const applyCompletedClipMedia = (planIndex, media) => {
+  if (!media || typeof media !== "object") return false;
+  const payloadPlanIndex = String(media.plan_index || planIndex || "").trim();
+  if (payloadPlanIndex && payloadPlanIndex !== String(planIndex || "").trim()) {
+    throw new Error(`Terminal media plan mismatch (${payloadPlanIndex})`);
+  }
+  const card = getClipCardByPlanIndex(planIndex);
+  const railItem = document.querySelector(
+    `.clip-rail-item[data-plan-index="${CSS.escape(String(planIndex || ""))}"]`,
+  );
+  const videoUrl = String(media.video_url || "").trim();
+  const posterUrl = String(media.poster_url || "").trim();
+  const mediaVersion = String(media.media_version || "").trim();
+  const video = card?.querySelector("video");
+  if (video && videoUrl && video.getAttribute("src") !== videoUrl) {
+    video.setAttribute("src", videoUrl);
+    video.load();
+  }
+  if (video && posterUrl) video.setAttribute("poster", posterUrl);
+  const openLink = card?.querySelector(".generate-v2-open-btn");
+  if (openLink && videoUrl) openLink.href = videoUrl;
+  const downloadLink = card?.querySelector(".generate-v2-download-btn");
+  if (downloadLink && media.download_url) downloadLink.href = String(media.download_url);
+  if (railItem && posterUrl) {
+    railItem.querySelectorAll("img").forEach((image) => { image.src = posterUrl; });
+  }
+  [card, railItem].forEach((element) => {
+    if (!element) return;
+    if (mediaVersion) element.dataset.mediaVersion = mediaVersion;
+    if (media.clip_filename) element.dataset.filename = String(media.clip_filename);
+    if (media.render_width) element.dataset.renderWidth = String(media.render_width);
+    if (media.render_height) element.dataset.renderHeight = String(media.render_height);
+    if (media.render_aspect) element.dataset.renderAspect = String(media.render_aspect);
+  });
+  return Boolean(videoUrl || mediaVersion || posterUrl);
+};
+
 const applyServerClipFreshness = (planIndex, freshness) => {
   if (!freshness || typeof freshness.needs_regenerate !== "boolean") {
     return;
@@ -16270,14 +16342,47 @@ const refreshServerClipFreshness = async () => {
 };
 
 const finalizeClipJobSuccess = async (planIndex, { cached = false, freshness = null } = {}) => {
-  applyServerClipFreshness(planIndex, freshness);
-  stopClipJobPolling(planIndex, { clearStored: true });
-  setGenerateV2ClipMutationLocked(planIndex, false);
-  setGenerateV2RenderOverlay(planIndex, { active: false, failed: false, success: false });
-  for (let attempt = 0; attempt < clipJobRevealAttempts; attempt += 1) {
-    const refreshed = await refreshClipList(planIndex, "list", { forceReplaceSelected: true });
-    applyServerClipFreshness(planIndex, freshness);
-    if (refreshed && isCreatedClipRendered(planIndex)) {
+  const clearTerminalUi = () => {
+    const cleanupSteps = [
+      ["overlay_clear", () => setGenerateV2RenderOverlay(planIndex, { active: false, failed: false, success: false })],
+      ["poll_stop", () => stopClipJobPolling(planIndex, { clearStored: true })],
+      ["terminal_dom_state", () => syncClipJobDomState(planIndex, { jobId: "", status: "done" })],
+      ["mutation_unlock", () => setGenerateV2ClipMutationLocked(planIndex, false)],
+      ["regenerate_feedback_clear", () => setRegenerateFeedback(planIndex, "", false)],
+    ];
+    cleanupSteps.forEach(([step, action]) => {
+      try {
+        action();
+      } catch (error) {
+        reportClipPostDoneError(planIndex, step, error);
+      }
+    });
+  };
+  // Terminal status owns the spinner lifecycle. Clear it before any optional
+  // card/poster/freshness work, and again after DOM replacement in `finally`.
+  clearTerminalUi();
+  let rendered = false;
+  try {
+    await runClipPostDoneStep(planIndex, "video_and_poster", () => applyCompletedClipMedia(planIndex, freshness));
+    await runClipPostDoneStep(planIndex, "needs_regenerate", () => applyServerClipFreshness(planIndex, freshness));
+    for (let attempt = 0; attempt < clipJobRevealAttempts; attempt += 1) {
+      const refreshed = await runClipPostDoneStep(
+        planIndex,
+        "card_and_timing_refresh",
+        async () => {
+          const result = await refreshClipList(planIndex, "list", { forceReplaceSelected: true });
+          if (!result) throw new Error("Clip card refresh returned false");
+          return result;
+        },
+        false,
+      );
+      await runClipPostDoneStep(planIndex, "video_and_poster_after_refresh", () => applyCompletedClipMedia(planIndex, freshness));
+      await runClipPostDoneStep(planIndex, "needs_regenerate_after_refresh", () => applyServerClipFreshness(planIndex, freshness));
+      rendered = Boolean(refreshed && isCreatedClipRendered(planIndex));
+      if (rendered) break;
+      if (attempt < clipJobRevealAttempts - 1) await sleep(clipJobRevealDelayMs);
+    }
+    await runClipPostDoneStep(planIndex, "ready_notification", () => {
       if (cached) {
         injectClipNotice(planIndex, "You've already generated this clip.");
       } else if (typeof window.vsPushNotification === "function") {
@@ -16288,33 +16393,25 @@ const finalizeClipJobSuccess = async (planIndex, { cached = false, freshness = n
           suppressBanner: Boolean(document.querySelector('#clip-workbench-shell[data-generate-v2="1"]')),
         });
       }
+    });
+    await runClipPostDoneStep(planIndex, "ready_coachmark", () => {
       window.__trsClipSelectorController?.showReadyCoachmark?.(planIndex);
-      loadGenerateUsageSummary();
-      setGenerateV2RenderOverlay(planIndex, { active: false, failed: false, success: false });
-      return;
-    }
-    if (attempt < clipJobRevealAttempts - 1) {
-      await sleep(clipJobRevealDelayMs);
-    }
-  }
-  if (!cached && typeof window.vsPushNotification === "function") {
-    window.vsPushNotification({
-      title: ["Short", "ready"].join(" "),
-      message: ["Your short video", "is ready."].join(" "),
-      href: window.location.href,
-      suppressBanner: Boolean(document.querySelector('#clip-workbench-shell[data-generate-v2="1"]')),
     });
-  }
-  window.__trsClipSelectorController?.showReadyCoachmark?.(planIndex);
-  const card = getClipCardByPlanIndex(planIndex);
-  if (card) {
-    setClipFeedbackState(card, {
-      message: "Short generated. Refresh if the preview does not appear yet.",
-      tone: "text-warning",
-      busy: false,
-      showSpinner: false,
-      disableButton: false,
-    });
+    await runClipPostDoneStep(planIndex, "usage_summary", () => loadGenerateUsageSummary());
+    if (!rendered) {
+      const card = getClipCardByPlanIndex(planIndex);
+      if (card) {
+        setClipFeedbackState(card, {
+          message: "Short generated. Refresh if the preview does not appear yet.",
+          tone: "text-warning",
+          busy: false,
+          showSpinner: false,
+          disableButton: false,
+        });
+      }
+    }
+  } finally {
+    clearTerminalUi();
   }
 };
 
@@ -16485,6 +16582,7 @@ const pollClipJobUntilDone = async (
   const state = { cancelled: false, jobId, controller: null };
   clipJobPolls.set(key, state);
   storeClipJob(key, { jobId, startedAt, status: initialStatus, mode });
+  syncClipJobDomState(planIndex, { jobId, status: normalizeClipJobStatus(initialStatus) });
 
   let attempt = 0;
   let status = normalizeClipJobStatus(initialStatus);
@@ -16528,6 +16626,7 @@ const pollClipJobUntilDone = async (
       status = normalizeClipJobStatus(payload?.status || status);
       queuePosition = payload?.queue_position;
       storeClipJob(key, { jobId, startedAt, status, mode });
+      syncClipJobDomState(planIndex, { jobId, status });
       pollErrorCount = 0;
       if (status === "done") {
         const freshness = payload?.media && typeof payload.media === "object"
@@ -17850,15 +17949,20 @@ const resumeQueuedClipJobs = ({ forceRestart = false } = {}) => {
     if (!planIndex) {
       return;
     }
-    const liveRenderStatus = String(card.dataset.renderJobStatus || "").trim().toLowerCase();
-    if (card.dataset.status === "created" && !["queued", "processing", "running"].includes(liveRenderStatus)) {
-      stopClipJobPolling(planIndex, { clearStored: true });
-      return;
-    }
     const storedJob = storedJobs[String(planIndex)] || {};
-    const jobId = String(card.dataset.renderJobId || "").trim() || String(storedJob.jobId || "").trim();
-    const status = liveRenderStatus || normalizeClipJobStatus(storedJob.status || card.dataset.status);
+    const storedStatus = normalizeClipJobStatus(storedJob.status);
+    const liveRenderStatus = String(card.dataset.renderJobStatus || "").trim().toLowerCase();
+    const jobId = String(storedJob.jobId || "").trim() || String(card.dataset.renderJobId || "").trim();
+    const status = isClipJobLiveStatus(storedStatus)
+      ? storedStatus
+      : normalizeClipJobStatus(liveRenderStatus || card.dataset.status);
+    // A client-enqueued regenerate has newer state in sessionStorage than the
+    // server-rendered card. Never cancel it just because the card still says
+    // `created` when focus/visibility resumes.
     if (!jobId || !isClipJobLiveStatus(status)) {
+      if (card.dataset.status === "created" && !isClipJobLiveStatus(liveRenderStatus)) {
+        stopClipJobPolling(planIndex, { clearStored: true });
+      }
       return;
     }
     pollClipJobUntilDone(planIndex, jobId, {

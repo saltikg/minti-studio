@@ -130,6 +130,180 @@ def _print_pass(variant: str, label: str) -> None:
     print(f"PASS [{variant}] {label}")
 
 
+def _assert_stubbed_regenerate(page: Page, variant: str) -> None:
+    card = page.locator(".clip-card:has(video):has(.generate-v2-regenerate-btn)").first
+    if card.count() == 0:
+        # The smoke server may not have the production media mount, even when
+        # the selected clip is rendered in production. Hydrate one existing
+        # card with the same controls so the real regenerate client flow can
+        # still be exercised without starting a render.
+        card = page.locator(".clip-card[data-plan-index]").first
+        if card.count() == 0:
+            page.evaluate(
+                """() => {
+                  const repository = document.getElementById('clip-card-repository')
+                    || document.getElementById('clip-management-panel');
+                  if (!repository) throw new Error('Smoke page has no clip card repository');
+                  const card = document.createElement('div');
+                  card.className = 'clip-card';
+                  card.dataset.planIndex = 'smoke-regenerate';
+                  card.dataset.regenerateUrl = `${window.location.pathname}/clip/smoke-regenerate/regenerate`;
+                  card.innerHTML = '<div class="clip-card-media"></div>';
+                  repository.appendChild(card);
+                }"""
+            )
+            card = page.locator(".clip-card[data-plan-index='smoke-regenerate']")
+        assert card.count() == 1, "Could not prepare a clip card for regenerate smoke testing"
+        card.evaluate(
+            """card => {
+              card.dataset.status = 'created';
+              card.dataset.outdated = '0';
+              if (!card.dataset.regenerateUrl) {
+                card.dataset.regenerateUrl = `${window.location.pathname}/clip/${card.dataset.planIndex}/regenerate`;
+              }
+              const media = card.querySelector('.clip-card-media');
+              if (!media) throw new Error('Smoke clip card has no media container');
+              media.innerHTML = `
+                <div class="generate-v2-media-shell">
+                  <div class="generate-v2-media-column">
+                    <video src="/smoke-initial.mp4?v=smoke-regenerate-v1"
+                      poster="/smoke-initial.jpg?v=smoke-regenerate-v1"></video>
+                    <div class="generate-v2-render-overlay d-none">
+                      <span class="generate-v2-render-overlay-label"></span>
+                    </div>
+                    <div class="clip-card-media-actions generate-v2-primary-actions">
+                      <a class="generate-v2-open-btn" href="/smoke-initial.mp4?v=smoke-regenerate-v1"></a>
+                      <a class="generate-v2-download-btn" href="/smoke-download?v=smoke-regenerate-v1"></a>
+                      <button type="button" class="generate-v2-regenerate-btn"
+                        data-plan-index="${card.dataset.planIndex}"
+                        data-regenerate-url="${card.dataset.regenerateUrl}">
+                        <i class="bi bi-arrow-clockwise"></i><span>Regenerate</span>
+                      </button>
+                    </div>
+                  </div>
+                </div>`;
+              initGenerateV2RegenerateControls();
+            }"""
+        )
+    plan_index = str(card.get_attribute("data-plan-index") or "").strip()
+    assert plan_index, "Rendered clip card has no plan index"
+    initial_src = str(card.locator("video").get_attribute("src") or "")
+    initial_poster = str(card.locator("video").get_attribute("poster") or "")
+    assert initial_src, "Rendered clip card has no video URL"
+    new_version = "smoke-regenerate-v2"
+    separator = "&" if "?" in initial_src else "?"
+    new_src = f"{initial_src}{separator}smoke_version={new_version}"
+    poster_separator = "&" if "?" in initial_poster else "?"
+    new_poster = (
+        f"{initial_poster}{poster_separator}smoke_version={new_version}"
+        if initial_poster else ""
+    )
+    status_calls = {"count": 0}
+
+    def fulfill_regenerate(route) -> None:
+        route.fulfill(
+            status=202,
+            content_type="application/json",
+            body='{"success":true,"job_id":"stub-regenerate-job","status":"processing"}',
+        )
+
+    def fulfill_status(route) -> None:
+        status_calls["count"] += 1
+        if status_calls["count"] == 1:
+            route.fulfill(
+                status=200,
+                content_type="application/json",
+                body='{"id":"stub-regenerate-job","status":"processing"}',
+            )
+            return
+        route.fulfill(
+            status=200,
+            content_type="application/json",
+            json={
+                "id": "stub-regenerate-job",
+                "status": "done",
+                "media": {
+                    "plan_index": plan_index,
+                    "clip_filename": f"stub-{plan_index}.mp4",
+                    "media_version": new_version,
+                    "video_url": new_src,
+                    "poster_url": new_poster,
+                    "download_url": f"/stub-download/{plan_index}?v={new_version}",
+                    "needs_regenerate": False,
+                    "regenerate_reason": "",
+                },
+            },
+        )
+
+    regenerate_pattern = "**/video_shorts/generate/*/clip/*/regenerate"
+    status_pattern = "**/*stub-regenerate-job*"
+    # The terminal handler refreshes the card from the page before reapplying
+    # terminal media. Make that stubbed server page represent the completed
+    # render, as the real endpoint does.
+    page_html = page.content()
+    page_html = page_html.replace(
+        f'data-plan-index="{plan_index}"',
+        f'data-plan-index="{plan_index}" data-media-version="{new_version}"',
+    )
+    for old_url, completed_url in ((initial_src, new_src), (initial_poster, new_poster)):
+        if not old_url or not completed_url:
+            continue
+        page_html = page_html.replace(old_url, completed_url)
+        page_html = page_html.replace(
+            old_url.replace("&", "&amp;"), completed_url.replace("&", "&amp;")
+        )
+
+    def fulfill_page_refresh(route) -> None:
+        route.fulfill(status=200, content_type="text/html", body=page_html)
+
+    page.route(regenerate_pattern, fulfill_regenerate)
+    page.route(status_pattern, fulfill_status)
+    page.route(page.url, fulfill_page_refresh)
+    page.on("dialog", lambda dialog: dialog.accept())
+    try:
+        card.locator(".generate-v2-regenerate-btn").evaluate("button => button.click()")
+        for _ in range(100):
+            if status_calls["count"] >= 2:
+                break
+            page.wait_for_timeout(100)
+        assert status_calls["count"] >= 2, status_calls
+        page.wait_for_function(
+            """({plan, version}) => {
+              const card = document.querySelector(`.clip-card[data-plan-index='${plan}']`);
+              const video = card?.querySelector('video');
+              return card?.dataset.mediaVersion === version
+                && video?.getAttribute('src')?.includes(`smoke_version=${version}`);
+            }""",
+            arg={"plan": plan_index, "version": new_version},
+            timeout=30_000,
+        )
+        result = page.evaluate(
+            """({plan, version}) => {
+              const card = document.querySelector(`.clip-card[data-plan-index='${plan}']`);
+              const overlay = card?.querySelector('.generate-v2-render-overlay');
+              const video = card?.querySelector('video');
+              return {
+                hasCard: !!card,
+                isRendering: card?.querySelector('.generate-v2-media-column')?.classList.contains('is-rendering'),
+                overlayHidden: overlay?.classList.contains('d-none'),
+                mediaVersion: card?.dataset.mediaVersion || '',
+                videoSrc: video?.getAttribute('src') || '',
+                expectedVersion: version,
+              };
+            }""",
+            arg={"plan": plan_index, "version": new_version},
+        )
+        assert result["hasCard"] and not result["isRendering"], result
+        assert result["overlayHidden"], result
+        assert result["mediaVersion"] == new_version, result
+        assert f"smoke_version={new_version}" in result["videoSrc"], result
+        _print_pass(variant, "stubbed regenerate processing-to-done clears overlay and updates media version")
+    finally:
+        page.unroute(page.url, fulfill_page_refresh)
+        page.unroute(status_pattern, fulfill_status)
+        page.unroute(regenerate_pattern, fulfill_regenerate)
+
+
 def _assert_server_geometry_round_trip(page: Page, variant: str, kind: str) -> None:
     result = page.evaluate(
         """kind => {
@@ -187,6 +361,11 @@ def _run_variant(browser: Browser, *, base_url: str, cookie_name: str,
         context.add_cookies([{"name": cookie_name, "value": cookie_value, "url": base_url}])
         page = context.new_page()
         page.on("pageerror", lambda error: print(f"PAGE_ERROR [{variant}] {error}"))
+        page.on(
+            "console",
+            lambda message: print(f"CONSOLE_ERROR [{variant}] {message.text}")
+            if message.type == "error" else None,
+        )
         page.goto(f"{base_url}/video_shorts/generate/{selected_video}", wait_until="domcontentloaded")
         page.wait_for_selector("#clip-workbench-shell[data-generate-v2='1']", timeout=15_000)
         page.evaluate("() => window.setGenerateV2ActiveTab('edit', {persist: false})")
@@ -284,6 +463,8 @@ def _run_variant(browser: Browser, *, base_url: str, cookie_name: str,
         )
         assert not duplicates, duplicates
         _print_pass(variant, "page contains no duplicate DOM ids")
+        if width == 1280 and height == 720 and dpr == 1:
+            _assert_stubbed_regenerate(page, variant)
         print(f"VARIANT_OK {variant}")
     finally:
         context.close()
