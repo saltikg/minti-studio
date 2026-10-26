@@ -2305,6 +2305,7 @@
     flex-direction: column;
     gap: 6px;
     min-height: 0;
+    align-self: start;
     overflow-y: auto;
     overflow-x: hidden;
   }
@@ -2323,6 +2324,9 @@
     align-items: center;
     justify-content: center;
     gap: 5px;
+    flex: 0 0 64px;
+    height: 64px;
+    max-height: 72px;
   }
   .generate-v2-editor-rail-btn svg {
     width: 20px;
@@ -2545,14 +2549,23 @@
   @media (min-width: 992px) {
     #clip-workbench-shell[data-generate-v2="1"].is-v2-editing .generate-v2-editor-rail {
       display: grid;
-      grid-template-rows: repeat(8, minmax(42px, 1fr));
+      grid-template-rows: repeat(8, 64px);
+      grid-auto-rows: 64px;
+      align-content: start;
+      align-self: start;
+      height: auto;
+      max-height: 100%;
       gap: 4px;
-      overflow: hidden;
+      overflow-y: auto;
+      overflow-x: hidden;
     }
     #clip-workbench-shell[data-generate-v2="1"].is-v2-editing .generate-v2-editor-rail-btn {
-      min-height: 42px;
+      min-height: 64px;
+      height: 64px;
+      max-height: 72px;
       padding: 4px 3px;
       gap: 2px;
+      flex: none;
     }
     #clip-workbench-shell[data-generate-v2="1"].is-v2-editing .generate-v2-editor-rail-btn svg,
     #clip-workbench-shell[data-generate-v2="1"].is-v2-editing .generate-v2-editor-rail-btn .bi {
@@ -19979,7 +19992,6 @@ document.addEventListener("DOMContentLoaded", () => {
     previewCanvas.height = dims.height;
   };
   syncPreviewCanvasSize();
-  const overlayScale = previewConfig.overlayScale || (previewConfig.frameWidth ? (previewConfig.frameWidth / 720) : 0.375);
   const renderFrameHeight = previewConfig.overlayHeight || 1280;
   const renderFrameWidth = previewConfig.overlayWidth || 720;
   const overlayManagedFieldNames = ["title_margin", "sub_margin", "video_overlay_offset", "video_date_top"];
@@ -20005,41 +20017,69 @@ document.addEventListener("DOMContentLoaded", () => {
   };
   const getActiveRenderFrameWidth = () => isOriginalCropAspect() ? originalRenderDimensions()[0] : renderFrameWidth;
   const getActiveRenderFrameHeight = () => isOriginalCropAspect() ? originalRenderDimensions()[1] : renderFrameHeight;
-  const getActivePreviewGeometry = () => {
-    const frame = isOriginalCropAspect() ? origPreviewFrame : previewFrame;
+  const previewGeometryForFrame = (
+    frame,
+    renderWidth = getActiveRenderFrameWidth(),
+    renderHeight = getActiveRenderFrameHeight(),
+  ) => {
     const rect = frame?.getBoundingClientRect?.();
-    const renderWidth = Math.max(1, getActiveRenderFrameWidth());
-    const renderHeight = Math.max(1, getActiveRenderFrameHeight());
+    const safeRenderWidth = Math.max(1, Number(renderWidth) || 1);
+    const safeRenderHeight = Math.max(1, Number(renderHeight) || 1);
     // CSS coordinates live inside a card that may itself be transformed in v2.
-    // Keep both spaces so every preview layer derives from the same live frame.
+    // Keep local CSS and rendered client spaces explicit so every display and
+    // interaction conversion derives from this one live frame measurement.
     const localWidth = Math.max(1, Number(frame?.clientWidth || frame?.offsetWidth || previewConfig.frameWidth));
     const localHeight = Math.max(1, Number(frame?.clientHeight || frame?.offsetHeight || previewConfig.frameHeight));
     const renderedWidth = Math.max(1, Number(rect?.width || localWidth));
     const renderedHeight = Math.max(1, Number(rect?.height || localHeight));
+    const localScaleX = localWidth / safeRenderWidth;
+    const localScaleY = localHeight / safeRenderHeight;
+    const clientScaleX = renderedWidth / safeRenderWidth;
+    const clientScaleY = renderedHeight / safeRenderHeight;
     return {
       frame,
-      renderWidth,
-      renderHeight,
+      renderWidth: safeRenderWidth,
+      renderHeight: safeRenderHeight,
       localWidth,
       localHeight,
       renderedWidth,
       renderedHeight,
-      scaleX: localWidth / renderWidth,
-      scaleY: localHeight / renderHeight,
-      renderedScaleX: renderedWidth / renderWidth,
-      renderedScaleY: renderedHeight / renderHeight,
+      localScaleX,
+      localScaleY,
+      clientScaleX,
+      clientScaleY,
+      // Backward-compatible names for diagnostics; conversions below are the
+      // only supported way to move between coordinate spaces.
+      scaleX: localScaleX,
+      scaleY: localScaleY,
+      renderedScaleX: clientScaleX,
+      renderedScaleY: clientScaleY,
+      renderToLocalX: (value) => Number(value || 0) * localScaleX,
+      renderToLocalY: (value) => Number(value || 0) * localScaleY,
+      localToRenderX: (value) => Number(value || 0) / Math.max(0.001, localScaleX),
+      localToRenderY: (value) => Number(value || 0) / Math.max(0.001, localScaleY),
+      renderToClientX: (value) => Number(value || 0) * clientScaleX,
+      renderToClientY: (value) => Number(value || 0) * clientScaleY,
+      clientToRenderX: (value) => Number(value || 0) / Math.max(0.001, clientScaleX),
+      clientToRenderY: (value) => Number(value || 0) / Math.max(0.001, clientScaleY),
+      clientToLocalX: (value) => Number(value || 0) * localWidth / renderedWidth,
+      clientToLocalY: (value) => Number(value || 0) * localHeight / renderedHeight,
     };
   };
+  window.getPreviewGeometryForFrame = previewGeometryForFrame;
+  const getActivePreviewGeometry = () => previewGeometryForFrame(
+    isOriginalCropAspect() ? origPreviewFrame : previewFrame,
+  );
   window.getCropEditorPreviewGeometry = getActivePreviewGeometry;
   const getActivePreviewFrameWidth = () => getActivePreviewGeometry().localWidth;
   const getActivePreviewFrameHeight = () => getActivePreviewGeometry().localHeight;
-  const getActivePreviewScaleX = () => getActivePreviewGeometry().scaleX;
-  const getActivePreviewScaleY = () => getActivePreviewGeometry().scaleY;
   const getMeasuredRenderHeight = (element, fallback) => {
     if (!element) return fallback;
-    const scaleY = Math.max(0.001, getActivePreviewScaleY());
-    const measured = element.getBoundingClientRect?.().height || element.scrollHeight || 0;
-    return measured > 0 ? Math.max(1, measured / scaleY) : fallback;
+    const geometry = getActivePreviewGeometry();
+    const clientHeight = element.getBoundingClientRect?.().height || 0;
+    if (clientHeight > 0) return Math.max(1, geometry.clientToRenderY(clientHeight));
+    const localHeight = element.scrollHeight || 0;
+    return localHeight > 0 ? Math.max(1, geometry.localToRenderY(localHeight)) : fallback;
   };
   const getActiveTitleHeight = () => getMeasuredRenderHeight(
     isOriginalCropAspect() ? origPreviewTitle : previewTitle,
@@ -20569,11 +20609,11 @@ document.addEventListener("DOMContentLoaded", () => {
     if (kind === "title") return isOriginalCropAspect() ? origPreviewTitle : previewTitle;
     return isOriginalCropAspect() ? origPreviewCaption : previewSubtitle;
   };
-  const positionMeasuredLayer = (kind, top, scaleY = getActivePreviewScaleY()) => {
+  const positionMeasuredLayer = (kind, top) => {
     const element = activeMeasuredLayer(kind);
     if (!element || element.dataset.captionDomOwner !== "measured-svg" || !Number.isFinite(Number(top))) return;
     const nextTop = Number(top);
-    element.style.top = `${nextTop * scaleY}px`;
+    element.style.top = `${getActivePreviewGeometry().renderToLocalY(nextTop)}px`;
     try {
       const box = JSON.parse(element.dataset.renderBbox || "[]");
       if (Array.isArray(box) && box.length === 4) {
@@ -20588,7 +20628,7 @@ document.addEventListener("DOMContentLoaded", () => {
   };
   const renderedPreviewScaleSignature = () => {
     const geometry = getActivePreviewGeometry();
-    return `${geometry.renderedScaleX.toFixed(4)}:${geometry.renderedScaleY.toFixed(4)}`;
+    return `${geometry.clientScaleX.toFixed(4)}:${geometry.clientScaleY.toFixed(4)}`;
   };
   const verifyMeasuredBandScale = (element, kind) => {
     if (!element?.isConnected || element.dataset.captionDomOwner !== "measured-svg") return;
@@ -20602,14 +20642,14 @@ document.addEventListener("DOMContentLoaded", () => {
     const bandAspect = bandRect.width / Math.max(0.001, bandRect.height);
     const viewBoxAspect = viewBox.width / Math.max(0.001, viewBox.height);
     const aspectMismatch = Math.abs(bandAspect - viewBoxAspect) / viewBoxAspect > 0.01;
-    const mismatch = Math.abs(actualX - geometry.renderedScaleX) / geometry.renderedScaleX > 0.01
-      || Math.abs(actualY - geometry.renderedScaleY) / geometry.renderedScaleY > 0.01
+    const mismatch = Math.abs(actualX - geometry.clientScaleX) / geometry.clientScaleX > 0.01
+      || Math.abs(actualY - geometry.clientScaleY) / geometry.clientScaleY > 0.01
       || aspectMismatch;
     if (!mismatch || previewBandScaleReported) return;
     previewBandScaleReported = true;
     window.MintiErrorReporter?.report?.({
       error_type: "design_preview_band_scale_mismatch",
-      message: `${kind} band scale ${actualX.toFixed(4)}:${actualY.toFixed(4)} aspect ${bandAspect.toFixed(4)} does not match frame ${geometry.renderedScaleX.toFixed(4)}:${geometry.renderedScaleY.toFixed(4)} viewBox aspect ${viewBoxAspect.toFixed(4)}`,
+      message: `${kind} band scale ${actualX.toFixed(4)}:${actualY.toFixed(4)} aspect ${bandAspect.toFixed(4)} does not match frame ${geometry.clientScaleX.toFixed(4)}:${geometry.clientScaleY.toFixed(4)} viewBox aspect ${viewBoxAspect.toFixed(4)}`,
       source: window.location.pathname,
     });
   };
@@ -20813,15 +20853,15 @@ document.addEventListener("DOMContentLoaded", () => {
     activeMeasuredLayer("title"),
     buildCurrentPaintInput("title", measurement?.title, measurementData),
     "title",
-    getActivePreviewScaleX(),
-    getActivePreviewScaleY(),
+    getActivePreviewGeometry().localScaleX,
+    getActivePreviewGeometry().localScaleY,
   );
   const paintCurrentCaptionPreview = (measurement, measurementData) => paintMeasuredText(
     activeMeasuredLayer("caption"),
     buildCurrentPaintInput("caption", measurement?.caption, measurementData),
     "caption",
-    getActivePreviewScaleX(),
-    getActivePreviewScaleY(),
+    getActivePreviewGeometry().localScaleX,
+    getActivePreviewGeometry().localScaleY,
   );
   const getActiveClipCard = () => {
     const activeIndex = document.getElementById("clip-management-panel")?.dataset.activePlanIndex;
@@ -21072,8 +21112,9 @@ document.addEventListener("DOMContentLoaded", () => {
     const y = Number.isFinite(resolvedSubscribeTop)
       ? resolvedSubscribeTop
       : getActiveRenderFrameHeight()-height-DESIGN_GEOMETRY.subscribe_bottom;
-    Object.assign(subscribeCanvas.style, {left: `${x*getActivePreviewScaleX()}px`, top: `${y*getActivePreviewScaleY()}px`,
-      width: `${width*getActivePreviewScaleX()}px`, height: `${height*getActivePreviewScaleY()}px`});
+    const geometry = getActivePreviewGeometry();
+    Object.assign(subscribeCanvas.style, {left: `${geometry.renderToLocalX(x)}px`, top: `${geometry.renderToLocalY(y)}px`,
+      width: `${geometry.renderToLocalX(width)}px`, height: `${geometry.renderToLocalY(height)}px`});
     subscribeCanvas.dataset.renderBbox = JSON.stringify([x,y,x+width,y+height]);
   };
 
@@ -21095,8 +21136,9 @@ document.addEventListener("DOMContentLoaded", () => {
       previewFrame.style.height = originalPreview ? "" : `${getActivePreviewFrameHeight()}px`;
     }
     const activeRenderHeight = getActiveRenderFrameHeight();
-    const scaleX = getActivePreviewScaleX();
-    const scaleY = getActivePreviewScaleY();
+    const previewGeometry = getActivePreviewGeometry();
+    const scaleX = previewGeometry.localScaleX;
+    const scaleY = previewGeometry.localScaleY;
     const elementScale = Math.min(scaleX, scaleY);
     const titleTemplatePreset = getActiveTitleTemplatePreset();
     const titleUsesPillowLayout = titleTemplatePreset?.engine === "pillow";
@@ -21294,8 +21336,8 @@ document.addEventListener("DOMContentLoaded", () => {
     // drop overwrite its newly committed margin and snap back to the prior position.
     measuredPlacement.title = titleTop;
     measuredPlacement.caption = subtitleTop;
-    positionMeasuredLayer("title", titleTop, scaleY);
-    positionMeasuredLayer("caption", subtitleTop, scaleY);
+    positionMeasuredLayer("title", titleTop);
+    positionMeasuredLayer("caption", subtitleTop);
     drawOriginalResultPreview();
     if (measure) requestMeasuredDesign();
     else schedulePreviewLayerSafetyCheck("position_commit");
@@ -21969,6 +22011,7 @@ document.addEventListener("DOMContentLoaded", () => {
       event.stopPropagation();
       setSelectedPreviewElement(kind);
       const activeFrame = isOriginalCropAspect() ? origPreviewFrame : previewFrame;
+      const previewGeometry = getActivePreviewGeometry();
       const activeFrameRect = activeFrame?.getBoundingClientRect?.();
       const elementRect = element.getBoundingClientRect();
       const displayedFrameHeight = Math.max(1, activeFrameRect?.height || activeFrame?.offsetHeight || 1);
@@ -21977,8 +22020,8 @@ document.addEventListener("DOMContentLoaded", () => {
         pointerDownClientY: event.clientY,
         previewDeltaY: 0,
         element,
-        cssPixelsPerClientY: Math.max(0.001, (activeFrame?.offsetHeight || displayedFrameHeight) / displayedFrameHeight),
-        renderUnitsPerClientY: getActiveRenderFrameHeight() / displayedFrameHeight,
+        cssPixelsPerClientY: previewGeometry.clientToLocalY(1),
+        renderUnitsPerClientY: previewGeometry.clientToRenderY(1),
         minClientDeltaY: (activeFrameRect?.top ?? elementRect.top) - elementRect.top,
         maxClientDeltaY: (activeFrameRect?.bottom ?? elementRect.bottom) - elementRect.bottom,
         moved: false,
@@ -21992,7 +22035,7 @@ document.addEventListener("DOMContentLoaded", () => {
   });
 
   const handlePreviewPointerMove = (event) => {
-    if (!dragState || !overlayScale) {
+    if (!dragState) {
       return;
     }
     event.preventDefault();
@@ -23194,6 +23237,7 @@ document.addEventListener("DOMContentLoaded", () => {
 </script>
 <script>
 document.addEventListener("DOMContentLoaded", function () {
+  const previewGeometryForFrame = window.getPreviewGeometryForFrame;
   const defaultStyleTemplateKey = {{ default_style_template_key|tojson }};
   const clipHasSavedStyleTemplate = {{ clip_has_saved_style_template|tojson }};
   const titleFont = document.getElementById("titleFont");
@@ -23201,11 +23245,10 @@ document.addEventListener("DOMContentLoaded", function () {
   const titlePreview = document.getElementById("titlePreview");
   const subtitlePreview = document.getElementById("subtitlePreview");
   // Editor preview is approximate; rendered MP4 output is the source of truth.
-  const getPreviewRenderScale = () => {
-    const frame = document.getElementById("shorts-preview-frame");
-    const width = frame?.getBoundingClientRect?.().width || 248;
-    return Math.max(0.12, Math.min(1, width / 1080));
-  };
+  const getPreviewRenderScale = () => Math.max(
+    0.12,
+    Math.min(1, Number(window.getCropEditorPreviewGeometry?.().clientScaleX || 0.12)),
+  );
   const colorToRgbTriplet = (value = "0, 0, 0") => {
     const raw = String(value || "").trim();
     const hex = raw.replace(/^#/, "");
@@ -23953,6 +23996,8 @@ document.addEventListener("DOMContentLoaded", function () {
   let draggedOverlayId = null;
   const shapeValidationErrors = new Map();
   const shapeHandles = ["nw", "n", "ne", "e", "se", "s", "sw", "w"];
+  const shapeRenderWidth = 1080;
+  const shapeRenderHeight = 1920;
   const shapeCoordinateMin = Number(DESIGN_GEOMETRY.shape_coordinate_min);
   const shapeCoordinateMax = Number(DESIGN_GEOMETRY.shape_coordinate_max);
   const shapeSizeMax = Number(DESIGN_GEOMETRY.shape_size_max);
@@ -23969,7 +24014,7 @@ document.addEventListener("DOMContentLoaded", function () {
     if (!Number.isFinite(numeric.alpha) || numeric.alpha < 0 || numeric.alpha > 100) errors.push("Opacity must be between 0 and 100%.");
     if (isImageOverlay(shape)) {
       if (!String(shape.asset_id || "").trim()) errors.push("Choose an uploaded image.");
-      if (numeric.x < 0 || numeric.y < 0 || numeric.x + numeric.w > 1080 || numeric.y + numeric.h > 1920) errors.push("Image must stay inside the video frame.");
+      if (numeric.x < 0 || numeric.y < 0 || numeric.x + numeric.w > shapeRenderWidth || numeric.y + numeric.h > shapeRenderHeight) errors.push("Image must stay inside the video frame.");
     } else {
       if (!Number.isFinite(numeric.radius) || numeric.radius < 0) errors.push("Corner radius must be zero or greater.");
       if (!/^#[0-9a-f]{6}$/i.test(String(shape.color || ""))) errors.push("Color must be a six-digit hex value.");
@@ -23978,10 +24023,10 @@ document.addEventListener("DOMContentLoaded", function () {
   };
   const clampShape = (shape) => {
     const image = isImageOverlay(shape);
-    shape.w = Math.max(1, Math.min(1080, Math.round(Number(shape.w) || 1)));
-    shape.h = Math.max(1, Math.min(1920, Math.round(Number(shape.h) || 1)));
-    shape.x = Math.max(0, Math.min(1080 - shape.w, Math.round(Number(shape.x) || 0)));
-    shape.y = Math.max(0, Math.min(1920 - shape.h, Math.round(Number(shape.y) || 0)));
+    shape.w = Math.max(1, Math.min(shapeRenderWidth, Math.round(Number(shape.w) || 1)));
+    shape.h = Math.max(1, Math.min(shapeRenderHeight, Math.round(Number(shape.h) || 1)));
+    shape.x = Math.max(0, Math.min(shapeRenderWidth - shape.w, Math.round(Number(shape.x) || 0)));
+    shape.y = Math.max(0, Math.min(shapeRenderHeight - shape.h, Math.round(Number(shape.y) || 0)));
     shape.alpha = Math.max(0, Math.min(100, Math.round(Number(shape.alpha) || 0)));
     if (image) {
       shape.type = "image";
@@ -24029,8 +24074,8 @@ document.addEventListener("DOMContentLoaded", function () {
     activeShapeSnapGuides.forEach((guide) => {
       const element = document.createElement("span");
       element.className = `preview-shape-snap-guide is-${guide.axis}`;
-      if (guide.axis === "vertical") element.style.left = `${guide.position / 10.8}%`;
-      else element.style.top = `${guide.position / 19.2}%`;
+      if (guide.axis === "vertical") element.style.left = `${guide.position / shapeRenderWidth * 100}%`;
+      else element.style.top = `${guide.position / shapeRenderHeight * 100}%`;
       layer.appendChild(element);
     });
   };
@@ -24042,10 +24087,10 @@ document.addEventListener("DOMContentLoaded", function () {
         element.className = `preview-shape${isImageOverlay(shape) ? " is-image" : ""}${shape.id === selectedShapeId ? " is-selected" : ""}`;
         element.dataset.shapeId = shape.id;
         element.tabIndex = shape.id === selectedShapeId ? 0 : -1;
-        element.style.left = `${shape.x / 10.8}%`;
-        element.style.top = `${shape.y / 19.2}%`;
-        element.style.width = `${shape.w / 10.8}%`;
-        element.style.height = `${shape.h / 19.2}%`;
+        element.style.left = `${shape.x / shapeRenderWidth * 100}%`;
+        element.style.top = `${shape.y / shapeRenderHeight * 100}%`;
+        element.style.width = `${shape.w / shapeRenderWidth * 100}%`;
+        element.style.height = `${shape.h / shapeRenderHeight * 100}%`;
         if (isImageOverlay(shape)) {
           const asset = overlayImageAsset(shape.asset_id);
           if (asset?.url) {
@@ -24058,7 +24103,8 @@ document.addEventListener("DOMContentLoaded", function () {
           element.style.opacity = String(shape.alpha / 100);
         } else {
           element.style.backgroundColor = hexToRgba(shape.color, shape.alpha / 100);
-          const radiusScale = Math.min(layer.clientWidth / 1080, layer.clientHeight / 1920);
+          const geometry = previewGeometryForFrame(layer, shapeRenderWidth, shapeRenderHeight);
+          const radiusScale = Math.min(geometry.localScaleX, geometry.localScaleY);
           element.style.borderRadius = `${Math.max(0, shape.radius * radiusScale)}px`;
         }
         if (shape.id === selectedShapeId) {
@@ -24080,19 +24126,20 @@ document.addEventListener("DOMContentLoaded", function () {
     shapeLayerElements().forEach((layer) => {
       const element = layer.querySelector(`.preview-shape[data-shape-id="${CSS.escape(shape.id)}"]`);
       if (!element) return;
-      element.style.left = `${shape.x / 10.8}%`;
-      element.style.top = `${shape.y / 19.2}%`;
-      element.style.width = `${shape.w / 10.8}%`;
-      element.style.height = `${shape.h / 19.2}%`;
+      element.style.left = `${shape.x / shapeRenderWidth * 100}%`;
+      element.style.top = `${shape.y / shapeRenderHeight * 100}%`;
+      element.style.width = `${shape.w / shapeRenderWidth * 100}%`;
+      element.style.height = `${shape.h / shapeRenderHeight * 100}%`;
       if (isImageOverlay(shape)) {
         element.style.opacity = String(shape.alpha / 100);
       } else {
-        const radiusScale = Math.min(layer.clientWidth / 1080, layer.clientHeight / 1920);
+        const geometry = previewGeometryForFrame(layer, shapeRenderWidth, shapeRenderHeight);
+        const radiusScale = Math.min(geometry.localScaleX, geometry.localScaleY);
         element.style.borderRadius = `${Math.max(0, shape.radius * radiusScale)}px`;
       }
     });
     Object.entries(shapeGeometry).forEach(([key, field]) => { if (field) field.value = String(shape[key]); });
-    const widthPercent = Math.max(1, Math.min(100, Math.round(shape.w / 10.8)));
+    const widthPercent = Math.max(1, Math.min(100, Math.round(shape.w / shapeRenderWidth * 100)));
     if (overlaySize) overlaySize.value = String(widthPercent);
     if (overlaySizeLabel) overlaySizeLabel.textContent = `${widthPercent}%`;
   };
@@ -24102,8 +24149,9 @@ document.addEventListener("DOMContentLoaded", function () {
     shapeLayerElements().forEach((layer) => {
       const element = layer.querySelector(`.preview-shape[data-shape-id="${CSS.escape(shape.id)}"]`);
       if (!element) return;
-      const dx = (shape.x - baseShape.x) * layer.clientWidth / 1080;
-      const dy = (shape.y - baseShape.y) * layer.clientHeight / 1920;
+      const geometry = previewGeometryForFrame(layer, shapeRenderWidth, shapeRenderHeight);
+      const dx = geometry.renderToLocalX(shape.x - baseShape.x);
+      const dy = geometry.renderToLocalY(shape.y - baseShape.y);
       element.style.transform = `translate3d(${dx}px, ${dy}px, 0)`;
       element.style.willChange = "transform";
     });
@@ -24130,7 +24178,7 @@ document.addEventListener("DOMContentLoaded", function () {
     if (shapeRadius && !image) shapeRadius.value = String(shape.radius);
     if (imageOpacity) imageOpacity.value = String(shape.alpha);
     if (imageOpacityLabel) imageOpacityLabel.textContent = `${shape.alpha}%`;
-    const widthPercent = Math.max(1, Math.min(100, Math.round(shape.w / 10.8)));
+    const widthPercent = Math.max(1, Math.min(100, Math.round(shape.w / shapeRenderWidth * 100)));
     if (overlaySize) overlaySize.value = String(widthPercent);
     if (overlaySizeLabel) overlaySizeLabel.textContent = `${widthPercent}%`;
     const shapeIndex = overlayShapes.findIndex((item) => item.id === shape.id);
@@ -24249,7 +24297,7 @@ document.addEventListener("DOMContentLoaded", function () {
   shapeAdd?.addEventListener("click", () => {
     if (overlayShapes.length >= 5) return;
     const id = `shape-${Date.now()}-${overlayShapes.length + 1}`;
-    overlayShapes.push({ id, x: 0, y: 1600, w: 1080, h: 160, color: "#000000", alpha: 100, radius: 0 });
+    overlayShapes.push({ id, x: 0, y: 1600, w: shapeRenderWidth, h: 160, color: "#000000", alpha: 100, radius: 0 });
     selectedShapeId = id;
     syncShapesUi();
   });
@@ -24323,7 +24371,7 @@ document.addEventListener("DOMContentLoaded", function () {
       const width = 180;
       const height = Math.max(1, Math.min(900, Math.round(width * naturalHeight / Math.max(1, naturalWidth))));
       const id = `image-${Date.now()}-${overlayShapes.length + 1}`;
-      overlayShapes.push({ type: "image", id, asset_id: String(asset.id), x: 1080 - 40 - width, y: 40, w: width, h: height, alpha: 100, aspect_locked: true });
+      overlayShapes.push({ type: "image", id, asset_id: String(asset.id), x: shapeRenderWidth - 40 - width, y: 40, w: width, h: height, alpha: 100, aspect_locked: true });
       selectedShapeId = id;
       imageLibrary?.classList.remove("is-open");
       syncShapesUi();
@@ -24423,7 +24471,7 @@ document.addEventListener("DOMContentLoaded", function () {
   imageOpacity?.addEventListener("input", () => { const shape = selectedShape(); if (isImageOverlay(shape)) { shape.alpha = Number(imageOpacity.value); syncShapesUi(); } });
   overlaySize?.addEventListener("input", () => {
     const shape = selectedShape(); if (!shape) return;
-    const nextWidth = Math.max(1, Math.min(1080, Math.round(Number(overlaySize.value) * 10.8)));
+    const nextWidth = Math.max(1, Math.min(shapeRenderWidth, Math.round(Number(overlaySize.value) * (shapeRenderWidth / 100))));
     if (isImageOverlay(shape) && shape.aspect_locked) {
       const ratio = shape.w / Math.max(1, shape.h);
       shape.h = Math.max(1, Math.round(nextWidth / Math.max(0.001, ratio)));
@@ -24461,6 +24509,7 @@ document.addEventListener("DOMContentLoaded", function () {
       handle: event.target.dataset.handle || "move",
       width: layerRect.width || layer.clientWidth,
       height: layerRect.height || layer.clientHeight,
+      geometry: previewGeometryForFrame(layer, shapeRenderWidth, shapeRenderHeight),
     };
     document.body.classList.toggle("is-shape-moving", shapePointerState.handle === "move");
     event.preventDefault(); syncShapeSelectionUi();
@@ -24469,8 +24518,8 @@ document.addEventListener("DOMContentLoaded", function () {
   document.addEventListener("pointermove", (event) => {
     if (!shapePointerState) return;
     const shape = selectedShape(); if (!shape) return;
-    const dx = (event.clientX - shapePointerState.startX) * 1080 / Math.max(1, shapePointerState.width);
-    const dy = (event.clientY - shapePointerState.startY) * 1920 / Math.max(1, shapePointerState.height);
+    const dx = shapePointerState.geometry.clientToRenderX(event.clientX - shapePointerState.startX);
+    const dy = shapePointerState.geometry.clientToRenderY(event.clientY - shapePointerState.startY);
     const base = shapePointerState.shape; const handle = shapePointerState.handle;
     if (handle === "move") {
       shape.x = base.x + dx;
@@ -24483,12 +24532,12 @@ document.addEventListener("DOMContentLoaded", function () {
         const bottom = shape.y + shape.h;
         const xTargets = [
           { distance: Math.abs(shape.x), value: safeMargin, position: safeMargin },
-          { distance: Math.abs(shape.x + shape.w - 1080), value: 1080 - safeMargin - shape.w, position: 1080 - safeMargin },
-          { distance: Math.abs(centerX - 540), value: 540 - shape.w / 2, position: 540 },
+          { distance: Math.abs(shape.x + shape.w - shapeRenderWidth), value: shapeRenderWidth - safeMargin - shape.w, position: shapeRenderWidth - safeMargin },
+          { distance: Math.abs(centerX - shapeRenderWidth / 2), value: shapeRenderWidth / 2 - shape.w / 2, position: shapeRenderWidth / 2 },
         ].filter((target) => target.distance <= threshold).sort((a, b) => a.distance - b.distance);
         const yTargets = [
           { distance: Math.abs(shape.y), value: safeMargin, position: safeMargin },
-          { distance: Math.min(Math.abs(bottom - 1920), Math.abs(bottom - 1536)), value: 1536 - shape.h, position: 1536 },
+          { distance: Math.min(Math.abs(bottom - shapeRenderHeight), Math.abs(bottom - shapeRenderHeight * 0.8)), value: shapeRenderHeight * 0.8 - shape.h, position: shapeRenderHeight * 0.8 },
         ].filter((target) => target.distance <= threshold).sort((a, b) => a.distance - b.distance);
         if (xTargets[0]) {
           shape.x = xTargets[0].value;
