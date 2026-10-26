@@ -26,16 +26,15 @@ from app.video_shorts.services.db import ensure_auth_user_schema, ensure_storage
 from app.video_shorts.services.quick_short_flow import (
     get_session,
 )
-from app.video_shorts.services.user_events import track_event
+from app.video_shorts.services.free_tool_analytics import (
+    capture_first_touch,
+    track_free_tool_event,
+)
 from app.video_shorts.youtube_api import YoutubeApiError, extract_video_id, fetch_video_metadata
 
 
 FREE_TOOL_MAX_VIDEO_SECONDS = 30 * 60
 FREE_TOOL_DAILY_GUESTS_PER_IP = 3
-FREE_TOOL_ANON_USER_PREFIX = "free_tool_anon"
-FREE_TOOL_ATTRIBUTION_SESSION_KEY = "free_tool_attribution"
-
-
 def _render_free_tool_template(**context):
     context.setdefault("vs_turnstile_enabled", turnstile_enabled())
     context.setdefault("vs_turnstile_site_key", turnstile_site_key())
@@ -65,12 +64,6 @@ def _ip_hash() -> str:
     secret = str(current_app.secret_key or os.getenv("SECRET_KEY") or "minti-free-tool").encode("utf-8")
     ip = _client_ip().encode("utf-8")
     return hashlib.sha256(secret + b":" + ip).hexdigest()
-
-
-def _free_tool_event_user_id(current_user: Optional[dict] = None) -> str:
-    if current_user and current_user.get("id"):
-        return str(current_user.get("id"))
-    return f"{FREE_TOOL_ANON_USER_PREFIX}:{_ip_hash()[:16]}"
 
 
 def _clean_attribution_value(value: object, *, max_length: int = 120) -> str:
@@ -103,33 +96,9 @@ def _valid_free_tool_lead_id(raw_lid: object) -> str:
 
 
 def _capture_free_tool_first_touch() -> None:
-    existing = session.get(FREE_TOOL_ATTRIBUTION_SESSION_KEY)
-    if isinstance(existing, dict) and existing:
-        return
-    attribution = {
-        "utm_source": _clean_attribution_value(request.args.get("utm_source")),
-        "utm_medium": _clean_attribution_value(request.args.get("utm_medium")),
-        "utm_campaign": _clean_attribution_value(request.args.get("utm_campaign")),
-    }
-    lead_id = _valid_free_tool_lead_id(request.args.get("lid"))
-    if lead_id:
-        attribution["lead_id"] = lead_id
-    attribution = {key: value for key, value in attribution.items() if value}
-    if attribution:
-        session[FREE_TOOL_ATTRIBUTION_SESSION_KEY] = attribution
-        session.modified = True
-
-
-def _free_tool_attribution_metadata() -> dict:
-    attribution = session.get(FREE_TOOL_ATTRIBUTION_SESSION_KEY)
-    if not isinstance(attribution, dict):
-        return {}
-    allowed = {"utm_source", "utm_medium", "utm_campaign", "lead_id"}
-    return {
-        key: _clean_attribution_value(value)
-        for key, value in attribution.items()
-        if key in allowed and _clean_attribution_value(value)
-    }
+    raw_lead_id = request.args.get("lid")
+    lead_id = _valid_free_tool_lead_id(raw_lead_id) if raw_lead_id else ""
+    capture_first_touch(lead_id=lead_id)
 
 
 def _track_free_tool_event(
@@ -140,13 +109,12 @@ def _track_free_tool_event(
     status: str = "",
     metadata: Optional[dict] = None,
 ) -> None:
-    event_metadata = {**_free_tool_attribution_metadata(), **(metadata or {})}
-    track_event(
-        _free_tool_event_user_id(current_user),
+    track_free_tool_event(
         event_name,
-        video_id=str(video_id or "").strip() or None,
+        current_user=current_user,
+        video_id=video_id,
         status=str(status or "").strip() or None,
-        metadata=event_metadata,
+        metadata=metadata,
     )
 
 
@@ -395,6 +363,7 @@ def free_tool_event():
     payload = request.get_json(silent=True) or request.form.to_dict() or {}
     event_name = str(payload.get("event") or "").strip()
     allowed_events = {
+        "free_tool_landing_view",
         "free_tool_gate_shown",
         "free_tool_gate_click",
     }
@@ -406,8 +375,11 @@ def free_tool_event():
         "choice": str(payload.get("choice") or "").strip(),
         "clip": str(payload.get("clip") or "").strip(),
         "path": str(payload.get("path") or request.path or "").strip(),
+        "locale": str(payload.get("locale") or "").strip(),
+        "client_tracked": event_name == "free_tool_landing_view",
     }
-    _track_free_tool_event(event_name, current_user=current_user, status=metadata.get("choice") or "", metadata=metadata)
+    status = metadata.get("locale") if event_name == "free_tool_landing_view" else metadata.get("choice")
+    _track_free_tool_event(event_name, current_user=current_user, status=status or "", metadata=metadata)
     return jsonify(ok=True)
 
 
@@ -420,13 +392,6 @@ def render_free_tool_landing(locale: str = "en"):
     error = ""
     video_url = ""
     processing_context = _processing_context_for_guest(current_user) if request.method == "GET" else None
-    if request.method == "GET":
-        _track_free_tool_event(
-            "free_tool_landing_view",
-            current_user=current_user,
-            status=locale,
-            metadata={"locale": locale, "path": request.path},
-        )
     if request.method == "POST":
         video_url = str(request.form.get("video_url") or request.form.get("youtube_url") or "").strip()
         if not _verify_turnstile_or_fail():

@@ -195,7 +195,7 @@
       <div>
         <h2 class="h5 mb-1">Free tool</h2>
         <div class="pipeline-overview-meta mb-0">
-          Submit → claim: {{ free_tool_stats.submit_to_claim_7 }} last 7 days · {{ free_tool_stats.submit_to_claim_30 }} last 30 days
+          Unique sessions · Submit → claim: {{ free_tool_stats.submit_to_claim_7 }} last 7 days · {{ free_tool_stats.submit_to_claim_30 }} last 30 days
         </div>
       </div>
       <div class="pipeline-overview-meta mb-0">
@@ -230,6 +230,24 @@
               <td>{{ source.landing_views }}</td>
               <td>{{ source.submits }}</td>
               <td>{{ source.claims }}</td>
+            </tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    {% endif %}
+    {% if free_tool_stats.referrers %}
+      <table class="free-tool-source-table">
+        <thead>
+          <tr>
+            <th>Top referrer (30d)</th>
+            <th>Sessions</th>
+          </tr>
+        </thead>
+        <tbody>
+          {% for item in free_tool_stats.referrers %}
+            <tr>
+              <td>{{ item.referrer }}</td>
+              <td>{{ item.sessions }}</td>
             </tr>
           {% endfor %}
         </tbody>

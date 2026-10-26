@@ -113,6 +113,7 @@ from app.video_shorts.config import (
     SHORTS_CATEGORY_OPTIONS,
     SHORTS_DIR,
     PRIVATE_STATE_DIR,
+    SIGNUP_ALIAS_ALLOWLIST,
     SIGNUPS_ENABLED,
     STATIC_FONTS_DIR,
     SUB_FONT_CHOICES,
@@ -180,6 +181,7 @@ from app.video_shorts.services.db import (
     table_columns,
 )
 from app.video_shorts.services.auth_protection import RateLimitRule, check_rate_limits
+from app.video_shorts.services.free_tool_analytics import track_free_tool_event
 from app.video_shorts.services.background_preferences import load_background_preference
 from app.video_shorts.services.onboarding_magic_links import (
     mint_onboarding_magic_link,
@@ -10750,9 +10752,9 @@ def _guest_gate_response(
         "tracked_gate_shown": True,
     }
     try:
-        track_event(
-            str((current_user or {}).get("id") or ""),
+        track_free_tool_event(
             "free_tool_gate_shown",
+            current_user=current_user,
             video_id=str(video_pk or "").strip() or None,
             short_id=str(clip or "").strip() or None,
             status=action,
@@ -16172,9 +16174,9 @@ def download_generated_clip(video_pk: int, plan_index: int):
     video_id = str(row[0] or "").strip()
     video_title = str(row[1] or "").strip()
     if int((current_user or {}).get("guest_video_count") or 0) > 0:
-        track_event(
-            str(current_user.get("id") or ""),
+        track_free_tool_event(
             "free_tool_download_after_claim",
+            current_user=current_user,
             video_id=video_id,
             short_id=str(plan_index),
             status="download",
@@ -21847,10 +21849,78 @@ FREE_TOOL_ADMIN_EVENTS = [
     "free_tool_submit",
     "free_tool_top1_ready",
     "free_tool_gate_shown",
-    "free_tool_gate_click",
     "free_tool_claim",
     "free_tool_download_after_claim",
 ]
+
+
+def _normalize_free_tool_internal_email(value: object) -> str:
+    email = str(value or "").strip().lower()
+    if "@" not in email:
+        return email
+    local, domain = email.rsplit("@", 1)
+    local = local.split("+", 1)[0]
+    if domain in {"gmail.com", "googlemail.com"}:
+        local = local.replace(".", "")
+        domain = "gmail.com"
+    return f"{local}@{domain}"
+
+
+def _free_tool_excluded_user_ids(conn) -> List[str]:
+    if not table_columns(conn, "shorts_users"):
+        return []
+    allowlisted = {
+        _normalize_free_tool_internal_email(email)
+        for email in SIGNUP_ALIAS_ALLOWLIST
+        if str(email or "").strip()
+    }
+    try:
+        rows = conn.execute(
+            """
+            SELECT CAST(id AS VARCHAR), role, email, username
+            FROM shorts_users
+            """
+        ).fetchall()
+    except Exception:
+        current_app.logger.warning("Unable to load internal free-tool users", exc_info=True)
+        return []
+    excluded = []
+    for row in rows:
+        is_admin = str(row[1] or "").strip().lower() == "admin"
+        is_allowlisted = any(
+            _normalize_free_tool_internal_email(value) in allowlisted
+            for value in row[2:4]
+            if value
+        )
+        if is_admin or is_allowlisted:
+            excluded.append(str(row[0] or "").strip())
+    return [user_id for user_id in excluded if user_id]
+
+
+def _free_tool_clean_event_sql(conn, excluded_user_ids: List[str]) -> tuple[str, List[Any]]:
+    clauses = [
+        f"NOT ({_user_event_metadata_bool_sql(conn, 'is_internal')})",
+        f"NOT ({_user_event_metadata_bool_sql(conn, 'is_bot')})",
+        (
+            "(ue.event_name <> 'free_tool_landing_view' OR "
+            f"{_user_event_metadata_bool_sql(conn, 'client_tracked')})"
+        ),
+    ]
+    params: List[Any] = []
+    if excluded_user_ids:
+        placeholders = ", ".join("?" for _ in excluded_user_ids)
+        clauses.append(f"CAST(ue.user_id AS VARCHAR) NOT IN ({placeholders})")
+        params.extend(excluded_user_ids)
+    return " AND ".join(clauses), params
+
+
+def _free_tool_referrer_label(value: object) -> str:
+    referrer = str(value or "").strip()
+    if not referrer:
+        return "(direct)"
+    parsed = urlparse(referrer if "://" in referrer else f"//{referrer}")
+    host = str(parsed.hostname or "").strip().lower()
+    return host or referrer[:120]
 
 
 def _load_free_tool_admin_stats(conn) -> dict[str, Any]:
@@ -21858,6 +21928,7 @@ def _load_free_tool_admin_stats(conn) -> dict[str, Any]:
         return {
             "events": [],
             "sources": [],
+            "referrers": [],
             "submit_to_claim_7": "0%",
             "submit_to_claim_30": "0%",
             "submits_7": 0,
@@ -21866,18 +21937,21 @@ def _load_free_tool_admin_stats(conn) -> dict[str, Any]:
             "claims_30": 0,
         }
     placeholders = ", ".join(["?"] * len(FREE_TOOL_ADMIN_EVENTS))
+    session_expr = f"COALESCE({_user_event_metadata_text_sql(conn, 'session_id')}, CAST(ue.user_id AS VARCHAR))"
+    clean_sql, clean_params = _free_tool_clean_event_sql(conn, _free_tool_excluded_user_ids(conn))
     rows = conn.execute(
         f"""
         SELECT
             event_name,
-            SUM(CASE WHEN created_at >= (now() - INTERVAL '7 days') THEN 1 ELSE 0 END) AS count_7,
-            SUM(CASE WHEN created_at >= (now() - INTERVAL '30 days') THEN 1 ELSE 0 END) AS count_30
-        FROM user_events
-        WHERE event_name IN ({placeholders})
-          AND created_at >= (now() - INTERVAL '30 days')
+            COUNT(DISTINCT CASE WHEN ue.created_at >= (now() - INTERVAL '7 days') THEN {session_expr} END) AS count_7,
+            COUNT(DISTINCT CASE WHEN ue.created_at >= (now() - INTERVAL '30 days') THEN {session_expr} END) AS count_30
+        FROM user_events ue
+        WHERE ue.event_name IN ({placeholders})
+          AND ue.created_at >= (now() - INTERVAL '30 days')
+          AND {clean_sql}
         GROUP BY event_name
         """,
-        FREE_TOOL_ADMIN_EVENTS,
+        [*FREE_TOOL_ADMIN_EVENTS, *clean_params],
     ).fetchall()
     counts = {str(row[0] or ""): {"count_7": int(row[1] or 0), "count_30": int(row[2] or 0)} for row in rows}
     events = [
@@ -21900,16 +21974,18 @@ def _load_free_tool_admin_stats(conn) -> dict[str, Any]:
         SELECT
             COALESCE({source_expr}, '(direct)') AS source,
             COALESCE({campaign_expr}, '(none)') AS campaign,
-            SUM(CASE WHEN ue.event_name = 'free_tool_landing_view' THEN 1 ELSE 0 END) AS landing_views,
-            SUM(CASE WHEN ue.event_name = 'free_tool_submit' THEN 1 ELSE 0 END) AS submits,
-            SUM(CASE WHEN ue.event_name = 'free_tool_claim' THEN 1 ELSE 0 END) AS claims
+            COUNT(DISTINCT CASE WHEN ue.event_name = 'free_tool_landing_view' THEN {session_expr} END) AS landing_views,
+            COUNT(DISTINCT CASE WHEN ue.event_name = 'free_tool_submit' THEN {session_expr} END) AS submits,
+            COUNT(DISTINCT CASE WHEN ue.event_name = 'free_tool_claim' THEN {session_expr} END) AS claims
         FROM user_events ue
         WHERE ue.event_name IN ('free_tool_landing_view', 'free_tool_submit', 'free_tool_claim')
           AND ue.created_at >= (now() - INTERVAL '30 days')
+          AND {clean_sql}
         GROUP BY source, campaign
         ORDER BY landing_views DESC, submits DESC, claims DESC, source ASC, campaign ASC
         LIMIT 12
-        """
+        """,
+        clean_params,
     ).fetchall()
     source_breakdown = [
         {
@@ -21921,6 +21997,26 @@ def _load_free_tool_admin_stats(conn) -> dict[str, Any]:
         }
         for row in source_rows
     ]
+    referrer_expr = _user_event_metadata_text_sql(conn, "referrer")
+    referrer_rows = conn.execute(
+        f"""
+        SELECT COALESCE({referrer_expr}, '') AS referrer, {session_expr} AS session_id
+        FROM user_events ue
+        WHERE ue.event_name = 'free_tool_landing_view'
+          AND ue.created_at >= (now() - INTERVAL '30 days')
+          AND {clean_sql}
+        GROUP BY referrer, session_id
+        """,
+        clean_params,
+    ).fetchall()
+    referrer_counts: Dict[str, int] = {}
+    for row in referrer_rows:
+        label = _free_tool_referrer_label(row[0])
+        referrer_counts[label] = referrer_counts.get(label, 0) + 1
+    referrers = [
+        {"referrer": label, "sessions": count}
+        for label, count in sorted(referrer_counts.items(), key=lambda item: (-item[1], item[0]))[:10]
+    ]
 
     def _rate(claims: int, submits: int) -> str:
         if not submits:
@@ -21930,6 +22026,7 @@ def _load_free_tool_admin_stats(conn) -> dict[str, Any]:
     return {
         "events": events,
         "sources": source_breakdown,
+        "referrers": referrers,
         "submit_to_claim_7": _rate(claims_7, submits_7),
         "submit_to_claim_30": _rate(claims_30, submits_30),
         "submits_7": submits_7,

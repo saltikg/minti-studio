@@ -118,6 +118,11 @@ SIGNUP_ALIAS_ALLOWLIST = {
     for email in str(os.getenv("SIGNUP_ALIAS_ALLOWLIST") or "gokhansaltik@gmail.com").split(",")
     if email.strip()
 }
+INTERNAL_IPS = {
+    value.strip()
+    for value in str(os.getenv("INTERNAL_IPS") or "").split(",")
+    if value.strip()
+}
 
 
 DEFAULT_STORAGE_PLANS = [

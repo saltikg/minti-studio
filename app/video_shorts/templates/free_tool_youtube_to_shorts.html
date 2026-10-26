@@ -697,6 +697,17 @@
       const isTurkish = {{ 'true' if is_tr else 'false' }};
       const maxFreeDurationSeconds = 30 * 60;
       const registerUrl = {{ url_for('video_shorts_bp.register', next=request.path) | tojson }};
+      fetch({{ url_for('video_shorts_bp.free_tool_event') | tojson }}, {
+        method: "POST",
+        credentials: "same-origin",
+        keepalive: true,
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          event: "free_tool_landing_view",
+          locale: isTurkish ? "tr" : "en",
+          path: window.location.pathname,
+        }),
+      }).catch(function () {});
       const youtubeUrlInput = document.getElementById("mv-youtube-url");
       const youtubeSubmit = document.getElementById("mv-youtube-submit");
       const youtubePreview = document.getElementById("mv-youtube-preview");

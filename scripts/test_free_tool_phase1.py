@@ -151,8 +151,17 @@ def main() -> None:
     assert preview.status_code == 200, preview.status_code
     assert b"YouTube to Shorts" in preview.data
 
-    ignored_lid = client.get("/tools/youtube-to-shorts?preview=preview-secret&utm_source=badsource&lid=missing")
+    attributed_client = app.test_client()
+    ignored_lid = attributed_client.get(
+        "/tools/youtube-to-shorts?preview=preview-secret&utm_source=badsource&lid=missing",
+        headers={"Referer": "https://example.com/free-tools"},
+    )
     assert ignored_lid.status_code == 200, ignored_lid.status_code
+    landing_event = attributed_client.post(
+        "/tools/youtube-to-shorts/event",
+        json={"event": "free_tool_landing_view", "locale": "en", "path": "/tools/youtube-to-shorts"},
+    )
+    assert landing_event.status_code == 200, landing_event.status_code
     conn = get_db()
     try:
         row = conn.execute(
@@ -168,6 +177,8 @@ def main() -> None:
         ignored_metadata = json.loads(row[0] or "{}")
         assert ignored_metadata.get("utm_source") == "badsource", ignored_metadata
         assert "lead_id" not in ignored_metadata, ignored_metadata
+        assert ignored_metadata.get("session_id"), ignored_metadata
+        assert ignored_metadata.get("referrer") == "https://example.com/free-tools", ignored_metadata
     finally:
         conn.close()
 
