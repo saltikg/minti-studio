@@ -36,6 +36,7 @@ JOB_TYPE_ENRICH_DISCOVERY_EMAILS = "enrich_discovery_emails"
 JOB_TYPE_ENRICH_AUTOPILOT_DISCOVERY_EMAILS = "enrich_autopilot_discovery_emails"
 JOB_TYPE_PURGE_VIDEO = "purge_video"
 DISCOVERY_JOB_ORIGIN = "discovery_demo"
+ADMIN_JOB_ORIGIN = "admin"
 CUSTOMER_JOB_ORIGIN = "customer"
 AUTO_RENDER_JOB_ORIGIN = "auto"
 GUEST_JOB_ORIGIN = "guest"
@@ -702,8 +703,11 @@ def enqueue_job(
         if job_type == JOB_TYPE_RENDER_SHORT:
             validate_render_job_scope({"user_id": user_id, "payload": payload}, conn)
             # Scope even callers that supplied a pre-cutover or incomplete hash.
-            raw = json.dumps([input_hash, int(payload["video_pk"]), payload.get("brand_id"),
-                              payload["source_video_id"], payload.get("plan_index")], separators=(",", ":"))
+            hash_scope = [input_hash, int(payload["video_pk"]), payload.get("brand_id"),
+                          payload["source_video_id"], payload.get("plan_index")]
+            if payload.get("made_by_admin"):
+                hash_scope.append(ADMIN_JOB_ORIGIN)
+            raw = json.dumps(hash_scope, separators=(",", ":"))
             input_hash = hashlib.sha256(raw.encode("utf-8")).hexdigest()
         ensure_render_jobs_schema(conn)
         payload, priority = _prepare_guest_job_payload(conn, user_id, payload, priority)
@@ -1310,7 +1314,10 @@ def mark_job_failed(
         ).fetchone()
         user_id = str(row[0]) if row and row[0] else None
         payload = _parse_json(row[1]) if row and len(row) > 1 else {}
-        quota_exempt = bool((payload or {}).get("auto_render_quota_exempt"))
+        quota_exempt = bool(
+            (payload or {}).get("auto_render_quota_exempt")
+            or (payload or {}).get("quota_exempt")
+        )
         _refund_guest_render_if_reserved(conn, job_id)
         conn.execute(
             f"""

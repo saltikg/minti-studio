@@ -8,6 +8,7 @@ from flask import g
 
 
 ADMIN_OPERATION_WORKSPACE_KINDS = {"lead", "customer"}
+ADMIN_JOB_ORIGIN = "admin"
 
 
 def _is_admin(current_user: Optional[Dict[str, Any]]) -> bool:
@@ -111,4 +112,28 @@ def request_admin_operation_scope() -> Optional[Dict[str, str]]:
         "brand_id": brand_id,
         "workspace_kind": workspace_kind,
         "acting_admin_id": acting_admin_id,
+    }
+
+
+def admin_operation_job_metadata(
+    scope: Optional[Dict[str, str]] = None,
+    *,
+    customer_only: bool = True,
+) -> Dict[str, Any]:
+    """Return the durable actor/quota contract for admin-created customer work."""
+    resolved = scope if isinstance(scope, dict) else request_admin_operation_scope()
+    if not resolved:
+        return {}
+    workspace_kind = str(resolved.get("workspace_kind") or "").strip().lower()
+    if customer_only and workspace_kind != "customer":
+        return {}
+    acting_admin_id = str(resolved.get("acting_admin_id") or "").strip()
+    if not acting_admin_id:
+        return {}
+    return {
+        "job_origin": ADMIN_JOB_ORIGIN,
+        "made_by_admin": True,
+        "quota_exempt": True,
+        "acting_admin_id": acting_admin_id,
+        "admin_operation_kind": workspace_kind,
     }

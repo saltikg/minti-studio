@@ -219,6 +219,7 @@ from app.video_shorts.services.autopilot_leads import (
     provision_discovery_lead_email,
 )
 from app.video_shorts.services.admin_operation_scope import (
+    admin_operation_job_metadata,
     request_admin_operation_scope,
     resolve_admin_operation_request_scope,
     set_request_admin_operation_scope,
@@ -390,6 +391,7 @@ from app.video_shorts.services.youtube_oauth import (
 from app.video_shorts.services.shorts_overview_quota import get_shorts_overview_quota_state
 from app.video_shorts.services.timezones import DEFAULT_TIME_ZONE, TIMEZONE_LABELS, TIMEZONE_OPTIONS
 from app.video_shorts.services.render_jobs import (
+    ADMIN_JOB_ORIGIN,
     AUTO_RENDER_JOB_ORIGIN,
     AUTO_RENDER_JOB_PRIORITY,
     CUSTOMER_JOB_ORIGIN,
@@ -5722,6 +5724,7 @@ def enqueue_auto_suggest_render_job_after_transcript(
     video_id: Any,
     job_origin: Any = "",
     ingest_source: Any = "",
+    admin_job_metadata: Optional[Dict[str, Any]] = None,
 ) -> Optional[Dict[str, Any]]:
     clean_owner = str(owner_user_id or "").strip()
     clean_brand = str(brand_id or "").strip()
@@ -5741,21 +5744,29 @@ def enqueue_auto_suggest_render_job_after_transcript(
     auto_suggest_mode = "legacy" if legacy_mode else (
         "user_added" if _is_user_added_ingest_source(ingest_source) else "suggestions_only"
     )
+    admin_metadata = dict(admin_job_metadata or {})
+    payload = {
+        "owner_user_id": clean_owner,
+        "brand_id": clean_brand,
+        "video_pk": clean_video_pk,
+        "video_id": clean_video_id,
+        "job_origin": GUEST_JOB_ORIGIN if owner_is_guest else AUTO_RENDER_JOB_ORIGIN,
+        "auto_suggest_mode": auto_suggest_mode,
+        "ingest_source": str(ingest_source or "").strip(),
+    }
+    if admin_metadata.get("made_by_admin"):
+        payload.update(admin_metadata)
     return enqueue_worker_job(
         user_id=clean_owner,
         job_type=JOB_TYPE_AUTO_SUGGEST_RENDER,
-        payload={
-            "owner_user_id": clean_owner,
-            "brand_id": clean_brand,
-            "video_pk": clean_video_pk,
-            "video_id": clean_video_id,
-            "job_origin": GUEST_JOB_ORIGIN if owner_is_guest else AUTO_RENDER_JOB_ORIGIN,
-            "auto_suggest_mode": auto_suggest_mode,
-            "ingest_source": str(ingest_source or "").strip(),
-        },
+        payload=payload,
         input_hash=_auto_suggest_render_input_hash(clean_owner, clean_brand, clean_video_pk, clean_video_id),
         max_attempts=1,
-        priority=GUEST_JOB_PRIORITY if owner_is_guest else AUTO_RENDER_JOB_PRIORITY,
+        priority=(
+            None
+            if admin_metadata.get("made_by_admin")
+            else (GUEST_JOB_PRIORITY if owner_is_guest else AUTO_RENDER_JOB_PRIORITY)
+        ),
     )
 
 
@@ -7894,6 +7905,7 @@ def _enqueue_admin_operation_transcribe_source_job(scope: Dict[str, str], row: A
         "duration_seconds": duration_seconds,
         "brand_id": scope["brand_id"],
     }
+    payload.update(admin_operation_job_metadata(scope))
     if is_discovery_demo:
         payload["job_origin"] = DISCOVERY_JOB_ORIGIN
     job_input_hash = sha256(
@@ -8369,6 +8381,7 @@ def _enqueue_auto_render_for_plan_entry(
     video_pk: int,
     plan_index: int,
     default_customer: bool = False,
+    admin_job_metadata: Optional[Dict[str, Any]] = None,
 ) -> Dict[str, Any]:
     conn = get_db_readonly()
     try:
@@ -8399,6 +8412,7 @@ def _enqueue_auto_render_for_plan_entry(
         g.vs_auto_suggest_render_context = {
             "quota_exempt": True,
             "default_customer": bool(default_customer),
+            "admin_job_metadata": dict(admin_job_metadata or {}),
         }
         response = autoclip_video(int(video_pk))
         status_code = getattr(response, "status_code", None)
@@ -8532,6 +8546,12 @@ def execute_auto_suggest_render_job(payload: Dict[str, Any]) -> Dict[str, Any]:
     if not owner_user_id or not brand_id or not video_pk or not video_id:
         return finish("missing_scope")
     owner_is_guest = _owner_is_guest_user(owner_user_id) or str((payload or {}).get("job_origin") or "").strip() == GUEST_JOB_ORIGIN
+    admin_job_metadata = {
+        key: (payload or {}).get(key)
+        for key in ("job_origin", "made_by_admin", "quota_exempt", "acting_admin_id", "admin_operation_kind")
+        if (payload or {}).get(key) is not None
+    }
+    admin_quota_exempt = bool(admin_job_metadata.get("made_by_admin") and admin_job_metadata.get("quota_exempt"))
     auto_suggest_mode = str((payload or {}).get("auto_suggest_mode") or "legacy").strip().lower()
     legacy_mode = auto_suggest_mode == "legacy"
     if legacy_mode and not owner_is_guest and not _auto_suggest_render_gate_matches(owner_user_id):
@@ -8600,6 +8620,8 @@ def execute_auto_suggest_render_job(payload: Dict[str, Any]) -> Dict[str, Any]:
             "_brand_id": brand_id,
             "_request_user_role": str((user_row[0] if user_row else "") or ""),
         }
+        if admin_quota_exempt:
+            form_data.update({f"_admin_{key}": value for key, value in admin_job_metadata.items()})
         plan_result = _generate_clip_plan_for_video(
             video_pk,
             form_data,
@@ -8626,7 +8648,7 @@ def execute_auto_suggest_render_job(payload: Dict[str, Any]) -> Dict[str, Any]:
     if auto_suggest_mode == "suggestions_only":
         return finish("suggestions_only_import")
 
-    if not legacy_mode:
+    if not legacy_mode and not admin_quota_exempt:
         block_reason = _default_auto_render_account_block_reason(owner_user_id)
         if block_reason:
             return finish(block_reason)
@@ -8656,6 +8678,7 @@ def execute_auto_suggest_render_job(payload: Dict[str, Any]) -> Dict[str, Any]:
             video_pk=video_pk,
             plan_index=plan_index,
             default_customer=not legacy_mode,
+            admin_job_metadata=admin_job_metadata if admin_quota_exempt else None,
         )
         if not legacy_mode and enqueue_result.get("ok"):
             _mark_plan_entry_auto_created(video_id, video_pk, plan_index)
@@ -8712,7 +8735,10 @@ def _interactive_render_origin(
     video_pk: int,
     auto_render_job: bool,
     discovery_pipeline_job: bool,
+    admin_operation: bool = False,
 ) -> tuple[str, Optional[int]]:
+    if admin_operation:
+        return ADMIN_JOB_ORIGIN, None
     if discovery_pipeline_job and _is_discovery_demo_scope(owner_user_id, brand_id, video_pk):
         return DISCOVERY_JOB_ORIGIN, DISCOVERY_JOB_PRIORITY
     if auto_render_job:
@@ -11067,6 +11093,7 @@ def _active_editor_context() -> Dict[str, Any]:
             "brand_id": operation_scope["brand_id"],
             "workspace_kind": operation_scope["workspace_kind"],
             "is_admin_operation": True,
+            "acting_admin_id": operation_scope["acting_admin_id"],
         }
     current_user = getattr(g, "vs_current_user", None) or {}
     return {
@@ -11074,6 +11101,7 @@ def _active_editor_context() -> Dict[str, Any]:
         "brand_id": current_brand_id(),
         "workspace_kind": "",
         "is_admin_operation": False,
+        "acting_admin_id": "",
     }
 
 
@@ -24109,6 +24137,7 @@ def _enqueue_admin_operation_ingest_youtube_job(scope: Dict[str, str], video_pk:
         "duration_seconds": row[3],
         "brand_id": scope["brand_id"],
     }
+    payload.update(admin_operation_job_metadata(scope))
     if is_discovery_demo:
         payload["job_origin"] = DISCOVERY_JOB_ORIGIN
     enqueue_result = enqueue_job(
@@ -28077,6 +28106,8 @@ def transcribe_video(video_pk):
     editor_context = _active_editor_context()
     target_owner_user_id = editor_context["owner_user_id"]
     target_brand_id = editor_context["brand_id"]
+    admin_job_metadata = admin_operation_job_metadata()
+    admin_quota_exempt = bool(admin_job_metadata.get("quota_exempt"))
 
     def _generate_redirect():
         return redirect(_editor_url("generate_short", video_pk=video_pk))
@@ -28104,7 +28135,7 @@ def transcribe_video(video_pk):
         segment_suffix = f" ({transcript_segment_count} segments)" if transcript_segment_count else ""
         flash(f"Existing transcript found{segment_suffix}. OpenAI call skipped.", "info")
         return _generate_redirect()
-    quota_error = _transcription_quota_error_for_user(target_owner_user_id, duration_seconds)
+    quota_error = None if admin_quota_exempt else _transcription_quota_error_for_user(target_owner_user_id, duration_seconds)
     if quota_error:
         flash(quota_error, "warning")
         return _generate_redirect()
@@ -28174,13 +28205,14 @@ def transcribe_video(video_pk):
                     video_pk=video_pk,
                     video_id=vid,
                     ingest_source="",
+                    admin_job_metadata=admin_job_metadata or None,
                 )
             except Exception:
                 current_app.logger.exception(
                     "Failed to enqueue suggestions-only workflow after synchronous transcript video_pk=%s",
                     video_pk,
                 )
-        if target_owner_user_id and audio_minutes > 0:
+        if target_owner_user_id and audio_minutes > 0 and not admin_quota_exempt:
             try:
                 add_transcription_minutes(
                     str(target_owner_user_id),
@@ -28635,6 +28667,9 @@ def _generate_clip_plan_for_video(
         )
         plan_entry["origin"] = "ai"
         plan_entry["planner"] = planner_used
+        if form_data.get("_admin_made_by_admin"):
+            plan_entry["made_by_admin"] = True
+            plan_entry["acting_admin_id"] = str(form_data.get("_admin_acting_admin_id") or "")
         if used_fallback_plan and _is_placeholder_clip_title(plan_entry.get("title")):
             _mark_plan_entry_placeholder_title(plan_entry)
         else:
@@ -28818,9 +28853,13 @@ def create_clip_plan(video_pk):
         return gated
     cleanup_video_shorts_temp_dir()
     try:
+        form_data = dict(request.form.items())
+        admin_metadata = admin_operation_job_metadata()
+        if admin_metadata:
+            form_data.update({f"_admin_{key}": value for key, value in admin_metadata.items()})
         result = _generate_clip_plan_for_video(
             video_pk,
-            dict(request.form.items()),
+            form_data,
             debug_flag=request.args.get("debug") == "1",
         )
     except FileNotFoundError:
@@ -28850,6 +28889,9 @@ def create_clip_plan_start(video_pk):
         form_data["_request_user_role"] = str(current_user.get("role") or "")
         form_data["_owner_user_id"] = editor_context["owner_user_id"]
         form_data["_brand_id"] = editor_context["brand_id"]
+        admin_metadata = admin_operation_job_metadata()
+        if admin_metadata:
+            form_data.update({f"_admin_{key}": value for key, value in admin_metadata.items()})
         with _PLAN_JOB_LOCK:
             existing = dict(_PLAN_JOB_STATE.get(video_pk) or _load_plan_job_state(video_pk) or {})
             request_is_admin = str(current_user.get("role") or "").strip().lower() == "admin"
@@ -30001,6 +30043,12 @@ def autoclip_video(video_pk):
     auto_render_job = (request.form.get("_auto_render_job") or "").strip() in {"1", "true", "yes"}
     internal_auto_context = getattr(g, "vs_auto_suggest_render_context", None) or {}
     auto_render_quota_exempt = auto_render_job and bool(internal_auto_context.get("quota_exempt"))
+    admin_job_metadata = dict(internal_auto_context.get("admin_job_metadata") or {})
+    if not admin_job_metadata:
+        admin_job_metadata = admin_operation_job_metadata()
+    admin_quota_exempt = bool(
+        admin_job_metadata.get("made_by_admin") and admin_job_metadata.get("quota_exempt")
+    )
     auto_suggest_default = auto_render_job and bool(internal_auto_context.get("default_customer"))
     discovery_pipeline_job = (request.form.get("_discovery_pipeline_job") or "").strip() in {"1", "true", "yes"}
     queued_render_settings_hash = (request.form.get("_render_settings_hash") or "").strip() or None
@@ -30035,7 +30083,7 @@ def autoclip_video(video_pk):
     usage = None
     if not current_user:
         return _respond("Authentication required.", success=False, status=401, category="danger")
-    if current_user:
+    if current_user and not admin_quota_exempt:
         conn_usage = get_db_readonly()
         try:
             usage = _get_user_storage_usage(conn_usage, target_owner_user_id)
@@ -30968,8 +31016,11 @@ def autoclip_video(video_pk):
                 video_pk=int(video_pk),
                 auto_render_job=auto_render_job,
                 discovery_pipeline_job=discovery_pipeline_job,
+                admin_operation=admin_quota_exempt,
             )
             payload["job_origin"] = job_origin
+            if admin_quota_exempt:
+                payload.update(admin_job_metadata)
             if auto_suggest_default:
                 payload["auto_suggest_default"] = True
             if auto_render_quota_exempt:
@@ -31074,6 +31125,7 @@ def autoclip_video(video_pk):
             if (
                 not guest_reserve_result.get("guest")
                 and not auto_render_quota_exempt
+                and not admin_quota_exempt
             ):
                 reserve_result = reserve_export(target_owner_user_id)
             if not reserve_result.get("allowed", False):
@@ -32621,6 +32673,7 @@ def regenerate_clip_video(video_pk: int, plan_index: int):
         "brand_id": brand_id,
     }
     input_hash = build_input_hash(source_id=source_video_id, start=start, end=end, options=current_options)
+    admin_job_metadata = admin_operation_job_metadata()
     payload = {
         "video_pk": int(video_pk),
         "source_video_id": source_video_id,
@@ -32630,12 +32683,14 @@ def regenerate_clip_video(video_pk: int, plan_index: int):
         "start": start,
         "end": end,
         "regenerate": True,
-        "job_origin": CUSTOMER_JOB_ORIGIN,
+        "job_origin": ADMIN_JOB_ORIGIN if admin_job_metadata else CUSTOMER_JOB_ORIGIN,
         "render_settings_hash": current_hash,
         "options": current_options,
         "previous_youtube_video_id": str((generated_row[2] if generated_row else "") or plan_entry.get("yt_video_id") or "").strip(),
         "previous_publish_at_iso": str(plan_entry.get("publish_at_iso") or plan_entry.get("publish_at") or "").strip(),
     }
+    if admin_job_metadata:
+        payload.update(admin_job_metadata)
     if media_duration_seconds:
         payload["media_duration_seconds"] = media_duration_seconds
     enqueue_result = enqueue_render_job(

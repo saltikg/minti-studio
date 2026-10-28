@@ -40,6 +40,7 @@ google_oauth2_module.credentials = google_oauth2_credentials_module
 google_auth_module = _ensure_module("google.auth")
 google_auth_exceptions_module = _ensure_module("google.auth.exceptions")
 google_auth_exceptions_module.RefreshError = type("RefreshError", (Exception,), {})
+google_auth_exceptions_module.TransportError = type("TransportError", (Exception,), {})
 google_auth_transport_module = _ensure_module("google.auth.transport")
 google_auth_transport_requests_module = _ensure_module("google.auth.transport.requests")
 google_auth_transport_requests_module.Request = type("Request", (), {})
@@ -100,6 +101,7 @@ from app import create_app
 from app.video_shorts.routes import generation
 from app.video_shorts.services import db as db_service
 from app.video_shorts.services import compositor
+from app.video_shorts.services.admin_operation_scope import admin_operation_job_metadata
 from app.video_shorts.services import render_jobs, usage_metering, tenant_media
 from app.video_shorts.services.media_utils import MediaSubprocessTimeoutError
 from app.video_shorts import worker as worker_module
@@ -851,8 +853,9 @@ def test_discovery_startup_recovery_fails_second_processing_attempt(monkeypatch,
     user_id = str(uuid4())
     _insert_user(user_id, "plan_free")
     payload = {**_payload(1, "discovery-fail"), "job_origin": render_jobs.DISCOVERY_JOB_ORIGIN}
-    queued = render_jobs.enqueue_render_job(
+    queued = render_jobs.enqueue_worker_job(
         user_id=user_id,
+        job_type=render_jobs.JOB_TYPE_RENDER_SHORT,
         payload=payload,
         input_hash=_input_hash("discovery-fail"),
         priority=render_jobs.DISCOVERY_JOB_PRIORITY,
@@ -1464,3 +1467,69 @@ def test_worker_marks_render_job_failed_without_retry_when_disk_is_full(monkeypa
         and "Job failed without retry" in record.getMessage()
         for record in caplog.records
     )
+
+
+def test_admin_operation_jobs_are_distinguishable_and_quota_exempt():
+    metadata = admin_operation_job_metadata(
+        {
+            "workspace_kind": "customer",
+            "acting_admin_id": "admin-1",
+        }
+    )
+
+    assert metadata == {
+        "job_origin": "admin",
+        "made_by_admin": True,
+        "quota_exempt": True,
+        "acting_admin_id": "admin-1",
+        "admin_operation_kind": "customer",
+    }
+    assert admin_operation_job_metadata(
+        {"workspace_kind": "lead", "acting_admin_id": "admin-1"}
+    ) == {}
+
+
+def test_interactive_render_origin_keeps_customer_and_admin_actions_separate():
+    common = {
+        "owner_user_id": "owner-1",
+        "brand_id": "brand-1",
+        "video_pk": 1,
+        "auto_render_job": False,
+        "discovery_pipeline_job": False,
+    }
+
+    assert generation._interactive_render_origin(**common) == (render_jobs.CUSTOMER_JOB_ORIGIN, None)
+    assert generation._interactive_render_origin(**common, admin_operation=True) == (
+        render_jobs.ADMIN_JOB_ORIGIN,
+        None,
+    )
+
+
+def test_failed_admin_render_does_not_release_customer_export(monkeypatch, tmp_path):
+    _configure_duckdb(monkeypatch, tmp_path, "admin_quota_exempt_failure.duckdb")
+    user_id = str(uuid4())
+    video_pk = 303
+    source_video_id = "admin-render-video"
+    _insert_user(user_id, "plan_free")
+    _insert_video(video_pk, source_video_id, user_id)
+    payload = _payload(video_pk, source_video_id, 1)
+    payload.update(
+        {
+            "job_origin": render_jobs.ADMIN_JOB_ORIGIN,
+            "made_by_admin": True,
+            "quota_exempt": True,
+            "acting_admin_id": "admin-1",
+        }
+    )
+    queued = render_jobs.enqueue_worker_job(
+        user_id=user_id,
+        job_type=render_jobs.JOB_TYPE_RENDER_SHORT,
+        payload=payload,
+        input_hash=_input_hash(source_video_id, 1),
+    )
+    released = []
+    monkeypatch.setattr(render_jobs, "release_export", lambda value: released.append(value))
+
+    render_jobs.mark_job_failed(queued["job"]["id"], "failed")
+
+    assert released == []

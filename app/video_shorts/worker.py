@@ -1202,7 +1202,8 @@ def _execute_ingest_youtube_job(app, job: Dict[str, Any]) -> Dict[str, Any]:
     duration_seconds = payload.get("duration_seconds")
     job_origin = str(payload.get("job_origin") or "").strip()
     ingest_source = str(payload.get("ingest_source") or "").strip()
-    bill_usage = not _is_unconverted_discovery_demo_transcription(
+    quota_exempt = bool(payload.get("quota_exempt") and payload.get("made_by_admin"))
+    bill_usage = not quota_exempt and not _is_unconverted_discovery_demo_transcription(
         owner_user_id=owner_user_id,
         brand_id=brand_id,
         video_pk=video_pk,
@@ -1347,6 +1348,15 @@ def _execute_ingest_youtube_job(app, job: Dict[str, Any]) -> Dict[str, Any]:
                 video_id=video_id,
                 job_origin=job_origin,
                 ingest_source=ingest_source,
+                admin_job_metadata=(
+                    {
+                        key: payload.get(key)
+                        for key in ("job_origin", "made_by_admin", "quota_exempt", "acting_admin_id", "admin_operation_kind")
+                        if payload.get(key) is not None
+                    }
+                    if quota_exempt
+                    else None
+                ),
             )
             if enqueue_auto_result:
                 app.logger.info(
@@ -1409,7 +1419,8 @@ def _execute_transcribe_upload_job(app, job: Dict[str, Any]) -> Dict[str, Any]:
     duration_seconds = payload.get("duration_seconds")
     job_origin = str(payload.get("job_origin") or "").strip()
     ingest_source = str(payload.get("ingest_source") or "").strip()
-    bill_usage = not _is_unconverted_discovery_demo_transcription(
+    quota_exempt = bool(payload.get("quota_exempt") and payload.get("made_by_admin"))
+    bill_usage = not quota_exempt and not _is_unconverted_discovery_demo_transcription(
         owner_user_id=owner_user_id,
         brand_id=brand_id,
         video_pk=video_pk,
@@ -1459,6 +1470,15 @@ def _execute_transcribe_upload_job(app, job: Dict[str, Any]) -> Dict[str, Any]:
                 video_id=video_id,
                 job_origin=job_origin,
                 ingest_source=ingest_source,
+                admin_job_metadata=(
+                    {
+                        key: payload.get(key)
+                        for key in ("job_origin", "made_by_admin", "quota_exempt", "acting_admin_id", "admin_operation_kind")
+                        if payload.get(key) is not None
+                    }
+                    if quota_exempt
+                    else None
+                ),
             )
             if enqueue_auto_result:
                 app.logger.info(
