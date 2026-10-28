@@ -2685,6 +2685,7 @@ def _compose_trimmed_with_background(
     subscribe_overlay_enabled: bool = False,
     subscribe_overlay_path: Optional[Path] = None,
     show_title: bool = True,
+    title_display_seconds: Optional[float] = None,
     show_subtitle: bool = True,
     crop_settings: Optional[Dict[str, float]] = None,
     video_override_source: Optional[Path] = None,
@@ -2724,6 +2725,21 @@ def _compose_trimmed_with_background(
     else:
         direct_keep_ranges = []
         duration = max(end - start, 1.0)
+    try:
+        normalized_title_display_seconds = max(1.0, min(30.0, float(title_display_seconds)))
+    except (TypeError, ValueError):
+        normalized_title_display_seconds = None
+    if normalized_title_display_seconds is not None and duration <= normalized_title_display_seconds:
+        normalized_title_display_seconds = None
+
+    def _title_source_filter(input_label: str, output_label: str) -> str:
+        filters = "format=rgba"
+        if normalized_title_display_seconds is not None:
+            filters += (
+                f",fade=t=out:st={normalized_title_display_seconds:.3f}:"
+                "d=0.300:alpha=1"
+            )
+        return f"{input_label}{filters}{output_label}"
     if music_only and video_override_source:
         override_duration = _probe_media_duration_seconds(video_override_source)
         if override_duration:
@@ -4196,7 +4212,9 @@ def _compose_trimmed_with_background(
                     title_overlay_paths.append(title_overlay_path)
                     fill_title_input_index = next_video_input_index
                     next_video_input_index += 1
-                    filter_parts.append(f"[{fill_title_input_index}:v]format=rgba[title_fill_src]")
+                    filter_parts.append(
+                        _title_source_filter(f"[{fill_title_input_index}:v]", "[title_fill_src]")
+                    )
                     if len(fill_segment_indices) > 1:
                         fill_split_labels = "".join(f"[title_fill_src_{idx}]" for idx in fill_segment_indices)
                         filter_parts.append(f"[title_fill_src]split={len(fill_segment_indices)}{fill_split_labels}")
@@ -4235,7 +4253,9 @@ def _compose_trimmed_with_background(
                     )
                     fit_title_input_index = next_video_input_index
                     next_video_input_index += 1
-                    filter_parts.append(f"[{fit_title_input_index}:v]format=rgba[title_fit_src]")
+                    filter_parts.append(
+                        _title_source_filter(f"[{fit_title_input_index}:v]", "[title_fit_src]")
+                    )
                     if len(fit_segment_indices) > 1:
                         fit_split_labels = "".join(f"[title_fit_src_{idx}]" for idx in fit_segment_indices)
                         filter_parts.append(f"[title_fit_src]split={len(fit_segment_indices)}{fit_split_labels}")
@@ -4263,7 +4283,9 @@ def _compose_trimmed_with_background(
             else:
                 title_overlay_paths.append(title_overlay_path)
                 title_input_index = next_video_input_index
-                filter_parts.append(f"[{title_input_index}:v]format=rgba[title_src]")
+                filter_parts.append(
+                    _title_source_filter(f"[{title_input_index}:v]", "[title_src]")
+                )
                 filter_parts.append(
                     f"{final_label}[title_src]overlay=0:0:shortest=1[ov_title_debug]"
                 )

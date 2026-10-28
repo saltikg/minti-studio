@@ -471,6 +471,7 @@ SHORT_EDITOR_DEFAULT_FIELD_NAMES = (
     "video_overlay_offset",
     "enable_subscribe_overlay",
     "show_title",
+    "title_display_seconds",
     "show_subtitle",
     "visual_mode",
     "overlay_shapes",
@@ -926,6 +927,18 @@ def _normalize_optional_bool(value: Any, default: bool = True) -> bool:
     return bool(value)
 
 
+def _normalize_title_display_seconds(value: Any) -> Optional[float]:
+    if value is None or str(value).strip().lower() in {"", "none", "null", "whole"}:
+        return None
+    try:
+        seconds = float(value)
+    except (TypeError, ValueError):
+        return None
+    if not math.isfinite(seconds):
+        return None
+    return round(round(max(1.0, min(30.0, seconds)) * 2.0) / 2.0, 1)
+
+
 def _short_editor_config_defaults() -> Dict[str, Any]:
     return {
         "font": DEFAULT_EDITOR_TITLE_FONT_KEY,
@@ -948,6 +961,7 @@ def _short_editor_config_defaults() -> Dict[str, Any]:
         "video_overlay_offset": DEFAULT_VIDEO_OVERLAY_OFFSET,
         "enable_subscribe_overlay": True,
         "show_title": True,
+        "title_display_seconds": None,
         "show_subtitle": True,
         "visual_mode": "video",
         "overlay_shapes": [],
@@ -1049,6 +1063,7 @@ def _clean_short_editor_default_payload(source: Any) -> Dict[str, Any]:
         default=True,
     )
     payload["show_title"] = _normalize_optional_bool(source.get("show_title"), default=True)
+    payload["title_display_seconds"] = _normalize_title_display_seconds(source.get("title_display_seconds"))
     payload["show_subtitle"] = _normalize_optional_bool(source.get("show_subtitle"), default=True)
 
     visual_mode = str(source.get("visual_mode") or defaults["visual_mode"]).strip().lower()
@@ -8232,6 +8247,7 @@ AUTO_RENDER_DESIGN_FIELD_MAP: Dict[str, str] = {
     "subtitle_text_alpha": "subtitle_text_alpha",
     "enable_subscribe_overlay": "subscribe_overlay_enabled",
     "show_title": "show_title",
+    "title_display_seconds": "title_display_seconds",
     "show_subtitle": "show_subtitle",
     "visual_mode": "visual_mode",
     "video_overlay_offset": "video_overlay_offset",
@@ -9376,6 +9392,7 @@ def _build_render_job_options(
     music_fade_out: bool = True,
     music_speech_ranges: Optional[List[Dict[str, float]]] = None,
     subtitle_margin_custom: Optional[bool] = None,
+    title_display_seconds: Optional[float] = None,
 ) -> Dict[str, Any]:
     return {
         "plan_index": int(plan_index),
@@ -9405,6 +9422,7 @@ def _build_render_job_options(
         "date_text": date_text,
         "date_top": date_top,
         "show_title": bool(show_title),
+        "title_display_seconds": _normalize_title_display_seconds(title_display_seconds),
         "show_subtitle": bool(show_subtitle),
         "subscribe_overlay": bool(subscribe_overlay),
         "subscribe_overlay_image": subscribe_overlay_image,
@@ -9467,6 +9485,11 @@ def canonical_render_settings(options: Dict[str, Any]) -> Dict[str, Any]:
     """Normalize render settings so enqueue-time and current comparisons hash the same values."""
     payload = dict(options or {})
     payload["overlay_shapes"] = _normalize_overlay_shapes(payload.get("overlay_shapes"))
+    title_display_seconds = _normalize_title_display_seconds(payload.get("title_display_seconds"))
+    if title_display_seconds is None:
+        payload.pop("title_display_seconds", None)
+    else:
+        payload["title_display_seconds"] = title_display_seconds
     payload["music_audio_id"] = _normalize_music_audio_id(payload.get("music_audio_id"))
     payload["music_level"] = normalize_music_level(payload.get("music_level"))
     payload["music_start_seconds"] = round(normalize_music_start_seconds(payload.get("music_start_seconds")), 3)
@@ -9779,6 +9802,7 @@ def _render_settings_options_for_plan_entry(
         date_text=video.get("video_date_text"),
         date_top=video.get("video_date_top"),
         show_title=_normalize_optional_bool(video.get("show_title"), default=True),
+        title_display_seconds=_normalize_title_display_seconds(video.get("title_display_seconds")),
         show_subtitle=_normalize_optional_bool(video.get("show_subtitle"), default=True),
         subscribe_overlay=_normalize_optional_bool(video.get("subscribe_overlay_enabled"), default=True),
         subscribe_overlay_image=_subscribe_storage_reference_for_asset(
@@ -12204,6 +12228,8 @@ def generate_short(video_pk):
         video_sql += ", layout_mode"
     if "overlay_shapes" in video_columns:
         video_sql += ", overlay_shapes"
+    if "title_display_seconds" in video_columns:
+        video_sql += ", title_display_seconds"
     for music_column in ("music_audio_id", "music_level", "music_start_seconds", "music_duck", "music_fade_out"):
         if music_column in video_columns:
             video_sql += f", {music_column}"
@@ -12248,6 +12274,8 @@ def generate_short(video_pk):
         cols.append("layout_mode")
     if "overlay_shapes" in video_columns:
         cols.append("overlay_shapes")
+    if "title_display_seconds" in video_columns:
+        cols.append("title_display_seconds")
     for music_column in ("music_audio_id", "music_level", "music_start_seconds", "music_duck", "music_fade_out"):
         if music_column in video_columns:
             cols.append(music_column)
@@ -12595,6 +12623,7 @@ def generate_short(video_pk):
         "video_overlay_offset": video.get("video_overlay_offset"),
         "enable_subscribe_overlay": video.get("subscribe_overlay_enabled"),
         "show_title": video.get("show_title"),
+        "title_display_seconds": video.get("title_display_seconds"),
         "show_subtitle": video.get("show_subtitle"),
         "visual_mode": video.get("visual_mode"),
         "overlay_shapes": video.get("overlay_shapes"),
@@ -12649,6 +12678,9 @@ def generate_short(video_pk):
     video_subscribe_overlay = _normalize_optional_bool(raw_subscribe, default=True)
     raw_show_title = resolved_style_values.get("show_title")
     video_show_title = _normalize_optional_bool(raw_show_title, default=True)
+    video_title_display_seconds = _normalize_title_display_seconds(
+        resolved_style_values.get("title_display_seconds")
+    )
     raw_show_subtitle = resolved_style_values.get("show_subtitle")
     video_show_subtitle = _normalize_optional_bool(raw_show_subtitle, default=True)
     raw_is_music_only = video.get("is_music_only")
@@ -12942,6 +12974,7 @@ def generate_short(video_pk):
     selected_video_date_top = video_date_top
     selected_subscribe_overlay = video_subscribe_overlay if video_subscribe_overlay is not None else True
     selected_show_title = video_show_title if video_show_title is not None else True
+    selected_title_display_seconds = video_title_display_seconds
     selected_show_subtitle = video_show_subtitle if video_show_subtitle is not None else True
     selected_video_overlay_offset = video_overlay_offset
     selected_overlay_shapes = video.get("overlay_shapes") or []
@@ -14157,6 +14190,7 @@ def generate_short(video_pk):
         selected_video_date=selected_video_date,
         selected_video_date_top=selected_video_date_top,
         selected_show_title=selected_show_title,
+        selected_title_display_seconds=selected_title_display_seconds,
         selected_show_subtitle=selected_show_subtitle,
         selected_subscribe_overlay=selected_subscribe_overlay,
         selected_is_music_only=video_is_music_only,
@@ -29426,6 +29460,7 @@ def save_short_settings(video_pk):
     subscribe_overlay_value = request.form.get("enable_subscribe_overlay")
     subscribe_overlay_enabled = (subscribe_overlay_value or "").lower() in {"1", "true", "yes", "on"}
     show_title = (request.form.get("show_title") or "").lower() not in {"0", "false", "no", "off"}
+    title_display_seconds = _normalize_title_display_seconds(request.form.get("title_display_seconds"))
     show_subtitle = (request.form.get("show_subtitle") or "").lower() not in {"0", "false", "no", "off"}
     is_music_only = (request.form.get("is_music_only") or "").lower() in {"1", "true", "yes", "on"}
     visual_mode = (request.form.get("visual_mode") or "").strip().lower()
@@ -29658,6 +29693,7 @@ def save_short_settings(video_pk):
             "video_date_text": video_date_text,
             "video_date_top": video_date_top,
             "show_title": show_title,
+            "title_display_seconds": title_display_seconds,
             "show_subtitle": show_subtitle,
             "subscribe_overlay_enabled": subscribe_overlay_enabled,
             "is_music_only": is_music_only,
@@ -29689,6 +29725,7 @@ def save_short_settings(video_pk):
             "video_date_text": "video_date_text",
             "video_date_top": "video_date_top",
             "show_title": "show_title",
+            "title_display_seconds": "title_display_seconds",
             "show_subtitle": "show_subtitle",
             "subscribe_overlay_enabled": "enable_subscribe_overlay",
             "is_music_only": "is_music_only",
@@ -30041,6 +30078,7 @@ def autoclip_video(video_pk):
     video_date_top = DEFAULT_VIDEO_DATE_TOP
     video_subscribe_overlay = True
     video_show_title = True
+    video_title_display_seconds: Optional[float] = None
     video_show_subtitle = True
     video_is_music_only = False
     video_podcast_audio_filename = ""
@@ -30596,7 +30634,14 @@ def autoclip_video(video_pk):
 
         music_columns = [
             column
-            for column in ("music_audio_id", "music_level", "music_start_seconds", "music_duck", "music_fade_out")
+            for column in (
+                "music_audio_id",
+                "music_level",
+                "music_start_seconds",
+                "music_duck",
+                "music_fade_out",
+                "title_display_seconds",
+            )
             if column in crop_columns
         ]
         if music_columns:
@@ -30613,6 +30658,9 @@ def autoclip_video(video_pk):
                 video_music_start_seconds = normalize_music_start_seconds(music_values.get("music_start_seconds"))
                 video_music_duck = _normalize_optional_bool(music_values.get("music_duck"), default=True)
                 video_music_fade_out = _normalize_optional_bool(music_values.get("music_fade_out"), default=True)
+                video_title_display_seconds = _normalize_title_display_seconds(
+                    music_values.get("title_display_seconds")
+                )
     finally:
         conn.close()
     video_font_key = video_font_key or DEFAULT_EDITOR_TITLE_FONT_KEY
@@ -30814,6 +30862,7 @@ def autoclip_video(video_pk):
                 date_text=video_date_text,
                 date_top=video_date_top,
                 show_title=video_show_title,
+                title_display_seconds=video_title_display_seconds,
                 show_subtitle=video_show_subtitle,
                 subscribe_overlay=video_subscribe_overlay,
                 subscribe_overlay_image=_subscribe_storage_reference_for_asset(
@@ -31804,6 +31853,7 @@ def autoclip_video(video_pk):
                 video_date_text=video_date_text,
                 video_date_top=video_date_top,
                 show_title=video_show_title,
+                title_display_seconds=video_title_display_seconds,
                 show_subtitle=video_show_subtitle,
                 subscribe_overlay_enabled=video_subscribe_overlay,
                 subscribe_overlay_path=subscribe_overlay_path,
@@ -32352,6 +32402,8 @@ def regenerate_clip_video(video_pk: int, plan_index: int):
             video_sql += ", layout_mode"
         if "overlay_shapes" in video_columns:
             video_sql += ", overlay_shapes"
+        if "title_display_seconds" in video_columns:
+            video_sql += ", title_display_seconds"
         for music_column in ("music_audio_id", "music_level", "music_start_seconds", "music_duck", "music_fade_out"):
             if music_column in video_columns:
                 video_sql += f", {music_column}"
@@ -32383,6 +32435,8 @@ def regenerate_clip_video(video_pk: int, plan_index: int):
         video_cols.append("layout_mode")
     if "overlay_shapes" in video_columns:
         video_cols.append("overlay_shapes")
+    if "title_display_seconds" in video_columns:
+        video_cols.append("title_display_seconds")
     for music_column in ("music_audio_id", "music_level", "music_start_seconds", "music_duck", "music_fade_out"):
         if music_column in video_columns:
             video_cols.append(music_column)

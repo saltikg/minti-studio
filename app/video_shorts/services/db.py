@@ -620,6 +620,7 @@ def _ensure_video_crop_schema(conn) -> set:
         ("video_date_text", "VARCHAR", None),
         ("video_date_top", "INTEGER", 1006),
         ("show_title", "BOOLEAN", True),
+        ("title_display_seconds", "DOUBLE", None),
         ("show_subtitle", "BOOLEAN", True),
         ("subscribe_overlay_enabled", "BOOLEAN", True),
         ("is_music_only", "BOOLEAN", False),

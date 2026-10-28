@@ -9224,6 +9224,24 @@
                         </div>
                       </div>
                       <input type="range" name="title_bg_alpha" id="titleBgAlphaValue" class="d-none" min="0" max="100" step="1" value="{{ selected_title_bg_alpha if selected_title_bg_alpha is not none else 0 }}">
+                      <div class="design-panel-section-label">Timing</div>
+                      <div class="crop-modal-element-grid">
+                        <div class="input-group-inline compact">
+                          <label class="design-more-label" for="titleDisplayMode">Show title</label>
+                          <select id="titleDisplayMode" class="form-select form-select-sm">
+                            <option value="whole" {% if selected_title_display_seconds is none %}selected{% endif %}>Whole clip</option>
+                            <option value="3" {% if selected_title_display_seconds == 3 %}selected{% endif %}>First 3s</option>
+                            <option value="5" {% if selected_title_display_seconds == 5 %}selected{% endif %}>First 5s</option>
+                            <option value="custom" {% if selected_title_display_seconds is not none and selected_title_display_seconds not in [3, 5] %}selected{% endif %}>Custom</option>
+                          </select>
+                        </div>
+                        <div class="input-group-inline compact {% if selected_title_display_seconds is none or selected_title_display_seconds in [3, 5] %}d-none{% endif %}" id="titleDisplayCustomRow">
+                          <label class="design-more-label" for="titleDisplayCustom">Seconds</label>
+                          <span class="design-more-input"><input type="number" id="titleDisplayCustom" class="form-control form-control-sm short-input-small" min="1" max="30" step="0.5" value="{{ selected_title_display_seconds if selected_title_display_seconds is not none else 3 }}"><span class="design-more-unit">s</span></span>
+                        </div>
+                        <input type="hidden" name="title_display_seconds" id="titleDisplaySeconds" value="{{ selected_title_display_seconds if selected_title_display_seconds is not none else '' }}">
+                        <span class="badge rounded-pill text-bg-secondary d-none" id="titleDisplayChip">Hides after 3s</span>
+                      </div>
                       <div class="design-panel-hint">Drag to move, or use the arrow keys (Shift for bigger steps).</div>
                       <button type="button" class="design-panel-more-toggle" data-design-more-toggle="title" aria-expanded="false">▸ More options</button>
                       <div class="design-panel-more-options" data-design-more-options="title">
@@ -14427,6 +14445,27 @@ window.initGenerateV2TextTranscript = () => {
     return previewElapsedBeforePart(state.preview.partIndex)
       + Math.max(0, Math.min(Number(part?.end || 0), current) - Number(part?.start || 0));
   };
+  const previewTitleLayers = () => [
+    document.getElementById("shorts-preview-title-band"),
+    document.getElementById("orig-preview-title"),
+  ].filter(Boolean);
+  const syncPreviewTitleTiming = (elapsed = 0) => {
+    const limit = Number(document.querySelector('[name="title_display_seconds"]')?.value);
+    const hasLimit = Number.isFinite(limit) && limit > 0;
+    const opacity = !hasLimit || elapsed <= limit
+      ? 1
+      : Math.max(0, 1 - ((elapsed - limit) / 0.3));
+    previewTitleLayers().forEach((layer) => {
+      layer.style.opacity = String(opacity);
+      layer.style.transition = "none";
+    });
+  };
+  const resetPreviewTitleTiming = () => {
+    previewTitleLayers().forEach((layer) => {
+      layer.style.removeProperty("opacity");
+      layer.style.removeProperty("transition");
+    });
+  };
   const syncPreviewMusic = (sourceTime = null, playing = !state.preview.paused) => {
     if (!state.preview.active) return;
     window.__videoMusicPreview?.sync?.({
@@ -14440,6 +14479,7 @@ window.initGenerateV2TextTranscript = () => {
   const updatePreviewStatus = (sourceTime = null) => {
     if (!state.preview.active || !state.preview.ranges.length) return;
     const elapsed = previewElapsedAt(sourceTime);
+    syncPreviewTitleTiming(elapsed);
     const total = previewTotalDuration();
     const percent = total > 0 ? Math.max(0, Math.min(100, (elapsed / total) * 100)) : 0;
     if (previewStatus) {
@@ -14495,6 +14535,7 @@ window.initGenerateV2TextTranscript = () => {
     state.preview.musicFailed = false;
     state.preview.musicSpeechRanges = [];
     state.preview.restoreSnapshot = null;
+    resetPreviewTitleTiming();
     if (previewProgressFill) previewProgressFill.style.width = "0%";
     if (restore && snapshot) window.__trsClipSelectorController?.restorePlayerState?.(snapshot);
     setPreviewControls(false);
@@ -19584,6 +19625,7 @@ document.addEventListener("DOMContentLoaded", () => {
     suppressDesignStateSync += 1;
     try {
       window.applyCropEditorFieldState?.(snapshot.fields || {});
+      window.syncTitleDisplayUi?.();
       previousCaptionAnchor = getCaptionAnchor();
       syncCaptionPositionLabel();
       activeLayoutMode = snapshot.layout_mode === "auto" ? "auto" : "manual";
@@ -19692,6 +19734,11 @@ document.addEventListener("DOMContentLoaded", () => {
   }));
   syncCaptionPositionLabel();
   const showTitleToggle = getEditorField("show_title");
+  const titleDisplaySecondsField = getEditorField("title_display_seconds");
+  const titleDisplayMode = document.getElementById("titleDisplayMode");
+  const titleDisplayCustom = document.getElementById("titleDisplayCustom");
+  const titleDisplayCustomRow = document.getElementById("titleDisplayCustomRow");
+  const titleDisplayChip = document.getElementById("titleDisplayChip");
   const showSubtitleToggle = getEditorField("show_subtitle");
   const videoOverlayOffsetInput = getEditorField("video_overlay_offset");
   const layoutVideoPositionRow = settingsContainer?.querySelector(".layout-video-position-row");
@@ -22087,6 +22134,41 @@ document.addEventListener("DOMContentLoaded", () => {
     setCropFormat(value, activeSplitEnabled);
   };
 
+  const normalizedTitleDisplayValue = (value) => {
+    const parsed = Number(value);
+    if (!Number.isFinite(parsed) || parsed <= 0) return "";
+    return String(Math.round(Math.max(1, Math.min(30, parsed)) * 2) / 2);
+  };
+  const syncTitleDisplayUi = () => {
+    const value = normalizedTitleDisplayValue(titleDisplaySecondsField?.value);
+    const presetMode = value === "" ? "whole" : (value === "3" || value === "5" ? value : "custom");
+    if (titleDisplayMode) titleDisplayMode.value = presetMode;
+    titleDisplayCustomRow?.classList.toggle("d-none", presetMode !== "custom");
+    if (presetMode === "custom" && titleDisplayCustom && document.activeElement !== titleDisplayCustom) {
+      titleDisplayCustom.value = value || "3";
+    }
+    if (titleDisplayChip) {
+      titleDisplayChip.textContent = value ? `Hides after ${value}s` : "";
+      titleDisplayChip.classList.toggle("d-none", !value);
+    }
+  };
+  const commitTitleDisplayValue = (value) => {
+    if (!titleDisplaySecondsField) return;
+    titleDisplaySecondsField.value = normalizedTitleDisplayValue(value);
+    titleDisplaySecondsField.dispatchEvent(new Event("input", { bubbles: true }));
+    syncTitleDisplayUi();
+  };
+  window.syncTitleDisplayUi = syncTitleDisplayUi;
+  titleDisplayMode?.addEventListener("change", () => {
+    const mode = titleDisplayMode.value;
+    if (mode === "whole") commitTitleDisplayValue("");
+    else if (mode === "3" || mode === "5") commitTitleDisplayValue(mode);
+    else commitTitleDisplayValue(titleDisplayCustom?.value || "3");
+  });
+  titleDisplayCustom?.addEventListener("input", () => commitTitleDisplayValue(titleDisplayCustom.value));
+  titleDisplaySecondsField?.addEventListener("change", syncTitleDisplayUi);
+  syncTitleDisplayUi();
+
   [titleMarginInput, subtitleMarginInput, videoOverlayOffsetInput, videoDateTopInput, videoDateTextInput, showTitleToggle, showSubtitleToggle].forEach((field) => {
     field?.addEventListener("input", () => {
       markOverlayFieldDirty(field);
@@ -22638,6 +22720,7 @@ document.addEventListener("DOMContentLoaded", () => {
     "subtitle_preset",
     "title_margin",
     "title_line_spacing",
+    "title_display_seconds",
     "title_bg_color",
     "title_bg_alpha",
     "title_text_color",
