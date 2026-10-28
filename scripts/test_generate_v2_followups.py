@@ -179,8 +179,10 @@ def test_text_trim_selection_ranges() -> None:
     _check("text_trim_single_word_restore", result["ok"] and len(result["ranges"]) == 1, str(result))
     ok, message, _ = generation.validate_clip_title_time_edit(title="Tiny", start=result["start"], end=result["end"], video_duration=20)
     _check("text_trim_min_duration_refused", not ok and "at least 5" in message, message)
-    ok, message, _ = generation.validate_clip_title_time_edit(title="Huge", start=0, end=91, video_duration=120)
-    _check("text_trim_max_duration_refused", not ok and "90 seconds" in message, message)
+    ok, message, cleaned = generation.validate_clip_title_time_edit(title="Long", start=0, end=120, video_duration=180)
+    _check("text_trim_120_seconds_allowed", ok and cleaned.get("duration") == 120, message)
+    ok, message, _ = generation.validate_clip_title_time_edit(title="Huge", start=0, end=181, video_duration=240)
+    _check("text_trim_max_duration_refused", not ok and "180 seconds" in message, message)
 
 
 def test_word_time_mapping() -> None:

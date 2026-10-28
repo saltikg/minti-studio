@@ -110,6 +110,8 @@ from app.video_shorts.config import (
     OPENAI_MODEL,
     CLIP_PLAN_COOLDOWN_SECONDS,
     CLIP_PLAN_MAX_RUNS_PER_VIDEO,
+    CLIP_MIN_DURATION_SECONDS,
+    CLIP_MAX_DURATION_SECONDS,
     SHORTS_CATEGORY_OPTIONS,
     SHORTS_DIR,
     PRIVATE_STATE_DIR,
@@ -6583,8 +6585,8 @@ def validate_clip_title_time_edit(
     start: Any,
     end: Any,
     video_duration: Any = None,
-    min_duration: float = 5.0,
-    max_duration: float = 90.0,
+    min_duration: float = CLIP_MIN_DURATION_SECONDS,
+    max_duration: float = CLIP_MAX_DURATION_SECONDS,
 ) -> Tuple[bool, str, Dict[str, Any]]:
     clean_title = str(title or "").strip()
     start_seconds = _parse_time_input(start)
@@ -6601,9 +6603,9 @@ def validate_clip_title_time_edit(
         return False, "End time must be greater than start time.", {}
     duration = end_seconds - start_seconds
     if duration < min_duration:
-        return False, "Clip must be at least 5 seconds.", {}
+        return False, f"Clip must be at least {min_duration:g} seconds.", {}
     if duration > max_duration:
-        return False, "Clip must be 90 seconds or shorter.", {}
+        return False, f"Clip must be {max_duration:g} seconds or shorter.", {}
     video_duration_seconds = _to_float(video_duration)
     if video_duration_seconds is not None and end_seconds > video_duration_seconds:
         return False, "End time exceeds video duration.", {}
@@ -14148,6 +14150,8 @@ def generate_short(video_pk):
         selected_subtitle_text_alpha=selected_subtitle_text_alpha,
         subtitle_presets=SUBTITLE_PRESETS,
         style_templates=STYLE_TEMPLATES,
+        clip_min_duration_seconds=int(CLIP_MIN_DURATION_SECONDS),
+        clip_max_duration_seconds=int(CLIP_MAX_DURATION_SECONDS),
         default_style_template_key=DEFAULT_STYLE_TEMPLATE_KEY,
         clip_has_saved_style_template=clip_has_saved_style_template,
         selected_video_date=selected_video_date,
@@ -24867,10 +24871,18 @@ def add_clip_section(video_pk):
     requested_keep_ranges = range_resolution.ranges if had_keep_ranges else []
     if requested_keep_ranges:
         total_keep_duration = _edit_keep_ranges_duration(requested_keep_ranges) or 0.0
-        if total_keep_duration < 5.0:
-            return _respond("Clip must be at least 5 seconds.", status=400, category="warning")
-        if total_keep_duration > 90.0:
-            return _respond("Clip must be 90 seconds or shorter.", status=400, category="warning")
+        if total_keep_duration < CLIP_MIN_DURATION_SECONDS:
+            return _respond(
+                f"Clip must be at least {CLIP_MIN_DURATION_SECONDS:g} seconds.",
+                status=400,
+                category="warning",
+            )
+        if total_keep_duration > CLIP_MAX_DURATION_SECONDS:
+            return _respond(
+                f"Clip must be {CLIP_MAX_DURATION_SECONDS:g} seconds or shorter.",
+                status=400,
+                category="warning",
+            )
 
     plan_entries = _load_plan_entries(video_id, video_pk=video_pk) or []
 
@@ -25291,11 +25303,14 @@ def edit_clip_title_time(video_pk: int, plan_index: int):
 
     validation_start = request.form.get("start")
     validation_end = request.form.get("end")
-    validation_max_duration = 90.0
+    validation_max_duration = CLIP_MAX_DURATION_SECONDS
     if requested_keep_ranges:
         validation_start = requested_keep_ranges[0]["start"]
         validation_end = requested_keep_ranges[-1]["end"]
-        validation_max_duration = max(90.0, float(validation_end) - float(validation_start))
+        validation_max_duration = max(
+            CLIP_MAX_DURATION_SECONDS,
+            float(validation_end) - float(validation_start),
+        )
 
     valid, message, cleaned = validate_clip_title_time_edit(
         title=request.form.get("title"),
@@ -25324,10 +25339,16 @@ def edit_clip_title_time(video_pk: int, plan_index: int):
     requested_keep_ranges = range_resolution.ranges if had_keep_ranges else []
     if requested_keep_ranges:
         total_duration = _edit_keep_ranges_duration(requested_keep_ranges) or 0.0
-        if total_duration < 5.0:
-            return jsonify(success=False, message="Clip must be at least 5 seconds."), 400
-        if total_duration > 90.0:
-            return jsonify(success=False, message="Clip must be 90 seconds or shorter."), 400
+        if total_duration < CLIP_MIN_DURATION_SECONDS:
+            return jsonify(
+                success=False,
+                message=f"Clip must be at least {CLIP_MIN_DURATION_SECONDS:g} seconds.",
+            ), 400
+        if total_duration > CLIP_MAX_DURATION_SECONDS:
+            return jsonify(
+                success=False,
+                message=f"Clip must be {CLIP_MAX_DURATION_SECONDS:g} seconds or shorter.",
+            ), 400
 
     _mark_plan_entry_user_title_edit(plan_entry, cleaned["title"])
     plan_entry["start"] = cleaned["start"]

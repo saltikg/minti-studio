@@ -7033,7 +7033,7 @@
                   </div>
                   <span class="generate-v2-text-preview-status d-none" data-generate-v2-text-preview-status></span>
                   <button type="button" class="btn btn-sm btn-outline-light generate-v2-text-clear-parts" data-generate-v2-text-clear-parts>Clear</button>
-                  <span class="generate-v2-text-parts-warning d-none" data-generate-v2-text-parts-warning>5–90s required</span>
+                  <span class="generate-v2-text-parts-warning d-none" data-generate-v2-text-parts-warning>{{ clip_min_duration_seconds }}–{{ clip_max_duration_seconds }}s required</span>
                   <button type="button" class="btn btn-sm btn-primary" data-generate-v2-text-create>Create clip</button>
                 </div>
               </div>
@@ -11782,6 +11782,10 @@ const escapeHtml = window.escapeHtml || ((value) => String(value || "")
   .replace(/"/g, "&quot;")
   .replace(/'/g, "&#39;"));
 
+const CLIP_MIN_DURATION_SECONDS = {{ clip_min_duration_seconds | tojson }};
+const CLIP_MAX_DURATION_SECONDS = {{ clip_max_duration_seconds | tojson }};
+const CLIP_DURATION_REQUIREMENT = `${CLIP_MIN_DURATION_SECONDS}–${CLIP_MAX_DURATION_SECONDS}s required`;
+
 const getGenerateV2Root = () => document.querySelector("#clip-workbench-shell[data-generate-v2='1']");
 
 const formatScheduleTimeForViewer = (value) => {
@@ -12732,7 +12736,7 @@ const updateGenerateV2UnrenderedPreviewActions = () => {
   }
   const ranges = getGenerateV2PreviewRangesForSelectedClip();
   const duration = clipKeepRangesDuration(ranges);
-  const valid = duration >= 5 && duration <= 90;
+  const valid = duration >= CLIP_MIN_DURATION_SECONDS && duration <= CLIP_MAX_DURATION_SECONDS;
   const previewButton = preview.querySelector("[data-generate-v2-preview-selected-ranges]");
   const createButton = preview.querySelector("[data-generate-v2-create-selected-clip]");
   if (previewButton) {
@@ -12740,9 +12744,9 @@ const updateGenerateV2UnrenderedPreviewActions = () => {
   }
   if (createButton) {
     createButton.disabled = !valid;
-    createButton.title = valid ? "Create clip" : "Total duration must be 5-90 seconds.";
+    createButton.title = valid ? "Create clip" : `Total duration must be ${CLIP_MIN_DURATION_SECONDS}-${CLIP_MAX_DURATION_SECONDS} seconds.`;
   }
-  setGenerateV2SourcePreviewWarning(ranges.length && !valid ? "5–90s required" : "");
+  setGenerateV2SourcePreviewWarning(ranges.length && !valid ? CLIP_DURATION_REQUIREMENT : "");
 };
 
 const cueGenerateV2SourcePlayerToSelectedClip = () => {
@@ -14377,7 +14381,7 @@ window.initGenerateV2TextTranscript = () => {
     state.parts = normalizedParts;
     window.__generateV2TextParts = state.parts.slice();
     const total = partsDuration();
-    const valid = total >= 5 && total <= 90;
+    const valid = total >= CLIP_MIN_DURATION_SECONDS && total <= CLIP_MAX_DURATION_SECONDS;
     partsBar?.classList.toggle("is-visible", normalizedParts.length > 0);
     if (partsSummary) {
       partsSummary.textContent = `${normalizedParts.length} part${normalizedParts.length === 1 ? "" : "s"} · ${formatClipDurationLabel(total)}`;
@@ -14385,7 +14389,7 @@ window.initGenerateV2TextTranscript = () => {
     partsWarning?.classList.toggle("d-none", !normalizedParts.length || valid);
     if (createBtn) {
       createBtn.disabled = !normalizedParts.length || !valid;
-      createBtn.title = valid ? "Create clip" : "Total duration must be 5-90 seconds.";
+      createBtn.title = valid ? "Create clip" : `Total duration must be ${CLIP_MIN_DURATION_SECONDS}-${CLIP_MAX_DURATION_SECONDS} seconds.`;
     }
     if (previewAllBtn) previewAllBtn.disabled = !normalizedParts.length || state.preview.active;
     if (clearPartsBtn) {
@@ -15075,9 +15079,9 @@ const renderClipTextTrimEditor = (form, options = {}) => {
   if (durationLabel) {
     durationLabel.textContent = `Duration ${formatClipDurationLabel(duration)}${cuts > 0 ? ` · ${cuts} cut${cuts === 1 ? "" : "s"}` : ""}`;
   }
-  const invalidMessage = duration < 5
-    ? "Clip must be at least 5 seconds."
-    : (duration > 90 ? "Clip must be 90 seconds or shorter." : "");
+  const invalidMessage = duration < CLIP_MIN_DURATION_SECONDS
+    ? `Clip must be at least ${CLIP_MIN_DURATION_SECONDS} seconds.`
+    : (duration > CLIP_MAX_DURATION_SECONDS ? `Clip must be ${CLIP_MAX_DURATION_SECONDS} seconds or shorter.` : "");
   if (warning) {
     warning.textContent = invalidMessage;
     warning.classList.toggle("d-none", !invalidMessage);
@@ -15107,8 +15111,13 @@ const applyClipTextTrimSelection = (form, action) => {
     return;
   }
   const duration = clipKeepRangesDuration(nextRange.ranges);
-  if (duration < 5 || duration > 90) {
-    setClipEditError(form, duration < 5 ? "Clip must be at least 5 seconds." : "Clip must be 90 seconds or shorter.");
+  if (duration < CLIP_MIN_DURATION_SECONDS || duration > CLIP_MAX_DURATION_SECONDS) {
+    setClipEditError(
+      form,
+      duration < CLIP_MIN_DURATION_SECONDS
+        ? `Clip must be at least ${CLIP_MIN_DURATION_SECONDS} seconds.`
+        : `Clip must be ${CLIP_MAX_DURATION_SECONDS} seconds or shorter.`,
+    );
     return;
   }
   setClipEditError(form, "");
