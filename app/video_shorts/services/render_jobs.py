@@ -125,13 +125,36 @@ def _is_guest_user(conn, user_id: Any) -> bool:
         return False
 
 
-def _prepare_guest_job_payload(conn, user_id: Any, payload: Dict[str, Any], priority: Optional[int]) -> tuple[Dict[str, Any], Optional[int]]:
+def _is_autopilot_user(conn, user_id: Any) -> bool:
+    clean_user_id = str(user_id or "").strip()
+    if not clean_user_id:
+        return False
+    try:
+        row = conn.execute(
+            """
+            SELECT lower(coalesce(service_mode, ''))
+            FROM shorts_users
+            WHERE CAST(id AS VARCHAR) = CAST(? AS VARCHAR)
+            LIMIT 1
+            """,
+            [clean_user_id],
+        ).fetchone()
+        return bool(row and str(row[0] or "").strip() == "autopilot")
+    except Exception:
+        return False
+
+
+def _prepare_owner_job_payload(conn, user_id: Any, payload: Dict[str, Any], priority: Optional[int]) -> tuple[Dict[str, Any], Optional[int]]:
     next_payload = dict(payload or {})
     if _is_guest_user(conn, user_id):
         next_payload["job_origin"] = GUEST_JOB_ORIGIN
         priority = GUEST_JOB_PRIORITY
     elif str(next_payload.get("job_origin") or "").strip() == GUEST_JOB_ORIGIN:
         priority = GUEST_JOB_PRIORITY
+    elif _is_autopilot_user(conn, user_id):
+        next_payload["quota_exempt"] = True
+        if not next_payload.get("made_by_admin"):
+            next_payload["made_by_customer"] = True
     return next_payload, priority
 
 
@@ -710,7 +733,7 @@ def enqueue_job(
             raw = json.dumps(hash_scope, separators=(",", ":"))
             input_hash = hashlib.sha256(raw.encode("utf-8")).hexdigest()
         ensure_render_jobs_schema(conn)
-        payload, priority = _prepare_guest_job_payload(conn, user_id, payload, priority)
+        payload, priority = _prepare_owner_job_payload(conn, user_id, payload, priority)
         existing_done = _find_job_by_hash(conn, user_id=user_id, input_hash=input_hash,
                                           statuses=(JOB_STATUS_DONE,), job_type=job_type, payload=payload)
         if existing_done and job_type == JOB_TYPE_RENDER_SHORT and not is_render_job_cache_valid(existing_done, conn=conn):
@@ -790,7 +813,7 @@ def enqueue_worker_job(
     conn = get_db()
     try:
         ensure_render_jobs_schema(conn)
-        payload, priority = _prepare_guest_job_payload(conn, user_id, payload, priority)
+        payload, priority = _prepare_owner_job_payload(conn, user_id, payload, priority)
         existing_done = _find_job_by_hash(conn, user_id=user_id, input_hash=input_hash, statuses=(JOB_STATUS_DONE,))
         if existing_done:
             existing_done["cached"] = True

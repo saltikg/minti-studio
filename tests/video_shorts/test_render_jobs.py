@@ -1489,6 +1489,31 @@ def test_admin_operation_jobs_are_distinguishable_and_quota_exempt():
     ) == {}
 
 
+def test_autopilot_customer_jobs_are_marked_customer_made_and_quota_exempt(monkeypatch, tmp_path):
+    _configure_duckdb(monkeypatch, tmp_path, "autopilot_customer_job.duckdb")
+    user_id = str(uuid4())
+    _insert_user(user_id, "plan_free")
+    conn = db_service.get_db()
+    try:
+        conn.execute("ALTER TABLE shorts_users ADD COLUMN service_mode VARCHAR")
+        conn.execute("UPDATE shorts_users SET service_mode = 'autopilot' WHERE id = ?", [user_id])
+        conn.commit()
+    finally:
+        conn.close()
+
+    queued = render_jobs.enqueue_worker_job(
+        user_id=user_id,
+        job_type=render_jobs.JOB_TYPE_TRANSCRIBE_UPLOAD,
+        payload={"job_origin": render_jobs.CUSTOMER_JOB_ORIGIN},
+        input_hash="autopilot-customer-job",
+    )
+
+    payload = queued["job"]["payload"]
+    assert payload["job_origin"] == render_jobs.CUSTOMER_JOB_ORIGIN
+    assert payload["made_by_customer"] is True
+    assert payload["quota_exempt"] is True
+
+
 def test_interactive_render_origin_keeps_customer_and_admin_actions_separate():
     common = {
         "owner_user_id": "owner-1",

@@ -98,6 +98,38 @@ def test_export_limit_is_enforced(monkeypatch, tmp_path):
     assert blocked["remaining"] == 0
 
 
+def test_autopilot_usage_is_counted_outside_plan_quotas(monkeypatch, tmp_path):
+    db_path = tmp_path / "autopilot_unlimited.duckdb"
+    monkeypatch.setattr(db_service, "VIDEO_SHORTS_DB_BACKEND", "duckdb")
+    monkeypatch.setattr(db_service, "VIDEO_SHORTS_DB", str(db_path))
+
+    user_id = str(uuid4())
+    _insert_user(user_id, "plan_free")
+    conn = db_service.get_db()
+    try:
+        conn.execute("ALTER TABLE shorts_users ADD COLUMN service_mode VARCHAR")
+        conn.execute("UPDATE shorts_users SET service_mode = 'autopilot' WHERE id = ?", [user_id])
+        conn.commit()
+    finally:
+        conn.close()
+
+    assert usage_metering.reserve_export(user_id, 100)["allowed"] is True
+    assert usage_metering.check_transcription_quota(user_id, 1000)["allowed"] is True
+    usage_metering.add_transcription_minutes(user_id, 120)
+    snapshot = usage_metering.get_usage_snapshot(user_id)
+    assert snapshot["exports"]["used"] == 0
+    assert snapshot["transcription"]["used_minutes"] == 0
+
+    conn = db_service.get_db()
+    try:
+        conn.execute("UPDATE shorts_users SET service_mode = 'self' WHERE id = ?", [user_id])
+        conn.commit()
+    finally:
+        conn.close()
+    assert usage_metering.reserve_export(user_id, 1)["allowed"] is True
+    assert usage_metering.get_usage_snapshot(user_id)["exports"]["used"] == 1
+
+
 def test_plan_reseed_updates_existing_limits_without_duplicates(monkeypatch, tmp_path):
     db_path = tmp_path / "plan_reseed.duckdb"
     monkeypatch.setattr(db_service, "VIDEO_SHORTS_DB_BACKEND", "duckdb")

@@ -328,6 +328,14 @@
   {% endif %}
 </div>
 
+{% if is_autopilot %}
+<div class="card shadow-sm usage-panel mb-4">
+  <div class="card-body p-4">
+    <div class="vs-card-title mb-1">Autopilot is managed by Minti</div>
+    <div class="vs-text-muted">Usage limits do not apply while your account is in Autopilot mode.</div>
+  </div>
+</div>
+{% else %}
 <div class="card shadow-sm usage-panel mb-4">
   <div class="card-body p-4">
     <div class="d-flex justify-content-between align-items-start gap-3 flex-wrap mb-3">
@@ -347,15 +355,9 @@
         {% endif %}
         <div class="usage-reset" id="usage-reset-copy">Loading usage…</div>
       </div>
-      {% if is_autopilot %}
-        <button type="button" class="btn btn-sm vs-btn vs-btn-secondary usage-upgrade-btn" data-bs-toggle="modal" data-bs-target="#autopilotUpgradeModal">
-          Grow your plan
-        </button>
-      {% else %}
-        <button type="button" class="btn btn-sm vs-btn vs-btn-secondary usage-upgrade-btn" id="usage-upgrade-btn" data-bs-toggle="modal" data-bs-target="#planCompareModal">
-          Upgrade / Compare plans
-        </button>
-      {% endif %}
+      <button type="button" class="btn btn-sm vs-btn vs-btn-secondary usage-upgrade-btn" id="usage-upgrade-btn" data-bs-toggle="modal" data-bs-target="#planCompareModal">
+        Upgrade / Compare plans
+      </button>
     </div>
     <div id="usage-panel-banner" class="usage-banner d-none mb-3"></div>
     <div id="usage-panel-loading" class="usage-loading usage-panel-numbers">Loading usage…</div>
@@ -365,6 +367,7 @@
     </div>
   </div>
 </div>
+{% endif %}
 
 {% if not is_autopilot %}
 <div class="card shadow-sm usage-panel mb-4">
@@ -389,44 +392,6 @@
           </thead>
           <tbody id="usage-history-body"></tbody>
         </table>
-      </div>
-    </div>
-  </div>
-</div>
-{% endif %}
-
-{% if is_autopilot %}
-<div class="modal fade plan-compare-modal" id="autopilotUpgradeModal" tabindex="-1" aria-hidden="true">
-  <div class="modal-dialog modal-dialog-centered modal-dialog-scrollable">
-    <div class="modal-content vs-modal">
-      <div class="modal-header vs-modal-header">
-        <div>
-          <h5 class="modal-title vs-modal-title">Grow your Autopilot plan</h5>
-          <div class="plan-compare-copy">Choose a tier and we'll contact you to arrange the change.</div>
-        </div>
-        <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
-      </div>
-      <div class="modal-body vs-modal-body">
-        <div class="row g-3">
-          {% for tier, price in [(15, 20), (30, 40), (45, 60), (60, 80)] %}
-            <div class="col-sm-6">
-              <div class="card shadow-sm h-100 plan-card {% if tier == autopilot_service_tier %}plan-card-selected{% endif %}">
-                <div class="card-body text-center d-flex flex-column gap-3">
-                  <div>
-                    <div class="plan-name mb-1">{{ tier }} Shorts/mo</div>
-                    <div class="plan-price"><div class="price-amount" data-monthly="{{ price }}" data-yearly="{{ price }}" data-yearly-monthly="{{ price }}">${{ price }}</div><div class="price-period">per month</div></div>
-                  </div>
-                  {% if tier == autopilot_service_tier %}
-                    <button class="btn btn-sm vs-btn vs-btn-secondary plan-cta" disabled>Current plan</button>
-                  {% else %}
-                    <button type="button" class="btn btn-sm vs-btn vs-btn-primary plan-cta" data-autopilot-tier="{{ tier }}">Request this plan</button>
-                  {% endif %}
-                </div>
-              </div>
-            </div>
-          {% endfor %}
-        </div>
-        <div id="autopilot-upgrade-result" class="vs-text-muted vs-text-small mt-3" aria-live="polite"></div>
       </div>
     </div>
   </div>

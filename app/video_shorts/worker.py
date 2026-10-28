@@ -1202,7 +1202,7 @@ def _execute_ingest_youtube_job(app, job: Dict[str, Any]) -> Dict[str, Any]:
     duration_seconds = payload.get("duration_seconds")
     job_origin = str(payload.get("job_origin") or "").strip()
     ingest_source = str(payload.get("ingest_source") or "").strip()
-    quota_exempt = bool(payload.get("quota_exempt") and payload.get("made_by_admin"))
+    quota_exempt = bool(payload.get("quota_exempt"))
     bill_usage = not quota_exempt and not _is_unconverted_discovery_demo_transcription(
         owner_user_id=owner_user_id,
         brand_id=brand_id,
@@ -1419,7 +1419,7 @@ def _execute_transcribe_upload_job(app, job: Dict[str, Any]) -> Dict[str, Any]:
     duration_seconds = payload.get("duration_seconds")
     job_origin = str(payload.get("job_origin") or "").strip()
     ingest_source = str(payload.get("ingest_source") or "").strip()
-    quota_exempt = bool(payload.get("quota_exempt") and payload.get("made_by_admin"))
+    quota_exempt = bool(payload.get("quota_exempt"))
     bill_usage = not quota_exempt and not _is_unconverted_discovery_demo_transcription(
         owner_user_id=owner_user_id,
         brand_id=brand_id,

@@ -1095,13 +1095,10 @@
         }
         const autopilot = payload?.autopilot;
         if (autopilot) {
-          const tier = Number(autopilot.tier || 15);
-          const count = Number(autopilot.display_count || 0);
-          const kind = String(autopilot.display_kind || "prepared");
-          summary.textContent = `Autopilot · ${count}/${tier} Shorts ${kind}`;
-          summary.classList.remove("d-none");
+          summary.textContent = "";
+          summary.classList.add("d-none");
           try {
-            window.sessionStorage.setItem(usageSummaryKey, JSON.stringify(payload));
+            window.sessionStorage.removeItem(usageSummaryKey);
           } catch (error) {
             // Ignore storage failures.
           }

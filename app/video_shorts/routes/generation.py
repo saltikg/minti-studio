@@ -421,6 +421,7 @@ from app.video_shorts.services.render_jobs import (
 from app.video_shorts.services.usage_metering import (
     add_transcription_minutes,
     check_transcription_quota,
+    is_autopilot_quota_exempt,
     load_storage_plan_catalog as load_usage_storage_plan_catalog,
     release_export,
     reserve_export,
@@ -1166,13 +1167,14 @@ def _get_user_storage_usage(conn, user_id: str) -> Dict[str, int]:
         SELECT
             u.custom_limit_bytes,
             p.quota_bytes,
-            COALESCE(SUM(a.size_bytes), 0) AS used_bytes
+            COALESCE(SUM(a.size_bytes), 0) AS used_bytes,
+            lower(coalesce(u.service_mode, '')) AS service_mode
         FROM shorts_users u
         LEFT JOIN shorts_storage_plans p ON p.plan_id = u.plan_id
         LEFT JOIN shorts_storage_assets a
           ON a.user_id = u.id AND (a.status = 'active' OR a.status IS NULL)
         WHERE u.id = ?
-        GROUP BY u.custom_limit_bytes, p.quota_bytes
+        GROUP BY u.custom_limit_bytes, p.quota_bytes, u.service_mode
         """,
         [user_id],
     ).fetchone()
@@ -1180,6 +1182,8 @@ def _get_user_storage_usage(conn, user_id: str) -> Dict[str, int]:
         return {"used_bytes": 0, "limit_bytes": DEFAULT_USER_STORAGE_LIMIT, "percent": 0}
     limit_bytes = row[0] or row[1] or DEFAULT_USER_STORAGE_LIMIT
     used_bytes = int(row[2] or 0)
+    if str(row[3] or "").strip() == "autopilot":
+        return {"used_bytes": used_bytes, "limit_bytes": 0, "percent": 0}
     percent = int(min(100, (used_bytes / limit_bytes * 100))) if limit_bytes else 0
     return {"used_bytes": used_bytes, "limit_bytes": limit_bytes, "percent": percent}
 
@@ -8467,7 +8471,7 @@ def _default_auto_render_account_block_reason(owner_user_id: str) -> str:
     conn = get_db_readonly()
     try:
         row = conn.execute(
-            "SELECT COALESCE(subscription_status, '') FROM shorts_users WHERE CAST(id AS VARCHAR) = CAST(? AS VARCHAR) LIMIT 1",
+            "SELECT COALESCE(subscription_status, ''), lower(coalesce(service_mode, '')) FROM shorts_users WHERE CAST(id AS VARCHAR) = CAST(? AS VARCHAR) LIMIT 1",
             [owner_user_id],
         ).fetchone()
         if not row:
@@ -8475,6 +8479,8 @@ def _default_auto_render_account_block_reason(owner_user_id: str) -> str:
         subscription_status = str(row[0] or "").strip().lower()
         if subscription_status in {"suspended", "paused", "past_due", "unpaid", "incomplete_expired"}:
             return "account_suspended"
+        if str(row[1] or "").strip() == "autopilot":
+            return ""
         usage = _get_user_storage_usage(conn, owner_user_id)
     finally:
         conn.close()
@@ -8648,7 +8654,8 @@ def execute_auto_suggest_render_job(payload: Dict[str, Any]) -> Dict[str, Any]:
     if auto_suggest_mode == "suggestions_only":
         return finish("suggestions_only_import")
 
-    if not legacy_mode and not admin_quota_exempt:
+    owner_autopilot_quota_exempt = is_autopilot_quota_exempt(owner_user_id)
+    if not legacy_mode and not admin_quota_exempt and not owner_autopilot_quota_exempt:
         block_reason = _default_auto_render_account_block_reason(owner_user_id)
         if block_reason:
             return finish(block_reason)
@@ -16589,7 +16596,7 @@ def download_video(video_pk):
             usage = _get_user_storage_usage(conn_usage, current_user["id"])
         finally:
             conn_usage.close()
-        if usage["used_bytes"] >= usage["limit_bytes"]:
+        if usage["limit_bytes"] and usage["used_bytes"] >= usage["limit_bytes"]:
             flash(
                 _quota_block_message(
                     _format_size_bytes(usage["limit_bytes"]),
@@ -16701,7 +16708,7 @@ def download_video(video_pk):
                 usage = _get_user_storage_usage(conn_usage, current_user["id"])
             finally:
                 conn_usage.close()
-            if usage["used_bytes"] + size_bytes > usage["limit_bytes"]:
+            if usage["limit_bytes"] and usage["used_bytes"] + size_bytes > usage["limit_bytes"]:
                 try:
                     out_path.unlink()
                 except Exception:
@@ -17509,6 +17516,10 @@ def _load_admin_auth_users(
         """,
         params + [limit, offset],
     ).fetchall()
+    actor_counts = _load_monthly_autopilot_short_actor_counts(
+        conn,
+        [str(row[0] or "") for row in rows if str(row[15] or "").strip().lower() == "autopilot"],
+    )
     cost_lookup: Dict[str, Dict[str, Any]] = {}
     transcription_usage_lookup: Dict[str, Dict[str, Any]] = {}
     try:
@@ -17580,9 +17591,107 @@ def _load_admin_auth_users(
                     "display_monthly_avg_usd": "—",
                 },
                 "transcription_usage": transcription_usage_lookup.get(user_id) or {"display": "—"},
+                "shorts_this_month": actor_counts.get(
+                    user_id,
+                    {"total": 0, "admin": 0, "customer": 0},
+                ),
             }
         )
     return users, int(total_count or 0)
+
+
+def _load_monthly_autopilot_short_actor_counts(conn, user_ids: List[str]) -> Dict[str, Dict[str, int]]:
+    """Count newly rendered clips by the actor that created each clip."""
+    clean_user_ids = [str(user_id or "").strip() for user_id in user_ids if str(user_id or "").strip()]
+    if not clean_user_ids:
+        return {}
+    placeholders = ", ".join("?" for _ in clean_user_ids)
+    rows = conn.execute(
+        f"""
+        SELECT CAST(user_id AS VARCHAR), payload_json, created_at,
+               (finished_at >= date_trunc('month', CURRENT_TIMESTAMP)) AS first_render_this_month
+        FROM shorts_render_jobs
+        WHERE CAST(user_id AS VARCHAR) IN ({placeholders})
+          AND type = 'render_short'
+          AND status = 'done'
+        ORDER BY created_at ASC, id ASC
+        """,
+        clean_user_ids,
+    ).fetchall()
+
+    parsed_rows: List[Tuple[str, Dict[str, Any], bool]] = []
+    explicit_admin_videos: set[Tuple[str, str]] = set()
+    for row in rows:
+        raw_payload = row[1]
+        if isinstance(raw_payload, dict):
+            payload = dict(raw_payload)
+        else:
+            try:
+                payload = json.loads(raw_payload or "{}")
+            except (TypeError, ValueError):
+                payload = {}
+        if not isinstance(payload, dict):
+            payload = {}
+        user_id = str(row[0] or "").strip()
+        video_pk = str(payload.get("video_pk") or "").strip()
+        if payload.get("made_by_admin") or str(payload.get("job_origin") or "").strip() == ADMIN_JOB_ORIGIN:
+            explicit_admin_videos.add((user_id, video_pk))
+        parsed_rows.append((user_id, payload, bool(row[3])))
+
+    admin_provenance: set[Tuple[str, str]] = set()
+    try:
+        event_rows = conn.execute(
+            f"""
+            SELECT CAST(user_id AS VARCHAR), metadata
+            FROM user_events
+            WHERE CAST(user_id AS VARCHAR) IN ({placeholders})
+              AND event_name = 'admin_operation_customer_video_ingested'
+            """,
+            clean_user_ids,
+        ).fetchall()
+        for user_id, raw_metadata in event_rows:
+            metadata = raw_metadata if isinstance(raw_metadata, dict) else json.loads(raw_metadata or "{}")
+            video_pk = str((metadata or {}).get("video_pk") or "").strip()
+            if video_pk:
+                admin_provenance.add((str(user_id or "").strip(), video_pk))
+    except Exception:
+        current_app.logger.warning("Admin customer video provenance unavailable", exc_info=True)
+    if autopilot_leads_table_ready(conn):
+        lead_rows = conn.execute(
+            f"""
+            SELECT CAST(user_id AS VARCHAR), CAST(first_video_id AS VARCHAR)
+            FROM autopilot_leads
+            WHERE CAST(user_id AS VARCHAR) IN ({placeholders})
+              AND first_video_id IS NOT NULL
+            """,
+            clean_user_ids,
+        ).fetchall()
+        admin_provenance.update(
+            (str(user_id or "").strip(), str(video_pk or "").strip())
+            for user_id, video_pk in lead_rows
+            if video_pk is not None
+        )
+
+    counts = {user_id: {"total": 0, "admin": 0, "customer": 0} for user_id in clean_user_ids}
+    seen_clips: set[Tuple[str, str, str]] = set()
+    for user_id, payload, first_render_this_month in parsed_rows:
+        video_pk = str(payload.get("video_pk") or "").strip()
+        plan_index = str(payload.get("plan_index") or "").strip()
+        clip_key = (user_id, video_pk, plan_index)
+        if not video_pk or not plan_index or clip_key in seen_clips:
+            continue
+        seen_clips.add(clip_key)
+        if not first_render_this_month:
+            continue
+        made_by_admin = bool(payload.get("made_by_admin")) or str(payload.get("job_origin") or "").strip() == ADMIN_JOB_ORIGIN
+        made_by_customer = bool(payload.get("made_by_customer"))
+        if not made_by_admin and not made_by_customer:
+            provenance_key = (user_id, video_pk)
+            made_by_admin = provenance_key in admin_provenance and provenance_key not in explicit_admin_videos
+        actor = "admin" if made_by_admin else "customer"
+        counts[user_id][actor] += 1
+        counts[user_id]["total"] += 1
+    return counts
 
 
 def _load_admin_error_events(
@@ -30074,6 +30183,8 @@ def autoclip_video(video_pk):
     editor_context = _active_editor_context()
     target_owner_user_id = editor_context["owner_user_id"]
     brand_id = editor_context["brand_id"]
+    owner_autopilot_quota_exempt = is_autopilot_quota_exempt(target_owner_user_id)
+    owner_quota_exempt = admin_quota_exempt or owner_autopilot_quota_exempt
     target_owner_plan_id = (
         (current_user or {}).get("plan_id")
         if str((current_user or {}).get("id") or "") == str(target_owner_user_id or "")
@@ -30083,7 +30194,7 @@ def autoclip_video(video_pk):
     usage = None
     if not current_user:
         return _respond("Authentication required.", success=False, status=401, category="danger")
-    if current_user and not admin_quota_exempt:
+    if current_user and not owner_quota_exempt:
         conn_usage = get_db_readonly()
         try:
             usage = _get_user_storage_usage(conn_usage, target_owner_user_id)
@@ -31125,7 +31236,7 @@ def autoclip_video(video_pk):
             if (
                 not guest_reserve_result.get("guest")
                 and not auto_render_quota_exempt
-                and not admin_quota_exempt
+                and not owner_quota_exempt
             ):
                 reserve_result = reserve_export(target_owner_user_id)
             if not reserve_result.get("allowed", False):
@@ -32074,7 +32185,7 @@ def autoclip_video(video_pk):
                 )
                 invalidate_short_cdn_cache(clip_filename)
             size_bytes = final_file.stat().st_size if final_file.exists() else 0
-            if current_user:
+            if current_user and not owner_quota_exempt:
                 usage = usage or {"used_bytes": 0, "limit_bytes": DEFAULT_USER_STORAGE_LIMIT}
                 if usage["used_bytes"] + size_bytes > usage["limit_bytes"]:
                     try:

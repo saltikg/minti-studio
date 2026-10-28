@@ -18,6 +18,31 @@ PLANS_TABLE = "shorts_storage_plans"
 TRANSCRIPTION_EVENTS_TABLE = "shorts_transcription_usage_events"
 
 
+def is_autopilot_quota_exempt(user_id: str, *, conn=None) -> bool:
+    """Return whether the owner is currently managed without plan usage limits."""
+    clean_user_id = str(user_id or "").strip()
+    if not clean_user_id:
+        return False
+    owns_conn = conn is None
+    lookup_conn = conn or get_db()
+    try:
+        row = lookup_conn.execute(
+            """
+            SELECT lower(coalesce(service_mode, ''))
+            FROM shorts_users
+            WHERE CAST(id AS VARCHAR) = CAST(? AS VARCHAR)
+            LIMIT 1
+            """,
+            [clean_user_id],
+        ).fetchone()
+        return bool(row and str(row[0] or "").strip() == "autopilot")
+    except Exception:
+        return False
+    finally:
+        if owns_conn:
+            lookup_conn.close()
+
+
 def _utc_today() -> date:
     return datetime.now(timezone.utc).date()
 
@@ -504,6 +529,8 @@ def get_current_period(user_id: str) -> Dict[str, Any]:
 
 
 def increment_exports(user_id: str, n: int = 1) -> Dict[str, Any]:
+    if is_autopilot_quota_exempt(user_id):
+        return get_current_period(user_id)
     conn = get_db()
     period_start = _month_start()
     try:
@@ -534,6 +561,8 @@ def add_transcription_minutes(
     video_title: Optional[str] = None,
     event_at: Optional[datetime] = None,
 ) -> Dict[str, Any]:
+    if is_autopilot_quota_exempt(user_id):
+        return get_current_period(user_id)
     amount = _to_decimal(minutes)
     if amount <= 0:
         return get_current_period(user_id)
@@ -603,6 +632,14 @@ def add_transcription_minutes(
 
 
 def check_transcription_quota(user_id: str, requested_minutes: float | int | Decimal) -> Dict[str, Any]:
+    if is_autopilot_quota_exempt(user_id):
+        return {
+            "allowed": True,
+            "requested_minutes": round(float(requested_minutes or 0), 2),
+            "used_minutes": 0,
+            "limit_minutes": None,
+            "remaining_minutes": None,
+        }
     conn = get_db()
     period_start = _month_start()
     try:
@@ -637,6 +674,8 @@ def check_transcription_quota(user_id: str, requested_minutes: float | int | Dec
 
 
 def check_export_allowed(user_id: str) -> Dict[str, Any]:
+    if is_autopilot_quota_exempt(user_id):
+        return {"allowed": True, "remaining": None}
     conn = get_db()
     period_start = _month_start()
     try:
@@ -657,6 +696,8 @@ def reserve_export(user_id: str, n: int = 1) -> Dict[str, Any]:
     conn = get_db()
     period_start = _month_start()
     try:
+        if is_autopilot_quota_exempt(user_id, conn=conn):
+            return {"allowed": True, "remaining": None}
         ensure_usage_metering_schema(conn)
         _ensure_usage_row(conn, user_id, period_start)
         updated_row = conn.execute(
