@@ -5745,6 +5745,24 @@
   .design-color-chip-copy { display: inline-flex; align-items: baseline; gap: 4px; min-width: 0; white-space: nowrap; }
   .design-color-chip-value { font-size: 0.78rem; font-weight: 700; }
   .design-color-chip-opacity { color: rgba(255, 255, 255, 0.58); font-size: 0.7rem; }
+  .crop-modal-element-grid--title-text {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) 90px auto;
+    align-items: end;
+    gap: 10px;
+  }
+  .crop-modal-element-grid--title-text > * { min-width: 0; }
+  .crop-modal-element-grid--title-text [name="title_font_size"] { width: 90px; }
+  .crop-modal-element-grid--title-text .design-color-chip { min-width: 0; width: 44px; padding: 7px 10px; }
+  .crop-modal-element-grid--title-text .design-color-chip-copy { display: none; }
+  .title-display-control { display: grid; grid-template-columns: minmax(0, 1fr) auto; align-items: end; gap: 10px; }
+  .title-display-control > label { grid-column: 1 / -1; }
+  .title-display-custom { display: inline-flex; align-items: center; position: relative; width: 92px; }
+  .title-display-custom input { width: 100%; padding-right: 24px; }
+  .title-display-custom .design-more-unit { position: absolute; right: 9px; top: 50%; transform: translateY(-50%); color: rgba(255,255,255,.48); font-size: .72rem; pointer-events: none; }
+  @media (max-width: 520px) {
+    .crop-modal-element-grid--title-text { grid-template-columns: minmax(0, 1fr) 82px 44px; }
+  }
   .design-panel-more-options { display: none; gap: 10px; }
   .design-panel-more-options.is-open { display: grid; }
   .design-panel-more-toggle { justify-self: start; padding: 0; border: 0; background: transparent; color: rgba(255,255,255,.64); font-size: .78rem; }
@@ -9138,7 +9156,7 @@
                         <div id="titlePreview" class="short-font-preview" data-font="{{ selected_title_font_css|default('inherit')|e }}">Life is full of fun</div>
                       </div>
                       <div class="design-panel-section-label">Text</div>
-                      <div class="crop-modal-element-grid crop-modal-element-grid--title-top">
+                      <div class="crop-modal-element-grid crop-modal-element-grid--title-text">
                         <div class="font-preview-group tight">
                           {% if title_font_options %}
                           <div class="caption-tab-section-heading">Font</div>
@@ -9155,9 +9173,6 @@
                           </span>
                           <input type="number" name="title_font_size" class="form-control form-control-sm short-input-small" value="{{ selected_title_font_size or 44 }}" min="1" max="990">
                         </div>
-                      </div>
-                      <div class="design-panel-section-label">Background</div>
-                      <div class="crop-modal-element-grid crop-modal-element-grid--title-bottom">
                         <div class="input-group-inline compact short-alpha-control" data-design-text-color="title">
                           <div class="d-grid gap-1 w-100">
                             <span class="caption-tab-section-heading">Text color</span>
@@ -9189,6 +9204,9 @@
                             </div>
                           </div>
                         </div>
+                      </div>
+                      <div class="design-panel-section-label">Background</div>
+                      <div class="crop-modal-element-grid crop-modal-element-grid--title-bottom">
                         <div class="input-group-inline compact short-alpha-control" data-design-box-color="title">
                           <div class="d-grid gap-1 w-100">
                             <span class="caption-tab-section-heading">Background color</span>
@@ -9226,19 +9244,19 @@
                       <input type="range" name="title_bg_alpha" id="titleBgAlphaValue" class="d-none" min="0" max="100" step="1" value="{{ selected_title_bg_alpha if selected_title_bg_alpha is not none else 0 }}">
                       <div class="design-panel-section-label">Timing</div>
                       <div class="crop-modal-element-grid">
-                        <div class="input-group-inline compact">
+                        <div class="input-group-inline compact title-display-control">
                           <label class="design-more-label" for="titleDisplayMode">Show title</label>
                           <select id="titleDisplayMode" class="form-select form-select-sm">
-                            <option value="whole" {% if selected_title_display_seconds is none %}selected{% endif %}>Whole clip</option>
-                            <option value="3" {% if selected_title_display_seconds == 3 %}selected{% endif %}>First 3s</option>
-                            <option value="5" {% if selected_title_display_seconds == 5 %}selected{% endif %}>First 5s</option>
-                            <option value="custom" {% if selected_title_display_seconds is not none and selected_title_display_seconds not in [3, 5] %}selected{% endif %}>Custom</option>
+                            <option value="whole" {% if selected_title_display_mode == 'whole' %}selected{% endif %}>Whole clip</option>
+                            <option value="3" {% if selected_title_display_mode == '3' %}selected{% endif %}>First 3s</option>
+                            <option value="5" {% if selected_title_display_mode == '5' %}selected{% endif %}>First 5s</option>
+                            <option value="custom" {% if selected_title_display_mode == 'custom' %}selected{% endif %}>Custom</option>
                           </select>
+                          <span class="title-display-custom{% if selected_title_display_mode != 'custom' %} d-none{% endif %}" id="titleDisplayCustomRow">
+                            <input type="number" id="titleDisplayCustom" class="form-control form-control-sm" min="1" max="30" step="0.5" value="{{ selected_title_display_seconds if selected_title_display_seconds is not none else 4 }}" aria-label="Custom title display seconds"><span class="design-more-unit">s</span>
+                          </span>
                         </div>
-                        <div class="input-group-inline compact {% if selected_title_display_seconds is none or selected_title_display_seconds in [3, 5] %}d-none{% endif %}" id="titleDisplayCustomRow">
-                          <label class="design-more-label" for="titleDisplayCustom">Seconds</label>
-                          <span class="design-more-input"><input type="number" id="titleDisplayCustom" class="form-control form-control-sm short-input-small" min="1" max="30" step="0.5" value="{{ selected_title_display_seconds if selected_title_display_seconds is not none else 3 }}"><span class="design-more-unit">s</span></span>
-                        </div>
+                        <input type="hidden" name="title_display_mode" id="titleDisplayModeValue" value="{{ selected_title_display_mode }}">
                         <input type="hidden" name="title_display_seconds" id="titleDisplaySeconds" value="{{ selected_title_display_seconds if selected_title_display_seconds is not none else '' }}">
                         <span class="badge rounded-pill text-bg-secondary d-none" id="titleDisplayChip">Hides after 3s</span>
                       </div>
@@ -19734,6 +19752,7 @@ document.addEventListener("DOMContentLoaded", () => {
   }));
   syncCaptionPositionLabel();
   const showTitleToggle = getEditorField("show_title");
+  const titleDisplayModeField = getEditorField("title_display_mode");
   const titleDisplaySecondsField = getEditorField("title_display_seconds");
   const titleDisplayMode = document.getElementById("titleDisplayMode");
   const titleDisplayCustom = document.getElementById("titleDisplayCustom");
@@ -22141,19 +22160,28 @@ document.addEventListener("DOMContentLoaded", () => {
   };
   const syncTitleDisplayUi = () => {
     const value = normalizedTitleDisplayValue(titleDisplaySecondsField?.value);
-    const presetMode = value === "" ? "whole" : (value === "3" || value === "5" ? value : "custom");
-    if (titleDisplayMode) titleDisplayMode.value = presetMode;
-    titleDisplayCustomRow?.classList.toggle("d-none", presetMode !== "custom");
-    if (presetMode === "custom" && titleDisplayCustom && document.activeElement !== titleDisplayCustom) {
-      titleDisplayCustom.value = value || "3";
+    const storedMode = String(titleDisplayModeField?.value || "").trim().toLowerCase();
+    const mode = ["whole", "3", "5", "custom"].includes(storedMode)
+      ? storedMode
+      : (value === "" ? "whole" : (value === "3" || value === "5" ? value : "custom"));
+    if (titleDisplayModeField && titleDisplayModeField.value !== mode) titleDisplayModeField.value = mode;
+    if (titleDisplayMode) titleDisplayMode.value = mode;
+    titleDisplayCustomRow?.classList.toggle("d-none", mode !== "custom");
+    if (mode === "custom" && titleDisplayCustom && document.activeElement !== titleDisplayCustom) {
+      titleDisplayCustom.value = value || "4";
     }
     if (titleDisplayChip) {
       titleDisplayChip.textContent = value ? `Hides after ${value}s` : "";
       titleDisplayChip.classList.toggle("d-none", !value);
     }
   };
-  const commitTitleDisplayValue = (value) => {
+  const commitTitleDisplayValue = (value, mode) => {
     if (!titleDisplaySecondsField) return;
+    const normalizedMode = ["whole", "3", "5", "custom"].includes(mode) ? mode : "whole";
+    if (titleDisplayModeField) {
+      titleDisplayModeField.value = normalizedMode;
+      titleDisplayModeField.dispatchEvent(new Event("input", { bubbles: true }));
+    }
     titleDisplaySecondsField.value = normalizedTitleDisplayValue(value);
     titleDisplaySecondsField.dispatchEvent(new Event("input", { bubbles: true }));
     syncTitleDisplayUi();
@@ -22161,11 +22189,12 @@ document.addEventListener("DOMContentLoaded", () => {
   window.syncTitleDisplayUi = syncTitleDisplayUi;
   titleDisplayMode?.addEventListener("change", () => {
     const mode = titleDisplayMode.value;
-    if (mode === "whole") commitTitleDisplayValue("");
-    else if (mode === "3" || mode === "5") commitTitleDisplayValue(mode);
-    else commitTitleDisplayValue(titleDisplayCustom?.value || "3");
+    if (mode === "whole") commitTitleDisplayValue("", mode);
+    else if (mode === "3" || mode === "5") commitTitleDisplayValue(mode, mode);
+    else commitTitleDisplayValue(titleDisplayCustom?.value || "4", "custom");
   });
-  titleDisplayCustom?.addEventListener("input", () => commitTitleDisplayValue(titleDisplayCustom.value));
+  titleDisplayCustom?.addEventListener("input", () => commitTitleDisplayValue(titleDisplayCustom.value, "custom"));
+  titleDisplayModeField?.addEventListener("change", syncTitleDisplayUi);
   titleDisplaySecondsField?.addEventListener("change", syncTitleDisplayUi);
   syncTitleDisplayUi();
 
@@ -22720,6 +22749,7 @@ document.addEventListener("DOMContentLoaded", () => {
     "subtitle_preset",
     "title_margin",
     "title_line_spacing",
+    "title_display_mode",
     "title_display_seconds",
     "title_bg_color",
     "title_bg_alpha",

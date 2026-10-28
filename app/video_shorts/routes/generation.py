@@ -471,6 +471,7 @@ SHORT_EDITOR_DEFAULT_FIELD_NAMES = (
     "video_overlay_offset",
     "enable_subscribe_overlay",
     "show_title",
+    "title_display_mode",
     "title_display_seconds",
     "show_subtitle",
     "visual_mode",
@@ -939,6 +940,20 @@ def _normalize_title_display_seconds(value: Any) -> Optional[float]:
     return round(round(max(1.0, min(30.0, seconds)) * 2.0) / 2.0, 1)
 
 
+def _normalize_title_display_mode(value: Any, seconds: Any = None) -> str:
+    mode = str(value or "").strip().lower()
+    if mode in {"whole", "3", "5", "custom"}:
+        return mode
+    normalized_seconds = _normalize_title_display_seconds(seconds)
+    if normalized_seconds is None:
+        return "whole"
+    if normalized_seconds == 3.0:
+        return "3"
+    if normalized_seconds == 5.0:
+        return "5"
+    return "custom"
+
+
 def _short_editor_config_defaults() -> Dict[str, Any]:
     return {
         "font": DEFAULT_EDITOR_TITLE_FONT_KEY,
@@ -961,6 +976,7 @@ def _short_editor_config_defaults() -> Dict[str, Any]:
         "video_overlay_offset": DEFAULT_VIDEO_OVERLAY_OFFSET,
         "enable_subscribe_overlay": True,
         "show_title": True,
+        "title_display_mode": "whole",
         "title_display_seconds": None,
         "show_subtitle": True,
         "visual_mode": "video",
@@ -1063,7 +1079,16 @@ def _clean_short_editor_default_payload(source: Any) -> Dict[str, Any]:
         default=True,
     )
     payload["show_title"] = _normalize_optional_bool(source.get("show_title"), default=True)
-    payload["title_display_seconds"] = _normalize_title_display_seconds(source.get("title_display_seconds"))
+    title_display_seconds = _normalize_title_display_seconds(source.get("title_display_seconds"))
+    title_display_mode = _normalize_title_display_mode(source.get("title_display_mode"), title_display_seconds)
+    if title_display_mode == "whole":
+        title_display_seconds = None
+    elif title_display_mode in {"3", "5"}:
+        title_display_seconds = float(title_display_mode)
+    elif title_display_seconds is None:
+        title_display_seconds = 4.0
+    payload["title_display_mode"] = title_display_mode
+    payload["title_display_seconds"] = title_display_seconds
     payload["show_subtitle"] = _normalize_optional_bool(source.get("show_subtitle"), default=True)
 
     visual_mode = str(source.get("visual_mode") or defaults["visual_mode"]).strip().lower()
@@ -1077,12 +1102,7 @@ def _clean_short_editor_default_payload(source: Any) -> Dict[str, Any]:
 
 def _apply_short_editor_defaults(raw_values: Dict[str, Any], user_defaults: Dict[str, Any]) -> Dict[str, Any]:
     config_defaults = _short_editor_config_defaults()
-    if not user_defaults:
-        return {
-            name: raw_values.get(name) if not _is_blank_editor_default_value(raw_values.get(name)) else config_defaults[name]
-            for name in SHORT_EDITOR_DEFAULT_FIELD_NAMES
-        }
-    clean_user_defaults = _clean_short_editor_default_payload(user_defaults)
+    clean_user_defaults = _clean_short_editor_default_payload(user_defaults) if user_defaults else {}
     resolved: Dict[str, Any] = {}
     for name in SHORT_EDITOR_DEFAULT_FIELD_NAMES:
         raw_value = raw_values.get(name)
@@ -1096,6 +1116,13 @@ def _apply_short_editor_defaults(raw_values: Dict[str, Any], user_defaults: Dict
             resolved[name] = clean_user_defaults[name]
         else:
             resolved[name] = raw_value
+    if _is_blank_editor_default_value(raw_values.get("title_display_mode")) and not _is_blank_editor_default_value(
+        raw_values.get("title_display_seconds")
+    ):
+        resolved["title_display_mode"] = _normalize_title_display_mode(
+            None,
+            raw_values.get("title_display_seconds"),
+        )
     return resolved
 
 
@@ -8247,6 +8274,7 @@ AUTO_RENDER_DESIGN_FIELD_MAP: Dict[str, str] = {
     "subtitle_text_alpha": "subtitle_text_alpha",
     "enable_subscribe_overlay": "subscribe_overlay_enabled",
     "show_title": "show_title",
+    "title_display_mode": "title_display_mode",
     "title_display_seconds": "title_display_seconds",
     "show_subtitle": "show_subtitle",
     "visual_mode": "visual_mode",
@@ -12228,6 +12256,8 @@ def generate_short(video_pk):
         video_sql += ", layout_mode"
     if "overlay_shapes" in video_columns:
         video_sql += ", overlay_shapes"
+    if "title_display_mode" in video_columns:
+        video_sql += ", title_display_mode"
     if "title_display_seconds" in video_columns:
         video_sql += ", title_display_seconds"
     for music_column in ("music_audio_id", "music_level", "music_start_seconds", "music_duck", "music_fade_out"):
@@ -12274,6 +12304,8 @@ def generate_short(video_pk):
         cols.append("layout_mode")
     if "overlay_shapes" in video_columns:
         cols.append("overlay_shapes")
+    if "title_display_mode" in video_columns:
+        cols.append("title_display_mode")
     if "title_display_seconds" in video_columns:
         cols.append("title_display_seconds")
     for music_column in ("music_audio_id", "music_level", "music_start_seconds", "music_duck", "music_fade_out"):
@@ -12623,6 +12655,7 @@ def generate_short(video_pk):
         "video_overlay_offset": video.get("video_overlay_offset"),
         "enable_subscribe_overlay": video.get("subscribe_overlay_enabled"),
         "show_title": video.get("show_title"),
+        "title_display_mode": video.get("title_display_mode"),
         "title_display_seconds": video.get("title_display_seconds"),
         "show_subtitle": video.get("show_subtitle"),
         "visual_mode": video.get("visual_mode"),
@@ -12974,6 +13007,10 @@ def generate_short(video_pk):
     selected_video_date_top = video_date_top
     selected_subscribe_overlay = video_subscribe_overlay if video_subscribe_overlay is not None else True
     selected_show_title = video_show_title if video_show_title is not None else True
+    selected_title_display_mode = _normalize_title_display_mode(
+        resolved_style_values.get("title_display_mode"),
+        video_title_display_seconds,
+    )
     selected_title_display_seconds = video_title_display_seconds
     selected_show_subtitle = video_show_subtitle if video_show_subtitle is not None else True
     selected_video_overlay_offset = video_overlay_offset
@@ -14190,6 +14227,7 @@ def generate_short(video_pk):
         selected_video_date=selected_video_date,
         selected_video_date_top=selected_video_date_top,
         selected_show_title=selected_show_title,
+        selected_title_display_mode=selected_title_display_mode,
         selected_title_display_seconds=selected_title_display_seconds,
         selected_show_subtitle=selected_show_subtitle,
         selected_subscribe_overlay=selected_subscribe_overlay,
@@ -29461,6 +29499,16 @@ def save_short_settings(video_pk):
     subscribe_overlay_enabled = (subscribe_overlay_value or "").lower() in {"1", "true", "yes", "on"}
     show_title = (request.form.get("show_title") or "").lower() not in {"0", "false", "no", "off"}
     title_display_seconds = _normalize_title_display_seconds(request.form.get("title_display_seconds"))
+    title_display_mode = _normalize_title_display_mode(
+        request.form.get("title_display_mode"),
+        title_display_seconds,
+    )
+    if title_display_mode == "whole":
+        title_display_seconds = None
+    elif title_display_mode in {"3", "5"}:
+        title_display_seconds = float(title_display_mode)
+    elif title_display_seconds is None:
+        title_display_seconds = 4.0
     show_subtitle = (request.form.get("show_subtitle") or "").lower() not in {"0", "false", "no", "off"}
     is_music_only = (request.form.get("is_music_only") or "").lower() in {"1", "true", "yes", "on"}
     visual_mode = (request.form.get("visual_mode") or "").strip().lower()
@@ -29693,6 +29741,7 @@ def save_short_settings(video_pk):
             "video_date_text": video_date_text,
             "video_date_top": video_date_top,
             "show_title": show_title,
+            "title_display_mode": title_display_mode,
             "title_display_seconds": title_display_seconds,
             "show_subtitle": show_subtitle,
             "subscribe_overlay_enabled": subscribe_overlay_enabled,
@@ -29725,6 +29774,7 @@ def save_short_settings(video_pk):
             "video_date_text": "video_date_text",
             "video_date_top": "video_date_top",
             "show_title": "show_title",
+            "title_display_mode": "title_display_mode",
             "title_display_seconds": "title_display_seconds",
             "show_subtitle": "show_subtitle",
             "subscribe_overlay_enabled": "enable_subscribe_overlay",
