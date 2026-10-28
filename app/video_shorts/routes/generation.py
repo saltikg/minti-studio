@@ -17641,19 +17641,19 @@ def _load_monthly_autopilot_short_actor_counts(conn, user_ids: List[str]) -> Dic
     admin_provenance: set[Tuple[str, str]] = set()
     try:
         event_rows = conn.execute(
-            f"""
-            SELECT CAST(user_id AS VARCHAR), metadata
+            """
+            SELECT metadata
             FROM user_events
-            WHERE CAST(user_id AS VARCHAR) IN ({placeholders})
-              AND event_name = 'admin_operation_customer_video_ingested'
+            WHERE event_name = 'admin_operation_customer_video_ingested'
             """,
-            clean_user_ids,
         ).fetchall()
-        for user_id, raw_metadata in event_rows:
+        allowed_user_ids = set(clean_user_ids)
+        for (raw_metadata,) in event_rows:
             metadata = raw_metadata if isinstance(raw_metadata, dict) else json.loads(raw_metadata or "{}")
+            user_id = str((metadata or {}).get("target_owner_user_id") or "").strip()
             video_pk = str((metadata or {}).get("video_pk") or "").strip()
-            if video_pk:
-                admin_provenance.add((str(user_id or "").strip(), video_pk))
+            if user_id in allowed_user_ids and video_pk:
+                admin_provenance.add((user_id, video_pk))
     except Exception:
         current_app.logger.warning("Admin customer video provenance unavailable", exc_info=True)
     if autopilot_leads_table_ready(conn):
