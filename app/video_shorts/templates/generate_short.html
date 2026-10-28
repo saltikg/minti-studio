@@ -7745,7 +7745,7 @@
                   </form>
                   <div class="clip-card-save-feedback small mt-1 d-none"></div>
                   <div class="clip-title-suggestion-feedback small mt-1 text-muted d-none"></div>
-                  <form id="transcript-form-{{ row.plan_index }}" class="clip-card-transcript" method="post" action="{{ editor_url('update_clip_subtitle', video_pk=video.id) }}">
+                  <form id="transcript-form-{{ row.plan_index }}-{{ loop.index0 }}" class="clip-card-transcript" method="post" action="{{ editor_url('update_clip_subtitle', video_pk=video.id) }}">
                     <input type="hidden" name="plan_index" value="{{ row.plan_index }}">
                     <input type="hidden" name="video_filename" value="{{ row.video_filename or '' }}">
                     <textarea name="subtitle" class="form-control" rows="5">{{ row.transcript_full or "" }}</textarea>
