@@ -1262,13 +1262,9 @@
         </div>
         <div class="mv-autopilot-notice">Minti is managing this for you — you can take over anytime</div>
       </div>
-      {% if is_new_autopilot_customer %}
+      {% if is_new_autopilot_customer and not autopilot_has_shorts %}
         <div class="mv-autopilot-start-copy">
-          {% if recent_shorts %}
-            We prepared these Shorts for you — watch them below, and Minti can keep managing the whole channel from here.
-          {% else %}
-            Your first Shorts are being prepared — check back soon.
-          {% endif %}
+          Your first Shorts are being prepared — check back soon.
         </div>
       {% endif %}
     {% else %}
@@ -1353,7 +1349,7 @@
 	    <div class="mv-recent-shorts-head">
 	      <h2 id="mv-recent-shorts-heading" class="mv-section-title">{% if show_autopilot_framing %}Recently created Shorts{% else %}Your Shorts{% endif %}</h2>
 	      {% if show_autopilot_framing %}
-	        <div class="mv-section-note">{{ prepared_short_count }} of {{ autopilot_service_tier }} this month · prepared by Minti</div>
+	        <div class="mv-section-note">prepared by Minti</div>
 	      {% endif %}
 	    </div>
 	    <div class="mv-shorts-carousel">

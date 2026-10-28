@@ -696,8 +696,6 @@
     const transcriptionMonthModalEmpty = document.getElementById("transcriptionMonthModalEmpty");
 
     const usageMonthDetails = new Map();
-    const isAutopilot = {{ is_autopilot|tojson }};
-    const autopilotPlanLabel = {{ autopilot_plan_label|tojson }};
     const autopilotUpgradeResult = document.getElementById("autopilot-upgrade-result");
     const billingHasManagedSubscription = {{ billing_has_managed_subscription|tojson }};
     const subscriptionCancelAtPeriodEnd = {{ subscription_cancel_at_period_end|tojson }};
@@ -844,24 +842,6 @@
       if (!usageMeters) return;
       usageMeters.innerHTML = "";
 
-      if (isAutopilot) {
-        const autopilot = payload?.autopilot || {};
-        const tier = Number(autopilot.tier || 15);
-        const count = Number(autopilot.display_count || 0);
-        const kind = String(autopilot.display_kind || "prepared");
-        usageMeters.innerHTML = `
-          <div class="usage-meter usage-state-ok">
-            <div class="usage-meter-label mb-2">This month</div>
-            <div class="usage-meter-value">${count} <span class="vs-text-muted">/ ${tier} Shorts</span></div>
-            <div class="usage-meter-foot"><span class="usage-meter-meta">${kind === "published" ? "Published" : "Prepared"} by Minti</span></div>
-          </div>
-        `;
-        usageBanner?.classList.add("d-none");
-        if (usageResetCopy) usageResetCopy.textContent = formatResetCopy(payload?.period?.reset_at);
-        if (usagePlanName) usagePlanName.textContent = autopilotPlanLabel;
-        return;
-      }
-
       const exportsUsed = Number(payload?.exports?.used || 0);
       const exportsLimitRaw = payload?.exports?.limit;
       const hasExportLimit = exportsLimitRaw !== null && exportsLimitRaw !== undefined;
@@ -931,9 +911,7 @@
         usageResetCopy.textContent = planId === "plan_free" ? "" : formatResetCopy(payload?.period?.reset_at);
       }
       if (usagePlanName) {
-        const planName = isAutopilot
-          ? autopilotPlanLabel
-          : (payload?.plan?.name || "{{ current_plan_label }}");
+        const planName = payload?.plan?.name || "{{ current_plan_label }}";
         usagePlanName.textContent = planName;
       }
 

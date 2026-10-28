@@ -5425,38 +5425,8 @@ def usage_api():
 
 
 def _autopilot_usage_summary(current_user: dict) -> dict:
-    """Return customer-facing short progress without exposing self-serve metering."""
-    try:
-        tier = int(current_user.get("service_tier") or 15)
-    except (TypeError, ValueError):
-        tier = 15
-    period_start = datetime.now(timezone.utc).replace(day=1, hour=0, minute=0, second=0, microsecond=0)
-    generated_count = 0
-    published_count = 0
-    conn = get_db_readonly()
-    try:
-        row = conn.execute(
-            """
-            SELECT
-                COUNT(*),
-                COALESCE(SUM(CASE WHEN lower(coalesce(publish_status, '')) = 'published' THEN 1 ELSE 0 END), 0)
-            FROM shorts_generated_videos
-            WHERE CAST(user_id AS VARCHAR) = ?
-              AND created_at >= ?
-            """,
-            [str(current_user["id"]), period_start],
-        ).fetchone()
-        generated_count = int((row or [0, 0])[0] or 0)
-        published_count = int((row or [0, 0])[1] or 0)
-    finally:
-        conn.close()
-    return {
-        "tier": tier,
-        "prepared_count": generated_count,
-        "published_count": published_count,
-        "display_count": published_count if published_count else generated_count,
-        "display_kind": "published" if published_count else "prepared",
-    }
+    """Mark Autopilot sessions so customer usage UI stays hidden."""
+    return {"enabled": True}
 
 
 @video_shorts_bp.route("/api/autopilot/upgrade-request", methods=["POST"])

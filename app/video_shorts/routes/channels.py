@@ -973,9 +973,9 @@ def my_videos_page():
     )
     show_autopilot_framing = is_autopilot or is_pending_autopilot_lead
     is_new_autopilot_customer = False
+    autopilot_has_shorts = False
     recent_shorts = []
     recent_shorts_has_more = False
-    prepared_short_count = 0
     if show_autopilot_framing and brand_id:
         new_autopilot_row = conn.execute(
             """
@@ -987,17 +987,22 @@ def my_videos_page():
             [current_user["id"]],
         ).fetchone()
         is_new_autopilot_customer = bool(new_autopilot_row) or is_pending_autopilot_lead
-        prepared_short_count_row = conn.execute(
+        autopilot_has_shorts = bool(
+            _visible_short_rows(conn, current_user["id"], brand_id)
+        )
+        active_short_job = conn.execute(
             """
-            SELECT COUNT(*)
-            FROM shorts_generated_videos gv
-            WHERE gv.user_id = ?
-              AND gv.brand_id = ?
-              AND gv.created_at >= date_trunc('month', CURRENT_TIMESTAMP)
+            SELECT 1
+            FROM shorts_render_jobs
+            WHERE CAST(user_id AS VARCHAR) = CAST(? AS VARCHAR)
+              AND coalesce(payload_json ->> 'brand_id', '') = ?
+              AND type IN ('render_short', 'auto_suggest_render')
+              AND status IN ('queued', 'processing', 'running', 'claimed')
+            LIMIT 1
             """,
-            [current_user["id"], brand_id],
+            [current_user["id"], str(brand_id)],
         ).fetchone()
-        prepared_short_count = int(prepared_short_count_row[0] or 0) if prepared_short_count_row else 0
+        autopilot_has_shorts = autopilot_has_shorts or bool(active_short_job)
     short_counts = {}
     # The carousel is non-critical first-paint content. Its existing JSON route
     # loads it after the library HTML is delivered.
@@ -1088,11 +1093,10 @@ def my_videos_page():
         is_pending_autopilot_lead=is_pending_autopilot_lead,
         show_autopilot_framing=show_autopilot_framing,
         is_new_autopilot_customer=is_new_autopilot_customer,
+        autopilot_has_shorts=autopilot_has_shorts,
         recent_shorts=recent_shorts,
         recent_shorts_has_more=recent_shorts_has_more,
         recent_shorts_page_size=RECENT_SHORTS_PAGE_SIZE,
-        prepared_short_count=prepared_short_count,
-        autopilot_service_tier=int(current_user.get("service_tier") or current_user.get("pending_service_tier") or 15),
         stripe_ready=stripe_is_configured(),
         stripe_publishable_key=STRIPE_PUBLISHABLE_KEY,
         search_query=search_query,

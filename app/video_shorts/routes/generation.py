@@ -21235,11 +21235,7 @@ def shorts_storage_plans():
         return redirect(url_for("video_shorts_bp.login", next=request.url))
     is_admin = current_user.get("role") == "admin"
     is_autopilot = str(current_user.get("service_mode") or "").strip().lower() == "autopilot"
-    try:
-        autopilot_service_tier = int(current_user.get("service_tier") or 15)
-    except (TypeError, ValueError):
-        autopilot_service_tier = 15
-    autopilot_plan_label = f"Autopilot — {autopilot_service_tier} Shorts/mo"
+    autopilot_plan_label = "Autopilot"
     billing_user = load_billing_user_state(current_user["id"], refresh_live=True)
     effective_plan_id = (
         (billing_user or {}).get("plan_id")
@@ -21314,7 +21310,6 @@ def shorts_storage_plans():
         plans=plans,
         is_admin=is_admin,
         is_autopilot=is_autopilot,
-        autopilot_service_tier=autopilot_service_tier,
         autopilot_plan_label=autopilot_plan_label,
         current_plan_label=autopilot_plan_label if is_autopilot else ((current_plan or {}).get("label") or "Free"),
         stripe_ready=stripe_is_configured(),
