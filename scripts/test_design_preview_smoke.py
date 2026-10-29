@@ -130,6 +130,50 @@ def _print_pass(variant: str, label: str) -> None:
     print(f"PASS [{variant}] {label}")
 
 
+def _assert_make_clip_add_keeps_exact_word_indexes(page: Page, variant: str) -> None:
+    page.evaluate("() => window.setGenerateV2ActiveTab('transcript', {persist: false})")
+    page.wait_for_selector("[data-generate-v2-text-document] .generate-v2-text-word")
+    result = page.evaluate(
+        """() => {
+          const documentEl = document.querySelector('[data-generate-v2-text-document]');
+          const paragraph = Array.from(documentEl.querySelectorAll('.generate-v2-text-paragraph'))
+            .find(node => node.querySelectorAll('.generate-v2-text-word').length >= 2);
+          const spans = Array.from(paragraph?.querySelectorAll('.generate-v2-text-word') || []);
+          if (spans.length < 2) return {error: 'no selectable transcript sentence'};
+          const first = spans[0];
+          const last = spans[spans.length - 1];
+          const selection = window.getSelection();
+          const range = document.createRange();
+          range.setStart(first.firstChild, 0);
+          range.setEnd(last.firstChild, last.firstChild.textContent.length);
+          selection.removeAllRanges();
+          selection.addRange(range);
+          documentEl.dispatchEvent(new MouseEvent('mouseup', {bubbles: true}));
+          const add = document.querySelector('[data-generate-v2-text-add]');
+          if (!add || add.disabled) return {error: 'Add button unavailable'};
+          add.click();
+          const part = window.__generateV2TextParts?.[0] || null;
+          const highlighted = Array.from(documentEl.querySelectorAll('.generate-v2-text-word.is-added'))
+            .map(node => Number(node.dataset.wordIndex));
+          return {
+            first: Number(first.dataset.wordIndex),
+            last: Number(last.dataset.wordIndex),
+            part,
+            highlighted,
+          };
+        }"""
+    )
+    assert not result.get("error"), result
+    expected = list(range(result["first"], result["last"] + 1))
+    assert result["part"]["start_word_index"] == result["first"], result
+    assert result["part"]["end_word_index"] == result["last"], result
+    assert result["highlighted"] == expected, result
+    _print_pass(variant, "Make a Clip Add preserves exact selected word indexes")
+    page.evaluate("() => document.querySelector('[data-generate-v2-text-clear-parts]')?.click()")
+    page.evaluate("() => window.setGenerateV2ActiveTab('edit', {persist: false})")
+    page.wait_for_function("() => window.__generateV2EditModeActive === true")
+
+
 def _assert_stubbed_regenerate(page: Page, variant: str) -> None:
     card = page.locator(".clip-card:has(video):has(.generate-v2-regenerate-btn)").first
     if card.count() == 0:
@@ -384,6 +428,7 @@ def _run_variant(browser: Browser, *, base_url: str, cookie_name: str,
         reported_dpr = page.evaluate("() => window.devicePixelRatio")
         assert reported_dpr == dpr, (variant, reported_dpr)
         _print_pass(variant, "browser DPR")
+        _assert_make_clip_add_keeps_exact_word_indexes(page, variant)
 
         aspect = page.evaluate(
             """() => {

@@ -35,7 +35,7 @@ class ClipRangeResolution:
     ok: bool
     start: float
     end: float
-    ranges: list[dict[str, float]]
+    ranges: list[dict[str, Any]]
     error: str = ""
     clamped: bool = False
 
@@ -61,7 +61,7 @@ def resolve_clip_ranges(
     if parsed_start is None or parsed_end is None or parsed_end <= parsed_start:
         return ClipRangeResolution(False, 0.0, 0.0, [], "End time must be greater than Start.")
 
-    raw_ranges: list[dict[str, float]] = []
+    raw_ranges: list[dict[str, Any]] = []
     for item in keep_ranges or []:
         if not isinstance(item, dict):
             continue
@@ -69,7 +69,16 @@ def resolve_clip_ranges(
         range_end = _as_float(item.get("end"))
         if range_start is None or range_end is None or range_end <= range_start:
             continue
-        raw_ranges.append({"start": range_start, "end": range_end})
+        parsed = {"start": range_start, "end": range_end}
+        try:
+            first_index = int(item.get("start_word_index"))
+            last_index = int(item.get("end_word_index"))
+        except (TypeError, ValueError):
+            first_index = last_index = -1
+        if first_index >= 0 and last_index >= first_index:
+            parsed["start_word_index"] = first_index
+            parsed["end_word_index"] = last_index
+        raw_ranges.append(parsed)
     if not raw_ranges:
         raw_ranges = [{"start": parsed_start, "end": parsed_end}]
 
@@ -80,7 +89,7 @@ def resolve_clip_ranges(
         if overshoot > max(0.0, float(overshoot_tolerance_seconds)) and not transcript_word_selection:
             return ClipRangeResolution(False, 0.0, 0.0, [], RANGE_END_ERROR)
 
-    resolved: list[dict[str, float]] = []
+    resolved: list[dict[str, Any]] = []
     clamped = False
     for item in raw_ranges:
         range_start = max(0.0, item["start"])
@@ -95,7 +104,11 @@ def resolve_clip_ranges(
         if range_end <= range_start:
             clamped = True
             continue
-        resolved.append({"start": round(range_start, 6), "end": round(range_end, 6)})
+        parsed = {"start": round(range_start, 6), "end": round(range_end, 6)}
+        if "start_word_index" in item and "end_word_index" in item:
+            parsed["start_word_index"] = item["start_word_index"]
+            parsed["end_word_index"] = item["end_word_index"]
+        resolved.append(parsed)
 
     if not resolved:
         message = RANGE_END_ERROR if media_end is not None else "The selected clip has no usable duration."

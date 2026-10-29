@@ -175,6 +175,27 @@ def main():
         assert "edit_keep_ranges" not in entry
         assert payload["edit_keep_ranges"] == []
 
+    with app.app_context(), _patched_generation() as writes:
+        indexed_range = {
+            "start": 1.0,
+            "end": 8.0,
+            "start_word_index": 1429,
+            "end_word_index": 1614,
+        }
+        status, payload = _post(
+            app,
+            {
+                "start_time": "1",
+                "end_time": "8",
+                "selection_source": "transcript_words",
+                "keep_ranges": json.dumps([indexed_range]),
+            },
+        )
+        assert status == 200, payload
+        entry = writes[-1][1][0]
+        assert entry["edit_keep_ranges"] == [indexed_range]
+        assert payload["edit_keep_ranges"] == [indexed_range]
+
     with app.app_context(), _patched_generation(duration=300.0) as writes:
         status, payload = _post(
             app,

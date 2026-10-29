@@ -6361,8 +6361,8 @@ def _normalize_edit_keep_ranges(
     min_fragment_seconds: float = 0.4,
     merge_gap_seconds: float = 0.0,
     max_ranges: int = 20,
-) -> List[Dict[str, float]]:
-    cleaned: List[Dict[str, float]] = []
+) -> List[Dict[str, Any]]:
+    cleaned: List[Dict[str, Any]] = []
     for item in ranges or []:
         if not isinstance(item, dict):
             continue
@@ -6370,7 +6370,19 @@ def _normalize_edit_keep_ranges(
         end = _to_float(item.get("end"))
         if start is None or end is None or end <= start:
             continue
-        cleaned.append({"start": round(max(0.0, float(start)), 3), "end": round(max(0.0, float(end)), 3)})
+        normalized: Dict[str, Any] = {
+            "start": round(max(0.0, float(start)), 3),
+            "end": round(max(0.0, float(end)), 3),
+        }
+        try:
+            first_index = int(item.get("start_word_index"))
+            last_index = int(item.get("end_word_index"))
+        except (TypeError, ValueError):
+            first_index = last_index = -1
+        if first_index >= 0 and last_index >= first_index:
+            normalized["start_word_index"] = first_index
+            normalized["end_word_index"] = last_index
+        cleaned.append(normalized)
     cleaned.sort(key=lambda item: (item["start"], item["end"]))
     merged: List[Dict[str, float]] = []
     for item in cleaned:
@@ -6380,18 +6392,76 @@ def _normalize_edit_keep_ranges(
         gap = item["start"] - merged[-1]["end"]
         if gap <= merge_gap_seconds:
             merged[-1]["end"] = max(merged[-1]["end"], item["end"])
+            if "start_word_index" in item:
+                merged[-1]["start_word_index"] = min(
+                    int(merged[-1].get("start_word_index", item["start_word_index"])),
+                    int(item["start_word_index"]),
+                )
+                merged[-1]["end_word_index"] = max(
+                    int(merged[-1].get("end_word_index", item["end_word_index"])),
+                    int(item["end_word_index"]),
+                )
         else:
             merged.append(dict(item))
     normalized: List[Dict[str, float]] = []
     for item in merged:
         if item["end"] - item["start"] >= min_fragment_seconds:
-            normalized.append({"start": round(item["start"], 3), "end": round(item["end"], 3)})
+            normalized.append(dict(item))
         if len(normalized) >= max_ranges:
             break
     for index in range(1, len(normalized)):
         if normalized[index]["start"] < normalized[index - 1]["end"]:
             normalized[index]["start"] = normalized[index - 1]["end"]
     return [item for item in normalized if item["end"] > item["start"]]
+
+
+def _canonicalize_indexed_keep_ranges(
+    ranges: List[Dict[str, Any]],
+    words: List[Dict[str, Any]],
+) -> List[Dict[str, Any]]:
+    """Make selected word indexes authoritative while retaining time boundaries for media."""
+    by_index = {int(word["index"]): word for word in words if isinstance(word.get("index"), int)}
+    canonical: List[Dict[str, Any]] = []
+    for item in ranges:
+        first = item.get("start_word_index")
+        last = item.get("end_word_index")
+        if isinstance(first, int) and isinstance(last, int) and first in by_index and last in by_index and last >= first:
+            canonical.append({
+                **item,
+                "start": float(by_index[first]["start"]),
+                "end": float(by_index[last]["end"]),
+            })
+        else:
+            canonical.append(dict(item))
+    return canonical
+
+
+def _segments_for_indexed_keep_ranges(
+    segments: List[Dict[str, Any]],
+    ranges: List[Dict[str, Any]],
+) -> List[Dict[str, Any]]:
+    indexed = _transcript_words_with_sentence_indexes(segments)
+    if not indexed or not any("start_word_index" in item for item in ranges):
+        return segments
+    selected_segments: List[Dict[str, Any]] = []
+    for item in ranges:
+        first = item.get("start_word_index")
+        last = item.get("end_word_index")
+        if not isinstance(first, int) or not isinstance(last, int):
+            continue
+        selected = [word for word in indexed if first <= int(word["index"]) <= last]
+        if not selected:
+            continue
+        selected_segments.append({
+            "start": selected[0]["start"],
+            "end": selected[-1]["end"],
+            "text": " ".join(str(word["text"]) for word in selected),
+            "words": [
+                {"start": word["start"], "end": word["end"], "word": word["text"], "index": word["index"]}
+                for word in selected
+            ],
+        })
+    return selected_segments or segments
 
 
 def _edit_keep_ranges_duration(ranges: Any) -> Optional[float]:
@@ -24865,8 +24935,14 @@ def _resolve_video_clip_ranges(
                 )
             finally:
                 transcript_conn.close()
-            transcript_words = _flatten_transcript_words_for_snapping(transcript_segments)
+            transcript_words = _transcript_words_with_sentence_indexes(transcript_segments)
         ranges_to_resolve = keep_ranges or [{"start": start, "end": end}]
+        if transcript_word_selection and transcript_words:
+            ranges_to_resolve = _canonicalize_indexed_keep_ranges(ranges_to_resolve, transcript_words)
+            if keep_ranges:
+                keep_ranges = ranges_to_resolve
+            start = ranges_to_resolve[0]["start"]
+            end = ranges_to_resolve[-1]["end"]
         if (len(keep_ranges) > 1 or (transcript_word_selection and transcript_words)) and resolved_source is None:
             resolved_source, resolved_source_is_temp = _resolve_source_video(video_id, video_pk=video_pk)
         media_duration = get_or_backfill_media_duration_seconds(
@@ -24935,7 +25011,7 @@ def preview_keep_ranges(video_pk: int):
             media_duration_seconds=media_duration,
             fallback_duration_seconds=row[1],
             transcript_word_selection=True,
-            transcript_words=_flatten_transcript_words_for_snapping(segments),
+            transcript_words=_transcript_words_with_sentence_indexes(segments),
         )
         speech_ranges = build_final_timeline_speech_ranges(
             segments,
@@ -25091,7 +25167,14 @@ def add_clip_section(video_pk):
         conn_transcript = get_db_readonly()
         _, segments = _fetch_transcript(conn_transcript, video_id, video_pk=video_pk)
         if segments:
-            if len(requested_keep_ranges) > 1:
+            if requested_keep_ranges and any("start_word_index" in item for item in requested_keep_ranges):
+                selected_segments = _segments_for_indexed_keep_ranges(segments, requested_keep_ranges)
+                transcript_full = " ".join(
+                    str(segment.get("text") or "").strip()
+                    for segment in selected_segments
+                    if str(segment.get("text") or "").strip()
+                ).strip()
+            elif len(requested_keep_ranges) > 1:
                 remapped_segments = _remap_transcript_segments_to_keep_ranges(
                     segments,
                     requested_keep_ranges,
@@ -25147,7 +25230,8 @@ def add_clip_section(video_pk):
         new_entry["selection_source"] = "transcript_words"
     if title:
         new_entry["title_user_edited_at"] = _utc_now_iso()
-    if len(requested_keep_ranges) > 1:
+    has_indexed_keep_ranges = any("start_word_index" in item for item in requested_keep_ranges)
+    if len(requested_keep_ranges) > 1 or has_indexed_keep_ranges:
         new_entry["edit_keep_ranges"] = requested_keep_ranges
         new_entry["edit_cut_count"] = max(0, len(requested_keep_ranges) - 1)
         total_keep_duration = _edit_keep_ranges_duration(requested_keep_ranges)
@@ -25192,7 +25276,11 @@ def add_clip_section(video_pk):
             "end": round(end_time, 6),
             "media_duration": media_duration,
             "range_clamped": range_resolution.clamped,
-            "edit_keep_ranges": requested_keep_ranges if len(requested_keep_ranges) > 1 else [],
+            "edit_keep_ranges": (
+                requested_keep_ranges
+                if len(requested_keep_ranges) > 1 or has_indexed_keep_ranges
+                else []
+            ),
         },
     )
 
@@ -31440,6 +31528,9 @@ def autoclip_video(video_pk):
         if duration_seconds and not podcast_audio_path:
             adj_end = min(adj_end, float(duration_seconds))
         edit_keep_ranges = _normalize_edit_keep_ranges(plan_entry.get("edit_keep_ranges"))
+        indexed_keep_ranges = bool(edit_keep_ranges) and any(
+            "start_word_index" in item for item in edit_keep_ranges
+        )
         music_speech_ranges: Optional[list[Dict[str, float]]] = None
         if len(edit_keep_ranges) > 1 and not podcast_audio_path:
             normalized_source_path, resolved_keep_ranges, _ = resolve_keep_ranges_for_trim(
@@ -31451,14 +31542,22 @@ def autoclip_video(video_pk):
                     str(plan_entry.get("selection_source") or "").strip().lower() == "transcript_words"
                     or str(plan_entry.get("origin") or "").strip().lower() == "ai"
                 ),
+                transcript_words=(
+                    _transcript_words_with_sentence_indexes(segments or [])
+                    if indexed_keep_ranges else None
+                ),
             )
             multi_range_duration = sum(
                 max(0.0, float(item["end"]) - float(item["start"]))
                 for item in resolved_keep_ranges
             )
             if multi_range_duration > 0:
+                selected_source_segments = (
+                    _segments_for_indexed_keep_ranges(segments or [], resolved_keep_ranges)
+                    if indexed_keep_ranges else segments
+                )
                 music_speech_ranges = build_final_timeline_speech_ranges(
-                    segments,
+                    selected_source_segments,
                     clip_start=start,
                     clip_end=end,
                     edit_keep_ranges=resolved_keep_ranges,
@@ -31467,7 +31566,9 @@ def autoclip_video(video_pk):
                 src_path = normalized_source_path
                 edit_keep_ranges = resolved_keep_ranges
                 compose_keep_ranges = [dict(item) for item in resolved_keep_ranges]
-                segments = _remap_transcript_segments_to_keep_ranges(segments or [], resolved_keep_ranges)
+                segments = _remap_transcript_segments_to_keep_ranges(
+                    selected_source_segments or [], resolved_keep_ranges
+                )
                 start = 0.0
                 end = float(multi_range_duration)
                 adj_start = 0.0
@@ -31480,6 +31581,8 @@ def autoclip_video(video_pk):
                     multi_range_duration,
                     src_path,
                 )
+        if indexed_keep_ranges and len(edit_keep_ranges) <= 1:
+            segments = _segments_for_indexed_keep_ranges(segments or [], edit_keep_ranges)
         if music_speech_ranges is None:
             music_speech_ranges = build_final_timeline_speech_ranges(
                 segments,

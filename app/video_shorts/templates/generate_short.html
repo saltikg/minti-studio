@@ -9908,7 +9908,7 @@ document.addEventListener("DOMContentLoaded", () => {
         selection_source: "transcript_words",
       });
       const normalizedKeepRanges = normalizeClipKeepRanges?.(keepRanges) || [];
-      if (normalizedKeepRanges.length > 1) {
+      if (normalizedKeepRanges.length) {
         body.set("keep_ranges", JSON.stringify(normalizedKeepRanges));
       }
       const response = await fetch(root.dataset.addClipUrl || "", {
@@ -13797,12 +13797,31 @@ const indexesForRange = (words, start, end) => words
   .map((word, index) => (wordOverlapsRange(word, start, end) ? index : -1))
   .filter((index) => index >= 0);
 
+const wordBelongsToClipPart = (word, part) => {
+  const wordIndex = Number(word?.index);
+  const first = Number(part?.start_word_index);
+  const last = Number(part?.end_word_index);
+  if (Number.isInteger(wordIndex) && Number.isInteger(first) && Number.isInteger(last)) {
+    return wordIndex >= first && wordIndex <= last;
+  }
+  return wordOverlapsRange(word, Number(part?.start), Number(part?.end));
+};
+
 const normalizeClipKeepRanges = (ranges) => {
   const cleaned = (Array.isArray(ranges) ? ranges : [])
-    .map((range) => ({
-      start: Math.max(0, Number(range?.start)),
-      end: Math.max(0, Number(range?.end)),
-    }))
+    .map((range) => {
+      const normalized = {
+        start: Math.max(0, Number(range?.start)),
+        end: Math.max(0, Number(range?.end)),
+      };
+      const first = Number(range?.start_word_index);
+      const last = Number(range?.end_word_index);
+      if (Number.isInteger(first) && Number.isInteger(last) && first >= 0 && last >= first) {
+        normalized.start_word_index = first;
+        normalized.end_word_index = last;
+      }
+      return normalized;
+    })
     .filter((range) => Number.isFinite(range.start) && Number.isFinite(range.end) && range.end > range.start)
     .sort((a, b) => (a.start - b.start) || (a.end - b.end));
   const merged = [];
@@ -13810,6 +13829,12 @@ const normalizeClipKeepRanges = (ranges) => {
     const last = merged[merged.length - 1];
     if (last && (range.start - last.end) <= 0) {
       last.end = Math.max(last.end, range.end);
+      if (Number.isInteger(range.start_word_index)) {
+        last.start_word_index = Number.isInteger(last.start_word_index)
+          ? Math.min(last.start_word_index, range.start_word_index) : range.start_word_index;
+        last.end_word_index = Number.isInteger(last.end_word_index)
+          ? Math.max(last.end_word_index, range.end_word_index) : range.end_word_index;
+      }
     } else {
       merged.push({ ...range });
     }
@@ -13817,7 +13842,14 @@ const normalizeClipKeepRanges = (ranges) => {
   return merged
     .filter((range) => (range.end - range.start) >= 0.4)
     .slice(0, 20)
-    .map((range) => ({ start: Number(range.start.toFixed(3)), end: Number(range.end.toFixed(3)) }));
+    .map((range) => {
+      const normalized = { start: Number(range.start.toFixed(3)), end: Number(range.end.toFixed(3)) };
+      if (Number.isInteger(range.start_word_index) && Number.isInteger(range.end_word_index)) {
+        normalized.start_word_index = range.start_word_index;
+        normalized.end_word_index = range.end_word_index;
+      }
+      return normalized;
+    });
 };
 
 const getClipKeepRangesFromForm = (form, words = getGenerateV2WordTimestamps()) => {
@@ -14398,9 +14430,12 @@ window.initGenerateV2TextTranscript = () => {
     if (!state.selectedIndexes.length) return null;
     const first = Math.min(...state.selectedIndexes);
     const last = Math.max(...state.selectedIndexes);
-    const start = Math.max(0, Number(words[first]?.start || 0) - 0.04);
-    const end = Number(words[last]?.end || words[last]?.start || start) + 0.08;
-    return { first, last, start, end, duration: Math.max(0, end - start) };
+    const start = Math.max(0, Number(words[first]?.start || 0));
+    const end = Number(words[last]?.end || words[last]?.start || start);
+    return {
+      first, last, start, end, duration: Math.max(0, end - start),
+      start_word_index: first, end_word_index: last,
+    };
   };
   const normalizeTranscriptParts = (parts) => normalizeClipKeepRanges(parts);
   const setTranscriptParts = (parts) => {
@@ -14435,7 +14470,12 @@ window.initGenerateV2TextTranscript = () => {
   const addPart = (range) => {
     if (!range) return;
     stopPreview();
-    state.parts = normalizeTranscriptParts([...state.parts, { start: range.start, end: range.end }]);
+    state.parts = normalizeTranscriptParts([...state.parts, {
+      start: range.start,
+      end: range.end,
+      start_word_index: range.start_word_index,
+      end_word_index: range.end_word_index,
+    }]);
     window.getSelection?.()?.removeAllRanges?.();
     hideToolbar();
     render();
@@ -14772,7 +14812,7 @@ window.initGenerateV2TextTranscript = () => {
         span.className = "generate-v2-text-word";
         const wordStart = Number(word.start || 0);
         const wordEnd = Number(word.end || wordStart);
-        const partIndex = state.parts.findIndex((part) => wordOverlapsRange(word, part.start, part.end));
+        const partIndex = state.parts.findIndex((part) => wordBelongsToClipPart(word, part));
         if (partIndex >= 0) {
           span.classList.add("is-added");
         }
@@ -14792,7 +14832,7 @@ window.initGenerateV2TextTranscript = () => {
         if (partIndex >= 0) {
           const part = state.parts[partIndex];
           const nextWord = words[Number(word.index) + 1];
-          const isPartEnd = !nextWord || !wordOverlapsRange(nextWord, part.start, part.end);
+          const isPartEnd = !nextWord || !wordBelongsToClipPart(nextWord, part);
           if (isPartEnd) {
             const removeBtn = document.createElement("button");
             removeBtn.type = "button";

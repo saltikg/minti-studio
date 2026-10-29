@@ -274,8 +274,8 @@ def _format_loadavg(loadavg: tuple[float, float, float] | None) -> str:
     return ",".join(f"{value:.2f}" for value in loadavg)
 
 
-def _normalize_keep_ranges_for_trim(keep_ranges: Optional[list[Dict[str, Any]]]) -> list[dict[str, float]]:
-    ranges: list[dict[str, float]] = []
+def _normalize_keep_ranges_for_trim(keep_ranges: Optional[list[Dict[str, Any]]]) -> list[dict[str, Any]]:
+    ranges: list[dict[str, Any]] = []
     for item in keep_ranges or []:
         if not isinstance(item, dict):
             continue
@@ -286,7 +286,16 @@ def _normalize_keep_ranges_for_trim(keep_ranges: Optional[list[Dict[str, Any]]])
             continue
         if start < 0 or end <= start:
             continue
-        ranges.append({"start": round(start, 6), "end": round(end, 6)})
+        normalized: dict[str, Any] = {"start": round(start, 6), "end": round(end, 6)}
+        try:
+            first_index = int(item.get("start_word_index"))
+            last_index = int(item.get("end_word_index"))
+        except (TypeError, ValueError):
+            first_index = last_index = -1
+        if first_index >= 0 and last_index >= first_index:
+            normalized["start_word_index"] = first_index
+            normalized["end_word_index"] = last_index
+        ranges.append(normalized)
     ranges.sort(key=lambda item: (item["start"], item["end"]))
     return ranges
 
@@ -450,8 +459,8 @@ def _snap_keep_range_boundaries_to_audio(
 
 def _normalize_transcript_words_for_boundary_snap(
     transcript_words: Optional[list[Dict[str, Any]]],
-) -> list[dict[str, float]]:
-    words: list[dict[str, float]] = []
+) -> list[dict[str, Any]]:
+    words: list[dict[str, Any]] = []
     for item in transcript_words or []:
         if not isinstance(item, dict):
             continue
@@ -462,7 +471,11 @@ def _normalize_transcript_words_for_boundary_snap(
             continue
         if start < 0 or end < start:
             continue
-        words.append({"start": start, "end": end})
+        try:
+            word_index = int(item.get("index"))
+        except (TypeError, ValueError):
+            word_index = len(words)
+        words.append({"start": start, "end": end, "index": word_index})
     return sorted(words, key=lambda item: (item["start"], item["end"]))
 
 
@@ -476,12 +489,19 @@ def _outer_word_boundary_context(
         return {}
     current_start = float(ranges[0]["start"])
     current_end = float(ranges[-1]["end"])
-    first_index = min(range(len(words)), key=lambda index: abs(words[index]["start"] - current_start))
-    last_index = min(range(len(words)), key=lambda index: abs(words[index]["end"] - current_end))
-    if abs(words[first_index]["start"] - current_start) > CLIP_EDGE_SNAP_WINDOW_SECONDS:
-        first_index = -1
-    if abs(words[last_index]["end"] - current_end) > CLIP_EDGE_SNAP_WINDOW_SECONDS:
-        last_index = -1
+    explicit_first = ranges[0].get("start_word_index")
+    explicit_last = ranges[-1].get("end_word_index")
+    index_positions = {int(word["index"]): position for position, word in enumerate(words)}
+    first_index = index_positions.get(int(explicit_first)) if explicit_first is not None else None
+    last_index = index_positions.get(int(explicit_last)) if explicit_last is not None else None
+    if first_index is None:
+        first_index = min(range(len(words)), key=lambda index: abs(words[index]["start"] - current_start))
+        if abs(words[first_index]["start"] - current_start) > CLIP_EDGE_SNAP_WINDOW_SECONDS:
+            first_index = -1
+    if last_index is None:
+        last_index = min(range(len(words)), key=lambda index: abs(words[index]["end"] - current_end))
+        if abs(words[last_index]["end"] - current_end) > CLIP_EDGE_SNAP_WINDOW_SECONDS:
+            last_index = -1
     return {
         "previous_end": words[first_index - 1]["end"] if first_index > 0 else None,
         "first_start": words[first_index]["start"] if first_index >= 0 else None,
@@ -507,18 +527,28 @@ def _snap_outer_keep_range_boundaries_to_audio(
     first_start = context.get("first_start")
     last_end = context.get("last_end")
     next_start = context.get("next_start")
-    windows: list[tuple[str, float, float, float]] = []
+    windows: list[tuple[str, float, float, float, float, float]] = []
 
     if previous_end is not None and first_start is not None:
-        minimum_start = float(previous_end) + CLIP_EDGE_WORD_GUARD_SECONDS
-        search_start = max(minimum_start, current_start - CLIP_EDGE_SNAP_WINDOW_SECONDS)
-        search_end = min(float(first_start), current_start + CLIP_EDGE_SNAP_WINDOW_SECONDS)
-        windows.append(("start", search_start, search_end, minimum_start))
+        gap_start = float(previous_end)
+        gap_end = max(gap_start, float(first_start))
+        midpoint = (gap_start + gap_end) / 2.0
+        if gap_end - gap_start < CLIP_EDGE_WORD_GUARD_SECONDS:
+            search_start = search_end = midpoint
+        else:
+            search_start = max(gap_start + CLIP_EDGE_WORD_GUARD_SECONDS, current_start - CLIP_EDGE_SNAP_WINDOW_SECONDS)
+            search_end = min(gap_end, current_start + CLIP_EDGE_SNAP_WINDOW_SECONDS)
+        windows.append(("start", search_start, search_end, gap_start, gap_end, midpoint))
     if last_end is not None and next_start is not None:
-        maximum_end = max(0.0, float(next_start) - CLIP_EDGE_WORD_GUARD_SECONDS)
-        search_start = max(float(last_end), current_end - CLIP_EDGE_SNAP_WINDOW_SECONDS)
-        search_end = min(maximum_end, current_end + CLIP_EDGE_SNAP_WINDOW_SECONDS)
-        windows.append(("end", search_start, search_end, maximum_end))
+        gap_start = float(last_end)
+        gap_end = max(gap_start, float(next_start))
+        midpoint = (gap_start + gap_end) / 2.0
+        if gap_end - gap_start < CLIP_EDGE_WORD_GUARD_SECONDS:
+            search_start = search_end = midpoint
+        else:
+            search_start = max(gap_start, current_end - CLIP_EDGE_SNAP_WINDOW_SECONDS)
+            search_end = min(gap_end - CLIP_EDGE_WORD_GUARD_SECONDS, current_end + CLIP_EDGE_SNAP_WINDOW_SECONDS)
+        windows.append(("end", search_start, search_end, gap_start, gap_end, midpoint))
     if not windows:
         return ranges, context
 
@@ -541,10 +571,10 @@ def _snap_outer_keep_range_boundaries_to_audio(
 
     adjusted = [dict(item) for item in ranges]
     adjustments: list[dict[str, Any]] = []
-    for kind, search_start, search_end, hard_boundary in windows:
+    for kind, search_start, search_end, gap_start, gap_end, midpoint in windows:
         original = current_start if kind == "start" else current_end
         if search_end - search_start < 0.010:
-            candidate = hard_boundary
+            candidate = midpoint
         else:
             candidate = _lowest_energy_time_in_pcm_window(
                 pcm,
@@ -554,12 +584,12 @@ def _snap_outer_keep_range_boundaries_to_audio(
                 sample_rate=sample_rate,
             )
             if candidate is None:
-                candidate = hard_boundary
+                candidate = midpoint
         if kind == "start":
-            snapped = min(max(float(candidate), hard_boundary), adjusted[0]["end"] - 0.001)
+            snapped = min(max(float(candidate), gap_start), gap_end, adjusted[0]["end"] - 0.001)
             adjusted[0]["start"] = round(max(0.0, snapped), 6)
         else:
-            snapped = max(min(float(candidate), hard_boundary), adjusted[-1]["start"] + 0.001)
+            snapped = max(min(float(candidate), gap_end), gap_start, adjusted[-1]["start"] + 0.001)
             adjusted[-1]["end"] = round(snapped, 6)
         if abs(snapped - original) > 0.0005:
             adjustments.append({"boundary": kind, "from": round(original, 6), "to": round(snapped, 6)})
