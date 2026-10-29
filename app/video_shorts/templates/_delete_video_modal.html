@@ -56,7 +56,7 @@
   aria-labelledby="{{ delete_video_modal_label_id }}"
   aria-hidden="true"
   data-delete-video-modal
-  data-delete-fallback-url="{{ url_for('video_shorts_bp.my_videos_page') }}">
+  data-delete-fallback-url="{{ delete_video_fallback_url|default(url_for('video_shorts_bp.my_videos_page')) }}">
   <div class="modal-dialog modal-dialog-centered">
     <div class="modal-content bg-dark text-light border-secondary">
       <div class="modal-header border-secondary">

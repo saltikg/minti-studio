@@ -11,6 +11,7 @@ from types import ModuleType, SimpleNamespace
 from uuid import uuid4
 
 import pytest
+from werkzeug.exceptions import NotFound
 
 def _ensure_module(name: str) -> ModuleType:
     module = sys.modules.get(name)
@@ -98,7 +99,7 @@ botocore_exceptions_module.ClientError = type("ClientError", (Exception,), {})
 botocore_module.exceptions = botocore_exceptions_module
 
 from app import create_app
-from app.video_shorts.routes import generation, quick_short
+from app.video_shorts.routes import channels, generation, quick_short
 from app.video_shorts.services import db as db_service
 from app.video_shorts.services import compositor
 from app.video_shorts.services.admin_operation_scope import admin_operation_job_metadata
@@ -1038,6 +1039,100 @@ def test_admin_customer_ingest_uses_shared_target_owned_flow(monkeypatch):
         "acting_admin_id": admin_id,
         "admin_operation_kind": "customer",
     }
+
+
+def test_admin_customer_delete_rejects_video_outside_target_brand(monkeypatch, tmp_path):
+    _configure_duckdb(monkeypatch, tmp_path, "admin_customer_delete_scope.duckdb")
+    admin_id = str(uuid4())
+    owner_id = str(uuid4())
+    other_owner_id = str(uuid4())
+    brand_id = str(uuid4())
+    other_brand_id = str(uuid4())
+    foreign_video_pk = 9302
+
+    _insert_user(admin_id, "plan_10gb")
+    _insert_user(owner_id, "plan_10gb")
+    _insert_user(other_owner_id, "plan_10gb")
+    _insert_video(
+        foreign_video_pk,
+        "foreign-customer-video",
+        other_owner_id,
+        brand_id=other_brand_id,
+    )
+    monkeypatch.setattr(
+        generation,
+        "resolve_admin_operation_request_scope",
+        lambda *args, **kwargs: {
+            "owner_user_id": owner_id,
+            "brand_id": brand_id,
+            "workspace_kind": "customer",
+            "acting_admin_id": admin_id,
+        },
+    )
+    shared_delete_called = False
+
+    def _unexpected_shared_delete(**kwargs):
+        nonlocal shared_delete_called
+        shared_delete_called = True
+
+    monkeypatch.setattr(channels, "request_video_delete_response_for_user", _unexpected_shared_delete)
+
+    app = create_app()
+    handler = generation.admin_operation_delete_customer_video
+    while hasattr(handler, "__wrapped__"):
+        handler = handler.__wrapped__
+
+    with app.test_request_context(
+        f"/video_shorts/admin/operation/customer/{brand_id}/video/{foreign_video_pk}/delete",
+        method="POST",
+    ):
+        with pytest.raises(NotFound):
+            handler(brand_id, foreign_video_pk)
+
+    assert shared_delete_called is False
+
+
+def test_admin_customer_delete_uses_shared_target_owned_flow(monkeypatch):
+    admin_id = str(uuid4())
+    owner_id = str(uuid4())
+    brand_id = str(uuid4())
+    video_pk = 9301
+    captured = {}
+    monkeypatch.setattr(
+        generation,
+        "_require_admin_operation_scope",
+        lambda **kwargs: {
+            "owner_user_id": owner_id,
+            "brand_id": brand_id,
+            "workspace_kind": "customer",
+            "acting_admin_id": admin_id,
+        },
+    )
+    monkeypatch.setattr(generation, "_require_active_customer_workspace", lambda scope: {"brand_id": brand_id})
+
+    def _capture_shared_delete(**kwargs):
+        captured.update(kwargs)
+        return "shared-delete-response"
+
+    monkeypatch.setattr(channels, "request_video_delete_response_for_user", _capture_shared_delete)
+
+    app = create_app()
+    handler = generation.admin_operation_delete_customer_video
+    while hasattr(handler, "__wrapped__"):
+        handler = handler.__wrapped__
+
+    with app.test_request_context(
+        f"/video_shorts/admin/operation/customer/{brand_id}/video/{video_pk}/delete",
+        method="POST",
+    ):
+        response = handler(brand_id, video_pk)
+
+    assert response == "shared-delete-response"
+    assert captured["video_pk"] == video_pk
+    assert captured["owner_user_id"] == owner_id
+    assert captured["brand_id"] == brand_id
+    assert captured["deleted_by"] == admin_id
+    assert f"/admin/operation/customer/{brand_id}/workspace" in captured["redirect_url"]
 
 
 def test_admin_lead_download_enqueues_only_scoped_brand_ingest_job(monkeypatch, tmp_path):

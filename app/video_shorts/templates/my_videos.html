@@ -1251,7 +1251,7 @@
   data-coachmark-hidden="{{ 'true' if hide_my_videos_coachmark else 'false' }}"
   data-coachmark-scope="{{ coachmark_user_scope }}"
   data-autopilot-conversion="{{ 'true' if is_pending_autopilot_lead and recent_shorts_has_more else 'false' }}"
-  data-counts-endpoint="{{ url_for('video_shorts_bp.my_videos_short_counts') }}"
+  data-counts-endpoint="{{ my_videos_counts_url }}"
   data-ingest-endpoint="{{ my_videos_ingest_url }}"
 >
   <section class="mv-hero{% if show_autopilot_framing %} mv-hero--autopilot{% endif %}">
@@ -1395,7 +1395,7 @@
   {% if show_autopilot_framing %}
     <h2 class="mv-source-heading">Source videos</h2>
   {% endif %}
-  {{ mv_components.video_list(videos, allow_video_management) }}
+  {{ mv_components.video_list(videos, allow_video_management, false, allow_video_title_edit) }}
 </div>
 
 {% set delete_video_modal_id = 'deleteVideoModal' %}

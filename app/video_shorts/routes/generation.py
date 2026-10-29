@@ -24038,6 +24038,8 @@ def admin_operation_customer_workspace(brand_id: str):
         return {
             "open_url": url_for("video_shorts_bp.admin_operation_generate_customer_short", brand_id=brand_id, video_pk=video_pk),
             "retry_url": url_for("video_shorts_bp.admin_operation_retry_customer_video", brand_id=brand_id, video_pk=video_pk),
+            "delete_summary_url": url_for("video_shorts_bp.admin_operation_customer_video_delete_summary", brand_id=brand_id, video_pk=video_pk),
+            "delete_url": url_for("video_shorts_bp.admin_operation_delete_customer_video", brand_id=brand_id, video_pk=video_pk),
         }
 
     return render_my_videos_page_for_user(
@@ -24051,9 +24053,12 @@ def admin_operation_customer_workspace(brand_id: str):
             "customer": {**customer, "brand_id": scope["brand_id"]},
             "my_videos_status_url": url_for("video_shorts_bp.admin_operation_customer_processing_status", brand_id=brand_id),
             "my_videos_ingest_url": url_for("video_shorts_bp.admin_operation_ingest_customer_video", brand_id=brand_id),
+            "my_videos_counts_url": url_for("video_shorts_bp.admin_operation_customer_short_counts", brand_id=brand_id),
             "generate_url_template": url_for("video_shorts_bp.admin_operation_generate_customer_short", brand_id=brand_id, video_pk=0),
             "retry_url_template": url_for("video_shorts_bp.admin_operation_retry_customer_video", brand_id=brand_id, video_pk=0),
-            "allow_video_management": False,
+            "allow_video_management": True,
+            "allow_video_title_edit": False,
+            "delete_video_fallback_url": url_for("video_shorts_bp.admin_operation_customer_workspace", brand_id=brand_id),
         },
     )
 
@@ -24104,6 +24109,19 @@ def admin_operation_customer_processing_status(brand_id: str):
     return jsonify(ok=True, statuses=statuses)
 
 
+@video_shorts_bp.route("/admin/operation/customer/<brand_id>/short-counts", methods=["GET"])
+@require_admin
+def admin_operation_customer_short_counts(brand_id: str):
+    scope = _require_admin_operation_scope(brand_id=brand_id, workspace_kind="customer")
+    _require_active_customer_workspace(scope)
+    from app.video_shorts.routes.channels import video_short_counts_response_for_user
+
+    return video_short_counts_response_for_user(
+        owner_user_id=scope["owner_user_id"],
+        brand_id=scope["brand_id"],
+    )
+
+
 @video_shorts_bp.route("/admin/operation/customer/<brand_id>/video/<int:video_pk>/retry-processing", methods=["POST"])
 @require_admin
 def admin_operation_retry_customer_video(brand_id: str, video_pk: int):
@@ -24116,6 +24134,44 @@ def admin_operation_retry_customer_video(brand_id: str, video_pk: int):
         user_id=scope["owner_user_id"],
         brand_id=scope["brand_id"],
         job_payload_extra=admin_operation_job_metadata(scope),
+    )
+
+
+@video_shorts_bp.route("/admin/operation/customer/<brand_id>/video/<int:video_pk>/delete-summary", methods=["GET"])
+@require_admin
+def admin_operation_customer_video_delete_summary(brand_id: str, video_pk: int):
+    scope = _require_admin_operation_scope(
+        brand_id=brand_id,
+        workspace_kind="customer",
+        video_pk=video_pk,
+    )
+    _require_active_customer_workspace(scope)
+    from app.video_shorts.routes.channels import video_delete_summary_response_for_user
+
+    return video_delete_summary_response_for_user(
+        video_pk=video_pk,
+        owner_user_id=scope["owner_user_id"],
+        brand_id=scope["brand_id"],
+    )
+
+
+@video_shorts_bp.route("/admin/operation/customer/<brand_id>/video/<int:video_pk>/delete", methods=["POST"])
+@require_admin
+def admin_operation_delete_customer_video(brand_id: str, video_pk: int):
+    scope = _require_admin_operation_scope(
+        brand_id=brand_id,
+        workspace_kind="customer",
+        video_pk=video_pk,
+    )
+    _require_active_customer_workspace(scope)
+    from app.video_shorts.routes.channels import request_video_delete_response_for_user
+
+    return request_video_delete_response_for_user(
+        video_pk=video_pk,
+        owner_user_id=scope["owner_user_id"],
+        brand_id=scope["brand_id"],
+        deleted_by=scope["acting_admin_id"],
+        redirect_url=url_for("video_shorts_bp.admin_operation_customer_workspace", brand_id=brand_id),
     )
 
 

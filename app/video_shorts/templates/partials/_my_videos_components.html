@@ -45,7 +45,7 @@
   </div>
 {%- endmacro %}
 
-{% macro video_list(videos, allow_management=True, retry_failed=False) -%}
+{% macro video_list(videos, allow_management=True, retry_failed=False, allow_title_edit=True) -%}
   <section class="mv-list">
     <div class="mv-list-head">
       <div>Video</div><div class="text-center">Length</div><div>Added</div>
@@ -61,12 +61,12 @@
               {% else %}<span>{{ item.thumb_fallback }}</span>{% endif %}
             </div>
             <div class="mv-title-cell">
-              <div class="mv-title-edit" {% if allow_management %}data-title-edit data-video-id="{{ item.id }}" data-update-url="{{ item.update_title_url }}"{% endif %}>
+              <div class="mv-title-edit" {% if allow_title_edit %}data-title-edit data-video-id="{{ item.id }}" data-update-url="{{ item.update_title_url }}"{% endif %}>
                 {% if item.source_href %}<a class="mv-video-title mv-video-title-link" data-title-text href="{{ item.source_href }}" target="_blank" rel="noopener noreferrer">{{ item.title }}</a>
                 {% else %}<div class="mv-video-title" data-title-text>{{ item.title }}</div>{% endif %}
-                {% if allow_management %}<button type="button" class="mv-title-edit-btn" data-title-edit-start aria-label="Edit title"><i class="bi bi-pencil-square" aria-hidden="true"></i></button>{% endif %}
+                {% if allow_title_edit %}<button type="button" class="mv-title-edit-btn" data-title-edit-start aria-label="Edit title"><i class="bi bi-pencil-square" aria-hidden="true"></i></button>{% endif %}
               </div>
-              {% if allow_management %}<div class="mv-title-edit-status d-none" data-title-status aria-live="polite"></div>{% endif %}
+              {% if allow_title_edit %}<div class="mv-title-edit-status d-none" data-title-status aria-live="polite"></div>{% endif %}
               <span class="mv-source-badge mv-source-badge--{{ item.source_kind }}">
                 <i class="bi bi-{{ 'link-45deg' if item.source_kind == 'url' else 'upload' }}" aria-hidden="true"></i>{{ item.source_label }}
               </span>

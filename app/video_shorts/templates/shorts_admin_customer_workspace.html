@@ -18,7 +18,7 @@
   data-coachmark-hidden="true"
   data-coachmark-scope="admin-customer-{{ customer.brand_id }}"
   data-autopilot-conversion="false"
-  data-counts-endpoint=""
+  data-counts-endpoint="{{ my_videos_counts_url }}"
   data-ingest-endpoint="{{ my_videos_ingest_url }}">
   <section class="mv-hero mv-hero--autopilot">
     <div class="customer-workspace-header">
@@ -47,6 +47,10 @@
   </section>
 
   <h2 class="mv-source-heading">Customer videos</h2>
-  {{ mv_components.video_list(videos, false, true) }}
+  {{ mv_components.video_list(videos, allow_video_management, false, allow_video_title_edit) }}
 </div>
+
+{% set delete_video_modal_id = 'deleteVideoModal' %}
+{% set delete_video_modal_label_id = 'deleteVideoModalLabel' %}
+{% include '_delete_video_modal.html' %}
 {% endblock %}

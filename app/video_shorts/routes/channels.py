@@ -1123,9 +1123,12 @@ def render_my_videos_page_for_user(
         coachmark_user_scope=f"user-{current_user['id']}",
         my_videos_status_url=url_for("video_shorts_bp.my_videos_processing_status"),
         my_videos_ingest_url=url_for("video_shorts_bp.quick_short_ingest_youtube"),
+        my_videos_counts_url=url_for("video_shorts_bp.my_videos_short_counts"),
         generate_url_template=url_for("video_shorts_bp.generate_short", video_pk=0),
         retry_url_template=url_for("video_shorts_bp.retry_my_video_processing", video_pk=0),
         allow_video_management=True,
+        allow_video_title_edit=True,
+        delete_video_fallback_url=url_for("video_shorts_bp.my_videos_page"),
         hide_my_videos_coachmark=load_user_bool_preference(
             current_user["id"], HIDE_MY_VIDEOS_COACHMARK_PREFERENCE_KEY, default=False
         ),
@@ -1348,11 +1351,19 @@ def my_video_delete_summary(video_pk: int):
     current_user = getattr(g, "vs_current_user", None)
     if not current_user:
         return jsonify(ok=False, message="Authentication required."), 401
+    return video_delete_summary_response_for_user(
+        video_pk=video_pk,
+        owner_user_id=str(current_user["id"]),
+        brand_id=current_brand_id(),
+    )
+
+
+def video_delete_summary_response_for_user(*, video_pk: int, owner_user_id: str, brand_id):
     try:
         summary = preview_video_deletion(
             video_pk=video_pk,
-            owner_user_id=str(current_user["id"]),
-            brand_id=current_brand_id(),
+            owner_user_id=owner_user_id,
+            brand_id=brand_id,
         )
         source_video_id = str(summary.pop("source_video_id", "") or "")
         if not summary.get("thumbnail_url") and source_video_id:
@@ -1367,18 +1378,30 @@ def delete_my_video(video_pk: int):
     current_user = getattr(g, "vs_current_user", None)
     if not current_user:
         return jsonify(ok=False, message="Authentication required."), 401
+    return request_video_delete_response_for_user(
+        video_pk=video_pk,
+        owner_user_id=str(current_user["id"]),
+        brand_id=current_brand_id(),
+        deleted_by=str(current_user["id"]),
+        redirect_url=url_for("video_shorts_bp.my_videos_page"),
+    )
+
+
+def request_video_delete_response_for_user(
+    *, video_pk: int, owner_user_id: str, brand_id, deleted_by: str, redirect_url: str
+):
     try:
         summary = request_video_deletion(
             video_pk=video_pk,
-            owner_user_id=str(current_user["id"]),
-            brand_id=current_brand_id(),
-            deleted_by=str(current_user["id"]),
+            owner_user_id=owner_user_id,
+            brand_id=brand_id,
+            deleted_by=deleted_by,
         )
         return jsonify(
             ok=True,
             message="Video deleted. Stored files are being removed in the background.",
             summary=summary,
-            redirect_url=url_for("video_shorts_bp.my_videos_page"),
+            redirect_url=redirect_url,
         ), 202
     except VideoDeletionConflict as exc:
         return jsonify(ok=False, message=str(exc)), 409
@@ -1426,9 +1449,16 @@ def my_videos_short_counts():
     if not current_user:
         return jsonify({"ok": False, "error": "Authentication required."}), 401
 
+    return video_short_counts_response_for_user(
+        owner_user_id=str(current_user["id"]),
+        brand_id=current_brand_id(),
+    )
+
+
+def video_short_counts_response_for_user(*, owner_user_id: str, brand_id):
     conn = get_db_readonly()
     try:
-        counts = _short_counts_by_video(conn, current_user["id"], current_brand_id())
+        counts = _short_counts_by_video(conn, owner_user_id, brand_id)
     finally:
         conn.close()
     return jsonify(
