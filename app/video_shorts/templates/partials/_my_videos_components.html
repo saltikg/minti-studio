@@ -20,6 +20,92 @@
   <div id="{{ preview_id }}" class="mv-youtube-preview" aria-live="polite"></div>
 {%- endmacro %}
 
+{% macro ingestion_card_stack(videos, status_url) -%}
+  <div class="vs-ingestion-card-stack" data-ingestion-card-stack data-status-url="{{ status_url }}">
+    {% for item in videos %}
+      {% if item.show_import_card %}
+        <article
+          class="vs-ingestion-card"
+          data-ingestion-card
+          data-video-pk="{{ item.id }}"
+          data-status-url="{{ status_url }}"
+          data-retry-url="{{ item.retry_url }}"
+          data-open-url="{{ item.open_url }}"
+          data-video-title="{{ item.title|e }}"
+          data-video-thumbnail="{{ (item.thumbnail_url or item.preview_image_url or '')|e }}"
+          data-video-duration="{{ (item.duration_label or '')|e }}"
+          data-video-channel="{{ (item.channel_name or '')|e }}"
+          data-source-kind="{{ item.source_kind }}"
+          data-initial-stage="{{ 'failed' if item.is_failed else 'processing' }}"
+          data-initial-failed="{{ '1' if item.is_failed else '0' }}"
+          data-was-active="{{ '1' if item.is_processing else '0' }}"
+        ></article>
+      {% endif %}
+    {% endfor %}
+  </div>
+{%- endmacro %}
+
+{% macro video_list(videos, allow_management=True, retry_failed=False) -%}
+  <section class="mv-list">
+    <div class="mv-list-head">
+      <div>Video</div><div class="text-center">Length</div><div>Added</div>
+      <div class="text-center">Shorts</div><div class="text-center">Published</div><div>Status</div><div></div>
+    </div>
+    {% if videos %}
+      {% for item in videos %}
+        <div class="mv-row mv-coachmark-anchor" data-video-row data-video-id="{{ item.id }}" data-status="{{ item.status_filter }}" data-added-at="{{ item.added_at_iso }}" {% if loop.first %}id="mv-first-video-row" data-first-video-row="true"{% endif %}>
+          <div class="mv-video-cell">
+            <div class="mv-thumb">
+              {% if item.thumbnail_url %}<img src="{{ item.thumbnail_url }}" alt="{{ item.title }}">
+              {% elif item.preview_image_url %}<img src="{{ item.preview_image_url }}" alt="{{ item.title }}">
+              {% else %}<span>{{ item.thumb_fallback }}</span>{% endif %}
+            </div>
+            <div class="mv-title-cell">
+              <div class="mv-title-edit" {% if allow_management %}data-title-edit data-video-id="{{ item.id }}" data-update-url="{{ item.update_title_url }}"{% endif %}>
+                {% if item.source_href %}<a class="mv-video-title mv-video-title-link" data-title-text href="{{ item.source_href }}" target="_blank" rel="noopener noreferrer">{{ item.title }}</a>
+                {% else %}<div class="mv-video-title" data-title-text>{{ item.title }}</div>{% endif %}
+                {% if allow_management %}<button type="button" class="mv-title-edit-btn" data-title-edit-start aria-label="Edit title"><i class="bi bi-pencil-square" aria-hidden="true"></i></button>{% endif %}
+              </div>
+              {% if allow_management %}<div class="mv-title-edit-status d-none" data-title-status aria-live="polite"></div>{% endif %}
+              <span class="mv-source-badge mv-source-badge--{{ item.source_kind }}">
+                <i class="bi bi-{{ 'link-45deg' if item.source_kind == 'url' else 'upload' }}" aria-hidden="true"></i>{{ item.source_label }}
+              </span>
+            </div>
+          </div>
+          <div class="mv-table-muted text-center">{{ item.duration_label or "—" }}</div>
+          <div class="mv-table-muted">{{ item.added_at_label or "—" }}</div>
+          <div class="mv-count-cell"><div class="mv-table-number is-zero" data-short-count>—</div></div>
+          <div class="mv-count-cell"><div class="mv-table-number is-zero" data-published-count>—</div><div class="mv-table-sub" data-published-total hidden></div></div>
+          <div class="mv-status-cell">
+            {% if item.has_stale_import_job %}<span class="mv-status-pill mv-status-pill--failed" data-ingestion-pill>Failed — Retry</span>
+            {% elif item.is_ready_for_editing %}<span class="mv-status-pill mv-status-pill--ready" data-ingestion-pill>Ready</span>
+            {% elif item.is_failed %}<span class="mv-status-pill mv-status-pill--failed" data-ingestion-pill>Failed</span>
+            {% else %}
+              <span class="mv-status-pill mv-status-pill--processing" data-ingestion-pill>Processing</span>
+              <span class="mv-status-detail" data-processing-started-at="{{ item.processing_started_at_iso }}" data-processing-attempt="{{ item.processing_attempt_label }}"><span data-processing-detail>{{ item.processing_attempt_label }}</span></span>
+            {% endif %}
+          </div>
+          <div class="mv-row-actions mv-coachmark-anchor mv-coachmark-anchor--button" {% if loop.first %}id="mv-first-video-action"{% endif %}>
+            {% if item.has_stale_import_job %}<button type="button" class="btn btn-outline-danger btn-sm" data-processing-retry data-retry-url="{{ item.retry_url }}">Retry</button>
+            {% elif item.is_ready_for_editing %}<a href="{{ item.open_url }}" class="btn btn-primary btn-sm" {% if loop.first %}data-first-video-action="true"{% endif %}>Create clip</a>
+            {% elif item.is_processing %}<span class="btn btn-secondary btn-sm mv-action-processing" aria-disabled="true">Processing…</span>
+            {% elif item.is_failed and retry_failed %}<button type="button" class="btn btn-outline-danger btn-sm" data-processing-retry data-retry-url="{{ item.retry_url }}">Retry</button>
+            {% elif item.is_failed %}<span class="btn btn-outline-secondary btn-sm mv-action-processing" aria-disabled="true">Unavailable</span>
+            {% else %}<a href="{{ item.open_url }}" class="btn btn-primary btn-sm" {% if loop.first %}data-first-video-action="true"{% endif %}>Create clip</a>{% endif %}
+            {% if allow_management %}
+              <div class="dropdown">
+                <button class="btn btn-outline-secondary btn-sm mv-row-menu-toggle" type="button" data-bs-toggle="dropdown" aria-expanded="false" aria-label="More video actions" title="More video actions">⋯</button>
+                <ul class="dropdown-menu dropdown-menu-end"><li><button type="button" class="dropdown-item text-danger" data-delete-video data-video-title="{{ item.title|e }}" data-video-thumbnail="{{ (item.thumbnail_url or item.preview_image_url or '')|e }}" data-video-duration="{{ (item.duration_label or '—')|e }}" data-video-added="{{ (item.added_at_label or 'Unknown date')|e }}" data-summary-url="{{ item.delete_summary_url }}" data-delete-url="{{ item.delete_url }}">Delete video</button></li></ul>
+              </div>
+            {% endif %}
+          </div>
+        </div>
+      {% endfor %}
+      <div id="mv-filter-empty" class="mv-filter-empty">No videos match these filters.</div>
+    {% else %}<div class="mv-empty">No videos match this view yet.</div>{% endif %}
+  </section>
+{%- endmacro %}
+
 {% macro free_tool_processing_card(processing_context, video_url='', is_tr=False) -%}
   {% set processing_video = processing_context.video or {} %}
   <div

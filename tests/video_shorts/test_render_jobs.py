@@ -98,7 +98,7 @@ botocore_exceptions_module.ClientError = type("ClientError", (Exception,), {})
 botocore_module.exceptions = botocore_exceptions_module
 
 from app import create_app
-from app.video_shorts.routes import generation
+from app.video_shorts.routes import generation, quick_short
 from app.video_shorts.services import db as db_service
 from app.video_shorts.services import compositor
 from app.video_shorts.services.admin_operation_scope import admin_operation_job_metadata
@@ -984,43 +984,11 @@ def test_job_status_endpoint_is_owner_scoped(monkeypatch, tmp_path):
     assert other_response.status_code == 404
 
 
-def test_admin_customer_download_enqueues_target_owned_ingest_job(monkeypatch, tmp_path):
-    _configure_duckdb(monkeypatch, tmp_path, "admin_customer_ingest_job.duckdb")
+def test_admin_customer_ingest_uses_shared_target_owned_flow(monkeypatch):
     admin_id = str(uuid4())
     owner_id = str(uuid4())
-    other_owner_id = str(uuid4())
     brand_id = str(uuid4())
-    other_brand_id = str(uuid4())
-    video_pk = 9101
-    other_video_pk = 9102
-
-    _insert_user(admin_id, "plan_10gb")
-    _insert_user(owner_id, "plan_10gb")
-    _insert_user(other_owner_id, "plan_10gb")
-    conn = db_service.get_db()
-    try:
-        conn.execute("UPDATE shorts_users SET role = 'admin' WHERE id = ?", [admin_id])
-        conn.commit()
-    finally:
-        conn.close()
-    _insert_video(
-        video_pk,
-        "local_customer_source",
-        owner_id,
-        brand_id=brand_id,
-        video_url="https://www.youtube.com/watch?v=customer12345",
-        download_status="failed",
-    )
-    _insert_video(
-        other_video_pk,
-        "local_other_customer_source",
-        other_owner_id,
-        brand_id=other_brand_id,
-        video_url="https://www.youtube.com/watch?v=other12345",
-        download_status="failed",
-    )
-
-    enqueued: list[dict] = []
+    captured = {}
     monkeypatch.setattr(
         generation,
         "_require_admin_operation_scope",
@@ -1032,39 +1000,44 @@ def test_admin_customer_download_enqueues_target_owned_ingest_job(monkeypatch, t
         },
     )
     monkeypatch.setattr(generation, "_require_active_customer_workspace", lambda scope: {"brand_id": brand_id})
-    monkeypatch.setattr(generation, "track_event", lambda *args, **kwargs: None)
     monkeypatch.setattr(
-        generation,
-        "enqueue_job",
-        lambda **kwargs: enqueued.append(kwargs) or {"kind": "queued", "job": {"id": "customer-job"}},
+        quick_short,
+        "fetch_video_metadata",
+        lambda video_id: {"video_id": video_id, "title": "Customer source", "duration_seconds": 60},
     )
 
+    def _capture_create(**kwargs):
+        captured.update(kwargs)
+        return {"session": {"id": "customer-session"}, "job_id": "customer-job", "cached": False}
+
+    monkeypatch.setattr(quick_short, "create_youtube_ingest_session_for_user", _capture_create)
+    monkeypatch.setattr(quick_short, "_build_session_payload", lambda session: session)
+
     app = create_app()
-    app.secret_key = "test-secret"
-    client = app.test_client()
-    with client.session_transaction() as session:
-        session["vs_user_id"] = admin_id
+    handler = generation.admin_operation_ingest_customer_video
+    while hasattr(handler, "__wrapped__"):
+        handler = handler.__wrapped__
 
-    response = client.post(f"/video_shorts/admin/operation/customer/{brand_id}/video/{video_pk}/download")
+    with app.test_request_context(
+        f"/video_shorts/admin/operation/customer/{brand_id}/ingest",
+        method="POST",
+        json={"video_url": "https://www.youtube.com/watch?v=customer12345"},
+        headers={"Accept": "application/json", "X-Requested-With": "XMLHttpRequest"},
+    ):
+        response = handler(brand_id)
 
-    assert response.status_code == 302
-    assert len(enqueued) == 1
-    job = enqueued[0]
-    assert job["user_id"] == owner_id
-    assert job["job_type"] == render_jobs.JOB_TYPE_INGEST_YOUTUBE
-    assert job["max_attempts"] == 6
-    assert job["payload"]["brand_id"] == brand_id
-    assert job["payload"]["video_pk"] == video_pk
-    assert job["payload"]["video_id"] == "local_customer_source"
-    assert job["payload"]["video_url"] == "https://www.youtube.com/watch?v=customer12345"
-    assert job["payload"]["quick_session_id"] == ""
-
-    conn = db_service.get_db_readonly()
-    try:
-        status = conn.execute("SELECT download_status FROM youtube_videos WHERE id = ?", [video_pk]).fetchone()[0]
-    finally:
-        conn.close()
-    assert status == "failed"
+    assert response.status_code == 200
+    assert response.get_json()["ok"] is True
+    assert captured["user_id"] == owner_id
+    assert captured["brand_id"] == brand_id
+    assert captured["video_url"] == "https://www.youtube.com/watch?v=customer12345"
+    assert captured["job_payload_extra"] == {
+        "job_origin": "admin",
+        "made_by_admin": True,
+        "quota_exempt": True,
+        "acting_admin_id": admin_id,
+        "admin_operation_kind": "customer",
+    }
 
 
 def test_admin_lead_download_enqueues_only_scoped_brand_ingest_job(monkeypatch, tmp_path):

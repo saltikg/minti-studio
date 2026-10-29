@@ -7652,11 +7652,11 @@ def process_new_lead_autodownload(*, limit: int = 1) -> bool:
         }
         try:
             current_app.logger.info(
-                "Autopilot download enqueue using _enqueue_admin_operation_ingest_youtube_job lead_id=%s video_pk=%s",
+                "Autopilot download enqueue using _enqueue_lead_operation_ingest_youtube_job lead_id=%s video_pk=%s",
                 lead_id,
                 video_pk,
             )
-            enqueue_row = _enqueue_admin_operation_ingest_youtube_job(scope, video_pk)
+            enqueue_row = _enqueue_lead_operation_ingest_youtube_job(scope, video_pk)
         except HTTPException as exc:
             conn_fail = get_db()
             try:
@@ -7667,7 +7667,7 @@ def process_new_lead_autodownload(*, limit: int = 1) -> bool:
                     to_state="failed",
                     detail={
                         "mechanism": "cron_poll",
-                        "helper": "_enqueue_admin_operation_ingest_youtube_job",
+                        "helper": "_enqueue_lead_operation_ingest_youtube_job",
                         "video_pk": video_pk,
                         "video_id": video_id,
                         "error": f"HTTP {exc.code}",
@@ -7691,7 +7691,7 @@ def process_new_lead_autodownload(*, limit: int = 1) -> bool:
                     to_state="failed",
                     detail={
                         "mechanism": "cron_poll",
-                        "helper": "_enqueue_admin_operation_ingest_youtube_job",
+                        "helper": "_enqueue_lead_operation_ingest_youtube_job",
                         "video_pk": video_pk,
                         "video_id": video_id,
                         "error": str(exc) or exc.__class__.__name__,
@@ -7717,7 +7717,7 @@ def process_new_lead_autodownload(*, limit: int = 1) -> bool:
                 to_state=target_state,
                 detail={
                     "mechanism": "cron_poll",
-                    "helper": "_enqueue_admin_operation_ingest_youtube_job",
+                    "helper": "_enqueue_lead_operation_ingest_youtube_job",
                     "video_pk": video_pk,
                     "video_id": video_id,
                     "job_id": enqueue_row.get("job_id"),
@@ -10557,7 +10557,7 @@ def _fetch_scoped_video_row_with_scope(
     return conn.execute(sql, params).fetchone()
 
 
-def _format_admin_workspace_elapsed(started_at: Any, finished_at: Any) -> str:
+def _format_lead_workspace_elapsed(started_at: Any, finished_at: Any) -> str:
     if not started_at:
         return ""
     try:
@@ -10577,7 +10577,7 @@ def _format_admin_workspace_elapsed(started_at: Any, finished_at: Any) -> str:
     return f"{hours}h {minutes}m" if minutes else f"{hours}h"
 
 
-def _admin_workspace_job_selects() -> str:
+def _lead_workspace_job_selects() -> str:
     return """
             (
                 SELECT j.id
@@ -10636,7 +10636,7 @@ def _admin_workspace_job_selects() -> str:
     """
 
 
-def _build_admin_workspace_video(row: Any, *, brand_id: str, workspace_kind: str) -> Dict[str, Any]:
+def _build_lead_workspace_video(row: Any, *, brand_id: str) -> Dict[str, Any]:
     video_url = str(row[4] or "").strip()
     source_href = video_url if video_url.startswith(("http://", "https://")) else ""
     if not source_href:
@@ -10646,7 +10646,7 @@ def _build_admin_workspace_video(row: Any, *, brand_id: str, workspace_kind: str
     active_started_at = row[9]
     active_attempts = int(row[10] or 0)
     active_max_attempts = int(row[11] or 0)
-    completed_elapsed = _format_admin_workspace_elapsed(row[12], row[13])
+    completed_elapsed = _format_lead_workspace_elapsed(row[12], row[13])
     is_ready = str(row[6] or "").strip().lower() == "downloaded" and str(row[7] or "").strip().lower() == "done"
     is_processing = not is_ready and bool(row[8])
     status_detail = ""
@@ -10674,8 +10674,7 @@ def _build_admin_workspace_video(row: Any, *, brand_id: str, workspace_kind: str
         "is_ready": is_ready,
         "download_status_url": (
             url_for(
-                "video_shorts_bp.admin_operation_download_status",
-                workspace_kind=workspace_kind,
+                "video_shorts_bp.admin_operation_lead_download_status",
                 brand_id=brand_id,
                 video_pk=int(row[0]),
                 job_id=str(row[8]),
@@ -10684,14 +10683,14 @@ def _build_admin_workspace_video(row: Any, *, brand_id: str, workspace_kind: str
             else ""
         ),
         "generate_url": url_for(
-            f"video_shorts_bp.admin_operation_generate_{workspace_kind}_short",
+            "video_shorts_bp.admin_operation_generate_lead_short",
             brand_id=brand_id,
             video_pk=int(row[0]),
         ),
     }
 
 
-def _admin_workspace_preview_ready(video_id: str) -> bool:
+def _lead_workspace_preview_ready(video_id: str) -> bool:
     clean_video_id = str(video_id or "").strip()
     if not clean_video_id:
         return False
@@ -24000,7 +23999,7 @@ def admin_operation_lead_workspace(brand_id: str):
         rows = conn.execute(
             f"""
             SELECT id, video_id, title, thumbnail_url, video_url, duration_seconds, download_status, transcript_status
-                 , {_admin_workspace_job_selects()}
+                 , {_lead_workspace_job_selects()}
             FROM youtube_videos
             WHERE owner_user_id = ? AND brand_id = ?
             ORDER BY id DESC
@@ -24010,7 +24009,7 @@ def admin_operation_lead_workspace(brand_id: str):
     finally:
         conn.close()
     first_video_id = int(first_row[0]) if first_row and first_row[0] is not None else None
-    videos = [_build_admin_workspace_video(row, brand_id=scope["brand_id"], workspace_kind="lead") for row in rows]
+    videos = [_build_lead_workspace_video(row, brand_id=scope["brand_id"]) for row in rows]
     videos.sort(key=lambda video: (video["id"] != first_video_id, -video["id"]))
     selected_plan_entries: List[Dict[str, Any]] = []
     first_video = next((video for video in videos if video["id"] == first_video_id), None)
@@ -24032,174 +24031,95 @@ def admin_operation_customer_workspace(brand_id: str):
     """Admin-only workspace for a revalidated converted autopilot customer."""
     scope = _require_admin_operation_scope(brand_id=brand_id, workspace_kind="customer")
     customer = _require_active_customer_workspace(scope)
-    conn = get_db_readonly()
-    try:
-        rows = conn.execute(
-            f"""
-            SELECT id, video_id, title, thumbnail_url, video_url, duration_seconds, download_status, transcript_status
-                 , {_admin_workspace_job_selects()}
-            FROM youtube_videos
-            WHERE owner_user_id = ? AND brand_id = ?
-            ORDER BY id DESC
-            """,
-            [scope["owner_user_id"], scope["brand_id"]],
-        ).fetchall()
-    finally:
-        conn.close()
-    videos = [_build_admin_workspace_video(row, brand_id=scope["brand_id"], workspace_kind="customer") for row in rows]
-    return render_template(
-        "shorts_admin_customer_workspace.html",
-        admin_title="Customer workspace",
-        customer={**customer, "brand_id": scope["brand_id"]},
-        videos=videos,
+    from app.video_shorts.routes.channels import render_my_videos_page_for_user
+
+    def _admin_item_urls(item):
+        video_pk = int(item["id"])
+        return {
+            "open_url": url_for("video_shorts_bp.admin_operation_generate_customer_short", brand_id=brand_id, video_pk=video_pk),
+            "retry_url": url_for("video_shorts_bp.admin_operation_retry_customer_video", brand_id=brand_id, video_pk=video_pk),
+        }
+
+    return render_my_videos_page_for_user(
+        current_user={"id": scope["owner_user_id"], "service_mode": "autopilot"},
+        brand_id=scope["brand_id"],
+        template_name="shorts_admin_customer_workspace.html",
+        item_url_builder=_admin_item_urls,
+        extra_context={
+            "admin_title": "Customer workspace",
+            "my_videos_base": "vs_admin_base.html",
+            "customer": {**customer, "brand_id": scope["brand_id"]},
+            "my_videos_status_url": url_for("video_shorts_bp.admin_operation_customer_processing_status", brand_id=brand_id),
+            "my_videos_ingest_url": url_for("video_shorts_bp.admin_operation_ingest_customer_video", brand_id=brand_id),
+            "generate_url_template": url_for("video_shorts_bp.admin_operation_generate_customer_short", brand_id=brand_id, video_pk=0),
+            "retry_url_template": url_for("video_shorts_bp.admin_operation_retry_customer_video", brand_id=brand_id, video_pk=0),
+            "allow_video_management": False,
+        },
     )
 
 
 @video_shorts_bp.route("/admin/operation/customer/<brand_id>/ingest", methods=["POST"])
 @require_admin
 def admin_operation_ingest_customer_video(brand_id: str):
-    """Create a target-owned local source row for a customer YouTube URL."""
+    """Start the shared My Videos ingest flow for a revalidated customer."""
     scope = _require_admin_operation_scope(brand_id=brand_id, workspace_kind="customer")
     _require_active_customer_workspace(scope)
-    raw_url = str(request.form.get("url") or "").strip()
-    youtube_video_id = extract_video_id(raw_url)
-    if not youtube_video_id:
-        flash("Enter a valid YouTube video URL.", "warning")
-        return redirect(url_for("video_shorts_bp.admin_operation_customer_workspace", brand_id=brand_id))
-    canonical_url = f"https://www.youtube.com/watch?v={youtube_video_id}"
-    try:
-        meta = fetch_video_metadata(youtube_video_id)
-    except YoutubeApiError as exc:
-        current_app.logger.warning("Customer workspace video metadata failed: %s", exc)
-        flash("Could not read that YouTube video right now.", "danger")
-        return redirect(url_for("video_shorts_bp.admin_operation_customer_workspace", brand_id=brand_id))
-    except Exception:
-        current_app.logger.exception("Customer workspace video metadata failed")
-        flash("Could not prepare that YouTube video right now.", "danger")
-        return redirect(url_for("video_shorts_bp.admin_operation_customer_workspace", brand_id=brand_id))
+    from app.video_shorts.routes import quick_short
 
-    conn = get_db()
+    data = request.get_json(silent=True) if request.is_json else request.form
+    raw_url = str((data.get("video_url") if data else "") or (data.get("url") if data else "") or "").strip()
     try:
-        local_channel_id = _get_or_create_local_uploads_channel(
-            conn,
-            owner_user_id=scope["owner_user_id"],
+        result = quick_short.ingest_youtube_for_user(
+            user_id=scope["owner_user_id"],
             brand_id=scope["brand_id"],
+            video_url=raw_url,
+            source="admin_customer_workspace",
+            job_payload_extra=admin_operation_job_metadata(scope),
         )
-        existing = conn.execute(
-            """
-            SELECT id
-            FROM youtube_videos
-            WHERE owner_user_id = ?
-              AND brand_id = ?
-              AND video_url = ?
-              AND lower(coalesce(video_id, '')) LIKE 'local_%%'
-            LIMIT 1
-            """,
-            [scope["owner_user_id"], scope["brand_id"], canonical_url],
-        ).fetchone()
-        if existing:
-            conn.commit()
-            flash("That video is already in this customer's My Videos.", "info")
-            return redirect(url_for("video_shorts_bp.admin_operation_customer_workspace", brand_id=brand_id))
-        local_video_id = f"local_{uuid4().hex}"
-        conn.execute(
-            """
-            INSERT INTO youtube_videos (
-                channel_id, video_id, title, published_at, thumbnail_url, fetch_transcript,
-                duration_seconds, view_count, like_count, comment_count, video_url,
-                local_bucket_channel_id, owner_user_id, brand_id, download_status,
-                transcript_status, subtitle_style
-            )
-            VALUES (?, ?, ?, ?, ?, FALSE, ?, ?, ?, ?, ?, ?, ?, ?, 'pending', 'pending', 'karaoke')
-            """,
-            [
-                local_channel_id,
-                local_video_id,
-                meta.get("title") or canonical_url,
-                meta.get("published_at"),
-                meta.get("thumbnail_url"),
-                meta.get("duration_seconds"),
-                meta.get("view_count"),
-                meta.get("like_count"),
-                meta.get("comment_count"),
-                canonical_url,
-                local_channel_id,
-                scope["owner_user_id"],
-                scope["brand_id"],
-            ],
-        )
-        video_pk_row = conn.execute(
-            """
-            SELECT id FROM youtube_videos
-            WHERE video_id = ? AND owner_user_id = ? AND brand_id = ?
-            ORDER BY id DESC
-            LIMIT 1
-            """,
-            [local_video_id, scope["owner_user_id"], scope["brand_id"]],
-        ).fetchone()
-        conn.commit()
-    finally:
-        conn.close()
-    track_event(
-        scope["acting_admin_id"],
-        "admin_operation_customer_video_ingested",
-        video_id=local_video_id,
-        metadata={
-            "acting_admin_id": scope["acting_admin_id"],
-            "target_owner_user_id": scope["owner_user_id"],
-            "target_brand_id": scope["brand_id"],
-            "video_pk": int(video_pk_row[0]) if video_pk_row else None,
-            "source_youtube_video_id": youtube_video_id,
-        },
-    )
-    flash("Video added to this customer's My Videos. Download it when ready.", "success")
+    except (ValueError, YoutubeApiError) as exc:
+        if _wants_json_response() or request.is_json:
+            return jsonify(ok=False, message=str(exc)), 400
+        flash(str(exc), "warning")
+        return redirect(url_for("video_shorts_bp.admin_operation_customer_workspace", brand_id=brand_id))
+    if _wants_json_response():
+        return jsonify(ok=True, session=quick_short._build_session_payload(result["session"]), job_id=result.get("job_id"), cached=result.get("cached"))
+    flash("Video added to this customer's My Videos and queued for processing.", "success")
     return redirect(url_for("video_shorts_bp.admin_operation_customer_workspace", brand_id=brand_id))
 
 
-@video_shorts_bp.route("/admin/operation/customer/<brand_id>/video/<int:video_pk>/download", methods=["POST"])
+@video_shorts_bp.route("/admin/operation/customer/<brand_id>/processing-status", methods=["GET"])
 @require_admin
-def admin_operation_download_customer_video(brand_id: str, video_pk: int):
-    """Queue a target-owned customer source for the prod ingest worker."""
+def admin_operation_customer_processing_status(brand_id: str):
+    scope = _require_admin_operation_scope(brand_id=brand_id, workspace_kind="customer")
+    _require_active_customer_workspace(scope)
+    from app.video_shorts.services.ingestion_progress import get_video_ingestion_statuses
+
+    video_pks = []
+    for value in (request.args.get("video_ids") or "").split(",")[:100]:
+        try:
+            video_pks.append(int(value))
+        except (TypeError, ValueError):
+            continue
+    statuses = get_video_ingestion_statuses(owner_user_id=scope["owner_user_id"], brand_id=scope["brand_id"], video_pks=video_pks)
+    return jsonify(ok=True, statuses=statuses)
+
+
+@video_shorts_bp.route("/admin/operation/customer/<brand_id>/video/<int:video_pk>/retry-processing", methods=["POST"])
+@require_admin
+def admin_operation_retry_customer_video(brand_id: str, video_pk: int):
     scope = _require_admin_operation_scope(brand_id=brand_id, workspace_kind="customer", video_pk=video_pk)
     _require_active_customer_workspace(scope)
-    row = _enqueue_admin_operation_ingest_youtube_job(scope, video_pk)
-    track_event(
-        scope["acting_admin_id"],
-        "admin_operation_customer_download_queued",
-        video_id=str(row["video_id"]),
-        metadata={
-            "acting_admin_id": scope["acting_admin_id"],
-            "target_owner_user_id": scope["owner_user_id"],
-            "target_brand_id": scope["brand_id"],
-            "video_pk": video_pk,
-            "job_id": row["job_id"],
-            "enqueue_kind": row["enqueue_kind"],
-        },
+    from app.video_shorts.routes.channels import retry_video_processing_for_user
+
+    return retry_video_processing_for_user(
+        video_pk=video_pk,
+        user_id=scope["owner_user_id"],
+        brand_id=scope["brand_id"],
+        job_payload_extra=admin_operation_job_metadata(scope),
     )
-    if _wants_json_response():
-        return jsonify(
-            success=True,
-            job_id=row["job_id"],
-            status=row["enqueue_kind"],
-            status_url=(
-                url_for(
-                    "video_shorts_bp.admin_operation_download_status",
-                    workspace_kind="customer",
-                    brand_id=brand_id,
-                    video_pk=video_pk,
-                    job_id=row["job_id"],
-                )
-                if row["job_id"]
-                else ""
-            ),
-            generate_url=url_for("video_shorts_bp.admin_operation_generate_customer_short", brand_id=brand_id, video_pk=video_pk),
-            already_ready=row["enqueue_kind"] == "already_downloaded",
-        )
-    flash("Video queued for download.", "success")
-    return redirect(url_for("video_shorts_bp.admin_operation_customer_workspace", brand_id=brand_id))
 
 
-def _enqueue_admin_operation_ingest_youtube_job(scope: Dict[str, str], video_pk: int) -> Dict[str, Any]:
+def _enqueue_lead_operation_ingest_youtube_job(scope: Dict[str, str], video_pk: int) -> Dict[str, Any]:
     conn = get_db_readonly()
     try:
         row = _fetch_scoped_video_row_with_scope(
@@ -24223,7 +24143,7 @@ def _enqueue_admin_operation_ingest_youtube_job(scope: Dict[str, str], video_pk:
     ready_for_generate = (
         download_status == "downloaded"
         and transcript_status == "done"
-        and _admin_workspace_preview_ready(video_id)
+        and _lead_workspace_preview_ready(video_id)
     )
     if ready_for_generate:
         return {"video_id": video_id, "job_id": None, "enqueue_kind": "already_downloaded"}
@@ -24279,7 +24199,7 @@ def admin_operation_download_lead_video(brand_id: str, video_pk: int):
     """Queue a target-owned lead source for the prod ingest worker."""
     scope = _require_admin_operation_scope(brand_id=brand_id, workspace_kind="lead", video_pk=video_pk)
     _require_active_lead_workspace(scope)
-    row = _enqueue_admin_operation_ingest_youtube_job(scope, video_pk)
+    row = _enqueue_lead_operation_ingest_youtube_job(scope, video_pk)
     track_event(
         scope["acting_admin_id"],
         "admin_operation_lead_download_queued",
@@ -24300,8 +24220,7 @@ def admin_operation_download_lead_video(brand_id: str, video_pk: int):
             status=row["enqueue_kind"],
             status_url=(
                 url_for(
-                    "video_shorts_bp.admin_operation_download_status",
-                    workspace_kind="lead",
+                    "video_shorts_bp.admin_operation_lead_download_status",
                     brand_id=brand_id,
                     video_pk=video_pk,
                     job_id=row["job_id"],
@@ -24316,19 +24235,11 @@ def admin_operation_download_lead_video(brand_id: str, video_pk: int):
     return redirect(url_for("video_shorts_bp.admin_operation_lead_workspace", brand_id=brand_id))
 
 
-@video_shorts_bp.route("/admin/operation/<workspace_kind>/<brand_id>/video/<int:video_pk>/download/<job_id>/status", methods=["GET"])
+@video_shorts_bp.route("/admin/operation/lead/<brand_id>/video/<int:video_pk>/download/<job_id>/status", methods=["GET"])
 @require_admin
-def admin_operation_download_status(workspace_kind: str, brand_id: str, video_pk: int, job_id: str):
-    workspace_kind = str(workspace_kind or "").strip().lower()
-    if workspace_kind not in {"customer", "lead"}:
-        abort(404)
-    scope = _require_admin_operation_scope(brand_id=brand_id, workspace_kind=workspace_kind, video_pk=video_pk)
-    if workspace_kind == "customer":
-        _require_active_customer_workspace(scope)
-        generate_endpoint = "video_shorts_bp.admin_operation_generate_customer_short"
-    else:
-        _require_active_lead_workspace(scope)
-        generate_endpoint = "video_shorts_bp.admin_operation_generate_lead_short"
+def admin_operation_lead_download_status(brand_id: str, video_pk: int, job_id: str):
+    scope = _require_admin_operation_scope(brand_id=brand_id, workspace_kind="lead", video_pk=video_pk)
+    _require_active_lead_workspace(scope)
     job = get_job(job_id, user_id=str(scope["owner_user_id"]))
     payload = (job or {}).get("payload") or {}
     if (
@@ -24364,7 +24275,7 @@ def admin_operation_download_status(workspace_kind: str, brand_id: str, video_pk
         is_ready=is_ready,
         download_status=download_status,
         transcript_status=transcript_status,
-        generate_url=url_for(generate_endpoint, brand_id=brand_id, video_pk=video_pk),
+        generate_url=url_for("video_shorts_bp.admin_operation_generate_lead_short", brand_id=brand_id, video_pk=video_pk),
     )
 
 

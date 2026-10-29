@@ -1063,6 +1063,9 @@ def create_youtube_ingest_session_for_user(
     video_url: str,
     meta: Dict[str, Any],
     source: str = "quick",
+    existing_video_pk: Optional[int] = None,
+    existing_video_id: Optional[str] = None,
+    job_payload_extra: Optional[Dict[str, Any]] = None,
 ) -> Dict[str, Any]:
     video_id = str(meta.get("video_id") or "").strip() or extract_video_id(video_url) or ""
     if not video_id:
@@ -1073,13 +1076,33 @@ def create_youtube_ingest_session_for_user(
     conn = get_db()
     try:
         ensure_brand_schema(conn)
-        video_pk = _upsert_video(conn, meta, None, user_id, brand_id)
+        if existing_video_pk:
+            existing_row = conn.execute(
+                """
+                SELECT video_id
+                FROM youtube_videos
+                WHERE id = ?
+                  AND CAST(owner_user_id AS VARCHAR) = CAST(? AS VARCHAR)
+                  AND brand_id IS NOT DISTINCT FROM ?
+                  AND deleted_at IS NULL
+                LIMIT 1
+                """,
+                [int(existing_video_pk), str(user_id), brand_id],
+            ).fetchone()
+            if not existing_row:
+                raise ValueError("Video not found.")
+            video_pk = int(existing_video_pk)
+            existing_video_id = str(existing_row[0] or existing_video_id or "").strip()
+        else:
+            video_pk = _upsert_video(conn, meta, None, user_id, brand_id)
         conn.commit()
         track_event(user_id, "video_uploaded", video_id=video_id)
     finally:
         conn.close()
     if not video_pk:
         raise RuntimeError("Video record could not be created.")
+    if existing_video_id:
+        video_id = str(existing_video_id).strip()
     payload = {"meta": meta}
     if source:
         payload["source"] = source
@@ -1091,18 +1114,20 @@ def create_youtube_ingest_session_for_user(
         payload=payload,
     )
     job_input_hash = sha256(f"quick-youtube:{user_id}:{brand_id}:{video_id}".encode("utf-8")).hexdigest()
+    job_payload = {
+        "quick_session_id": quick_session["id"],
+        "video_pk": int(video_pk),
+        "video_id": video_id,
+        "video_url": video_url,
+        "duration_seconds": meta.get("duration_seconds"),
+        "brand_id": brand_id,
+        "ingest_source": "user_youtube_import",
+    }
+    job_payload.update(job_payload_extra or {})
     enqueue_result = enqueue_job(
         user_id=user_id,
         job_type=JOB_TYPE_INGEST_YOUTUBE,
-        payload={
-            "quick_session_id": quick_session["id"],
-            "video_pk": int(video_pk),
-            "video_id": video_id,
-            "video_url": video_url,
-            "duration_seconds": meta.get("duration_seconds"),
-            "brand_id": brand_id,
-            "ingest_source": "user_youtube_import",
-        },
+        payload=job_payload,
         input_hash=job_input_hash,
         max_attempts=6,
     )
@@ -1124,6 +1149,35 @@ def create_youtube_ingest_session_for_user(
         "job_id": job.get("id"),
         "cached": enqueue_result.get("kind") == "cached",
     }
+
+
+def ingest_youtube_for_user(
+    *,
+    user_id: str,
+    brand_id: Optional[str],
+    video_url: str,
+    source: str = "quick",
+    existing_video_pk: Optional[int] = None,
+    existing_video_id: Optional[str] = None,
+    job_payload_extra: Optional[Dict[str, Any]] = None,
+) -> Dict[str, Any]:
+    video_id = extract_video_id(video_url)
+    if not video_id:
+        raise ValueError("Enter a valid YouTube video URL.")
+    meta = fetch_video_metadata(video_id)
+    duration = meta.get("duration_seconds")
+    if duration is not None and duration > MAX_QUICK_SHORT_SECONDS:
+        raise ValueError("The YouTube video must be 120 minutes or shorter.")
+    return create_youtube_ingest_session_for_user(
+        user_id=user_id,
+        brand_id=brand_id,
+        video_url=f"https://www.youtube.com/watch?v={video_id}",
+        meta=meta,
+        source=source,
+        existing_video_pk=existing_video_pk,
+        existing_video_id=existing_video_id,
+        job_payload_extra=job_payload_extra,
+    )
 
 
 @video_shorts_bp.route("/shorts/quick", methods=["GET"])
@@ -1189,24 +1243,18 @@ def quick_short_ingest_youtube():
     brand_id = current_brand_id()
     data = request.get_json(silent=True) if request.is_json else request.form
     video_url = str((data.get("video_url") if data else "") or "").strip()
-    video_id = extract_video_id(video_url)
-    if not video_id:
-        return _json_error("Enter a valid YouTube video URL.")
     try:
-        meta = fetch_video_metadata(video_id)
+        result = ingest_youtube_for_user(
+            user_id=current_user["id"],
+            brand_id=brand_id,
+            video_url=video_url,
+        )
+    except ValueError as exc:
+        return _json_error(str(exc))
     except YoutubeApiError as exc:
         return _json_error(str(exc))
     except Exception:
         return _json_error("We couldn't read that YouTube video right now.")
-    duration = meta.get("duration_seconds")
-    if duration is not None and duration > MAX_QUICK_SHORT_SECONDS:
-        return _json_error("The YouTube video must be 120 minutes or shorter.")
-    result = create_youtube_ingest_session_for_user(
-        user_id=current_user["id"],
-        brand_id=brand_id,
-        video_url=video_url,
-        meta=meta,
-    )
     return jsonify({
         "ok": True,
         "session": _build_session_payload(result["session"]),

@@ -1,36 +1,26 @@
-{% extends "vs_admin_base.html" %}
+{% extends "my_videos.html" %}
+{% import "partials/_my_videos_components.html" as mv_components %}
 
 {% block title %}Customer workspace{% endblock %}
-{% block admin_heading %}Customer workspace{% endblock %}
-{% block admin_subheading %}
-  <p>Prepare and manage Shorts in this customer's own brand.</p>
-{% endblock %}
 
 {% block extra_styles %}
-  <style>
-    .customer-workspace-header { display:flex; justify-content:space-between; align-items:center; gap:16px; margin-bottom:20px; padding:16px; border:1px solid rgba(45,212,191,.22); border-radius:12px; background:rgba(45,212,191,.05); }
-    .customer-workspace-ingest { display:grid; grid-template-columns:minmax(0,1fr) auto; gap:10px; margin-bottom:20px; }
-    .customer-workspace-video { display:grid; grid-template-columns:120px minmax(0,1fr) auto; gap:16px; align-items:center; padding:16px 0; border-bottom:1px solid rgba(255,255,255,.08); }
-    .customer-workspace-video:last-child { border-bottom:0; }
-    .customer-workspace-target-line { color:#fff; display:flex; flex-wrap:wrap; gap:6px; align-items:center; }
-    .customer-workspace-target-line .text-muted { color:#fff !important; }
-    .customer-workspace-target-actions { display:flex; flex-wrap:wrap; gap:8px; margin-top:8px; }
-    .customer-workspace-thumb, .customer-workspace-thumb-placeholder { width:120px; height:68px; object-fit:cover; border-radius:8px; background:rgba(255,255,255,.08); }
-    .customer-workspace-video-link { color:#fff; text-decoration:none; }
-    .customer-workspace-video-link:hover, .customer-workspace-video-link:focus { color:#fff; text-decoration:underline; }
-    .customer-workspace-status { color:rgba(255,255,255,.62); font-size:.86rem; margin-top:4px; }
-    .customer-workspace-actions { display:flex; flex-direction:column; gap:5px; align-items:flex-start; min-width:116px; }
-    .customer-workspace-empty { color:#fff !important; }
-    .workspace-download-detail { color:rgba(255,255,255,.58); font-size:.78rem; line-height:1.2; white-space:nowrap; }
-    .workspace-download-state { display:flex; flex-direction:column; gap:5px; align-items:flex-start; }
-    .workspace-download-spinner { display:inline-block; width:.85em; height:.85em; margin-right:6px; border:2px solid rgba(255,255,255,.4); border-top-color:#fff; border-radius:999px; vertical-align:-1px; animation:workspace-download-spin .75s linear infinite; }
-    @keyframes workspace-download-spin { to { transform:rotate(360deg); } }
-    @media (max-width:767.98px) { .customer-workspace-header, .customer-workspace-video { align-items:flex-start; flex-direction:column; grid-template-columns:1fr; } .customer-workspace-ingest { grid-template-columns:1fr; } .customer-workspace-actions { width:100%; } }
-  </style>
+{{ super() }}
+<style>
+  .customer-workspace-header { display:flex; justify-content:space-between; align-items:center; gap:16px; margin-bottom:20px; padding:16px; border:1px solid rgba(45,212,191,.22); border-radius:12px; background:rgba(45,212,191,.05); }
+  .customer-workspace-target-line { color:#fff; display:flex; flex-wrap:wrap; gap:6px; align-items:center; }
+  .customer-workspace-target-actions { display:flex; flex-wrap:wrap; gap:8px; margin-top:8px; }
+  @media (max-width:767.98px) { .customer-workspace-header { align-items:flex-start; flex-direction:column; } }
+</style>
 {% endblock %}
 
 {% block content %}
-  <section class="vs-admin-card p-3 p-lg-4">
+<div class="mv-shell" id="mv-shell"
+  data-coachmark-hidden="true"
+  data-coachmark-scope="admin-customer-{{ customer.brand_id }}"
+  data-autopilot-conversion="false"
+  data-counts-endpoint=""
+  data-ingest-endpoint="{{ my_videos_ingest_url }}">
+  <section class="mv-hero mv-hero--autopilot">
     <div class="customer-workspace-header">
       <div>
         <div class="text-uppercase small fw-semibold text-white">Target customer brand</div>
@@ -38,205 +28,25 @@
           <span>Working on: {{ customer.creator_name }} - {{ customer.brand_name }}</span>
           {% if customer.creator_email %}<span class="text-muted small">{{ customer.creator_email }}</span>{% endif %}
         </div>
-        {% if customer.youtube_url %}
-          <div class="customer-workspace-target-actions">
-            <a class="btn btn-sm btn-outline-light" href="{{ customer.youtube_url }}" target="_blank" rel="noopener noreferrer">Open YouTube</a>
-          </div>
-        {% endif %}
+        {% if customer.youtube_url %}<div class="customer-workspace-target-actions"><a class="btn btn-sm btn-outline-light" href="{{ customer.youtube_url }}" target="_blank" rel="noopener noreferrer">Open YouTube</a></div>{% endif %}
       </div>
       <form method="post" action="{{ url_for('video_shorts_bp.admin_operation_exit_workspace', workspace_kind='customer', brand_id=customer.brand_id) }}">
         <button type="submit" class="btn btn-outline-secondary">Exit workspace</button>
       </form>
     </div>
 
-    <h2 class="h5 mb-2">Add customer video</h2>
-    <form method="post" action="{{ url_for('video_shorts_bp.admin_operation_ingest_customer_video', brand_id=customer.brand_id) }}" class="customer-workspace-ingest">
-      <input type="url" name="url" class="form-control" placeholder="https://www.youtube.com/watch?v=..." required>
-      <button type="submit" class="btn btn-primary">Add to My Videos</button>
-    </form>
-
-    <h2 class="h5 mb-2">Customer videos</h2>
-    {% for video in videos %}
-      <article class="customer-workspace-video" data-download-row>
-        {% if video.source_href %}
-          <a href="{{ video.source_href }}" target="_blank" rel="noopener noreferrer" aria-label="Open {{ video.title }} on YouTube">
-            {% if video.thumbnail_url %}<img class="customer-workspace-thumb" src="{{ video.thumbnail_url }}" alt="">{% else %}<span class="customer-workspace-thumb-placeholder"></span>{% endif %}
-          </a>
-        {% else %}
-          {% if video.thumbnail_url %}<img class="customer-workspace-thumb" src="{{ video.thumbnail_url }}" alt="">{% else %}<span class="customer-workspace-thumb-placeholder"></span>{% endif %}
-        {% endif %}
-        <div>
-          <div class="fw-semibold">
-            {% if video.source_href %}
-              <a class="customer-workspace-video-link" href="{{ video.source_href }}" target="_blank" rel="noopener noreferrer">{{ video.title }}</a>
-            {% else %}
-              {{ video.title }}
-            {% endif %}
-          </div>
-          <div class="customer-workspace-status">Download: <span data-download-status-label>{% if video.is_ready %}ready{% elif video.is_processing %}processing{% else %}{{ video.download_status }}{% endif %}</span>{% if video.transcript_status %} · Transcript: <span data-transcript-status-label>{{ video.transcript_status }}</span>{% endif %}</div>
-        </div>
-        <div class="customer-workspace-actions">
-          {% if video.is_ready %}
-            <a class="btn btn-primary" href="{{ video.generate_url }}">Generate</a>
-            {% if video.ready_detail_label %}<span class="workspace-download-detail">{{ video.ready_detail_label }}</span>{% endif %}
-          {% elif video.is_processing %}
-            <div class="workspace-download-state" data-download-status-url="{{ video.download_status_url }}" data-generate-url="{{ video.generate_url }}" data-processing-started-at="{{ video.active_ingest_started_at }}" data-processing-attempt="{{ video.processing_attempt_label }}">
-              <button type="button" class="btn btn-secondary" disabled><span class="workspace-download-spinner" aria-hidden="true"></span>Processing</button>
-              <span class="workspace-download-detail" data-download-detail>{{ video.processing_attempt_label }}</span>
-            </div>
-          {% else %}
-            <form method="post" action="{{ url_for('video_shorts_bp.admin_operation_download_customer_video', brand_id=customer.brand_id, video_pk=video.id) }}" class="admin-download-form" data-generate-url="{{ video.generate_url }}">
-              <button type="submit" class="btn btn-outline-primary">Download</button>
-            </form>
-          {% endif %}
-        </div>
-      </article>
-    {% else %}
-      <p class="customer-workspace-empty mb-0">No source videos are scoped to this customer brand.</p>
-    {% endfor %}
+    <div class="mv-add-panel">
+      <div class="mv-tabs" role="tablist" aria-label="Add video"><button type="button" class="mv-tab is-active" role="tab" aria-selected="true">Video from URL<span class="mv-beta-tag">BETA</span></button></div>
+      <div class="mv-pane is-active"><div class="mv-pane-inner">
+        {{ mv_components.youtube_paste_box(button_label='Add to My Videos') }}
+        <div class="mv-add-hint">Works with any public YouTube video.</div>
+      </div></div>
+    </div>
+    <div id="mv-upload-feedback" class="mv-upload-feedback mt-3" aria-live="polite"></div>
+    {{ mv_components.ingestion_card_stack(videos, my_videos_status_url) }}
   </section>
-{% endblock %}
 
-{% block extra_scripts %}
-  <script>
-    (() => {
-      const pollTimers = new WeakMap();
-      const tickTimers = new WeakMap();
-      const formatElapsed = (startedAt, finishedAt) => {
-        const normalizeTimestamp = (value) => {
-          const text = String(value || '').trim();
-          if (!text) return '';
-          return /(?:z|[+-]\d{2}:?\d{2})$/i.test(text) ? text : `${text}Z`;
-        };
-        const startedMs = Date.parse(normalizeTimestamp(startedAt));
-        if (!Number.isFinite(startedMs)) return '';
-        const endMs = finishedAt ? Date.parse(normalizeTimestamp(finishedAt)) : Date.now();
-        const elapsed = Math.max(0, Math.floor(((Number.isFinite(endMs) ? endMs : Date.now()) - startedMs) / 1000));
-        if (elapsed < 60) return `${elapsed}s`;
-        const minutes = Math.floor(elapsed / 60);
-        const seconds = elapsed % 60;
-        if (minutes < 60) return seconds ? `${minutes}m ${seconds}s` : `${minutes}m`;
-        const hours = Math.floor(minutes / 60);
-        const remMinutes = minutes % 60;
-        return remMinutes ? `${hours}h ${remMinutes}m` : `${hours}h`;
-      };
-      const updateDetail = (state, finishedAt = '') => {
-        const detail = state.querySelector('[data-download-detail]');
-        if (!detail) return;
-        const elapsed = formatElapsed(state.dataset.processingStartedAt, finishedAt);
-        const attempt = state.dataset.processingAttempt || '';
-        detail.textContent = [finishedAt ? `completed in ${elapsed}` : elapsed, attempt].filter(Boolean).join(' · ');
-      };
-      const startTicker = (state) => {
-        window.clearInterval(tickTimers.get(state));
-        updateDetail(state);
-        tickTimers.set(state, window.setInterval(() => updateDetail(state), 1000));
-      };
-      const stopTicker = (state) => {
-        window.clearInterval(tickTimers.get(state));
-        tickTimers.delete(state);
-      };
-      const setReady = (row, generateUrl, startedAt = '', finishedAt = '') => {
-        const actions = row.querySelector('.customer-workspace-actions');
-        const statusLabel = row.querySelector('[data-download-status-label]');
-        if (statusLabel) statusLabel.textContent = 'ready';
-        actions.textContent = '';
-        const link = document.createElement('a');
-        link.className = 'btn btn-primary';
-        link.href = generateUrl;
-        link.textContent = 'Generate';
-        actions.appendChild(link);
-        const elapsed = formatElapsed(startedAt, finishedAt);
-        if (elapsed) {
-          const detail = document.createElement('span');
-          detail.className = 'workspace-download-detail';
-          detail.textContent = `completed in ${elapsed}`;
-          actions.appendChild(detail);
-        }
-      };
-      const setFailed = (state, message) => {
-        stopTicker(state);
-        const button = state.querySelector('button');
-        const detail = state.querySelector('[data-download-detail]');
-        if (button) {
-          button.className = 'btn btn-outline-danger';
-          button.textContent = 'Failed';
-        }
-        if (detail) detail.textContent = message || 'Download failed.';
-      };
-      const poll = (state) => {
-        window.clearTimeout(pollTimers.get(state));
-        startTicker(state);
-        const statusUrl = state.dataset.downloadStatusUrl;
-        if (!statusUrl) return;
-        fetch(statusUrl, {headers: {'Accept': 'application/json'}})
-          .then((response) => response.ok ? response.json() : Promise.reject(new Error(`HTTP ${response.status}`)))
-          .then((data) => {
-            if (data.started_at) state.dataset.processingStartedAt = data.started_at;
-            if (data.attempts && data.max_attempts) {
-              state.dataset.processingAttempt = `attempt ${data.attempts}/${data.max_attempts}`;
-            } else if (data.max_attempts) {
-              state.dataset.processingAttempt = 'waiting to start';
-            }
-            if (data.is_ready || data.status === 'done') {
-              stopTicker(state);
-              setReady(state.closest('[data-download-row]'), data.generate_url || state.dataset.generateUrl, state.dataset.processingStartedAt, data.finished_at || new Date().toISOString());
-              return;
-            }
-            if (data.status === 'failed' || data.status === 'cancelled') {
-              setFailed(state, data.error);
-              return;
-            }
-            updateDetail(state);
-            pollTimers.set(state, window.setTimeout(() => poll(state), 2000));
-          })
-          .catch(() => {
-            pollTimers.set(state, window.setTimeout(() => poll(state), 4000));
-          });
-      };
-      document.querySelectorAll('[data-download-status-url]').forEach(poll);
-      document.querySelectorAll('.admin-download-form').forEach((form) => {
-        form.addEventListener('submit', (event) => {
-          event.preventDefault();
-          const row = form.closest('[data-download-row]');
-          const actions = row.querySelector('.customer-workspace-actions');
-          const statusLabel = row.querySelector('[data-download-status-label]');
-          if (statusLabel) statusLabel.textContent = 'processing';
-          actions.textContent = '';
-          const state = document.createElement('div');
-          state.className = 'workspace-download-state';
-          state.dataset.generateUrl = form.dataset.generateUrl || '';
-          state.dataset.processingStartedAt = new Date().toISOString();
-          const button = document.createElement('button');
-          button.type = 'button';
-          button.className = 'btn btn-secondary';
-          button.disabled = true;
-          const spinner = document.createElement('span');
-          spinner.className = 'workspace-download-spinner';
-          spinner.setAttribute('aria-hidden', 'true');
-          button.append(spinner, 'Processing');
-          const detail = document.createElement('span');
-          detail.className = 'workspace-download-detail';
-          detail.setAttribute('data-download-detail', '');
-          state.append(button, detail);
-          actions.appendChild(state);
-          startTicker(state);
-          fetch(form.action, {method: 'POST', headers: {'Accept': 'application/json', 'X-Requested-With': 'XMLHttpRequest'}})
-            .then((response) => response.json().then((data) => ({response, data})))
-            .then(({response, data}) => {
-              if (!response.ok || !data.success) throw new Error(data.message || `HTTP ${response.status}`);
-              if (data.already_ready) {
-                setReady(row, data.generate_url || state.dataset.generateUrl);
-                return;
-              }
-              state.dataset.downloadStatusUrl = data.status_url || '';
-              state.dataset.generateUrl = data.generate_url || state.dataset.generateUrl;
-              poll(state);
-            })
-            .catch((error) => setFailed(state, error.message));
-          updateDetail(state);
-        });
-      });
-    })();
-  </script>
+  <h2 class="mv-source-heading">Customer videos</h2>
+  {{ mv_components.video_list(videos, false, true) }}
+</div>
 {% endblock %}
