@@ -71,6 +71,10 @@ OUTREACH_BLUR_WIDTH = 270
 OUTREACH_BLUR_HEIGHT = 480
 OUTREACH_BLUR_SIGMA = 20
 OUTREACH_BACKGROUND_DARKEN_OPACITY = 0.32
+CLIP_EDGE_SNAP_WINDOW_SECONDS = 0.250
+CLIP_EDGE_WORD_GUARD_SECONDS = 0.030
+CLIP_AUDIO_FADE_IN_SECONDS = 0.050
+CLIP_AUDIO_FADE_OUT_SECONDS = 0.150
 
 CROP_TARGET_SIZE = 1080  # reference crop resolution before resizing for display
 VIDEO_TARGET_WIDTH = DESIGN_GEOMETRY["width"]
@@ -444,6 +448,142 @@ def _snap_keep_range_boundaries_to_audio(
     return adjusted
 
 
+def _normalize_transcript_words_for_boundary_snap(
+    transcript_words: Optional[list[Dict[str, Any]]],
+) -> list[dict[str, float]]:
+    words: list[dict[str, float]] = []
+    for item in transcript_words or []:
+        if not isinstance(item, dict):
+            continue
+        try:
+            start = float(item.get("start"))
+            end = float(item.get("end"))
+        except (TypeError, ValueError):
+            continue
+        if start < 0 or end < start:
+            continue
+        words.append({"start": start, "end": end})
+    return sorted(words, key=lambda item: (item["start"], item["end"]))
+
+
+def _outer_word_boundary_context(
+    ranges: list[dict[str, float]],
+    transcript_words: Optional[list[Dict[str, Any]]],
+) -> dict[str, Optional[float]]:
+    """Find transcript neighbors around the selected outer words."""
+    words = _normalize_transcript_words_for_boundary_snap(transcript_words)
+    if not ranges or not words:
+        return {}
+    current_start = float(ranges[0]["start"])
+    current_end = float(ranges[-1]["end"])
+    first_index = min(range(len(words)), key=lambda index: abs(words[index]["start"] - current_start))
+    last_index = min(range(len(words)), key=lambda index: abs(words[index]["end"] - current_end))
+    if abs(words[first_index]["start"] - current_start) > CLIP_EDGE_SNAP_WINDOW_SECONDS:
+        first_index = -1
+    if abs(words[last_index]["end"] - current_end) > CLIP_EDGE_SNAP_WINDOW_SECONDS:
+        last_index = -1
+    return {
+        "previous_end": words[first_index - 1]["end"] if first_index > 0 else None,
+        "first_start": words[first_index]["start"] if first_index >= 0 else None,
+        "last_end": words[last_index]["end"] if last_index >= 0 else None,
+        "next_start": words[last_index + 1]["start"] if 0 <= last_index < len(words) - 1 else None,
+    }
+
+
+def _snap_outer_keep_range_boundaries_to_audio(
+    src_path: Path,
+    ranges: list[dict[str, float]],
+    transcript_words: Optional[list[Dict[str, Any]]],
+    *,
+    sample_rate: int = 16000,
+) -> tuple[list[dict[str, float]], dict[str, Optional[float]]]:
+    """Snap only the clip's outer edges between adjacent transcript words."""
+    context = _outer_word_boundary_context(ranges, transcript_words)
+    if not ranges or not context:
+        return ranges, context
+    current_start = float(ranges[0]["start"])
+    current_end = float(ranges[-1]["end"])
+    previous_end = context.get("previous_end")
+    first_start = context.get("first_start")
+    last_end = context.get("last_end")
+    next_start = context.get("next_start")
+    windows: list[tuple[str, float, float, float]] = []
+
+    if previous_end is not None and first_start is not None:
+        minimum_start = float(previous_end) + CLIP_EDGE_WORD_GUARD_SECONDS
+        search_start = max(minimum_start, current_start - CLIP_EDGE_SNAP_WINDOW_SECONDS)
+        search_end = min(float(first_start), current_start + CLIP_EDGE_SNAP_WINDOW_SECONDS)
+        windows.append(("start", search_start, search_end, minimum_start))
+    if last_end is not None and next_start is not None:
+        maximum_end = max(0.0, float(next_start) - CLIP_EDGE_WORD_GUARD_SECONDS)
+        search_start = max(float(last_end), current_end - CLIP_EDGE_SNAP_WINDOW_SECONDS)
+        search_end = min(maximum_end, current_end + CLIP_EDGE_SNAP_WINDOW_SECONDS)
+        windows.append(("end", search_start, search_end, maximum_end))
+    if not windows:
+        return ranges, context
+
+    pcm_window_start = max(0.0, min(min(item[1], item[2]) for item in windows))
+    pcm_window_end = max(max(item[1], item[2]) for item in windows)
+    try:
+        pcm = _extract_mono_pcm_window(
+            src_path,
+            window_start=pcm_window_start,
+            duration=max(0.001, pcm_window_end - pcm_window_start),
+            sample_rate=sample_rate,
+        )
+    except Exception as exc:
+        _log_multi_range_boundary_warning(
+            "Clip outer audio boundary analysis failed src=%s error=%s",
+            src_path.name,
+            exc,
+        )
+        return ranges, context
+
+    adjusted = [dict(item) for item in ranges]
+    adjustments: list[dict[str, Any]] = []
+    for kind, search_start, search_end, hard_boundary in windows:
+        original = current_start if kind == "start" else current_end
+        if search_end - search_start < 0.010:
+            candidate = hard_boundary
+        else:
+            candidate = _lowest_energy_time_in_pcm_window(
+                pcm,
+                window_start=pcm_window_start,
+                search_start=search_start,
+                search_end=search_end,
+                sample_rate=sample_rate,
+            )
+            if candidate is None:
+                candidate = hard_boundary
+        if kind == "start":
+            snapped = min(max(float(candidate), hard_boundary), adjusted[0]["end"] - 0.001)
+            adjusted[0]["start"] = round(max(0.0, snapped), 6)
+        else:
+            snapped = max(min(float(candidate), hard_boundary), adjusted[-1]["start"] + 0.001)
+            adjusted[-1]["end"] = round(snapped, 6)
+        if abs(snapped - original) > 0.0005:
+            adjustments.append({"boundary": kind, "from": round(original, 6), "to": round(snapped, 6)})
+    if adjustments:
+        try:
+            current_app.logger.info(
+                "Clip outer audio boundary snap src=%s adjustments=%s context=%s",
+                src_path.name,
+                json.dumps(adjustments, ensure_ascii=False),
+                json.dumps(context, ensure_ascii=False),
+            )
+        except Exception:
+            pass
+    return adjusted, context
+
+
+def _audio_edge_fade_filter(duration: float) -> str:
+    safe_duration = max(0.001, float(duration))
+    fade_in = min(CLIP_AUDIO_FADE_IN_SECONDS, safe_duration / 2.0)
+    fade_out = min(CLIP_AUDIO_FADE_OUT_SECONDS, safe_duration / 2.0)
+    fade_out_start = max(fade_in, safe_duration - fade_out)
+    return f"afade=t=in:st=0:d={fade_in:.3f},afade=t=out:st={fade_out_start:.6f}:d={fade_out:.3f}"
+
+
 def _trim_source_to_keep_ranges(
     src_path: Path,
     keep_ranges: list[Dict[str, Any]],
@@ -509,7 +649,8 @@ def _trim_source_to_keep_ranges(
     ]
     if has_audio:
         filter_parts.append(
-            f"[0:a]asettb=AVTB,asetnsamples=n=480,aselect='{select_expr}',asetpts='PTS-({origin_expr})/TB',asettb=AVTB,aresample=async=1:first_pts=0[a]"
+            f"[0:a]asettb=AVTB,asetnsamples=n=480,aselect='{select_expr}',asetpts='PTS-({origin_expr})/TB',"
+            f"asettb=AVTB,aresample=async=1:first_pts=0,{_audio_edge_fade_filter(total_duration)}[a]"
         )
     cmd.extend(["-filter_complex", ";".join(filter_parts), "-map", "[v]"])
     if has_audio:
@@ -559,6 +700,7 @@ def resolve_keep_ranges_for_trim(
     media_duration_seconds: Optional[float] = None,
     fallback_duration_seconds: Optional[float] = None,
     transcript_word_selection: bool = False,
+    transcript_words: Optional[list[Dict[str, Any]]] = None,
 ) -> tuple[Path, list[dict[str, float]], bool]:
     """Resolve the exact source ranges used by the multi-range ffmpeg trim."""
     ranges = _normalize_keep_ranges_for_trim(keep_ranges)
@@ -568,6 +710,12 @@ def resolve_keep_ranges_for_trim(
     has_audio = _has_audio_stream(normalized_src_path)
     if len(ranges) > 1 and has_audio:
         ranges = _snap_keep_range_boundaries_to_audio(normalized_src_path, ranges)
+    if ranges and has_audio and transcript_word_selection and transcript_words:
+        ranges, _ = _snap_outer_keep_range_boundaries_to_audio(
+            normalized_src_path,
+            ranges,
+            transcript_words,
+        )
     if ranges:
         resolution = resolve_clip_ranges(
             start=ranges[0]["start"],
@@ -4694,6 +4842,18 @@ def _compose_trimmed_with_background(
             music_audio_map = "[a_music_mix]"
         else:
             music_audio_map = "[music_bg]"
+    edge_audio_map: Optional[str] = None
+    if not podcast_mode:
+        edge_audio_source = music_audio_map or direct_timeline_audio_label
+        if not edge_audio_source and direct_audio_source is not None and _has_audio_stream(direct_audio_source):
+            edge_audio_source = "[2:a]"
+        if not edge_audio_source and clip_video_source and _has_audio_stream(clip_video_source):
+            edge_audio_source = "[1:a]"
+        if edge_audio_source:
+            filter_parts.append(
+                f"{edge_audio_source}{_audio_edge_fade_filter(duration)}[clip_edge_faded_a]"
+            )
+            edge_audio_map = "[clip_edge_faded_a]"
     filter_complex = ";".join(filter_parts)
 
     out_path.parent.mkdir(parents=True, exist_ok=True)
@@ -4727,7 +4887,7 @@ def _compose_trimmed_with_background(
             cmd.extend(["-stream_loop", "-1", "-i", str(direct_visual_override)])
     else:
         cmd.extend(["-i", str(clip_video_source)])
-    audio_map = direct_timeline_audio_label or "1:a?"
+    audio_map = edge_audio_map or direct_timeline_audio_label or "1:a?"
     if direct_audio_source is not None:
         cmd.extend(
             [
@@ -4739,7 +4899,7 @@ def _compose_trimmed_with_background(
                 str(direct_audio_source),
             ]
         )
-        audio_map = "2:a"
+        audio_map = edge_audio_map or "2:a"
     if shape_overlay_path:
         cmd.extend(["-loop", "1", "-i", str(shape_overlay_path)])
     for overlay_path in title_overlay_paths:
@@ -4753,7 +4913,7 @@ def _compose_trimmed_with_background(
         cmd.extend(["-stream_loop", "-1", "-i", str(overlay_asset_path)])
     if music_enabled:
         cmd.extend(["-stream_loop", "-1", "-i", str(music_path)])
-        audio_map = music_audio_map or audio_map
+        audio_map = edge_audio_map or music_audio_map or audio_map
     cmd.extend(
         [
             "-filter_complex",
@@ -4804,7 +4964,7 @@ def _compose_trimmed_with_background(
                 cmd.extend(["-stream_loop", "-1", "-i", str(direct_visual_override)])
         else:
             cmd.extend(["-i", str(clip_video_source)])
-        audio_map_music_only = direct_timeline_audio_label or "1:a?"
+        audio_map_music_only = edge_audio_map or direct_timeline_audio_label or "1:a?"
         if direct_audio_source is not None:
             cmd.extend(
                 [
@@ -4816,7 +4976,7 @@ def _compose_trimmed_with_background(
                     str(direct_audio_source),
                 ]
             )
-            audio_map_music_only = "2:a"
+            audio_map_music_only = edge_audio_map or "2:a"
         for overlay_path in title_overlay_paths:
             cmd.extend(["-loop", "1", "-i", str(overlay_path)])
         if effective_subtitle_overlay_specs:
@@ -4925,6 +5085,7 @@ def _cut_clip(
         duration = max(end - start, 1.0)
     out_path.parent.mkdir(parents=True, exist_ok=True)
     resolved_ffmpeg = _resolve_ffmpeg()
+    has_audio = _has_audio_stream(src)
     seek_start = float(keep_ranges[0]["start"]) if keep_ranges else max(0.0, float(start))
     input_duration = (
         max(0.001, float(keep_ranges[-1]["end"]) - seek_start)
@@ -4952,7 +5113,6 @@ def _cut_clip(
             }
             for item in keep_ranges
         ]
-        has_audio = _has_audio_stream(src)
         video_split_labels = "".join(
             f"[cut_range_v_src_{index}]" for index in range(len(relative_ranges))
         )
@@ -4978,7 +5138,10 @@ def _cut_clip(
         if has_audio:
             filter_parts.append(
                 "".join(concat_inputs)
-                + f"concat=n={len(relative_ranges)}:v=1:a=1[cut_v][cut_a]"
+                + f"concat=n={len(relative_ranges)}:v=1:a=1[cut_v][cut_a_raw]"
+            )
+            filter_parts.append(
+                f"[cut_a_raw]{_audio_edge_fade_filter(duration)}[cut_a]"
             )
             audio_map = "[cut_a]"
         else:
@@ -4987,6 +5150,9 @@ def _cut_clip(
                 + f"concat=n={len(relative_ranges)}:v=1:a=0[cut_v]"
             )
         video_map = "[cut_v]"
+    elif has_audio:
+        filter_parts.append(f"[0:a]{_audio_edge_fade_filter(duration)}[cut_a]")
+        audio_map = "[cut_a]"
     if subtitle_path:
         try:
             source_width, source_height = _probe_video_dimensions(src)

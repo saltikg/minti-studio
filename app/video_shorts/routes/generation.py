@@ -24887,27 +24887,42 @@ def _resolve_video_clip_ranges(
     resolved_source = source_path
     resolved_source_is_temp = False
     try:
-        if len(keep_ranges) > 1 and resolved_source is None:
+        transcript_words: List[Dict[str, Any]] = []
+        if transcript_word_selection:
+            transcript_conn = get_db_readonly()
+            try:
+                _, transcript_segments = _fetch_transcript(
+                    transcript_conn,
+                    video_id,
+                    video_pk=video_pk,
+                )
+            finally:
+                transcript_conn.close()
+            transcript_words = _flatten_transcript_words_for_snapping(transcript_segments)
+        ranges_to_resolve = keep_ranges or [{"start": start, "end": end}]
+        if (len(keep_ranges) > 1 or (transcript_word_selection and transcript_words)) and resolved_source is None:
             resolved_source, resolved_source_is_temp = _resolve_source_video(video_id, video_pk=video_pk)
         media_duration = get_or_backfill_media_duration_seconds(
             video_pk,
             video_id,
             source_path=resolved_source,
         )
-        if len(keep_ranges) > 1 and resolved_source is not None:
+        if resolved_source is not None and (len(keep_ranges) > 1 or (transcript_word_selection and transcript_words)):
             try:
                 _, snapped_ranges, _ = resolve_keep_ranges_for_trim(
                     resolved_source,
-                    keep_ranges,
+                    ranges_to_resolve,
                     media_duration_seconds=media_duration,
                     fallback_duration_seconds=db_duration_seconds,
                     transcript_word_selection=transcript_word_selection,
+                    transcript_words=transcript_words,
                 )
             except ValueError as exc:
                 return ClipRangeResolution(False, 0.0, 0.0, [], str(exc)), media_duration
-            keep_ranges = snapped_ranges
-            start = keep_ranges[0]["start"]
-            end = keep_ranges[-1]["end"]
+            if keep_ranges:
+                keep_ranges = snapped_ranges
+            start = snapped_ranges[0]["start"]
+            end = snapped_ranges[-1]["end"]
         resolution = resolve_clip_ranges(
             start=start,
             end=end,
@@ -24953,6 +24968,7 @@ def preview_keep_ranges(video_pk: int):
             media_duration_seconds=media_duration,
             fallback_duration_seconds=row[1],
             transcript_word_selection=True,
+            transcript_words=_flatten_transcript_words_for_snapping(segments),
         )
         speech_ranges = build_final_timeline_speech_ranges(
             segments,
@@ -31446,10 +31462,14 @@ def autoclip_video(video_pk):
     output_path = tenant_media.short_path(clip_filename)
     error_message = None
     try:
+        transcript_word_selection = (
+            str(plan_entry.get("selection_source") or "").strip().lower() == "transcript_words"
+            or str(plan_entry.get("origin") or "").strip().lower() == "ai"
+        )
         START_PAD = 0.25
         END_PAD = 0.5
-        adj_start = max(0.0, start - START_PAD)
-        adj_end = end + END_PAD
+        adj_start = start if transcript_word_selection else max(0.0, start - START_PAD)
+        adj_end = end if transcript_word_selection else end + END_PAD
         if duration_seconds and not podcast_audio_path:
             adj_end = min(adj_end, float(duration_seconds))
         edit_keep_ranges = _normalize_edit_keep_ranges(plan_entry.get("edit_keep_ranges"))
