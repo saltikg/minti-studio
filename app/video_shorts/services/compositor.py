@@ -1261,6 +1261,45 @@ def _resolve_title_shadow_style(subtitle_preset: Optional[str]) -> dict[str, Any
     }
 
 
+def _relative_luminance(hex_color: Optional[str]) -> float:
+    value = str(hex_color or "#FFFFFF").strip().lstrip("#")
+    if len(value) != 6 or any(char not in "0123456789abcdefABCDEF" for char in value):
+        value = "FFFFFF"
+    channels = [int(value[index:index + 2], 16) / 255.0 for index in (0, 2, 4)]
+    linear = [channel / 12.92 if channel <= 0.04045 else ((channel + 0.055) / 1.055) ** 2.4 for channel in channels]
+    return (0.2126 * linear[0]) + (0.7152 * linear[1]) + (0.0722 * linear[2])
+
+
+def _resolve_title_text_effects(
+    *,
+    subtitle_preset: Optional[str],
+    title_text_color: Optional[str],
+    title_bg_alpha: Optional[int],
+    title_outline_color: Optional[str],
+    title_outline_width: int,
+) -> dict[str, Any]:
+    """Resolve title effects once for both browser measurement and Pillow output."""
+    has_box = _normalize_alpha_percent(title_bg_alpha, DEFAULT_TITLE_BG_ALPHA) > 0
+    light_text = _relative_luminance(title_text_color) > 0.5
+    if has_box or not light_text:
+        return {
+            "outline_color": str(title_outline_color or "#000000"),
+            "outline_width": 0,
+            "shadow": {
+                "shadow_color": "",
+                "shadow_opacity": 0.0,
+                "shadow_offset_x": 0,
+                "shadow_offset_y": 0,
+                "shadow_blur_radius": 0,
+            },
+        }
+    return {
+        "outline_color": str(title_outline_color or "#000000"),
+        "outline_width": max(0, int(title_outline_width or 0)),
+        "shadow": _resolve_title_shadow_style(subtitle_preset),
+    }
+
+
 def _title_overlay_layout(
     text: str,
     *,
@@ -1296,10 +1335,14 @@ def _title_overlay_layout(
         raise RuntimeError("Pillow title render requested with empty text")
 
     side_margin = _title_side_margin(target_width)
-    try:
-        safe_outline_width = max(0, int(title_outline_width or 0))
-    except (TypeError, ValueError):
-        safe_outline_width = 0
+    effects = _resolve_title_text_effects(
+        subtitle_preset=subtitle_preset,
+        title_text_color=title_text_color,
+        title_bg_alpha=title_bg_alpha,
+        title_outline_color=title_outline_color,
+        title_outline_width=title_outline_width,
+    )
+    safe_outline_width = effects["outline_width"]
     # Reserve the outline width in the wrapping calculation so strokes stay in bounds.
     max_text_width = max(120, int(target_width) - (2 * (side_margin + safe_outline_width)))
     safe_line_spacing = int(line_spacing)
@@ -1359,6 +1402,7 @@ def _title_overlay_layout(
                 line_height=chosen_line_height, entries=line_entries, draw_y=draw_y,
                 block_height=block_height, side_margin=side_margin,
                 outline_width=safe_outline_width, max_text_width=max_text_width,
+                outline_color=effects["outline_color"], shadow=effects["shadow"],
                 text=display_text)
 
 
@@ -1403,7 +1447,7 @@ def _render_title_overlay(
     max_text_width = layout["max_text_width"]
     display_text = layout["text"]
     overlay = Image.new("RGBA", (int(target_width), int(target_height)), (0, 0, 0, 0))
-    shadow_style = _resolve_title_shadow_style(subtitle_preset)
+    shadow_style = layout["shadow"]
     shadow_layer = _build_blurred_text_shadow(
         line_entries,
         canvas_width=int(target_width),
@@ -1447,11 +1491,11 @@ def _render_title_overlay(
                     min(int(target_width), bg_right + bg_pad_x),
                     min(int(target_height), bg_bottom + bg_pad_y),
                 ],
-                radius=max(DESIGN_GEOMETRY["box_radius_min"], int(round(float(chosen_font_size) * DESIGN_GEOMETRY["box_radius"]))),
+                radius=max(DESIGN_GEOMETRY["box_radius_min"], int(round(float(chosen_font_size) * DESIGN_GEOMETRY["title_box_radius"]))),
                 fill=_hex_to_rgba(title_bg_color or DEFAULT_TITLE_BG_COLOR, int(round(bg_alpha * 255 / 100.0))),
             )
     text_fill = _hex_to_rgba(title_text_color or "#FFFFFF", 255)
-    outline_fill = _hex_to_rgba(title_outline_color or "#000000", 255)
+    outline_fill = _hex_to_rgba(layout["outline_color"], 255)
     for entry in line_entries:
         draw_args = {
             "font": chosen_font,
@@ -1529,39 +1573,6 @@ def _normalize_alpha_percent(value: Optional[int], default: int = DEFAULT_TITLE_
     except Exception:
         alpha = int(default)
     return max(0, min(100, alpha))
-
-
-def _title_drawtext_style(
-    *,
-    subtitle_preset: Optional[str],
-    title_bg_color: Optional[str],
-    title_bg_alpha: Optional[int],
-) -> str:
-    box_color = f"{_hex_to_drawtext_color(title_bg_color)}@{_normalize_alpha_percent(title_bg_alpha, DEFAULT_TITLE_BG_ALPHA) / 100:.2f}"
-    parts = [
-        "box=1",
-        f"boxcolor={box_color}",
-        f"boxborderw={TITLE_BOX_BORDER_WIDTH}",
-    ]
-    if str(subtitle_preset or "").strip() == "green_pop":
-        parts.extend([
-            "shadowx=0",
-            "shadowy=8",
-            "shadowcolor=black@0.55",
-        ])
-    if str(subtitle_preset or "").strip() == "blue_pop":
-        parts.extend([
-            "borderw=3",
-            "bordercolor=black@1.0",
-        ])
-    return ":".join(parts)
-
-
-def _title_visual_y(base_y: int, font_size: int) -> int:
-    # FFmpeg drawtext places glyphs slightly low inside boxed titles.
-    # Nudge upward a bit so the text feels centered within the background pill.
-    offset = max(3, int(round((font_size or 0) * 0.12)))
-    return max(0, int(base_y) - offset)
 
 
 def _overlay_y_expr(
@@ -2628,7 +2639,7 @@ def _compose_with_background(
     title_font_size: int = 30,
     title_margin: int = DEFAULT_TITLE_MARGIN,
     title_line_spacing: int = -4,
-    title_engine: str = "drawtext",
+    title_engine: str = "pillow",
     title_uppercase: bool = False,
     title_language: Optional[str] = None,
     title_bg_color: Optional[str] = None,
@@ -2680,35 +2691,28 @@ def _compose_with_background(
     ]
     final_label = "[ov]"
 
+    title_overlay_path = None
     if title_txt:
-        # Font dosyası
         test_font_file = _title_font_path_for_text(title_txt, font_path)
-
-        # Çok satırlı metni textfile ile kullan
-        debug_textfile = _write_debug_textfile(title_txt.replace("\n", "\n"))
-
-        # UI'dan gelen title_margin'i mantıklı aralığa sıkıştır
-        # Çok yukarı veya çok aşağı kaçmasın
-        title_style = _title_drawtext_style(
+        title_overlay_path, _ = _render_title_overlay(
+            title_txt,
+            font_path=test_font_file,
+            font_size=title_font_size,
+            target_width=VIDEO_TARGET_WIDTH,
+            target_height=VIDEO_TARGET_HEIGHT,
+            base_y=title_margin,
+            line_spacing=title_line_spacing,
+            title_text_color=title_text_color,
             subtitle_preset=subtitle_preset,
             title_bg_color=title_bg_color,
             title_bg_alpha=title_bg_alpha,
+            uppercase=bool(title_uppercase),
+            title_language=title_language,
+            video_top_limit=None,
         )
-
-        debug_drawtext = (
-            f"{final_label}drawtext="
-            f"fontfile='{test_font_file}':"
-            f"textfile='{_escape_ass_path(debug_textfile)}':"
-            "x=(w-text_w)/2:"
-            f"y={title_layout['draw_y']}:"
-            f"fontsize={title_layout['font_size']}:"
-            f"fontcolor={_hex_to_drawtext_color(title_text_color, '#000000')}:"
-            "line_spacing=5:"
-            f"{title_style}:"
-            "[ov_title_debug]"
-        )
-        filter_parts.append(debug_drawtext)
-        final_label = "[ov_title_debug]"
+        filter_parts.append("[2:v]format=rgba[title_src]")
+        filter_parts.append(f"{final_label}[title_src]overlay=0:0:shortest=1[ov_title]")
+        final_label = "[ov_title]"
 
     if subtitle_path:
         style = _subtitle_force_style(
@@ -2742,6 +2746,10 @@ def _compose_with_background(
         str(bg_path),
         "-i",
         str(clip_path),
+    ]
+    if title_overlay_path:
+        cmd.extend(["-loop", "1", "-i", str(title_overlay_path)])
+    cmd.extend([
         "-filter_complex",
         filter_complex,
         "-map",
@@ -2760,7 +2768,7 @@ def _compose_with_background(
         "-movflags",
         "+faststart",
         str(out_path),
-    ]
+    ])
     try:
         run_media_subprocess(
             cmd,
@@ -2770,24 +2778,9 @@ def _compose_with_background(
             check=True,
             timeout=FFMPEG_RENDER_TIMEOUT,
         )
-    except subprocess.CalledProcessError:
-        if title_txt:
-            # Drawtext patlarsa başlıksız fallback
-            fallback_filter = ";".join(filter_parts[:2])
-            cmd[9] = fallback_filter        # filter_complex arg
-            cmd[11] = "[ov]"                # map video label
-            current_app.logger.info(
-                "Drawtext failed; retrying without title overlay for %s",
-                out_path.name,
-            )
-            run_media_subprocess(
-                cmd,
-                operation="compose_with_background_fallback",
-                context=f"output={out_path.name}",
-                output_paths=[out_path],
-                check=True,
-                timeout=FFMPEG_RENDER_TIMEOUT,
-            )
+    finally:
+        if title_overlay_path:
+            title_overlay_path.unlink(missing_ok=True)
 
 
 
@@ -2810,7 +2803,7 @@ def _compose_trimmed_with_background(
     title_font_size: int = 30,
     title_margin: int = DEFAULT_TITLE_MARGIN,
     title_line_spacing: int = -4,
-    title_engine: str = "drawtext",
+    title_engine: str = "pillow",
     title_uppercase: bool = False,
     title_language: Optional[str] = None,
     title_bg_color: Optional[str] = None,
@@ -2863,7 +2856,7 @@ def _compose_trimmed_with_background(
         raise FileNotFoundError(f"Source video not found: {src_path}")
     resolved_ffmpeg = _resolve_ffmpeg()
     podcast_mode = bool(audio_override_source and Path(audio_override_source).exists())
-    normalized_title_engine = DESIGN_GEOMETRY["title_engine"]  # Includes legacy drawtext designs.
+    normalized_title_engine = "pillow"
     direct_keep_ranges = _normalize_keep_ranges_for_trim(source_keep_ranges)
     if len(direct_keep_ranges) > 1:
         duration = max(
@@ -2925,7 +2918,7 @@ def _compose_trimmed_with_background(
             safe_subtitle_margin = int(subtitle_margin if subtitle_margin is not None else SUB_MARGIN_DEFAULT)
         except (TypeError, ValueError):
             safe_subtitle_margin = 60
-        normalized_title_engine = DESIGN_GEOMETRY["title_engine"]  # Includes legacy drawtext designs.
+        normalized_title_engine = "pillow"
         if overlay_aspect == "portrait":
             target_width = VIDEO_TARGET_WIDTH
             target_height = VIDEO_TARGET_HEIGHT
@@ -3028,35 +3021,6 @@ def _compose_trimmed_with_background(
                 )
                 final_label = "[pod_title_out]"
                 next_video_input_index += 1
-            else:
-                title_layout = _fit_title_text(
-                    _apply_title_case(title_txt, title_language, bool(title_uppercase)),
-                    font_path=test_font_file,
-                    font_size=safe_title_font_size,
-                    target_width=target_width,
-                    target_height=target_height,
-                    base_y=safe_title_margin,
-                    line_spacing=safe_title_line_spacing,
-                )
-                debug_textfile = _write_debug_textfile(title_layout["text"].replace("\n", "\n"))
-                title_style = _title_drawtext_style(
-                    subtitle_preset=subtitle_preset,
-                    title_bg_color=title_bg_color,
-                    title_bg_alpha=title_bg_alpha,
-                )
-                filter_parts.append(
-                    f"{final_label}drawtext="
-                    f"fontfile='{test_font_file}':"
-                    f"textfile='{_escape_ass_path(debug_textfile)}':"
-                    "x=(w-text_w)/2:"
-                    f"y={title_layout['draw_y']}:"
-                    f"fontsize={title_layout['font_size']}:"
-                    f"fontcolor={_hex_to_drawtext_color(title_text_color, '#000000')}:"
-                    f"line_spacing={safe_title_line_spacing}:"
-                    f"{title_style}:"
-                    "[ov_title]"
-                )
-                final_label = "[ov_title]"
         if effective_subtitle_path:
             style = _subtitle_force_style(
                 target_width=target_width,
@@ -4439,65 +4403,6 @@ def _compose_trimmed_with_background(
                 )
                 final_label = "[ov_title_debug]"
                 next_video_input_index += 1
-        else:
-            title_layout = _fit_title_text(
-                _apply_title_case(title_txt, title_language, bool(title_uppercase)),
-                font_path=test_font_file,
-                font_size=title_font_size,
-                target_width=target_width,
-                target_height=target_height,
-                base_y=title_margin,
-                line_spacing=safe_title_line_spacing_main,
-            )
-            debug_textfile = _write_debug_textfile(title_layout["text"].replace("\n", "\n"))
-            title_style = _title_drawtext_style(
-                subtitle_preset=subtitle_preset,
-                title_bg_color=title_bg_color,
-                title_bg_alpha=title_bg_alpha,
-            )
-
-            title_margin_custom = int(title_margin or DEFAULT_TITLE_MARGIN) != int(DEFAULT_TITLE_MARGIN)
-            if face_aware_layout_active and not title_margin_custom:
-                current_title_label = final_label
-                for idx, segment in enumerate(layout_segments):
-                    seg_start = float(segment.get("start") or 0.0)
-                    seg_end = float(segment.get("end") or duration)
-                    if str(segment.get("mode") or "fill") == "fit":
-                        title_y_expr = f"max(0,{face_aware_fit_metrics['title_bottom']:.2f}-text_h)".replace(",", r"\,")
-                    else:
-                        title_y_expr = str(title_layout["draw_y"])
-                    next_title_label = f"[ov_title_debug_{idx}]"
-                    enable_expr = f"between(t\\,{seg_start:.6f}\\,{seg_end:.6f})"
-                    filter_parts.append(
-                        f"{current_title_label}drawtext="
-                        f"fontfile='{test_font_file}':"
-                        f"textfile='{_escape_ass_path(debug_textfile)}':"
-                        "x=(w-text_w)/2:"
-                        f"y={title_y_expr}:"
-                        f"fontsize={title_layout['font_size']}:"
-                        f"fontcolor={_hex_to_drawtext_color(title_text_color, '#000000')}:"
-                        f"line_spacing={safe_title_line_spacing_main}:"
-                        f"{title_style}:"
-                        f"enable='{enable_expr}'"
-                        f"{next_title_label}"
-                    )
-                    current_title_label = next_title_label
-                final_label = current_title_label
-            else:
-                debug_drawtext = (
-                    f"{final_label}drawtext="
-                    f"fontfile='{test_font_file}':"
-                    f"textfile='{_escape_ass_path(debug_textfile)}':"
-                    "x=(w-text_w)/2:"
-                    f"y={title_layout['draw_y']}:"
-                    f"fontsize={title_layout['font_size']}:"
-                    f"fontcolor={_hex_to_drawtext_color(title_text_color, '#000000')}:"
-                    f"line_spacing={safe_title_line_spacing_main}:"
-                    f"{title_style}:"
-                    "[ov_title_debug]"
-                )
-                filter_parts.append(debug_drawtext)
-                final_label = "[ov_title_debug]"
     face_aware_subtitle_path: Optional[Path] = None
     anchored_subtitle_path: Optional[Path] = None
     if effective_subtitle_path:

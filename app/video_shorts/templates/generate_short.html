@@ -20943,7 +20943,7 @@ document.addEventListener("DOMContentLoaded", () => {
     const nextStyles = {left: `${left*scaleX}px`, right: "auto", top: `${top*scaleY}px`,
       width: `${(right-left)*scaleX}px`, height: `${(bottom-top)*scaleY}px`, padding: "0",
       minHeight: "0", display: (kind === "title" ? isTitleVisible() : isSubtitleVisible()) ? "block" : "none", lineHeight: "normal", letterSpacing: `${DESIGN_GEOMETRY.letter_spacing}px`,
-      borderRadius: `${Math.max(DESIGN_GEOMETRY.box_radius_min, Math.round(spec.font_size*DESIGN_GEOMETRY.box_radius))*scaleX}px`,
+      borderRadius: `${Math.max(DESIGN_GEOMETRY.box_radius_min, Math.round(spec.font_size*(kind === "title" ? DESIGN_GEOMETRY.title_box_radius : DESIGN_GEOMETRY.box_radius)))*scaleX}px`,
       backgroundColor: paintInput.backgroundColor || "transparent"};
     const svg = svgNode("svg", {viewBox: `${left} ${top} ${right-left} ${bottom-top}`, width: "100%", height: "100%", preserveAspectRatio: "xMinYMin meet", "aria-hidden": "true"});
     svg.style.overflow = "visible";
@@ -20976,7 +20976,7 @@ document.addEventListener("DOMContentLoaded", () => {
         ? (preset.active_color || inheritedTextColor)
         : inheritedTextColor;
       const stroke = kind === "title" ? spec.outline : (run.active && !spec.active_outline ? 0 : spec.outline);
-      text.setAttribute("stroke", stroke ? (preset.outline_color || "#000000") : "none");
+      text.setAttribute("stroke", stroke ? (spec.outline_color || "#000000") : "none");
       text.setAttribute("stroke-width", 2*(stroke || 0));
       const fillKind = run.active ? "active" : "inactive";
       if (kind === "caption" && (preset[`${fillKind}_fill_mode`] || preset.fill_mode) === "gradient") {
@@ -21001,7 +21001,19 @@ document.addEventListener("DOMContentLoaded", () => {
         shadowText.setAttribute("fill-opacity", Number(shadow.shadow_opacity));
         shadowText.setAttribute("stroke", "none");
         shadowText.setAttribute("data-preview-shadow", "1");
-        shadowText.removeAttribute("filter");
+        const blurRadius = Math.max(0, Number(shadow.shadow_blur_radius || 0));
+        if (blurRadius > 0) {
+          const filterId = `${svgNamespace}-title-shadow-blur`;
+          let shadowFilter = svg.querySelector(`#${CSS.escape(filterId)}`);
+          if (!shadowFilter) {
+            shadowFilter = svgNode("filter", {id: filterId, x: "-50%", y: "-50%", width: "200%", height: "200%"});
+            shadowFilter.appendChild(svgNode("feGaussianBlur", {stdDeviation: blurRadius}));
+            defs.appendChild(shadowFilter);
+          }
+          shadowText.setAttribute("filter", `url(#${filterId})`);
+        } else {
+          shadowText.removeAttribute("filter");
+        }
         shadowText.style.fill = shadow.shadow_color;
         shadowText.textContent = run.text;
         svg.appendChild(shadowText);
@@ -21136,6 +21148,8 @@ document.addEventListener("DOMContentLoaded", () => {
       caption_anchor: getCaptionAnchor(),
       line_spacing: Math.round(Number(getEditorField("title_line_spacing")?.value || -4)*(original ? height/renderFrameHeight : 1)),
       preset: subtitlePresetField?.value, caption_style: subtitleStyleField?.value, language: {{ (transcript_language or '')|tojson }},
+      title_text_color: getEditorField("title_text_color")?.value,
+      title_bg_alpha: Number(getEditorField("title_bg_alpha")?.value || 0),
       active_word: Number(previewSubtitle?.dataset.activeWord || 0),
     };
     if (original && getCaptionAnchor() === "bottom" && !initialSubtitleMarginCustom && !dirtyOverlayFields.has("sub_margin")) {

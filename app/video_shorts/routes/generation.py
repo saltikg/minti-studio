@@ -791,13 +791,13 @@ def _resolve_title_template_behavior(
         if template_font_key != resolved_font_key:
             continue
         return {
-            "title_engine": str(template.get("title_engine") or "drawtext").strip() or "drawtext",
+            "title_engine": "pillow",
             "title_uppercase": bool(template.get("title_uppercase")),
             "title_outline_color": str(template.get("title_outline_color") or "#000000").strip() or "#000000",
             "title_outline_width": max(0, int(template.get("title_outline_width") or 0)),
         }
     return {
-        "title_engine": "drawtext",
+        "title_engine": "pillow",
         "title_uppercase": False,
         "title_outline_color": "#000000",
         "title_outline_width": 0,

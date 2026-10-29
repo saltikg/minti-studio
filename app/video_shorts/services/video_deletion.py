@@ -989,6 +989,22 @@ def execute_video_purge_job(payload: dict[str, Any]) -> dict[str, Any]:
                     if asset.get("file_key")
                 )
 
+        if table_columns(conn, "free_tool_text_cache"):
+            active_source = conn.execute(
+                """
+                SELECT 1
+                FROM youtube_videos
+                WHERE video_id = ? AND deleted_at IS NULL
+                LIMIT 1
+                """,
+                [source_video_id],
+            ).fetchone()
+            if not active_source:
+                conn.execute(
+                    "DELETE FROM free_tool_text_cache WHERE youtube_video_id = ?",
+                    [source_video_id],
+                )
+
         if table_columns(conn, "shorts_video_legacy_owners"):
             conn.execute("DELETE FROM shorts_video_legacy_owners WHERE video_pk = ?", [video_pk])
         if "promoted_source_video_id" in table_columns(conn, "discovery_leads"):

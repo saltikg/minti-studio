@@ -1,7 +1,7 @@
 """Live preview geometry. Returns numbers and text only, never rendered frames."""
 from PIL import ImageFont
 from app.video_shorts.config import DESIGN_GEOMETRY as D, SUBTITLE_PRESETS
-from app.video_shorts.services.compositor import _title_overlay_layout, _resolve_title_shadow_style
+from app.video_shorts.services.compositor import _title_overlay_layout
 from app.video_shorts.services.transcript_service import _caption_frame_layout, _layout_wrapped_caption
 
 
@@ -24,9 +24,11 @@ def measure_design(data, *, title_font_path, caption_font_path, title_behavior):
     title = _title_overlay_layout(
         data.get('title') or ' ', font_path=str(title_font_path), font_size=title_size,
         target_width=width, target_height=height, base_y=int(data['title_top']),
-        line_spacing=int(data.get('line_spacing', -4)), title_text_color=None,
+        line_spacing=int(data.get('line_spacing', -4)), title_text_color=data.get('title_text_color'),
         subtitle_preset=data.get('preset'), uppercase=bool(title_behavior['title_uppercase']),
         video_top_limit=None, title_language=data.get('language'),
+        title_bg_alpha=data.get('title_bg_alpha'),
+        title_outline_color=title_behavior['title_outline_color'],
         title_outline_width=title_behavior['title_outline_width'],
     ) if str(data.get('title') or '').strip() else None
     title_result = dict(box=[0, 0, 1, 1], runs=[], lines=0, font_size=title_size)
@@ -42,8 +44,8 @@ def measure_design(data, *, title_font_path, caption_font_path, title_behavior):
         py = max(D['title_padding_min_y'], round(title['font_size']*D['title_padding_y']))
         title_result = dict(box=_box(_union(boxes), px, py, width, height), runs=runs,
                             lines=len(runs), font_size=title['font_size'],
-                            outline=title['outline_width'], anchor=title['draw_y'],
-                            shadow=_resolve_title_shadow_style(data.get('preset')))
+                            outline=title['outline_width'], outline_color=title['outline_color'],
+                            anchor=title['draw_y'], shadow=title['shadow'])
     font = ImageFont.truetype(str(caption_font_path), caption_size)
     active_size = max(1, caption_size + int(preset.get('active_font_size_delta') or 0))
     active_font = ImageFont.truetype(str(caption_font_path), active_size)
