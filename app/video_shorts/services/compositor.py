@@ -4091,17 +4091,17 @@ def _compose_trimmed_with_background(
                     fit_scaled = f"[layout_fit_{idx}]"
                     fit_bg = f"[layout_bg_trim_{idx}]"
                     filter_parts.append(
-                        f"{seg_trim}crop=iw*{_fmt(crop_w)}:ih*{_fmt(crop_h)}:"
-                        f"iw*{_fmt(crop_x)}:ih*{_fmt(crop_y)},"
-                        f"scale={target_width}:{face_aware_fit_frame_height}:force_original_aspect_ratio=increase,"
-                        f"crop={target_width}:{face_aware_fit_frame_height},"
+                        f"{seg_trim}scale={target_width}:-2,"
                         f"setsar=1,settb=AVTB{fit_scaled}"
                     )
                     filter_parts.append(
                         f"{fit_bg_labels[idx]}trim=duration={seg_duration:.6f},"
                         f"setpts=PTS-STARTPTS,settb=AVTB{fit_bg}"
                     )
-                    fit_overlay_y = _fmt(face_aware_fit_metrics["frame_top"])
+                    fit_overlay_y = (
+                        f"{_fmt(face_aware_fit_metrics['frame_top'])}"
+                        f"+({face_aware_fit_frame_height}-h)/2"
+                    )
                     filter_parts.append(
                         f"{fit_bg}{fit_scaled}overlay=(W-w)/2:{fit_overlay_y}:shortest=1,"
                         f"format=yuv420p,settb=AVTB{seg_out}"

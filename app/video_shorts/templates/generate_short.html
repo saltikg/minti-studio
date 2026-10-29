@@ -21129,6 +21129,23 @@ document.addEventListener("DOMContentLoaded", () => {
       return playhead >= start && (playhead < end || (index === segments.length - 1 && playhead <= end));
     }) || segments[0];
   };
+  const getAutoFitPreviewDims = () => {
+    if (getAutoLayoutPreviewPlacement()?.mode !== "fit") return null;
+    const source = cropperImages.top;
+    const sourceWidth = Number(source?.naturalWidth || naturalSize.width || 0);
+    const sourceHeight = Number(source?.naturalHeight || naturalSize.height || 0);
+    if (!sourceWidth || !sourceHeight) return null;
+    const width = getActiveRenderFrameWidth();
+    const fitBandHeight = Math.max(2, Math.floor((width * 9 / 16) / 2) * 2);
+    const scaledHeight = Math.max(2, Math.round((width * sourceHeight / sourceWidth) / 2) * 2);
+    const fitTop = Number(DESIGN_GEOMETRY.fit_top || 0);
+    return {
+      width,
+      height: scaledHeight,
+      y: fitTop + ((fitBandHeight - scaledHeight) / 2),
+    };
+  };
+  const getCurrentVideoPreviewDims = () => getAutoFitPreviewDims() || getOverlayDims();
   const longestRenderedCaptionGroup = () => {
     const transcript = String(getActiveClipCard()?.dataset.previewCaption || "").trim();
     if (!transcript) return "Sample subtitle line";
@@ -21352,7 +21369,8 @@ document.addEventListener("DOMContentLoaded", () => {
   };
 
   const applyPreviewLayout = ({ measure = true, measureKinds = null, repaintIfUnchanged = false } = {}) => {
-    const dims = getOverlayDims();
+    const autoFitDims = getAutoFitPreviewDims();
+    const dims = autoFitDims || getOverlayDims();
     const originalPreview = isOriginalCropAspect();
     syncCaptionPaintOwners();
     reframeSection?.classList.toggle("is-original-layout", originalPreview);
@@ -21408,11 +21426,13 @@ document.addEventListener("DOMContentLoaded", () => {
       getPositionBounds("title_margin", baseTitleHeight, activeRenderHeight).min,
       getPositionBounds("title_margin", baseTitleHeight, activeRenderHeight).max,
     );
-    const videoTop = clampRenderValue(
-      getNumericFieldValue(videoOverlayOffsetInput, dims.y),
-      0,
-      Math.max(0, activeRenderHeight - dims.height),
-    );
+    const videoTop = autoFitDims
+      ? dims.y
+      : clampRenderValue(
+          getNumericFieldValue(videoOverlayOffsetInput, dims.y),
+          0,
+          Math.max(0, activeRenderHeight - dims.height),
+        );
     const rawSubtitleMargin = getNumericFieldValue(subtitleMarginInput, renderFrameHeight - previewConfig.subtitleY - previewConfig.subtitleHeight);
     const subtitleMarginCustom = dirtyOverlayFields.has("sub_margin") || initialSubtitleMarginCustom;
     const subtitleBounds = getPositionBounds("sub_margin", subtitleHeight, activeRenderHeight);
@@ -21592,6 +21612,7 @@ document.addEventListener("DOMContentLoaded", () => {
     if (segmentKey === lastAutoLayoutPreviewSegmentKey) return;
     lastAutoLayoutPreviewSegmentKey = segmentKey;
     applyPreviewLayout({ measure: false });
+    drawPreviewFromCropper();
   }, 200);
   const clearPreviewCanvas = () => {
     if (!previewCanvas || !previewCtx) {
@@ -21990,11 +22011,17 @@ document.addEventListener("DOMContentLoaded", () => {
     if (!topCropper || !previewCanvas || !previewCtx) {
       return;
     }
-    const dims = getOverlayDims();
+    const autoFitDims = getAutoFitPreviewDims();
+    const dims = autoFitDims || getOverlayDims();
     if (!dims.width || !dims.height) {
       return;
     }
-    syncPreviewCanvasSize();
+    if (autoFitDims) {
+      previewCanvas.width = autoFitDims.width;
+      previewCanvas.height = autoFitDims.height;
+    } else {
+      syncPreviewCanvasSize();
+    }
     const canvasWidth = previewCanvas.width || dims.width;
     const canvasHeight = previewCanvas.height || dims.height;
     previewCtx.clearRect(0, 0, canvasWidth, canvasHeight);
@@ -22020,6 +22047,21 @@ document.addEventListener("DOMContentLoaded", () => {
       return;
     }
     try {
+      if (autoFitDims) {
+        const source = cropperImages.top;
+        previewCtx.drawImage(
+          source,
+          0,
+          0,
+          source.naturalWidth,
+          source.naturalHeight,
+          0,
+          0,
+          canvasWidth,
+          canvasHeight,
+        );
+        return;
+      }
       if (!effectiveSplit) {
         drawSavedCrop("top", isOriginalCropAspect() ? (originalZoomRect || { x: 0, y: 0, w: 1, h: 1 }) : currentPresetRatios, 0, canvasHeight);
         return;
