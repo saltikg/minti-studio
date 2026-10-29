@@ -368,7 +368,7 @@
                         class="form-select form-select-sm vs-input"
                         data-image-category-select
                         data-image-id="{{ image.id }}"
-                        data-update-url="{{ url_for('video_shorts_bp.update_static_image_category', image_id=image.id) }}"
+                        data-update-url="{{ url_for('video_shorts_bp.update_static_image_category', image_id=image.id) }}{{ static_asset_scope_suffix }}"
                       >
                         <option value="" {% if not image.category_id %}selected{% endif %}>Select</option>
                         {% for category in categories %}
@@ -384,7 +384,7 @@
                           type="checkbox"
                           role="switch"
                           data-image-background-toggle
-                          data-update-url="{{ url_for('video_shorts_bp.update_static_image_background', image_id=image.id) }}"
+                          data-update-url="{{ url_for('video_shorts_bp.update_static_image_background', image_id=image.id) }}{{ static_asset_scope_suffix }}"
                           {% if image.use_as_background %}checked{% endif %}
                         >
                       </div>
@@ -398,7 +398,7 @@
                       >
                         {% if is_selected %}Selected{% else %}Set as background{% endif %}
                       </button>
-                      <form method="post" action="{{ url_for('video_shorts_bp.delete_static_image', image_id=image.id) }}" class="m-0">
+                      <form method="post" action="{{ url_for('video_shorts_bp.delete_static_image', image_id=image.id) }}{{ static_asset_scope_suffix }}" class="m-0">
                         <button type="submit" class="btn btn-sm vs-btn vs-btn-danger w-100" data-confirm-message="Are you sure you want to remove this image?">
                           <span class="material-symbols-outlined" aria-hidden="true">delete_outline</span>
                           <span>Remove</span>
@@ -500,7 +500,7 @@
                       <span>{{ asset.file_ext|upper or 'FILE' }}</span>
                     </div>
                     <div class="static-card-actions">
-                      <form method="post" action="{{ url_for('video_shorts_bp.delete_static_image', image_id=asset.id) }}" class="m-0">
+                      <form method="post" action="{{ url_for('video_shorts_bp.delete_static_image', image_id=asset.id) }}{{ static_asset_scope_suffix }}" class="m-0">
                         <button type="submit" class="btn btn-sm vs-btn vs-btn-danger w-100" data-confirm-message="Are you sure you want to remove this subscribe animation?">
                           <span class="material-symbols-outlined" aria-hidden="true">delete_outline</span>
                           <span>Remove</span>
@@ -546,7 +546,7 @@
   const fileThumb = document.getElementById("static-file-thumb");
   const fileMeta = document.getElementById("static-file-meta");
   const uploadSubmitBtn = document.getElementById("static-upload-submit");
-  const backgroundSelectionUrl = "{{ url_for('video_shorts_bp.update_selected_background') }}";
+  const backgroundSelectionUrl = "{{ url_for('video_shorts_bp.update_selected_background') }}{{ static_asset_scope_suffix }}";
   let previewObjectUrl = null;
 
   const updateImageDimensions = (img) => {

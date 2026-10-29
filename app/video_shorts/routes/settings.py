@@ -2,6 +2,7 @@ from app.video_shorts.services import tenant_media
 import json
 import logging
 from pathlib import Path
+from urllib.parse import urlencode
 from uuid import uuid4
 
 from flask import flash, jsonify, redirect, render_template, request, url_for, g
@@ -26,6 +27,7 @@ from app.video_shorts.services.background_preferences import (
     load_background_preference,
     save_background_preference,
 )
+from app.video_shorts.services.admin_operation_scope import resolve_admin_operation_request_scope
 from app.video_shorts.services.comment_moderation import DEFAULT_COMMENT_MODERATION_PROMPT, _prompt_key
 from app.video_shorts.services.description_prompt_settings import (
     DEFAULT_DESCRIPTION_LANGUAGES,
@@ -48,6 +50,29 @@ from app.video_shorts.services.system_backgrounds import (
 
 
 logger = logging.getLogger(__name__)
+
+
+def _static_asset_scope(conn, current_user):
+    """Resolve settings assets to the validated customer/lead workspace tenant."""
+    acting_user_id = str((current_user or {}).get("id") or "").strip()
+    brand_id = current_brand_id()
+    requested_brand = str(request.args.get("admin_operation_brand") or "").strip()
+    requested_kind = str(request.args.get("admin_operation_kind") or "").strip().lower()
+    if not requested_brand and not requested_kind:
+        return acting_user_id, brand_id, {}
+    scope = resolve_admin_operation_request_scope(
+        conn,
+        current_user=current_user,
+        brand_id=requested_brand,
+        workspace_kind=requested_kind,
+    )
+    if not scope:
+        return None, None, None
+    query = {
+        "admin_operation_brand": scope["brand_id"],
+        "admin_operation_kind": scope["workspace_kind"],
+    }
+    return scope["owner_user_id"], scope["brand_id"], query
 
 
 def _brand_prompt_key(user_id: str | None, brand_id: str | None) -> str:
@@ -414,14 +439,18 @@ def description_prompt_settings_api():
 @video_shorts_bp.route("/settings/static-images", methods=["GET", "POST"])
 def static_images_page():
     current_user = getattr(g, "vs_current_user", None)
-    brand_id = current_brand_id()
     if not current_user:
         return redirect(url_for("video_shorts_bp.login", next=request.url))
 
     conn = get_db()
     ensure_brand_schema(conn)
+    asset_user_id, brand_id, scope_query = _static_asset_scope(conn, current_user)
+    if scope_query is None:
+        conn.close()
+        return jsonify(success=False, message="Invalid admin workspace."), 403
+    settings_url = url_for("video_shorts_bp.static_images_page", **scope_query)
     ensure_static_images_schema(conn)
-    ensure_static_image_categories_schema(conn, current_user.get("id"), brand_id=brand_id)
+    ensure_static_image_categories_schema(conn, asset_user_id, brand_id=brand_id)
 
     if request.method == "POST":
         wants_json = request.headers.get("X-Requested-With") == "XMLHttpRequest"
@@ -431,7 +460,7 @@ def static_images_page():
             asset_kind = "background"
         logger.info(
             "static_images_page POST received user_id=%s action=%s asset_kind=%s wants_json=%s media_backend=%s",
-            current_user.get("id"),
+            asset_user_id,
             action,
             asset_kind,
             wants_json,
@@ -446,14 +475,14 @@ def static_images_page():
                 if wants_json:
                     return jsonify(success=False, message=message), 400
                 flash(message, "warning")
-                return redirect(url_for("video_shorts_bp.static_images_page"))
+                return redirect(settings_url)
             if len(name) > 60:
                 conn.close()
                 message = "Category name is too long (max 60)."
                 if wants_json:
                     return jsonify(success=False, message=message), 400
                 flash(message, "warning")
-                return redirect(url_for("video_shorts_bp.static_images_page"))
+                return redirect(settings_url)
 
             existing = conn.execute(
                 """
@@ -461,7 +490,7 @@ def static_images_page():
                 FROM shorts_static_image_categories
                 WHERE user_id = ? AND brand_id = ? AND COALESCE(is_active, true) = true AND lower(name) = lower(?)
                 """,
-                [current_user.get("id"), brand_id, name],
+                [asset_user_id, brand_id, name],
             ).fetchone()
             if existing:
                 conn.close()
@@ -473,7 +502,7 @@ def static_images_page():
                         category={"id": str(existing[0]), "name": existing[1]},
                     ), 200
                 flash(message, "warning")
-                return redirect(url_for("video_shorts_bp.static_images_page"))
+                return redirect(settings_url)
 
             category_id = str(uuid4())
             row = conn.execute(
@@ -482,19 +511,19 @@ def static_images_page():
                 VALUES (?, ?, ?, ?, true, now())
                 RETURNING id, name
                 """,
-                [category_id, current_user.get("id"), brand_id, name],
+                [category_id, asset_user_id, brand_id, name],
             ).fetchone()
             conn.commit()
             conn.close()
             if wants_json:
                 return jsonify(success=True, category={"id": str(row[0]), "name": row[1]}), 200
             flash("Category added.", "success")
-            return redirect(url_for("video_shorts_bp.static_images_page"))
+            return redirect(settings_url)
 
         upload = request.files.get("image")
         logger.info(
             "static image upload request user_id=%s file_field_present=%s form_filename=%s",
-            current_user.get("id"),
+            asset_user_id,
             upload is not None,
             getattr(upload, "filename", "") if upload else "",
         )
@@ -509,14 +538,14 @@ def static_images_page():
         if asset_kind == "background" and not category_id:
             logger.warning(
                 "static image upload validation failed user_id=%s reason=missing_category",
-                current_user.get("id"),
+                asset_user_id,
             )
             conn.close()
             message = "Please choose a category."
             if wants_json:
                 return jsonify(success=False, message=message), 400
             flash(message, "warning")
-            return redirect(url_for("video_shorts_bp.static_images_page"))
+            return redirect(settings_url)
         category = None
         if asset_kind == "background":
             category = conn.execute(
@@ -526,12 +555,12 @@ def static_images_page():
                 WHERE id = ? AND user_id = ? AND COALESCE(is_active, true) = true
                   AND brand_id = ?
                 """,
-                [category_id, current_user.get("id"), brand_id],
+                [category_id, asset_user_id, brand_id],
             ).fetchone()
             if not category:
                 logger.warning(
                     "static image upload validation failed user_id=%s reason=category_not_found category_id=%s",
-                    current_user.get("id"),
+                    asset_user_id,
                     category_id,
                 )
                 conn.close()
@@ -539,11 +568,11 @@ def static_images_page():
                 if wants_json:
                     return jsonify(success=False, message=message), 400
                 flash(message, "warning")
-                return redirect(url_for("video_shorts_bp.static_images_page"))
+                return redirect(settings_url)
         if not upload or not upload.filename:
             logger.warning(
                 "static image upload validation failed user_id=%s reason=missing_file asset_kind=%s",
-                current_user.get("id"),
+                asset_user_id,
                 asset_kind,
             )
             conn.close()
@@ -551,7 +580,7 @@ def static_images_page():
             if wants_json:
                 return jsonify(success=False, message=message), 400
             flash(message, "warning")
-            return redirect(url_for("video_shorts_bp.static_images_page"))
+            return redirect(settings_url)
 
         filename = secure_filename(upload.filename)
         ext = Path(filename).suffix.lower()
@@ -570,7 +599,7 @@ def static_images_page():
         if ext not in allowed_exts:
             logger.warning(
                 "static image upload validation failed user_id=%s reason=unsupported_ext asset_kind=%s filename=%s ext=%s",
-                current_user.get("id"),
+                asset_user_id,
                 asset_kind,
                 filename,
                 ext,
@@ -580,7 +609,7 @@ def static_images_page():
             if wants_json:
                 return jsonify(success=False, message=message), 400
             flash(message, "warning")
-            return redirect(url_for("video_shorts_bp.static_images_page"))
+            return redirect(settings_url)
 
         try:
             upload.stream.seek(0, 2)
@@ -591,7 +620,7 @@ def static_images_page():
         if size_bytes is not None and size_bytes > max_bytes:
             logger.warning(
                 "static image upload validation failed user_id=%s reason=file_too_large asset_kind=%s filename=%s size_bytes=%s limit_bytes=%s",
-                current_user.get("id"),
+                asset_user_id,
                 asset_kind,
                 filename,
                 size_bytes,
@@ -602,14 +631,14 @@ def static_images_page():
             if wants_json:
                 return jsonify(success=False, message=message), 400
             flash(message, "warning")
-            return redirect(url_for("video_shorts_bp.static_images_page"))
+            return redirect(settings_url)
 
         stored_name = f"{uuid4().hex}{ext}"
-        key = _user_image_storage_key(current_user["id"], stored_name)
+        key = _user_image_storage_key(asset_user_id, stored_name)
         storage = get_media_storage()
         logger.info(
             "static image upload starting user_id=%s original_filename=%s stored_name=%s key=%s media_backend=%s storage_backend=%s size_bytes=%s",
-            current_user.get("id"),
+            asset_user_id,
             filename,
             stored_name,
             key,
@@ -623,7 +652,7 @@ def static_images_page():
                 raise ValueError("empty upload")
             logger.info(
                 "static image upload put_bytes begin user_id=%s key=%s content_type=%s payload_size=%s",
-                current_user.get("id"),
+                asset_user_id,
                 key,
                 upload.mimetype or "",
                 len(data),
@@ -635,13 +664,13 @@ def static_images_page():
             )
             logger.info(
                 "static image upload put_bytes success user_id=%s key=%s",
-                current_user.get("id"),
+                asset_user_id,
                 key,
             )
         except Exception:
             logger.exception(
                 "static image upload storage failure user_id=%s original_filename=%s stored_name=%s key=%s backend=%s",
-                current_user.get("id"),
+                asset_user_id,
                 filename,
                 stored_name,
                 key,
@@ -652,7 +681,7 @@ def static_images_page():
             if wants_json:
                 return jsonify(success=False, message=message), 500
             flash(message, "danger")
-            return redirect(url_for("video_shorts_bp.static_images_page"))
+            return redirect(settings_url)
 
         if not label:
             label = Path(filename).stem[:40] if filename else "Image"
@@ -661,7 +690,7 @@ def static_images_page():
             image_id = str(uuid4())
             logger.info(
                 "static image upload db insert begin user_id=%s image_id=%s stored_name=%s category_id=%s use_as_background=%s",
-                current_user.get("id"),
+                asset_user_id,
                 image_id,
                 stored_name,
                 category_id,
@@ -674,7 +703,7 @@ def static_images_page():
                 """,
                 [
                     image_id,
-                    current_user["id"],
+                    asset_user_id,
                     brand_id,
                     asset_kind,
                     category_id if asset_kind == "background" else None,
@@ -688,13 +717,13 @@ def static_images_page():
             conn.commit()
             logger.info(
                 "static image upload db insert success user_id=%s stored_name=%s",
-                current_user.get("id"),
+                asset_user_id,
                 stored_name,
             )
         except Exception:
             logger.exception(
                 "static image upload db failure user_id=%s stored_name=%s key=%s",
-                current_user.get("id"),
+                asset_user_id,
                 stored_name,
                 key,
             )
@@ -703,12 +732,12 @@ def static_images_page():
             if wants_json:
                 return jsonify(success=False, message=message), 500
             flash(message, "danger")
-            return redirect(url_for("video_shorts_bp.static_images_page"))
+            return redirect(settings_url)
         conn.close()
         if wants_json:
             return jsonify(success=True), 200
         flash("Image added.", "success")
-        return redirect(url_for("video_shorts_bp.static_images_page"))
+        return redirect(settings_url)
 
     rows = conn.execute(
         """
@@ -719,7 +748,7 @@ def static_images_page():
         WHERE i.user_id = ? AND i.brand_id = ? AND COALESCE(i.is_active, true) = true
         ORDER BY i.created_at DESC
         """,
-        [current_user.get("id"), brand_id],
+        [asset_user_id, brand_id],
     ).fetchall()
     category_rows = conn.execute(
         """
@@ -728,7 +757,7 @@ def static_images_page():
         WHERE user_id = ? AND brand_id = ? AND COALESCE(is_active, true) = true
         ORDER BY lower(name)
         """,
-        [current_user.get("id"), brand_id],
+        [asset_user_id, brand_id],
     ).fetchall()
     conn.close()
     images = []
@@ -746,13 +775,13 @@ def static_images_page():
             "use_as_background": bool(row[7]) if len(row) > 7 else False,
             "file_ext": row[8] or "",
             "asset_kind": row[9] or "background",
-            "image_url": _user_image_public_url(current_user.get("id"), row[2]),
+            "image_url": _user_image_public_url(asset_user_id, row[2]),
         }
         if item["asset_kind"] == "subscribe":
             subscribe_animations.append(item)
         else:
             images.append(item)
-    selected_background_key = load_background_preference(current_user.get("id"), brand_id)
+    selected_background_key = load_background_preference(asset_user_id, brand_id)
     system_images = []
     for system_path in list_system_background_paths():
         system_images.append(
@@ -773,6 +802,7 @@ def static_images_page():
         system_images=system_images,
         categories=categories,
         selected_background_key=selected_background_key,
+        static_asset_scope_suffix=("?" + urlencode(scope_query)) if scope_query else "",
     )
 
 
@@ -787,14 +817,17 @@ def podcast_audios_page():
 @video_shorts_bp.route("/settings/static-images/<image_id>/category", methods=["POST"])
 def update_static_image_category(image_id):
     current_user = getattr(g, "vs_current_user", None)
-    brand_id = current_brand_id()
     if not current_user:
         return jsonify(success=False, message="Unauthorized."), 401
 
     conn = get_db()
     ensure_brand_schema(conn)
+    asset_user_id, brand_id, scope_query = _static_asset_scope(conn, current_user)
+    if scope_query is None:
+        conn.close()
+        return jsonify(success=False, message="Invalid admin workspace."), 403
     ensure_static_images_schema(conn)
-    ensure_static_image_categories_schema(conn, current_user.get("id"), brand_id=brand_id)
+    ensure_static_image_categories_schema(conn, asset_user_id, brand_id=brand_id)
 
     image_row = conn.execute(
         """
@@ -803,7 +836,7 @@ def update_static_image_category(image_id):
         WHERE id = ? AND user_id = ? AND brand_id = ? AND COALESCE(is_active, true) = true
           AND COALESCE(asset_kind, 'background') = 'background'
         """,
-        [image_id, current_user.get("id"), brand_id],
+        [image_id, asset_user_id, brand_id],
     ).fetchone()
     if not image_row:
         conn.close()
@@ -820,7 +853,7 @@ def update_static_image_category(image_id):
         FROM shorts_static_image_categories
         WHERE id = ? AND user_id = ? AND brand_id = ? AND COALESCE(is_active, true) = true
         """,
-        [category_id, current_user.get("id"), brand_id],
+        [category_id, asset_user_id, brand_id],
     ).fetchone()
     if not category_row:
         conn.close()
@@ -832,7 +865,7 @@ def update_static_image_category(image_id):
         SET category_id = ?, updated_at = now()
         WHERE id = ? AND user_id = ? AND brand_id = ?
         """,
-        [category_id, image_id, current_user.get("id"), brand_id],
+        [category_id, image_id, asset_user_id, brand_id],
     )
     conn.commit()
     conn.close()
@@ -845,12 +878,15 @@ def update_static_image_category(image_id):
 @video_shorts_bp.route("/settings/static-images/<image_id>/background", methods=["POST"])
 def update_static_image_background(image_id):
     current_user = getattr(g, "vs_current_user", None)
-    brand_id = current_brand_id()
     if not current_user:
         return jsonify(success=False, message="Unauthorized."), 401
 
     conn = get_db()
     ensure_brand_schema(conn)
+    asset_user_id, brand_id, scope_query = _static_asset_scope(conn, current_user)
+    if scope_query is None:
+        conn.close()
+        return jsonify(success=False, message="Invalid admin workspace."), 403
     ensure_static_images_schema(conn)
 
     image_row = conn.execute(
@@ -860,7 +896,7 @@ def update_static_image_background(image_id):
         WHERE id = ? AND user_id = ? AND brand_id = ? AND COALESCE(is_active, true) = true
           AND COALESCE(asset_kind, 'background') = 'background'
         """,
-        [image_id, current_user.get("id"), brand_id],
+        [image_id, asset_user_id, brand_id],
     ).fetchone()
     if not image_row:
         conn.close()
@@ -878,7 +914,7 @@ def update_static_image_background(image_id):
         SET use_as_background = ?, updated_at = now()
         WHERE id = ? AND user_id = ? AND brand_id = ?
         """,
-        [use_as_background, image_id, current_user.get("id"), brand_id],
+        [use_as_background, image_id, asset_user_id, brand_id],
     )
     conn.commit()
     conn.close()
@@ -888,62 +924,72 @@ def update_static_image_background(image_id):
 @video_shorts_bp.route("/settings/static-images/background-selection", methods=["POST"])
 def update_selected_background():
     current_user = getattr(g, "vs_current_user", None)
-    brand_id = current_brand_id()
     if not current_user:
         return jsonify(success=False, message="Unauthorized."), 401
 
+    conn = get_db()
+    asset_user_id, brand_id, scope_query = _static_asset_scope(conn, current_user)
+    conn.close()
+    if scope_query is None:
+        return jsonify(success=False, message="Invalid admin workspace."), 403
+
     requested_key = (request.form.get("background_key") or "").strip()
     if requested_key:
-        resolved_key = _resolve_selected_background_key(current_user.get("id"), brand_id, requested_key)
+        resolved_key = _resolve_selected_background_key(asset_user_id, brand_id, requested_key)
         if not resolved_key:
             return jsonify(success=False, message="Background not found."), 404
-        save_background_preference(current_user.get("id"), brand_id, resolved_key)
+        save_background_preference(asset_user_id, brand_id, resolved_key)
         return jsonify(success=True, background_key=resolved_key), 200
 
-    save_background_preference(current_user.get("id"), brand_id, None)
+    save_background_preference(asset_user_id, brand_id, None)
     return jsonify(success=True, background_key=""), 200
 
 
 @video_shorts_bp.route("/settings/static-images/<image_id>/delete", methods=["POST"])
 def delete_static_image(image_id):
     current_user = getattr(g, "vs_current_user", None)
-    brand_id = current_brand_id()
     if not current_user:
         return redirect(url_for("video_shorts_bp.login", next=request.url))
-    if is_system_background_key(image_id):
-        flash("System images cannot be deleted.", "warning")
-        return redirect(url_for("video_shorts_bp.static_images_page"))
 
     conn = get_db()
     ensure_brand_schema(conn)
+    asset_user_id, brand_id, scope_query = _static_asset_scope(conn, current_user)
+    if scope_query is None:
+        conn.close()
+        return jsonify(success=False, message="Invalid admin workspace."), 403
+    settings_url = url_for("video_shorts_bp.static_images_page", **scope_query)
+    if is_system_background_key(image_id):
+        conn.close()
+        flash("System images cannot be deleted.", "warning")
+        return redirect(settings_url)
     ensure_static_images_schema(conn)
     row = conn.execute(
         """
         SELECT filename FROM shorts_static_images
         WHERE id = ? AND user_id = ? AND brand_id = ?
         """,
-        [image_id, current_user.get("id"), brand_id],
+        [image_id, asset_user_id, brand_id],
     ).fetchone()
     if not row:
         conn.close()
         flash("Image not found.", "warning")
-        return redirect(url_for("video_shorts_bp.static_images_page"))
+        return redirect(settings_url)
     conn.execute(
         """
         UPDATE shorts_static_images
         SET is_active = false, updated_at = now()
         WHERE id = ? AND user_id = ? AND brand_id = ?
         """,
-        [image_id, current_user.get("id"), brand_id],
+        [image_id, asset_user_id, brand_id],
     )
     conn.commit()
     conn.close()
-    selected_background_key = load_background_preference(current_user.get("id"), brand_id)
+    selected_background_key = load_background_preference(asset_user_id, brand_id)
     if selected_background_key == f"userbg:{image_id}":
-        save_background_preference(current_user.get("id"), brand_id, None)
+        save_background_preference(asset_user_id, brand_id, None)
     try:
-        _delete_user_image_asset(current_user.get("id"), str(row[0] or ""))
+        _delete_user_image_asset(asset_user_id, str(row[0] or ""))
     except Exception:
         pass
     flash("Image removed.", "success")
-    return redirect(url_for("video_shorts_bp.static_images_page"))
+    return redirect(settings_url)

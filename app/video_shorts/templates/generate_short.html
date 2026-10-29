@@ -9003,10 +9003,13 @@
                           </button>
                         </div>
                       </div>
+                      <div class="small mt-2">
+                        <a href="{{ url_for('video_shorts_bp.static_images_page') }}{{ static_audio_scope_query }}" class="link-secondary">Manage backgrounds</a>
+                      </div>
                       {% if not bg_visual_options %}
                         <div class="small text-warning mt-2 background-picker-empty">
                           Please upload a background image from
-                          <a href="{{ url_for('video_shorts_bp.static_images_page') }}" class="link-warning">Backgrounds</a>.
+                          <a href="{{ url_for('video_shorts_bp.static_images_page') }}{{ static_audio_scope_query }}" class="link-warning">Backgrounds</a>.
                         </div>
                       {% endif %}
                     </div>

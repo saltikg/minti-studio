@@ -14399,7 +14399,13 @@ def generate_short(video_pk):
         subscribe_visual_options=subscribe_visual_options,
         video_subscribe_overlay_key=video_subscribe_overlay_key,
         subscribe_visual_label=subscribe_visual_label,
-        background_preference_update_url=url_for("video_shorts_bp.update_selected_background"),
+        background_preference_update_url=url_for(
+            "video_shorts_bp.update_selected_background",
+            **({
+                "admin_operation_brand": editor_context["brand_id"],
+                "admin_operation_kind": editor_context["workspace_kind"],
+            } if editor_context["is_admin_operation"] else {}),
+        ),
         clip_coachmark_preference_url=url_for("video_shorts_bp.update_clip_coachmark_preference"),
         hide_clip_coachmark=hide_clip_coachmark,
         video_crop_aspect=video.get("crop_aspect") if video else None,
