@@ -8630,6 +8630,13 @@
                data-selected-podcast-short-ids='{{ (selected_podcast_overlay_short_ids or [])|tojson|safe }}'>
                 <div class="crop-modal-tab-panels">
                   <div class="crop-modal-tab-panel crop-modal-settings-panel crop-modal-layout-panel" data-crop-modal-panel="layout" hidden>
+                    <div class="control-group mb-3">
+                      <label class="form-label" for="export-resolution">Export quality</label>
+                      <select class="form-select form-select-sm" id="export-resolution" name="export_resolution">
+                        <option value="720" {% if selected_export_resolution != '1080' %}selected{% endif %}>Standard (720p)</option>
+                        <option value="1080" {% if selected_export_resolution == '1080' %}selected{% endif %}{% if not export_resolution_eligible %} disabled{% endif %}>HD (1080p){% if not export_resolution_eligible %} — Paid plans{% endif %}</option>
+                      </select>
+                    </div>
                     <div class="layout-top-row">
                       <div class="control-group" id="crop-aspect-selector">
                       <div class="controls{% if generate_v2 %} has-original-layout{% endif %}{% if face_aware_layout_available %} has-auto-layout{% endif %}" role="group" aria-label="Crop aspect ratio">
@@ -22896,6 +22903,7 @@ document.addEventListener("DOMContentLoaded", () => {
   });
 
   const shortDesignFieldNames = [
+    "export_resolution",
     "font",
     "sub_font",
     "title_font_size",

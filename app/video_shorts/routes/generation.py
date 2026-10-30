@@ -273,6 +273,7 @@ from app.video_shorts.services.user_events import prepare_transcript_completed_t
 from app.video_shorts.services.billing import (
     STRIPE_PUBLISHABLE_KEY,
     load_billing_user_state,
+    plan_is_paid,
     stripe_is_configured,
     user_has_managed_subscription,
 )
@@ -458,6 +459,7 @@ HIDE_CLIP_COACHMARK_PREFERENCE_KEY = "hide_clip_coachmark"
 SHORT_EDITOR_DEFAULTS_PREFERENCE_KEY = "short_editor_defaults"
 FACE_AWARE_DEFAULT_PREFERENCE_KEY = "face_aware_layout_default"
 SHORT_EDITOR_DEFAULT_FIELD_NAMES = (
+    "export_resolution",
     "font",
     "sub_font",
     "title_font_size",
@@ -963,6 +965,7 @@ def _normalize_title_display_mode(value: Any, seconds: Any = None) -> str:
 
 def _short_editor_config_defaults() -> Dict[str, Any]:
     return {
+        "export_resolution": "720",
         "font": DEFAULT_EDITOR_TITLE_FONT_KEY,
         "sub_font": DEFAULT_SUB_FONT_KEY,
         "title_font_size": DEFAULT_EDITOR_TITLE_FONT_SIZE,
@@ -1038,9 +1041,45 @@ def _load_short_editor_defaults(user_id: Optional[str], brand_id: Optional[str] 
     return {name: parsed.get(name) for name in SHORT_EDITOR_DEFAULT_FIELD_NAMES if name in parsed}
 
 
+def _owner_can_export_1080(user_id: Optional[str]) -> bool:
+    normalized_user_id = str(user_id or "").strip()
+    if not normalized_user_id:
+        return False
+    conn = None
+    try:
+        conn = get_db_readonly()
+        row = conn.execute(
+            """
+            SELECT COALESCE(plan_id, ''), lower(COALESCE(service_mode, ''))
+            FROM shorts_users
+            WHERE CAST(id AS VARCHAR) = CAST(? AS VARCHAR)
+            LIMIT 1
+            """,
+            [normalized_user_id],
+        ).fetchone()
+    except Exception as exc:
+        current_app.logger.warning("Export resolution eligibility lookup failed for user %s: %s", normalized_user_id, exc)
+        return False
+    finally:
+        if conn is not None:
+            conn.close()
+    return bool(row and (plan_is_paid(str(row[0] or "")) or str(row[1] or "") == "autopilot"))
+
+
+def _resolved_export_resolution(user_id: Optional[str], brand_id: Optional[str]) -> str:
+    stored = str(_load_short_editor_defaults(user_id, brand_id).get("export_resolution") or "720").strip()
+    return "1080" if stored == "1080" and _owner_can_export_1080(user_id) else "720"
+
+
+def _resolved_export_target(user_id: Optional[str], brand_id: Optional[str]) -> tuple[int, int]:
+    return (1080, 1920) if _resolved_export_resolution(user_id, brand_id) == "1080" else (720, 1280)
+
+
 def _clean_short_editor_default_payload(source: Any) -> Dict[str, Any]:
     defaults = _short_editor_config_defaults()
     payload: Dict[str, Any] = {}
+
+    payload["export_resolution"] = "1080" if str(source.get("export_resolution") or "720").strip() == "1080" else "720"
 
     font_key = _resolve_title_font_key(source.get("font") or defaults["font"])
     payload["font"] = font_key
@@ -9734,6 +9773,7 @@ def _build_render_job_options(
     plan_index: int,
     title: str,
     brand_id: Optional[str],
+    export_resolution: str = "720",
     crop_ratios: Dict[str, Any],
     crop_aspect: str,
     layout_mode: Optional[str],
@@ -9782,6 +9822,7 @@ def _build_render_job_options(
         "plan_index": int(plan_index),
         "title": (title or "").strip(),
         "brand_id": brand_id,
+        "export_resolution": "1080" if str(export_resolution or "720") == "1080" else "720",
         "crop_ratios": crop_ratios or {},
         "crop_aspect": crop_aspect or "landscape",
         "layout_mode": _normalize_layout_mode(layout_mode),
@@ -9828,7 +9869,7 @@ def _build_render_job_options(
     }
 
 
-RENDER_SETTINGS_HASH_VERSION = 2
+RENDER_SETTINGS_HASH_VERSION = 3
 RENDER_SETTINGS_HASH_PREFIX = f"v{RENDER_SETTINGS_HASH_VERSION}:"
 _LEGACY_OVERLAY_HASH_FIELDS = ("overlay_shapes",)
 _LEGACY_MUSIC_HASH_FIELDS = (
@@ -10162,6 +10203,7 @@ def _render_settings_options_for_plan_entry(
         plan_index=int(plan_entry.get("plan_index") or 0),
         title=plan_entry.get("title") or fallback_title,
         brand_id=brand_id,
+        export_resolution=_resolved_export_resolution(owner_user_id, brand_id),
         crop_ratios=_video_crop_ratios_from_mapping(video),
         crop_aspect=str(video.get("crop_aspect") or "landscape").strip() or "landscape",
         layout_mode=_effective_layout_mode_for_owner(owner_user_id, video.get("layout_mode")),
@@ -12991,6 +13033,12 @@ def generate_short(video_pk):
     )
 
     short_editor_defaults = _load_short_editor_defaults(editor_owner_user_id, brand_id)
+    export_resolution_eligible = _owner_can_export_1080(editor_owner_user_id)
+    selected_export_resolution = (
+        "1080"
+        if export_resolution_eligible and str(short_editor_defaults.get("export_resolution") or "720") == "1080"
+        else "720"
+    )
     raw_style_values = {
         "font": video.get("title_font_key"),
         "sub_font": video.get("subtitle_font_key"),
@@ -14599,6 +14647,8 @@ def generate_short(video_pk):
         selected_music_start_seconds=selected_music_start_seconds,
         selected_music_duck=selected_music_duck,
         selected_music_fade_out=selected_music_fade_out,
+        selected_export_resolution=selected_export_resolution,
+        export_resolution_eligible=export_resolution_eligible,
         debug_info=debug_info,
         clip_rows=clip_rows,
         clip_edit_words=clip_edit_words,
@@ -16221,6 +16271,8 @@ def save_short_editor_defaults():
     source = source or {}
     try:
         payload = _clean_short_editor_default_payload(source)
+        if not _owner_can_export_1080(owner_user_id):
+            payload["export_resolution"] = "720"
         invalid_assets = _invalid_overlay_image_asset_ids(
             payload.get("overlay_shapes") or [],
             owner_user_id=owner_user_id,
@@ -31373,6 +31425,7 @@ def autoclip_video(video_pk):
                 plan_index=plan_index,
                 title=plan_entry.get("title") or video_title,
                 brand_id=brand_id,
+                export_resolution=_resolved_export_resolution(video_owner_user_id or target_owner_user_id, brand_id),
                 crop_ratios=video_crop_ratios,
                 crop_aspect=video_crop_aspect,
                 layout_mode=video_layout_mode,
@@ -31694,8 +31747,13 @@ def autoclip_video(video_pk):
         font_path,
         font_exists,
     )
-    render_target_width = 720
-    render_target_height = 1280
+    if podcast_audio_path:
+        render_target_width, render_target_height = DESIGN_GEOMETRY["width"], DESIGN_GEOMETRY["height"]
+    else:
+        render_target_width, render_target_height = _resolved_export_target(
+            video_owner_user_id or target_owner_user_id,
+            brand_id,
+        )
     if str(video_crop_aspect or "").strip().lower() == "original" and not podcast_audio_path:
         try:
             source_info = _probe_video_stream_info(src_path, log=current_app.logger)
@@ -31752,6 +31810,36 @@ def autoclip_video(video_pk):
             sub_font_size,
             title_margin,
             sub_margin,
+        )
+    elif not podcast_audio_path:
+        render_scale = float(render_target_width) / float(DESIGN_GEOMETRY["width"])
+
+        def _scale_render_px(value: Any, *, minimum: Optional[int] = None) -> int:
+            try:
+                scaled = int(round(float(value) * render_scale))
+            except (TypeError, ValueError):
+                scaled = 0
+            return max(int(minimum), scaled) if minimum is not None else scaled
+
+        title_font_size = _scale_render_px(title_font_size, minimum=1)
+        sub_font_size = _scale_render_px(sub_font_size, minimum=1)
+        sub_margin = _scale_render_px(sub_margin, minimum=0)
+        title_margin = _scale_render_px(title_margin, minimum=0)
+        video_title_line_spacing = _scale_render_px(video_title_line_spacing)
+        video_date_top = _scale_render_px(video_date_top, minimum=0)
+        video_overlay_offset = _scale_render_px(video_overlay_offset, minimum=0)
+        title_template_behavior = dict(title_template_behavior)
+        title_template_behavior["title_outline_width"] = _scale_render_px(
+            title_template_behavior.get("title_outline_width", 0),
+            minimum=0,
+        )
+        current_app.logger.info(
+            "Export render target video_id=%s plan_index=%s resolution=%sx%s scale=%.3f",
+            vid,
+            plan_index,
+            render_target_width,
+            render_target_height,
+            render_scale,
         )
 
     temp_subs = []
@@ -31905,6 +31993,8 @@ def autoclip_video(video_pk):
                                 subtitle_bg_color=subtitle_bg_color,
                                 subtitle_bg_alpha=subtitle_bg_alpha,
                                 subtitle_preset=video_subtitle_preset,
+                                target_width=render_target_width,
+                                target_height=render_target_height,
                             )
                     else:
                         subtitle_srt = _build_ass_karaoke_for_clip(
@@ -31920,6 +32010,8 @@ def autoclip_video(video_pk):
                             subtitle_bg_color=subtitle_bg_color,
                             subtitle_bg_alpha=subtitle_bg_alpha,
                             subtitle_preset=video_subtitle_preset,
+                            target_width=render_target_width,
+                            target_height=render_target_height,
                         )
                 if subtitle_srt:
                     temp_subs.append(subtitle_srt)
@@ -31982,6 +32074,8 @@ def autoclip_video(video_pk):
                             subtitle_bg_color=subtitle_bg_color,
                             subtitle_bg_alpha=subtitle_bg_alpha,
                             subtitle_preset=video_subtitle_preset,
+                            target_width=render_target_width,
+                            target_height=render_target_height,
                         )
                 else:
                     subtitle_srt = _build_ass_karaoke_for_clip(
@@ -31997,6 +32091,8 @@ def autoclip_video(video_pk):
                         subtitle_bg_color=subtitle_bg_color,
                         subtitle_bg_alpha=subtitle_bg_alpha,
                         subtitle_preset=video_subtitle_preset,
+                        target_width=render_target_width,
+                        target_height=render_target_height,
                     )
             else:
                 subtitle_srt = _build_srt_for_clip(segments, adj_start, adj_end)
@@ -32436,6 +32532,8 @@ def autoclip_video(video_pk):
                 outreach_layout=outreach_render,
                 source_keep_ranges=compose_keep_ranges,
                 low_memory_demo=discovery_demo_job,
+                render_target_width=render_target_width,
+                render_target_height=render_target_height,
                 )
             if face_aware_layout_result and face_aware_layout_result.get("enabled"):
                 resolved_layout_segments = compose_crop_settings.get("resolved_layout_segments")

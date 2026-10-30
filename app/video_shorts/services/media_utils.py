@@ -1016,9 +1016,9 @@ def normalize_s3_source_video_for_upload(
             owner_user_id=owner_user_id,
         )
 
-    if height <= 720:
+    if height <= 1080:
         active_logger.info(
-            "normalize transcode skip video_id=%s key=%s path=%s codec=%s width=%s height=%s reason=height_lte_720",
+            "normalize transcode skip video_id=%s key=%s path=%s codec=%s width=%s height=%s reason=height_lte_1080",
             video_id,
             source_key,
             local_path,
@@ -1088,7 +1088,7 @@ def normalize_s3_source_video_for_upload(
             owner_user_id=owner_user_id,
         )
 
-    temp_output = local_path.with_name(f"{local_path.stem}.720p.{os.getpid()}{suffix}")
+    temp_output = local_path.with_name(f"{local_path.stem}.1080p.{os.getpid()}{suffix}")
     transcode_started_at = time.time()
     timeout_seconds = scale_media_timeout(
         max(SOURCE_FASTSTART_TIMEOUT_SECONDS * 4, FFMPEG_SHORT_TIMEOUT),
@@ -1105,7 +1105,7 @@ def normalize_s3_source_video_for_upload(
         "pipe:1",
         "-nostats",
         "-vf",
-        "scale=-2:720",
+        "scale=-2:1080",
         "-c:v",
         "libx264",
         "-crf",
@@ -1135,7 +1135,7 @@ def normalize_s3_source_video_for_upload(
         )
         run_ffmpeg_subprocess_with_progress(
             cmd,
-            operation="source_transcode_to_720p",
+            operation="source_transcode_to_1080p",
             context=f"video_id={video_id} key={source_key} target_key={upload_key}",
             duration_seconds=duration_seconds,
             output_paths=[temp_output],
@@ -1144,7 +1144,7 @@ def normalize_s3_source_video_for_upload(
             progress_callback=progress_callback,
         )
         if not temp_output.exists() or temp_output.stat().st_size <= 0:
-            raise RuntimeError("720p transcode output missing or empty")
+            raise RuntimeError("1080p transcode output missing or empty")
         output_size_bytes = int(temp_output.stat().st_size)
         put_file_for_owner(temp_output, upload_key, owner_user_id=owner_user_id)
         active_logger.info(

@@ -1602,8 +1602,9 @@ def _title_overlay_layout(
     min_font_size: int = TITLE_WRAP_MIN_FONT_SIZE,
 ) -> dict[str, Any]:
     """Measure title geometry without generating an image."""
+    render_scale = max(0.01, float(target_width) / float(DESIGN_GEOMETRY["width"]))
     font_size = max(1, int(round(font_size * DESIGN_GEOMETRY["font_scale"])))
-    min_font_size = min(font_size, min_font_size)
+    min_font_size = min(font_size, max(1, int(round(float(min_font_size) * render_scale))))
     display_text = _apply_title_case(text, title_language, uppercase)
     effective_font_path = str(ARABIC_FALLBACK_FONT_PATH) if contains_arabic_script(display_text) else font_path
     font = _load_title_font(effective_font_path, font_size)
@@ -1622,6 +1623,8 @@ def _title_overlay_layout(
         title_outline_color=title_outline_color,
         title_outline_width=title_outline_width,
     )
+    for key in ("shadow_offset_x", "shadow_offset_y", "shadow_blur_radius"):
+        effects["shadow"][key] = int(round(float(effects["shadow"].get(key) or 0) * render_scale))
     safe_outline_width = effects["outline_width"]
     # Reserve the outline width in the wrapping calculation so strokes stay in bounds.
     max_text_width = max(120, int(target_width) - (2 * (side_margin + safe_outline_width)))
@@ -1745,8 +1748,9 @@ def _render_title_overlay(
     draw = ImageDraw.Draw(overlay)
     bg_alpha = _normalize_alpha_percent(title_bg_alpha, DEFAULT_TITLE_BG_ALPHA)
     if bg_alpha > 0 and line_entries:
-        bg_pad_x = max(DESIGN_GEOMETRY["title_padding_min_x"], int(round(float(chosen_font_size) * DESIGN_GEOMETRY["title_padding_x"])))
-        bg_pad_y = max(DESIGN_GEOMETRY["title_padding_min_y"], int(round(float(chosen_font_size) * DESIGN_GEOMETRY["title_padding_y"])))
+        render_scale = max(0.01, float(target_width) / float(DESIGN_GEOMETRY["width"]))
+        bg_pad_x = max(int(round(DESIGN_GEOMETRY["title_padding_min_x"] * render_scale)), int(round(float(chosen_font_size) * DESIGN_GEOMETRY["title_padding_x"])))
+        bg_pad_y = max(int(round(DESIGN_GEOMETRY["title_padding_min_y"] * render_scale)), int(round(float(chosen_font_size) * DESIGN_GEOMETRY["title_padding_y"])))
         bg_left = int(target_width)
         bg_top = int(target_height)
         bg_right = 0
@@ -1771,7 +1775,7 @@ def _render_title_overlay(
                     min(int(target_width), bg_right + bg_pad_x),
                     min(int(target_height), bg_bottom + bg_pad_y),
                 ],
-                radius=max(DESIGN_GEOMETRY["box_radius_min"], int(round(float(chosen_font_size) * DESIGN_GEOMETRY["title_box_radius"]))),
+                radius=max(int(round(DESIGN_GEOMETRY["box_radius_min"] * render_scale)), int(round(float(chosen_font_size) * DESIGN_GEOMETRY["title_box_radius"]))),
                 fill=_hex_to_rgba(title_bg_color or DEFAULT_TITLE_BG_COLOR, int(round(bg_alpha * 255 / 100.0))),
             )
     text_fill = _hex_to_rgba(title_text_color or "#FFFFFF", 255)
@@ -1860,8 +1864,9 @@ def _overlay_y_expr(
     subtitle_path: Optional[Path],
     subtitle_margin: Optional[int],
     subtitle_font_size: Optional[int],
+    render_scale: float = 1.0,
 ) -> str:
-    safe_bottom = 220
+    safe_bottom = int(round(220 * max(0.01, float(render_scale))))
     if subtitle_path:
         try:
             font_size = int(subtitle_font_size or 0)
@@ -1892,6 +1897,7 @@ def _subtitle_force_style(
 ) -> str:
     clean_font = (subtitle_font or "DejaVu Sans").replace("'", "")
     normalized_subtitle_style = str(subtitle_style or "plain").strip().lower()
+    render_scale = max(0.01, float(target_width) / float(DESIGN_GEOMETRY["width"]))
     alignment = {"top": 8, "center": 5, "bottom": 2}[normalize_caption_anchor(caption_anchor)]
     base = (
         f"PlayResX={int(target_width)},"
@@ -1905,7 +1911,7 @@ def _subtitle_force_style(
         + f"PrimaryColour={_hex_to_ass_color_with_alpha(subtitle_text_color, subtitle_text_alpha, '#FFFFFF', DEFAULT_SUBTITLE_TEXT_ALPHA)},"
         + f"BackColour={_hex_to_ass_color_with_alpha(subtitle_bg_color, subtitle_bg_alpha, DEFAULT_SUBTITLE_BG_COLOR, DEFAULT_SUBTITLE_BG_ALPHA)},"
         + "BorderStyle=4,"
-        + "Outline=1,"
+        + f"Outline={max(1, int(round(render_scale)))},"
         + "Shadow=0,"
         + f"MarginV={subtitle_margin},"
         + f"Alignment={alignment},"
@@ -1970,20 +1976,23 @@ def _face_aware_fit_position_metrics(
     target_height: int = VIDEO_TARGET_HEIGHT,
     subtitle_font_size: int = DEFAULT_SUB_FONT_SIZE,
 ) -> Dict[str, float]:
+    design_scale = max(0.01, float(target_height) / float(DESIGN_GEOMETRY["height"]))
+    fit_gap = float(DESIGN_GEOMETRY["fit_caption_gap"]) * design_scale
+    safe_gap = 30.0 * design_scale
     frame_height = float(target_width) * 9.0 / 16.0
     frame_top = min(
-        max(0.0, FACE_AWARE_FIT_FRAME_TOP),
+        max(0.0, float(FACE_AWARE_FIT_FRAME_TOP) * design_scale),
         max(0.0, float(target_height) - frame_height),
     )
     frame_bottom = frame_top + frame_height
     caption_block_height = max(24.0, float(subtitle_font_size or DEFAULT_SUB_FONT_SIZE) * 2.0)
-    caption_top = min(float(target_height) - caption_block_height - 30.0, frame_bottom + DESIGN_GEOMETRY["fit_caption_gap"])
+    caption_top = min(float(target_height) - caption_block_height - safe_gap, frame_bottom + fit_gap)
     caption_margin_v = max(0.0, float(target_height) - caption_top - caption_block_height)
-    subscribe_y = min(float(target_height) - 30.0, caption_top + caption_block_height + DESIGN_GEOMETRY["fit_caption_gap"])
+    subscribe_y = min(float(target_height) - safe_gap, caption_top + caption_block_height + fit_gap)
     return {
         "frame_top": frame_top,
         "frame_bottom": frame_bottom,
-        "title_bottom": max(0.0, frame_top - DESIGN_GEOMETRY["fit_caption_gap"]),
+        "title_bottom": max(0.0, frame_top - fit_gap),
         "caption_top": caption_top,
         "caption_margin_v": caption_margin_v,
         "subscribe_y": subscribe_y,
@@ -1997,11 +2006,9 @@ def _face_aware_top_caption_subscribe_metrics(
     subtitle_top: int,
 ) -> Dict[str, float]:
     """Reserve two caption lines, then fit subscribe above the Shorts UI zone."""
-    design_scale = max(0.01, float(target_height) / float(DESIGN_GEOMETRY["height"]))
-    caption_top = float(subtitle_top) * design_scale
+    caption_top = float(subtitle_top)
     max_caption_height = (
         float(subtitle_font_size)
-        * design_scale
         * FACE_AWARE_TOP_CAPTION_MAX_LINES
         * FACE_AWARE_TOP_CAPTION_LINE_HEIGHT_MULTIPLIER
     )
@@ -2163,16 +2170,18 @@ def _face_aware_caption_top_for_block(
             target_height=target_height,
             subtitle_font_size=int(max(1, round(safe_block_height / 2.0))),
         )
-        return max(0.0, min(float(target_height) - safe_block_height, float(metrics["frame_bottom"]) + DESIGN_GEOMETRY["fit_caption_gap"]))
+        fit_gap = float(DESIGN_GEOMETRY["fit_caption_gap"]) * (float(target_height) / float(DESIGN_GEOMETRY["height"]))
+        return max(0.0, min(float(target_height) - safe_block_height, float(metrics["frame_bottom"]) + fit_gap))
     try:
         face_bottom = segment.get("caption_face_bottom")
         if face_bottom is not None:
-            min_top = FACE_AWARE_FILL_CAPTION_MIN_TOP
-            max_top = max(min_top, float(target_height) - FACE_AWARE_FILL_SUBSCRIBE_ROOM - safe_block_height)
-            return max(min_top, min(max_top, float(face_bottom) + FACE_AWARE_FILL_CAPTION_GAP))
+            design_scale = float(target_height) / float(DESIGN_GEOMETRY["height"])
+            min_top = FACE_AWARE_FILL_CAPTION_MIN_TOP * design_scale
+            max_top = max(min_top, float(target_height) - (FACE_AWARE_FILL_SUBSCRIBE_ROOM * design_scale) - safe_block_height)
+            return max(min_top, min(max_top, float(face_bottom) + (FACE_AWARE_FILL_CAPTION_GAP * design_scale)))
     except Exception:
         pass
-    margin = FACE_AWARE_FILL_FALLBACK_SUBTITLE_MARGIN
+    margin = FACE_AWARE_FILL_FALLBACK_SUBTITLE_MARGIN * (float(target_height) / float(DESIGN_GEOMETRY["height"]))
     return max(0.0, float(target_height) - float(margin) - safe_block_height)
 
 
@@ -2198,13 +2207,14 @@ def _face_aware_fill_subtitle_margin(
     subtitle_margin: Optional[int],
     *,
     subtitle_margin_custom: Optional[bool] = None,
+    target_height: int = VIDEO_TARGET_HEIGHT,
 ) -> int:
     if _is_face_aware_default_subtitle_margin(subtitle_margin, subtitle_margin_custom=subtitle_margin_custom):
-        return FACE_AWARE_FILL_FALLBACK_SUBTITLE_MARGIN
+        return int(round(FACE_AWARE_FILL_FALLBACK_SUBTITLE_MARGIN * (float(target_height) / float(DESIGN_GEOMETRY["height"]))))
     try:
         return int(round(float(subtitle_margin)))
     except Exception:
-        return FACE_AWARE_FILL_FALLBACK_SUBTITLE_MARGIN
+        return int(round(FACE_AWARE_FILL_FALLBACK_SUBTITLE_MARGIN * (float(target_height) / float(DESIGN_GEOMETRY["height"]))))
 
 
 def _face_aware_fill_caption_metrics_for_segment(
@@ -2219,14 +2229,18 @@ def _face_aware_fill_caption_metrics_for_segment(
 ) -> Dict[str, Optional[float]]:
     caption_block_height = _face_aware_caption_block_height(subtitle_font_size)
     if not _is_face_aware_default_subtitle_margin(subtitle_margin, subtitle_margin_custom=subtitle_margin_custom):
-        margin = _face_aware_fill_subtitle_margin(subtitle_margin, subtitle_margin_custom=subtitle_margin_custom)
+        margin = _face_aware_fill_subtitle_margin(
+            subtitle_margin,
+            subtitle_margin_custom=subtitle_margin_custom,
+            target_height=target_height,
+        )
         caption_top = max(0.0, float(target_height) - float(margin) - caption_block_height)
         return {
             "median_face_bottom": None,
             "caption_top": caption_top,
             "caption_margin_v": float(margin),
             "caption_block_height": caption_block_height,
-            "subscribe_y": caption_top + caption_block_height + DESIGN_GEOMETRY["fit_caption_gap"],
+            "subscribe_y": caption_top + caption_block_height + (DESIGN_GEOMETRY["fit_caption_gap"] * (float(target_height) / float(DESIGN_GEOMETRY["height"]))),
         }
     try:
         seg_start = float(segment.get("start") or 0.0)
@@ -2253,14 +2267,14 @@ def _face_aware_fill_caption_metrics_for_segment(
         face_bottom = ((cy + (face_h / 2.0) - segment_crop_y) / segment_crop_h) * float(target_height)
         face_bottom_values.append(face_bottom)
     if not face_bottom_values:
-        margin = FACE_AWARE_FILL_FALLBACK_SUBTITLE_MARGIN
+        margin = FACE_AWARE_FILL_FALLBACK_SUBTITLE_MARGIN * (float(target_height) / float(DESIGN_GEOMETRY["height"]))
         caption_top = max(0.0, float(target_height) - float(margin) - caption_block_height)
         return {
             "median_face_bottom": None,
             "caption_top": caption_top,
             "caption_margin_v": float(margin),
             "caption_block_height": caption_block_height,
-            "subscribe_y": caption_top + caption_block_height + DESIGN_GEOMETRY["fit_caption_gap"],
+            "subscribe_y": caption_top + caption_block_height + (DESIGN_GEOMETRY["fit_caption_gap"] * (float(target_height) / float(DESIGN_GEOMETRY["height"]))),
         }
     face_bottom_values.sort()
     mid = len(face_bottom_values) // 2
@@ -2269,16 +2283,17 @@ def _face_aware_fill_caption_metrics_for_segment(
         if len(face_bottom_values) % 2
         else (face_bottom_values[mid - 1] + face_bottom_values[mid]) / 2.0
     )
-    min_top = FACE_AWARE_FILL_CAPTION_MIN_TOP
-    max_top = max(min_top, float(target_height) - FACE_AWARE_FILL_SUBSCRIBE_ROOM - caption_block_height)
-    caption_top = max(min_top, min(max_top, median_face_bottom + FACE_AWARE_FILL_CAPTION_GAP))
+    design_scale = float(target_height) / float(DESIGN_GEOMETRY["height"])
+    min_top = FACE_AWARE_FILL_CAPTION_MIN_TOP * design_scale
+    max_top = max(min_top, float(target_height) - (FACE_AWARE_FILL_SUBSCRIBE_ROOM * design_scale) - caption_block_height)
+    caption_top = max(min_top, min(max_top, median_face_bottom + (FACE_AWARE_FILL_CAPTION_GAP * design_scale)))
     caption_margin_v = max(0.0, float(target_height) - caption_top - caption_block_height)
     return {
         "median_face_bottom": median_face_bottom,
         "caption_top": caption_top,
         "caption_margin_v": caption_margin_v,
         "caption_block_height": caption_block_height,
-        "subscribe_y": caption_top + caption_block_height + DESIGN_GEOMETRY["fit_caption_gap"],
+        "subscribe_y": caption_top + caption_block_height + (DESIGN_GEOMETRY["fit_caption_gap"] * design_scale),
     }
 
 
@@ -3129,6 +3144,8 @@ def _compose_trimmed_with_background(
     outreach_layout: bool = False,
     source_keep_ranges: Optional[list[Dict[str, Any]]] = None,
     low_memory_demo: bool = False,
+    render_target_width: Optional[int] = None,
+    render_target_height: Optional[int] = None,
 ):
     """Single-pass trim + compose to reduce processing time."""
     if not bg_path.exists():
@@ -3870,8 +3887,12 @@ def _compose_trimmed_with_background(
         target_width = PODCAST_LANDSCAPE_WIDTH
         target_height = PODCAST_LANDSCAPE_HEIGHT
     else:
-        target_width = VIDEO_TARGET_WIDTH
-        target_height = VIDEO_TARGET_HEIGHT
+        try:
+            target_width = max(2, int(render_target_width or VIDEO_TARGET_WIDTH))
+            target_height = max(2, int(render_target_height or VIDEO_TARGET_HEIGHT))
+        except (TypeError, ValueError):
+            target_width = VIDEO_TARGET_WIDTH
+            target_height = VIDEO_TARGET_HEIGHT
     render_timing.record_output_resolution(target_width, target_height)
     overlay_width = min(VIDEO_OVERLAY_WIDTH, target_width)
     if original_layout_mode:
@@ -3892,7 +3913,8 @@ def _compose_trimmed_with_background(
         overlay_top_offset = int(overlay_top_offset)
     except Exception:
         overlay_top_offset = VIDEO_OVERLAY_TOP_OFFSET
-    overlay_top_offset = max(0, min(1200, overlay_top_offset))
+    render_scale = max(0.01, float(target_width) / float(DESIGN_GEOMETRY["width"]))
+    overlay_top_offset = max(0, min(int(round(1200 * render_scale)), overlay_top_offset))
 
     # Step 2: overlay trimmed onto background
     title_txt = _sanitize_text_for_overlay(title or "", 140)
@@ -4180,8 +4202,8 @@ def _compose_trimmed_with_background(
         split_tile_height = max(2, int(target_height * DESIGN_GEOMETRY["split_ratio"]))
         split_tile_height -= split_tile_height % 2
         split_seam_y = int(target_height * DESIGN_GEOMETRY["split_ratio"])
-        split_divider_thickness = DESIGN_GEOMETRY["split_divider"]
-        split_divider_outline_thickness = DESIGN_GEOMETRY["split_outline"]
+        split_divider_thickness = max(1, int(round(DESIGN_GEOMETRY["split_divider"] * render_scale)))
+        split_divider_outline_thickness = max(1, int(round(DESIGN_GEOMETRY["split_outline"] * render_scale)))
         filter_parts.extend(
             [
                 f"{clip_input_label}split=2[split_top_src][split_bottom_src]",
@@ -4289,7 +4311,7 @@ def _compose_trimmed_with_background(
                     segment["subscribe_y"] = float(face_aware_fit_metrics["subscribe_y"])
                 else:
                     segment["subscribe_y"] = float(
-                        caption_top + caption_block_height + DESIGN_GEOMETRY["fit_caption_gap"]
+                        caption_top + caption_block_height + (DESIGN_GEOMETRY["fit_caption_gap"] * render_scale)
                     )
         if dynamic_crop_enabled:
             x_ratio_expr = _piecewise_linear_ratio_expr(face_track_points, "x") or _fmt(crop_x)
@@ -4373,8 +4395,8 @@ def _compose_trimmed_with_background(
                     split_tile_height = max(2, int(target_height * DESIGN_GEOMETRY["split_ratio"]))
                     split_tile_height -= split_tile_height % 2
                     split_seam_y = int(target_height * DESIGN_GEOMETRY["split_ratio"])
-                    split_divider_thickness = DESIGN_GEOMETRY["split_divider"]
-                    split_divider_outline_thickness = DESIGN_GEOMETRY["split_outline"]
+                    split_divider_thickness = max(1, int(round(DESIGN_GEOMETRY["split_divider"] * render_scale)))
+                    split_divider_outline_thickness = max(1, int(round(DESIGN_GEOMETRY["split_outline"] * render_scale)))
                     split_top_src = f"[layout_split_top_src_{idx}]"
                     split_bottom_src = f"[layout_split_bottom_src_{idx}]"
                     split_top = f"[layout_split_top_{idx}]"
@@ -4530,6 +4552,7 @@ def _compose_trimmed_with_background(
                 effective_subtitle_path,
                 subtitle_margin,
                 subtitle_font_size,
+                render_scale,
             )
             filter_parts.extend(
                 [
@@ -4564,10 +4587,15 @@ def _compose_trimmed_with_background(
         test_font_file = _title_font_path_for_text(title_txt, font_path)
         if normalized_title_engine == "pillow":
             try:
-                requested_video_top = int(video_overlay_offset if video_overlay_offset is not None else VIDEO_OVERLAY_TOP_OFFSET)
+                requested_video_top = int(
+                    video_overlay_offset
+                    if video_overlay_offset is not None
+                    else round(VIDEO_OVERLAY_TOP_OFFSET * render_scale)
+                )
             except (TypeError, ValueError):
-                requested_video_top = VIDEO_OVERLAY_TOP_OFFSET
-            title_margin_custom = int(title_margin or DEFAULT_TITLE_MARGIN) != int(DEFAULT_TITLE_MARGIN)
+                requested_video_top = int(round(VIDEO_OVERLAY_TOP_OFFSET * render_scale))
+            scaled_default_title_margin = int(round(DEFAULT_TITLE_MARGIN * render_scale))
+            title_margin_custom = int(title_margin if title_margin is not None else scaled_default_title_margin) != scaled_default_title_margin
             video_top_limit = None
             if not title_margin_custom and str(crop_aspect or "landscape").strip().lower() != "portrait":
                 video_top_limit = max(0, min(target_height, requested_video_top))
@@ -4766,7 +4794,11 @@ def _compose_trimmed_with_background(
             caption_overlay_y_expr = "0"
             if effective_subtitle_overlay_events:
                 fallback_height = _face_aware_caption_block_height(subtitle_font_size)
-                fallback_top = float(target_height) - float(_face_aware_fill_subtitle_margin(subtitle_margin, subtitle_margin_custom=subtitle_margin_custom)) - fallback_height
+                fallback_top = float(target_height) - float(_face_aware_fill_subtitle_margin(
+                    subtitle_margin,
+                    subtitle_margin_custom=subtitle_margin_custom,
+                    target_height=target_height,
+                )) - fallback_height
                 caption_y_intervals: list[tuple[float, float, float]] = []
                 for event in effective_subtitle_overlay_events:
                     event_start = float(event["start"])
@@ -4792,7 +4824,11 @@ def _compose_trimmed_with_background(
                 caption_overlay_y_expr = _piecewise_constant_overlay_y_expr(caption_y_intervals, duration=duration)
             else:
                 try:
-                    fill_margin = float(_face_aware_fill_subtitle_margin(subtitle_margin, subtitle_margin_custom=subtitle_margin_custom))
+                    fill_margin = float(_face_aware_fill_subtitle_margin(
+                        subtitle_margin,
+                        subtitle_margin_custom=subtitle_margin_custom,
+                        target_height=target_height,
+                    ))
                     fit_margin = float(face_aware_fit_metrics["caption_margin_v"])
                     caption_block_height = _face_aware_caption_block_height(subtitle_font_size)
                     split_caption_top = float(face_aware_split_metrics["caption_top"])
@@ -4804,7 +4840,11 @@ def _compose_trimmed_with_background(
                     fit_caption_y = fill_margin - fit_margin
                     split_caption_y = split_caption_top - split_base_top
                 except Exception:
-                    fill_margin = float(_face_aware_fill_subtitle_margin(subtitle_margin, subtitle_margin_custom=subtitle_margin_custom))
+                    fill_margin = float(_face_aware_fill_subtitle_margin(
+                        subtitle_margin,
+                        subtitle_margin_custom=subtitle_margin_custom,
+                        target_height=target_height,
+                    ))
                     fit_caption_y = 0.0
                     split_caption_y = 0.0
                 caption_y_intervals: list[tuple[float, float, float]] = []
@@ -4835,7 +4875,7 @@ def _compose_trimmed_with_background(
         date_txt = _sanitize_text_for_overlay(video_date_text, 160)
         if date_txt:
             date_font_file = font_path or "/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf"
-            date_font_size = 24
+            date_font_size = max(1, int(round(24 * render_scale)))
             try:
                 date_top = int(video_date_top if video_date_top is not None else DEFAULT_VIDEO_DATE_TOP)
             except (TypeError, ValueError):
@@ -4844,7 +4884,7 @@ def _compose_trimmed_with_background(
                 "video_date_top",
                 date_top,
                 target_height=target_height,
-                element_height=DESIGN_POSITION_LIMITS["video_date_top"]["fallback_element_height"],
+                element_height=int(round(DESIGN_POSITION_LIMITS["video_date_top"]["fallback_element_height"] * render_scale)),
             )
             date_y_expr = str(date_top)
             date_box_color = "black@0.6"
@@ -4859,7 +4899,7 @@ def _compose_trimmed_with_background(
                 "fontcolor=white:"
                 "box=1:"
                 f"boxcolor={date_box_color}:"
-                "boxborderw=18:"
+                f"boxborderw={max(1, int(round(18 * render_scale)))}:"
                 "[ov_date]"
             )
             filter_parts.append(date_drawtext)
@@ -4868,7 +4908,9 @@ def _compose_trimmed_with_background(
         subscribe_input_index = next_video_input_index
         overlay_src_label = "[ov_sub_src]"
         overlay_out_label = "[ov_sub]"
-        subscribe_scale_filter = f"scale=iw*{SUBSCRIBE_OVERLAY_SCALE}:ih*{SUBSCRIBE_OVERLAY_SCALE}"
+        subscribe_render_scale = float(SUBSCRIBE_OVERLAY_SCALE) * render_scale
+        subscribe_bottom_offset = max(0, int(round(float(SUBSCRIBE_OVERLAY_BOTTOM_OFFSET) * render_scale)))
+        subscribe_scale_filter = f"scale=iw*{subscribe_render_scale}:ih*{subscribe_render_scale}"
         top_caption_subscribe_metrics = None
         if face_aware_layout_active and not face_aware_auto_caption_placement and normalize_caption_anchor(caption_anchor) == "top":
             top_caption_subscribe_metrics = _face_aware_top_caption_subscribe_metrics(
@@ -4882,7 +4924,7 @@ def _compose_trimmed_with_background(
                 primary_width = float(visible_geometry["primary_width"])
                 primary_height = float(visible_geometry["primary_height"])
                 effective_scale = min(
-                    float(SUBSCRIBE_OVERLAY_SCALE),
+                    subscribe_render_scale,
                     target_visible_width / primary_width,
                 )
                 max_visible_height = float(top_caption_subscribe_metrics["subscribe_max_height"])
@@ -4925,22 +4967,22 @@ def _compose_trimmed_with_background(
             else:
                 subscribe_scale_filter = (
                     "scale=-2:"
-                    f"min(ih*{SUBSCRIBE_OVERLAY_SCALE}\\,{int(top_caption_subscribe_metrics['subscribe_max_height'])})"
+                    f"min(ih*{subscribe_render_scale}\\,{int(top_caption_subscribe_metrics['subscribe_max_height'])})"
                 )
         filter_parts.append(
             f"[{subscribe_input_index}:v]{subscribe_scale_filter},format=rgba{overlay_src_label}"
         )
-        subscribe_y_expr = f"H-h-{SUBSCRIBE_OVERLAY_BOTTOM_OFFSET}"
+        subscribe_y_expr = f"H-h-{subscribe_bottom_offset}"
         if top_caption_subscribe_metrics:
             subscribe_y_expr = f"{top_caption_subscribe_metrics['subscribe_top']:.2f}"
         elif face_aware_auto_caption_placement:
-            default_subscribe_top = float(target_height) - float(SUBSCRIBE_OVERLAY_BOTTOM_OFFSET)
+            default_subscribe_top = float(target_height) - float(subscribe_bottom_offset)
             try:
                 overlay_dimensions = _overlay_canvas_dimensions(Path(overlay_asset_path))
                 if not overlay_dimensions:
                     raise RuntimeError("overlay dimensions unavailable")
                 _, overlay_source_height = overlay_dimensions
-                default_subscribe_top -= float(overlay_source_height) * float(SUBSCRIBE_OVERLAY_SCALE)
+                default_subscribe_top -= float(overlay_source_height) * subscribe_render_scale
             except Exception as exc:
                 current_app.logger.warning(
                     "Face-aware subscribe placement probe failed path=%s: %s",

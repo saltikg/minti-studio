@@ -54,13 +54,13 @@ _TR_STOPWORDS = {
 }
 _MIN_BOUNDARY_CUE_SECONDS = 0.7
 KARAOKE_MAX_WORDS = DESIGN_GEOMETRY["caption_words"]
-_ASS_RENDER_WIDTH = 720
-_ASS_RENDER_HEIGHT = 1280
+_ASS_RENDER_WIDTH = DESIGN_GEOMETRY["width"]
+_ASS_RENDER_HEIGHT = DESIGN_GEOMETRY["height"]
 _ASS_MARGIN_L = DESIGN_GEOMETRY["caption_side_margin"]
 _ASS_MARGIN_R = DESIGN_GEOMETRY["caption_side_margin"]
 _PILL_CURVE_FACTOR = 0.55228475
-_PILLOW_CAPTION_WIDTH = 720
-_PILLOW_CAPTION_HEIGHT = 1280
+_PILLOW_CAPTION_WIDTH = DESIGN_GEOMETRY["width"]
+_PILLOW_CAPTION_HEIGHT = DESIGN_GEOMETRY["height"]
 _WORD_HIGHLIGHT_OVERLAY_FPS = 30
 _ARABIC_TRANSLITERATION_VERSION = 1
 _PILLOW_RAQM_AVAILABLE = bool(features.check("raqm"))
@@ -866,6 +866,9 @@ def _compute_single_line_pill_layout(
     pad_y: int,
     effective_line_width: int,
     caption_anchor: str = "bottom",
+    canvas_width: int = _ASS_RENDER_WIDTH,
+    canvas_height: int = _ASS_RENDER_HEIGHT,
+    margin_left: int = _ASS_MARGIN_L,
 ) -> Dict[str, int] | None:
     full_line = " ".join(words)
     before_text = " ".join(words[:active_index])
@@ -875,8 +878,8 @@ def _compute_single_line_pill_layout(
     if line_width > effective_line_width:
         return None
     line_height = _measure_line_height(font)
-    text_top = int(round(caption_block_top(subtitle_margin, caption_anchor, line_height, _ASS_RENDER_HEIGHT)))
-    x0 = max(_ASS_MARGIN_L, int(round((_ASS_RENDER_WIDTH - line_width) / 2)))
+    text_top = int(round(caption_block_top(subtitle_margin, caption_anchor, line_height, canvas_height)))
+    x0 = max(margin_left, int(round((canvas_width - line_width) / 2)))
     before_width = _measure_text_width(font, before_text)
     active_word_width = _measure_text_width(font, words[active_index])
     pill_height = line_height + (pad_y * 2)
@@ -933,7 +936,14 @@ def _build_ass_karaoke_for_clip(
     subtitle_bg_color: Optional[str],
     subtitle_bg_alpha: Optional[int],
     subtitle_preset: Optional[str] = None,
+    target_width: int = _ASS_RENDER_WIDTH,
+    target_height: int = _ASS_RENDER_HEIGHT,
 ) -> Path | None:
+    safe_target_width = max(2, int(target_width or _ASS_RENDER_WIDTH))
+    safe_target_height = max(2, int(target_height or _ASS_RENDER_HEIGHT))
+    render_scale = float(safe_target_width) / float(DESIGN_GEOMETRY["width"])
+    render_margin_l = max(0, int(round(float(_ASS_MARGIN_L) * render_scale)))
+    render_margin_r = max(0, int(round(float(_ASS_MARGIN_R) * render_scale)))
     preset = _resolve_subtitle_preset(subtitle_preset)
     preset_key = str(subtitle_preset or DEFAULT_SUBTITLE_PRESET).strip() or DEFAULT_SUBTITLE_PRESET
     active_color = str(preset.get("active_color") or SUBTITLE_HIGHLIGHT_COLOR).strip() or SUBTITLE_HIGHLIGHT_COLOR
@@ -942,11 +952,19 @@ def _build_ass_karaoke_for_clip(
     active_box_color = str(preset.get("active_box_color") or "").strip()
     active_box_outline_color = str(preset.get("active_box_outline_color") or active_box_color or outline_color).strip() or outline_color
     try:
-        outline_width = max(0, int(preset.get("outline_width", 1) or 1))
+        outline_width = max(0, int(round(float(preset.get("outline_width", 1) or 1) * render_scale)))
     except Exception:
         outline_width = 1
     try:
-        active_box_outline_width = max(0, int(preset.get("active_box_outline_width", outline_width) or outline_width))
+        active_box_outline_width = max(
+            0,
+            int(
+                round(
+                    float(preset.get("active_box_outline_width", preset.get("outline_width", 1)) or 1)
+                    * render_scale
+                )
+            ),
+        )
     except Exception:
         active_box_outline_width = outline_width
     try:
@@ -974,9 +992,9 @@ def _build_ass_karaoke_for_clip(
     resolved_font = str(subtitle_font or preset_font or "DejaVu Sans").strip() or "DejaVu Sans"
     pill_metrics = _pill_font_metrics(preset_key, resolved_font, subtitle_font_size) if pill_enabled else None
     pill_font = pill_metrics[0] if pill_metrics else None
-    pill_padding_x = max(DESIGN_GEOMETRY["pill_padding_min_x"], int(round(float(subtitle_font_size) * DESIGN_GEOMETRY["pill_padding_x"])))
-    pill_padding_y = max(DESIGN_GEOMETRY["pill_padding_min_y"], int(round(float(subtitle_font_size) * DESIGN_GEOMETRY["pill_padding_y"])))
-    effective_line_width = _ASS_RENDER_WIDTH - _ASS_MARGIN_L - _ASS_MARGIN_R
+    pill_padding_x = max(int(round(DESIGN_GEOMETRY["pill_padding_min_x"] * render_scale)), int(round(float(subtitle_font_size) * DESIGN_GEOMETRY["pill_padding_x"])))
+    pill_padding_y = max(int(round(DESIGN_GEOMETRY["pill_padding_min_y"] * render_scale)), int(round(float(subtitle_font_size) * DESIGN_GEOMETRY["pill_padding_y"])))
+    effective_line_width = safe_target_width - render_margin_l - render_margin_r
     pill_single_line_count = 0
     pill_wrap_fallback_count = 0
     pill_font_fallback_count = 0
@@ -1217,6 +1235,9 @@ def _build_ass_karaoke_for_clip(
                                 pad_y=pill_padding_y,
                                 effective_line_width=effective_line_width,
                                 caption_anchor=caption_anchor,
+                                canvas_width=safe_target_width,
+                                canvas_height=safe_target_height,
+                                margin_left=render_margin_l,
                             )
                             if layout is None:
                                 pill_wrap_fallback_count += (len(words) - index)
@@ -1312,8 +1333,8 @@ def _build_ass_karaoke_for_clip(
         "ScriptType: v4.00+",
         "WrapStyle: 2",
         "ScaledBorderAndShadow: yes",
-        "PlayResX: 1080",
-        "PlayResY: 1920",
+        f"PlayResX: {safe_target_width}",
+        f"PlayResY: {safe_target_height}",
         "",
         "[V4+ Styles]",
         "Format: Name, Fontname, Fontsize, PrimaryColour, SecondaryColour, OutlineColour, BackColour, "
@@ -1326,7 +1347,7 @@ def _build_ass_karaoke_for_clip(
         f"{_hex_to_ass_color_with_alpha(inactive_color, subtitle_text_alpha, '#FFFFFF', DEFAULT_SUBTITLE_TEXT_ALPHA)},"
         f"{_hex_to_ass_color_with_alpha(outline_color, 100, '#000000', 100)},"
         f"{back_color},"
-        f"{bold},0,0,0,100,100,0,0,{4 if show_box else border_style},{outline_width},0,{alignment},40,40,"
+        f"{bold},0,0,0,100,100,0,0,{4 if show_box else border_style},{outline_width},0,{alignment},{render_margin_l},{render_margin_r},"
         f"{int(subtitle_margin)},1",
     ]
     if use_active_word_style:
@@ -1338,7 +1359,7 @@ def _build_ass_karaoke_for_clip(
             f"{_hex_to_ass_color_with_alpha(active_color, 100, '#111827', 100)},"
             f"{_hex_to_ass_color_with_alpha(active_box_outline_color, 100, '#FFD84D', 100)},"
             f"{_hex_to_ass_color_with_alpha(active_box_color, 100, '#FFD84D', 100)},"
-            f"{bold},0,0,0,100,100,0,0,{active_box_border_style},{active_box_outline_width},0,{alignment},40,40,"
+            f"{bold},0,0,0,100,100,0,0,{active_box_border_style},{active_box_outline_width},0,{alignment},{render_margin_l},{render_margin_r},"
             f"{int(subtitle_margin)},1"
         )
         lines.append(
@@ -1359,7 +1380,7 @@ def _build_ass_karaoke_for_clip(
             "&HFF000000,"
             "&HFF000000,"
             "&HFF000000,"
-            f"{bold},0,0,0,100,100,0,0,{border_style},{outline_width},0,{alignment},40,40,{int(subtitle_margin)},1"
+            f"{bold},0,0,0,100,100,0,0,{border_style},{outline_width},0,{alignment},{render_margin_l},{render_margin_r},{int(subtitle_margin)},1"
         )
         lines.append(
             "Style: PillShape,"
@@ -1381,9 +1402,9 @@ def _build_ass_karaoke_for_clip(
         if normalized_anchor != "bottom" and "\\pos(" not in text:
             anchor_y = (
                 int(subtitle_margin) if normalized_anchor == "top"
-                else (_ASS_RENDER_HEIGHT - int(subtitle_margin) if normalized_anchor == "bottom" else int(subtitle_margin))
+                else (safe_target_height - int(subtitle_margin) if normalized_anchor == "bottom" else int(subtitle_margin))
             )
-            text = f"{{\\an{alignment}\\pos({_ASS_RENDER_WIDTH // 2},{anchor_y})}}" + text
+            text = f"{{\\an{alignment}\\pos({safe_target_width // 2},{anchor_y})}}" + text
         if active_word_tags and not use_active_word_style:
             text = re.sub(
                 r"\{\\k(\d+)\}([^\s]+)",
@@ -1455,6 +1476,8 @@ def _build_blurred_shadow_region(
     shadow_offset_x: int,
     shadow_offset_y: int,
     shadow_blur_radius: int,
+    canvas_width: int = _PILLOW_CAPTION_WIDTH,
+    canvas_height: int = _PILLOW_CAPTION_HEIGHT,
 ) -> Dict[str, Any] | None:
     words = list(layout.get("words") or [])
     if not words:
@@ -1485,8 +1508,8 @@ def _build_blurred_shadow_region(
     blur_pad = max(2, int(round(max(0, shadow_blur_radius) * 3)))
     region_left = max(0, min_x + min(0, int(shadow_offset_x)) - blur_pad)
     region_top = max(0, min_y + min(0, int(shadow_offset_y)) - blur_pad)
-    region_right = min(_PILLOW_CAPTION_WIDTH, max_x + max(0, int(shadow_offset_x)) + blur_pad)
-    region_bottom = min(_PILLOW_CAPTION_HEIGHT, max_y + max(0, int(shadow_offset_y)) + blur_pad)
+    region_right = min(int(canvas_width), max_x + max(0, int(shadow_offset_x)) + blur_pad)
+    region_bottom = min(int(canvas_height), max_y + max(0, int(shadow_offset_y)) + blur_pad)
     region_width = max(1, int(region_right - region_left))
     region_height = max(1, int(region_bottom - region_top))
 
@@ -1562,7 +1585,11 @@ def _layout_wrapped_caption(
     measured_fonts = [font, line_height_font or font, *(word_fonts or [])]
     line_height = max(_measure_line_height(item) for item in measured_fonts)
     line_ascent = max(_font_ascent(item) for item in measured_fonts)
-    line_gap = max(DESIGN_GEOMETRY["caption_line_gap_min"], int(round(line_height * DESIGN_GEOMETRY["caption_line_gap"])))
+    render_scale = max(0.01, float(canvas_width) / float(DESIGN_GEOMETRY["width"]))
+    line_gap = max(
+        int(round(DESIGN_GEOMETRY["caption_line_gap_min"] * render_scale)),
+        int(round(line_height * DESIGN_GEOMETRY["caption_line_gap"])),
+    )
     total_height = (line_height * len(lines)) + (line_gap * max(0, len(lines) - 1))
     if normalize_caption_anchor(caption_anchor) == "center":
         safe_margin = max(total_height / 2.0, min(canvas_height - total_height / 2.0, float(subtitle_margin)))
@@ -1731,14 +1758,15 @@ def _caption_frame_layout(
     draw_pill=True,
 ):
     """Font-measured geometry shared by the renderer and live DOM preview."""
+    render_scale = max(0.01, float(canvas_width) / float(DESIGN_GEOMETRY["width"]))
     active_font = active_font or font
     display_words = _caption_display_words(words, force_uppercase=force_uppercase, language=caption_language)
     word_fonts = [
         _font_for_script(word, active_font if index == active_index else font)
         for index, word in enumerate(display_words)
     ]
-    base_pad_x = max(DESIGN_GEOMETRY["pill_padding_min_x"], int(round(float(font_size) * DESIGN_GEOMETRY["pill_padding_x"])))
-    pad_y = max(DESIGN_GEOMETRY["pill_padding_min_y"], int(round(float(font_size) * DESIGN_GEOMETRY["pill_padding_y"])))
+    base_pad_x = max(int(round(DESIGN_GEOMETRY["pill_padding_min_x"] * render_scale)), int(round(float(font_size) * DESIGN_GEOMETRY["pill_padding_x"])))
+    pad_y = max(int(round(DESIGN_GEOMETRY["pill_padding_min_y"] * render_scale)), int(round(float(font_size) * DESIGN_GEOMETRY["pill_padding_y"])))
     if precomputed_layout is None:
         probe_image = Image.new("RGBA", (8, 8), (0, 0, 0, 0))
         probe_draw = ImageDraw.Draw(probe_image)
@@ -1772,7 +1800,10 @@ def _caption_frame_layout(
             display_words,
             font=font,
             subtitle_margin=subtitle_margin,
-            max_width=max(80, int(canvas_width) - _ASS_MARGIN_L - _ASS_MARGIN_R),
+            max_width=max(
+                int(round(80 * render_scale)),
+                int(canvas_width) - int(round(_ASS_MARGIN_L * render_scale)) - int(round(_ASS_MARGIN_R * render_scale)),
+            ),
             canvas_width=int(canvas_width),
             canvas_height=int(canvas_height),
             slot_widths=slot_widths,
@@ -1814,6 +1845,7 @@ def _render_word_highlight_caption_frame(
     canvas_height: int = _PILLOW_CAPTION_HEIGHT,
     out_path: Path,
 ) -> Dict[str, Any]:
+    render_scale = max(0.01, float(canvas_width) / float(DESIGN_GEOMETRY["width"]))
     active_font = active_font or font
     layout = _caption_frame_layout(
         words, active_index=active_index, font=font, active_font=active_font,
@@ -1824,7 +1856,7 @@ def _render_word_highlight_caption_frame(
         caption_anchor=caption_anchor,
         draw_pill=draw_pill,
     )
-    pad_y = max(DESIGN_GEOMETRY["pill_padding_min_y"], int(round(float(font_size) * DESIGN_GEOMETRY["pill_padding_y"])))
+    pad_y = max(int(round(DESIGN_GEOMETRY["pill_padding_min_y"] * render_scale)), int(round(float(font_size) * DESIGN_GEOMETRY["pill_padding_y"])))
     image = Image.new("RGBA", (int(canvas_width), int(canvas_height)), (0, 0, 0, 0))
     draw = ImageDraw.Draw(image)
     if shadow_region:
@@ -1846,11 +1878,13 @@ def _render_word_highlight_caption_frame(
             line_height = int(line.get("height") or layout.get("line_height") or font_size)
             line_boxes.append((line_left, line_y, line_right, line_y + line_height))
         if line_boxes:
-            bg_left = max(0, min(box[0] for box in line_boxes) - max(DESIGN_GEOMETRY["caption_padding_min_x"], int(round(float(font_size) * DESIGN_GEOMETRY["caption_padding_x"]))))
-            bg_top = max(0, min(box[1] for box in line_boxes) - max(DESIGN_GEOMETRY["caption_padding_min_y"], int(round(float(font_size) * DESIGN_GEOMETRY["caption_padding_y"]))))
-            bg_right = min(int(canvas_width), max(box[2] for box in line_boxes) + max(DESIGN_GEOMETRY["caption_padding_min_x"], int(round(float(font_size) * DESIGN_GEOMETRY["caption_padding_x"]))))
-            bg_bottom = min(int(canvas_height), max(box[3] for box in line_boxes) + max(DESIGN_GEOMETRY["caption_padding_min_y"], int(round(float(font_size) * DESIGN_GEOMETRY["caption_padding_y"]))))
-            radius = max(DESIGN_GEOMETRY["box_radius_min"], int(round(float(font_size) * DESIGN_GEOMETRY["box_radius"])))
+            bg_pad_x = max(int(round(DESIGN_GEOMETRY["caption_padding_min_x"] * render_scale)), int(round(float(font_size) * DESIGN_GEOMETRY["caption_padding_x"])))
+            bg_pad_y = max(int(round(DESIGN_GEOMETRY["caption_padding_min_y"] * render_scale)), int(round(float(font_size) * DESIGN_GEOMETRY["caption_padding_y"])))
+            bg_left = max(0, min(box[0] for box in line_boxes) - bg_pad_x)
+            bg_top = max(0, min(box[1] for box in line_boxes) - bg_pad_y)
+            bg_right = min(int(canvas_width), max(box[2] for box in line_boxes) + bg_pad_x)
+            bg_bottom = min(int(canvas_height), max(box[3] for box in line_boxes) + bg_pad_y)
+            radius = max(int(round(DESIGN_GEOMETRY["box_radius_min"] * render_scale)), int(round(float(font_size) * DESIGN_GEOMETRY["box_radius"])))
             draw.rounded_rectangle(
                 [bg_left, bg_top, bg_right, bg_bottom],
                 radius=radius,
@@ -2107,12 +2141,15 @@ def _build_word_highlight_caption_overlay(
     if not font_path.exists():
         return None, [], {"reason": "missing_font_file", "font_path": str(font_path)}
 
+    safe_target_width = max(2, int(target_width or _PILLOW_CAPTION_WIDTH))
+    safe_target_height = max(2, int(target_height or _PILLOW_CAPTION_HEIGHT))
+    render_scale = float(safe_target_width) / float(DESIGN_GEOMETRY["width"])
     temp_dir = Path(tempfile.mkdtemp(prefix="word_highlight_overlay_"))
     cleanup_paths: List[Path] = [temp_dir]
     subtitle_font_size = max(1, int(round(subtitle_font_size * DESIGN_GEOMETRY["font_scale"])))
     font = ImageFont.truetype(str(font_path), int(subtitle_font_size))
     try:
-        active_font_size_delta = int(preset.get("active_font_size_delta", 0) or 0)
+        active_font_size_delta = int(round(float(preset.get("active_font_size_delta", 0) or 0) * render_scale))
     except Exception:
         active_font_size_delta = 0
     active_font = (
@@ -2168,9 +2205,13 @@ def _build_word_highlight_caption_overlay(
     inactive_gradient_top = str(preset.get("inactive_gradient_top") or inactive_color).strip() or inactive_color
     inactive_gradient_mid = str(preset.get("inactive_gradient_mid") or inactive_color).strip() or inactive_color
     inactive_gradient_bottom = str(preset.get("inactive_gradient_bottom") or inactive_color).strip() or inactive_color
-    safe_target_width = max(2, int(target_width or _PILLOW_CAPTION_WIDTH))
-    safe_target_height = max(2, int(target_height or _PILLOW_CAPTION_HEIGHT))
-    safe_caption_width = max(80, safe_target_width - _ASS_MARGIN_L - _ASS_MARGIN_R)
+    outline_width = max(0, int(round(float(outline_width) * render_scale)))
+    shadow_offset_x = int(round(float(shadow_offset_x) * render_scale))
+    shadow_offset_y = int(round(float(shadow_offset_y) * render_scale))
+    shadow_blur_radius = max(0, int(round(float(shadow_blur_radius) * render_scale)))
+    render_margin_l = max(0, int(round(float(_ASS_MARGIN_L) * render_scale)))
+    render_margin_r = max(0, int(round(float(_ASS_MARGIN_R) * render_scale)))
+    safe_caption_width = max(80, safe_target_width - render_margin_l - render_margin_r)
 
     for seg in segments:
         try:
@@ -2387,6 +2428,8 @@ def _build_word_highlight_caption_overlay(
                         shadow_offset_x=shadow_offset_x,
                         shadow_offset_y=shadow_offset_y,
                         shadow_blur_radius=shadow_blur_radius,
+                        canvas_width=safe_target_width,
+                        canvas_height=safe_target_height,
                     )
                     shadow_cache[chunk_key] = shadow_region
                 else:
