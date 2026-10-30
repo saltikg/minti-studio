@@ -7066,36 +7066,35 @@ def _evaluate_lead_generation_approval_gate(
         if not selected:
             conn.commit()
             return None
-        failed_entry = None
+        changed = False
         for entry in selected:
             try:
                 entry_index = int(entry.get("plan_index") or 0)
             except Exception:
                 entry_index = None
-            status = str(entry.get("status") or "").strip().lower()
-            if (failed_plan_index is not None and entry_index == int(failed_plan_index)) or status in {"failed", "error"}:
-                failed_entry = entry
-                break
-        if failed_entry:
-            result = record_lead_pipeline_event(
-                conn,
-                lead_id=lead["id"],
-                event_type="selected_generation_failed",
-                to_state="failed",
-                detail={
-                    "video_pk": int(video_pk),
-                    "video_id": video_id,
-                    "failed_plan_index": failed_entry.get("plan_index"),
-                    "failure_message": failure_message,
-                    "selected": _summarize_selected_plan_entries(selected),
-                },
-            )
-            conn.commit()
-            return result
+            if failed_plan_index is not None and entry_index == int(failed_plan_index):
+                entry["status"] = "failed"
+                if failure_message:
+                    entry["render_error"] = str(failure_message)
+                changed = True
+        if changed:
+            _write_plan_entries(video_id, entries, video_pk=video_pk)
+
+        failed_entries = [
+            entry
+            for entry in selected
+            if str(entry.get("status") or "").strip().lower() in {"failed", "error"}
+        ]
+        completed_entries = [
+            entry
+            for entry in selected
+            if str(entry.get("status") or "").strip().lower() in {"created", "done"}
+        ]
         incomplete = [
             entry
             for entry in selected
-            if str(entry.get("status") or "").strip().lower() not in {"created", "done"}
+            if str(entry.get("status") or "").strip().lower()
+            not in {"created", "done", "failed", "error"}
         ]
         if incomplete:
             conn.commit()
@@ -7104,7 +7103,24 @@ def _evaluate_lead_generation_approval_gate(
                 "complete": False,
                 "selected_count": len(selected),
                 "incomplete_count": len(incomplete),
+                "failed_count": len(failed_entries),
             }
+        if failed_entries and not completed_entries:
+            result = record_lead_pipeline_event(
+                conn,
+                lead_id=lead["id"],
+                event_type="selected_generation_failed",
+                to_state="failed",
+                detail={
+                    "video_pk": int(video_pk),
+                    "video_id": video_id,
+                    "failed_plan_indexes": [entry.get("plan_index") for entry in failed_entries],
+                    "failure_message": failure_message,
+                    "selected": _summarize_selected_plan_entries(selected),
+                },
+            )
+            conn.commit()
+            return result
         result = record_lead_pipeline_event(
             conn,
             lead_id=lead["id"],
@@ -7114,6 +7130,8 @@ def _evaluate_lead_generation_approval_gate(
                 "video_pk": int(video_pk),
                 "video_id": video_id,
                 "selected": _summarize_selected_plan_entries(selected),
+                "failed_plan_indexes": [entry.get("plan_index") for entry in failed_entries],
+                "partial_completion": bool(failed_entries),
             },
         )
         conn.commit()
@@ -7511,7 +7529,7 @@ def _selected_entries_requiring_enqueue(entries: List[Dict[str, Any]]) -> List[D
         if not isinstance(entry, dict) or not entry.get("selected_for_generation"):
             continue
         status = str(entry.get("status") or "").strip().lower()
-        if status in {"created", "done", "queued", "processing", "rendering"}:
+        if status in {"created", "done", "failed", "error", "queued", "processing", "rendering"}:
             continue
         if str(entry.get("render_job_id") or "").strip():
             continue
@@ -7598,14 +7616,15 @@ def process_new_lead_autodownload(*, limit: int = 1) -> bool:
                 v.video_id,
                 v.video_url,
                 COALESCE(v.download_status, ''),
-                COALESCE(v.transcript_status, '')
+                COALESCE(v.transcript_status, ''),
+                COALESCE(l.pipeline_state, 'new')
             FROM autopilot_leads l
             LEFT JOIN youtube_videos v ON v.id = l.first_video_id
             WHERE l.converted_at IS NULL
               AND l.user_id IS NOT NULL
               AND l.brand_id IS NOT NULL
               AND l.first_video_id IS NOT NULL
-              AND COALESCE(l.pipeline_state, 'new') = 'new'
+              AND COALESCE(l.pipeline_state, 'new') IN ('new', 'downloading')
             ORDER BY l.created_at ASC NULLS LAST, l.id ASC
             LIMIT 20
             """
@@ -7635,6 +7654,7 @@ def process_new_lead_autodownload(*, limit: int = 1) -> bool:
         video_url = str(row[6] or "").strip()
         download_status = str(row[7] or "").strip().lower()
         transcript_status = str(row[8] or "").strip().lower()
+        pipeline_state = str(row[9] or "new").strip().lower()
 
         invalid_reason = _invalid_autopilot_entry_email_reason(creator_email)
         if invalid_reason:
@@ -7714,6 +7734,12 @@ def process_new_lead_autodownload(*, limit: int = 1) -> bool:
                 break
             continue
 
+        # A downloading lead already has (or had) an ingest job. Do not enqueue
+        # it again or write the state backwards; the next poll will advance it
+        # as soon as the source and transcript are ready.
+        if pipeline_state == "downloading":
+            continue
+
         scope = {
             "owner_user_id": owner_user_id,
             "brand_id": brand_id,
@@ -7777,7 +7803,12 @@ def process_new_lead_autodownload(*, limit: int = 1) -> bool:
             continue
 
         enqueue_kind = str(enqueue_row.get("enqueue_kind") or "").strip()
-        target_state = "downloaded" if enqueue_kind in {"already_downloaded", "already_transcribed"} else "downloading"
+        source_ready_after_enqueue = _lead_source_video_ready_for_planning(video_pk, video_id)
+        target_state = (
+            "downloaded"
+            if source_ready_after_enqueue or enqueue_kind in {"already_downloaded", "already_transcribed"}
+            else "downloading"
+        )
         conn_event = get_db()
         try:
             record_lead_pipeline_event(
@@ -7793,6 +7824,7 @@ def process_new_lead_autodownload(*, limit: int = 1) -> bool:
                     "job_id": enqueue_row.get("job_id"),
                     "enqueue_kind": enqueue_kind,
                     "job_type": enqueue_row.get("job_type") or JOB_TYPE_INGEST_YOUTUBE,
+                    "source_ready_after_enqueue": source_ready_after_enqueue,
                 },
             )
             conn_event.commit()

@@ -776,6 +776,161 @@ def test_worker_loop_uses_stale_job_timeout_config(monkeypatch):
     assert processed_scopes == [(True, False)]
 
 
+class _AutopilotTestResult:
+    def __init__(self, rows):
+        self._rows = rows
+
+    def fetchall(self):
+        return self._rows
+
+
+class _AutopilotTestConnection:
+    def __init__(self, rows=()):
+        self.rows = rows
+        self.committed = False
+        self.closed = False
+
+    def execute(self, *_args, **_kwargs):
+        return _AutopilotTestResult(self.rows)
+
+    def commit(self):
+        self.committed = True
+
+    def rollback(self):
+        pass
+
+    def close(self):
+        self.closed = True
+
+
+def test_downloading_autopilot_lead_advances_when_source_is_ready(monkeypatch):
+    lead_id = str(uuid4())
+    query_conn = _AutopilotTestConnection(
+        [
+            (
+                lead_id,
+                "creator@validcreator.tv",
+                str(uuid4()),
+                str(uuid4()),
+                7730,
+                "source-video",
+                "https://www.youtube.com/watch?v=source-video",
+                "downloaded",
+                "done",
+                "downloading",
+            )
+        ]
+    )
+    event_conn = _AutopilotTestConnection()
+    connections = iter([query_conn, event_conn])
+    events = []
+
+    monkeypatch.setattr(generation, "get_db", lambda: next(connections))
+    monkeypatch.setattr(generation, "lead_pipeline_available", lambda _conn: True)
+    monkeypatch.setattr(generation, "_lead_source_video_ready_for_planning", lambda *_args: True)
+    monkeypatch.setattr(
+        generation,
+        "record_lead_pipeline_event",
+        lambda _conn, **kwargs: events.append(kwargs) or kwargs,
+    )
+    monkeypatch.setattr(
+        generation,
+        "_enqueue_lead_operation_ingest_youtube_job",
+        lambda *_args: pytest.fail("ready downloading lead must not be enqueued again"),
+    )
+
+    assert generation.process_new_lead_autodownload() is True
+    assert len(events) == 1
+    assert events[0]["lead_id"] == lead_id
+    assert events[0]["event_type"] == "auto_download_already_ready"
+    assert events[0]["to_state"] == "downloaded"
+
+
+def test_existing_ingest_that_finishes_during_enqueue_does_not_regress(monkeypatch):
+    lead_id = str(uuid4())
+    query_conn = _AutopilotTestConnection(
+        [
+            (
+                lead_id,
+                "creator@validcreator.tv",
+                str(uuid4()),
+                str(uuid4()),
+                7730,
+                "source-video",
+                "https://www.youtube.com/watch?v=source-video",
+                "downloading",
+                "pending",
+                "new",
+            )
+        ]
+    )
+    event_conn = _AutopilotTestConnection()
+    connections = iter([query_conn, event_conn])
+    readiness = iter([False, True])
+    events = []
+
+    monkeypatch.setattr(generation, "get_db", lambda: next(connections))
+    monkeypatch.setattr(generation, "lead_pipeline_available", lambda _conn: True)
+    monkeypatch.setattr(
+        generation,
+        "_lead_source_video_ready_for_planning",
+        lambda *_args: next(readiness),
+    )
+    monkeypatch.setattr(
+        generation,
+        "_enqueue_lead_operation_ingest_youtube_job",
+        lambda *_args: {"enqueue_kind": "existing_job", "job_id": "ingest-1"},
+    )
+    monkeypatch.setattr(
+        generation,
+        "record_lead_pipeline_event",
+        lambda _conn, **kwargs: events.append(kwargs) or kwargs,
+    )
+    monkeypatch.setattr(generation, "current_app", SimpleNamespace(logger=logging.getLogger(__name__)))
+
+    assert generation.process_new_lead_autodownload() is True
+    assert len(events) == 1
+    assert events[0]["lead_id"] == lead_id
+    assert events[0]["event_type"] == "auto_download_enqueued"
+    assert events[0]["to_state"] == "downloaded"
+    assert events[0]["detail"]["source_ready_after_enqueue"] is True
+
+
+def test_partial_render_failure_advances_lead_to_approval(monkeypatch):
+    entries = [
+        {"plan_index": 1, "selected_for_generation": True, "status": "created"},
+        {"plan_index": 2, "selected_for_generation": True, "status": "failed"},
+    ]
+    conn = _AutopilotTestConnection()
+    events = []
+
+    monkeypatch.setattr(generation, "get_db", lambda: conn)
+    monkeypatch.setattr(
+        generation,
+        "find_active_lead_for_scope",
+        lambda *_args, **_kwargs: {"id": "lead-1"},
+    )
+    monkeypatch.setattr(generation, "_load_plan_entries", lambda *_args, **_kwargs: entries)
+    monkeypatch.setattr(
+        generation,
+        "record_lead_pipeline_event",
+        lambda _conn, **kwargs: events.append(kwargs) or kwargs,
+    )
+
+    result = generation._evaluate_lead_generation_approval_gate(
+        owner_user_id="user-1",
+        brand_id="brand-1",
+        video_pk=7657,
+        video_id="source-video",
+    )
+
+    assert result["to_state"] == "awaiting_approval"
+    assert events[0]["event_type"] == "selected_generation_completed"
+    assert events[0]["detail"]["partial_completion"] is True
+    assert events[0]["detail"]["failed_plan_indexes"] == [2]
+    assert generation._selected_entries_requiring_enqueue(entries) == []
+
+
 def test_timed_out_processing_job_requeues_then_fails_and_releases_quota(monkeypatch, tmp_path):
     _configure_duckdb(monkeypatch, tmp_path, "timeout_requeue.duckdb")
     user_id = str(uuid4())
