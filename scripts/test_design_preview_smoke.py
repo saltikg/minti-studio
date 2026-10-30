@@ -508,6 +508,16 @@ def _run_variant(browser: Browser, *, base_url: str, cookie_name: str,
         )
         assert not duplicates, duplicates
         _print_pass(variant, "page contains no duplicate DOM ids")
+        duplicate_clip_plans = page.evaluate(
+            """() => { const seen = new Set(); const duplicates = [];
+              document.querySelectorAll('.clip-card[data-plan-index]').forEach(card => {
+                const plan = String(card.dataset.planIndex || '').trim();
+                if (!plan) return;
+                if (seen.has(plan)) duplicates.push(plan); else seen.add(plan); });
+              return [...new Set(duplicates)]; }"""
+        )
+        assert not duplicate_clip_plans, duplicate_clip_plans
+        _print_pass(variant, "page contains one clip-card node per plan")
         if width == 1280 and height == 720 and dpr == 1:
             _assert_stubbed_regenerate(page, variant)
         print(f"VARIANT_OK {variant}")
