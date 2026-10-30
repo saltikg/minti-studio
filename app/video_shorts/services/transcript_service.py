@@ -40,6 +40,7 @@ from app.video_shorts.services.arabic_text import (
 from app.video_shorts.services.db import _ensure_transcript_schema, get_db
 from app.video_shorts.services.media_utils import _extract_audio_segment, _resolve_ffmpeg, run_media_subprocess
 from app.video_shorts.services.transcript_lang_tagging import infer_lang_from_text, tag_segments_with_language
+from app.video_shorts.services.text_case import uppercase_text
 import re
 
 
@@ -591,7 +592,14 @@ def _word_timed_text_for_overlap(
     return " ".join(word for word, _start, _end in kept).strip(), kept[0][1], kept[-1][2]
 
 
-def _build_srt_for_clip(segments: List[Dict[str, Any]], clip_start: float, clip_end: float) -> Path | None:
+def _build_srt_for_clip(
+    segments: List[Dict[str, Any]],
+    clip_start: float,
+    clip_end: float,
+    *,
+    force_uppercase: bool = False,
+    language: str = "",
+) -> Path | None:
     """
     Build a temp SRT file for segments within [clip_start, clip_end].
     Returns path or None if no lines.
@@ -661,7 +669,7 @@ def _build_srt_for_clip(segments: List[Dict[str, Any]], clip_start: float, clip_
                 continue
             lines.append(f"{idx}")
             lines.append(f"{fmt(start)} --> {fmt(end)}")
-            lines.append(chunk_text)
+            lines.append(uppercase_text(chunk_text, language) if force_uppercase else chunk_text)
             lines.append("")
             idx += 1
 
@@ -803,16 +811,10 @@ def _font_ascent(font: ImageFont.FreeTypeFont) -> int:
         return _measure_line_height(font)
 
 
-def _turkish_upper(text: str) -> str:
-    return str(text).replace("i", "İ").replace("ı", "I").upper()
-
-
 def _caption_display_words(words: List[str], *, force_uppercase: bool = False, language: str = "") -> List[str]:
     if not force_uppercase:
         return [str(word) for word in words]
-    if str(language or "").strip().lower() == "tr":
-        return [_turkish_upper(str(word)) for word in words]
-    return [str(word).upper() for word in words]
+    return [uppercase_text(word, language) for word in words]
 
 
 def _build_ass_pill_shape(width: float, height: float) -> str:
@@ -936,6 +938,8 @@ def _build_ass_karaoke_for_clip(
     subtitle_bg_color: Optional[str],
     subtitle_bg_alpha: Optional[int],
     subtitle_preset: Optional[str] = None,
+    force_uppercase: Optional[bool] = None,
+    caption_language: str = "",
     target_width: int = _ASS_RENDER_WIDTH,
     target_height: int = _ASS_RENDER_HEIGHT,
 ) -> Path | None:
@@ -945,6 +949,7 @@ def _build_ass_karaoke_for_clip(
     render_margin_l = max(0, int(round(float(_ASS_MARGIN_L) * render_scale)))
     render_margin_r = max(0, int(round(float(_ASS_MARGIN_R) * render_scale)))
     preset = _resolve_subtitle_preset(subtitle_preset)
+    effective_uppercase = bool(preset.get("force_uppercase")) if force_uppercase is None else bool(force_uppercase)
     preset_key = str(subtitle_preset or DEFAULT_SUBTITLE_PRESET).strip() or DEFAULT_SUBTITLE_PRESET
     active_color = str(preset.get("active_color") or SUBTITLE_HIGHLIGHT_COLOR).strip() or SUBTITLE_HIGHLIGHT_COLOR
     inactive_color = str(subtitle_text_color or preset.get("inactive_color") or "#FFFFFF").strip() or "#FFFFFF"
@@ -1068,6 +1073,11 @@ def _build_ass_karaoke_for_clip(
                 chunk_start += KARAOKE_MAX_WORDS
                 if not chunk_words:
                     continue
+                if effective_uppercase:
+                    chunk_words = [
+                        {**item, "word": uppercase_text(item.get("word"), caption_language)}
+                        for item in chunk_words
+                    ]
                 chunk_rel_start = max(0.0, float(chunk_words[0]["start"]) - clip_start)
                 chunk_rel_end = max(chunk_rel_start + 0.1, float(chunk_words[-1]["end"]) - clip_start)
                 if (s < clip_start or e > clip_end) and (chunk_rel_end - chunk_rel_start) < _MIN_BOUNDARY_CUE_SECONDS:
@@ -1189,6 +1199,8 @@ def _build_ass_karaoke_for_clip(
             continue
 
         text = (seg.get("tr_text") or seg.get("text") or seg.get("ar_text") or "").strip()
+        if effective_uppercase:
+            text = uppercase_text(text, caption_language)
         if not text:
             continue
         is_boundary_segment = s < clip_start or e > clip_end
@@ -2129,6 +2141,7 @@ def _build_word_highlight_caption_overlay(
     subtitle_bg_color: Optional[str] = None,
     subtitle_bg_alpha: Optional[int] = None,
     caption_language: str = "",
+    force_uppercase: Optional[bool] = None,
     target_width: int = _PILLOW_CAPTION_WIDTH,
     target_height: int = _PILLOW_CAPTION_HEIGHT,
 ) -> Tuple[Path | None, List[Path], Dict[str, Any]]:
@@ -2158,7 +2171,7 @@ def _build_word_highlight_caption_overlay(
         else font
     )
     active_outline = bool(preset.get("active_outline", False))
-    force_uppercase = bool(preset.get("force_uppercase", False))
+    force_uppercase = bool(preset.get("force_uppercase", False)) if force_uppercase is None else bool(force_uppercase)
     inactive_color = str(subtitle_text_color or preset.get("inactive_color") or "#FFFFFF").strip() or "#FFFFFF"
     inactive_alpha = _alpha_percent_to_byte(subtitle_text_alpha, DEFAULT_SUBTITLE_TEXT_ALPHA)
     active_color = str(preset.get("active_color") or "#111827").strip() or "#111827"
@@ -2513,7 +2526,14 @@ def _build_word_highlight_caption_overlay(
     }
 
 
-def _build_srt_from_text(text: str, clip_start: float, clip_end: float) -> Path | None:
+def _build_srt_from_text(
+    text: str,
+    clip_start: float,
+    clip_end: float,
+    *,
+    force_uppercase: bool = False,
+    language: str = "",
+) -> Path | None:
     """
     Build a temp SRT file using the provided text for the clip duration.
     """
@@ -2533,7 +2553,7 @@ def _build_srt_from_text(text: str, clip_start: float, clip_end: float) -> Path 
     lines = [
         "1",
         f"{fmt(0.0)} --> {fmt(duration)}",
-        text.strip(),
+        uppercase_text(text.strip(), language) if force_uppercase else text.strip(),
         "",
     ]
     tmp = tempfile.NamedTemporaryFile(delete=False, suffix=".srt")

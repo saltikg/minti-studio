@@ -2,7 +2,11 @@
 from PIL import ImageFont
 from app.video_shorts.config import DESIGN_GEOMETRY as D, SUBTITLE_PRESETS
 from app.video_shorts.services.compositor import _title_overlay_layout
-from app.video_shorts.services.transcript_service import _caption_frame_layout, _layout_wrapped_caption
+from app.video_shorts.services.transcript_service import (
+    _caption_display_words,
+    _caption_frame_layout,
+    _layout_wrapped_caption,
+)
 
 
 def _union(boxes):
@@ -21,6 +25,14 @@ def measure_design(data, *, title_font_path, caption_font_path, title_behavior):
     caption_size = max(1, int(round(int(data['caption_size']) * D['font_scale'])))
     karaoke = data.get('caption_style', 'karaoke') == 'karaoke'
     preset = (SUBTITLE_PRESETS.get(data.get('preset')) or {}) if karaoke else {}
+    caption_uppercase = (
+        bool(data.get('subtitle_uppercase'))
+        if 'subtitle_uppercase' in data
+        else bool(preset.get('force_uppercase'))
+    )
+    title_behavior = dict(title_behavior)
+    if 'title_uppercase' in data:
+        title_behavior['title_uppercase'] = bool(data.get('title_uppercase'))
     title = _title_overlay_layout(
         data.get('title') or ' ', font_path=str(title_font_path), font_size=title_size,
         target_width=width, target_height=height, base_y=int(data['title_top']),
@@ -61,7 +73,7 @@ def measure_design(data, *, title_font_path, caption_font_path, title_behavior):
                 active_font=active_font, caption_language=data.get('language', ''),
                 subtitle_margin=int(data['caption_margin']), font_size=caption_size,
                 outline_width=int(preset.get('outline_width') or 0),
-                force_uppercase=bool(preset.get('force_uppercase')),
+                force_uppercase=caption_uppercase,
                 canvas_width=width, canvas_height=height, caption_anchor=data.get('caption_anchor', 'bottom'))
             widths = [int(line.get('width') or 0) for line in candidate['lines']]
             score = (len(candidate['lines']), max(widths or [0]), candidate['total_height'])
@@ -78,14 +90,18 @@ def measure_design(data, *, title_font_path, caption_font_path, title_behavior):
     draw_pill = bool(preset.get('active_pill')) and bool(preset.get('draw_pill', True))
     precomputed = None
     if not draw_pill and active_size == caption_size:
-        display = [w.upper() if preset.get('force_uppercase') else w for w in words]
+        display = _caption_display_words(
+            words,
+            force_uppercase=caption_uppercase,
+            language=data.get('language', ''),
+        )
         precomputed = _layout_wrapped_caption(display, font=font,
             subtitle_margin=int(data['caption_margin']), max_width=width-2*D['caption_side_margin'],
             canvas_width=width, canvas_height=height, caption_anchor=data.get('caption_anchor', 'bottom'))
     layout = _caption_frame_layout(words, active_index=active, font=font, active_font=active_font,
         caption_language=data.get('language', ''), subtitle_margin=int(data['caption_margin']),
         font_size=caption_size, outline_width=outline,
-        force_uppercase=bool(preset.get('force_uppercase')), precomputed_layout=precomputed,
+        force_uppercase=caption_uppercase, precomputed_layout=precomputed,
         canvas_width=width, canvas_height=height, caption_anchor=data.get('caption_anchor', 'bottom'))
     runs, line_boxes, glyph_boxes = [], [], []
     pill = None
@@ -113,4 +129,5 @@ def measure_design(data, *, title_font_path, caption_font_path, title_behavior):
         glyph_box=_union(glyph_boxes), lines=len(layout['lines']), font_size=caption_size,
         outline=outline, active_outline=bool(preset.get('active_outline')),
         anchor=layout['lines'][0]['y'] if layout['lines'] else 0,
-        block_height=layout['total_height'], text=' '.join(words)), width=width, height=height)
+        block_height=layout['total_height'], text=' '.join(str(word['word']) for word in layout['words'])),
+        width=width, height=height)

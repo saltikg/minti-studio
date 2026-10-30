@@ -470,6 +470,8 @@ SHORT_EDITOR_DEFAULT_FIELD_NAMES = (
     "caption_anchor",
     "subtitle_style",
     "subtitle_preset",
+    "title_uppercase",
+    "subtitle_uppercase",
     "title_margin",
     "title_line_spacing",
     "title_bg_color",
@@ -966,6 +968,10 @@ def _normalize_title_display_mode(value: Any, seconds: Any = None) -> str:
 
 
 def _short_editor_config_defaults() -> Dict[str, Any]:
+    default_title_behavior = _resolve_title_template_behavior(
+        subtitle_preset=DEFAULT_SUBTITLE_PRESET,
+        title_font_key=DEFAULT_EDITOR_TITLE_FONT_KEY,
+    )
     return {
         "font": DEFAULT_EDITOR_TITLE_FONT_KEY,
         "sub_font": DEFAULT_SUB_FONT_KEY,
@@ -975,6 +981,8 @@ def _short_editor_config_defaults() -> Dict[str, Any]:
         "caption_anchor": "top",
         "subtitle_style": "plain",
         "subtitle_preset": DEFAULT_SUBTITLE_PRESET,
+        "title_uppercase": bool(default_title_behavior["title_uppercase"]),
+        "subtitle_uppercase": bool((SUBTITLE_PRESETS.get(DEFAULT_SUBTITLE_PRESET) or {}).get("force_uppercase")),
         "title_margin": DEFAULT_TITLE_MARGIN,
         "title_line_spacing": -4,
         "title_bg_color": DEFAULT_EDITOR_TITLE_BG_COLOR,
@@ -1080,6 +1088,12 @@ def _clean_short_editor_default_payload(source: Any) -> Dict[str, Any]:
 
     subtitle_preset = str(source.get("subtitle_preset") or defaults["subtitle_preset"]).strip() or DEFAULT_SUBTITLE_PRESET
     payload["subtitle_preset"] = subtitle_preset if subtitle_preset in SUBTITLE_PRESETS else DEFAULT_SUBTITLE_PRESET
+    payload["title_uppercase"] = _normalize_optional_bool(
+        source.get("title_uppercase"), default=defaults["title_uppercase"]
+    )
+    payload["subtitle_uppercase"] = _normalize_optional_bool(
+        source.get("subtitle_uppercase"), default=defaults["subtitle_uppercase"]
+    )
 
     payload["title_bg_color"] = _normalize_hex_color(source.get("title_bg_color"), DEFAULT_EDITOR_TITLE_BG_COLOR)
     payload["title_text_color"] = _normalize_hex_color(source.get("title_text_color"), DEFAULT_EDITOR_TITLE_TEXT_COLOR)
@@ -8611,6 +8625,8 @@ AUTO_RENDER_DESIGN_FIELD_MAP: Dict[str, str] = {
     "caption_anchor": "caption_anchor",
     "subtitle_style": "subtitle_style",
     "subtitle_preset": "subtitle_preset",
+    "title_uppercase": "title_uppercase",
+    "subtitle_uppercase": "subtitle_uppercase",
     "title_margin": "title_margin",
     "title_line_spacing": "title_line_spacing",
     "title_bg_color": "title_bg_color",
@@ -9755,6 +9771,8 @@ def _build_render_job_options(
     caption_anchor: Optional[str],
     subtitle_style: Optional[str],
     subtitle_preset: Optional[str],
+    title_uppercase: bool,
+    subtitle_uppercase: bool,
     title_margin: Optional[int],
     title_line_spacing: Optional[int],
     title_bg_color: Optional[str],
@@ -9805,6 +9823,8 @@ def _build_render_job_options(
         "subtitle_margin_custom": subtitle_margin_custom,
         "subtitle_style": (subtitle_style or "plain").strip().lower(),
         "subtitle_preset": str(subtitle_preset or DEFAULT_SUBTITLE_PRESET).strip() or DEFAULT_SUBTITLE_PRESET,
+        "title_uppercase": bool(title_uppercase),
+        "subtitle_uppercase": bool(subtitle_uppercase),
         "title_margin": title_margin,
         "title_line_spacing": title_line_spacing,
         "title_bg_color": title_bg_color,
@@ -10186,6 +10206,19 @@ def _render_settings_options_for_plan_entry(
         subtitle_margin_custom=video.get("subtitle_margin_custom"),
         subtitle_style=subtitle_style,
         subtitle_preset=subtitle_preset,
+        title_uppercase=(
+            _normalize_optional_bool(video.get("title_uppercase"), default=False)
+            if video.get("title_uppercase") is not None
+            else _resolve_title_template_behavior(
+                subtitle_preset=subtitle_preset,
+                title_font_key=video.get("title_font_key") or DEFAULT_EDITOR_TITLE_FONT_KEY,
+            )["title_uppercase"]
+        ),
+        subtitle_uppercase=(
+            _normalize_optional_bool(video.get("subtitle_uppercase"), default=False)
+            if video.get("subtitle_uppercase") is not None
+            else bool((SUBTITLE_PRESETS.get(subtitle_preset) or {}).get("force_uppercase"))
+        ),
         title_margin=video.get("title_margin"),
         title_line_spacing=video.get("title_line_spacing"),
         title_bg_color=_normalize_hex_color(video.get("title_bg_color"), DEFAULT_EDITOR_TITLE_BG_COLOR),
@@ -12544,6 +12577,13 @@ def design_layout_metrics():
         data["title"] = str(data.get("title") or "")[:500]
         data["caption"] = str(data.get("caption") or "")[:1000]
         behavior = _resolve_title_template_behavior(subtitle_preset=data.get("preset"), title_font_key=title_key)
+        data["title_uppercase"] = _normalize_optional_bool(
+            data.get("title_uppercase"), default=bool(behavior["title_uppercase"])
+        )
+        preset = SUBTITLE_PRESETS.get(str(data.get("preset") or "")) or {}
+        data["subtitle_uppercase"] = _normalize_optional_bool(
+            data.get("subtitle_uppercase"), default=bool(preset.get("force_uppercase"))
+        )
         result = measure_design(data, title_font_path=title_font, caption_font_path=caption_font, title_behavior=behavior)
     except (ValueError, TypeError, KeyError, StopIteration, OSError) as exc:
         current_app.logger.warning("Invalid design layout: %s", type(exc).__name__)
@@ -12609,6 +12649,10 @@ def generate_short(video_pk):
     """
     if "subtitle_preset" in video_columns:
         video_sql += ", subtitle_preset"
+    if "title_uppercase" in video_columns:
+        video_sql += ", title_uppercase"
+    if "subtitle_uppercase" in video_columns:
+        video_sql += ", subtitle_uppercase"
     if "crop_locked" in video_columns:
         video_sql += ", crop_locked"
     if "creator_name" in video_columns:
@@ -12657,6 +12701,10 @@ def generate_short(video_pk):
     ]
     if "subtitle_preset" in video_columns:
         cols.append("subtitle_preset")
+    if "title_uppercase" in video_columns:
+        cols.append("title_uppercase")
+    if "subtitle_uppercase" in video_columns:
+        cols.append("subtitle_uppercase")
     if "crop_locked" in video_columns:
         cols.append("crop_locked")
     if "creator_name" in video_columns:
@@ -13012,6 +13060,8 @@ def generate_short(video_pk):
         "caption_anchor": video.get("caption_anchor"),
         "subtitle_style": video.get("subtitle_style"),
         "subtitle_preset": video.get("subtitle_preset"),
+        "title_uppercase": video.get("title_uppercase"),
+        "subtitle_uppercase": video.get("subtitle_uppercase"),
         "title_margin": video.get("title_margin"),
         "title_line_spacing": video.get("title_line_spacing"),
         "title_bg_color": video.get("title_bg_color"),
@@ -13033,6 +13083,14 @@ def generate_short(video_pk):
         "music_duck": video.get("music_duck"),
         "music_fade_out": video.get("music_fade_out"),
     }
+    if raw_style_values["title_uppercase"] is None and "title_uppercase" not in short_editor_defaults:
+        raw_style_values["title_uppercase"] = _resolve_title_template_behavior(
+            subtitle_preset=raw_style_values.get("subtitle_preset") or DEFAULT_SUBTITLE_PRESET,
+            title_font_key=raw_style_values.get("font") or DEFAULT_EDITOR_TITLE_FONT_KEY,
+        )["title_uppercase"]
+    if raw_style_values["subtitle_uppercase"] is None and "subtitle_uppercase" not in short_editor_defaults:
+        preset = SUBTITLE_PRESETS.get(str(raw_style_values.get("subtitle_preset") or DEFAULT_SUBTITLE_PRESET)) or {}
+        raw_style_values["subtitle_uppercase"] = bool(preset.get("force_uppercase"))
     resolved_style_values = _apply_short_editor_defaults(raw_style_values, short_editor_defaults)
     video["overlay_shapes"] = _normalize_overlay_shapes(resolved_style_values.get("overlay_shapes"))
     video["music_audio_id"] = _normalize_music_audio_id(video.get("music_audio_id"))
@@ -13058,6 +13116,8 @@ def generate_short(video_pk):
     video_subtitle_preset = str(resolved_style_values.get("subtitle_preset") or DEFAULT_SUBTITLE_PRESET).strip() or DEFAULT_SUBTITLE_PRESET
     if video_subtitle_preset not in SUBTITLE_PRESETS:
         video_subtitle_preset = DEFAULT_SUBTITLE_PRESET
+    video_title_uppercase = _normalize_optional_bool(resolved_style_values.get("title_uppercase"), default=False)
+    video_subtitle_uppercase = _normalize_optional_bool(resolved_style_values.get("subtitle_uppercase"), default=False)
     video_title_margin = resolved_style_values.get("title_margin") or DEFAULT_TITLE_MARGIN
     video_title_line_spacing = resolved_style_values.get("title_line_spacing")
     try:
@@ -13357,6 +13417,8 @@ def generate_short(video_pk):
     selected_sub_margin_custom = video_sub_margin_custom
     selected_subtitle_style = video_subtitle_style
     selected_subtitle_preset = video_subtitle_preset
+    selected_title_uppercase = video_title_uppercase
+    selected_subtitle_uppercase = video_subtitle_uppercase
     selected_title_margin = video_title_margin
     selected_title_line_spacing = video_title_line_spacing
     selected_title_bg_color = video_title_bg_color
@@ -14578,6 +14640,8 @@ def generate_short(video_pk):
         selected_sub_margin_custom=selected_sub_margin_custom,
         selected_subtitle_style=selected_subtitle_style,
         selected_subtitle_preset=selected_subtitle_preset,
+        selected_title_uppercase=selected_title_uppercase,
+        selected_subtitle_uppercase=selected_subtitle_uppercase,
         selected_title_margin=selected_title_margin,
         selected_title_line_spacing=selected_title_line_spacing,
         selected_title_bg_color=selected_title_bg_color,
@@ -30024,6 +30088,8 @@ def save_short_settings(video_pk):
     subtitle_preset = str(request.form.get("subtitle_preset") or DEFAULT_SUBTITLE_PRESET).strip() or DEFAULT_SUBTITLE_PRESET
     if subtitle_preset not in SUBTITLE_PRESETS:
         subtitle_preset = DEFAULT_SUBTITLE_PRESET
+    title_uppercase = _normalize_optional_bool(request.form.get("title_uppercase"), default=False)
+    subtitle_uppercase = _normalize_optional_bool(request.form.get("subtitle_uppercase"), default=False)
     subscribe_overlay_key = _normalize_subscribe_overlay_key(
         request.form.get("subscribe_overlay_image"),
         expected_owner_user_id=editor_owner_user_id,
@@ -30263,6 +30329,8 @@ def save_short_settings(video_pk):
             "subtitle_margin_custom": subtitle_margin_custom,
             "subtitle_style": subtitle_style,
             "subtitle_preset": subtitle_preset,
+            "title_uppercase": title_uppercase,
+            "subtitle_uppercase": subtitle_uppercase,
             "title_margin": title_margin,
             "title_line_spacing": title_line_spacing,
             "title_bg_color": title_bg_color,
@@ -30296,6 +30364,8 @@ def save_short_settings(video_pk):
             "subtitle_margin_custom": "sub_margin",
             "subtitle_style": "subtitle_style",
             "subtitle_preset": "subtitle_preset",
+            "title_uppercase": "title_uppercase",
+            "subtitle_uppercase": "subtitle_uppercase",
             "title_margin": "title_margin",
             "title_line_spacing": "title_line_spacing",
             "title_bg_color": "title_bg_color",
@@ -30667,6 +30737,8 @@ def autoclip_video(video_pk):
     video_subtitle_text_alpha = DEFAULT_SUBTITLE_TEXT_ALPHA
     video_subtitle_style = "plain"
     video_subtitle_preset = DEFAULT_SUBTITLE_PRESET
+    video_title_uppercase: Optional[bool] = None
+    video_subtitle_uppercase: Optional[bool] = None
     video_date_text = None
     video_date_top = DEFAULT_VIDEO_DATE_TOP
     video_subscribe_overlay = True
@@ -31234,6 +31306,8 @@ def autoclip_video(video_pk):
                 "music_duck",
                 "music_fade_out",
                 "title_display_seconds",
+                "title_uppercase",
+                "subtitle_uppercase",
             )
             if column in crop_columns
         ]
@@ -31254,6 +31328,10 @@ def autoclip_video(video_pk):
                 video_title_display_seconds = _normalize_title_display_seconds(
                     music_values.get("title_display_seconds")
                 )
+                if "title_uppercase" in music_values:
+                    video_title_uppercase = music_values.get("title_uppercase")
+                if "subtitle_uppercase" in music_values:
+                    video_subtitle_uppercase = music_values.get("subtitle_uppercase")
     finally:
         conn.close()
     video_font_key = video_font_key or DEFAULT_EDITOR_TITLE_FONT_KEY
@@ -31271,6 +31349,20 @@ def autoclip_video(video_pk):
         video_subtitle_style = "plain"
     if video_subtitle_preset not in SUBTITLE_PRESETS:
         video_subtitle_preset = DEFAULT_SUBTITLE_PRESET
+    title_template_behavior = _resolve_title_template_behavior(
+        subtitle_preset=video_subtitle_preset,
+        title_font_key=video_font_key,
+    )
+    video_title_uppercase = (
+        bool(title_template_behavior["title_uppercase"])
+        if video_title_uppercase is None
+        else _normalize_optional_bool(video_title_uppercase, default=False)
+    )
+    video_subtitle_uppercase = (
+        bool((SUBTITLE_PRESETS.get(video_subtitle_preset) or {}).get("force_uppercase"))
+        if video_subtitle_uppercase is None
+        else _normalize_optional_bool(video_subtitle_uppercase, default=False)
+    )
     try:
         video_title_line_spacing = int(video_title_line_spacing if video_title_line_spacing is not None else -4)
     except Exception:
@@ -31447,6 +31539,8 @@ def autoclip_video(video_pk):
                 subtitle_margin_custom=video_sub_margin_custom,
                 subtitle_style=video_subtitle_style,
                 subtitle_preset=video_subtitle_preset,
+                title_uppercase=video_title_uppercase,
+                subtitle_uppercase=video_subtitle_uppercase,
                 title_margin=video_title_margin,
                 title_line_spacing=video_title_line_spacing,
                 title_bg_color=video_title_bg_color,
@@ -31974,7 +32068,8 @@ def autoclip_video(video_pk):
                             subtitle_text_alpha=subtitle_text_alpha,
                             subtitle_bg_color=subtitle_bg_color,
                             subtitle_bg_alpha=subtitle_bg_alpha,
-                            caption_language="",
+                            caption_language=plan_entry.get("language") or "",
+                            force_uppercase=video_subtitle_uppercase,
                             target_width=render_target_width,
                             target_height=render_target_height,
                         )
@@ -32001,6 +32096,8 @@ def autoclip_video(video_pk):
                                 subtitle_bg_color=subtitle_bg_color,
                                 subtitle_bg_alpha=subtitle_bg_alpha,
                                 subtitle_preset=video_subtitle_preset,
+                                force_uppercase=video_subtitle_uppercase,
+                                caption_language=plan_entry.get("language") or "",
                                 target_width=render_target_width,
                                 target_height=render_target_height,
                             )
@@ -32018,13 +32115,21 @@ def autoclip_video(video_pk):
                             subtitle_bg_color=subtitle_bg_color,
                             subtitle_bg_alpha=subtitle_bg_alpha,
                             subtitle_preset=video_subtitle_preset,
+                            force_uppercase=video_subtitle_uppercase,
+                            caption_language=plan_entry.get("language") or "",
                             target_width=render_target_width,
                             target_height=render_target_height,
                         )
                 if subtitle_srt:
                     temp_subs.append(subtitle_srt)
             else:
-                subtitle_srt = _build_srt_from_text(custom_transcript, adj_start, adj_end)
+                subtitle_srt = _build_srt_from_text(
+                    custom_transcript,
+                    adj_start,
+                    adj_end,
+                    force_uppercase=video_subtitle_uppercase,
+                    language=plan_entry.get("language") or "",
+                )
                 if subtitle_srt:
                     temp_subs.append(subtitle_srt)
         else:
@@ -32051,6 +32156,7 @@ def autoclip_video(video_pk):
                         subtitle_bg_color=subtitle_bg_color,
                         subtitle_bg_alpha=subtitle_bg_alpha,
                         caption_language=plan_entry.get("language") or "",
+                        force_uppercase=video_subtitle_uppercase,
                         target_width=render_target_width,
                         target_height=render_target_height,
                     )
@@ -32082,6 +32188,8 @@ def autoclip_video(video_pk):
                             subtitle_bg_color=subtitle_bg_color,
                             subtitle_bg_alpha=subtitle_bg_alpha,
                             subtitle_preset=video_subtitle_preset,
+                            force_uppercase=video_subtitle_uppercase,
+                            caption_language=plan_entry.get("language") or "",
                             target_width=render_target_width,
                             target_height=render_target_height,
                         )
@@ -32099,11 +32207,19 @@ def autoclip_video(video_pk):
                         subtitle_bg_color=subtitle_bg_color,
                         subtitle_bg_alpha=subtitle_bg_alpha,
                         subtitle_preset=video_subtitle_preset,
+                        force_uppercase=video_subtitle_uppercase,
+                        caption_language=plan_entry.get("language") or "",
                         target_width=render_target_width,
                         target_height=render_target_height,
                     )
             else:
-                subtitle_srt = _build_srt_for_clip(segments, adj_start, adj_end)
+                subtitle_srt = _build_srt_for_clip(
+                    segments,
+                    adj_start,
+                    adj_end,
+                    force_uppercase=video_subtitle_uppercase,
+                    language=plan_entry.get("language") or "",
+                )
             if subtitle_srt:
                 temp_subs.append(subtitle_srt)
         render_timing.record_elapsed("transcribe_captions", caption_timing_started)
@@ -32495,7 +32611,7 @@ def autoclip_video(video_pk):
                 title_margin=title_margin,
                 title_line_spacing=video_title_line_spacing,
                 title_engine=title_template_behavior["title_engine"],
-                title_uppercase=title_template_behavior["title_uppercase"],
+                title_uppercase=video_title_uppercase,
                 title_language=plan_entry.get("language"),
                 title_bg_color=title_bg_color,
                 title_bg_alpha=title_bg_alpha,
@@ -33069,6 +33185,10 @@ def regenerate_clip_video(video_pk: int, plan_index: int):
             video_sql += ", overlay_shapes"
         if "title_display_seconds" in video_columns:
             video_sql += ", title_display_seconds"
+        if "title_uppercase" in video_columns:
+            video_sql += ", title_uppercase"
+        if "subtitle_uppercase" in video_columns:
+            video_sql += ", subtitle_uppercase"
         for music_column in ("music_audio_id", "music_level", "music_start_seconds", "music_duck", "music_fade_out"):
             if music_column in video_columns:
                 video_sql += f", {music_column}"
@@ -33102,6 +33222,10 @@ def regenerate_clip_video(video_pk: int, plan_index: int):
         video_cols.append("overlay_shapes")
     if "title_display_seconds" in video_columns:
         video_cols.append("title_display_seconds")
+    if "title_uppercase" in video_columns:
+        video_cols.append("title_uppercase")
+    if "subtitle_uppercase" in video_columns:
+        video_cols.append("subtitle_uppercase")
     for music_column in ("music_audio_id", "music_level", "music_start_seconds", "music_duck", "music_fade_out"):
         if music_column in video_columns:
             video_cols.append(music_column)

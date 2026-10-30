@@ -5658,9 +5658,12 @@
     grid-template-columns: minmax(0, 1fr) 96px;
     align-items: start;
   }
-  .crop-modal-element-grid--title-bottom,
-  .crop-modal-element-grid--caption-bottom {
+  .crop-modal-element-grid--title-bottom {
     grid-template-columns: minmax(0, 1fr);
+    align-items: start;
+  }
+  .crop-modal-element-grid--caption-bottom {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
     align-items: start;
   }
   .crop-modal-element-grid--caption-top {
@@ -8565,6 +8568,8 @@
                       data-style-template-card
                       data-style-template-key="{{ template.key }}"
                       data-style-template-subtitle-preset="{{ template.subtitle_preset }}"
+                      data-style-template-title-uppercase="{{ 'true' if template.title_uppercase else 'false' }}"
+                      data-style-template-subtitle-uppercase="{{ 'true' if subtitle_preset_config.get('force_uppercase') else 'false' }}"
                       data-style-template-subtitle-font-key="{{ subtitle_font_ns.key }}"
                       data-style-template-title-font-key="{{ template.title_font_key }}"
                       data-style-template-title-font-family="{{ template.title_font }}"
@@ -9047,10 +9052,6 @@
                           </div>
                         </div>
                       </div>
-                      <div class="crop-modal-element-preview">
-                        <div id="subtitlePreview" class="short-font-preview">Sample subtitle line</div>
-                      </div>
-                      <div class="design-panel-section-label">Text</div>
                       <div class="crop-modal-element-grid crop-modal-element-grid--caption-top">
                         <div class="caption-tab-font-field">
                           <div class="caption-tab-section-heading">Font</div>
@@ -9065,7 +9066,6 @@
                           <input type="number" name="sub_font_size" class="form-control form-control-sm" value="{{ selected_sub_font_size or 40 }}" min="1" max="990">
                         </div>
                       </div>
-                      <div class="design-panel-section-label">Background</div>
                       <div class="crop-modal-element-grid crop-modal-element-grid--caption-bottom">
                         <div class="input-group-inline compact short-alpha-control" data-design-text-color="caption">
                           <div class="d-grid gap-1 w-100">
@@ -9135,25 +9135,17 @@
                       </div>
                       <input type="range" name="subtitle_text_alpha" id="subtitleTextAlphaValue" class="d-none" min="0" max="100" step="1" value="{{ selected_subtitle_text_alpha if selected_subtitle_text_alpha is not none else 100 }}">
                       <input type="range" name="subtitle_bg_alpha" id="subtitleBgAlphaValue" class="d-none" min="0" max="100" step="1" value="{{ selected_subtitle_bg_alpha if selected_subtitle_bg_alpha is not none else 85 }}">
-                      <div class="caption-anchor-control mt-3">
-                        <div class="caption-tab-section-heading">Anchor</div>
-                        <div class="btn-group btn-group-sm w-100" role="group" aria-label="Caption vertical anchor">
-                          {% for value, label in [('top', 'Top'), ('center', 'Center'), ('bottom', 'Bottom')] %}
-                            <input type="radio" class="btn-check" name="caption_anchor" id="captionAnchor{{ label }}" value="{{ value }}" {% if (selected_caption_anchor or 'bottom') == value %}checked{% endif %}>
-                            <label class="btn btn-outline-light" for="captionAnchor{{ label }}">{{ label }}</label>
-                          {% endfor %}
+                      <div class="crop-modal-inline-toggle crop-toggle-card mt-2">
+                        <div class="form-check form-switch mb-0">
+                          <input class="form-check-input" type="checkbox" name="subtitle_uppercase" id="subtitleUppercaseToggle" value="1" {% if selected_subtitle_uppercase %}checked{% endif %}>
+                          <label class="form-check-label" for="subtitleUppercaseToggle">ALL CAPS</label>
                         </div>
-                        <div class="design-panel-hint mt-1">Top keeps the first line in place; extra lines grow downward.</div>
                       </div>
-                      <div class="design-panel-hint">Drag to move, or use the arrow keys (Shift for bigger steps).</div>
-                      <button type="button" class="design-panel-more-toggle" data-design-more-toggle="caption" aria-expanded="false">▸ More options</button>
-                      <div class="design-panel-more-options" data-design-more-options="caption">
-                        <div class="design-panel-more-grid">
-                          <div class="input-group-inline compact" data-preview-control="subtitle">
-                            <span class="design-more-label" id="captionPositionLabel">Caption position</span>
-                            <span class="design-more-input"><input type="number" name="sub_margin" class="form-control form-control-sm short-input-small" value="{{ selected_sub_margin or 520 }}" min="{{ design_position_limits.sub_margin.min }}" max="{{ design_position_limits.sub_margin.max }}"><span class="design-more-unit">px</span></span>
-                          </div>
-                        </div>
+                      <input type="hidden" name="caption_anchor" value="{{ selected_caption_anchor or 'bottom' }}">
+                      <div class="input-group-inline compact mt-2" data-preview-control="subtitle">
+                        <span class="design-more-label" id="captionPositionLabel">Position from top</span>
+                        <span class="design-more-input"><input type="number" name="sub_margin" class="form-control form-control-sm short-input-small" value="{{ selected_sub_margin or 520 }}" min="{{ design_position_limits.sub_margin.min }}" max="{{ design_position_limits.sub_margin.max }}"><span class="design-more-unit">px</span></span>
+                        <div class="design-panel-hint">or drag in preview</div>
                       </div>
                     </div>
                     <div class="input-group-inline compact subtitle-style-hidden">
@@ -9265,6 +9257,12 @@
                         </div>
                       </div>
                       <input type="range" name="title_bg_alpha" id="titleBgAlphaValue" class="d-none" min="0" max="100" step="1" value="{{ selected_title_bg_alpha if selected_title_bg_alpha is not none else 0 }}">
+                      <div class="crop-modal-inline-toggle crop-toggle-card mt-2">
+                        <div class="form-check form-switch mb-0">
+                          <input class="form-check-input" type="checkbox" name="title_uppercase" id="titleUppercaseToggle" value="1" {% if selected_title_uppercase %}checked{% endif %}>
+                          <label class="form-check-label" for="titleUppercaseToggle">ALL CAPS</label>
+                        </div>
+                      </div>
                       <div class="design-panel-section-label">Timing</div>
                       <div class="crop-modal-element-grid">
                         <div class="input-group-inline compact title-display-control">
@@ -9692,6 +9690,15 @@
 <script>
 const DESIGN_GEOMETRY = {{ design_geometry|tojson }};
 const DESIGN_STYLE_TEMPLATES = {{ style_templates|tojson }};
+const DESIGN_TEXT_LANGUAGE = {{ (transcript_language or '')|tojson }};
+window.uppercaseForLanguage = (value, language = DESIGN_TEXT_LANGUAGE) => {
+  const text = String(value ?? "");
+  const normalized = String(language || "").trim().toLowerCase();
+  if (normalized.startsWith("tr") || ["tur", "turkish", "turkce", "türkçe"].includes(normalized)) {
+    return text.replace(/i/g, "İ").replace(/ı/g, "I").toUpperCase();
+  }
+  return text.toUpperCase();
+};
 const getActiveTitleTemplatePreset = () => {
   const subtitlePresetField = document.getElementById("subtitlePresetValue");
   const presetKey = String(subtitlePresetField?.value || "").trim();
@@ -9701,9 +9708,10 @@ const getActiveTitleTemplatePreset = () => {
     sideMargin: DESIGN_GEOMETRY.title_side_margin, outlineWidth: template.title_outline_width || 0} : null;
 };
 const getPreviewTitleDisplayText = (value) => {
-  const preset = getActiveTitleTemplatePreset();
   const resolved = String(value || "").trim() || "Life is full of fun";
-  return preset?.uppercase ? resolved.toLocaleUpperCase("tr-TR") : resolved;
+  return document.getElementById("titleUppercaseToggle")?.checked
+    ? window.uppercaseForLanguage(resolved)
+    : resolved;
 };
 const syncPreviewTitleText = (nextTitle = null) => {
   const modalEl = document.getElementById("crop-area-modal");
@@ -12423,13 +12431,9 @@ const mountGenerateV2EditorNodes = () => {
   const backgroundTarget = document.getElementById("generate-v2-editor-section-background");
   const subscribeTarget = document.getElementById("generate-v2-editor-section-subscribe");
   const previewTarget = document.getElementById("generate-v2-preview-slot");
-  const captionPanel = modal?.querySelector("[data-crop-modal-panel='caption']");
   const titlePanel = modal?.querySelector("[data-crop-modal-panel='title']");
-  const captionTextColor = captionPanel?.querySelector("[data-design-text-color='caption']");
   const titleTextColor = titlePanel?.querySelector("[data-design-text-color='title']");
-  const captionTextTarget = captionPanel?.querySelector(".crop-modal-element-grid--caption-top");
   const titleTextTarget = titlePanel?.querySelector(".crop-modal-element-grid--title-top");
-  if (captionTextColor && captionTextTarget && captionTextColor.parentNode !== captionTextTarget) captionTextTarget.appendChild(captionTextColor);
   if (titleTextColor && titleTextTarget && titleTextColor.parentNode !== titleTextTarget) titleTextTarget.appendChild(titleTextColor);
   moveGenerateV2Node(modal?.querySelector(".style-template-section"), styleTarget);
   moveGenerateV2Node(modal?.querySelector(".subscribe-visual-selector"), subscribeTarget);
@@ -19816,7 +19820,7 @@ document.addEventListener("DOMContentLoaded", () => {
   const subtitleMarginInput = getEditorField("sub_margin");
   const captionAnchorInputs = queryEditorFields('[name="caption_anchor"]');
   const captionPositionLabel = document.getElementById("captionPositionLabel");
-  const getCaptionAnchor = () => captionAnchorInputs.find((input) => input.checked)?.value || "bottom";
+  const getCaptionAnchor = () => captionAnchorInputs.find((input) => input.checked)?.value || captionAnchorInputs[0]?.value || "bottom";
   let previousCaptionAnchor = getCaptionAnchor();
   const captionTopForPosition = (position, anchor, blockHeight, frameHeight) => {
     if (anchor === "top") return position;
@@ -19830,9 +19834,7 @@ document.addEventListener("DOMContentLoaded", () => {
   };
   const syncCaptionPositionLabel = () => {
     if (!captionPositionLabel) return;
-    captionPositionLabel.textContent = getCaptionAnchor() === "top"
-      ? "Distance from top"
-      : (getCaptionAnchor() === "center" ? "Center Y" : "Distance from bottom");
+    captionPositionLabel.textContent = "Position from top";
   };
   captionAnchorInputs.forEach((input) => input.addEventListener("change", () => {
     if (!input.checked) return;
@@ -21246,7 +21248,12 @@ document.addEventListener("DOMContentLoaded", () => {
     });
     return fragment;
   };
-  window.getHonestCaptionPreviewText = longestRenderedCaptionGroup;
+  window.getHonestCaptionPreviewText = () => {
+    const text = longestRenderedCaptionGroup();
+    return getEditorField("subtitle_uppercase")?.checked
+      ? window.uppercaseForLanguage(text)
+      : text;
+  };
   window.buildCaptionPreviewMarkup = captionPreviewMarkup;
   const buildCurrentMeasurementData = () => {
     const original = isOriginalCropAspect();
@@ -21266,6 +21273,8 @@ document.addEventListener("DOMContentLoaded", () => {
       caption_anchor: getCaptionAnchor(),
       line_spacing: Math.round(Number(getEditorField("title_line_spacing")?.value || -4)*(original ? height/renderFrameHeight : 1)),
       preset: subtitlePresetField?.value, caption_style: subtitleStyleField?.value, language: {{ (transcript_language or '')|tojson }},
+      title_uppercase: Boolean(getEditorField("title_uppercase")?.checked),
+      subtitle_uppercase: Boolean(getEditorField("subtitle_uppercase")?.checked),
       title_text_color: getEditorField("title_text_color")?.value,
       title_bg_alpha: Number(getEditorField("title_bg_alpha")?.value || 0),
       active_word: Number(previewSubtitle?.dataset.activeWord || 0),
@@ -22904,6 +22913,8 @@ document.addEventListener("DOMContentLoaded", () => {
     "caption_anchor",
     "subtitle_style",
     "subtitle_preset",
+    "title_uppercase",
+    "subtitle_uppercase",
     "title_margin",
     "title_line_spacing",
     "title_display_mode",
@@ -23782,6 +23793,8 @@ document.addEventListener("DOMContentLoaded", function () {
   const titleBgCustomInput = document.getElementById("titleBgCustomColor");
   const subtitlePresetField = document.getElementById("subtitlePresetValue");
   const subtitleStyleField = document.getElementById("subtitleStyleField");
+  const titleUppercaseToggle = document.getElementById("titleUppercaseToggle");
+  const subtitleUppercaseToggle = document.getElementById("subtitleUppercaseToggle");
   const subtitlePresetCards = Array.from(document.querySelectorAll("[data-subtitle-preset-card]"));
   const cropAreaModalEl = document.getElementById("crop-area-modal");
   const styleTemplateCards = cropAreaModalEl
@@ -24167,7 +24180,7 @@ document.addEventListener("DOMContentLoaded", function () {
       element.style.setProperty("--word-highlight-text-background", wordHighlightPreset?.textBackground || "none");
       element.style.setProperty("--word-highlight-active-background", wordHighlightPreset?.activeBackground || "none");
       element.style.setProperty("--word-highlight-active-scale", wordHighlightPreset?.activeScale || "1");
-      element.style.textTransform = wordHighlightPreset?.uppercase ? "uppercase" : "";
+      element.style.textTransform = "";
     };
     if (subtitlePreview) {
       subtitlePreview.classList.toggle("is-word-highlight", isWordHighlight);
@@ -24206,6 +24219,10 @@ document.addEventListener("DOMContentLoaded", function () {
       subtitleStyleField.value = "karaoke";
       subtitleStyleField.dispatchEvent(new Event("input", { bubbles: true }));
       subtitleStyleField.dispatchEvent(new Event("change", { bubbles: true }));
+    }
+    if (subtitleUppercaseToggle) {
+      subtitleUppercaseToggle.checked = Boolean(RENDERER_SUBTITLE_PRESETS?.[nextValue]?.force_uppercase);
+      subtitleUppercaseToggle.dispatchEvent(new Event("change", { bubbles: true }));
     }
     syncSubtitlePresetCards();
     applySubtitlePreview();
@@ -24270,6 +24287,14 @@ document.addEventListener("DOMContentLoaded", function () {
       return;
     }
     applySubtitlePresetValue(String(card.dataset.styleTemplateSubtitlePreset || "").trim());
+    if (titleUppercaseToggle) {
+      titleUppercaseToggle.checked = String(card.dataset.styleTemplateTitleUppercase || "").toLowerCase() === "true";
+      titleUppercaseToggle.dispatchEvent(new Event("change", { bubbles: true }));
+    }
+    if (subtitleUppercaseToggle) {
+      subtitleUppercaseToggle.checked = String(card.dataset.styleTemplateSubtitleUppercase || "").toLowerCase() === "true";
+      subtitleUppercaseToggle.dispatchEvent(new Event("change", { bubbles: true }));
+    }
     const nextSubtitleFontKey = String(card.dataset.styleTemplateSubtitleFontKey || "").trim();
     if (subtitleFont && nextSubtitleFontKey) {
       subtitleFont.value = nextSubtitleFontKey;
@@ -24337,7 +24362,6 @@ document.addEventListener("DOMContentLoaded", function () {
   const relocateDesignTextColorFields = () => {
     const modal = document.getElementById("crop-area-modal");
     const moves = [
-      ["caption", ".crop-modal-element-grid--caption-top"],
       ["title", ".crop-modal-element-grid--title-top"],
     ];
     moves.forEach(([kind, targetSelector]) => {
@@ -25060,6 +25084,11 @@ document.addEventListener("DOMContentLoaded", function () {
   titleBgAlphaInput?.addEventListener("input", applyTitleBgPreview);
   subtitleTextAlphaInput?.addEventListener("input", applySubtitlePreview);
   subtitleBgAlphaInput?.addEventListener("input", applySubtitlePreview);
+  titleUppercaseToggle?.addEventListener("change", () => {
+    syncPreviewTitleText();
+    syncFinalPreviewLayout({ measureKinds: ["title"], repaintIfUnchanged: true });
+  });
+  subtitleUppercaseToggle?.addEventListener("change", applySubtitlePreview);
   const syncSubtitlePresetCards = () => {
     const activeValue = String(subtitlePresetField?.value || "amber_gold").trim() || "amber_gold";
     subtitlePresetCards.forEach((card) => {

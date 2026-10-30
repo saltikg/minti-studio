@@ -608,6 +608,8 @@ def _ensure_video_crop_schema(conn) -> set:
         ("caption_anchor", "VARCHAR", "top"),
         ("subtitle_style", "VARCHAR", "plain"),
         ("subtitle_preset", "VARCHAR", DEFAULT_SUBTITLE_PRESET),
+        ("title_uppercase", "BOOLEAN", None),
+        ("subtitle_uppercase", "BOOLEAN", None),
         ("title_margin", "INTEGER", DEFAULT_TITLE_MARGIN),
         ("title_line_spacing", "INTEGER", -4),
         ("title_bg_color", "VARCHAR", DEFAULT_EDITOR_TITLE_BG_COLOR),

@@ -52,6 +52,7 @@ from app.video_shorts.services.media_utils import (
 from app.video_shorts.services.music import music_volume_expression, normalize_music_level
 from app.video_shorts.services import render_timing
 from app.video_shorts.services.clip_ranges import resolve_clip_ranges
+from app.video_shorts.services.text_case import normalize_language, uppercase_text
 
 SUBSCRIBE_OVERLAY_SCALE = DESIGN_GEOMETRY["subscribe_scale"]
 SUBSCRIBE_OVERLAY_BOTTOM_OFFSET = DESIGN_GEOMETRY["subscribe_bottom"]
@@ -1431,23 +1432,8 @@ def _fit_title_text(
     }
 
 
-_TR_UPPER_MAP = str.maketrans({
-    "i": "İ",
-    "ı": "I",
-})
-
-
-def _turkish_upper(text: str) -> str:
-    return str(text or "").translate(_TR_UPPER_MAP).upper()
-
-
 def _normalize_title_language(language: Any) -> str:
-    value = str(language or "").strip().lower()
-    if not value:
-        return ""
-    if value.startswith("tr") or value in {"tur", "turkish", "turkce"}:
-        return "tr"
-    return value[:2]
+    return normalize_language(language)
 
 
 def _apply_title_case(text: str, title_language: Optional[str], uppercase: bool) -> str:
@@ -1455,7 +1441,7 @@ def _apply_title_case(text: str, title_language: Optional[str], uppercase: bool)
     value = str(text or "")
     if not uppercase:
         return value
-    return _turkish_upper(value) if _normalize_title_language(title_language) == "tr" else value.upper()
+    return uppercase_text(value, title_language)
 
 
 def _hex_to_rgba(color: Optional[str], alpha: int = 255) -> tuple[int, int, int, int]:
