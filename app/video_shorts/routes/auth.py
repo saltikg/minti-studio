@@ -93,6 +93,7 @@ from app.video_shorts.services.onboarding_magic_links import (
     normalize_outreach_language,
 )
 from app.video_shorts.services.user_events import track_event
+from app.video_shorts.services.export_resolution import resolve_export_resolution
 from app.video_shorts.services.free_tool_analytics import (
     attribution_metadata as free_tool_attribution_metadata,
     track_free_tool_event,
@@ -2626,6 +2627,7 @@ def profile():
     stored_time_zone = (raw_timezone_row[0] or "").strip() if raw_timezone_row and raw_timezone_row[0] else ""
     brands = list_user_brands(conn, user["id"])
     current_brand = getattr(g, "vs_current_brand", None)
+    export_resolution = resolve_export_resolution(user["id"], conn=conn)
 
     if request.method == "POST":
         form_type = request.form.get("form_type")
@@ -2708,6 +2710,8 @@ def profile():
         timezones=TIMEZONE_OPTIONS,
         selected_timezone=stored_time_zone,
         has_explicit_timezone=bool(stored_time_zone),
+        export_resolution_effective=export_resolution.resolution,
+        export_resolution_eligible=export_resolution.eligible,
     )
 
 

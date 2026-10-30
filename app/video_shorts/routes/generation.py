@@ -216,6 +216,10 @@ from app.video_shorts.services.user_preferences import (
     save_user_preference,
     save_user_bool_preference,
 )
+from app.video_shorts.services.export_resolution import (
+    EXPORT_RESOLUTION_OVERRIDE_KEY,
+    resolve_export_resolution,
+)
 from app.video_shorts.services.autopilot_leads import (
     _get_or_create_local_uploads_channel,
     apply_outreach_video_style,
@@ -273,7 +277,6 @@ from app.video_shorts.services.user_events import prepare_transcript_completed_t
 from app.video_shorts.services.billing import (
     STRIPE_PUBLISHABLE_KEY,
     load_billing_user_state,
-    plan_is_paid,
     stripe_is_configured,
     user_has_managed_subscription,
 )
@@ -459,7 +462,6 @@ HIDE_CLIP_COACHMARK_PREFERENCE_KEY = "hide_clip_coachmark"
 SHORT_EDITOR_DEFAULTS_PREFERENCE_KEY = "short_editor_defaults"
 FACE_AWARE_DEFAULT_PREFERENCE_KEY = "face_aware_layout_default"
 SHORT_EDITOR_DEFAULT_FIELD_NAMES = (
-    "export_resolution",
     "font",
     "sub_font",
     "title_font_size",
@@ -965,7 +967,6 @@ def _normalize_title_display_mode(value: Any, seconds: Any = None) -> str:
 
 def _short_editor_config_defaults() -> Dict[str, Any]:
     return {
-        "export_resolution": "720",
         "font": DEFAULT_EDITOR_TITLE_FONT_KEY,
         "sub_font": DEFAULT_SUB_FONT_KEY,
         "title_font_size": DEFAULT_EDITOR_TITLE_FONT_SIZE,
@@ -1025,7 +1026,7 @@ def _short_editor_defaults_preference_key(brand_id: Optional[str] = None) -> str
     return f"{SHORT_EDITOR_DEFAULTS_PREFERENCE_KEY}:{normalized_brand}" if normalized_brand else SHORT_EDITOR_DEFAULTS_PREFERENCE_KEY
 
 
-def _load_short_editor_defaults(user_id: Optional[str], brand_id: Optional[str] = None) -> Dict[str, Any]:
+def _load_short_editor_defaults_json(user_id: Optional[str], brand_id: Optional[str] = None) -> Dict[str, Any]:
     raw = load_user_preference(user_id, _short_editor_defaults_preference_key(brand_id))
     if not raw and brand_id:
         raw = load_user_preference(user_id, SHORT_EDITOR_DEFAULTS_PREFERENCE_KEY)
@@ -1038,48 +1039,17 @@ def _load_short_editor_defaults(user_id: Optional[str], brand_id: Optional[str] 
         return {}
     if not isinstance(parsed, dict):
         return {}
+    return parsed
+
+
+def _load_short_editor_defaults(user_id: Optional[str], brand_id: Optional[str] = None) -> Dict[str, Any]:
+    parsed = _load_short_editor_defaults_json(user_id, brand_id)
     return {name: parsed.get(name) for name in SHORT_EDITOR_DEFAULT_FIELD_NAMES if name in parsed}
-
-
-def _owner_can_export_1080(user_id: Optional[str]) -> bool:
-    normalized_user_id = str(user_id or "").strip()
-    if not normalized_user_id:
-        return False
-    conn = None
-    try:
-        conn = get_db_readonly()
-        row = conn.execute(
-            """
-            SELECT COALESCE(plan_id, ''), lower(COALESCE(service_mode, ''))
-            FROM shorts_users
-            WHERE CAST(id AS VARCHAR) = CAST(? AS VARCHAR)
-            LIMIT 1
-            """,
-            [normalized_user_id],
-        ).fetchone()
-    except Exception as exc:
-        current_app.logger.warning("Export resolution eligibility lookup failed for user %s: %s", normalized_user_id, exc)
-        return False
-    finally:
-        if conn is not None:
-            conn.close()
-    return bool(row and (plan_is_paid(str(row[0] or "")) or str(row[1] or "") == "autopilot"))
-
-
-def _resolved_export_resolution(user_id: Optional[str], brand_id: Optional[str]) -> str:
-    stored = str(_load_short_editor_defaults(user_id, brand_id).get("export_resolution") or "720").strip()
-    return "1080" if stored == "1080" and _owner_can_export_1080(user_id) else "720"
-
-
-def _resolved_export_target(user_id: Optional[str], brand_id: Optional[str]) -> tuple[int, int]:
-    return (1080, 1920) if _resolved_export_resolution(user_id, brand_id) == "1080" else (720, 1280)
 
 
 def _clean_short_editor_default_payload(source: Any) -> Dict[str, Any]:
     defaults = _short_editor_config_defaults()
     payload: Dict[str, Any] = {}
-
-    payload["export_resolution"] = "1080" if str(source.get("export_resolution") or "720").strip() == "1080" else "720"
 
     font_key = _resolve_title_font_key(source.get("font") or defaults["font"])
     payload["font"] = font_key
@@ -10203,7 +10173,7 @@ def _render_settings_options_for_plan_entry(
         plan_index=int(plan_entry.get("plan_index") or 0),
         title=plan_entry.get("title") or fallback_title,
         brand_id=brand_id,
-        export_resolution=_resolved_export_resolution(owner_user_id, brand_id),
+        export_resolution=resolve_export_resolution(owner_user_id).resolution,
         crop_ratios=_video_crop_ratios_from_mapping(video),
         crop_aspect=str(video.get("crop_aspect") or "landscape").strip() or "landscape",
         layout_mode=_effective_layout_mode_for_owner(owner_user_id, video.get("layout_mode")),
@@ -13033,12 +13003,6 @@ def generate_short(video_pk):
     )
 
     short_editor_defaults = _load_short_editor_defaults(editor_owner_user_id, brand_id)
-    export_resolution_eligible = _owner_can_export_1080(editor_owner_user_id)
-    selected_export_resolution = (
-        "1080"
-        if export_resolution_eligible and str(short_editor_defaults.get("export_resolution") or "720") == "1080"
-        else "720"
-    )
     raw_style_values = {
         "font": video.get("title_font_key"),
         "sub_font": video.get("subtitle_font_key"),
@@ -14647,8 +14611,6 @@ def generate_short(video_pk):
         selected_music_start_seconds=selected_music_start_seconds,
         selected_music_duck=selected_music_duck,
         selected_music_fade_out=selected_music_fade_out,
-        selected_export_resolution=selected_export_resolution,
-        export_resolution_eligible=export_resolution_eligible,
         debug_info=debug_info,
         clip_rows=clip_rows,
         clip_edit_words=clip_edit_words,
@@ -16271,8 +16233,11 @@ def save_short_editor_defaults():
     source = source or {}
     try:
         payload = _clean_short_editor_default_payload(source)
-        if not _owner_can_export_1080(owner_user_id):
-            payload["export_resolution"] = "720"
+        stored_defaults = _load_short_editor_defaults_json(owner_user_id, editor_context.get("brand_id"))
+        stored_export_resolution = str(stored_defaults.get("export_resolution") or "").strip()
+        # Preserve the legacy JSON field without using it to decide render resolution.
+        if stored_export_resolution in {"720", "1080"}:
+            payload["export_resolution"] = stored_export_resolution
         invalid_assets = _invalid_overlay_image_asset_ids(
             payload.get("overlay_shapes") or [],
             owner_user_id=owner_user_id,
@@ -21322,6 +21287,8 @@ def _load_admin_user_detail(conn, user_id: str) -> Optional[Dict[str, Any]]:
                 else:
                     trial_status_tone = "danger"
 
+    export_resolution = resolve_export_resolution(user_id, conn=conn)
+
     return {
         "id": row[0],
         "username": row[1] or "",
@@ -21337,6 +21304,8 @@ def _load_admin_user_detail(conn, user_id: str) -> Optional[Dict[str, Any]]:
         "service_mode": "autopilot" if str(row[11] or "").strip().lower() == "autopilot" else "self",
         "service_mode_label": "Autopilot" if str(row[11] or "").strip().lower() == "autopilot" else "Self-serve",
         "service_tier": int(row[12]) if row[12] is not None else None,
+        "export_resolution_override": export_resolution.override or "auto",
+        "export_resolution_effective": export_resolution.resolution,
         "trial_days": latest_trial_days,
         "trial_days_label": latest_trial_days_label,
         "trial_used_at": latest_trial_anchor_at,
@@ -21943,6 +21912,43 @@ def admin_update_user_service_mode(user_id: str):
         label = "Autopilot" if result["service_mode"] == "autopilot" else "Self-serve"
         target_label = str(target_row[1] or target_user_id)
         flash(f"Service mode for {target_label} set to {label}.", "success")
+    return redirect(url_for("video_shorts_bp.admin_user_detail", user_id=target_user_id))
+
+
+@video_shorts_bp.route("/admin/users/<user_id>/export-resolution", methods=["POST"])
+@require_admin
+def admin_update_user_export_resolution(user_id: str):
+    target_user_id = str(user_id or "").strip()
+    if not target_user_id:
+        abort(404)
+    requested_value = str(request.form.get("export_resolution_override") or "auto").strip().lower()
+    if requested_value not in {"auto", "720", "1080"}:
+        flash("Choose a valid export quality.", "danger")
+        return redirect(url_for("video_shorts_bp.admin_user_detail", user_id=target_user_id))
+
+    conn = get_db_readonly()
+    try:
+        target_row = conn.execute(
+            "SELECT 1 FROM shorts_users WHERE CAST(id AS VARCHAR) = ? LIMIT 1",
+            [target_user_id],
+        ).fetchone()
+    finally:
+        conn.close()
+    if not target_row:
+        abort(404)
+
+    try:
+        save_user_preference(
+            target_user_id,
+            EXPORT_RESOLUTION_OVERRIDE_KEY,
+            requested_value if requested_value in {"720", "1080"} else None,
+        )
+    except Exception as exc:
+        current_app.logger.exception("Admin export-resolution update failed for user=%s: %s", target_user_id, exc)
+        flash("Could not update export quality.", "danger")
+    else:
+        label = {"auto": "Auto (by plan)", "720": "Standard 720p", "1080": "HD 1080p"}[requested_value]
+        flash(f"Export quality set to {label}.", "success")
     return redirect(url_for("video_shorts_bp.admin_user_detail", user_id=target_user_id))
 
 
@@ -31399,6 +31405,9 @@ def autoclip_video(video_pk):
             selected_subscribe_overlay_key = make_system_subscribe_key(auto_subscribe_path.name)
     src_path = None
     src_path_is_temp = False
+    effective_export_resolution = resolve_export_resolution(
+        video_owner_user_id or target_owner_user_id
+    ).resolution
     if not queued_job:
         try:
             edit_keep_ranges_for_job = _normalize_edit_keep_ranges(plan_entry.get("edit_keep_ranges"))
@@ -31425,7 +31434,7 @@ def autoclip_video(video_pk):
                 plan_index=plan_index,
                 title=plan_entry.get("title") or video_title,
                 brand_id=brand_id,
-                export_resolution=_resolved_export_resolution(video_owner_user_id or target_owner_user_id, brand_id),
+                export_resolution=effective_export_resolution,
                 crop_ratios=video_crop_ratios,
                 crop_aspect=video_crop_aspect,
                 layout_mode=video_layout_mode,
@@ -31750,9 +31759,8 @@ def autoclip_video(video_pk):
     if podcast_audio_path:
         render_target_width, render_target_height = DESIGN_GEOMETRY["width"], DESIGN_GEOMETRY["height"]
     else:
-        render_target_width, render_target_height = _resolved_export_target(
-            video_owner_user_id or target_owner_user_id,
-            brand_id,
+        render_target_width, render_target_height = (
+            (1080, 1920) if effective_export_resolution == "1080" else (720, 1280)
         )
     if str(video_crop_aspect or "").strip().lower() == "original" and not podcast_audio_path:
         try:

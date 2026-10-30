@@ -301,6 +301,21 @@
             </div>
           </form>
         </div>
+
+        <div class="vs-detail-row">
+          <div class="vs-detail-view">
+            <div>
+              <div class="vs-detail-label">Export quality</div>
+              <div class="vs-detail-value">
+                {% if export_resolution_effective == '1080' %}
+                  HD 1080p
+                {% else %}
+                  Standard 720p{% if not export_resolution_eligible %} · HD on paid plans{% endif %}
+                {% endif %}
+              </div>
+            </div>
+          </div>
+        </div>
       </div>
 
       <details class="vs-password-toggle">

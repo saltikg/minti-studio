@@ -98,6 +98,7 @@ def _env_bool(name: str, default: bool, *, warn_invalid: bool = False, logger=No
 SOURCE_CACHE_MAX_GB = _env_int("SOURCE_CACHE_MAX_GB", 15)
 
 GENERATE_V2_ALL = _env_bool("GENERATE_V2_ALL", False)
+EXPORT_1080_FOR_PAID = _env_bool("EXPORT_1080_FOR_PAID", False)
 AUTO_SUGGEST_RENDER_ENABLED = _env_bool("AUTO_SUGGEST_RENDER_ENABLED", False)
 AUTO_SUGGEST_RENDER_USER_IDS = {
     user_id.strip()

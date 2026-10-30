@@ -367,6 +367,22 @@
                 {% endif %}
               </form>
             </dd>
+
+            <dt>Export quality</dt>
+            <dd>
+              <form
+                method="post"
+                action="{{ url_for('video_shorts_bp.admin_update_user_export_resolution', user_id=user_detail.id) }}"
+                class="admin-service-mode-form">
+                <select name="export_resolution_override" class="form-select form-select-sm admin-service-mode-select" aria-label="Export quality">
+                  <option value="auto" {% if user_detail.export_resolution_override == 'auto' %}selected{% endif %}>Auto (by plan)</option>
+                  <option value="720" {% if user_detail.export_resolution_override == '720' %}selected{% endif %}>Standard 720p</option>
+                  <option value="1080" {% if user_detail.export_resolution_override == '1080' %}selected{% endif %}>HD 1080p</option>
+                </select>
+                <button type="submit" class="btn btn-sm btn-primary">Update</button>
+                <span class="vs-admin-muted">Effective now: {{ 'HD 1080p' if user_detail.export_resolution_effective == '1080' else 'Standard 720p' }}</span>
+              </form>
+            </dd>
           </dl>
         </div>
         <div class="admin-detail-account-column">
