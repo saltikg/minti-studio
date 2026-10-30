@@ -4177,6 +4177,15 @@ def _compose_trimmed_with_background(
                     )
                     direct_timeline_audio_label = "[clip_base_a]"
         clip_input_label = "[clip_direct_v]"
+    clip_source_fps = _probe_video_frame_rate(layout_video_source) if layout_video_source else None
+    if clip_source_fps is not None and clip_source_fps > 30.01:
+        filter_parts.append(f"{clip_input_label}fps=30[clip_fps_limited]")
+        clip_input_label = "[clip_fps_limited]"
+        current_app.logger.info(
+            "Clip frame rate limited source=%s source_fps=%.3f output_fps=30",
+            layout_video_source.name,
+            clip_source_fps,
+        )
     if needs_background_stream and outreach_layout:
         outreach_source_label = clip_input_label
         clip_input_label = "[outreach_clip_src]"

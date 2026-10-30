@@ -69,8 +69,26 @@ def resolve_export_resolution(user_id: Optional[str], *, conn=None) -> ExportRes
         if override not in {"720", "1080"}:
             override = None
 
+        unactivated_lead = False
+        if not service_mode:
+            unactivated_lead = bool(
+                db.execute(
+                    """
+                    SELECT 1
+                    FROM autopilot_leads
+                    WHERE CAST(user_id AS VARCHAR) = CAST(? AS VARCHAR)
+                      AND converted_at IS NULL
+                    LIMIT 1
+                    """,
+                    [normalized_user_id],
+                ).fetchone()
+            )
+        eligible = bool(eligible and not unactivated_lead)
+
         if override:
             resolution = override
+        elif unactivated_lead:
+            resolution = "720"
         elif eligible and flag_enabled:
             resolution = "1080"
         else:

@@ -87,11 +87,15 @@ def _download_video(video_url: str, video_id: str, out_dir: Path) -> Path:
     opts = {
         "outtmpl": str(out_dir / f"{video_id}.%(ext)s"),
         "merge_output_format": "mp4",
+        # Prefer 30 fps only after resolution so 60 fps HD never loses to 30 fps SD.
         "format": (
-            "bestvideo[vcodec^=avc1][height<=1080]+bestaudio[ext=m4a]/"
-            "bestvideo[vcodec^=avc1][height<=1080]+bestaudio/"
-            "bestvideo*+bestaudio/best"
+            "bestvideo[vcodec^=avc1][width<=1920][height<=1920][fps<=60]+bestaudio[ext=m4a]/"
+            "bestvideo[vcodec^=avc1][width<=1920][height<=1920][fps<=60]+bestaudio/"
+            "bestvideo[width<=1920][height<=1920][fps<=60]+bestaudio[ext=m4a]/"
+            "bestvideo[width<=1920][height<=1920][fps<=60]+bestaudio/"
+            "best[width<=1920][height<=1920]"
         ),
+        "format_sort": ["res:1080", "fps:30"],
         "quiet": True,
         "noprogress": True,
     }

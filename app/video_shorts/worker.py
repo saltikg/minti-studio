@@ -904,12 +904,18 @@ def _download_youtube_video(
     opts = {
         "outtmpl": str(work_dir / f"{video_id}.%(ext)s"),
         "merge_output_format": "mp4",
+        # Keep resolution ahead of frame rate. Slash-separated 30/60 fps
+        # alternatives would accept a low-resolution 30 fps format before yt-dlp
+        # ever considers a 60 fps HD format. Bounding both dimensions at 1920
+        # admits 1920x1080 and its 1080x1920 vertical equivalent, but not 1440p/4K.
         "format": (
-            "bestvideo[vcodec^=avc1][height<=1080][fps<=30]+bestaudio[ext=m4a]/"
-            "bestvideo[vcodec^=avc1][height<=1080][fps<=30]+bestaudio/"
-            "bestvideo[height<=1080][fps<=30]+bestaudio/"
-            "best[height<=1080][fps<=30]"
+            "bestvideo[vcodec^=avc1][width<=1920][height<=1920][fps<=60]+bestaudio[ext=m4a]/"
+            "bestvideo[vcodec^=avc1][width<=1920][height<=1920][fps<=60]+bestaudio/"
+            "bestvideo[width<=1920][height<=1920][fps<=60]+bestaudio[ext=m4a]/"
+            "bestvideo[width<=1920][height<=1920][fps<=60]+bestaudio/"
+            "best[width<=1920][height<=1920]"
         ),
+        "format_sort": ["res:1080", "fps:30"],
         "quiet": True,
         "noprogress": True,
         "legacy_server_connect": True,
