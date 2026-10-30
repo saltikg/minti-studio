@@ -46,6 +46,9 @@ def create_app():
     app.config["DB_PATH"]  = DB_PATH
     app.config["BASE_URL"] = BASE_URL
     app.config["PERMANENT_SESSION_LIFETIME"] = timedelta(days=60)
+    app.config["SESSION_COOKIE_SECURE"] = BASE_URL.lower().startswith("https://")
+    app.config["SESSION_COOKIE_HTTPONLY"] = True
+    app.config["SESSION_COOKIE_SAMESITE"] = "Lax"
 
     app.secret_key = os.getenv("SECRET_KEY")
 

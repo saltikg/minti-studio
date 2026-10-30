@@ -1939,9 +1939,10 @@ def login():
                             brand = {"id": claim_result["target_brand_id"]}
                 finally:
                     brand_conn.close()
-                session["vs_user_id"] = row[0]
-                if brand:
-                    session["vs_brand_id"] = brand["id"]
+                _establish_authenticated_session(
+                    user_id=row[0],
+                    brand_id=(brand or {}).get("id"),
+                )
                 g.vs_current_user = None
                 if post_choice["intent"]:
                     persist_conn = get_db()
@@ -3054,9 +3055,10 @@ def google_oauth_callback():
             send_membership_activated_emails(user_id=user_id, signup_method="Google")
         except Exception:
             logger.exception("Membership activation email orchestration failed after Google signup for user=%s", user_id)
-    session["vs_user_id"] = user_id
-    if brand:
-        session["vs_brand_id"] = brand["id"]
+    _establish_authenticated_session(
+        user_id=user_id,
+        brand_id=(brand or {}).get("id"),
+    )
     flash("Signed in with Google.", "success")
     nxt = _normalize_next_url(session.pop("google_login_next", None)) or url_for("video_shorts_bp.my_videos_page")
     action = _normalize_guest_resume_action(session.pop("google_login_action", ""))

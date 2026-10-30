@@ -2,6 +2,9 @@ from __future__ import annotations
 
 import io
 import sys
+from datetime import datetime, timezone
+from email.utils import parsedate_to_datetime
+from http.cookies import SimpleCookie
 from types import ModuleType, SimpleNamespace
 from uuid import uuid4
 
@@ -34,6 +37,7 @@ google_oauth2_module.credentials = google_oauth2_credentials_module
 google_auth_module = _ensure_module("google.auth")
 google_auth_exceptions_module = _ensure_module("google.auth.exceptions")
 google_auth_exceptions_module.RefreshError = type("RefreshError", (Exception,), {})
+google_auth_exceptions_module.TransportError = type("TransportError", (Exception,), {})
 google_auth_transport_module = _ensure_module("google.auth.transport")
 google_auth_transport_requests_module = _ensure_module("google.auth.transport.requests")
 google_auth_transport_requests_module.Request = type("Request", (), {})
@@ -75,6 +79,7 @@ stripe_module.billing_portal = SimpleNamespace(
 
 requests_module = _ensure_module("requests")
 requests_module.Response = type("Response", (), {})
+requests_module.RequestException = type("RequestException", (Exception,), {})
 requests_module.get = lambda *args, **kwargs: None
 requests_module.post = lambda *args, **kwargs: None
 requests_module.delete = lambda *args, **kwargs: None
@@ -169,6 +174,11 @@ def test_existing_google_user_can_sign_in_when_signups_disabled(monkeypatch, tmp
 
     monkeypatch.setattr(auth_routes, "_build_google_flow", lambda state=None: _FakeFlow())
     monkeypatch.setattr(
+        auth_routes,
+        "ensure_brand_for_user",
+        lambda *args, **kwargs: {"id": "brand-1"},
+    )
+    monkeypatch.setattr(
         auth_routes.id_token,
         "verify_oauth2_token",
         lambda *args, **kwargs: {"sub": "google-sub-1", "email": email, "name": "Existing User"},
@@ -185,8 +195,18 @@ def test_existing_google_user_can_sign_in_when_signups_disabled(monkeypatch, tmp
     response = client.get("/video_shorts/login/google/callback?state=state-123&code=test-code")
     assert response.status_code == 302
     assert response.headers["Location"].endswith("/video_shorts/channels")
+    session_cookie = SimpleCookie()
+    session_cookie.load(response.headers["Set-Cookie"])
+    cookie = session_cookie[app.config["SESSION_COOKIE_NAME"]]
+    assert cookie["secure"]
+    assert cookie["httponly"]
+    assert cookie["samesite"] == "Lax"
+    expires_at = parsedate_to_datetime(cookie["expires"])
+    lifetime = expires_at - datetime.now(timezone.utc)
+    assert 59 <= lifetime.days <= 60
     with client.session_transaction() as session:
         assert session["vs_user_id"] == user_id
+        assert session.permanent is True
 
     conn = db_service.get_db()
     try:
