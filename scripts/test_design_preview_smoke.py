@@ -174,6 +174,28 @@ def _assert_make_clip_add_keeps_exact_word_indexes(page: Page, variant: str) -> 
     page.wait_for_function("() => window.__generateV2EditModeActive === true")
 
 
+def _assert_trim_selection_keeps_exact_first_word(page: Page, variant: str) -> None:
+    result = page.evaluate(
+        """() => {
+          const words = typeof getGenerateV2WordTimestamps === 'function'
+            ? getGenerateV2WordTimestamps() : [];
+          if (words.length < 3) return {skipped: 'no transcript words'};
+          const first = 1;
+          const last = Math.min(words.length - 1, 2);
+          const ranges = typeof selectionToClipKeepRanges === 'function'
+            ? selectionToClipKeepRanges(words, [{
+            start: Number(words[0].start), end: Number(words[last].end)
+          }], [first, last], 'keep-only') : null;
+          return {first, last, ranges: ranges?.ranges || []};
+        }"""
+    )
+    assert not result.get("skipped"), result
+    ranges = result["ranges"]
+    assert ranges and ranges[0]["start_word_index"] == result["first"], result
+    assert ranges[0]["end_word_index"] == result["last"], result
+    _print_pass(variant, "trim-view selection starts at the exact selected word")
+
+
 def _assert_stubbed_regenerate(page: Page, variant: str) -> None:
     card = page.locator(".clip-card:has(video):has(.generate-v2-regenerate-btn)").first
     if card.count() == 0:
@@ -429,6 +451,7 @@ def _run_variant(browser: Browser, *, base_url: str, cookie_name: str,
         assert reported_dpr == dpr, (variant, reported_dpr)
         _print_pass(variant, "browser DPR")
         _assert_make_clip_add_keeps_exact_word_indexes(page, variant)
+        _assert_trim_selection_keeps_exact_first_word(page, variant)
 
         aspect = page.evaluate(
             """() => {

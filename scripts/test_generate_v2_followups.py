@@ -175,7 +175,15 @@ def test_text_trim_selection_ranges() -> None:
         str(result),
     )
     result = generation.derive_clip_keep_ranges_from_word_selection(words, current, 3, 3, "keep-only")
-    _check("text_trim_single_word_keep_only", result["ok"] and result["ranges"][0]["start"] == 1.46 and result["ranges"][0]["end"] == 2.08, str(result))
+    _check(
+        "text_trim_single_word_keep_only",
+        result["ok"]
+        and result["ranges"][0]["start"] == 1.46
+        and result["ranges"][0]["end"] == 2.08
+        and result["ranges"][0]["start_word_index"] == 3
+        and result["ranges"][0]["end_word_index"] == 3,
+        str(result),
+    )
     result = generation.derive_clip_keep_ranges_from_word_selection(words, current, 4, 4, "remove")
     _check("text_trim_single_word_remove", result["ok"] and len(result["ranges"]) == 2, str(result))
     result = generation.derive_clip_keep_ranges_from_word_selection(words, result["ranges"], 4, 4, "restore")

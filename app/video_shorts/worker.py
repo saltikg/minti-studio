@@ -2250,6 +2250,45 @@ def _render_job_completion_from_plan(job: Dict[str, Any]) -> Optional[Dict[str, 
     return None
 
 
+def _active_render_mutation_scopes() -> set[tuple[str, str, str]]:
+    conn = get_db()
+    try:
+        rows = conn.execute(
+            """
+            SELECT user_id, payload_json
+            FROM shorts_render_jobs
+            WHERE type=? AND lower(status) IN ('processing', 'running', 'claimed', 'rendering')
+            """,
+            [JOB_TYPE_RENDER_SHORT],
+        ).fetchall()
+    finally:
+        conn.close()
+    scopes = set()
+    for row in rows:
+        payload = render_jobs._parse_json(row[1]) if row[1] else {}
+        video_pk = payload.get("video_pk")
+        plan_index = payload.get("plan_index")
+        brand_id = payload.get("brand_id")
+        if video_pk and plan_index and brand_id:
+            scopes.add((str(row[0]), str(brand_id), youtube_scheduling.asset_key(video_pk=video_pk, plan_index=plan_index)))
+    return scopes
+
+
+def recover_orphaned_render_mutation_leases(app) -> int:
+    released = youtube_scheduling.release_orphaned_rendering_leases(
+        active_job_scopes=_active_render_mutation_scopes(),
+        minimum_age_seconds=60,
+    )
+    for user_id, brand_id, key in released:
+        app.logger.warning(
+            "Released orphaned render mutation lease user_id=%s brand_id=%s asset_key=%s",
+            user_id,
+            brand_id,
+            key,
+        )
+    return len(released)
+
+
 def recover_stuck_render_jobs(app, *, stale_seconds: int = 15 * 60) -> Dict[str, int]:
     """Terminalize stale render jobs whose worker stopped making progress.
 
@@ -2265,7 +2304,7 @@ def recover_stuck_render_jobs(app, *, stale_seconds: int = 15 * 60) -> Dict[str,
             SELECT id
             FROM shorts_render_jobs
             WHERE type = ?
-              AND status = 'processing'
+              AND lower(status) IN ('processing', 'running', 'claimed', 'rendering')
               AND COALESCE(updated_at, started_at, created_at) < ?
             ORDER BY COALESCE(updated_at, started_at, created_at) ASC
             """,
@@ -2280,7 +2319,7 @@ def recover_stuck_render_jobs(app, *, stale_seconds: int = 15 * 60) -> Dict[str,
     for row in rows:
         job_id = str(row[0] or "").strip()
         job = get_job(job_id)
-        if not job or str(job.get("status") or "").strip().lower() != "processing":
+        if not job or str(job.get("status") or "").strip().lower() not in {"processing", "running", "claimed", "rendering"}:
             continue
         if not render_jobs.job_heartbeat_is_stale(job, cutoff):
             continue
@@ -2331,6 +2370,10 @@ def run_worker_loop() -> None:
                 except Exception:
                     app.logger.exception("Discovery temp janitor failed")
             requeue_dead_local_worker_jobs()
+            try:
+                recover_orphaned_render_mutation_leases(app)
+            except Exception:
+                app.logger.exception("Orphaned render mutation lease recovery failed")
             try:
                 recovered_stuck = recover_stuck_render_jobs(app, stale_seconds=15 * 60)
                 if any(recovered_stuck.values()):

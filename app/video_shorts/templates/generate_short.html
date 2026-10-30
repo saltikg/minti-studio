@@ -13856,36 +13856,65 @@ const normalizeClipKeepRanges = (ranges) => {
 };
 
 const getClipKeepRangesFromForm = (form, words = getGenerateV2WordTimestamps()) => {
+  const withLegacyIndexes = (ranges) => normalizeClipKeepRanges(ranges).map((range) => {
+    if (Number.isInteger(range.start_word_index) && Number.isInteger(range.end_word_index)) return range;
+    const indexes = words
+      .map((word, index) => {
+        const start = Number(word?.start);
+        const end = Number(word?.end);
+        const midpoint = (start + end) / 2;
+        return Number.isFinite(midpoint) && midpoint >= range.start && midpoint <= range.end ? index : -1;
+      })
+      .filter((index) => index >= 0);
+    return indexes.length
+      ? { ...range, start_word_index: indexes[0], end_word_index: indexes[indexes.length - 1] }
+      : range;
+  });
+  const remember = (ranges) => {
+    const indexed = withLegacyIndexes(ranges);
+    const input = form.querySelector("[data-edit-keep-ranges-input]");
+    if (input && indexed.length) input.value = JSON.stringify(indexed);
+    return indexed;
+  };
   const keepRangesInput = form.querySelector("[data-edit-keep-ranges-input]");
   if (keepRangesInput?.value) {
     try {
       const parsed = JSON.parse(keepRangesInput.value || "[]");
       const normalized = normalizeClipKeepRanges(parsed);
-      if (normalized.length) return normalized;
+      if (normalized.length) return remember(normalized);
     } catch (_) {}
   }
   try {
     const parsedInitial = JSON.parse(form.dataset.initialKeepRanges || "[]");
     const normalizedInitial = normalizeClipKeepRanges(parsedInitial);
-    if (normalizedInitial.length) return normalizedInitial;
+    if (normalizedInitial.length) return remember(normalizedInitial);
   } catch (_) {}
   const start = Number(form.querySelector("[data-edit-start-input]")?.value || form.dataset.initialStart || 0);
   const end = Number(form.querySelector("[data-edit-end-input]")?.value || form.dataset.initialEnd || 0);
   if (Number.isFinite(start) && Number.isFinite(end) && end > start) {
-    return normalizeClipKeepRanges([{ start, end }]);
+    return remember([{ start, end }]);
   }
   if (words.length) {
-    return normalizeClipKeepRanges([{ start: Number(words[0].start || 0), end: Number(words[words.length - 1].end || 0) }]);
+    return remember([{ start: Number(words[0].start || 0), end: Number(words[words.length - 1].end || 0) }]);
   }
   return [];
 };
 
-const wordIndexInRanges = (word, ranges) => ranges.some((range) => wordOverlapsRange(word, range.start, range.end));
+const wordIndexInRanges = (word, ranges, fallbackIndex = null) => {
+  const index = Number.isInteger(Number(word?.index)) ? Number(word.index) : Number(fallbackIndex);
+  return ranges.some((range) => {
+    if (Number.isInteger(range.start_word_index) && Number.isInteger(range.end_word_index)) {
+      return Number.isInteger(index) && index >= range.start_word_index && index <= range.end_word_index;
+    }
+    const midpoint = (Number(word?.start) + Number(word?.end)) / 2;
+    return Number.isFinite(midpoint) && midpoint >= range.start && midpoint <= range.end;
+  });
+};
 
 const rangesToWordIndexSet = (words, ranges) => {
   const indexes = new Set();
   words.forEach((word, index) => {
-    if (wordIndexInRanges(word, ranges)) indexes.add(index);
+    if (wordIndexInRanges(word, ranges, index)) indexes.add(index);
   });
   return indexes;
 };
@@ -13968,6 +13997,8 @@ const rangesFromWordIndexes = (words, indexes) => {
     ranges.push({
       start,
       end: Math.max(start, end),
+      start_word_index: runStart,
+      end_word_index: previous,
     });
   };
   sorted.slice(1).forEach((index) => {

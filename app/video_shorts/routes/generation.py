@@ -6474,11 +6474,23 @@ def _edit_keep_ranges_duration(ranges: Any) -> Optional[float]:
 def _range_word_indexes(words: List[Dict[str, Any]], ranges: List[Dict[str, float]]) -> set[int]:
     kept: set[int] = set()
     for idx, word in enumerate(words):
+        explicit = any(
+            isinstance(item.get("start_word_index"), int)
+            and isinstance(item.get("end_word_index"), int)
+            and int(item["start_word_index"]) <= idx <= int(item["end_word_index"])
+            for item in ranges
+        )
+        if explicit:
+            kept.add(idx)
+            continue
+        if any("start_word_index" in item for item in ranges):
+            continue
         word_start = _to_float(word.get("start"))
         word_end = _to_float(word.get("end"))
         if word_start is None or word_end is None:
             continue
-        if any(word_end > item["start"] and word_start < item["end"] for item in ranges):
+        midpoint = (float(word_start) + float(word_end)) / 2.0
+        if any(item["start"] <= midpoint <= item["end"] for item in ranges):
             kept.add(idx)
     return kept
 
@@ -6565,6 +6577,8 @@ def _range_from_word_indexes(
     return {
         "start": round(padded_start, 3),
         "end": round(max(padded_start, padded_end), 3),
+        "start_word_index": int(first_index),
+        "end_word_index": int(last_index),
     }
 
 

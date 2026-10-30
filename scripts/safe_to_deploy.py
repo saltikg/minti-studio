@@ -69,7 +69,7 @@ def _fetch_processing_jobs() -> list[ProcessingJob]:
             COALESCE(j.payload_json->>'job_origin', '') AS origin
         FROM shorts_render_jobs j
         LEFT JOIN shorts_users u ON u.id::text = j.user_id
-        WHERE j.status = 'processing'
+        WHERE lower(j.status) IN ('processing', 'running', 'claimed', 'rendering')
         ORDER BY j.started_at ASC
     """
     jobs: list[ProcessingJob] = []

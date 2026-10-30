@@ -222,6 +222,42 @@ def release_clip_mutation_lease(lease):
         return bool(row)
 
 
+def release_orphaned_rendering_leases(*, active_job_scopes=None, minimum_age_seconds=60):
+    """Release render leases left by requests/workers that no longer own an active job."""
+    active = {
+        (str(user_id), str(brand_id), str(key))
+        for user_id, brand_id, key in (active_job_scopes or [])
+    }
+    cutoff = utc() - timedelta(seconds=max(0, int(minimum_age_seconds or 0)))
+    released = []
+    with connection() as conn:
+        rows = conn.execute(
+            f"""
+            SELECT user_id, brand_id, asset_key, updated_at
+            FROM {MUTATION_LEASE_TABLE}
+            WHERE state='rendering'
+              AND updated_at<=?
+            """,
+            [cutoff],
+        ).fetchall()
+        for row in rows:
+            scope = (str(row[0]), str(row[1]), str(row[2]))
+            if scope in active:
+                continue
+            deleted = conn.execute(
+                f"""
+                DELETE FROM {MUTATION_LEASE_TABLE}
+                WHERE user_id=? AND brand_id=? AND asset_key=?
+                  AND state='rendering' AND updated_at<=?
+                RETURNING asset_key
+                """,
+                [*scope, cutoff],
+            ).fetchone()
+            if deleted:
+                released.append(scope)
+    return released
+
+
 def _row(conn, schedule_id):
     cur = conn.execute(f"SELECT * FROM {TABLE} WHERE id = ?", [schedule_id])
     row = cur.fetchone()
