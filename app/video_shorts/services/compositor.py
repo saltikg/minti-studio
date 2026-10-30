@@ -76,7 +76,10 @@ OUTREACH_BACKGROUND_DARKEN_OPACITY = 0.32
 CLIP_EDGE_SNAP_WINDOW_SECONDS = 0.250
 CLIP_EDGE_WORD_GUARD_SECONDS = 0.030
 CLIP_AUDIO_FADE_IN_SECONDS = 0.050
-CLIP_AUDIO_FADE_OUT_SECONDS = 0.150
+CLIP_AUDIO_FADE_OUT_SECONDS = 0.080
+CLIP_EDGE_ENERGY_FRAME_SECONDS = 0.010
+CLIP_EDGE_SILENCE_HOLD_SECONDS = 0.040
+CLIP_EDGE_SILENCE_RATIO = 0.25
 
 CROP_TARGET_SIZE = 1080  # reference crop resolution before resizing for display
 VIDEO_TARGET_WIDTH = DESIGN_GEOMETRY["width"]
@@ -383,6 +386,76 @@ def _lowest_energy_time_in_pcm_window(
     return window_start + (center_sample / float(sample_rate))
 
 
+def _rms_energy_frames(
+    pcm: np.ndarray,
+    *,
+    window_start: float,
+    search_start: float,
+    search_end: float,
+    sample_rate: int = 16000,
+    frame_seconds: float = CLIP_EDGE_ENERGY_FRAME_SECONDS,
+) -> list[tuple[float, float]]:
+    """Return ``(frame_start, rms)`` values on the source timeline."""
+    if pcm.size == 0 or search_end <= search_start:
+        return []
+    frame_size = max(1, int(round(sample_rate * frame_seconds)))
+    first_sample = max(0, int(round((search_start - window_start) * sample_rate)))
+    last_sample = min(int(pcm.size), int(round((search_end - window_start) * sample_rate)))
+    frames: list[tuple[float, float]] = []
+    for offset in range(first_sample, max(first_sample, last_sample - frame_size) + 1, frame_size):
+        frame = pcm[offset : min(offset + frame_size, last_sample)]
+        if frame.size < frame_size:
+            break
+        rms = float(np.sqrt(np.mean(np.square(frame))))
+        frames.append((window_start + (offset / float(sample_rate)), rms))
+    return frames
+
+
+def _relative_silence_threshold(frames: list[tuple[float, float]]) -> float:
+    """Derive a noise threshold from the local speech level, not absolute volume."""
+    if not frames:
+        return 0.0
+    values = np.asarray([rms for _, rms in frames], dtype=np.float32)
+    speech_level = float(np.percentile(values, 75))
+    return max(1e-6, speech_level * CLIP_EDGE_SILENCE_RATIO)
+
+
+def _sustained_silence_runs(
+    frames: list[tuple[float, float]],
+    *,
+    threshold: float,
+    frame_seconds: float = CLIP_EDGE_ENERGY_FRAME_SECONDS,
+    hold_seconds: float = CLIP_EDGE_SILENCE_HOLD_SECONDS,
+) -> list[tuple[float, float]]:
+    """Find quiet runs that last long enough to be a real speech boundary."""
+    required = max(1, int(math.ceil(hold_seconds / frame_seconds)))
+    runs: list[tuple[float, float]] = []
+    run_start: Optional[int] = None
+    for index, (_, rms) in enumerate(frames + [(0.0, threshold + 1.0)]):
+        if index < len(frames) and rms <= threshold:
+            if run_start is None:
+                run_start = index
+            continue
+        if run_start is not None and index - run_start >= required:
+            start_time = frames[run_start][0]
+            end_time = frames[index - 1][0] + frame_seconds
+            runs.append((start_time, end_time))
+        run_start = None
+    return runs
+
+
+def _lowest_energy_frame_time(frames: list[tuple[float, float]], *, prefer_after: Optional[float] = None) -> Optional[float]:
+    candidates = frames
+    if prefer_after is not None:
+        after = [item for item in frames if item[0] + CLIP_EDGE_ENERGY_FRAME_SECONDS >= prefer_after]
+        if after:
+            candidates = after
+    if not candidates:
+        return None
+    frame_start, _ = min(candidates, key=lambda item: (item[1], item[0]))
+    return frame_start + (CLIP_EDGE_ENERGY_FRAME_SECONDS / 2.0)
+
+
 def _snap_keep_range_boundaries_to_audio(
     src_path: Path,
     ranges: list[dict[str, float]],
@@ -519,7 +592,7 @@ def _snap_outer_keep_range_boundaries_to_audio(
     *,
     sample_rate: int = 16000,
 ) -> tuple[list[dict[str, float]], dict[str, Optional[float]]]:
-    """Snap only the clip's outer edges between adjacent transcript words."""
+    """Place clip edges around speech using sustained, relative audio silence."""
     context = _outer_word_boundary_context(ranges, transcript_words)
     if not ranges or not context:
         return ranges, context
@@ -529,79 +602,100 @@ def _snap_outer_keep_range_boundaries_to_audio(
     first_start = context.get("first_start")
     last_end = context.get("last_end")
     next_start = context.get("next_start")
-    windows: list[tuple[str, float, float, float, float, float]] = []
-
-    if previous_end is not None and first_start is not None:
-        gap_start = float(previous_end)
-        gap_end = max(gap_start, float(first_start))
-        midpoint = (gap_start + gap_end) / 2.0
-        if gap_end - gap_start < CLIP_EDGE_WORD_GUARD_SECONDS:
-            search_start = search_end = midpoint
-        else:
-            search_start = max(gap_start + CLIP_EDGE_WORD_GUARD_SECONDS, current_start - CLIP_EDGE_SNAP_WINDOW_SECONDS)
-            search_end = min(gap_end, current_start + CLIP_EDGE_SNAP_WINDOW_SECONDS)
-        windows.append(("start", search_start, search_end, gap_start, gap_end, midpoint))
-    if last_end is not None and next_start is not None:
-        gap_start = float(last_end)
-        gap_end = max(gap_start, float(next_start))
-        midpoint = (gap_start + gap_end) / 2.0
-        if gap_end - gap_start < CLIP_EDGE_WORD_GUARD_SECONDS:
-            search_start = search_end = midpoint
-        else:
-            search_start = max(gap_start, current_end - CLIP_EDGE_SNAP_WINDOW_SECONDS)
-            search_end = min(gap_end - CLIP_EDGE_WORD_GUARD_SECONDS, current_end + CLIP_EDGE_SNAP_WINDOW_SECONDS)
-        windows.append(("end", search_start, search_end, gap_start, gap_end, midpoint))
-    if not windows:
-        return ranges, context
-
-    pcm_window_start = max(0.0, min(min(item[1], item[2]) for item in windows))
-    pcm_window_end = max(max(item[1], item[2]) for item in windows)
-    try:
-        pcm = _extract_mono_pcm_window(
-            src_path,
-            window_start=pcm_window_start,
-            duration=max(0.001, pcm_window_end - pcm_window_start),
-            sample_rate=sample_rate,
-        )
-    except Exception as exc:
-        _log_multi_range_boundary_warning(
-            "Clip outer audio boundary analysis failed src=%s error=%s",
-            src_path.name,
-            exc,
-        )
-        return ranges, context
-
     adjusted = [dict(item) for item in ranges]
     adjustments: list[dict[str, Any]] = []
-    for kind, search_start, search_end, gap_start, gap_end, midpoint in windows:
+    diagnostics: dict[str, Any] = {}
+
+    def analyze(kind: str, search_start: float, search_end: float, word_boundary: float) -> None:
         original = current_start if kind == "start" else current_end
-        if search_end - search_start < 0.010:
-            candidate = midpoint
-        else:
-            candidate = _lowest_energy_time_in_pcm_window(
-                pcm,
-                window_start=pcm_window_start,
-                search_start=search_start,
-                search_end=search_end,
+        if search_end <= search_start:
+            return
+        analysis_start = max(0.0, search_start - 0.15)
+        analysis_end = search_end + 0.15
+        try:
+            pcm = _extract_mono_pcm_window(
+                src_path,
+                window_start=analysis_start,
+                duration=max(0.001, analysis_end - analysis_start),
                 sample_rate=sample_rate,
             )
-            if candidate is None:
-                candidate = midpoint
-        if kind == "start":
-            snapped = min(max(float(candidate), gap_start), gap_end, adjusted[0]["end"] - 0.001)
-            adjusted[0]["start"] = round(max(0.0, snapped), 6)
-        else:
-            snapped = max(min(float(candidate), gap_end), gap_start, adjusted[-1]["start"] + 0.001)
+        except Exception as exc:
+            _log_multi_range_boundary_warning(
+                "Clip outer audio boundary analysis failed src=%s boundary=%s error=%s",
+                src_path.name,
+                kind,
+                exc,
+            )
+            return
+        analysis_frames = _rms_energy_frames(
+            pcm,
+            window_start=analysis_start,
+            search_start=analysis_start,
+            search_end=analysis_end,
+            sample_rate=sample_rate,
+        )
+        search_frames = [item for item in analysis_frames if search_start <= item[0] < search_end]
+        threshold = _relative_silence_threshold(analysis_frames)
+        quiet_runs = _sustained_silence_runs(search_frames, threshold=threshold)
+        fallback = False
+        if kind == "end":
+            if quiet_runs:
+                speech_edge = max(float(word_boundary), quiet_runs[0][0])
+            else:
+                fallback = True
+                speech_edge = _lowest_energy_frame_time(search_frames, prefer_after=word_boundary)
+                if speech_edge is None:
+                    return
+                speech_edge = max(float(word_boundary), float(speech_edge))
+            snapped = min(
+                float(speech_edge) + CLIP_AUDIO_FADE_OUT_SECONDS,
+                search_end + CLIP_AUDIO_FADE_OUT_SECONDS,
+            )
+            snapped = max(snapped, float(word_boundary), adjusted[-1]["start"] + 0.001)
             adjusted[-1]["end"] = round(snapped, 6)
+            fade_edge = snapped - CLIP_AUDIO_FADE_OUT_SECONDS
+        else:
+            if quiet_runs:
+                # The quiet run nearest the selected speech gives the fade room.
+                speech_edge = min(float(word_boundary), quiet_runs[-1][1])
+            else:
+                fallback = True
+                candidate = _lowest_energy_frame_time(search_frames)
+                if candidate is None:
+                    return
+                speech_edge = min(float(word_boundary), float(candidate))
+            snapped = max(search_start, float(speech_edge) - CLIP_AUDIO_FADE_IN_SECONDS)
+            snapped = min(snapped, float(word_boundary), adjusted[0]["end"] - 0.001)
+            adjusted[0]["start"] = round(max(0.0, snapped), 6)
+            fade_edge = snapped + CLIP_AUDIO_FADE_IN_SECONDS
+        diagnostics[kind] = {
+            "search": [round(search_start, 6), round(search_end, 6)],
+            "threshold": round(threshold, 8),
+            "speech_edge": round(float(speech_edge), 6),
+            "fade_edge": round(float(fade_edge), 6),
+            "fallback_low_energy": fallback,
+        }
         if abs(snapped - original) > 0.0005:
             adjustments.append({"boundary": kind, "from": round(original, 6), "to": round(snapped, 6)})
+
+    if previous_end is not None and first_start is not None:
+        start_search_start = max(0.0, float(first_start) - 0.400, float(previous_end) - 0.100)
+        start_search_end = float(first_start) + 0.050
+        analyze("start", start_search_start, start_search_end, float(first_start))
+    if last_end is not None:
+        end_search_start = max(0.0, float(last_end) - 0.050)
+        end_search_end = float(last_end) + 0.400
+        if next_start is not None:
+            end_search_end = min(end_search_end, float(next_start) + 0.100)
+        analyze("end", end_search_start, end_search_end, float(last_end))
     if adjustments:
         try:
             current_app.logger.info(
-                "Clip outer audio boundary snap src=%s adjustments=%s context=%s",
+                "Clip outer audio boundary snap src=%s adjustments=%s context=%s diagnostics=%s",
                 src_path.name,
                 json.dumps(adjustments, ensure_ascii=False),
                 json.dumps(context, ensure_ascii=False),
+                json.dumps(diagnostics, ensure_ascii=False),
             )
         except Exception:
             pass

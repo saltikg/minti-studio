@@ -700,6 +700,55 @@ def main() -> None:
             and abs(no_silence_adjusted[1]["start"] - no_silence_ranges[1]["start"]) <= 0.20,
             str(no_silence_adjusted),
         )
+
+        outer_edges = tmp / "outer_edges.wav"
+        _write_wav(
+            outer_edges,
+            _join_arrays([
+                _tone(0.60),
+                _silence(0.20),
+                _tone(0.72),  # Selected word speech continues 120ms past its transcript end.
+                _silence(0.23),
+                _tone(0.50),
+            ]),
+        )
+        outer_ranges = [{"start": 0.80, "end": 1.40, "start_word_index": 1, "end_word_index": 1}]
+        outer_words = [
+            {"index": 0, "start": 0.0, "end": 0.60},
+            {"index": 1, "start": 0.80, "end": 1.40},
+            {"index": 2, "start": 1.75, "end": 2.10},
+        ]
+        outer_adjusted, _ = compositor._snap_outer_keep_range_boundaries_to_audio(
+            outer_edges,
+            outer_ranges,
+            outer_words,
+        )
+        _check(
+            "outer_edges_preserve_spoken_word_and_fade_in_silence",
+            0.74 <= outer_adjusted[0]["start"] <= 0.76
+            and 1.59 <= outer_adjusted[0]["end"] <= 1.61
+            and "d=0.080" in compositor._audio_edge_fade_filter(
+                outer_adjusted[0]["end"] - outer_adjusted[0]["start"]
+            ),
+            str(outer_adjusted),
+        )
+
+        continuous_edges = tmp / "continuous_edges.wav"
+        _write_wav(continuous_edges, _tone(2.0))
+        continuous_adjusted, _ = compositor._snap_outer_keep_range_boundaries_to_audio(
+            continuous_edges,
+            outer_ranges,
+            [
+                {"index": 0, "start": 0.0, "end": 0.80},
+                {"index": 1, "start": 0.80, "end": 1.40},
+                {"index": 2, "start": 1.40, "end": 2.0},
+            ],
+        )
+        _check(
+            "continuous_speech_keeps_selected_word_tail",
+            continuous_adjusted[0]["end"] >= 1.40,
+            str(continuous_adjusted),
+        )
         _check_multi_range_av_sync(tmp)
         _check_long_gop_mid_seek_av_sync(tmp)
         _check_mpegts_mid_seek_av_sync(tmp)
