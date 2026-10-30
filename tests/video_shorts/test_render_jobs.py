@@ -381,6 +381,40 @@ def test_completed_preview_cache_requires_jpeg(monkeypatch, tmp_path):
     assert render_jobs.is_render_job_cache_valid(job) is True
 
 
+def test_missing_completed_preview_is_requeued(monkeypatch, tmp_path):
+    _configure_duckdb(monkeypatch, tmp_path, "preview_requeue.duckdb")
+    user_id = str(uuid4())
+    _insert_user(user_id, "plan_10gb")
+    _insert_video(
+        13,
+        "preview-requeue",
+        user_id,
+        brand_id="brand-a",
+        video_url="s3://videos/preview-requeue.mp4",
+        download_status="downloaded",
+    )
+    monkeypatch.setattr(generation, "SHORTS_DIR", tmp_path / "shorts")
+    first = render_jobs.enqueue_preview_frame_job(
+        owner_user_id=user_id,
+        brand_id="brand-a",
+        video_pk=13,
+        source_key="videos/preview-requeue.mp4",
+        duration_seconds=123,
+    )
+    render_jobs.mark_job_done(first["job"]["id"], {"video_id": "preview-requeue"})
+
+    second = render_jobs.enqueue_preview_frame_job(
+        owner_user_id=user_id,
+        brand_id="brand-a",
+        video_pk=13,
+        source_key="videos/preview-requeue.mp4",
+        duration_seconds=123,
+    )
+
+    assert second["kind"] == "queued"
+    assert second["job"]["id"] != first["job"]["id"]
+
+
 def test_preview_enqueue_rejects_cross_tenant_and_source_mismatch(monkeypatch, tmp_path):
     _configure_duckdb(monkeypatch, tmp_path, "preview_scope_reject.duckdb")
     user_id = str(uuid4())

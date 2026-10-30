@@ -825,7 +825,17 @@ def enqueue_worker_job(
     try:
         ensure_render_jobs_schema(conn)
         payload, priority = _prepare_owner_job_payload(conn, user_id, payload, priority)
-        existing_done = _find_job_by_hash(conn, user_id=user_id, input_hash=input_hash, statuses=(JOB_STATUS_DONE,))
+        existing_done = _find_job_by_hash(
+            conn,
+            user_id=user_id,
+            input_hash=input_hash,
+            statuses=(JOB_STATUS_DONE,),
+            job_type=job_type,
+            payload=payload,
+        )
+        if existing_done and job_type == JOB_TYPE_PREVIEW_FRAME and not is_render_job_cache_valid(existing_done, conn=conn):
+            _invalidate_done_job_cache_entry(conn, existing_done["id"])
+            existing_done = None
         if existing_done:
             existing_done["cached"] = True
             existing_done["queue_position"] = None
