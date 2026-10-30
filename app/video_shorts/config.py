@@ -371,6 +371,25 @@ SUBTITLE_PRESETS = {
         "active_outline": True,
         "force_uppercase": True,
     },
+    "podcast": {
+        "active_color": "#FFFFFF",
+        "inactive_color": "#FFFFFF",
+        "outline_color": "#000000",
+        "outline_width": 0,
+        "border_style": 1,
+        "box": False,
+        "bold": True,
+        "active_scale": 100,
+        "font": "Montserrat Black Italic",
+        "active_pill": False,
+        "pillow_engine": True,
+        "draw_pill": False,
+        "shadow_color": "#000000",
+        "shadow_opacity": 0.55,
+        "shadow_offset_x": 0,
+        "shadow_offset_y": 2,
+        "shadow_blur_radius": 10,
+    },
     "silver_pop": {
         "active_color": "#FFFFFF",
         "inactive_color": "#E2E4E7",
@@ -858,6 +877,21 @@ STYLE_TEMPLATES = [
         "title_outline_color": "#000000",
     },
     {
+        "key": "podcast",
+        "label": "Podcast",
+        "subtitle_preset": "podcast",
+        "title_engine": "pillow",
+        "title_uppercase": False,
+        "title_font": "Montserrat Black Italic",
+        "title_font_key": "montserrat_black_italic",
+        "title_text_color": "#FFFFFF",
+        "title_bg_color": "#000000",
+        "title_bg_alpha": 0,
+        "title_font_size": DEFAULT_TITLE_FONT_SIZE,
+        "title_outline_width": 0,
+        "title_outline_color": "#000000",
+    },
+    {
         "key": "blue_pop",
         "label": "Blue Pop",
         "subtitle_preset": "blue_pop",
@@ -1201,6 +1235,22 @@ TITLE_FONTS = OrderedDict(
             },
         ),
         (
+            "montserrat_black_italic",
+            {
+                "label": "Montserrat Black Italic",
+                "css_family": "'Montserrat Black Italic', sans-serif",
+                "path": STATIC_FONTS_DIR / "Montserrat-BlackItalic.ttf",
+            },
+        ),
+        (
+            "poppins_black_italic",
+            {
+                "label": "Poppins Black Italic",
+                "css_family": "'Poppins Black Italic', sans-serif",
+                "path": STATIC_FONTS_DIR / "Poppins-BlackItalic.ttf",
+            },
+        ),
+        (
             "noto_sans_arabic_bold",
             {
                 "label": "Noto Sans Arabic Bold",
@@ -1268,6 +1318,8 @@ SUB_FONT_CHOICES = [
     ("bebas_neue", "Bebas Neue", str(STATIC_FONTS_DIR / "BebasNeue-Regular.ttf"), "Bebas Neue"),
     ("montserrat", "Montserrat", str(STATIC_FONTS_DIR / "Montserrat-VariableFont_wght.ttf"), "Montserrat"),
     ("montserrat_black", "Montserrat Black", str(STATIC_FONTS_DIR / "Montserrat-Black.ttf"), "Montserrat Black"),
+    ("montserrat_black_italic", "Montserrat Black Italic", str(STATIC_FONTS_DIR / "Montserrat-BlackItalic.ttf"), "Montserrat Black Italic"),
+    ("poppins_black_italic", "Poppins Black Italic", str(STATIC_FONTS_DIR / "Poppins-BlackItalic.ttf"), "Poppins Black Italic"),
     ("oswald_regular", "Oswald Regular", str(STATIC_FONTS_DIR / "Oswald-Regular.ttf"), "Oswald"),
     ("oswald_bold", "Oswald Bold", str(STATIC_FONTS_DIR / "Oswald-Bold.ttf"), "Oswald"),
     ("fjalla_one", "Fjalla One", str(STATIC_FONTS_DIR / "FjallaOne-Regular.ttf"), "Fjalla One"),
@@ -1304,6 +1356,10 @@ SUBTITLE_PILL_FONT_MAP = {
     "opus": {
         "ass_font_name": "Montserrat Black",
         "font_path": STATIC_FONTS_DIR / "Montserrat-Black.ttf",
+    },
+    "podcast": {
+        "ass_font_name": "Montserrat Black Italic",
+        "font_path": STATIC_FONTS_DIR / "Montserrat-BlackItalic.ttf",
     },
     "silver_pop": {
         "ass_font_name": "Anton",
