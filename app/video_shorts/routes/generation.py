@@ -30264,6 +30264,7 @@ def autoclip_video(video_pk):
     )
     auto_suggest_default = auto_render_job and bool(internal_auto_context.get("default_customer"))
     discovery_pipeline_job = (request.form.get("_discovery_pipeline_job") or "").strip() in {"1", "true", "yes"}
+    discovery_demo_job = (request.form.get("_discovery_demo_job") or "").strip() in {"1", "true", "yes"}
     queued_render_settings_hash = (request.form.get("_render_settings_hash") or "").strip() or None
     try:
         queued_render_settings_options = json.loads(request.form.get("_render_settings_options") or "{}")
@@ -32213,6 +32214,7 @@ def autoclip_video(video_pk):
                 music_speech_ranges=music_speech_ranges,
                 outreach_layout=outreach_render,
                 source_keep_ranges=compose_keep_ranges,
+                low_memory_demo=discovery_demo_job,
                 )
             if face_aware_layout_result and face_aware_layout_result.get("enabled"):
                 resolved_layout_segments = compose_crop_settings.get("resolved_layout_segments")

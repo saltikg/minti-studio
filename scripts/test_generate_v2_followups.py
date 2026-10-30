@@ -4,6 +4,9 @@
 from __future__ import annotations
 
 import sys
+import os
+import socket
+from datetime import datetime, timedelta
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -351,6 +354,38 @@ def test_stuck_render_recovery_marks_completed_output_done() -> None:
             setattr(worker, name, value)
 
 
+def test_stuck_render_recovery_does_not_steal_live_job() -> None:
+    original = {
+        "get_db": worker.get_db,
+        "get_job": worker.get_job,
+        "requeue_job": worker.requeue_job,
+        "mark_job_failed": worker.mark_job_failed,
+    }
+    calls = []
+    stale = datetime.utcnow() - timedelta(hours=2)
+    try:
+        worker.get_db = lambda: _FakeRowsConnection([("job-live",)])
+        worker.get_job = lambda job_id: {
+            "id": job_id,
+            "type": worker.JOB_TYPE_RENDER_SHORT,
+            "status": "processing",
+            "attempts": 1,
+            "max_attempts": 3,
+            "worker_id": f"{socket.gethostname()}:{os.getpid()}",
+            "updated_at": stale,
+            "payload": {"source_video_id": "unitVideo", "plan_index": 4},
+            "user_id": "user-1",
+        }
+        worker.requeue_job = lambda *args, **kwargs: calls.append(("requeue", args, kwargs))
+        worker.mark_job_failed = lambda *args, **kwargs: calls.append(("failed", args, kwargs))
+        result = worker.recover_stuck_render_jobs(_FakeApp(), stale_seconds=900)
+        _check("stuck_recovery_live_pid_untouched", result == {"recovered": 0, "requeued": 0, "failed": 0}, str(result))
+        _check("stuck_recovery_live_pid_no_transition", calls == [], str(calls))
+    finally:
+        for name, value in original.items():
+            setattr(worker, name, value)
+
+
 if __name__ == "__main__":
     test_auto_selection_two_eligible()
     test_sentence_snapping()
@@ -360,3 +395,4 @@ if __name__ == "__main__":
     test_edit_endpoint_returns_job_id_for_render_and_regenerate()
     test_worker_finalize_exception_does_not_leave_processing()
     test_stuck_render_recovery_marks_completed_output_done()
+    test_stuck_render_recovery_does_not_steal_live_job()

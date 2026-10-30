@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import ctypes
+import gc
 import json
 import math
 import os
@@ -2878,6 +2880,7 @@ def _compose_trimmed_with_background(
     music_speech_ranges: Optional[list[Dict[str, float]]] = None,
     outreach_layout: bool = False,
     source_keep_ranges: Optional[list[Dict[str, Any]]] = None,
+    low_memory_demo: bool = False,
 ):
     """Single-pass trim + compose to reduce processing time."""
     if not bg_path.exists():
@@ -4791,6 +4794,15 @@ def _compose_trimmed_with_background(
             edge_audio_map = "[clip_edge_faded_a]"
     filter_complex = ";".join(filter_parts)
 
+    if low_memory_demo:
+        # Caption/face-layout preparation creates many large temporary images.
+        # Release that transient heap before ffmpeg joins the process tree.
+        gc.collect()
+        try:
+            ctypes.CDLL(None).malloc_trim(0)
+        except (AttributeError, OSError):
+            pass
+
     out_path.parent.mkdir(parents=True, exist_ok=True)
     temp_out_path = out_path.with_name(f"{out_path.stem}.compose-{secrets.token_hex(4)}{out_path.suffix}")
     cmd = [
@@ -4942,6 +4954,13 @@ def _compose_trimmed_with_background(
                 "+faststart",
                 str(temp_out_path),
             ]
+        )
+    if low_memory_demo:
+        cmd[1:1] = ["-filter_threads", "1", "-filter_complex_threads", "1"]
+        output_index = len(cmd) - 1
+        cmd[output_index:output_index] = ["-threads", "1"]
+        current_app.logger.info(
+            "Discovery demo low-memory ffmpeg settings enabled threads=1 filter_threads=1"
         )
     current_app.logger.info("Compose ffmpeg command: %s", " ".join(cmd))
     current_app.logger.debug("Compose ffmpeg command (debug): %s", " ".join(cmd))

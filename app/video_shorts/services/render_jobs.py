@@ -6,6 +6,7 @@ import logging
 import os
 import socket
 import threading
+from contextlib import contextmanager
 from datetime import datetime, timedelta
 from typing import Any, Dict, Optional
 from uuid import uuid4
@@ -1395,8 +1396,7 @@ def requeue_timed_out_jobs(*, timeout_seconds: int) -> Dict[str, int]:
             f"""
             {_job_select_sql()}
             WHERE status = ?
-              AND started_at IS NOT NULL
-              AND started_at < ?
+              AND COALESCE(updated_at, started_at, created_at) < ?
             ORDER BY started_at ASC
             """,
             [JOB_STATUS_PROCESSING, cutoff],
@@ -1406,6 +1406,11 @@ def requeue_timed_out_jobs(*, timeout_seconds: int) -> Dict[str, int]:
         conn.close()
     for row in rows:
         job = _row_to_job(row)
+        if worker_pid_is_alive(job, socket.gethostname()) is True:
+            continue
+        latest = get_job(job["id"])
+        if not latest or not job_heartbeat_is_stale(latest, cutoff):
+            continue
         if job["attempts"] >= job["max_attempts"]:
             mark_job_failed(job["id"], "Job timed out and exhausted retries.")
             failed += 1
@@ -1417,6 +1422,11 @@ def requeue_timed_out_jobs(*, timeout_seconds: int) -> Dict[str, int]:
 
 def _local_dead_worker_job(row: Any, local_hostname: str) -> Optional[Dict[str, Any]]:
     job = _row_to_job(row)
+    return job if worker_pid_is_alive(job, local_hostname) is False else None
+
+
+def worker_pid_is_alive(job: Dict[str, Any], local_hostname: str) -> Optional[bool]:
+    """Return PID liveness for a locally-owned job; None for non-local/unknown owners."""
     worker_id = str(job.get("worker_id") or "").strip()
     if ":" not in worker_id:
         return None
@@ -1429,11 +1439,65 @@ def _local_dead_worker_job(row: Any, local_hostname: str) -> Optional[Dict[str, 
         return None
     try:
         os.kill(worker_pid, 0)
-        return None
+        return True
     except ProcessLookupError:
-        return job
+        return False
     except PermissionError:
-        return None
+        return True
+
+
+def job_heartbeat_is_stale(job: Dict[str, Any], cutoff: datetime) -> bool:
+    value = job.get("updated_at") or job.get("started_at") or job.get("created_at")
+    if not value:
+        return True
+    if isinstance(value, str):
+        try:
+            value = datetime.fromisoformat(value.replace("Z", "+00:00")).replace(tzinfo=None)
+        except (TypeError, ValueError):
+            return True
+    if getattr(value, "tzinfo", None) is not None:
+        value = value.replace(tzinfo=None)
+    return value < cutoff
+
+
+def touch_job_heartbeat(job_id: str, worker_id: str) -> bool:
+    """Refresh one processing job only while it is still owned by this worker."""
+    conn = get_db()
+    try:
+        updated = conn.execute(
+            f"""
+            UPDATE {JOBS_TABLE}
+            SET updated_at = CURRENT_TIMESTAMP
+            WHERE id = ? AND status = ? AND worker_id = ?
+            """,
+            [job_id, JOB_STATUS_PROCESSING, worker_id],
+        )
+        conn.commit()
+        return getattr(updated, "rowcount", 1) != 0
+    finally:
+        conn.close()
+
+
+@contextmanager
+def render_job_heartbeat(job_id: str, worker_id: str, *, interval_seconds: int = 60):
+    """Keep a render's updated_at fresh without sharing its render DB connection."""
+    stop_event = threading.Event()
+
+    def _beat() -> None:
+        while not stop_event.wait(max(1, int(interval_seconds))):
+            try:
+                if not touch_job_heartbeat(job_id, worker_id):
+                    return
+            except Exception:
+                logger.warning("Render job heartbeat failed job_id=%s", job_id, exc_info=True)
+
+    thread = threading.Thread(target=_beat, name=f"render-heartbeat-{job_id[:8]}", daemon=True)
+    thread.start()
+    try:
+        yield
+    finally:
+        stop_event.set()
+        thread.join(timeout=1.0)
 
 
 def requeue_dead_local_worker_jobs() -> Dict[str, int]:

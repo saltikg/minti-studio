@@ -1,6 +1,7 @@
 from __future__ import annotations
 from app.video_shorts.services import tenant_media
 from app.video_shorts.services import render_timing
+from app.video_shorts.services import render_jobs
 
 import errno
 import json
@@ -95,6 +96,7 @@ from app.video_shorts.services.render_jobs import (
     requeue_dead_local_worker_jobs,
     requeue_job,
     requeue_timed_out_jobs,
+    render_job_heartbeat,
     update_job_result,
 )
 from app.video_shorts.services.free_tool_cache import load_text_cache, write_transcript_cache
@@ -1809,6 +1811,7 @@ def _execute_render_job(app, job: Dict[str, Any]) -> Dict[str, Any]:
                 "_regenerate_job": "1" if payload.get("regenerate") else "",
                 "_render_settings_hash": str(payload.get("render_settings_hash") or ""),
                 "_render_settings_options": json.dumps(payload.get("options") or {}, separators=(",", ":")),
+                "_discovery_demo_job": "1" if str(payload.get("job_origin") or "").strip() == "discovery_demo" else "",
             },
             headers={"X-Requested-With": "XMLHttpRequest"},
         ):
@@ -2003,7 +2006,8 @@ def process_next_job(
 
             result = execute_video_purge_job(job.get("payload") or {})
         else:
-            result = _execute_render_job(app, job)
+            with render_job_heartbeat(job["id"], worker_id):
+                result = _execute_render_job(app, job)
         try:
             timing_json = render_timing.terminal_payload() if job.get("type") == JOB_TYPE_RENDER_SHORT else None
             mark_job_done(job["id"], result, timing_json=timing_json)
@@ -2277,6 +2281,10 @@ def recover_stuck_render_jobs(app, *, stale_seconds: int = 15 * 60) -> Dict[str,
         job_id = str(row[0] or "").strip()
         job = get_job(job_id)
         if not job or str(job.get("status") or "").strip().lower() != "processing":
+            continue
+        if not render_jobs.job_heartbeat_is_stale(job, cutoff):
+            continue
+        if render_jobs.worker_pid_is_alive(job, socket.gethostname()) is True:
             continue
         completion = _render_job_completion_from_assets(job) or _render_job_completion_from_plan(job)
         if completion:
