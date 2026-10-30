@@ -13,6 +13,7 @@ from flask import current_app
 from app.video_shorts.config import (
     DESIGN_GEOMETRY,
     ARABIC_FALLBACK_FONT_PATH,
+    DEFAULT_SUB_FONT_KEY,
     DEFAULT_SUBTITLE_PRESET,
     DEFAULT_SUBTITLE_BG_ALPHA,
     DEFAULT_SUBTITLE_BG_COLOR,
@@ -1492,6 +1493,39 @@ def _subtitle_font_path_for_key(font_key: Optional[str]) -> Optional[Path]:
     return None
 
 
+def _pillow_subtitle_font_path(
+    subtitle_font_key: Optional[str],
+    preset_key: str,
+) -> tuple[Optional[Path], Optional[Dict[str, Any]]]:
+    """Resolve an explicit caption font before consulting preset defaults."""
+    requested_key = str(subtitle_font_key or "").strip()
+    if requested_key:
+        font_path = _subtitle_font_path_for_key(requested_key)
+        if font_path:
+            return font_path, None
+        return None, {"reason": "missing_font_file", "font_key": requested_key}
+
+    font_info = SUBTITLE_PILL_FONT_MAP.get(preset_key)
+    if font_info:
+        font_path = Path(font_info.get("font_path") or "")
+        if font_path.exists():
+            return font_path, None
+        return None, {"reason": "missing_font_file", "font_path": str(font_path)}
+
+    preset_font_name = str((_resolve_subtitle_preset(preset_key) or {}).get("font") or "").strip().lower()
+    for _key, label, font_path, font_name in SUB_FONT_CHOICES:
+        if preset_font_name not in {str(label).strip().lower(), str(font_name).strip().lower()}:
+            continue
+        path = Path(font_path)
+        if path.exists():
+            return path, None
+        return None, {"reason": "missing_font_file", "font_path": str(path)}
+    default_path = _subtitle_font_path_for_key(DEFAULT_SUB_FONT_KEY)
+    if default_path:
+        return default_path, None
+    return None, {"reason": "missing_font_map", "preset": preset_key}
+
+
 def _build_blurred_shadow_region(
     layout: Dict[str, Any],
     *,
@@ -2162,12 +2196,9 @@ def _build_word_highlight_caption_overlay(
 ) -> Tuple[Path | None, List[Path], Dict[str, Any]]:
     preset = _resolve_subtitle_preset(subtitle_preset)
     preset_key = str(subtitle_preset or DEFAULT_SUBTITLE_PRESET).strip() or DEFAULT_SUBTITLE_PRESET
-    font_info = SUBTITLE_PILL_FONT_MAP.get(preset_key)
-    if not font_info:
-        return None, [], {"reason": "missing_font_map"}
-    font_path = _subtitle_font_path_for_key(subtitle_font_key) or Path(font_info.get("font_path") or "")
-    if not font_path.exists():
-        return None, [], {"reason": "missing_font_file", "font_path": str(font_path)}
+    font_path, font_error = _pillow_subtitle_font_path(subtitle_font_key, preset_key)
+    if not font_path:
+        return None, [], dict(font_error or {"reason": "missing_font_file"})
 
     safe_target_width = max(2, int(target_width or _PILLOW_CAPTION_WIDTH))
     safe_target_height = max(2, int(target_height or _PILLOW_CAPTION_HEIGHT))

@@ -1438,6 +1438,10 @@ SUBTITLE_PILL_FONT_MAP = {
         "ass_font_name": "Montserrat Black Italic",
         "font_path": STATIC_FONTS_DIR / "Montserrat-BlackItalic.ttf",
     },
+    "yellow_punch": {
+        "ass_font_name": "Montserrat Black",
+        "font_path": STATIC_FONTS_DIR / "Montserrat-Black.ttf",
+    },
     "silver_pop": {
         "ass_font_name": "Anton",
         "font_path": STATIC_FONTS_DIR / "Anton-Regular.ttf",

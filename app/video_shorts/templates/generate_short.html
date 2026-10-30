@@ -5045,6 +5045,9 @@
     background: rgba(15, 23, 42, 0.82);
     opacity: 0.7;
   }
+  .style-template-card-preview--no-caption-box::after {
+    opacity: 0;
+  }
   .style-template-card-preview-title {
     position: relative;
     z-index: 1;
@@ -8604,7 +8607,7 @@
                       data-style-template-subtitle-bg-alpha="{{ 85 if subtitle_preset_config.get('box') else 0 }}"
                       aria-pressed="false"
                     >
-                      <div class="style-template-card-preview style-template-card-preview--{{ preview_variant }}">
+                      <div class="style-template-card-preview style-template-card-preview--{{ preview_variant }}{% if not subtitle_preset_config.get('box') %} style-template-card-preview--no-caption-box{% endif %}">
                         <span
                           class="style-template-card-preview-title"
                           style="background: {{ 'transparent' if template.title_bg_alpha is defined and template.title_bg_alpha == 0 else template.title_bg_color }}; color: {{ template.title_text_color }};"
@@ -24436,6 +24439,11 @@ document.addEventListener("DOMContentLoaded", function () {
     if (nextSubtitleBgAlpha !== "") {
       setDesignFieldValue(getDesignField("subtitle_bg_alpha"), nextSubtitleBgAlpha, false);
     }
+    syncDesignChip("titleTextColorValue", titleTextColorField?.value, 100);
+    syncDesignChip("titleBgColorValue", titleBgColorField?.value, titleBgAlphaInput?.value);
+    syncDesignChip("subtitleTextColorValue", getDesignField("subtitle_text_color")?.value, getDesignField("subtitle_text_alpha")?.value);
+    syncDesignChip("subtitleHighlightColorValue", getDesignField("subtitle_highlight_color")?.value, 100);
+    syncDesignChip("subtitleBgColorValue", getDesignField("subtitle_bg_color")?.value, getDesignField("subtitle_bg_alpha")?.value);
     applyTitleBgPreview();
     applySubtitlePreview();
     syncStyleTemplateCards();

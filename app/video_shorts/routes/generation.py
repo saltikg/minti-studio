@@ -32144,6 +32144,13 @@ def autoclip_video(video_pk):
                                 overlay_frame_count,
                             )
                         else:
+                            current_app.logger.warning(
+                                "Word highlight Pillow overlay unavailable; falling back to ASS video_id=%s preset=%s reason=%s meta=%s",
+                                vid,
+                                video_subtitle_preset,
+                                (overlay_meta or {}).get("reason") or "unknown",
+                                overlay_meta,
+                            )
                             subtitle_srt = _build_ass_karaoke_for_clip(
                                 override_segments,
                                 adj_start,
@@ -32238,8 +32245,10 @@ def autoclip_video(video_pk):
                         )
                     else:
                         current_app.logger.warning(
-                            "Word highlight Pillow overlay unavailable; falling back to ASS clip=%s meta=%s",
-                            clip_filename,
+                            "Word highlight Pillow overlay unavailable; falling back to ASS video_id=%s preset=%s reason=%s meta=%s",
+                            vid,
+                            video_subtitle_preset,
+                            (overlay_meta or {}).get("reason") or "unknown",
                             overlay_meta,
                         )
                         subtitle_srt = _build_ass_karaoke_for_clip(
