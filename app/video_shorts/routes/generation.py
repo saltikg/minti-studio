@@ -4174,6 +4174,7 @@ def _face_track_shot_boundaries(
     absolute_start: float,
     duration: float,
     detect_scenes: bool = True,
+    source_keep_ranges: Optional[List[Dict[str, float]]] = None,
 ) -> tuple[list[float], list[tuple[float, float]], list[dict[str, Any]]]:
     if not FACE_CUT_ON_SHOT_CHANGE or duration <= 0:
         return [], [], []
@@ -4191,20 +4192,44 @@ def _face_track_shot_boundaries(
     def _inside_fill(value: float) -> bool:
         return any(start < value < end for start, end in fill_ranges)
 
-    scene_candidates = (
-        _face_aware_scene_candidates(
-            source_path,
-            start=float(absolute_start),
-            duration=float(duration),
+    keep_ranges = _normalize_edit_keep_ranges(source_keep_ranges)
+    range_join_times: list[float] = []
+    if detect_scenes and len(keep_ranges) > 1:
+        scene_candidates: list[tuple[float, float]] = []
+        timeline_offset = 0.0
+        for index, item in enumerate(keep_ranges):
+            source_start = float(item["start"])
+            source_duration = max(0.0, float(item["end"]) - source_start)
+            for score, source_time in _face_aware_scene_candidates(
+                source_path,
+                start=source_start,
+                duration=source_duration,
+            ):
+                output_time = float(absolute_start) + timeline_offset + (float(source_time) - source_start)
+                scene_candidates.append((float(score), output_time))
+            timeline_offset += source_duration
+            if index < len(keep_ranges) - 1:
+                range_join_times.append(float(absolute_start) + timeline_offset)
+    else:
+        scene_candidates = (
+            _face_aware_scene_candidates(
+                source_path,
+                start=float(absolute_start),
+                duration=float(duration),
+            )
+            if detect_scenes
+            else []
         )
-        if detect_scenes
-        else []
-    )
     scene_times = sorted({time_value for _, time_value in scene_candidates if _inside_fill(time_value)})
     cut_details: list[dict[str, Any]] = [
         {"time": time_value, "reason": "scene"}
         for time_value in scene_times
     ]
+    cut_details.extend(
+        {"time": time_value, "reason": "range_join"}
+        for time_value in range_join_times
+        if _inside_fill(time_value)
+    )
     valid_rows = [
         row
         for row in sorted(rows, key=lambda item: float(item.get("t") or 0.0))
@@ -4239,6 +4264,11 @@ def _face_track_shot_boundaries(
             "samples": [round(previous_time, 6), round(current_time, 6)],
         })
 
+    mandatory_cuts = {
+        round(float(item["time"]), 6)
+        for item in cut_details
+        if item.get("reason") == "range_join"
+    }
     candidate_cuts = sorted({round(float(item["time"]), 6) for item in cut_details})
     range_start = float(absolute_start)
     range_end = range_start + float(duration)
@@ -4248,7 +4278,10 @@ def _face_track_shot_boundaries(
     for index in range(1, len(boundaries) - 1):
         shot_start = boundaries[index]
         shot_end = boundaries[index + 1]
-        if shot_end - shot_start < float(FACE_MIN_SHOT_S):
+        if (
+            round(shot_start, 6) not in mandatory_cuts
+            and shot_end - shot_start < float(FACE_MIN_SHOT_S)
+        ):
             dropped_starts.add(round(shot_start, 6))
             hold_ranges.append((shot_start, shot_end))
     kept_cuts = [cut_time for cut_time in candidate_cuts if round(cut_time, 6) not in dropped_starts]
@@ -4937,7 +4970,7 @@ def _compute_face_aware_layout_segments(
                 source_path=source_path,
                 absolute_start=float(start_seconds),
                 duration=float(duration),
-                detect_scenes=len(keep_ranges) <= 1,
+                source_keep_ranges=keep_ranges,
             )
             face_track_smooth_path = _write_preview_face_track_smooth(
                 video_id,
