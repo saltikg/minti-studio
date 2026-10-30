@@ -1076,13 +1076,15 @@ def _load_face_track_points(
                 "cx": cx,
                 "cy": cy,
                 "h": max(0.0, min(1.0, h_ratio)),
+                "cut": bool(row.get("cut")),
                 "x": max(0.0, min(max_x, cx - (float(crop_w) / 2.0))),
                 "y": max(0.0, min(max_y, cy - (float(crop_h) / 2.0))),
             }
         )
     deduped: list[dict[str, float]] = []
     for point in sorted(points, key=lambda item: item["t"]):
-        if deduped and abs(deduped[-1]["t"] - point["t"]) < 1e-3:
+        preserve_cut_boundary = bool(point.get("cut")) or bool(deduped and deduped[-1].get("cut"))
+        if deduped and not preserve_cut_boundary and abs(deduped[-1]["t"] - point["t"]) < 1e-3:
             deduped[-1] = point
         else:
             deduped.append(point)
@@ -1139,8 +1141,9 @@ def _piecewise_linear_ratio_expr(
             value = float(point[key])
         except Exception:
             continue
-        normalized = {"t": t_val, key: value}
-        if cleaned and abs(float(cleaned[-1]["t"]) - t_val) < 1e-6:
+        normalized = {"t": t_val, key: value, "cut": bool(point.get("cut"))}
+        preserve_cut_boundary = bool(normalized["cut"]) or bool(cleaned and cleaned[-1].get("cut"))
+        if cleaned and not preserve_cut_boundary and abs(float(cleaned[-1]["t"]) - t_val) < 1e-6:
             cleaned[-1] = normalized
         else:
             cleaned.append(normalized)
@@ -1150,25 +1153,45 @@ def _piecewise_linear_ratio_expr(
     if len(points) == 1:
         return f"{points[0][key]:.6f}"
     t_var = str(time_expr or "t")
-    parts: list[str] = []
-    first = points[0]
-    if float(first["t"]) > 0:
-        parts.append(f"(lt({t_var},{float(first['t']):.6f})*{float(first[key]):.6f})")
-    for index in range(0, len(points) - 1):
-        current = points[index]
-        nxt = points[index + 1]
-        t0 = float(current["t"])
-        t1 = float(nxt["t"])
-        v0 = float(current[key])
-        v1 = float(nxt[key])
-        if t1 <= t0:
-            segment_expr = f"{v0:.6f}"
-        else:
-            segment_expr = f"({v0:.6f}+({v1 - v0:.6f})*({t_var}-{t0:.6f})/{t1 - t0:.6f})"
-        parts.append(f"(gte({t_var},{t0:.6f})*lt({t_var},{t1:.6f})*{segment_expr})")
-    last = points[-1]
-    parts.append(f"(gte({t_var},{float(last['t']):.6f})*{float(last[key]):.6f})")
-    return "+".join(parts)
+
+    def _linear_expr(linear_points: list[dict[str, float]]) -> str:
+        if len(linear_points) == 1:
+            return f"{float(linear_points[0][key]):.6f}"
+        parts: list[str] = []
+        first = linear_points[0]
+        if float(first["t"]) > 0:
+            parts.append(f"(lt({t_var},{float(first['t']):.6f})*{float(first[key]):.6f})")
+        for index in range(0, len(linear_points) - 1):
+            current = linear_points[index]
+            nxt = linear_points[index + 1]
+            t0 = float(current["t"])
+            t1 = float(nxt["t"])
+            v0 = float(current[key])
+            v1 = float(nxt[key])
+            if t1 <= t0:
+                segment_expr = f"{v0:.6f}"
+            else:
+                segment_expr = f"({v0:.6f}+({v1 - v0:.6f})*({t_var}-{t0:.6f})/{t1 - t0:.6f})"
+            parts.append(f"(gte({t_var},{t0:.6f})*lt({t_var},{t1:.6f})*{segment_expr})")
+        last = linear_points[-1]
+        parts.append(f"(gte({t_var},{float(last['t']):.6f})*{float(last[key]):.6f})")
+        return "+".join(parts)
+
+    shot_starts = [index for index, point in enumerate(points) if index > 0 and point.get("cut")]
+    if shot_starts:
+        chunks: list[list[dict[str, float]]] = []
+        start_index = 0
+        for cut_index in shot_starts:
+            chunks.append(points[start_index:cut_index])
+            start_index = cut_index
+        chunks.append(points[start_index:])
+        expression = _linear_expr(chunks[-1])
+        for chunk, cut_index in reversed(list(zip(chunks[:-1], shot_starts))):
+            cut_time = float(points[cut_index]["t"])
+            expression = f"if(lt({t_var},{cut_time:.6f}),{_linear_expr(chunk)},{expression})"
+        return expression
+
+    return _linear_expr(points)
 
 
 def _sanitize_text_for_overlay(text: str, max_len: int = 160) -> str:

@@ -3676,19 +3676,13 @@ def _smooth_preview_face_track_rows(
             nonempty_index += 1
             if stitched and smoothed:
                 cut_time = clean_cuts[shot_index - 1]
-                previous_values = _track_row_values(stitched[-1])
                 next_values = _track_row_values(smoothed[0])
-                if previous_values and next_values:
-                    stitched.append({
-                        "t": round(max(0.0, cut_time - 0.001), 6),
-                        **previous_values,
-                        "found": True,
-                        "source": "shot_cut:before",
-                    })
+                if next_values:
                     stitched.append({
                         "t": round(cut_time, 6),
                         **next_values,
                         "found": True,
+                        "cut": True,
                         "source": "shot_cut:after",
                     })
             stitched.extend(smoothed)
@@ -4061,7 +4055,7 @@ def _face_aware_scene_candidates(
     ffmpeg_bin = _resolve_ffmpeg()
     filter_expr = (
         f"select='gt(scene,{float(FACE_AWARE_SCENE_THRESHOLD):.6f})',"
-        "metadata=print,showinfo"
+        "metadata=print"
     )
     cmd = [
         ffmpeg_bin,
@@ -4104,11 +4098,13 @@ def _face_aware_scene_candidates(
         )
         return []
     output = "\n".join([result.stdout or "", result.stderr or ""])
-    pts_values = [float(match.group(1)) for match in re.finditer(r"pts_time:([0-9.]+)", output)]
-    scores = [float(match.group(1)) for match in re.finditer(r"lavfi\.scene_score=([0-9.]+)", output)]
+    candidates = re.findall(
+        r"frame:\d+[^\n]*pts_time:([0-9.]+)[^\n]*\n[^\n]*lavfi\.scene_score=([0-9.]+)",
+        output,
+    )
     return [
-        (scores[idx] if idx < len(scores) else 0.0, float(start) + pts_time)
-        for idx, pts_time in enumerate(pts_values)
+        (float(score), float(start) + float(pts_time))
+        for pts_time, score in candidates
     ]
 
 

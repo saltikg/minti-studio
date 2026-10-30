@@ -264,7 +264,6 @@ def _append_face_track_shot_cut_check(rows: list[tuple[str, str, str]]) -> None:
         for index in range(12)
     ]
     smoothed = generation._smooth_preview_face_track_rows(raw, shot_cuts=[3.0])
-    before = next((item for item in smoothed if abs(float(item.get("t") or 0.0) - 2.999) < 1e-6), None)
     after = next((item for item in smoothed if abs(float(item.get("t") or 0.0) - 3.0) < 1e-6), None)
     within_shot = [
         float(item.get("cx_ratio") or 0.0)
@@ -272,17 +271,25 @@ def _append_face_track_shot_cut_check(rows: list[tuple[str, str, str]]) -> None:
         if 0.5 <= float(item.get("t") or 0.0) <= 2.5
     ]
     ok = bool(
-        before
-        and after
-        and abs(float(before["cx_ratio"]) - 0.25) < 1e-6
+        after
         and abs(float(after["cx_ratio"]) - 0.75) < 1e-6
+        and after.get("cut") is True
         and within_shot
         and max(within_shot) - min(within_shot) < 1e-6
     )
+    expr = compositor._piecewise_linear_ratio_expr(
+        [
+            {"t": 2.5, "x": 0.25},
+            {"t": 3.0, "x": 0.75, "cut": True},
+            {"t": 3.5, "x": 0.75},
+        ],
+        "x",
+    )
+    ok = ok and bool(expr and "if(lt(t,3.000000)" in expr and "(0.500000)*(t-2.500000)" not in expr)
     rows.append((
         "face_track_shot_cut",
         "PASS" if ok else "FAIL",
-        f"before={before} after={after} within_shot={within_shot}",
+        f"after={after} within_shot={within_shot} expr={expr}",
     ))
 
 
