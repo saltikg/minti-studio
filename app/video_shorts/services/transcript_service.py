@@ -25,6 +25,7 @@ from app.video_shorts.config import (
     SUBTITLE_PILL_FONT_MAP,
     SUBTITLE_PRESETS,
     SUBTITLE_HIGHLIGHT_COLOR,
+    caption_effect_values,
     WHISPER_MODEL,
     clamp_design_position,
     caption_block_top,
@@ -937,6 +938,8 @@ def _build_ass_karaoke_for_clip(
     subtitle_text_alpha: Optional[int],
     subtitle_bg_color: Optional[str],
     subtitle_bg_alpha: Optional[int],
+    subtitle_highlight_color: Optional[str] = None,
+    subtitle_effect: Optional[str] = None,
     subtitle_preset: Optional[str] = None,
     force_uppercase: Optional[bool] = None,
     caption_language: str = "",
@@ -951,13 +954,14 @@ def _build_ass_karaoke_for_clip(
     preset = _resolve_subtitle_preset(subtitle_preset)
     effective_uppercase = bool(preset.get("force_uppercase")) if force_uppercase is None else bool(force_uppercase)
     preset_key = str(subtitle_preset or DEFAULT_SUBTITLE_PRESET).strip() or DEFAULT_SUBTITLE_PRESET
-    active_color = str(preset.get("active_color") or SUBTITLE_HIGHLIGHT_COLOR).strip() or SUBTITLE_HIGHLIGHT_COLOR
+    active_color = str(subtitle_highlight_color or preset.get("active_color") or SUBTITLE_HIGHLIGHT_COLOR).strip() or SUBTITLE_HIGHLIGHT_COLOR
     inactive_color = str(subtitle_text_color or preset.get("inactive_color") or "#FFFFFF").strip() or "#FFFFFF"
     outline_color = str(preset.get("outline_color") or "#000000").strip() or "#000000"
     active_box_color = str(preset.get("active_box_color") or "").strip()
     active_box_outline_color = str(preset.get("active_box_outline_color") or active_box_color or outline_color).strip() or outline_color
+    effect_values = caption_effect_values(subtitle_effect, preset)
     try:
-        outline_width = max(0, int(round(float(preset.get("outline_width", 1) or 1) * render_scale)))
+        outline_width = max(0, int(round(float(effect_values.get("outline_width", 0) or 0) * render_scale)))
     except Exception:
         outline_width = 1
     try:
@@ -1336,7 +1340,16 @@ def _build_ass_karaoke_for_clip(
             DEFAULT_SUBTITLE_BG_ALPHA,
         )
     else:
-        back_color = _hex_to_ass_color_with_alpha("#000000", 0, "#000000", 0)
+        back_color = _hex_to_ass_color_with_alpha(
+            effect_values.get("shadow_color") or "#000000",
+            int(round(float(effect_values.get("shadow_opacity", 0) or 0) * 100)),
+            "#000000",
+            0,
+        )
+    ass_shadow = max(
+        abs(int(effect_values.get("shadow_offset_x", 0) or 0)),
+        abs(int(effect_values.get("shadow_offset_y", 0) or 0)),
+    )
 
     normalized_anchor = normalize_caption_anchor(caption_anchor)
     alignment = {"top": 8, "center": 5, "bottom": 2}[normalized_anchor]
@@ -1359,7 +1372,7 @@ def _build_ass_karaoke_for_clip(
         f"{_hex_to_ass_color_with_alpha(inactive_color, subtitle_text_alpha, '#FFFFFF', DEFAULT_SUBTITLE_TEXT_ALPHA)},"
         f"{_hex_to_ass_color_with_alpha(outline_color, 100, '#000000', 100)},"
         f"{back_color},"
-        f"{bold},0,0,0,100,100,0,0,{4 if show_box else border_style},{outline_width},0,{alignment},{render_margin_l},{render_margin_r},"
+        f"{bold},0,0,0,100,100,0,0,{4 if show_box else border_style},{outline_width},{ass_shadow},{alignment},{render_margin_l},{render_margin_r},"
         f"{int(subtitle_margin)},1",
     ]
     if use_active_word_style:
@@ -1371,7 +1384,7 @@ def _build_ass_karaoke_for_clip(
             f"{_hex_to_ass_color_with_alpha(active_color, 100, '#111827', 100)},"
             f"{_hex_to_ass_color_with_alpha(active_box_outline_color, 100, '#FFD84D', 100)},"
             f"{_hex_to_ass_color_with_alpha(active_box_color, 100, '#FFD84D', 100)},"
-            f"{bold},0,0,0,100,100,0,0,{active_box_border_style},{active_box_outline_width},0,{alignment},{render_margin_l},{render_margin_r},"
+            f"{bold},0,0,0,100,100,0,0,{active_box_border_style},{active_box_outline_width},{ass_shadow},{alignment},{render_margin_l},{render_margin_r},"
             f"{int(subtitle_margin)},1"
         )
         lines.append(
@@ -2137,6 +2150,8 @@ def _build_word_highlight_caption_overlay(
     subtitle_preset: Optional[str],
     subtitle_font_key: Optional[str] = None,
     subtitle_text_color: Optional[str] = None,
+    subtitle_highlight_color: Optional[str] = None,
+    subtitle_effect: Optional[str] = None,
     subtitle_text_alpha: Optional[int] = None,
     subtitle_bg_color: Optional[str] = None,
     subtitle_bg_alpha: Optional[int] = None,
@@ -2174,29 +2189,30 @@ def _build_word_highlight_caption_overlay(
     force_uppercase = bool(preset.get("force_uppercase", False)) if force_uppercase is None else bool(force_uppercase)
     inactive_color = str(subtitle_text_color or preset.get("inactive_color") or "#FFFFFF").strip() or "#FFFFFF"
     inactive_alpha = _alpha_percent_to_byte(subtitle_text_alpha, DEFAULT_SUBTITLE_TEXT_ALPHA)
-    active_color = str(preset.get("active_color") or "#111827").strip() or "#111827"
+    active_color = str(subtitle_highlight_color or preset.get("active_color") or "#111827").strip() or "#111827"
     outline_color = str(preset.get("outline_color") or "#000000").strip() or "#000000"
     pill_color = str(preset.get("active_box_color") or "#FFD84D").strip() or "#FFD84D"
     draw_pill = bool(preset.get("draw_pill", True))
-    shadow_color = str(preset.get("shadow_color") or "").strip()
+    effect_values = caption_effect_values(subtitle_effect, preset)
+    shadow_color = str(effect_values.get("shadow_color") or "").strip()
     try:
-        outline_width = max(0, int(preset.get("outline_width", 3) or 0))
+        outline_width = max(0, int(effect_values.get("outline_width", 0) or 0))
     except Exception:
         outline_width = 3
     try:
-        shadow_opacity = max(0.0, min(1.0, float(preset.get("shadow_opacity", 0.0) or 0.0)))
+        shadow_opacity = max(0.0, min(1.0, float(effect_values.get("shadow_opacity", 0.0) or 0.0)))
     except Exception:
         shadow_opacity = 0.0
     try:
-        shadow_offset_x = int(preset.get("shadow_offset_x", 0) or 0)
+        shadow_offset_x = int(effect_values.get("shadow_offset_x", 0) or 0)
     except Exception:
         shadow_offset_x = 0
     try:
-        shadow_offset_y = int(preset.get("shadow_offset_y", 0) or 0)
+        shadow_offset_y = int(effect_values.get("shadow_offset_y", 0) or 0)
     except Exception:
         shadow_offset_y = 0
     try:
-        shadow_blur_radius = max(0, int(preset.get("shadow_blur_radius", 0) or 0))
+        shadow_blur_radius = max(0, int(effect_values.get("shadow_blur_radius", 0) or 0))
     except Exception:
         shadow_blur_radius = 0
 

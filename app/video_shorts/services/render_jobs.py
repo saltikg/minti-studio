@@ -567,7 +567,17 @@ def invalidate_done_job_cache(job_id: str) -> int:
 def is_render_job_cache_valid(job: Dict[str, Any], *, conn=None) -> bool:
     if not isinstance(job, dict):
         return False
-    if str(job.get("type") or "").strip() != JOB_TYPE_RENDER_SHORT:
+    job_type = str(job.get("type") or "").strip()
+    if job_type == JOB_TYPE_PREVIEW_FRAME:
+        video_id = str((job.get("payload") or {}).get("video_id") or "").strip()
+        if not video_id:
+            return False
+        try:
+            from app.video_shorts.routes import generation
+            return generation._preview_frame_cache_path(video_id).is_file()
+        except Exception:
+            return False
+    if job_type != JOB_TYPE_RENDER_SHORT:
         return True
     payload = job.get("payload") or {}
     source_video_id = str(payload.get("source_video_id") or "").strip()
@@ -737,7 +747,7 @@ def enqueue_job(
         payload, priority = _prepare_owner_job_payload(conn, user_id, payload, priority)
         existing_done = _find_job_by_hash(conn, user_id=user_id, input_hash=input_hash,
                                           statuses=(JOB_STATUS_DONE,), job_type=job_type, payload=payload)
-        if existing_done and job_type == JOB_TYPE_RENDER_SHORT and not is_render_job_cache_valid(existing_done, conn=conn):
+        if existing_done and job_type in {JOB_TYPE_RENDER_SHORT, JOB_TYPE_PREVIEW_FRAME} and not is_render_job_cache_valid(existing_done, conn=conn):
             _invalidate_done_job_cache_entry(conn, existing_done["id"])
             existing_done = None
         if existing_done:

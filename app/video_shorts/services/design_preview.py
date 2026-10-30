@@ -1,6 +1,6 @@
 """Live preview geometry. Returns numbers and text only, never rendered frames."""
 from PIL import ImageFont
-from app.video_shorts.config import DESIGN_GEOMETRY as D, SUBTITLE_PRESETS
+from app.video_shorts.config import DESIGN_GEOMETRY as D, SUBTITLE_PRESETS, caption_effect_values, resolve_caption_effect
 from app.video_shorts.services.compositor import _title_overlay_layout
 from app.video_shorts.services.transcript_service import (
     _caption_display_words,
@@ -25,6 +25,8 @@ def measure_design(data, *, title_font_path, caption_font_path, title_behavior):
     caption_size = max(1, int(round(int(data['caption_size']) * D['font_scale'])))
     karaoke = data.get('caption_style', 'karaoke') == 'karaoke'
     preset = (SUBTITLE_PRESETS.get(data.get('preset')) or {}) if karaoke else {}
+    effect = resolve_caption_effect(data.get('subtitle_effect'), preset)
+    effect_values = caption_effect_values(effect, preset)
     caption_uppercase = (
         bool(data.get('subtitle_uppercase'))
         if 'subtitle_uppercase' in data
@@ -72,7 +74,7 @@ def measure_design(data, *, title_font_path, caption_font_path, title_behavior):
             candidate = _caption_frame_layout(group, active_index=candidate_active, font=font,
                 active_font=active_font, caption_language=data.get('language', ''),
                 subtitle_margin=int(data['caption_margin']), font_size=caption_size,
-                outline_width=int(preset.get('outline_width') or 0),
+                outline_width=int(effect_values.get('outline_width') or 0),
                 force_uppercase=caption_uppercase,
                 canvas_width=width, canvas_height=height, caption_anchor=data.get('caption_anchor', 'bottom'))
             widths = [int(line.get('width') or 0) for line in candidate['lines']]
@@ -86,7 +88,7 @@ def measure_design(data, *, title_font_path, caption_font_path, title_behavior):
         return dict(title=title_result, caption=dict(box=[0, 0, 1, 1], runs=[],
                     lines=0, font_size=caption_size, outline=0), width=width, height=height)
     active = selected_group[0][1] if selected_group and karaoke else min(max(0, int(data.get('active_word', 0))), max(0, len(words)-1))
-    outline = int(preset.get('outline_width') or 0)
+    outline = int(effect_values.get('outline_width') or 0)
     draw_pill = bool(preset.get('active_pill')) and bool(preset.get('draw_pill', True))
     precomputed = None
     if not draw_pill and active_size == caption_size:
@@ -128,6 +130,8 @@ def measure_design(data, *, title_font_path, caption_font_path, title_behavior):
     return dict(title=title_result, caption=dict(box=caption_box, runs=runs, pill=pill,
         glyph_box=_union(glyph_boxes), lines=len(layout['lines']), font_size=caption_size,
         outline=outline, active_outline=bool(preset.get('active_outline')),
+        highlight_color=data.get('subtitle_highlight_color') or preset.get('active_color'),
+        effect=effect, effect_values=effect_values,
         anchor=layout['lines'][0]['y'] if layout['lines'] else 0,
         block_height=layout['total_height'], text=' '.join(str(word['word']) for word in layout['words'])),
         width=width, height=height)

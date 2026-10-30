@@ -195,6 +195,46 @@ DEFAULT_TITLE_TEXT_COLOR = "#000000"
 DEFAULT_SUBTITLE_TEXT_COLOR = "#FFFFFF"
 DEFAULT_SUBTITLE_BG_COLOR = "#000000"
 SUBTITLE_HIGHLIGHT_COLOR = "#FFD84D"
+CAPTION_EFFECT_NONE = "none"
+CAPTION_EFFECT_SOFT_SHADOW = "soft_shadow"
+CAPTION_EFFECT_OUTLINE_SHADOW = "outline_shadow"
+CAPTION_EFFECTS = {
+    CAPTION_EFFECT_NONE: {
+        "outline_width": 0, "shadow_color": "#000000", "shadow_opacity": 0.0,
+        "shadow_offset_x": 0, "shadow_offset_y": 0, "shadow_blur_radius": 0,
+    },
+    CAPTION_EFFECT_SOFT_SHADOW: {
+        "outline_width": 0, "shadow_color": "#000000", "shadow_opacity": 0.55,
+        "shadow_offset_x": 0, "shadow_offset_y": 2, "shadow_blur_radius": 10,
+    },
+    CAPTION_EFFECT_OUTLINE_SHADOW: {
+        "outline_width": 3, "shadow_color": "#000000", "shadow_opacity": 1.0,
+        "shadow_offset_x": 3, "shadow_offset_y": 3, "shadow_blur_radius": 0,
+    },
+}
+
+
+def caption_effect_from_preset(preset):
+    preset = preset or {}
+    outline = max(0, int(preset.get("outline_width", 0) or 0))
+    opacity = max(0.0, float(preset.get("shadow_opacity", 0) or 0)) if preset.get("shadow_color") else 0.0
+    blur = max(0, int(preset.get("shadow_blur_radius", 0) or 0))
+    if outline > 0 and opacity > 0 and blur == 0:
+        return CAPTION_EFFECT_OUTLINE_SHADOW
+    if opacity > 0:
+        return CAPTION_EFFECT_SOFT_SHADOW
+    return CAPTION_EFFECT_NONE
+
+
+def resolve_caption_effect(value, preset=None):
+    normalized = str(value or "").strip().lower()
+    return normalized if normalized in CAPTION_EFFECTS else caption_effect_from_preset(preset)
+
+
+def caption_effect_values(value, preset=None):
+    return dict(CAPTION_EFFECTS[resolve_caption_effect(value, preset)])
+
+
 SUBTITLE_PRESETS = {
     "classic_yellow": {
         "active_color": "#FFD84D",
@@ -390,6 +430,26 @@ SUBTITLE_PRESETS = {
         "shadow_offset_x": 0,
         "shadow_offset_y": 2,
         "shadow_blur_radius": 10,
+    },
+    "yellow_punch": {
+        "active_color": "#FFE600",
+        "inactive_color": "#FFE600",
+        "outline_color": "#000000",
+        "outline_width": 3,
+        "border_style": 1,
+        "box": False,
+        "bold": True,
+        "active_scale": 100,
+        "font": "Montserrat Black",
+        "active_pill": False,
+        "pillow_engine": True,
+        "draw_pill": False,
+        "shadow_color": "#000000",
+        "shadow_opacity": 1.0,
+        "shadow_offset_x": 3,
+        "shadow_offset_y": 3,
+        "shadow_blur_radius": 0,
+        "force_uppercase": True,
     },
     "silver_pop": {
         "active_color": "#FFFFFF",
@@ -890,6 +950,22 @@ STYLE_TEMPLATES = [
         "title_bg_alpha": 0,
         "title_font_size": DEFAULT_TITLE_FONT_SIZE,
         "title_outline_width": 0,
+        "title_outline_color": "#000000",
+    },
+    {
+        "key": "yellow_punch",
+        "label": "Yellow Punch",
+        "subtitle_preset": "yellow_punch",
+        "caption_effect": CAPTION_EFFECT_OUTLINE_SHADOW,
+        "title_engine": "pillow",
+        "title_uppercase": True,
+        "title_font": "Montserrat Black",
+        "title_font_key": "montserrat_black",
+        "title_text_color": "#FFFFFF",
+        "title_bg_color": "#000000",
+        "title_bg_alpha": 0,
+        "title_font_size": DEFAULT_TITLE_FONT_SIZE,
+        "title_outline_width": 3,
         "title_outline_color": "#000000",
     },
     {

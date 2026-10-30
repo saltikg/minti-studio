@@ -371,6 +371,16 @@ def test_preview_enqueue_is_tenant_scoped_and_idempotent(monkeypatch, tmp_path):
     assert generation._preview_frame_cache_path("preview-a") != generation._preview_frame_cache_path("preview-b")
 
 
+def test_completed_preview_cache_requires_jpeg(monkeypatch, tmp_path):
+    monkeypatch.setattr(generation, "SHORTS_DIR", tmp_path / "shorts")
+    job = {"type": render_jobs.JOB_TYPE_PREVIEW_FRAME, "payload": {"video_id": "preview-cache"}}
+
+    assert render_jobs.is_render_job_cache_valid(job) is False
+    target = generation._preview_frame_cache_path("preview-cache")
+    target.write_bytes(b"jpg")
+    assert render_jobs.is_render_job_cache_valid(job) is True
+
+
 def test_preview_enqueue_rejects_cross_tenant_and_source_mismatch(monkeypatch, tmp_path):
     _configure_duckdb(monkeypatch, tmp_path, "preview_scope_reject.duckdb")
     user_id = str(uuid4())

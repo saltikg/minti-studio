@@ -60,6 +60,8 @@ from app.video_shorts.config import (
     SUBTITLE_HIGHLIGHT_COLOR,
     SUBTITLE_PRESETS,
     STYLE_TEMPLATES,
+    caption_effect_from_preset,
+    resolve_caption_effect,
     DEFAULT_TITLE_BG_COLOR,
     DEFAULT_TITLE_BG_ALPHA,
     DEFAULT_EDITOR_TITLE_BG_ALPHA,
@@ -478,9 +480,11 @@ SHORT_EDITOR_DEFAULT_FIELD_NAMES = (
     "title_bg_alpha",
     "title_text_color",
     "subtitle_text_color",
+    "subtitle_highlight_color",
     "subtitle_text_alpha",
     "subtitle_bg_color",
     "subtitle_bg_alpha",
+    "subtitle_effect",
     "video_overlay_offset",
     "enable_subscribe_overlay",
     "show_title",
@@ -989,9 +993,11 @@ def _short_editor_config_defaults() -> Dict[str, Any]:
         "title_bg_alpha": DEFAULT_EDITOR_TITLE_BG_ALPHA,
         "title_text_color": DEFAULT_EDITOR_TITLE_TEXT_COLOR,
         "subtitle_text_color": DEFAULT_SUBTITLE_TEXT_COLOR,
+        "subtitle_highlight_color": None,
         "subtitle_text_alpha": DEFAULT_SUBTITLE_TEXT_ALPHA,
         "subtitle_bg_color": DEFAULT_SUBTITLE_BG_COLOR,
         "subtitle_bg_alpha": DEFAULT_SUBTITLE_BG_ALPHA,
+        "subtitle_effect": caption_effect_from_preset(SUBTITLE_PRESETS.get(DEFAULT_SUBTITLE_PRESET)),
         "video_overlay_offset": DEFAULT_VIDEO_OVERLAY_OFFSET,
         "enable_subscribe_overlay": True,
         "show_title": True,
@@ -1098,7 +1104,10 @@ def _clean_short_editor_default_payload(source: Any) -> Dict[str, Any]:
     payload["title_bg_color"] = _normalize_hex_color(source.get("title_bg_color"), DEFAULT_EDITOR_TITLE_BG_COLOR)
     payload["title_text_color"] = _normalize_hex_color(source.get("title_text_color"), DEFAULT_EDITOR_TITLE_TEXT_COLOR)
     payload["subtitle_text_color"] = _normalize_hex_color(source.get("subtitle_text_color"), DEFAULT_SUBTITLE_TEXT_COLOR)
+    highlight_color = str(source.get("subtitle_highlight_color") or "").strip()
+    payload["subtitle_highlight_color"] = _normalize_hex_color(highlight_color, SUBTITLE_HIGHLIGHT_COLOR) if highlight_color else None
     payload["subtitle_bg_color"] = _normalize_hex_color(source.get("subtitle_bg_color"), DEFAULT_SUBTITLE_BG_COLOR)
+    payload["subtitle_effect"] = resolve_caption_effect(source.get("subtitle_effect"), SUBTITLE_PRESETS.get(payload["subtitle_preset"]))
 
     payload["title_bg_alpha"] = _normalize_alpha_percent(source.get("title_bg_alpha"), DEFAULT_EDITOR_TITLE_BG_ALPHA)
     payload["subtitle_text_alpha"] = _normalize_alpha_percent(source.get("subtitle_text_alpha"), DEFAULT_SUBTITLE_TEXT_ALPHA)
@@ -8633,7 +8642,9 @@ AUTO_RENDER_DESIGN_FIELD_MAP: Dict[str, str] = {
     "title_bg_alpha": "title_bg_alpha",
     "title_text_color": "title_text_color",
     "subtitle_text_color": "subtitle_text_color",
+    "subtitle_highlight_color": "subtitle_highlight_color",
     "subtitle_bg_color": "subtitle_bg_color",
+    "subtitle_effect": "subtitle_effect",
     "subtitle_bg_alpha": "subtitle_bg_alpha",
     "subtitle_text_alpha": "subtitle_text_alpha",
     "enable_subscribe_overlay": "subscribe_overlay_enabled",
@@ -12653,6 +12664,10 @@ def generate_short(video_pk):
         video_sql += ", title_uppercase"
     if "subtitle_uppercase" in video_columns:
         video_sql += ", subtitle_uppercase"
+    if "subtitle_highlight_color" in video_columns:
+        video_sql += ", subtitle_highlight_color"
+    if "subtitle_effect" in video_columns:
+        video_sql += ", subtitle_effect"
     if "crop_locked" in video_columns:
         video_sql += ", crop_locked"
     if "creator_name" in video_columns:
@@ -12705,6 +12720,10 @@ def generate_short(video_pk):
         cols.append("title_uppercase")
     if "subtitle_uppercase" in video_columns:
         cols.append("subtitle_uppercase")
+    if "subtitle_highlight_color" in video_columns:
+        cols.append("subtitle_highlight_color")
+    if "subtitle_effect" in video_columns:
+        cols.append("subtitle_effect")
     if "crop_locked" in video_columns:
         cols.append("crop_locked")
     if "creator_name" in video_columns:
@@ -13068,9 +13087,11 @@ def generate_short(video_pk):
         "title_bg_alpha": video.get("title_bg_alpha"),
         "title_text_color": video.get("title_text_color"),
         "subtitle_text_color": video.get("subtitle_text_color"),
+        "subtitle_highlight_color": video.get("subtitle_highlight_color"),
         "subtitle_text_alpha": video.get("subtitle_text_alpha"),
         "subtitle_bg_color": video.get("subtitle_bg_color"),
         "subtitle_bg_alpha": video.get("subtitle_bg_alpha"),
+        "subtitle_effect": video.get("subtitle_effect"),
         "video_overlay_offset": video.get("video_overlay_offset"),
         "enable_subscribe_overlay": video.get("subscribe_overlay_enabled"),
         "show_title": video.get("show_title"),
@@ -13128,6 +13149,10 @@ def generate_short(video_pk):
     video_title_bg_alpha = _normalize_alpha_percent(resolved_style_values.get("title_bg_alpha"), DEFAULT_EDITOR_TITLE_BG_ALPHA)
     video_title_text_color = resolved_style_values.get("title_text_color") or DEFAULT_EDITOR_TITLE_TEXT_COLOR
     video_subtitle_text_color = resolved_style_values.get("subtitle_text_color") or DEFAULT_SUBTITLE_TEXT_COLOR
+    video_subtitle_highlight_color = resolved_style_values.get("subtitle_highlight_color")
+    video_subtitle_effect = resolve_caption_effect(
+        resolved_style_values.get("subtitle_effect"), SUBTITLE_PRESETS.get(video_subtitle_preset)
+    )
     video_subtitle_bg_color = resolved_style_values.get("subtitle_bg_color") or DEFAULT_SUBTITLE_BG_COLOR
     video_subtitle_bg_alpha = _normalize_alpha_percent(resolved_style_values.get("subtitle_bg_alpha"), DEFAULT_SUBTITLE_BG_ALPHA)
     video_subtitle_text_alpha = _normalize_alpha_percent(resolved_style_values.get("subtitle_text_alpha"), DEFAULT_SUBTITLE_TEXT_ALPHA)
@@ -13172,6 +13197,8 @@ def generate_short(video_pk):
     video_title_bg_color = _normalize_hex_color(video_title_bg_color, DEFAULT_EDITOR_TITLE_BG_COLOR)
     video_title_text_color = _normalize_hex_color(video_title_text_color, DEFAULT_EDITOR_TITLE_TEXT_COLOR)
     video_subtitle_text_color = _normalize_hex_color(video_subtitle_text_color, DEFAULT_SUBTITLE_TEXT_COLOR)
+    if video_subtitle_highlight_color:
+        video_subtitle_highlight_color = _normalize_hex_color(video_subtitle_highlight_color, SUBTITLE_HIGHLIGHT_COLOR)
     video_subtitle_bg_color = _normalize_hex_color(video_subtitle_bg_color, DEFAULT_SUBTITLE_BG_COLOR)
     matched_style_template_key = _match_style_template_key(
         subtitle_preset=video_subtitle_preset,
@@ -13397,6 +13424,8 @@ def generate_short(video_pk):
     session["vs_title_bg_alpha"] = video_title_bg_alpha
     session["vs_title_text_color"] = video_title_text_color
     session["vs_subtitle_text_color"] = video_subtitle_text_color
+    session["vs_subtitle_highlight_color"] = video_subtitle_highlight_color
+    session["vs_subtitle_effect"] = video_subtitle_effect
     session["vs_subtitle_bg_color"] = video_subtitle_bg_color
     session["vs_subtitle_bg_alpha"] = video_subtitle_bg_alpha
     session["vs_subtitle_text_alpha"] = video_subtitle_text_alpha
@@ -13425,6 +13454,11 @@ def generate_short(video_pk):
     selected_title_bg_alpha = video_title_bg_alpha
     selected_title_text_color = video_title_text_color
     selected_subtitle_text_color = video_subtitle_text_color
+    selected_subtitle_highlight_color = (
+        video_subtitle_highlight_color
+        or str((SUBTITLE_PRESETS.get(video_subtitle_preset) or {}).get("active_color") or SUBTITLE_HIGHLIGHT_COLOR)
+    )
+    selected_subtitle_effect = video_subtitle_effect
     selected_subtitle_bg_color = video_subtitle_bg_color
     selected_subtitle_bg_alpha = video_subtitle_bg_alpha
     selected_subtitle_text_alpha = video_subtitle_text_alpha
@@ -14648,11 +14682,20 @@ def generate_short(video_pk):
         selected_title_bg_alpha=selected_title_bg_alpha,
         selected_title_text_color=selected_title_text_color,
         selected_subtitle_text_color=selected_subtitle_text_color,
+        selected_subtitle_highlight_color=selected_subtitle_highlight_color,
+        selected_subtitle_effect=selected_subtitle_effect,
         selected_subtitle_bg_color=selected_subtitle_bg_color,
         selected_subtitle_bg_alpha=selected_subtitle_bg_alpha,
         selected_subtitle_text_alpha=selected_subtitle_text_alpha,
         subtitle_presets=SUBTITLE_PRESETS,
-        style_templates=STYLE_TEMPLATES,
+        style_templates=[
+            {
+                **template,
+                "caption_effect": template.get("caption_effect")
+                or caption_effect_from_preset(SUBTITLE_PRESETS.get(str(template.get("subtitle_preset") or ""))),
+            }
+            for template in STYLE_TEMPLATES
+        ],
         clip_min_duration_seconds=int(CLIP_MIN_DURATION_SECONDS),
         clip_max_duration_seconds=int(CLIP_MAX_DURATION_SECONDS),
         default_style_template_key=DEFAULT_STYLE_TEMPLATE_KEY,
@@ -30079,6 +30122,8 @@ def save_short_settings(video_pk):
     title_bg_alpha = _normalize_alpha_percent(request.form.get("title_bg_alpha") or DEFAULT_EDITOR_TITLE_BG_ALPHA, DEFAULT_TITLE_BG_ALPHA)
     title_text_color = _normalize_hex_color(request.form.get("title_text_color") or DEFAULT_EDITOR_TITLE_TEXT_COLOR, DEFAULT_TITLE_TEXT_COLOR)
     subtitle_text_color = _normalize_hex_color(request.form.get("subtitle_text_color") or DEFAULT_SUBTITLE_TEXT_COLOR, DEFAULT_SUBTITLE_TEXT_COLOR)
+    raw_highlight_color = str(request.form.get("subtitle_highlight_color") or "").strip()
+    subtitle_highlight_color = _normalize_hex_color(raw_highlight_color, SUBTITLE_HIGHLIGHT_COLOR) if raw_highlight_color else None
     subtitle_bg_color = _normalize_hex_color(request.form.get("subtitle_bg_color") or DEFAULT_SUBTITLE_BG_COLOR, DEFAULT_SUBTITLE_BG_COLOR)
     subtitle_bg_alpha = _normalize_alpha_percent(request.form.get("subtitle_bg_alpha") or DEFAULT_SUBTITLE_BG_ALPHA, DEFAULT_SUBTITLE_BG_ALPHA)
     subtitle_text_alpha = _normalize_alpha_percent(request.form.get("subtitle_text_alpha") or DEFAULT_SUBTITLE_TEXT_ALPHA, DEFAULT_SUBTITLE_TEXT_ALPHA)
@@ -30088,6 +30133,7 @@ def save_short_settings(video_pk):
     subtitle_preset = str(request.form.get("subtitle_preset") or DEFAULT_SUBTITLE_PRESET).strip() or DEFAULT_SUBTITLE_PRESET
     if subtitle_preset not in SUBTITLE_PRESETS:
         subtitle_preset = DEFAULT_SUBTITLE_PRESET
+    subtitle_effect = resolve_caption_effect(request.form.get("subtitle_effect"), SUBTITLE_PRESETS.get(subtitle_preset))
     title_uppercase = _normalize_optional_bool(request.form.get("title_uppercase"), default=False)
     subtitle_uppercase = _normalize_optional_bool(request.form.get("subtitle_uppercase"), default=False)
     subscribe_overlay_key = _normalize_subscribe_overlay_key(
@@ -30337,9 +30383,11 @@ def save_short_settings(video_pk):
             "title_bg_alpha": title_bg_alpha,
             "title_text_color": title_text_color,
             "subtitle_text_color": subtitle_text_color,
+            "subtitle_highlight_color": subtitle_highlight_color,
             "subtitle_bg_color": subtitle_bg_color,
             "subtitle_bg_alpha": subtitle_bg_alpha,
             "subtitle_text_alpha": subtitle_text_alpha,
+            "subtitle_effect": subtitle_effect,
             "video_date_text": video_date_text,
             "video_date_top": video_date_top,
             "show_title": show_title,
@@ -30372,9 +30420,11 @@ def save_short_settings(video_pk):
             "title_bg_alpha": "title_bg_alpha",
             "title_text_color": "title_text_color",
             "subtitle_text_color": "subtitle_text_color",
+            "subtitle_highlight_color": "subtitle_highlight_color",
             "subtitle_bg_color": "subtitle_bg_color",
             "subtitle_bg_alpha": "subtitle_bg_alpha",
             "subtitle_text_alpha": "subtitle_text_alpha",
+            "subtitle_effect": "subtitle_effect",
             "video_date_text": "video_date_text",
             "video_date_top": "video_date_top",
             "show_title": "show_title",
@@ -30732,6 +30782,8 @@ def autoclip_video(video_pk):
     video_title_bg_alpha = DEFAULT_EDITOR_TITLE_BG_ALPHA
     video_title_text_color = None
     video_subtitle_text_color = None
+    video_subtitle_highlight_color = None
+    video_subtitle_effect = None
     video_subtitle_bg_color = None
     video_subtitle_bg_alpha = DEFAULT_SUBTITLE_BG_ALPHA
     video_subtitle_text_alpha = DEFAULT_SUBTITLE_TEXT_ALPHA
@@ -31308,6 +31360,8 @@ def autoclip_video(video_pk):
                 "title_display_seconds",
                 "title_uppercase",
                 "subtitle_uppercase",
+                "subtitle_highlight_color",
+                "subtitle_effect",
             )
             if column in crop_columns
         ]
@@ -31332,6 +31386,8 @@ def autoclip_video(video_pk):
                     video_title_uppercase = music_values.get("title_uppercase")
                 if "subtitle_uppercase" in music_values:
                     video_subtitle_uppercase = music_values.get("subtitle_uppercase")
+                video_subtitle_highlight_color = music_values.get("subtitle_highlight_color")
+                video_subtitle_effect = music_values.get("subtitle_effect")
     finally:
         conn.close()
     video_font_key = video_font_key or DEFAULT_EDITOR_TITLE_FONT_KEY
@@ -31339,6 +31395,8 @@ def autoclip_video(video_pk):
     video_title_bg_color = _normalize_hex_color(video_title_bg_color, DEFAULT_EDITOR_TITLE_BG_COLOR)
     video_title_text_color = _normalize_hex_color(video_title_text_color, DEFAULT_EDITOR_TITLE_TEXT_COLOR)
     video_subtitle_text_color = _normalize_hex_color(video_subtitle_text_color, DEFAULT_SUBTITLE_TEXT_COLOR)
+    if video_subtitle_highlight_color:
+        video_subtitle_highlight_color = _normalize_hex_color(video_subtitle_highlight_color, SUBTITLE_HIGHLIGHT_COLOR)
     video_caption_anchor, video_sub_margin = _resolve_caption_position(
         stored_anchor=video_caption_anchor,
         stored_margin=video_sub_margin,
@@ -31349,6 +31407,7 @@ def autoclip_video(video_pk):
         video_subtitle_style = "plain"
     if video_subtitle_preset not in SUBTITLE_PRESETS:
         video_subtitle_preset = DEFAULT_SUBTITLE_PRESET
+    video_subtitle_effect = resolve_caption_effect(video_subtitle_effect, SUBTITLE_PRESETS.get(video_subtitle_preset))
     title_template_behavior = _resolve_title_template_behavior(
         subtitle_preset=video_subtitle_preset,
         title_font_key=video_font_key,
@@ -32049,12 +32108,12 @@ def autoclip_video(video_pk):
         if custom_transcript:
             clip_text = custom_transcript
             subtitle_text = custom_transcript
-            if video_subtitle_style == "karaoke":
+            if video_subtitle_style == "karaoke" or video_subtitle_effect != "none":
                 override_segments = _build_override_segments_for_karaoke(custom_transcript, adj_start, adj_end)
-                if video_subtitle_style == "karaoke":
+                if video_subtitle_style == "karaoke" or video_subtitle_effect != "none":
                     active_subtitle_preset = str(video_subtitle_preset or "").strip()
                     active_preset_config = SUBTITLE_PRESETS.get(active_subtitle_preset) or {}
-                    if bool(active_preset_config.get("active_pill")) or bool(active_preset_config.get("pillow_engine")):
+                    if video_subtitle_effect != "none" or bool(active_preset_config.get("active_pill")) or bool(active_preset_config.get("pillow_engine")):
                         subtitle_overlay_video_path, subtitle_overlay_cleanup_paths, overlay_meta = _build_word_highlight_caption_overlay(
                             override_segments,
                             adj_start,
@@ -32065,6 +32124,8 @@ def autoclip_video(video_pk):
                             subtitle_preset=video_subtitle_preset,
                             subtitle_font_key=video_sub_font_key,
                             subtitle_text_color=subtitle_text_color,
+                            subtitle_highlight_color=video_subtitle_highlight_color,
+                            subtitle_effect=video_subtitle_effect,
                             subtitle_text_alpha=subtitle_text_alpha,
                             subtitle_bg_color=subtitle_bg_color,
                             subtitle_bg_alpha=subtitle_bg_alpha,
@@ -32092,6 +32153,8 @@ def autoclip_video(video_pk):
                                 subtitle_margin=sub_margin,
                                 caption_anchor=video_caption_anchor,
                                 subtitle_text_color=subtitle_text_color,
+                                subtitle_highlight_color=video_subtitle_highlight_color,
+                                subtitle_effect=video_subtitle_effect,
                                 subtitle_text_alpha=subtitle_text_alpha,
                                 subtitle_bg_color=subtitle_bg_color,
                                 subtitle_bg_alpha=subtitle_bg_alpha,
@@ -32111,6 +32174,8 @@ def autoclip_video(video_pk):
                             subtitle_margin=sub_margin,
                             caption_anchor=video_caption_anchor,
                             subtitle_text_color=subtitle_text_color,
+                            subtitle_highlight_color=video_subtitle_highlight_color,
+                            subtitle_effect=video_subtitle_effect,
                             subtitle_text_alpha=subtitle_text_alpha,
                             subtitle_bg_color=subtitle_bg_color,
                             subtitle_bg_alpha=subtitle_bg_alpha,
@@ -32138,10 +32203,10 @@ def autoclip_video(video_pk):
                 build_transcript_for_range(segments, adj_start, adj_end, prefer_tr=True),
                 400,
             )
-            if video_subtitle_style == "karaoke":
+            if video_subtitle_style == "karaoke" or video_subtitle_effect != "none":
                 active_subtitle_preset = str(video_subtitle_preset or "").strip()
                 active_preset_config = SUBTITLE_PRESETS.get(active_subtitle_preset) or {}
-                if bool(active_preset_config.get("active_pill")) or bool(active_preset_config.get("pillow_engine")):
+                if video_subtitle_effect != "none" or bool(active_preset_config.get("active_pill")) or bool(active_preset_config.get("pillow_engine")):
                     subtitle_overlay_video_path, subtitle_overlay_cleanup_paths, overlay_meta = _build_word_highlight_caption_overlay(
                         segments,
                         adj_start,
@@ -32152,6 +32217,8 @@ def autoclip_video(video_pk):
                         subtitle_preset=video_subtitle_preset,
                         subtitle_font_key=video_sub_font_key,
                         subtitle_text_color=subtitle_text_color,
+                        subtitle_highlight_color=video_subtitle_highlight_color,
+                        subtitle_effect=video_subtitle_effect,
                         subtitle_text_alpha=subtitle_text_alpha,
                         subtitle_bg_color=subtitle_bg_color,
                         subtitle_bg_alpha=subtitle_bg_alpha,
@@ -32184,6 +32251,8 @@ def autoclip_video(video_pk):
                             subtitle_margin=sub_margin,
                             caption_anchor=video_caption_anchor,
                             subtitle_text_color=subtitle_text_color,
+                            subtitle_highlight_color=video_subtitle_highlight_color,
+                            subtitle_effect=video_subtitle_effect,
                             subtitle_text_alpha=subtitle_text_alpha,
                             subtitle_bg_color=subtitle_bg_color,
                             subtitle_bg_alpha=subtitle_bg_alpha,
@@ -32203,6 +32272,8 @@ def autoclip_video(video_pk):
                         subtitle_margin=sub_margin,
                         caption_anchor=video_caption_anchor,
                         subtitle_text_color=subtitle_text_color,
+                        subtitle_highlight_color=video_subtitle_highlight_color,
+                        subtitle_effect=video_subtitle_effect,
                         subtitle_text_alpha=subtitle_text_alpha,
                         subtitle_bg_color=subtitle_bg_color,
                         subtitle_bg_alpha=subtitle_bg_alpha,

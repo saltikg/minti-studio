@@ -5371,6 +5371,25 @@
     justify-self: start;
     max-width: 92%;
   }
+  .style-template-card-preview--yellow-punch::after {
+    background: radial-gradient(circle at 28% 28%, rgba(255,230,0,.2), transparent 42%), linear-gradient(145deg, #252525, #080808);
+  }
+  .style-template-card-preview--yellow-punch .style-template-card-preview-title {
+    color: #fff !important;
+    font-family: "Montserrat", sans-serif;
+    font-weight: 900;
+    text-transform: uppercase;
+    text-shadow: -2px -2px 0 #000, 2px -2px 0 #000, -2px 2px 0 #000, 2px 2px 0 #000, 3px 3px 0 #000;
+  }
+  .style-template-card-preview--yellow-punch .style-template-card-preview-word,
+  .style-template-card-preview--yellow-punch .style-template-card-preview-word.is-active {
+    color: #FFE600;
+    font-family: "Montserrat", sans-serif;
+    font-weight: 900;
+    text-transform: uppercase;
+    background: transparent;
+    text-shadow: -1px -1px 0 #000, 1px -1px 0 #000, -1px 1px 0 #000, 1px 1px 0 #000, 2px 2px 0 #000;
+  }
   .style-template-card-preview--silver-pop::after {
     opacity: 0;
   }
@@ -5663,7 +5682,7 @@
     align-items: start;
   }
   .crop-modal-element-grid--caption-bottom {
-    grid-template-columns: repeat(2, minmax(0, 1fr));
+    grid-template-columns: repeat(3, minmax(0, 1fr));
     align-items: start;
   }
   .crop-modal-element-grid--caption-top {
@@ -8578,6 +8597,8 @@
                       data-style-template-title-bg-alpha="{{ template.title_bg_alpha if template.title_bg_alpha is defined else 0 }}"
                       data-style-template-title-font-size="{{ template.title_font_size }}"
                       data-style-template-subtitle-text-color="{{ subtitle_preset_config.get('inactive_color', '#FFFFFF') }}"
+                      data-style-template-subtitle-highlight-color="{{ subtitle_preset_config.get('active_color', '#FFFFFF') }}"
+                      data-style-template-caption-effect="{{ template.caption_effect or 'none' }}"
                       data-style-template-subtitle-text-alpha="100"
                       data-style-template-subtitle-bg-color="#000000"
                       data-style-template-subtitle-bg-alpha="{{ 85 if subtitle_preset_config.get('box') else 0 }}"
@@ -9099,6 +9120,25 @@
                             </div>
                           </div>
                         </div>
+                        <div class="input-group-inline compact short-alpha-control" data-caption-highlight-color {% if selected_subtitle_style != 'karaoke' %}hidden{% endif %}>
+                          <div class="d-grid gap-1 w-100">
+                            <span class="caption-tab-section-heading">Highlight color</span>
+                            <div class="short-bg-trigger design-color-chip" id="subtitleHighlightColorTrigger" role="button" tabindex="0" aria-label="Caption highlight color">
+                              <div class="short-bg-swatch" id="subtitleHighlightColorSwatch"></div>
+                              <div class="design-color-chip-copy"><span class="design-color-chip-value" id="subtitleHighlightColorChipValue">{{ selected_subtitle_highlight_color or '#FFFFFF' }}</span><span class="design-color-chip-opacity">Active word</span></div>
+                              <div class="short-bg-popover closed" id="subtitleHighlightColorPopover">
+                                <div class="design-preset-row">
+                                  {% for color in ['#000000','#FFFFFF','#FFE600','#FDE047','#F97316','#EF4444','#3B82F6','#A855F7'] %}<div class="short-color-swatch is-visible" data-color="{{ color }}"></div>{% endfor %}
+                                </div>
+                                <div class="short-color-custom mt-2 pt-2 border-top border-secondary-subtle">
+                                  <label for="subtitleHighlightCustomColor" class="form-label form-label-sm mb-1 text-white-50">Custom</label>
+                                  <input type="text" id="subtitleHighlightCustomColor" class="form-control form-control-sm" value="{{ selected_subtitle_highlight_color or '#FFFFFF' }}" placeholder="#RRGGBB">
+                                </div>
+                              </div>
+                              <input type="hidden" name="subtitle_highlight_color" id="subtitleHighlightColorValue" value="{{ selected_subtitle_highlight_color or '' }}">
+                            </div>
+                          </div>
+                        </div>
                         <div class="input-group-inline compact short-alpha-control" data-design-box-color="caption">
                           <div class="d-grid gap-1 w-100">
                             <span class="caption-tab-section-heading">Background color</span>
@@ -9140,6 +9180,14 @@
                           <input class="form-check-input" type="checkbox" name="subtitle_uppercase" id="subtitleUppercaseToggle" value="1" {% if selected_subtitle_uppercase %}checked{% endif %}>
                           <label class="form-check-label" for="subtitleUppercaseToggle">ALL CAPS</label>
                         </div>
+                      </div>
+                      <div class="input-group-inline compact mt-2">
+                        <span class="design-more-label">Effect</span>
+                        <select name="subtitle_effect" id="subtitleEffect" class="form-select form-select-sm">
+                          <option value="none" {% if selected_subtitle_effect == 'none' %}selected{% endif %}>None</option>
+                          <option value="soft_shadow" {% if selected_subtitle_effect == 'soft_shadow' %}selected{% endif %}>Soft shadow</option>
+                          <option value="outline_shadow" {% if selected_subtitle_effect == 'outline_shadow' %}selected{% endif %}>Outline + shadow</option>
+                        </select>
                       </div>
                       <input type="hidden" name="caption_anchor" value="{{ selected_caption_anchor or 'bottom' }}">
                       <div class="input-group-inline compact mt-2" data-preview-control="subtitle">
@@ -21015,7 +21063,14 @@ document.addEventListener("DOMContentLoaded", () => {
     return `rgba(${red}, ${green}, ${blue}, ${designAlpha(alpha) / 100})`;
   };
   const buildCurrentPaintInput = (kind, spec, measurementData) => {
-    const preset = rendererSubtitlePresets[String(measurementData?.preset || "")] || {};
+    const basePreset = rendererSubtitlePresets[String(measurementData?.preset || "")] || {};
+    const effectKey = String(measurementData?.subtitle_effect || "none");
+    const effect = effectKey === "soft_shadow"
+      ? { outline_width: 0, shadow_color: "#000000", shadow_opacity: 0.55, shadow_offset_x: 0, shadow_offset_y: 2, shadow_blur_radius: 10 }
+      : effectKey === "outline_shadow"
+        ? { outline_width: 3, shadow_color: "#000000", shadow_opacity: 1, shadow_offset_x: 3, shadow_offset_y: 3, shadow_blur_radius: 0 }
+        : { outline_width: 0, shadow_color: "", shadow_opacity: 0, shadow_offset_x: 0, shadow_offset_y: 0, shadow_blur_radius: 0 };
+    const preset = kind === "caption" ? { ...basePreset, ...effect } : basePreset;
     const font = measuredFontSpec(kind);
     const isTitle = kind === "title";
     const textColor = isTitle
@@ -21036,6 +21091,7 @@ document.addEventListener("DOMContentLoaded", () => {
       fontFamily: font.family || "sans-serif",
       fontWeight: font.weight || (isTitle ? "700" : "400"),
       textColor,
+      highlightColor: designHex(getEditorField("subtitle_highlight_color")?.value, preset.active_color || "#FFFFFF"),
       backgroundColor,
     };
   };
@@ -21076,7 +21132,7 @@ document.addEventListener("DOMContentLoaded", () => {
       text.style.textTransform = "none";
       text.style.textShadow = "none";
       let textFill = kind === "caption" && run.active
-        ? (preset.active_color || inheritedTextColor)
+        ? (paintInput.highlightColor || preset.active_color || inheritedTextColor)
         : inheritedTextColor;
       const stroke = kind === "title" ? spec.outline : (run.active && !spec.active_outline ? 0 : spec.outline);
       text.setAttribute("stroke", stroke ? (spec.outline_color || "#000000") : "none");
@@ -21275,6 +21331,8 @@ document.addEventListener("DOMContentLoaded", () => {
       preset: subtitlePresetField?.value, caption_style: subtitleStyleField?.value, language: {{ (transcript_language or '')|tojson }},
       title_uppercase: Boolean(getEditorField("title_uppercase")?.checked),
       subtitle_uppercase: Boolean(getEditorField("subtitle_uppercase")?.checked),
+      subtitle_highlight_color: getEditorField("subtitle_highlight_color")?.value || null,
+      subtitle_effect: getEditorField("subtitle_effect")?.value || "none",
       title_text_color: getEditorField("title_text_color")?.value,
       title_bg_alpha: Number(getEditorField("title_bg_alpha")?.value || 0),
       active_word: Number(previewSubtitle?.dataset.activeWord || 0),
@@ -22923,9 +22981,11 @@ document.addEventListener("DOMContentLoaded", () => {
     "title_bg_alpha",
     "title_text_color",
     "subtitle_text_color",
+    "subtitle_highlight_color",
     "subtitle_text_alpha",
     "subtitle_bg_color",
     "subtitle_bg_alpha",
+    "subtitle_effect",
     "video_date_text",
     "video_date_top",
     "video_overlay_offset",
@@ -23793,8 +23853,13 @@ document.addEventListener("DOMContentLoaded", function () {
   const titleBgCustomInput = document.getElementById("titleBgCustomColor");
   const subtitlePresetField = document.getElementById("subtitlePresetValue");
   const subtitleStyleField = document.getElementById("subtitleStyleField");
+  const subtitleEffectField = document.getElementById("subtitleEffect");
   const titleUppercaseToggle = document.getElementById("titleUppercaseToggle");
   const subtitleUppercaseToggle = document.getElementById("subtitleUppercaseToggle");
+  const syncCaptionHighlightVisibility = () => {
+    const visible = String(subtitleStyleField?.value || "") === "karaoke";
+    document.querySelectorAll("[data-caption-highlight-color]").forEach((node) => { node.hidden = !visible; });
+  };
   const subtitlePresetCards = Array.from(document.querySelectorAll("[data-subtitle-preset-card]"));
   const cropAreaModalEl = document.getElementById("crop-area-modal");
   const styleTemplateCards = cropAreaModalEl
@@ -24039,7 +24104,12 @@ document.addEventListener("DOMContentLoaded", function () {
       });
     };
     let allowAlphaRestore = true;
-    const applyColor = (value) => {
+    const dispatchNamedDesignField = (field) => {
+      if (!field?.name) return;
+      field.dispatchEvent(new Event("input", { bubbles: true }));
+      field.dispatchEvent(new Event("change", { bubbles: true }));
+    };
+    const applyColor = (value, dispatch = true) => {
       const hex = normalize(value);
       if (!hex) return;
       if (hidden) hidden.value = hex;
@@ -24056,6 +24126,7 @@ document.addEventListener("DOMContentLoaded", function () {
       if (customInput) customInput.value = hex;
       if (typeof onApply === "function") onApply(hex);
       setActiveSwatch(hex);
+      if (dispatch) dispatchNamedDesignField(hidden);
     };
     const applyNone = () => {
       if (!alphaField) return;
@@ -24065,6 +24136,7 @@ document.addEventListener("DOMContentLoaded", function () {
       if (chipOpacity) chipOpacity.textContent = "0% opacity";
       if (swatchEl) swatchEl.style.backgroundColor = "transparent";
       if (typeof onApply === "function") onApply(hidden?.value || "#000000");
+      dispatchNamedDesignField(alphaField);
     };
     popover?.querySelectorAll("[data-none-color]").forEach((none) => {
       none.addEventListener("click", () => { applyNone(); popover.classList.add("closed"); });
@@ -24074,6 +24146,7 @@ document.addEventListener("DOMContentLoaded", function () {
       const color = hidden?.value || "#000000";
       syncDesignChip(hiddenId, color, alphaPicker.value);
       if (typeof onApply === "function") onApply(color);
+      dispatchNamedDesignField(alphaField);
     });
     swatches.forEach((swatch) => {
       swatch.addEventListener("click", () => {
@@ -24105,7 +24178,7 @@ document.addEventListener("DOMContentLoaded", function () {
     const initialColor = normalize(hidden?.value) || normalize(swatches[0]?.dataset.color);
     allowAlphaRestore = false;
     if (initialColor) {
-      applyColor(initialColor);
+      applyColor(initialColor, false);
     }
     allowAlphaRestore = true;
     if (alphaField && alphaPicker) {
@@ -24154,22 +24227,27 @@ document.addEventListener("DOMContentLoaded", function () {
     const bgHex = normalize(subtitleBgHidden?.value || "#000000");
     const activePreset = String(subtitlePresetField?.value || "").trim();
     const wordHighlightPreset = WORD_HIGHLIGHT_PRESETS[activePreset] || null;
-    const isWordHighlight = Boolean(wordHighlightPreset?.hasRendererEffect);
+    const effectKey = String(subtitleEffectField?.value || "none");
+    const effectSpec = effectKey === "soft_shadow"
+      ? { outlineWidth: 0, shadowSpec: { opacity: 0.55, x: 0, y: 2, blur: 10 } }
+      : effectKey === "outline_shadow"
+        ? { outlineWidth: 3, shadowSpec: { opacity: 1, x: 3, y: 3, blur: 0 } }
+        : { outlineWidth: 0, shadowSpec: null };
+    const isWordHighlight = String(subtitleStyleField?.value || "") === "karaoke" || effectKey !== "none";
     const textRgba = hexToRgba(textHex, textAlpha);
     const bgRgba = hexToRgba(bgHex, bgAlpha);
     const effectiveSubtitleBackground = bgRgba;
-    const presetTextShadow = wordHighlightPreset?.outlineWidth
-      ? outlineShadow(wordHighlightPreset.outlineWidth)
-      : (wordHighlightPreset?.shadowSpec ? scaledRenderShadow(wordHighlightPreset.shadowSpec) : "none");
-    const presetActiveShadow = wordHighlightPreset?.activeOutlineWidth
-      ? outlineShadow(wordHighlightPreset.activeOutlineWidth)
-      : (wordHighlightPreset?.shadowSpec ? scaledRenderShadow(wordHighlightPreset.shadowSpec) : "none");
+    const presetTextShadow = effectSpec.outlineWidth
+      ? outlineShadow(effectSpec.outlineWidth)
+      : (effectSpec.shadowSpec ? scaledRenderShadow(effectSpec.shadowSpec) : "none");
+    const presetActiveShadow = presetTextShadow;
+    const highlightHex = normalize(document.getElementById("subtitleHighlightColorValue")?.value || wordHighlightPreset?.activeTextColor || textHex);
     const applyPresetEffectVars = (element) => {
       if (!element) return;
       element.style.color = textRgba;
       element.style.backgroundColor = effectiveSubtitleBackground;
       element.style.setProperty("--word-highlight-pill-color", wordHighlightPreset?.pillColor || "#FFD84D");
-      element.style.setProperty("--word-highlight-active-color", wordHighlightPreset?.activeTextColor || "#111827");
+      element.style.setProperty("--word-highlight-active-color", highlightHex);
       element.style.setProperty("--word-highlight-text-shadow", presetTextShadow);
       element.style.setProperty("--word-highlight-active-text-shadow", presetActiveShadow);
       element.style.setProperty("--word-highlight-active-padding", wordHighlightPreset?.activePadding || "0.14em 0.48em");
@@ -24336,6 +24414,14 @@ document.addEventListener("DOMContentLoaded", function () {
       const custom = document.getElementById("subtitleTextCustomColor");
       if (custom) custom.value = nextSubtitleTextColor;
     }
+    const nextHighlightColor = normalize(card.dataset.styleTemplateSubtitleHighlightColor || "");
+    if (nextHighlightColor) {
+      setDesignFieldValue(getDesignField("subtitle_highlight_color"), nextHighlightColor, false);
+      const custom = document.getElementById("subtitleHighlightCustomColor");
+      if (custom) custom.value = nextHighlightColor;
+    }
+    const nextCaptionEffect = String(card.dataset.styleTemplateCaptionEffect || "none").trim();
+    if (subtitleEffectField) setDesignFieldValue(subtitleEffectField, nextCaptionEffect, false);
     const nextSubtitleTextAlpha = String(card.dataset.styleTemplateSubtitleTextAlpha || "").trim();
     if (nextSubtitleTextAlpha !== "") {
       setDesignFieldValue(getDesignField("subtitle_text_alpha"), nextSubtitleTextAlpha, false);
@@ -24353,6 +24439,7 @@ document.addEventListener("DOMContentLoaded", function () {
     applyTitleBgPreview();
     applySubtitlePreview();
     syncStyleTemplateCards();
+    window.notifyCropEditorDesignChanged?.();
   };
   const applyInitialStyleTemplateSelection = () => {
     syncSubtitlePresetCards();
@@ -25072,6 +25159,15 @@ document.addEventListener("DOMContentLoaded", function () {
     onApply: () => applySubtitlePreview(),
   });
   bindColorPicker({
+    triggerId: "subtitleHighlightColorTrigger",
+    popoverId: "subtitleHighlightColorPopover",
+    hiddenId: "subtitleHighlightColorValue",
+    hexId: "subtitleHighlightColorChipValue",
+    swatchId: "subtitleHighlightColorSwatch",
+    customInputId: "subtitleHighlightCustomColor",
+    onApply: () => applySubtitlePreview(),
+  });
+  bindColorPicker({
     triggerId: "subtitleBgColorTrigger",
     popoverId: "subtitleBgColorPopover",
     hiddenId: "subtitleBgColorValue",
@@ -25089,6 +25185,12 @@ document.addEventListener("DOMContentLoaded", function () {
     syncFinalPreviewLayout({ measureKinds: ["title"], repaintIfUnchanged: true });
   });
   subtitleUppercaseToggle?.addEventListener("change", applySubtitlePreview);
+  subtitleEffectField?.addEventListener("change", applySubtitlePreview);
+  subtitleStyleField?.addEventListener("change", () => {
+    syncCaptionHighlightVisibility();
+    applySubtitlePreview();
+  });
+  syncCaptionHighlightVisibility();
   const syncSubtitlePresetCards = () => {
     const activeValue = String(subtitlePresetField?.value || "amber_gold").trim() || "amber_gold";
     subtitlePresetCards.forEach((card) => {
