@@ -16,6 +16,7 @@ from app.video_shorts.routes.auth import (
     turnstile_site_key,
 )
 from app.video_shorts.routes.quick_short import (
+    SourceVideoQuotaError,
     build_quick_short_session_status_payload,
     create_youtube_ingest_session_for_user,
 )
@@ -38,6 +39,7 @@ FREE_TOOL_DAILY_GUESTS_PER_IP = 3
 def _render_free_tool_template(**context):
     context.setdefault("vs_turnstile_enabled", turnstile_enabled())
     context.setdefault("vs_turnstile_site_key", turnstile_site_key())
+    context.setdefault("upgrade_url", "")
     return render_template("free_tool_youtube_to_shorts.html", **context)
 
 
@@ -445,13 +447,23 @@ def render_free_tool_landing(locale: str = "en"):
                         )
                     if current_user and not current_user.get("is_guest"):
                         brand_id = current_brand_id()
-                        ingest_result = create_youtube_ingest_session_for_user(
-                            user_id=str(current_user["id"]),
-                            brand_id=brand_id,
-                            video_url=video_url,
-                            meta=meta,
-                            source="free_tool_logged_in",
-                        )
+                        try:
+                            ingest_result = create_youtube_ingest_session_for_user(
+                                user_id=str(current_user["id"]),
+                                brand_id=brand_id,
+                                video_url=video_url,
+                                meta=meta,
+                                source="free_tool_logged_in",
+                            )
+                        except SourceVideoQuotaError as exc:
+                            return _render_free_tool_template(
+                                locale=locale,
+                                error=str(exc),
+                                upgrade_url=url_for("video_shorts_bp.shorts_storage_plans"),
+                                register_url="",
+                                video_url=video_url,
+                                duration_label=_duration_label(duration),
+                            )
                         return redirect(url_for("video_shorts_bp.generate_short", video_pk=ingest_result["video_pk"]))
 
                     guest_ip_hash = _ip_hash()

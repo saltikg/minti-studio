@@ -1712,6 +1712,96 @@ def test_admin_operation_jobs_are_distinguishable_and_quota_exempt():
     ) == {}
 
 
+def test_youtube_worker_rechecks_exact_duration_before_transcription(monkeypatch, tmp_path):
+    downloaded = tmp_path / "youtube-source.mp4"
+    downloaded.write_bytes(b"source")
+    quota_checks = []
+
+    def _check_quota(user_id, duration_seconds):
+        quota_checks.append(duration_seconds)
+        if len(quota_checks) == 1:
+            return {"allowed": True, "reason": None}
+        return {
+            "allowed": False,
+            "reason": "monthly_transcription",
+            "remaining_minutes": 5,
+        }
+
+    class _Storage:
+        backend_name = "s3"
+
+        def exists(self, key):
+            return False
+
+    monkeypatch.setattr(worker_module, "is_transcription_quota_exempt_user", lambda user_id: False)
+    monkeypatch.setattr(worker_module, "_is_unconverted_discovery_demo_transcription", lambda **kwargs: False)
+    monkeypatch.setattr(worker_module, "check_source_video_quota", _check_quota)
+    monkeypatch.setattr(worker_module, "_set_quick_session_state", lambda *args, **kwargs: None)
+    monkeypatch.setattr(worker_module, "_set_job_progress", lambda *args, **kwargs: None)
+    monkeypatch.setattr(worker_module, "get_media_storage", lambda: _Storage())
+    monkeypatch.setattr(worker_module, "_download_youtube_video", lambda *args, **kwargs: downloaded)
+    monkeypatch.setattr(worker_module, "probe_exact_media_duration_seconds", lambda *args, **kwargs: 20 * 60)
+    monkeypatch.setattr(
+        worker_module,
+        "_transcribe_with_whisper",
+        lambda *args, **kwargs: (_ for _ in ()).throw(AssertionError("transcription must not start")),
+    )
+
+    app = create_app()
+    job = {
+        "id": "youtube-quota-job",
+        "user_id": str(uuid4()),
+        "payload": {
+            "quick_session_id": "quick-session",
+            "video_pk": 42,
+            "video_id": "quota123456",
+            "video_url": "https://www.youtube.com/watch?v=quota123456",
+            "duration_seconds": 10 * 60,
+            "brand_id": str(uuid4()),
+        },
+    }
+
+    with pytest.raises(worker_module.PermanentRenderJobError, match="5 minutes of transcription left"):
+        worker_module._execute_ingest_youtube_job(app, job)
+    assert quota_checks == [10 * 60, 20 * 60]
+
+
+def test_youtube_worker_blocks_changed_quota_before_download(monkeypatch):
+    monkeypatch.setattr(worker_module, "is_transcription_quota_exempt_user", lambda user_id: False)
+    monkeypatch.setattr(worker_module, "_is_unconverted_discovery_demo_transcription", lambda **kwargs: False)
+    monkeypatch.setattr(
+        worker_module,
+        "check_source_video_quota",
+        lambda user_id, duration_seconds: {
+            "allowed": False,
+            "reason": "monthly_transcription",
+            "remaining_minutes": 2,
+        },
+    )
+    monkeypatch.setattr(
+        worker_module,
+        "_download_youtube_video",
+        lambda *args, **kwargs: (_ for _ in ()).throw(AssertionError("download must not start")),
+    )
+
+    app = create_app()
+    job = {
+        "id": "youtube-pre-download-quota-job",
+        "user_id": str(uuid4()),
+        "payload": {
+            "quick_session_id": "quick-session",
+            "video_pk": 43,
+            "video_id": "quota654321",
+            "video_url": "https://www.youtube.com/watch?v=quota654321",
+            "duration_seconds": 10 * 60,
+            "brand_id": str(uuid4()),
+        },
+    }
+
+    with pytest.raises(worker_module.PermanentRenderJobError, match="2 minutes of transcription left"):
+        worker_module._execute_ingest_youtube_job(app, job)
+
+
 def test_autopilot_customer_jobs_are_marked_customer_made_and_quota_exempt(monkeypatch, tmp_path):
     _configure_duckdb(monkeypatch, tmp_path, "autopilot_customer_job.duckdb")
     user_id = str(uuid4())

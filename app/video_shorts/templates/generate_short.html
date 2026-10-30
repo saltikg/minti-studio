@@ -9746,6 +9746,7 @@ document.addEventListener("DOMContentLoaded", () => {
   let running = false;
   let consecutivePollFailures = 0;
   const MAX_CONSECUTIVE_POLL_FAILURES = 8;
+  const transcriptionPlansUrl = {{ url_for('video_shorts_bp.shorts_storage_plans')|tojson }};
 
   const esc = (value) => String(value || "")
     .replace(/&/g, "&amp;")
@@ -9763,7 +9764,15 @@ document.addEventListener("DOMContentLoaded", () => {
     const spinnerHtml = spinning
       ? '<span class="spinner-border spinner-border-sm me-2 align-middle" role="status" aria-hidden="true"></span>'
       : "";
-    statusBox.innerHTML = `${spinnerHtml}<span>${esc(text || "")}</span>`;
+    const cleanText = String(text || "");
+    const showUpgrade = isError && (
+      cleanText.includes("of transcription left this month")
+      || cleanText.includes("plan allows up to")
+    );
+    const upgradeHtml = showUpgrade
+      ? ` <a href="${transcriptionPlansUrl}" class="link-warning">Upgrade</a>`
+      : "";
+    statusBox.innerHTML = `${spinnerHtml}<span>${esc(cleanText)}</span>${upgradeHtml}`;
   };
 
   const showSuccess = (text) => {

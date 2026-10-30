@@ -130,6 +130,56 @@ def test_autopilot_usage_is_counted_outside_plan_quotas(monkeypatch, tmp_path):
     assert usage_metering.get_usage_snapshot(user_id)["exports"]["used"] == 1
 
 
+def test_source_video_quota_checks_duration_and_monthly_remaining(monkeypatch, tmp_path):
+    db_path = tmp_path / "source_video_quota.duckdb"
+    monkeypatch.setattr(db_service, "VIDEO_SHORTS_DB_BACKEND", "duckdb")
+    monkeypatch.setattr(db_service, "VIDEO_SHORTS_DB", str(db_path))
+
+    user_id = str(uuid4())
+    _insert_user(user_id, "plan_free")
+
+    over_duration = usage_metering.check_source_video_quota(user_id, 61 * 60)
+    assert over_duration["allowed"] is False
+    assert over_duration["reason"] == "video_duration"
+    assert over_duration["max_duration_seconds"] == 60 * 60
+
+    usage_metering.add_transcription_minutes(user_id, 55, video_id="used-source")
+    over_monthly = usage_metering.check_source_video_quota(user_id, 10 * 60)
+    assert over_monthly["allowed"] is False
+    assert over_monthly["reason"] == "monthly_transcription"
+    assert over_monthly["remaining_minutes"] == 5
+
+    short_source = usage_metering.check_source_video_quota(user_id, 5 * 60)
+    assert short_source["allowed"] is True
+
+
+def test_source_video_quota_exempts_guest_autopilot_and_internal_users(monkeypatch, tmp_path):
+    db_path = tmp_path / "source_video_exemptions.duckdb"
+    monkeypatch.setattr(db_service, "VIDEO_SHORTS_DB_BACKEND", "duckdb")
+    monkeypatch.setattr(db_service, "VIDEO_SHORTS_DB", str(db_path))
+
+    guest_id = str(uuid4())
+    autopilot_id = str(uuid4())
+    internal_id = str(uuid4())
+    _insert_user(guest_id, "plan_free")
+    _insert_user(autopilot_id, "plan_free")
+    _insert_user(internal_id, "plan_free")
+    conn = db_service.get_db()
+    try:
+        conn.execute("ALTER TABLE shorts_users ADD COLUMN service_mode VARCHAR")
+        conn.execute("UPDATE shorts_users SET is_guest = TRUE WHERE id = ?", [guest_id])
+        conn.execute("UPDATE shorts_users SET service_mode = 'autopilot' WHERE id = ?", [autopilot_id])
+        conn.execute("UPDATE shorts_users SET role = 'admin' WHERE id = ?", [internal_id])
+        conn.commit()
+    finally:
+        conn.close()
+
+    for user_id in (guest_id, autopilot_id, internal_id):
+        result = usage_metering.check_source_video_quota(user_id, 3 * 60 * 60)
+        assert result["allowed"] is True
+        assert result["exempt"] is True
+
+
 def test_plan_reseed_updates_existing_limits_without_duplicates(monkeypatch, tmp_path):
     db_path = tmp_path / "plan_reseed.duckdb"
     monkeypatch.setattr(db_service, "VIDEO_SHORTS_DB_BACKEND", "duckdb")

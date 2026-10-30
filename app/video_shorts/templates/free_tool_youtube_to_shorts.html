@@ -548,7 +548,9 @@
         {% if error %}
           <div class="free-tool-error mb-3">
             {{ error }}
-            {% if register_url %}
+            {% if upgrade_url %}
+              · <a href="{{ upgrade_url }}">{{ "Planı yükselt" if is_tr else "Upgrade" }}</a>
+            {% elif register_url %}
               · <a href="{{ register_url }}">{{ "Ücretsiz hesap oluştur" if is_tr else "Create a free account" }}</a>
             {% endif %}
           </div>

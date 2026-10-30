@@ -9,6 +9,7 @@ from app.video_shorts.config import (
     DEFAULT_STORAGE_PLANS,
     DEFAULT_USER_PLAN_ID,
     DEFAULT_USER_STORAGE_LIMIT,
+    SIGNUP_ALIAS_ALLOWLIST,
 )
 from app.video_shorts.services.db import ensure_storage_user_schema, get_db, get_db_readonly, table_columns
 
@@ -36,6 +37,45 @@ def is_autopilot_quota_exempt(user_id: str, *, conn=None) -> bool:
             [clean_user_id],
         ).fetchone()
         return bool(row and str(row[0] or "").strip() == "autopilot")
+    except Exception:
+        return False
+    finally:
+        if owns_conn:
+            lookup_conn.close()
+
+
+def is_transcription_quota_exempt_user(user_id: str, *, conn=None) -> bool:
+    """Return whether owner-level transcription limits should not apply."""
+    clean_user_id = str(user_id or "").strip()
+    if not clean_user_id:
+        return False
+    owns_conn = conn is None
+    lookup_conn = conn or get_db_readonly()
+    try:
+        row = lookup_conn.execute(
+            """
+            SELECT
+                lower(coalesce(role, '')),
+                lower(coalesce(email, '')),
+                lower(coalesce(username, '')),
+                COALESCE(is_guest, FALSE),
+                lower(coalesce(service_mode, ''))
+            FROM shorts_users
+            WHERE CAST(id AS VARCHAR) = CAST(? AS VARCHAR)
+            LIMIT 1
+            """,
+            [clean_user_id],
+        ).fetchone()
+        if not row:
+            return False
+        allowlisted = {str(email or "").strip().lower() for email in SIGNUP_ALIAS_ALLOWLIST if email}
+        return bool(
+            str(row[0] or "").strip() == "admin"
+            or str(row[1] or "").strip() in allowlisted
+            or str(row[2] or "").strip() in allowlisted
+            or row[3]
+            or str(row[4] or "").strip() == "autopilot"
+        )
     except Exception:
         return False
     finally:
@@ -670,6 +710,59 @@ def check_transcription_quota(user_id: str, requested_minutes: float | int | Dec
         "used_minutes": used,
         "limit_minutes": float(limit),
         "remaining_minutes": remaining,
+    }
+
+
+def check_source_video_quota(user_id: str, duration_seconds: Any) -> Dict[str, Any]:
+    """Check the plan's per-video and remaining monthly transcription limits."""
+    try:
+        seconds = max(0.0, float(duration_seconds or 0))
+    except (TypeError, ValueError):
+        seconds = 0.0
+    requested_minutes = round(seconds / 60.0, 2) if seconds > 0 else 0.0
+    if is_transcription_quota_exempt_user(user_id):
+        return {
+            "allowed": True,
+            "exempt": True,
+            "requested_minutes": requested_minutes,
+            "reason": None,
+        }
+
+    conn = get_db_readonly()
+    try:
+        row = conn.execute(
+            """
+            SELECT
+                COALESCE(p.max_upload_duration_seconds, 0),
+                COALESCE(p.label, p.name, 'Current plan')
+            FROM shorts_users u
+            LEFT JOIN shorts_storage_plans p ON p.plan_id = u.plan_id
+            WHERE CAST(u.id AS VARCHAR) = CAST(? AS VARCHAR)
+            LIMIT 1
+            """,
+            [str(user_id)],
+        ).fetchone()
+    finally:
+        conn.close()
+    max_duration_seconds = int((row or [0])[0] or 0)
+    plan_label = str((row or [None, "Current plan"])[1] or "Current plan")
+    if seconds > 0 and max_duration_seconds > 0 and seconds > max_duration_seconds:
+        return {
+            "allowed": False,
+            "exempt": False,
+            "reason": "video_duration",
+            "requested_minutes": requested_minutes,
+            "max_duration_seconds": max_duration_seconds,
+            "plan_label": plan_label,
+        }
+
+    monthly = check_transcription_quota(user_id, requested_minutes)
+    return {
+        **monthly,
+        "exempt": False,
+        "reason": None if monthly.get("allowed", False) else "monthly_transcription",
+        "max_duration_seconds": max_duration_seconds,
+        "plan_label": plan_label,
     }
 
 

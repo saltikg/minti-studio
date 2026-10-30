@@ -66,6 +66,7 @@ from app.video_shorts.services.storage import (
     public_url_for_stored_media,
 )
 from app.video_shorts.services.user_events import track_event
+from app.video_shorts.services.usage_metering import check_source_video_quota
 from app.video_shorts.services.youtube_oauth import has_refresh_token
 from app.video_shorts.routes import generation
 from app.video_shorts.youtube_api import extract_video_id, fetch_video_metadata, YoutubeApiError
@@ -82,6 +83,13 @@ MULTIPART_UPLOAD_URL_TTL_SECONDS = 6 * 60 * 60
 MULTIPART_UPLOAD_MAX_PARTS = 10_000
 MAX_UPLOAD_BYTES_PER_FILE = 3 * 1024 * 1024 * 1024
 FREE_TOOL_METADATA_RATE_LIMITS = [RateLimitRule(limit=30, window_seconds=3600)]
+
+
+class SourceVideoQuotaError(ValueError):
+    def __init__(self, message: str, *, code: str, status_code: int = 403):
+        super().__init__(message)
+        self.code = code
+        self.status_code = status_code
 
 
 def _normalize_timestamp(value):
@@ -468,6 +476,27 @@ def _validate_upload_duration(*, duration_seconds: Optional[int], limits: Dict[s
             limit_seconds=limit_seconds,
         )
     return None
+
+
+def _source_video_quota_error(user_id: str, duration_seconds: Any) -> Optional[SourceVideoQuotaError]:
+    quota = check_source_video_quota(user_id, duration_seconds)
+    if quota.get("allowed", False):
+        return None
+    if quota.get("reason") == "video_duration":
+        message = _duration_limit_message(
+            duration_seconds=int(float(duration_seconds or 0)),
+            plan_label=str(quota.get("plan_label") or "Current"),
+            limit_seconds=int(quota.get("max_duration_seconds") or 0),
+        )
+        return SourceVideoQuotaError(message, code="source_video_too_long", status_code=413)
+    needed_minutes = float(quota.get("requested_minutes") or 0)
+    remaining_minutes = float(quota.get("remaining_minutes") or 0)
+    message = (
+        f"This video is {generation._format_transcription_minutes_label(needed_minutes)}, "
+        f"but you have {generation._format_transcription_minutes_label(remaining_minutes)} "
+        "of transcription left this month."
+    )
+    return SourceVideoQuotaError(message, code="transcription_limit_reached", status_code=403)
 
 
 def _ensure_postgres_youtube_videos_id_default(conn) -> None:
@@ -1072,6 +1101,10 @@ def create_youtube_ingest_session_for_user(
         raise ValueError("Enter a valid YouTube video URL.")
     meta = dict(meta or {})
     meta["video_id"] = video_id
+    if not bool((job_payload_extra or {}).get("quota_exempt")):
+        quota_error = _source_video_quota_error(user_id, meta.get("duration_seconds"))
+        if quota_error:
+            raise quota_error
     _ensure_quick_schema()
     conn = get_db()
     try:
@@ -1248,6 +1281,13 @@ def quick_short_ingest_youtube():
             user_id=current_user["id"],
             brand_id=brand_id,
             video_url=video_url,
+        )
+    except SourceVideoQuotaError as exc:
+        return _json_error(
+            str(exc),
+            exc.status_code,
+            code=exc.code,
+            upgrade_url=url_for("video_shorts_bp.shorts_storage_plans"),
         )
     except ValueError as exc:
         return _json_error(str(exc))

@@ -1464,6 +1464,7 @@
   const initialServiceMode = {{ ((vs_current_user.get('service_mode') if vs_current_user else '') or '')|tojson }};
   const showAutopilotFraming = {{ show_autopilot_framing|tojson }};
   const canHoverShortPreviews = window.matchMedia('(hover: hover) and (pointer: fine)').matches;
+  const storagePlansUrl = {{ url_for('video_shorts_bp.shorts_storage_plans')|tojson }};
 
   document.addEventListener('click', async (event) => {
     const retryButton = event.target.closest('[data-processing-retry]');
@@ -1953,7 +1954,20 @@
 
   const setFeedback = (message, isError = false) => {
     if (!uploadFeedback) return;
-    uploadFeedback.textContent = message || '';
+    const cleanMessage = String(message || '');
+    const showUpgrade = isError && (
+      cleanMessage.includes('of transcription left this month')
+      || cleanMessage.includes('plan allows up to')
+    );
+    uploadFeedback.textContent = cleanMessage;
+    if (showUpgrade) {
+      uploadFeedback.append(document.createTextNode(' '));
+      const upgradeLink = document.createElement('a');
+      upgradeLink.href = storagePlansUrl;
+      upgradeLink.className = 'link-warning';
+      upgradeLink.textContent = 'Upgrade';
+      uploadFeedback.append(upgradeLink);
+    }
     uploadFeedback.classList.toggle('is-error', Boolean(isError));
   };
 

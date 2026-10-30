@@ -28,6 +28,7 @@ from uuid import uuid4
 from google.auth.exceptions import RefreshError
 
 from flask import abort, current_app, flash, g, jsonify, redirect, render_template, request, send_file, session, url_for
+from markupsafe import Markup, escape
 import requests
 from werkzeug.exceptions import HTTPException
 from app.utils.datetime_format import format_admin_datetime
@@ -1234,6 +1235,13 @@ def _transcription_quota_error_for_user(user_id: str, duration_seconds: Any) -> 
     if quota.get("allowed", False):
         return None
     return _transcription_quota_message(duration_seconds, quota.get("remaining_minutes"))
+
+
+def _transcription_quota_upgrade_message(message: str) -> Markup:
+    upgrade_url = url_for("video_shorts_bp.shorts_storage_plans")
+    return Markup(
+        f'{escape(message)} <a href="{escape(upgrade_url)}" class="link-warning">Upgrade</a>'
+    )
 
 
 def _upsert_storage_asset(
@@ -28563,7 +28571,7 @@ def transcribe_video(video_pk):
         return _generate_redirect()
     quota_error = None if admin_quota_exempt else _transcription_quota_error_for_user(target_owner_user_id, duration_seconds)
     if quota_error:
-        flash(quota_error, "warning")
+        flash(_transcription_quota_upgrade_message(quota_error), "warning")
         return _generate_redirect()
     if disk_guard_triggered(operation="transcribe_video_sync", log=current_app.logger):
         flash(USER_FACING_DISK_GUARD_MESSAGE, "warning")

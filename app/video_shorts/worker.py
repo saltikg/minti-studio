@@ -117,7 +117,10 @@ from app.video_shorts.services.storage import (
 )
 from app.video_shorts.services.transcript_service import _transcribe_with_whisper
 from app.video_shorts.services.usage_metering import add_transcription_minutes
-from app.video_shorts.services.usage_metering import check_transcription_quota
+from app.video_shorts.services.usage_metering import (
+    check_source_video_quota,
+    is_transcription_quota_exempt_user,
+)
 from app.video_shorts.services.user_events import prepare_transcript_completed_transition, track_event
 from app.video_shorts.services.youtube_oauth import has_refresh_token
 from app.video_shorts.services import youtube_scheduling
@@ -799,6 +802,24 @@ def _transcription_quota_message(duration_seconds: Any, remaining_minutes: Any) 
         f"but you have {_format_transcription_minutes_label(remaining_minutes)} of transcription left this month."
     )
 
+
+def _source_video_quota_message(duration_seconds: Any, quota: Dict[str, Any]) -> str:
+    if quota.get("reason") == "video_duration":
+        return quick_short_routes._duration_limit_message(
+            duration_seconds=int(float(duration_seconds or 0)),
+            plan_label=str(quota.get("plan_label") or "Current"),
+            limit_seconds=int(quota.get("max_duration_seconds") or 0),
+        )
+    return _transcription_quota_message(duration_seconds, quota.get("remaining_minutes"))
+
+
+def _enforce_source_video_quota(owner_user_id: str, duration_seconds: Any) -> None:
+    if _duration_minutes(duration_seconds) <= 0:
+        return
+    quota = check_source_video_quota(owner_user_id, duration_seconds)
+    if not quota.get("allowed", False):
+        raise PermanentRenderJobError(_source_video_quota_message(duration_seconds, quota))
+
 def _inject_sessid(proxy_url: str, sessid: str) -> str:
     """DataImpulse proxy URL'ine ;sessid ekle — username sonuna, şifreden önce.
 
@@ -1204,7 +1225,7 @@ def _execute_ingest_youtube_job(app, job: Dict[str, Any]) -> Dict[str, Any]:
     duration_seconds = payload.get("duration_seconds")
     job_origin = str(payload.get("job_origin") or "").strip()
     ingest_source = str(payload.get("ingest_source") or "").strip()
-    quota_exempt = bool(payload.get("quota_exempt"))
+    quota_exempt = bool(payload.get("quota_exempt")) or is_transcription_quota_exempt_user(owner_user_id)
     bill_usage = not quota_exempt and not _is_unconverted_discovery_demo_transcription(
         owner_user_id=owner_user_id,
         brand_id=brand_id,
@@ -1213,6 +1234,8 @@ def _execute_ingest_youtube_job(app, job: Dict[str, Any]) -> Dict[str, Any]:
     )
     if not video_pk or not video_id or not video_url or not owner_user_id or not brand_id:
         raise PermanentRenderJobError("YouTube ingest job is missing its scoped source.")
+    if bill_usage:
+        _enforce_source_video_quota(owner_user_id, duration_seconds)
     _set_quick_session_state(session_id, status=STATUS_INGESTING)
     _set_job_progress(job["id"], stage="queued", message="Queued for ingest.", status="queued")
     _set_job_progress(job["id"], stage="downloading", message="Downloading the source video.", status="processing")
@@ -1249,6 +1272,9 @@ def _execute_ingest_youtube_job(app, job: Dict[str, Any]) -> Dict[str, Any]:
         except Exception:
             app.logger.warning("Exact media duration probe failed video_pk=%s", video_pk, exc_info=True)
             exact_media_duration = None
+        effective_duration_seconds = exact_media_duration or duration_seconds
+        if bill_usage:
+            _enforce_source_video_quota(owner_user_id, effective_duration_seconds)
         if not source_key:
             source_key = f"videos/{video_id}{local_path.suffix or '.mp4'}"
             put_file_for_owner(local_path, source_key, owner_user_id=owner_user_id)
@@ -1292,7 +1318,7 @@ def _execute_ingest_youtube_job(app, job: Dict[str, Any]) -> Dict[str, Any]:
             brand_id=brand_id,
             video_pk=video_pk,
             source_key=source_key,
-            duration_seconds=duration_seconds,
+            duration_seconds=effective_duration_seconds,
         )
         text_cache = load_text_cache(video_id) if job_origin == GUEST_JOB_ORIGIN else None
         if text_cache and text_cache.get("full_text") and text_cache.get("segments"):
@@ -1304,7 +1330,7 @@ def _execute_ingest_youtube_job(app, job: Dict[str, Any]) -> Dict[str, Any]:
                 full_text=transcript_text,
                 segments=segments,
                 owner_user_id=owner_user_id,
-                duration_seconds=duration_seconds,
+                duration_seconds=effective_duration_seconds,
                 bill_usage=False,
             )
             app.logger.info("free_tool_text_cache transcript HIT video_id=%s video_pk=%s", video_id, video_pk)
@@ -1323,7 +1349,7 @@ def _execute_ingest_youtube_job(app, job: Dict[str, Any]) -> Dict[str, Any]:
                 full_text=transcript_text,
                 segments=segments,
                 owner_user_id=owner_user_id,
-                duration_seconds=duration_seconds,
+                duration_seconds=effective_duration_seconds,
                 bill_usage=bill_usage,
             )
             try:
@@ -1370,13 +1396,13 @@ def _execute_ingest_youtube_job(app, job: Dict[str, Any]) -> Dict[str, Any]:
                 )
         except Exception as exc:
             app.logger.warning("Failed to enqueue auto_suggest_render video_pk=%s: %s", video_pk, exc)
-        clip_start, clip_end, clip_title, excerpt = _suggest_clip(segments, duration_seconds)
+        clip_start, clip_end, clip_title, excerpt = _suggest_clip(segments, effective_duration_seconds)
         enqueue_preview_frame_job(
             owner_user_id=owner_user_id,
             brand_id=brand_id,
             video_pk=video_pk,
             source_key=source_key,
-            duration_seconds=duration_seconds,
+            duration_seconds=effective_duration_seconds,
             clip_start_seconds=clip_start,
             clip_end_seconds=clip_end,
         )
@@ -1421,20 +1447,15 @@ def _execute_transcribe_upload_job(app, job: Dict[str, Any]) -> Dict[str, Any]:
     duration_seconds = payload.get("duration_seconds")
     job_origin = str(payload.get("job_origin") or "").strip()
     ingest_source = str(payload.get("ingest_source") or "").strip()
-    quota_exempt = bool(payload.get("quota_exempt"))
+    quota_exempt = bool(payload.get("quota_exempt")) or is_transcription_quota_exempt_user(owner_user_id)
     bill_usage = not quota_exempt and not _is_unconverted_discovery_demo_transcription(
         owner_user_id=owner_user_id,
         brand_id=brand_id,
         video_pk=video_pk,
         job_origin=job_origin,
     )
-    needed_minutes = _duration_minutes(duration_seconds)
-    if bill_usage and needed_minutes > 0:
-        quota = check_transcription_quota(owner_user_id, needed_minutes)
-        if not quota.get("allowed", False):
-            raise PermanentRenderJobError(
-                _transcription_quota_message(duration_seconds, quota.get("remaining_minutes"))
-            )
+    if bill_usage:
+        _enforce_source_video_quota(owner_user_id, duration_seconds)
     _set_quick_session_state(session_id, status=STATUS_INGESTING)
     _update_upload_session_progress(
         session_id,

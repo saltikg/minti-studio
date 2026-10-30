@@ -306,3 +306,100 @@ def test_upload_complete_rejects_over_duration_before_enqueue_and_deletes_object
     assert "This video is 2h. Your Free plan allows up to 60 minutes per video." == payload["message"]
     assert deleted_keys == ["videos/local_duration_test.mp4"]
     assert enqueued == []
+
+
+def test_youtube_import_rejects_plan_duration_before_session_creation(monkeypatch, tmp_path):
+    _configure_duckdb(monkeypatch, tmp_path, "youtube_duration_limit.duckdb")
+    user_id = str(uuid4())
+    _insert_user(user_id, email="youtube-duration@example.com", plan_id="plan_free")
+    monkeypatch.setattr(
+        quick_short_routes,
+        "fetch_video_metadata",
+        lambda video_id: {"video_id": video_id, "title": "Long source", "duration_seconds": 61 * 60},
+    )
+    monkeypatch.setattr(
+        quick_short_routes,
+        "create_session",
+        lambda **kwargs: (_ for _ in ()).throw(AssertionError("session must not be created")),
+    )
+
+    app = create_app()
+    with app.app_context():
+        try:
+            quick_short_routes.ingest_youtube_for_user(
+                user_id=user_id,
+                brand_id=str(uuid4()),
+                video_url="https://www.youtube.com/watch?v=quota123456",
+            )
+        except quick_short_routes.SourceVideoQuotaError as exc:
+            assert exc.code == "source_video_too_long"
+            assert exc.status_code == 413
+            assert str(exc) == "This video is 1h 1m. Your Free plan allows up to 60 minutes per video."
+        else:
+            raise AssertionError("expected source duration quota rejection")
+
+
+def test_youtube_import_rejects_monthly_quota_but_allows_short_source(monkeypatch, tmp_path):
+    _configure_duckdb(monkeypatch, tmp_path, "youtube_monthly_limit.duckdb")
+    user_id = str(uuid4())
+    _insert_user(user_id, email="youtube-monthly@example.com", plan_id="plan_free")
+    usage_metering.add_transcription_minutes(user_id, 55, video_id="prior-source")
+    metadata = {"video_id": "quota123456", "title": "Source", "duration_seconds": 10 * 60}
+    monkeypatch.setattr(quick_short_routes, "fetch_video_metadata", lambda video_id: dict(metadata, video_id=video_id))
+
+    app = create_app()
+    with app.app_context():
+        try:
+            quick_short_routes.ingest_youtube_for_user(
+                user_id=user_id,
+                brand_id=str(uuid4()),
+                video_url="https://www.youtube.com/watch?v=quota123456",
+            )
+        except quick_short_routes.SourceVideoQuotaError as exc:
+            assert exc.code == "transcription_limit_reached"
+            assert "you have 5 minutes of transcription left this month" in str(exc)
+        else:
+            raise AssertionError("expected monthly transcription quota rejection")
+
+        metadata["duration_seconds"] = 5 * 60
+        expected = {"job_id": "short-job"}
+        monkeypatch.setattr(
+            quick_short_routes,
+            "create_youtube_ingest_session_for_user",
+            lambda **kwargs: expected,
+        )
+        assert quick_short_routes.ingest_youtube_for_user(
+            user_id=user_id,
+            brand_id=str(uuid4()),
+            video_url="https://www.youtube.com/watch?v=quota123456",
+        ) is expected
+
+
+def test_youtube_ingest_api_returns_upgrade_link_for_quota_error(monkeypatch):
+    user_id = str(uuid4())
+    monkeypatch.setattr(quick_short_routes, "_require_quick_user", lambda: ({"id": user_id}, None))
+    monkeypatch.setattr(quick_short_routes, "_ensure_quick_schema", lambda: None)
+    monkeypatch.setattr(quick_short_routes, "current_brand_id", lambda: "brand-1")
+    monkeypatch.setattr(
+        quick_short_routes,
+        "ingest_youtube_for_user",
+        lambda **kwargs: (_ for _ in ()).throw(
+            quick_short_routes.SourceVideoQuotaError(
+                "This video is 10 minutes, but you have 5 minutes of transcription left this month.",
+                code="transcription_limit_reached",
+            )
+        ),
+    )
+
+    app = create_app()
+    with app.test_request_context(
+        "/video_shorts/shorts/quick/api/ingest-youtube",
+        method="POST",
+        json={"video_url": "https://www.youtube.com/watch?v=quota123456"},
+    ):
+        response, status = quick_short_routes.quick_short_ingest_youtube()
+
+    payload = response.get_json()
+    assert status == 403
+    assert payload["code"] == "transcription_limit_reached"
+    assert payload["upgrade_url"].endswith("/video_shorts/shorts/storage/plans")
