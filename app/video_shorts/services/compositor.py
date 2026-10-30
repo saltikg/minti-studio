@@ -3771,6 +3771,14 @@ def _compose_trimmed_with_background(
         elif len(layout_segments) == 1:
             layout_segments[0]["start"] = 0.0
             layout_segments[0]["end"] = float(duration)
+    if low_memory_demo and len(layout_segments) > 1:
+        current_app.logger.info(
+            "Discovery demo low-memory layout collapsed segments=%s mode=fill",
+            len(layout_segments),
+        )
+        layout_segments = [
+            {"start": 0.0, "end": float(duration), "mode": "fill", "zoom": 1.0}
+        ]
     face_aware_layout_active = len(layout_segments) >= 1
     face_aware_auto_caption_placement = bool(
         face_aware_layout_active
