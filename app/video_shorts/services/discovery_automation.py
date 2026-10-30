@@ -320,7 +320,6 @@ def _maybe_auto_generate_seed_keywords(control: Dict[str, Any]) -> Dict[str, Any
         "categories_proposed": [],
         "categories_proposed_detail": [],
     }
-    conn = get_db()
     try:
         from app.video_shorts.routes.api import (
             backfill_discovery_keyword_categories,
@@ -329,34 +328,41 @@ def _maybe_auto_generate_seed_keywords(control: Dict[str, Any]) -> Dict[str, Any
             generate_seed_keywords_into_queue,
         )
 
-        if not table_columns(conn, "keyword_queue"):
-            metadata["auto_generation_skipped"] = "keyword_queue_missing"
-            return metadata
+        def fresh_eligible_count() -> int:
+            count_conn = get_db()
+            try:
+                return count_eligible_keyword_queue(count_conn)
+            finally:
+                count_conn.close()
+
+        state_conn = get_db()
+        try:
+            if not table_columns(state_conn, "keyword_queue"):
+                metadata["auto_generation_skipped"] = "keyword_queue_missing"
+                return metadata
+            control_columns = table_columns(state_conn, CONTROL_TABLE)
+            if AUTO_GENERATE_COLUMN not in control_columns:
+                metadata["auto_generation_skipped"] = "state_column_missing"
+                current_app.logger.warning(
+                    "Discovery keyword auto-generation skipped: %s column is missing",
+                    AUTO_GENERATE_COLUMN,
+                )
+                return metadata
+            row = state_conn.execute(
+                f"SELECT {AUTO_GENERATE_COLUMN} FROM discovery_automation_control WHERE id = 1"
+            ).fetchone()
+        finally:
+            state_conn.close()
 
         try:
-            backfill_discovery_keyword_categories(conn)
+            backfill_discovery_keyword_categories()
         except Exception:
-            try:
-                conn.rollback()
-            except Exception:
-                pass
             current_app.logger.exception("Discovery category backfill failed; continuing daily generation")
-        eligible_before = count_eligible_keyword_queue(conn)
+
+        eligible_before = fresh_eligible_count()
         metadata["eligible_before"] = eligible_before
         metadata["eligible_final"] = eligible_before
 
-        control_columns = table_columns(conn, CONTROL_TABLE)
-        if AUTO_GENERATE_COLUMN not in control_columns:
-            metadata["auto_generation_skipped"] = "state_column_missing"
-            current_app.logger.warning(
-                "Discovery keyword auto-generation skipped: %s column is missing",
-                AUTO_GENERATE_COLUMN,
-            )
-            return metadata
-
-        row = conn.execute(
-            f"SELECT {AUTO_GENERATE_COLUMN} FROM discovery_automation_control WHERE id = 1"
-        ).fetchone()
         if _same_pacific_day(row[0] if row else None, now_utc):
             metadata["auto_generation_skipped"] = "already_attempted_today"
             current_app.logger.info(
@@ -369,7 +375,7 @@ def _maybe_auto_generate_seed_keywords(control: Dict[str, Any]) -> Dict[str, Any
         metadata["auto_generation_attempted"] = True
         generation_errors: List[Dict[str, Any]] = []
         try:
-            category_generation = discover_daily_categories_into_queue(conn)
+            category_generation = discover_daily_categories_into_queue()
             category_inserted = int(category_generation.get("newly_enqueued") or 0)
             category_duplicates = int(category_generation.get("already_present") or 0)
             metadata["categories_proposed"] = category_generation.get("categories_proposed") or []
@@ -383,9 +389,14 @@ def _maybe_auto_generate_seed_keywords(control: Dict[str, Any]) -> Dict[str, Any
             current_app.logger.exception("Discovery category daily generation failed; continuing keyword top-up")
 
         for attempt in range(1, 4):
-            if count_eligible_keyword_queue(conn) >= target:
+            if fresh_eligible_count() >= target:
                 break
-            generation = generate_seed_keywords_into_queue(conn)
+            try:
+                generation = generate_seed_keywords_into_queue()
+            except Exception as exc:
+                current_app.logger.exception("Discovery keyword top-up attempt %s failed; retrying with fresh connections", attempt)
+                generation_errors.append({"error": "keyword_generation_failed", "message": str(exc)})
+                continue
             metadata["attempts"] = attempt
             metadata["generated_raw"] += int(generation.get("generated_raw") or generation.get("generated") or 0)
             metadata["auto_generated_total"] += int(generation.get("generated") or 0)
@@ -396,21 +407,28 @@ def _maybe_auto_generate_seed_keywords(control: Dict[str, Any]) -> Dict[str, Any
             metadata["dropped_duplicates"] += duplicates
             generation_errors.extend(generation.get("errors") or [])
             metadata["auto_generation_success"] = bool(generation.get("success"))
-            if count_eligible_keyword_queue(conn) >= target:
+            if fresh_eligible_count() >= target:
                 break
 
-        eligible_after_generation = count_eligible_keyword_queue(conn)
-        if eligible_after_generation < target:
-            pull_result = _pull_forward_keyword_queue(conn, target - eligible_after_generation)
-            metadata["pulled_forward"] = int(pull_result.get("pulled_forward") or 0)
-            metadata["pulled_forward_keywords"] = pull_result.get("keywords") or []
+        final_conn = get_db()
+        try:
+            eligible_after_generation = count_eligible_keyword_queue(final_conn)
+            if eligible_after_generation < target:
+                pull_result = _pull_forward_keyword_queue(final_conn, target - eligible_after_generation)
+                metadata["pulled_forward"] = int(pull_result.get("pulled_forward") or 0)
+                metadata["pulled_forward_keywords"] = pull_result.get("keywords") or []
 
-        eligible_final = count_eligible_keyword_queue(conn)
-        metadata["eligible_final"] = eligible_final
-        metadata["auto_generation_errors"] = generation_errors
-        _store_keyword_generation_summary(conn, metadata)
-        _mark_keyword_auto_generated(conn)
-        conn.commit()
+            eligible_final = count_eligible_keyword_queue(final_conn)
+            metadata["eligible_final"] = eligible_final
+            metadata["auto_generation_errors"] = generation_errors
+            _store_keyword_generation_summary(final_conn, metadata)
+            _mark_keyword_auto_generated(final_conn)
+            final_conn.commit()
+        except Exception:
+            final_conn.rollback()
+            raise
+        finally:
+            final_conn.close()
         current_app.logger.info(
             "Discovery keyword daily summary date_pt=%s target=%s generated_raw=%s dropped_duplicates=%s inserted=%s pulled_forward=%s eligible_final=%s attempts=%s eligible_before=%s categories_proposed=%s categories_proposed_detail=%s",
             metadata["date_pt"],
@@ -435,10 +453,6 @@ def _maybe_auto_generate_seed_keywords(control: Dict[str, Any]) -> Dict[str, Any
             )
         return metadata
     except Exception:
-        try:
-            conn.rollback()
-        except Exception:
-            pass
         _mark_keyword_auto_generated_after_failure()
         current_app.logger.exception(
             "Discovery keyword auto-generation failed; continuing scheduled run with eligible queue"
@@ -446,11 +460,6 @@ def _maybe_auto_generate_seed_keywords(control: Dict[str, Any]) -> Dict[str, Any
         metadata["auto_generation_attempted"] = True
         metadata["auto_generation_failed"] = True
         return metadata
-    finally:
-        try:
-            conn.close()
-        except Exception:
-            pass
 
 
 def load_discovery_automation_dashboard() -> Dict[str, Any]:

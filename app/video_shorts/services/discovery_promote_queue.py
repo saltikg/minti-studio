@@ -215,12 +215,15 @@ def infer_outreach_first_name_for_lead(lead: Dict[str, Any]) -> str:
     return str(result.get("first_name") or "") or NO_GREETING_NAME_MARKER
 
 
-def store_outreach_first_name_if_needed(conn, lead_id: Any, result: Dict[str, Any] | None = None) -> str:
-    columns = table_columns(conn, "discovery_leads")
-    if "outreach_first_name" not in columns:
-        return ""
-    edited_sql = "COALESCE(outreach_first_name_edited_by_admin, false)" if "outreach_first_name_edited_by_admin" in columns else "false"
-    row = conn.execute(
+def store_outreach_first_name_if_needed(lead_id: Any, result: Dict[str, Any] | None = None) -> str:
+    """Infer and store a greeting name with no DB connection alive during inference."""
+    read_conn = get_db()
+    try:
+        columns = table_columns(read_conn, "discovery_leads")
+        if "outreach_first_name" not in columns:
+            return ""
+        edited_sql = "COALESCE(outreach_first_name_edited_by_admin, false)" if "outreach_first_name_edited_by_admin" in columns else "false"
+        row = read_conn.execute(
         f"""
         SELECT id, youtube_channel_id, channel_title, channel_description,
                subscriber_count, creator_name, creator_email, icp_fit,
@@ -230,7 +233,9 @@ def store_outreach_first_name_if_needed(conn, lead_id: Any, result: Dict[str, An
         LIMIT 1
         """,
         [lead_id],
-    ).fetchone()
+        ).fetchone()
+    finally:
+        read_conn.close()
     if not row:
         return ""
     if row[8] is not None or bool(row[9]):
@@ -250,19 +255,27 @@ def store_outreach_first_name_if_needed(conn, lead_id: Any, result: Dict[str, An
         "icp_fit": bool(row[7]) if row[7] is not None else None,
     }
     first_name = infer_outreach_first_name_for_lead(lead)
-    conn.execute(
-        """
-        UPDATE discovery_leads
-        SET outreach_first_name = ?
-        WHERE id = ?
-          AND outreach_first_name IS NULL
-        """,
-        [first_name, lead_id],
-    )
+    write_conn = get_db()
+    try:
+        write_conn.execute(
+            """
+            UPDATE discovery_leads
+            SET outreach_first_name = ?
+            WHERE id = ?
+              AND outreach_first_name IS NULL
+            """,
+            [first_name, lead_id],
+        )
+        write_conn.commit()
+    except Exception:
+        write_conn.rollback()
+        raise
+    finally:
+        write_conn.close()
     return first_name
 
 
-def _auto_seed_promoted_discovery_lead(conn, lead: Dict[str, Any]) -> Dict[str, Any]:
+def _auto_seed_promoted_discovery_lead(lead: Dict[str, Any]) -> Dict[str, Any]:
     lead_id = int(lead.get("id") or 0)
     channel_id = str(lead.get("youtube_channel_id") or "").strip()
     creator_email = str(lead.get("creator_email") or "").strip()
@@ -273,27 +286,38 @@ def _auto_seed_promoted_discovery_lead(conn, lead: Dict[str, Any]) -> Dict[str, 
         return {"promoted": False, "reason": "status_not_email_enriched"}
     if not channel_id:
         return {"promoted": False, "reason": "missing_channel_id"}
-    columns = table_columns(conn, "discovery_leads")
-    if any(column not in columns for column in ("is_seed", "promoted_at", "seed_notes")):
-        return {"promoted": False, "reason": "schema_missing"}
-
-    existing_seed = conn.execute(
-        """
-        SELECT source_video_id, transcript_summary
-        FROM seed_channel_profiles
-        WHERE channel_id = ?
-        LIMIT 1
-        """,
-        [channel_id],
-    ).fetchone()
+    read_conn = get_db()
+    try:
+        columns = table_columns(read_conn, "discovery_leads")
+        if any(column not in columns for column in ("is_seed", "promoted_at", "seed_notes")):
+            return {"promoted": False, "reason": "schema_missing"}
+        existing_seed = read_conn.execute(
+            """
+            SELECT source_video_id, transcript_summary
+            FROM seed_channel_profiles
+            WHERE channel_id = ?
+            LIMIT 1
+            """,
+            [channel_id],
+        ).fetchone()
+    finally:
+        read_conn.close()
     existing_summary = str((existing_seed or [None, ""])[1] or "").strip()
     summary_created = False
+    summary = ""
     if not existing_summary or existing_summary.startswith(SYNTHETIC_SEED_PREFIX):
         recent_titles = _fetch_recent_seed_titles(channel_id)
         summary = _summarize_auto_discovery_seed(lead, recent_titles)
         summary_created = True
-        if existing_seed:
-            conn.execute(
+    write_conn = get_db()
+    try:
+        if summary_created:
+            current_seed = write_conn.execute(
+                "SELECT 1 FROM seed_channel_profiles WHERE channel_id = ? LIMIT 1",
+                [channel_id],
+            ).fetchone()
+            if current_seed:
+                write_conn.execute(
                 """
                 UPDATE seed_channel_profiles
                 SET source_video_id = NULL,
@@ -302,8 +326,8 @@ def _auto_seed_promoted_discovery_lead(conn, lead: Dict[str, Any]) -> Dict[str, 
                 """,
                 [summary, channel_id],
             )
-        else:
-            conn.execute(
+            else:
+                write_conn.execute(
                 """
                 INSERT INTO seed_channel_profiles (
                     channel_id, source_video_id, transcript_summary, created_at
@@ -312,7 +336,7 @@ def _auto_seed_promoted_discovery_lead(conn, lead: Dict[str, Any]) -> Dict[str, 
                 """,
                 [channel_id, summary],
             )
-    conn.execute(
+        write_conn.execute(
         """
         UPDATE discovery_leads
         SET is_seed = true,
@@ -321,8 +345,14 @@ def _auto_seed_promoted_discovery_lead(conn, lead: Dict[str, Any]) -> Dict[str, 
         WHERE id = ?
         """,
         ["auto seed from promoted discovery lead", lead_id],
-    )
-    return {"promoted": True, "summary_created": summary_created}
+        )
+        write_conn.commit()
+        return {"promoted": True, "summary_created": summary_created}
+    except Exception:
+        write_conn.rollback()
+        raise
+    finally:
+        write_conn.close()
 
 
 def enqueue_discovery_promote_request(
@@ -585,10 +615,12 @@ def process_next_discovery_promote_request() -> bool:
         request = claim_next_promote_request(conn)
         conn.commit()
     except Exception:
-        conn.rollback()
+        if conn is not None:
+            conn.rollback()
         raise
     finally:
-        conn.close()
+        if conn is not None:
+            conn.close()
     if not request:
         return False
 
@@ -718,14 +750,19 @@ def _execute_promote_request(lead_id: int, *, selected_source_video_id: str = ""
                 """,
                 [str(existing[0]), existing[1], lead_id],
             )
+            conn.commit()
+            conn.close()
+            conn = None
             try:
-                seed_result = _auto_seed_promoted_discovery_lead(conn, {**lead, "status": "email_enriched"})
+                seed_result = _auto_seed_promoted_discovery_lead({**lead, "status": "email_enriched"})
                 current_app.logger.info("Auto-seeded linked discovery lead id=%s result=%s", lead_id, seed_result)
             except Exception:
                 current_app.logger.exception("Auto seed failed for linked discovery lead id=%s", lead_id)
-            conn.commit()
             return {"id": lead_id, "autopilot_lead_id": str(existing[0]), "reason": "already_a_lead_linked"}
 
+        conn.commit()
+        conn.close()
+        conn = None
         source = None
         if selected_source_video_id:
             source_options = select_source_video_candidates_for_channel(lead["youtube_channel_id"])
@@ -749,8 +786,12 @@ def _execute_promote_request(lead_id: int, *, selected_source_video_id: str = ""
             meta["channel_description"] = lead["channel_description"]
         if lead.get("outreach_first_name") is None:
             inferred_recipient_name = infer_outreach_first_name_for_lead(lead)
-            if "outreach_first_name" in lead_columns:
-                conn.execute(
+        else:
+            inferred_recipient_name = str(lead.get("outreach_first_name") or "")
+        write_conn = get_db()
+        try:
+            if lead.get("outreach_first_name") is None and "outreach_first_name" in lead_columns:
+                write_conn.execute(
                     """
                     UPDATE discovery_leads
                     SET outreach_first_name = ?
@@ -759,21 +800,19 @@ def _execute_promote_request(lead_id: int, *, selected_source_video_id: str = ""
                     """,
                     [inferred_recipient_name, lead_id],
                 )
-        else:
-            inferred_recipient_name = str(lead.get("outreach_first_name") or "")
-        autopilot = create_autopilot_lead_from_video(
-            conn,
-            meta=meta,
-            video_id=str(source["video_id"]),
-            canonical_url=str(source["canonical_url"]),
-            creator_name=lead["creator_name"] or lead["channel_title"],
-            creator_email=lead["creator_email"],
-            recipient_name=inferred_recipient_name,
-            subscriber_count=lead["subscriber_count"],
-            discovery_owner_user_id=DISCOVERY_PROMOTION_OWNER_USER_ID,
-            discovery_brand_id=DISCOVERY_PROMOTION_BRAND_ID,
-        )
-        conn.execute(
+            autopilot = create_autopilot_lead_from_video(
+                write_conn,
+                meta=meta,
+                video_id=str(source["video_id"]),
+                canonical_url=str(source["canonical_url"]),
+                creator_name=lead["creator_name"] or lead["channel_title"],
+                creator_email=lead["creator_email"],
+                recipient_name=inferred_recipient_name,
+                subscriber_count=lead["subscriber_count"],
+                discovery_owner_user_id=DISCOVERY_PROMOTION_OWNER_USER_ID,
+                discovery_brand_id=DISCOVERY_PROMOTION_BRAND_ID,
+            )
+            write_conn.execute(
             """
             UPDATE discovery_leads
             SET autopilot_lead_id = ?,
@@ -793,13 +832,18 @@ def _execute_promote_request(lead_id: int, *, selected_source_video_id: str = ""
                 source.get("minutes"),
                 lead_id,
             ],
-        )
+            )
+            write_conn.commit()
+        except Exception:
+            write_conn.rollback()
+            raise
+        finally:
+            write_conn.close()
         try:
-            seed_result = _auto_seed_promoted_discovery_lead(conn, {**lead, "status": "email_enriched"})
+            seed_result = _auto_seed_promoted_discovery_lead({**lead, "status": "email_enriched"})
             current_app.logger.info("Auto-seeded promoted discovery lead id=%s result=%s", lead_id, seed_result)
         except Exception:
             current_app.logger.exception("Auto seed failed for promoted discovery lead id=%s", lead_id)
-        conn.commit()
         return {
             "id": lead_id,
             "autopilot_lead_id": autopilot["lead_id"],
@@ -810,7 +854,9 @@ def _execute_promote_request(lead_id: int, *, selected_source_video_id: str = ""
             "sweetspot_score": source.get("score"),
         }
     except Exception:
-        conn.rollback()
+        if conn is not None:
+            conn.rollback()
         raise
     finally:
-        conn.close()
+        if conn is not None:
+            conn.close()

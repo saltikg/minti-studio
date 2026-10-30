@@ -225,7 +225,6 @@ def _mark_enriched(conn, lead_id: Any, result: Dict[str, Any]) -> None:
             lead_id,
         ],
     )
-    store_outreach_first_name_if_needed(conn, lead_id, result)
 
 
 def enrich_discovery_email_batch(payload: Dict[str, Any] | None = None) -> Dict[str, Any]:
@@ -256,6 +255,7 @@ def enrich_discovery_email_batch(payload: Dict[str, Any] | None = None) -> Dict[
     by_key = {_result_key(result): result for result in results if isinstance(result, dict) and _result_key(result)}
     enriched = 0
     failed = 0
+    greeting_tasks: List[tuple[Any, Dict[str, Any]]] = []
 
     conn = get_db()
     try:
@@ -265,6 +265,7 @@ def enrich_discovery_email_batch(payload: Dict[str, Any] | None = None) -> Dict[
                 result = by_key.get(lead["youtube_channel_id"]) or by_key.get(lead_url) or {}
                 if result.get("email"):
                     _mark_enriched(conn, lead["id"], result)
+                    greeting_tasks.append((lead["id"], result))
                     enriched += 1
                 else:
                     _mark_failed(conn, lead["id"], result.get("error") or fallback_error or "no_email_found")
@@ -280,6 +281,12 @@ def enrich_discovery_email_batch(payload: Dict[str, Any] | None = None) -> Dict[
                 failed += 1
     finally:
         conn.close()
+
+    for lead_id, result in greeting_tasks:
+        try:
+            store_outreach_first_name_if_needed(lead_id, result)
+        except Exception:
+            logger.exception("Could not store outreach first name for discovery lead id=%s", lead_id)
 
     return {
         "claimed": len(claimed),

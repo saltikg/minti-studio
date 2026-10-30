@@ -1165,11 +1165,15 @@ def _category_keyword_rule_fallback(keyword: str) -> str:
     return "Personal development"
 
 
-def backfill_discovery_keyword_categories(conn) -> Dict[str, Any]:
-    ensure_starting_discovery_categories(conn)
-    if not table_columns(conn, "keyword_queue"):
-        return {"assigned": 0, "category_counts": {}, "errors": [{"error": "keyword_queue_missing"}]}
-    rows = conn.execute(
+def backfill_discovery_keyword_categories() -> Dict[str, Any]:
+    """Backfill categories without keeping a database connection open during the LLM call."""
+    read_conn = get_db()
+    try:
+        ensure_starting_discovery_categories(read_conn)
+        if not table_columns(read_conn, "keyword_queue"):
+            read_conn.commit()
+            return {"assigned": 0, "category_counts": {}, "errors": [{"error": "keyword_queue_missing"}]}
+        rows = read_conn.execute(
         """
         SELECT q.id, q.keyword, q.category_id, COALESCE(c.source, ''), COALESCE(c.status, '')
         FROM keyword_queue q
@@ -1177,7 +1181,14 @@ def backfill_discovery_keyword_categories(conn) -> Dict[str, Any]:
         WHERE COALESCE(q.keyword, '') <> ''
         ORDER BY q.id ASC
         """
-    ).fetchall()
+        ).fetchall()
+        existing_categories = _load_discovery_categories(read_conn)
+        read_conn.commit()
+    except Exception:
+        read_conn.rollback()
+        raise
+    finally:
+        read_conn.close()
     keywords = [
         {
             "id": int(row[0]),
@@ -1189,7 +1200,6 @@ def backfill_discovery_keyword_categories(conn) -> Dict[str, Any]:
         for row in rows
         if str(row[1] or "").strip()
     ]
-    existing_categories = _load_discovery_categories(conn)
     assignments: Dict[str, str] = {}
     if _openai_client and keywords:
         prompt = (
@@ -1208,7 +1218,7 @@ def backfill_discovery_keyword_categories(conn) -> Dict[str, Any]:
                 ],
                 temperature=0,
             )
-            _store_discovery_icp_llm_usage(run_id=None, response=response, purpose="category_backfill", conn=conn)
+            _store_discovery_icp_llm_usage(run_id=None, response=response, purpose="category_backfill")
             payload = json.loads((response.choices[0].message.content or "").strip())
             for item in payload.get("assignments") or []:
                 keyword = str(item.get("keyword") or "").strip().lower()
@@ -1217,22 +1227,24 @@ def backfill_discovery_keyword_categories(conn) -> Dict[str, Any]:
                     assignments[keyword] = category
         except Exception:
             _log_discovery_exception("Discovery category backfill LLM assignment failed; using rule fallback")
-    category_counts: Dict[str, int] = {}
-    category_name_by_lower = {category["name"].lower(): category["name"] for category in existing_categories}
-    assigned = 0
-    for item in keywords:
-        if item.get("category_id"):
-            continue
-        keyword = item["keyword"]
-        category_name = assignments.get(keyword.lower()) or _category_keyword_rule_fallback(keyword)
-        category_name = category_name_by_lower.get(category_name.lower(), category_name)
-        category_id = _get_or_create_discovery_category(conn, category_name, source="llm" if category_name.lower() not in category_name_by_lower else "backfill", status="active")
-        if not category_id:
-            continue
-        conn.execute("UPDATE keyword_queue SET category_id = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?", [category_id, item["id"]])
-        assigned += 1
-        category_counts[category_name] = category_counts.get(category_name, 0) + 1
-    conn.execute(
+    write_conn = get_db()
+    try:
+        category_counts: Dict[str, int] = {}
+        category_name_by_lower = {category["name"].lower(): category["name"] for category in existing_categories}
+        assigned = 0
+        for item in keywords:
+            if item.get("category_id"):
+                continue
+            keyword = item["keyword"]
+            category_name = assignments.get(keyword.lower()) or _category_keyword_rule_fallback(keyword)
+            category_name = category_name_by_lower.get(category_name.lower(), category_name)
+            category_id = _get_or_create_discovery_category(write_conn, category_name, source="llm" if category_name.lower() not in category_name_by_lower else "backfill", status="active")
+            if not category_id:
+                continue
+            write_conn.execute("UPDATE keyword_queue SET category_id = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?", [category_id, item["id"]])
+            assigned += 1
+            category_counts[category_name] = category_counts.get(category_name, 0) + 1
+        write_conn.execute(
         """
         UPDATE discovery_run_keyword_stats s
         SET category_id = q.category_id,
@@ -1254,7 +1266,7 @@ def backfill_discovery_keyword_categories(conn) -> Dict[str, Any]:
               )
         """
     )
-    conn.execute(
+        write_conn.execute(
         """
         UPDATE discovery_run_keyword_stats s
         SET category_id = q.category_id,
@@ -1268,7 +1280,13 @@ def backfill_discovery_keyword_categories(conn) -> Dict[str, Any]:
           AND s.category_id IS NULL
         """
     )
-    return {"assigned": assigned, "category_counts": category_counts, "errors": []}
+        write_conn.commit()
+        return {"assigned": assigned, "category_counts": category_counts, "errors": []}
+    except Exception:
+        write_conn.rollback()
+        raise
+    finally:
+        write_conn.close()
 
 
 def _load_discovery_category_metrics(conn, *, days: int = 14) -> List[Dict[str, Any]]:
@@ -1576,15 +1594,24 @@ def _insert_category_keyword_items_into_queue(conn, items: List[Dict[str, str]],
     return {"newly_enqueued": inserted, "already_present": already_present, "keywords": inserted_keywords}
 
 
-def discover_daily_categories_into_queue(conn) -> Dict[str, Any]:
-    ensure_starting_discovery_categories(conn)
+def discover_daily_categories_into_queue() -> Dict[str, Any]:
+    """Generate and persist daily categories using separate read and write connections."""
     if not _openai_client:
         return {"categories": [], "keywords": [], "newly_enqueued": 0, "already_present": 0, "errors": [{"error": "openai_not_configured"}]}
-    metrics = _load_discovery_category_metrics(conn, days=14)
-    exhaustion = _load_discovery_exhaustion_signals(conn, days=14, keyword_limit=30, category_limit=12)
-    top_channels = _load_top_icp_channels_for_category_discovery(conn, limit=10)
-    blocked_statuses = set(DISCOVERY_CATEGORY_BLOCKED_STATUSES) | {"testing"}
-    blocked = [category["name"] for category in _load_discovery_categories(conn, statuses=blocked_statuses)]
+    read_conn = get_db()
+    try:
+        ensure_starting_discovery_categories(read_conn)
+        metrics = _load_discovery_category_metrics(read_conn, days=14)
+        exhaustion = _load_discovery_exhaustion_signals(read_conn, days=14, keyword_limit=30, category_limit=12)
+        top_channels = _load_top_icp_channels_for_category_discovery(read_conn, limit=10)
+        blocked_statuses = set(DISCOVERY_CATEGORY_BLOCKED_STATUSES) | {"testing"}
+        blocked = [category["name"] for category in _load_discovery_categories(read_conn, statuses=blocked_statuses)]
+        read_conn.commit()
+    except Exception:
+        read_conn.rollback()
+        raise
+    finally:
+        read_conn.close()
     prompt = (
         "Minti helps individual, on-camera, long-form YouTube creators: solo educators, coaches, consultants, "
         "and subject-matter experts who talk to camera and share information or personal/professional experience in any niche. "
@@ -1613,46 +1640,54 @@ def discover_daily_categories_into_queue(conn) -> Dict[str, Any]:
         ],
         temperature=0.45,
     )
-    _store_discovery_icp_llm_usage(run_id=None, response=response, purpose="category_discovery", conn=conn)
+    _store_discovery_icp_llm_usage(run_id=None, response=response, purpose="category_discovery")
     response_content = (response.choices[0].message.content or "").strip()
     current_app.logger.info("Discovery category discovery response: %s", response_content)
     payload = json.loads(response_content)
-    proposed: List[Dict[str, Any]] = []
-    keyword_items: List[Dict[str, str]] = []
-    for raw_category in (payload.get("categories") or [])[:2]:
-        name = _normalize_discovery_category_name(raw_category.get("name"))
-        if not name:
-            continue
-        persona = " ".join(str(raw_category.get("persona") or "").strip().split())[:500]
-        category_id = _get_or_create_discovery_category(conn, name, source="llm", status="testing", persona=persona)
-        queries = _normalize_seed_search_keywords(raw_category.get("queries"), limit=3)[:3]
-        proposed.append(
-            {
-                "id": category_id,
-                "name": name,
-                "persona": persona,
-                "rationale": str(raw_category.get("rationale") or "").strip()[:300],
-                "keywords": queries,
-            }
+    write_conn = get_db()
+    try:
+        proposed: List[Dict[str, Any]] = []
+        keyword_items: List[Dict[str, str]] = []
+        for raw_category in (payload.get("categories") or [])[:2]:
+            name = _normalize_discovery_category_name(raw_category.get("name"))
+            if not name:
+                continue
+            persona = " ".join(str(raw_category.get("persona") or "").strip().split())[:500]
+            category_id = _get_or_create_discovery_category(write_conn, name, source="llm", status="testing", persona=persona)
+            queries = _normalize_seed_search_keywords(raw_category.get("queries"), limit=3)[:3]
+            proposed.append(
+                {
+                    "id": category_id,
+                    "name": name,
+                    "persona": persona,
+                    "rationale": str(raw_category.get("rationale") or "").strip()[:300],
+                    "keywords": queries,
+                }
+            )
+            for query in queries:
+                keyword_items.append({"keyword": query, "category": name})
+        queue_counts = _insert_category_keyword_items_into_queue(
+            write_conn,
+            keyword_items,
+            source="category_discovery",
+            priority=0,
+            due_now=True,
         )
-        for query in queries:
-            keyword_items.append({"keyword": query, "category": name})
-    queue_counts = _insert_category_keyword_items_into_queue(
-        conn,
-        keyword_items,
-        source="category_discovery",
-        priority=0,
-        due_now=True,
-    )
-    return {
-        "categories": proposed,
-        "categories_proposed": [item["name"] for item in proposed],
-        "categories_proposed_detail": [{"name": item["name"], "persona": item["persona"]} for item in proposed],
-        "keywords": keyword_items,
-        "newly_enqueued": int(queue_counts["newly_enqueued"]),
-        "already_present": int(queue_counts["already_present"]),
-        "errors": [],
-    }
+        write_conn.commit()
+        return {
+            "categories": proposed,
+            "categories_proposed": [item["name"] for item in proposed],
+            "categories_proposed_detail": [{"name": item["name"], "persona": item["persona"]} for item in proposed],
+            "keywords": keyword_items,
+            "newly_enqueued": int(queue_counts["newly_enqueued"]),
+            "already_present": int(queue_counts["already_present"]),
+            "errors": [],
+        }
+    except Exception:
+        write_conn.rollback()
+        raise
+    finally:
+        write_conn.close()
 
 
 def retire_queued_keywords_for_dropped_categories(conn, category_ids: Optional[List[int]] = None) -> List[Dict[str, Any]]:
@@ -2058,6 +2093,7 @@ def _persist_discovery_lead(row: Dict[str, Any]) -> str:
     if not youtube_channel_id:
         return "skipped"
     conn = None
+    greeting_lead_id = None
     try:
         conn = get_db()
         columns = table_columns(conn, "discovery_leads")
@@ -2179,9 +2215,17 @@ def _persist_discovery_lead(row: Dict[str, Any]) -> str:
                 [youtube_channel_id],
             ).fetchone()
             if lead_row:
-                store_outreach_first_name_if_needed(conn, lead_row[0], {"email": row.get("creator_email")})
+                greeting_lead_id = lead_row[0]
         conn.commit()
-        return "inserted" if inserted_row and bool(inserted_row[0]) else "updated"
+        outcome = "inserted" if inserted_row and bool(inserted_row[0]) else "updated"
+        conn.close()
+        conn = None
+        if greeting_lead_id:
+            try:
+                store_outreach_first_name_if_needed(greeting_lead_id, {"email": row.get("creator_email")})
+            except Exception:
+                current_app.logger.exception("Could not store outreach first name for discovery lead id=%s", greeting_lead_id)
+        return outcome
     except Exception:
         if conn:
             try:
@@ -2486,7 +2530,7 @@ def _generate_seed_search_keyword_items(
     profile_items: List[Dict[str, Any]],
     existing_keywords: Optional[List[str]] = None,
     *,
-    conn=None,
+    discovery_context: Optional[Dict[str, Any]] = None,
 ) -> List[Dict[str, str]]:
     if not _openai_client:
         raise RuntimeError("OPENAI_API_KEY missing")
@@ -2508,16 +2552,11 @@ def _generate_seed_search_keyword_items(
     category_text = ""
     blocked_text = ""
     exhaustion_text = ""
-    if conn is not None:
+    if discovery_context is not None:
         try:
-            ensure_starting_discovery_categories(conn)
-            metrics = [
-                item
-                for item in _load_discovery_category_metrics(conn, days=14)
-                if item.get("status") in DISCOVERY_CATEGORY_ACTIVE_STATUSES
-            ]
-            blocked = [item["name"] for item in _load_discovery_categories(conn, statuses=DISCOVERY_CATEGORY_BLOCKED_STATUSES)]
-            exhaustion = _load_discovery_exhaustion_signals(conn, days=14, keyword_limit=40, category_limit=16)
+            metrics = list(discovery_context.get("metrics") or [])
+            blocked = list(discovery_context.get("blocked") or [])
+            exhaustion = dict(discovery_context.get("exhaustion") or {})
             category_text = (
                 "\n\nGenerate for active/kept categories only. Favor categories with high icp_email_found AND stable/high freshness. "
                 "Do not keep choosing a category whose freshness is low or falling; if a proven category is getting saturated, "
@@ -2561,7 +2600,7 @@ def _generate_seed_search_keyword_items(
         ],
         temperature=0.35,
     )
-    _store_discovery_icp_llm_usage(run_id=None, response=response, purpose="keyword_generator", conn=conn)
+    _store_discovery_icp_llm_usage(run_id=None, response=response, purpose="keyword_generator")
     content = (response.choices[0].message.content or "").strip()
     try:
         payload = json.loads(content)
@@ -2570,17 +2609,12 @@ def _generate_seed_search_keyword_items(
         return _normalize_category_keyword_items(content, limit=20)
 
 
-def _generate_icp_definition_keyword_items(conn, *, lane: str = "icp_exploration") -> List[Dict[str, str]]:
+def _generate_icp_definition_keyword_items(discovery_context: Dict[str, Any], *, lane: str = "icp_exploration") -> List[Dict[str, str]]:
     if not _openai_client:
         raise RuntimeError("OPENAI_API_KEY missing")
-    ensure_starting_discovery_categories(conn)
-    metrics = [
-        item
-        for item in _load_discovery_category_metrics(conn, days=14)
-        if item.get("status") in DISCOVERY_CATEGORY_ACTIVE_STATUSES
-    ]
-    blocked = [item["name"] for item in _load_discovery_categories(conn, statuses=DISCOVERY_CATEGORY_BLOCKED_STATUSES)]
-    exhaustion = _load_discovery_exhaustion_signals(conn, days=14, keyword_limit=60, category_limit=20)
+    metrics = list(discovery_context.get("metrics") or [])
+    blocked = list(discovery_context.get("blocked") or [])
+    exhaustion = dict(discovery_context.get("exhaustion") or {})
     lane_name = "good-category deepening" if lane == "category_deepening" else "seed-independent ICP exploration"
     lane_instruction = (
         "Focus on proven categories with non-falling freshness and real ICP+email output, but go narrower into unexplored "
@@ -2615,7 +2649,7 @@ def _generate_icp_definition_keyword_items(conn, *, lane: str = "icp_exploration
         ],
         temperature=0.45 if lane == "icp_exploration" else 0.35,
     )
-    _store_discovery_icp_llm_usage(run_id=None, response=response, purpose=lane, conn=conn)
+    _store_discovery_icp_llm_usage(run_id=None, response=response, purpose=lane)
     content = (response.choices[0].message.content or "").strip()
     try:
         payload = json.loads(content)
@@ -3135,8 +3169,28 @@ def count_eligible_keyword_queue(conn) -> int:
     return int((row[0] if row else 0) or 0)
 
 
-def generate_seed_keywords_into_queue(conn, existing_keywords: Optional[List[str]] = None) -> Dict[str, Any]:
-    pool = load_seed_pool(conn)
+def generate_seed_keywords_into_queue(existing_keywords: Optional[List[str]] = None) -> Dict[str, Any]:
+    """Generate keywords with no database connection alive during any LLM call."""
+    read_conn = get_db()
+    try:
+        ensure_starting_discovery_categories(read_conn)
+        pool = load_seed_pool(read_conn)
+        existing_profile = read_conn.execute("SELECT profile_text FROM icp_profile WHERE id = 1").fetchone()
+        profile_text = str((existing_profile or [None])[0] or "").strip()
+        exclusions = list(existing_keywords or []) or _load_recent_keyword_queue_terms(read_conn, limit=200)
+        exhaustion = _load_discovery_exhaustion_signals(read_conn, days=14, keyword_limit=60, category_limit=20)
+        metrics = [
+            item
+            for item in _load_discovery_category_metrics(read_conn, days=14)
+            if item.get("status") in DISCOVERY_CATEGORY_ACTIVE_STATUSES
+        ]
+        blocked = [item["name"] for item in _load_discovery_categories(read_conn, statuses=DISCOVERY_CATEGORY_BLOCKED_STATUSES)]
+        read_conn.commit()
+    except Exception:
+        read_conn.rollback()
+        raise
+    finally:
+        read_conn.close()
     if not pool and not _openai_client:
         return {
             "success": False,
@@ -3149,10 +3203,6 @@ def generate_seed_keywords_into_queue(conn, existing_keywords: Optional[List[str
             "seed_pool_count": 0,
             "errors": [{"error": "no_seed_pool", "message": "No seed profiles are available."}],
         }
-    existing_profile = conn.execute("SELECT profile_text FROM icp_profile WHERE id = 1").fetchone()
-    profile_text = str((existing_profile or [None])[0] or "").strip()
-    exclusions = list(existing_keywords or []) or _load_recent_keyword_queue_terms(conn, limit=200)
-    exhaustion = _load_discovery_exhaustion_signals(conn, days=14, keyword_limit=60, category_limit=20)
     exhaustion_keywords = [
         str(item.get("keyword") or "").strip()
         for item in exhaustion.get("low_yield_keywords", [])
@@ -3170,15 +3220,17 @@ def generate_seed_keywords_into_queue(conn, existing_keywords: Optional[List[str
         ("icp_exploration", DISCOVERY_KEYWORD_LANE_TARGETS["icp_exploration"]),
         ("category_deepening", DISCOVERY_KEYWORD_LANE_TARGETS["category_deepening"]),
     ]
+    discovery_context = {"metrics": metrics, "blocked": blocked, "exhaustion": exhaustion}
+    generated_by_lane: List[tuple[str, List[Dict[str, str]], Dict[str, Any]]] = []
 
     for lane, target in lane_sources:
         if target <= 0:
             continue
         try:
             raw_items = (
-                _generate_seed_search_keyword_items(pool, existing_keywords=blocked_keywords, conn=conn)
+                _generate_seed_search_keyword_items(pool, existing_keywords=blocked_keywords, discovery_context=discovery_context)
                 if lane == "seed" and pool
-                else _generate_icp_definition_keyword_items(conn, lane=lane)
+                else _generate_icp_definition_keyword_items(discovery_context, lane=lane)
             )
         except Exception as exc:
             current_app.logger.exception("Discovery %s keyword generation failed", lane)
@@ -3190,20 +3242,25 @@ def generate_seed_keywords_into_queue(conn, existing_keywords: Optional[List[str
         kept_items = list(filtered.get("items") or [])
         all_kept_items.extend(kept_items)
         dropped_keywords.extend(filtered.get("dropped_keywords") or [])
-        queue_counts = _insert_category_keyword_items_into_queue(conn, kept_items, source=lane, priority=100, due_now=False)
-        inserted_keywords = list(queue_counts.get("keywords") or [])
-        keywords.extend(inserted_keywords)
-        lane_keywords[lane] = inserted_keywords
-        lane_counts[lane] = {
+        generated_by_lane.append((lane, kept_items, filtered))
+        blocked_keywords.extend([item["keyword"] for item in kept_items])
+
+    write_conn = get_db()
+    try:
+        for lane, kept_items, filtered in generated_by_lane:
+            queue_counts = _insert_category_keyword_items_into_queue(write_conn, kept_items, source=lane, priority=100, due_now=False)
+            inserted_keywords = list(queue_counts.get("keywords") or [])
+            keywords.extend(inserted_keywords)
+            lane_keywords[lane] = inserted_keywords
+            lane_counts[lane] = {
             "generated_raw": int(filtered.get("generated_raw") or 0),
             "kept": len(kept_items),
             "newly_enqueued": int(queue_counts["newly_enqueued"]),
             "already_present": int(queue_counts["already_present"]),
-        }
-        blocked_keywords.extend([item["keyword"] for item in kept_items])
+            }
 
-    if existing_profile:
-        conn.execute(
+        if existing_profile:
+            write_conn.execute(
             """
             UPDATE icp_profile
             SET keywords_json = ?, updated_at = CURRENT_TIMESTAMP
@@ -3211,14 +3268,21 @@ def generate_seed_keywords_into_queue(conn, existing_keywords: Optional[List[str
             """,
             [json.dumps(keywords, ensure_ascii=False)],
         )
-    else:
-        conn.execute(
+        else:
+            write_conn.execute(
             """
             INSERT INTO icp_profile (id, profile_text, keywords_json, updated_at)
             VALUES (1, ?, ?, CURRENT_TIMESTAMP)
             """,
-            [profile_text, json.dumps(keywords, ensure_ascii=False)],
-        )
+                [profile_text, json.dumps(keywords, ensure_ascii=False)],
+            )
+        write_conn.commit()
+    except Exception:
+        write_conn.rollback()
+        raise
+    finally:
+        write_conn.close()
+
     return {
         "success": True,
         "generated": len(keywords),
@@ -4235,20 +4299,12 @@ def admin_seed_generate_keywords():
         payload.update({"generated": 0, "newly_enqueued": 0, "already_present": 0, "keywords": []})
         return jsonify(payload), status
 
-    conn = None
     try:
-        conn = get_db()
-        result = generate_seed_keywords_into_queue(conn)
+        result = generate_seed_keywords_into_queue()
         if not result.get("success"):
             return jsonify(result), 404
-        conn.commit()
         return jsonify(result)
     except Exception as exc:
-        if conn:
-            try:
-                conn.rollback()
-            except Exception:
-                pass
         current_app.logger.exception("Seed keyword queue generation failed")
         return jsonify(
             {
@@ -4260,9 +4316,6 @@ def admin_seed_generate_keywords():
                 "errors": [{"error": "seed_keyword_queue_failed", "message": str(exc) or "Seed keyword generation failed."}],
             }
         ), 500
-    finally:
-        if conn:
-            conn.close()
 
 
 @video_shorts_bp.route("/api/admin/lead-discovery-enrich-emails", methods=["POST"])
