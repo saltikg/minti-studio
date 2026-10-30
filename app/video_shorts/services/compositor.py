@@ -80,6 +80,13 @@ CLIP_AUDIO_FADE_OUT_SECONDS = 0.080
 CLIP_EDGE_ENERGY_FRAME_SECONDS = 0.010
 CLIP_EDGE_SILENCE_HOLD_SECONDS = 0.040
 CLIP_EDGE_SILENCE_RATIO = 0.25
+CLIP_EDGE_OUTER_RMS_SILENCE_RATIO = 0.60
+CLIP_EDGE_HIGH_FREQUENCY_RATIO = 0.20
+CLIP_EDGE_ANALYSIS_SAMPLE_RATE = 32000
+CLIP_EDGE_HIGH_FREQUENCY_MIN_HZ = 4000.0
+CLIP_EDGE_HIGH_FREQUENCY_MAX_HZ = 10000.0
+CLIP_EDGE_END_SAFETY_SECONDS = 0.200
+CLIP_EDGE_MAX_END_SEARCH_SECONDS = 0.400
 
 CROP_TARGET_SIZE = 1080  # reference crop resolution before resizing for display
 VIDEO_TARGET_WIDTH = DESIGN_GEOMETRY["width"]
@@ -411,6 +418,107 @@ def _rms_energy_frames(
     return frames
 
 
+def _audio_energy_frames(
+    pcm: np.ndarray,
+    *,
+    window_start: float,
+    search_start: float,
+    search_end: float,
+    sample_rate: int = CLIP_EDGE_ANALYSIS_SAMPLE_RATE,
+    frame_seconds: float = CLIP_EDGE_ENERGY_FRAME_SECONDS,
+) -> list[tuple[float, float, float]]:
+    """Return source time, broadband RMS, and 4-10 kHz energy per frame."""
+    if pcm.size == 0 or search_end <= search_start:
+        return []
+    frame_size = max(1, int(round(sample_rate * frame_seconds)))
+    first_sample = max(0, int(round((search_start - window_start) * sample_rate)))
+    last_sample = min(int(pcm.size), int(round((search_end - window_start) * sample_rate)))
+    frequencies = np.fft.rfftfreq(frame_size, d=1.0 / float(sample_rate))
+    high_frequency_mask = (
+        (frequencies >= CLIP_EDGE_HIGH_FREQUENCY_MIN_HZ)
+        & (frequencies <= CLIP_EDGE_HIGH_FREQUENCY_MAX_HZ)
+    )
+    window = np.hanning(frame_size).astype(np.float32)
+    frames: list[tuple[float, float, float]] = []
+    for offset in range(first_sample, max(first_sample, last_sample - frame_size) + 1, frame_size):
+        frame = pcm[offset : min(offset + frame_size, last_sample)]
+        if frame.size < frame_size:
+            break
+        rms = float(np.sqrt(np.mean(np.square(frame))))
+        spectrum = np.fft.rfft(frame * window)
+        high_frequency_band = spectrum[high_frequency_mask]
+        high_frequency_energy = (
+            float(np.sqrt(np.mean(np.square(np.abs(high_frequency_band)))) / frame_size)
+            if high_frequency_band.size
+            else 0.0
+        )
+        frames.append(
+            (
+                window_start + (offset / float(sample_rate)),
+                rms,
+                high_frequency_energy,
+            )
+        )
+    return frames
+
+
+def _relative_silence_thresholds(
+    frames: list[tuple[float, float, float]],
+) -> tuple[float, float]:
+    if not frames:
+        return 0.0, 0.0
+    rms_values = np.asarray([rms for _, rms, _ in frames], dtype=np.float32)
+    high_values = np.asarray([high for _, _, high in frames], dtype=np.float32)
+    return (
+        max(1e-6, float(np.percentile(rms_values, 75)) * CLIP_EDGE_OUTER_RMS_SILENCE_RATIO),
+        max(1e-8, float(np.percentile(high_values, 75)) * CLIP_EDGE_HIGH_FREQUENCY_RATIO),
+    )
+
+
+def _sustained_combined_silence_runs(
+    frames: list[tuple[float, float, float]],
+    *,
+    rms_threshold: float,
+    high_frequency_threshold: float,
+) -> list[tuple[float, float]]:
+    quiet_frames = [
+        (time_value, max(rms / max(rms_threshold, 1e-12), high / max(high_frequency_threshold, 1e-12)))
+        for time_value, rms, high in frames
+    ]
+    return _sustained_silence_runs(quiet_frames, threshold=1.0)
+
+
+def _lowest_combined_energy_frame_time(
+    frames: list[tuple[float, float, float]],
+    *,
+    rms_threshold: float,
+    high_frequency_threshold: float,
+    prefer_after: Optional[float] = None,
+) -> Optional[float]:
+    candidates = frames
+    if prefer_after is not None:
+        after = [
+            item
+            for item in frames
+            if item[0] + CLIP_EDGE_ENERGY_FRAME_SECONDS >= prefer_after
+        ]
+        if after:
+            candidates = after
+    if not candidates:
+        return None
+    frame_start, _, _ = min(
+        candidates,
+        key=lambda item: (
+            max(
+                item[1] / max(rms_threshold, 1e-12),
+                item[2] / max(high_frequency_threshold, 1e-12),
+            ),
+            item[0],
+        ),
+    )
+    return frame_start + (CLIP_EDGE_ENERGY_FRAME_SECONDS / 2.0)
+
+
 def _relative_silence_threshold(frames: list[tuple[float, float]]) -> float:
     """Derive a noise threshold from the local speech level, not absolute volume."""
     if not frames:
@@ -590,7 +698,7 @@ def _snap_outer_keep_range_boundaries_to_audio(
     ranges: list[dict[str, float]],
     transcript_words: Optional[list[Dict[str, Any]]],
     *,
-    sample_rate: int = 16000,
+    sample_rate: int = CLIP_EDGE_ANALYSIS_SAMPLE_RATE,
 ) -> tuple[list[dict[str, float]], dict[str, Optional[float]]]:
     """Place clip edges around speech using sustained, relative audio silence."""
     context = _outer_word_boundary_context(ranges, transcript_words)
@@ -627,7 +735,7 @@ def _snap_outer_keep_range_boundaries_to_audio(
                 exc,
             )
             return
-        analysis_frames = _rms_energy_frames(
+        analysis_frames = _audio_energy_frames(
             pcm,
             window_start=analysis_start,
             search_start=analysis_start,
@@ -635,21 +743,39 @@ def _snap_outer_keep_range_boundaries_to_audio(
             sample_rate=sample_rate,
         )
         search_frames = [item for item in analysis_frames if search_start <= item[0] < search_end]
-        threshold = _relative_silence_threshold(analysis_frames)
-        quiet_runs = _sustained_silence_runs(search_frames, threshold=threshold)
+        rms_threshold, high_frequency_threshold = _relative_silence_thresholds(analysis_frames)
+        quiet_runs = _sustained_combined_silence_runs(
+            search_frames,
+            rms_threshold=rms_threshold,
+            high_frequency_threshold=high_frequency_threshold,
+        )
         fallback = False
         if kind == "end":
-            if quiet_runs:
-                speech_edge = max(float(word_boundary), quiet_runs[0][0])
+            safety_floor = float(word_boundary) + CLIP_EDGE_END_SAFETY_SECONDS
+            if next_start is not None and float(next_start) > float(word_boundary) + CLIP_EDGE_WORD_GUARD_SECONDS:
+                safety_floor = min(safety_floor, float(next_start))
+            eligible_quiet_runs = [run for run in quiet_runs if run[1] >= safety_floor]
+            if eligible_quiet_runs:
+                speech_edge = max(float(word_boundary), eligible_quiet_runs[0][0])
             else:
                 fallback = True
-                speech_edge = _lowest_energy_frame_time(search_frames, prefer_after=word_boundary)
+                fallback_frames = [
+                    item
+                    for item in search_frames
+                    if item[0] <= safety_floor + 0.050
+                ]
+                speech_edge = _lowest_combined_energy_frame_time(
+                    fallback_frames or search_frames,
+                    rms_threshold=rms_threshold,
+                    high_frequency_threshold=high_frequency_threshold,
+                    prefer_after=safety_floor,
+                )
                 if speech_edge is None:
                     return
-                speech_edge = max(float(word_boundary), float(speech_edge))
-            snapped = min(
+                speech_edge = max(safety_floor, float(speech_edge))
+            snapped = max(
+                safety_floor,
                 float(speech_edge) + CLIP_AUDIO_FADE_OUT_SECONDS,
-                search_end + CLIP_AUDIO_FADE_OUT_SECONDS,
             )
             snapped = max(snapped, float(word_boundary), adjusted[-1]["start"] + 0.001)
             adjusted[-1]["end"] = round(snapped, 6)
@@ -660,7 +786,11 @@ def _snap_outer_keep_range_boundaries_to_audio(
                 speech_edge = min(float(word_boundary), quiet_runs[-1][1])
             else:
                 fallback = True
-                candidate = _lowest_energy_frame_time(search_frames)
+                candidate = _lowest_combined_energy_frame_time(
+                    search_frames,
+                    rms_threshold=rms_threshold,
+                    high_frequency_threshold=high_frequency_threshold,
+                )
                 if candidate is None:
                     return
                 speech_edge = min(float(word_boundary), float(candidate))
@@ -670,7 +800,8 @@ def _snap_outer_keep_range_boundaries_to_audio(
             fade_edge = snapped + CLIP_AUDIO_FADE_IN_SECONDS
         diagnostics[kind] = {
             "search": [round(search_start, 6), round(search_end, 6)],
-            "threshold": round(threshold, 8),
+            "rms_threshold": round(rms_threshold, 8),
+            "high_frequency_threshold": round(high_frequency_threshold, 10),
             "speech_edge": round(float(speech_edge), 6),
             "fade_edge": round(float(fade_edge), 6),
             "fallback_low_energy": fallback,
@@ -684,8 +815,8 @@ def _snap_outer_keep_range_boundaries_to_audio(
         analyze("start", start_search_start, start_search_end, float(first_start))
     if last_end is not None:
         end_search_start = max(0.0, float(last_end) - 0.050)
-        end_search_end = float(last_end) + 0.400
-        if next_start is not None:
+        end_search_end = float(last_end) + CLIP_EDGE_MAX_END_SEARCH_SECONDS
+        if next_start is not None and float(next_start) > float(last_end) + CLIP_EDGE_WORD_GUARD_SECONDS:
             end_search_end = min(end_search_end, float(next_start) + 0.100)
         analyze("end", end_search_start, end_search_end, float(last_end))
     if adjustments:

@@ -746,8 +746,34 @@ def main() -> None:
         )
         _check(
             "continuous_speech_keeps_selected_word_tail",
-            continuous_adjusted[0]["end"] >= 1.40,
+            continuous_adjusted[0]["end"] >= 1.60,
             str(continuous_adjusted),
+        )
+
+        fricative_tail = tmp / "fricative_tail.wav"
+        _write_wav(
+            fricative_tail,
+            _join_arrays([
+                _tone(1.40),
+                _tone(0.18, frequency=6000.0) * 0.08,
+                _silence(0.12),
+                _tone(0.40),
+            ]),
+        )
+        fricative_adjusted, _ = compositor._snap_outer_keep_range_boundaries_to_audio(
+            fricative_tail,
+            outer_ranges,
+            [
+                {"index": 0, "start": 0.0, "end": 0.80},
+                {"index": 1, "start": 0.80, "end": 1.40},
+                {"index": 2, "start": 1.40, "end": 2.10},
+            ],
+        )
+        fricative_fade_start = fricative_adjusted[0]["end"] - compositor.CLIP_AUDIO_FADE_OUT_SECONDS
+        _check(
+            "outer_edge_preserves_quiet_high_frequency_fricative",
+            fricative_adjusted[0]["end"] >= 1.659 and fricative_fade_start >= 1.579,
+            str(fricative_adjusted),
         )
         _check_multi_range_av_sync(tmp)
         _check_long_gop_mid_seek_av_sync(tmp)
