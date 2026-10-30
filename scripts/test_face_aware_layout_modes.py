@@ -251,6 +251,41 @@ def _append_face_track_expression_check(rows: list[tuple[str, str, str]]) -> Non
         rows.append(("face_track_expr_flat", "FAIL", f"expr={expr[:240] if expr else expr}"))
 
 
+def _append_face_track_shot_cut_check(rows: list[tuple[str, str, str]]) -> None:
+    raw = [
+        {
+            "t": index * 0.5,
+            "cx_ratio": 0.25 if index < 6 else 0.75,
+            "cy_ratio": 0.40,
+            "w_ratio": 0.20,
+            "h_ratio": 0.30,
+            "found": True,
+        }
+        for index in range(12)
+    ]
+    smoothed = generation._smooth_preview_face_track_rows(raw, shot_cuts=[3.0])
+    before = next((item for item in smoothed if abs(float(item.get("t") or 0.0) - 2.999) < 1e-6), None)
+    after = next((item for item in smoothed if abs(float(item.get("t") or 0.0) - 3.0) < 1e-6), None)
+    within_shot = [
+        float(item.get("cx_ratio") or 0.0)
+        for item in smoothed
+        if 0.5 <= float(item.get("t") or 0.0) <= 2.5
+    ]
+    ok = bool(
+        before
+        and after
+        and abs(float(before["cx_ratio"]) - 0.25) < 1e-6
+        and abs(float(after["cx_ratio"]) - 0.75) < 1e-6
+        and within_shot
+        and max(within_shot) - min(within_shot) < 1e-6
+    )
+    rows.append((
+        "face_track_shot_cut",
+        "PASS" if ok else "FAIL",
+        f"before={before} after={after} within_shot={within_shot}",
+    ))
+
+
 def _append_style_template_position_preservation_check(rows: list[tuple[str, str, str]]) -> None:
     base_video = {
         "title_font_key": "inter",
@@ -351,6 +386,7 @@ def main() -> int:
     with app.app_context(), tempfile.TemporaryDirectory(prefix="fa_layout_modes_") as temp_dir:
         _append_custom_caption_position_checks(rows)
         _append_face_track_expression_check(rows)
+        _append_face_track_shot_cut_check(rows)
         _append_style_template_position_preservation_check(rows)
         temp = Path(temp_dir)
         ffmpeg = _resolve_ffmpeg()

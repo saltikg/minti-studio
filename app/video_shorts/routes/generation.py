@@ -89,6 +89,9 @@ from app.video_shorts.config import (
     FACE_AWARE_SCENE_THRESHOLD,
     FACE_AWARE_SPLIT_TARGET_FACE_RATIO,
     FACE_AWARE_SNAP_WINDOW_SEC,
+    FACE_CUT_JUMP_THRESHOLD,
+    FACE_CUT_ON_SHOT_CHANGE,
+    FACE_MIN_SHOT_S,
     FFMPEG_RENDER_TIMEOUT,
     FFMPEG_SHORT_TIMEOUT,
     FFPROBE_TIMEOUT,
@@ -3631,7 +3634,66 @@ def _moving_average_track_values(rows: list[dict[str, Any]], index: int) -> dict
     }
 
 
-def _smooth_preview_face_track_rows(rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
+def _smooth_preview_face_track_rows(
+    rows: list[dict[str, Any]],
+    *,
+    shot_cuts: Optional[list[float]] = None,
+    shot_holds: Optional[list[tuple[float, float]]] = None,
+) -> list[dict[str, Any]]:
+    if shot_holds:
+        held_rows = [dict(row) for row in sorted(rows, key=lambda row: float(row.get("t") or 0.0))]
+        for hold_start, hold_end in shot_holds:
+            previous_values = None
+            for row in held_rows:
+                row_time = float(row.get("t") or 0.0)
+                values = _track_row_values(row) if row.get("found") else None
+                if row_time < float(hold_start) and values:
+                    previous_values = values
+                if float(hold_start) <= row_time < float(hold_end) and previous_values:
+                    row.update(previous_values)
+                    row["found"] = True
+                    row["source"] = "short_shot:held"
+        rows = held_rows
+    clean_cuts = sorted({float(value) for value in (shot_cuts or [])})
+    if clean_cuts:
+        ordered_rows = sorted(rows, key=lambda row: float(row.get("t") or 0.0))
+        shot_rows: list[list[dict[str, Any]]] = [[] for _ in range(len(clean_cuts) + 1)]
+        for row in ordered_rows:
+            row_time = float(row.get("t") or 0.0)
+            shot_index = sum(1 for cut_time in clean_cuts if row_time >= cut_time)
+            shot_rows[shot_index].append(row)
+        smoothed_shots = [
+            _smooth_preview_face_track_rows(items)
+            for items in shot_rows
+            if items
+        ]
+        stitched: list[dict[str, Any]] = []
+        nonempty_index = 0
+        for shot_index, items in enumerate(shot_rows):
+            if not items:
+                continue
+            smoothed = smoothed_shots[nonempty_index]
+            nonempty_index += 1
+            if stitched and smoothed:
+                cut_time = clean_cuts[shot_index - 1]
+                previous_values = _track_row_values(stitched[-1])
+                next_values = _track_row_values(smoothed[0])
+                if previous_values and next_values:
+                    stitched.append({
+                        "t": round(max(0.0, cut_time - 0.001), 6),
+                        **previous_values,
+                        "found": True,
+                        "source": "shot_cut:before",
+                    })
+                    stitched.append({
+                        "t": round(cut_time, 6),
+                        **next_values,
+                        "found": True,
+                        "source": "shot_cut:after",
+                    })
+            stitched.extend(smoothed)
+        return sorted(stitched, key=lambda row: float(row.get("t") or 0.0))
+
     filled = _remove_preview_face_track_outliers(_fill_preview_face_track(rows))
     smoothed: list[dict[str, Any]] = []
     previous_output: dict[str, float] | None = None
@@ -3679,14 +3741,23 @@ def _write_preview_face_track_smooth(
     rows: list[dict[str, Any]],
     start_seconds: Optional[float],
     end_seconds: Optional[float],
+    *,
+    shot_cuts: Optional[list[float]] = None,
+    shot_holds: Optional[list[tuple[float, float]]] = None,
 ) -> Optional[Path]:
     smooth_path = _preview_face_track_smooth_path(video_id, start_seconds, end_seconds)
-    smoothed_rows = _smooth_preview_face_track_rows(rows)
+    smoothed_rows = _smooth_preview_face_track_rows(
+        rows,
+        shot_cuts=shot_cuts,
+        shot_holds=shot_holds,
+    )
     smooth_path.write_text(json.dumps(smoothed_rows, ensure_ascii=True), encoding="utf-8")
     current_app.logger.info(
-        "Preview face track smooth written video_id=%s samples=%s output=%s",
+        "Preview face track smooth written video_id=%s samples=%s shot_cuts=%s shot_holds=%s output=%s",
         video_id,
         len(smoothed_rows),
+        [round(float(value), 6) for value in (shot_cuts or [])],
+        [[round(float(start), 6), round(float(end), 6)] for start, end in (shot_holds or [])],
         smooth_path.name,
     )
     return smooth_path
@@ -3979,17 +4050,14 @@ def _round_to_frame_time(value: float, fps: Optional[float]) -> float:
     return round(round(float(value or 0.0) * clean_fps) / clean_fps, 6)
 
 
-def _snap_face_aware_boundary(
+def _face_aware_scene_candidates(
     source_path: Path,
     *,
-    absolute_boundary: float,
-    fps: Optional[float],
-) -> Optional[float]:
-    window = float(FACE_AWARE_SNAP_WINDOW_SEC or 0.0)
-    if window <= 0:
-        return _round_to_frame_time(absolute_boundary, fps)
-    start = max(0.0, float(absolute_boundary) - window)
-    duration = max(0.05, (float(absolute_boundary) + window) - start)
+    start: float,
+    duration: float,
+) -> List[Tuple[float, float]]:
+    if duration <= 0:
+        return []
     ffmpeg_bin = _resolve_ffmpeg()
     filter_expr = (
         f"select='gt(scene,{float(FACE_AWARE_SCENE_THRESHOLD):.6f})',"
@@ -4014,26 +4082,141 @@ def _snap_face_aware_boundary(
     try:
         result = run_media_subprocess(
             cmd,
-            operation="face_aware_scene_snap",
-            context=f"source={source_path.name} boundary={absolute_boundary:.3f}",
+            operation="face_aware_scene_scan",
+            context=f"source={source_path.name} start={start:.3f} duration={duration:.3f}",
             check=False,
             capture_output=True,
             text=True,
-            timeout=max(5, min(int(FFMPEG_SHORT_TIMEOUT or 30), 60)),
+            timeout=scale_media_timeout(
+                FFMPEG_SHORT_TIMEOUT,
+                duration_seconds=duration,
+                multiplier=0.5,
+                extra_seconds=10,
+            ),
         )
     except Exception:
-        return _round_to_frame_time(absolute_boundary, fps)
+        current_app.logger.warning(
+            "Face-aware scene scan failed source=%s start=%.3f duration=%.3f",
+            source_path.name,
+            start,
+            duration,
+            exc_info=True,
+        )
+        return []
     output = "\n".join([result.stdout or "", result.stderr or ""])
     pts_values = [float(match.group(1)) for match in re.finditer(r"pts_time:([0-9.]+)", output)]
     scores = [float(match.group(1)) for match in re.finditer(r"lavfi\.scene_score=([0-9.]+)", output)]
-    candidates: List[Tuple[float, float]] = []
-    for idx, pts_time in enumerate(pts_values):
-        score = scores[idx] if idx < len(scores) else 0.0
-        candidates.append((score, start + pts_time))
+    return [
+        (scores[idx] if idx < len(scores) else 0.0, float(start) + pts_time)
+        for idx, pts_time in enumerate(pts_values)
+    ]
+
+
+def _snap_face_aware_boundary(
+    source_path: Path,
+    *,
+    absolute_boundary: float,
+    fps: Optional[float],
+) -> Optional[float]:
+    window = float(FACE_AWARE_SNAP_WINDOW_SEC or 0.0)
+    if window <= 0:
+        return _round_to_frame_time(absolute_boundary, fps)
+    start = max(0.0, float(absolute_boundary) - window)
+    duration = max(0.05, (float(absolute_boundary) + window) - start)
+    candidates = _face_aware_scene_candidates(source_path, start=start, duration=duration)
     if not candidates:
         return _round_to_frame_time(absolute_boundary, fps)
     _, snapped = max(candidates, key=lambda item: (item[0], -abs(item[1] - float(absolute_boundary))))
     return _round_to_frame_time(snapped, fps)
+
+
+def _face_track_shot_boundaries(
+    rows: list[dict[str, Any]],
+    segments: List[Dict[str, Any]],
+    *,
+    source_path: Path,
+    absolute_start: float,
+    duration: float,
+    detect_scenes: bool = True,
+) -> tuple[list[float], list[tuple[float, float]], list[dict[str, Any]]]:
+    if not FACE_CUT_ON_SHOT_CHANGE or duration <= 0:
+        return [], [], []
+    fill_ranges = [
+        (
+            float(absolute_start) + float(segment.get("start") or 0.0),
+            float(absolute_start) + float(segment.get("end") or 0.0),
+        )
+        for segment in segments or []
+        if str(segment.get("mode") or "").strip().lower() == "fill"
+    ]
+    if not fill_ranges:
+        return [], [], []
+
+    def _inside_fill(value: float) -> bool:
+        return any(start < value < end for start, end in fill_ranges)
+
+    scene_candidates = (
+        _face_aware_scene_candidates(
+            source_path,
+            start=float(absolute_start),
+            duration=float(duration),
+        )
+        if detect_scenes
+        else []
+    )
+    scene_times = sorted({time_value for _, time_value in scene_candidates if _inside_fill(time_value)})
+    cut_details: list[dict[str, Any]] = [
+        {"time": time_value, "reason": "scene"}
+        for time_value in scene_times
+    ]
+    valid_rows = [
+        row
+        for row in sorted(rows, key=lambda item: float(item.get("t") or 0.0))
+        if row.get("found") and _track_row_values(row)
+    ]
+    for previous, current in zip(valid_rows, valid_rows[1:]):
+        previous_time = float(previous.get("t") or 0.0)
+        current_time = float(current.get("t") or 0.0)
+        midpoint = (previous_time + current_time) / 2.0
+        if not _inside_fill(midpoint):
+            continue
+        previous_values = _track_row_values(previous)
+        current_values = _track_row_values(current)
+        if not previous_values or not current_values:
+            continue
+        jump = math.hypot(
+            current_values["cx_ratio"] - previous_values["cx_ratio"],
+            current_values["cy_ratio"] - previous_values["cy_ratio"],
+        )
+        if jump <= float(FACE_CUT_JUMP_THRESHOLD):
+            continue
+        nearby_scene = min(scene_times, key=lambda value: abs(value - midpoint), default=None)
+        cut_time = (
+            nearby_scene
+            if nearby_scene is not None and abs(nearby_scene - midpoint) <= 0.5
+            else midpoint
+        )
+        cut_details.append({
+            "time": cut_time,
+            "reason": "jump_scene" if cut_time == nearby_scene else "face_jump",
+            "jump": round(jump, 6),
+            "samples": [round(previous_time, 6), round(current_time, 6)],
+        })
+
+    candidate_cuts = sorted({round(float(item["time"]), 6) for item in cut_details})
+    range_start = float(absolute_start)
+    range_end = range_start + float(duration)
+    boundaries = [range_start, *candidate_cuts, range_end]
+    dropped_starts: set[float] = set()
+    hold_ranges: list[tuple[float, float]] = []
+    for index in range(1, len(boundaries) - 1):
+        shot_start = boundaries[index]
+        shot_end = boundaries[index + 1]
+        if shot_end - shot_start < float(FACE_MIN_SHOT_S):
+            dropped_starts.add(round(shot_start, 6))
+            hold_ranges.append((shot_start, shot_end))
+    kept_cuts = [cut_time for cut_time in candidate_cuts if round(cut_time, 6) not in dropped_starts]
+    return kept_cuts, hold_ranges, cut_details
 
 
 def _snap_face_aware_segments(
@@ -4670,8 +4853,8 @@ def _compute_face_aware_layout_segments(
         source_keep_ranges=source_keep_ranges,
         cache_info=cache_info,
     )
+    track_rows: list[dict[str, Any]] = []
     if samples:
-        track_rows = []
         for sample in samples:
             faces = sample.get("faces") if isinstance(sample.get("faces"), list) else []
             face = faces[0] if len(faces) == 1 and isinstance(faces[0], dict) else {}
@@ -4684,20 +4867,6 @@ def _compute_face_aware_layout_segments(
                     "h_ratio": face.get("h_ratio"),
                     "found": bool(face),
                 }
-            )
-        try:
-            face_track_smooth_path = _write_preview_face_track_smooth(
-                video_id,
-                track_rows,
-                start_seconds,
-                end_seconds,
-            )
-        except Exception:
-            current_app.logger.warning(
-                "Could not persist render-time face track video_id=%s plan_index=%s",
-                video_id,
-                plan_index,
-                exc_info=True,
             )
     keep_ranges = _normalize_edit_keep_ranges(source_keep_ranges)
     duration = (
@@ -4721,6 +4890,34 @@ def _compute_face_aware_layout_segments(
             segment["end"] = snapped
             segments[idx + 1]["start"] = snapped
             snapped_boundaries.append({"from": round(original_boundary, 6), "to": snapped})
+    face_shot_cuts: list[float] = []
+    face_shot_holds: list[tuple[float, float]] = []
+    face_shot_details: list[dict[str, Any]] = []
+    if track_rows:
+        try:
+            face_shot_cuts, face_shot_holds, face_shot_details = _face_track_shot_boundaries(
+                track_rows,
+                segments,
+                source_path=source_path,
+                absolute_start=float(start_seconds),
+                duration=float(duration),
+                detect_scenes=len(keep_ranges) <= 1,
+            )
+            face_track_smooth_path = _write_preview_face_track_smooth(
+                video_id,
+                track_rows,
+                start_seconds,
+                end_seconds,
+                shot_cuts=face_shot_cuts,
+                shot_holds=face_shot_holds,
+            )
+        except Exception:
+            current_app.logger.warning(
+                "Could not persist render-time face track video_id=%s plan_index=%s",
+                video_id,
+                plan_index,
+                exc_info=True,
+            )
     segments = _attach_face_aware_zoom_to_segments(
         segments,
         face_track_smooth_path=face_track_smooth_path,
@@ -4733,7 +4930,8 @@ def _compute_face_aware_layout_segments(
     )
     elapsed_ms = int(round((time.perf_counter() - started) * 1000.0))
     current_app.logger.info(
-        "face_aware_layout video_id=%s plan_index=%s samples=%s face_counts=%s segments=%s split_crops=%s snapped_boundaries=%s elapsed_ms=%s",
+        "face_aware_layout video_id=%s plan_index=%s samples=%s face_counts=%s segments=%s split_crops=%s "
+        "snapped_boundaries=%s face_shot_cuts=%s face_shot_holds=%s face_shot_details=%s elapsed_ms=%s",
         video_id,
         plan_index,
         len(samples),
@@ -4755,6 +4953,9 @@ def _compute_face_aware_layout_segments(
             if seg.get("mode") == "split"
         ],
         snapped_boundaries,
+        [round(value, 6) for value in face_shot_cuts],
+        [[round(start, 6), round(end, 6)] for start, end in face_shot_holds],
+        face_shot_details,
         elapsed_ms,
     )
     return {
@@ -4763,6 +4964,8 @@ def _compute_face_aware_layout_segments(
         "samples": samples,
         "segments": segments,
         "snapped_boundaries": snapped_boundaries,
+        "face_shot_cuts": face_shot_cuts,
+        "face_shot_holds": face_shot_holds,
         "elapsed_ms": elapsed_ms,
         "face_track_smooth_path": str(face_track_smooth_path) if face_track_smooth_path else "",
         "face_detect_cache_hit": bool(cache_info.get("hit")),
