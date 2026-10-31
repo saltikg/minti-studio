@@ -1745,6 +1745,17 @@ def channels_page():
             params.append(brand_id)
         else:
             where_clause += " AND c.brand_id IS NULL"
+    import_exclusion_sql = """
+        lower(trim(coalesce(c.notes, ''))) NOT IN (
+            'add by url import',
+            'quick short import'
+        )
+    """
+    where_clause += (
+        f" AND {import_exclusion_sql}"
+        if where_clause
+        else f"WHERE {import_exclusion_sql}"
+    )
     if "channel_id" in table_columns(conn, "autopilot_leads"):
         outreach_exclusion_sql = """
             lower(trim(coalesce(c.notes, ''))) <> 'autopilot lead import'
