@@ -120,6 +120,12 @@ def create_app():
 
         return public_short_watch_event(token)
 
+    @app.route("/email/unsubscribe/<token>", methods=["GET", "POST"])
+    def public_email_unsubscribe_alias(token):
+        from app.video_shorts.routes.email_sequence import public_email_unsubscribe
+
+        return public_email_unsubscribe(token)
+
     @app.get("/onboard/<token>")
     def onboarding_magic_link_alias(token):
         from app.video_shorts.routes.auth import redeem_onboarding_magic_link

@@ -1,16 +1,10 @@
 from __future__ import annotations
 
 import os
-import smtplib
-import ssl
-from email.message import EmailMessage
-from email.utils import formataddr, formatdate, make_msgid
 from typing import Any
 
 from app.video_shorts.services.outreach_email_send import (
-    OUTREACH_ZOHO_FROM_EMAIL,
-    OUTREACH_ZOHO_FROM_NAME,
-    _zoho_smtp_settings,
+    send_zoho_email,
 )
 
 
@@ -45,7 +39,6 @@ def send_blog_run_notification(
     reason: str | None = None,
     to_email: str | None = None,
 ) -> dict[str, object]:
-    settings = _zoho_smtp_settings()
     recipient = str(to_email or BLOG_NOTIFY_EMAIL or "").strip()
     if not recipient or "@" not in recipient:
         raise RuntimeError("Blog notification recipient email is missing")
@@ -70,28 +63,10 @@ def send_blog_run_notification(
         body_lines.extend(["", _line("Reason", reason)])
     text = "\n".join(body_lines).strip() + "\n"
 
-    message_id = make_msgid(domain="mintistudio.com")
-    message = EmailMessage()
-    message["From"] = formataddr((OUTREACH_ZOHO_FROM_NAME, OUTREACH_ZOHO_FROM_EMAIL))
-    message["To"] = recipient
-    message["Reply-To"] = OUTREACH_ZOHO_FROM_EMAIL
-    message["Subject"] = str(subject or "").strip()
-    message["Date"] = formatdate(localtime=False, usegmt=True)
-    message["Message-ID"] = message_id
-    message.set_content(text)
-
-    context = ssl.create_default_context()
-    if int(settings["port"]) == 465:
-        with smtplib.SMTP_SSL(settings["host"], settings["port"], context=context, timeout=20) as smtp:
-            smtp.login(settings["user"], settings["password"])
-            refused = smtp.send_message(message, from_addr=OUTREACH_ZOHO_FROM_EMAIL, to_addrs=[recipient])
-    else:
-        with smtplib.SMTP(settings["host"], settings["port"], timeout=20) as smtp:
-            smtp.ehlo()
-            smtp.starttls(context=context)
-            smtp.ehlo()
-            smtp.login(settings["user"], settings["password"])
-            refused = smtp.send_message(message, from_addr=OUTREACH_ZOHO_FROM_EMAIL, to_addrs=[recipient])
-    if refused:
-        raise RuntimeError(f"Zoho SMTP refused recipient: {refused}")
-    return {"status": "accepted", "message_id": message_id, "transport": "zoho", "to": recipient}
+    result = send_zoho_email(to_email=recipient, subject=subject, text=text)
+    return {
+        "status": "accepted",
+        "message_id": result["message_id"],
+        "transport": "zoho",
+        "to": recipient,
+    }

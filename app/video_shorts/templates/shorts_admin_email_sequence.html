@@ -1,0 +1,65 @@
+{% extends "vs_admin_base.html" %}
+
+{% block title %}Signup Email Sequence{% endblock %}
+{% block admin_heading %}Signup Email Sequence{% endblock %}
+{% block admin_subheading %}
+  <p>Seven plain-text emails scheduled from email verification. Automated enrollment and sending are not enabled yet.</p>
+{% endblock %}
+
+{% block extra_styles %}
+  <style>
+    .email-sequence-grid { display: grid; gap: 18px; }
+    .email-sequence-card { padding: 20px; }
+    .email-sequence-head { display: flex; justify-content: space-between; gap: 16px; align-items: center; margin-bottom: 16px; }
+    .email-sequence-title { margin: 0; font-size: 1.15rem; }
+    .email-sequence-fields { display: grid; gap: 14px; }
+    .email-sequence-body { min-height: 180px; }
+    .email-sequence-preview { margin: 0; padding: 16px; border-radius: 12px; background: rgba(0,0,0,.25); color: rgba(255,255,255,.82); white-space: pre-wrap; overflow-wrap: anywhere; }
+    .email-sequence-preview-label { margin-bottom: 8px; color: rgba(255,255,255,.56); font-size: .78rem; text-transform: uppercase; letter-spacing: .08em; }
+    .email-sequence-actions { display: flex; flex-wrap: wrap; align-items: center; gap: 10px; }
+  </style>
+{% endblock %}
+
+{% block content %}
+  {% if not postal_address_configured %}
+    <div class="alert alert-warning">COMPANY_POSTAL_ADDRESS is not configured. Preview remains available, but test sends are blocked.</div>
+  {% endif %}
+  <div class="email-sequence-grid">
+    {% for step in steps %}
+      <section class="vs-admin-card email-sequence-card" id="step-{{ step.step }}">
+        <form method="post" class="email-sequence-fields">
+          <input type="hidden" name="step" value="{{ step.step }}">
+          <div class="email-sequence-head">
+            <div>
+              <h2 class="email-sequence-title">Step {{ step.step }} · Day {{ step.delay_days }}</h2>
+              <div class="vs-admin-muted">Available placeholders: <code>{name}</code>, <code>{first_name}</code>; missing names fall back to “there”.</div>
+            </div>
+            <div class="form-check form-switch">
+              <input class="form-check-input" type="checkbox" role="switch" name="active" value="1" id="active-{{ step.step }}" {% if step.active %}checked{% endif %}>
+              <label class="form-check-label" for="active-{{ step.step }}">Active</label>
+            </div>
+          </div>
+          <div>
+            <label class="form-label" for="subject-{{ step.step }}">Subject</label>
+            <input class="form-control" id="subject-{{ step.step }}" name="subject" value="{{ step.subject }}" maxlength="500">
+          </div>
+          <div>
+            <label class="form-label" for="body-{{ step.step }}">Body (plain text)</label>
+            <textarea class="form-control email-sequence-body" id="body-{{ step.step }}" name="body_text">{{ step.body_text }}</textarea>
+          </div>
+          <div>
+            <div class="email-sequence-preview-label">Preview as {{ sample_name }} — footer included</div>
+            <pre class="email-sequence-preview"><strong>Subject: {{ step.preview.subject or '—' }}</strong>
+
+{{ step.preview.body_text }}</pre>
+          </div>
+          <div class="email-sequence-actions">
+            <button class="btn btn-primary" type="submit" name="action" value="save">Save step</button>
+            <button class="btn btn-outline-light" type="submit" name="action" value="test">Send test to me</button>
+            {% if step.updated_at %}<span class="vs-admin-muted small">Last updated {{ step.updated_at|admin_datetime }}</span>{% endif %}
+          </div>
+        </form>
+      </section>
+    {% endfor %}
+  </div>
+{% endblock %}

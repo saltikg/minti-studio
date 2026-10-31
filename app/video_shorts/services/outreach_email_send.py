@@ -328,10 +328,29 @@ def send_zoho_outreach_email(
     html: str,
     text: str,
 ) -> dict[str, object]:
-    settings = _zoho_smtp_settings()
     recipient = str(to_email or "").strip()
     if not recipient or "@" not in recipient:
         raise RuntimeError("Outreach recipient email is missing")
+    return send_zoho_email(
+        to_email=recipient,
+        subject=subject,
+        text=text,
+        html=html,
+    )
+
+
+def send_zoho_email(
+    *,
+    to_email: str,
+    subject: str,
+    text: str,
+    html: str | None = None,
+    extra_headers: dict[str, str] | None = None,
+) -> dict[str, object]:
+    settings = _zoho_smtp_settings()
+    recipient = str(to_email or "").strip()
+    if not recipient or "@" not in recipient:
+        raise RuntimeError("Email recipient is missing")
     message_id = make_msgid(domain="mintistudio.com")
     message = EmailMessage()
     message["From"] = formataddr((OUTREACH_ZOHO_FROM_NAME, OUTREACH_ZOHO_FROM_EMAIL))
@@ -340,8 +359,21 @@ def send_zoho_outreach_email(
     message["Subject"] = str(subject or "").strip()
     message["Date"] = formatdate(localtime=False, usegmt=True)
     message["Message-ID"] = message_id
+    for header_name, header_value in (extra_headers or {}).items():
+        normalized_name = str(header_name or "").strip()
+        if not normalized_name or normalized_name.lower() in {
+            "from",
+            "to",
+            "reply-to",
+            "subject",
+            "date",
+            "message-id",
+        }:
+            continue
+        message[normalized_name] = str(header_value or "").strip()
     message.set_content(str(text or ""))
-    message.add_alternative(str(html or ""), subtype="html")
+    if html is not None:
+        message.add_alternative(str(html), subtype="html")
 
     context = ssl.create_default_context()
     if int(settings["port"]) == 465:

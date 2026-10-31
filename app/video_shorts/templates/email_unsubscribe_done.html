@@ -1,0 +1,25 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Unsubscribed · MintiStudio</title>
+  <style>
+    body { margin: 0; min-height: 100vh; display: grid; place-items: center; background: #071018; color: #eef6f8; font: 16px/1.5 Arial, sans-serif; }
+    main { width: min(520px, calc(100% - 40px)); padding: 32px; border: 1px solid #263641; border-radius: 18px; background: #0b1720; }
+    h1 { margin-top: 0; }
+    p { color: #bdcbd2; }
+  </style>
+</head>
+<body>
+  <main>
+    {% if subscription_found %}
+      <h1>You’re unsubscribed</h1>
+      <p>You will not receive more signup sequence emails.</p>
+    {% else %}
+      <h1>Subscription not found</h1>
+      <p>No active signup email subscription matched this link.</p>
+    {% endif %}
+  </main>
+</body>
+</html>

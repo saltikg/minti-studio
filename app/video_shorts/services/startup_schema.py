@@ -25,6 +25,7 @@ from app.video_shorts.services.db import (
     ensure_user_preferences_schema,
 )
 from app.video_shorts.services.video_deletion import ensure_video_deletion_schema
+from app.video_shorts.services.email_sequence import ensure_email_sequence_schema
 
 
 _schema_lock = threading.Lock()
@@ -59,6 +60,7 @@ def initialize_runtime_schema() -> None:
             ensure_background_preferences_schema(conn)
             ensure_ai_video_schema(conn)
             ensure_video_deletion_schema(conn)
+            ensure_email_sequence_schema(conn)
             conn.commit()
             _schema_ready = True
         finally:

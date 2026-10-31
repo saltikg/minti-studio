@@ -24,3 +24,4 @@ from . import help  # noqa: F401
 from . import ai_video  # noqa: F401
 from . import interview  # noqa: F401
 from . import billing  # noqa: F401
+from . import email_sequence  # noqa: F401
