@@ -150,31 +150,16 @@ def unsubscribe_url(*, base_url: str, token: str) -> str:
     return f"{str(base_url or '').rstrip('/')}/email/unsubscribe/{quote(str(token or '').strip(), safe='')}"
 
 
-def sequence_email_headers(*, unsubscribe_link: str) -> dict[str, str]:
-    mailto = "mailto:info@mintistudio.com?subject=unsubscribe"
-    return {
-        "List-Unsubscribe": f"<{unsubscribe_link}>, <{mailto}>",
-        "List-Unsubscribe-Post": "List-Unsubscribe=One-Click",
-    }
-
-
 def render_sequence_email(
     *,
     subject: object,
     body_text: object,
     recipient_name: object,
-    unsubscribe_link: str,
-    postal_address: str | None = None,
 ) -> dict[str, str]:
-    address = str(postal_address if postal_address is not None else os.getenv("COMPANY_POSTAL_ADDRESS") or "").strip()
     rendered_subject = render_sequence_placeholders(subject, name=recipient_name)
-    rendered_body = render_sequence_placeholders(body_text, name=recipient_name).rstrip()
-    footer_lines = ["---", f"Unsubscribe: {unsubscribe_link}"]
-    if address:
-        footer_lines.append(address)
     return {
         "subject": rendered_subject,
-        "body_text": f"{rendered_body}\n\n" + "\n".join(footer_lines),
+        "body_text": render_sequence_placeholders(body_text, name=recipient_name),
     }
 
 
@@ -323,13 +308,9 @@ def _claim_due_nurture_send(conn, *, now_utc: datetime) -> dict[str, Any] | None
     if not row:
         return None
 
-    _subscription_id, user_id, email, name, step, subject, body_text, active, token = row
+    _subscription_id, user_id, email, name, step, subject, body_text, active, _token = row
     send_id = str(uuid4())
     send_token = new_email_token()
-    unsubscribe_link = unsubscribe_url(
-        base_url=os.getenv("BASE_URL") or "https://mintistudio.com",
-        token=str(token),
-    )
     if not bool(active) or not str(subject or "").strip() or not str(body_text or "").strip():
         conn.execute(
             """
@@ -350,12 +331,11 @@ def _claim_due_nurture_send(conn, *, now_utc: datetime) -> dict[str, Any] | None
         subject=subject,
         body_text=body_text,
         recipient_name=name,
-        unsubscribe_link=unsubscribe_link,
     )
     tracked_body, link_urls = rewrite_nurture_links(
         rendered["body_text"],
         send_token=send_token,
-        unsubscribe_link=unsubscribe_link,
+        unsubscribe_link="",
         base_url=os.getenv("BASE_URL") or "https://mintistudio.com",
     )
     conn.execute(
@@ -374,7 +354,7 @@ def _claim_due_nurture_send(conn, *, now_utc: datetime) -> dict[str, Any] | None
     return {
         "id": send_id, "step": int(step), "user_id": str(user_id), "email": str(email),
         "subject": rendered["subject"], "body": tracked_body, "send_token": send_token,
-        "attempts": 1, "unsubscribe_link": unsubscribe_link,
+        "attempts": 1,
     }
 
 
@@ -419,20 +399,9 @@ def process_due_signup_nurture_email() -> bool:
             )
             conn.commit()
             return True
-        unsubscribe_link = str(job.get("unsubscribe_link") or "")
-        if not unsubscribe_link:
-            row = conn.execute(
-                "SELECT unsubscribe_token FROM email_subscriptions WHERE user_id = ? AND list = 'signup_sequence' LIMIT 1",
-                [job["user_id"]],
-            ).fetchone()
-            unsubscribe_link = unsubscribe_url(
-                base_url=os.getenv("BASE_URL") or "https://mintistudio.com",
-                token=str(row[0]) if row else "",
-            )
         try:
             result = send_zoho_email(
                 to_email=job["email"], subject=job["subject"], text=job["body"],
-                extra_headers=sequence_email_headers(unsubscribe_link=unsubscribe_link),
             )
         except Exception as exc:
             next_status = "scheduled" if int(job["attempts"]) < NURTURE_MAX_ATTEMPTS else "failed"

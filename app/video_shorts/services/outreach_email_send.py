@@ -4,8 +4,11 @@ import os
 import smtplib
 import ssl
 from datetime import datetime, timedelta, timezone
+from email import policy
+from email.generator import BytesGenerator
 from email.message import EmailMessage
 from email.utils import formataddr, formatdate, make_msgid
+from io import BytesIO
 from typing import Any
 from urllib.parse import urlencode
 from zoneinfo import ZoneInfo
@@ -339,20 +342,19 @@ def send_zoho_outreach_email(
     )
 
 
-def send_zoho_email(
+def _build_zoho_message(
     *,
     to_email: str,
     subject: str,
     text: str,
     html: str | None = None,
     extra_headers: dict[str, str] | None = None,
-) -> dict[str, object]:
-    settings = _zoho_smtp_settings()
+) -> tuple[EmailMessage, str, str]:
     recipient = str(to_email or "").strip()
     if not recipient or "@" not in recipient:
         raise RuntimeError("Email recipient is missing")
     message_id = make_msgid(domain="mintistudio.com")
-    message = EmailMessage()
+    message = EmailMessage(policy=policy.SMTP.clone(mangle_from_=False))
     message["From"] = formataddr((OUTREACH_ZOHO_FROM_NAME, OUTREACH_ZOHO_FROM_EMAIL))
     message["To"] = recipient
     message["Reply-To"] = OUTREACH_ZOHO_FROM_EMAIL
@@ -374,19 +376,46 @@ def send_zoho_email(
     message.set_content(str(text or ""))
     if html is not None:
         message.add_alternative(str(html), subtype="html")
+    return message, recipient, message_id
+
+
+def _serialize_zoho_message(message: EmailMessage) -> bytes:
+    output = BytesIO()
+    generator = BytesGenerator(output, policy=message.policy, mangle_from_=False)
+    generator.flatten(message)
+    return output.getvalue()
+
+
+def send_zoho_email(
+    *,
+    to_email: str,
+    subject: str,
+    text: str,
+    html: str | None = None,
+    extra_headers: dict[str, str] | None = None,
+) -> dict[str, object]:
+    settings = _zoho_smtp_settings()
+    message, recipient, message_id = _build_zoho_message(
+        to_email=to_email,
+        subject=subject,
+        text=text,
+        html=html,
+        extra_headers=extra_headers,
+    )
+    raw_message = _serialize_zoho_message(message)
 
     context = ssl.create_default_context()
     if int(settings["port"]) == 465:
         with smtplib.SMTP_SSL(settings["host"], settings["port"], context=context, timeout=20) as smtp:
             smtp.login(settings["user"], settings["password"])
-            refused = smtp.send_message(message, from_addr=OUTREACH_ZOHO_FROM_EMAIL, to_addrs=[recipient])
+            refused = smtp.sendmail(OUTREACH_ZOHO_FROM_EMAIL, [recipient], raw_message)
     else:
         with smtplib.SMTP(settings["host"], settings["port"], timeout=20) as smtp:
             smtp.ehlo()
             smtp.starttls(context=context)
             smtp.ehlo()
             smtp.login(settings["user"], settings["password"])
-            refused = smtp.send_message(message, from_addr=OUTREACH_ZOHO_FROM_EMAIL, to_addrs=[recipient])
+            refused = smtp.sendmail(OUTREACH_ZOHO_FROM_EMAIL, [recipient], raw_message)
     if refused:
         raise RuntimeError(f"Zoho SMTP refused recipient: {refused}")
     return {

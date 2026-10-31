@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import os
 import json
 from datetime import timedelta
 from uuid import uuid4
@@ -16,8 +15,6 @@ from app.video_shorts.services.email_sequence import (
     new_email_token,
     normalize_sequence_email,
     render_sequence_email,
-    sequence_email_headers,
-    unsubscribe_url,
 )
 from app.video_shorts.services.outreach_email_send import send_zoho_email
 
@@ -85,7 +82,6 @@ def admin_email_sequence():
 
             if action == "test":
                 admin_email = normalize_sequence_email(current_user.get("email") or current_user.get("username"))
-                postal_address = str(os.getenv("COMPANY_POSTAL_ADDRESS") or "").strip()
                 if not admin_email or "@" not in admin_email:
                     flash("Your admin account does not have a valid email address.", "danger")
                     return redirect(url_for("video_shorts_bp.admin_email_sequence", step=step))
@@ -93,13 +89,10 @@ def admin_email_sequence():
                     flash("Add both a subject and body before sending a test.", "warning")
                     return redirect(url_for("video_shorts_bp.admin_email_sequence", step=step))
                 send_token = new_email_token()
-                test_unsubscribe_url = unsubscribe_url(base_url=_base_url(), token=f"test-{send_token}")
                 rendered = render_sequence_email(
                     subject=subject,
                     body_text=body_text,
                     recipient_name=str(current_user.get("name") or "there"),
-                    unsubscribe_link=test_unsubscribe_url,
-                    postal_address=postal_address,
                 )
                 send_id = str(uuid4())
                 conn.execute(
@@ -129,7 +122,6 @@ def admin_email_sequence():
                         to_email=admin_email,
                         subject=rendered["subject"],
                         text=rendered["body_text"],
-                        extra_headers=sequence_email_headers(unsubscribe_link=test_unsubscribe_url),
                     )
                 except Exception as exc:
                     conn.execute(
@@ -160,14 +152,11 @@ def admin_email_sequence():
             return redirect(url_for("video_shorts_bp.admin_email_sequence"))
 
         steps = load_signup_sequence_steps(conn)
-        preview_token = "preview-token"
-        preview_link = unsubscribe_url(base_url=_base_url(), token=preview_token)
         for step in steps:
             step["preview"] = render_sequence_email(
                 subject=step["subject"],
                 body_text=step["body_text"],
                 recipient_name=SAMPLE_RECIPIENT_NAME,
-                unsubscribe_link=preview_link,
             )
         return render_template(
             "shorts_admin_email_sequence.html",

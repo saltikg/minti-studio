@@ -1,50 +1,37 @@
+from email import policy
+from email.parser import BytesParser
+
 from app.video_shorts.services.email_sequence import (
     process_due_signup_nurture_email,
     render_sequence_email,
     render_sequence_placeholders,
     rewrite_nurture_links,
-    sequence_email_headers,
 )
 from app.video_shorts.services import outreach_email_send
 
 
-def test_sequence_placeholders_and_footer():
+def test_sequence_placeholders_without_footer():
     rendered = render_sequence_email(
         subject="Hi {first_name}",
-        body_text="Welcome, {name}.",
+        body_text="Welcome, {name}.\nFrom time to time\n",
         recipient_name="Alex Morgan",
-        unsubscribe_link="https://mintistudio.com/email/unsubscribe/token",
-        postal_address="123 Main St, San Francisco, CA",
     )
 
     assert rendered["subject"] == "Hi Alex"
-    assert "Welcome, Alex Morgan." in rendered["body_text"]
-    assert "Unsubscribe: https://mintistudio.com/email/unsubscribe/token" in rendered["body_text"]
-    assert rendered["body_text"].endswith("123 Main St, San Francisco, CA")
+    assert rendered["body_text"] == "Welcome, Alex Morgan.\nFrom time to time\n"
+    assert "Unsubscribe" not in rendered["body_text"]
     assert render_sequence_placeholders("Hi {name} / {first_name}") == "Hi there / there"
 
 
-def test_sequence_headers_include_one_click():
-    headers = sequence_email_headers(unsubscribe_link="https://mintistudio.com/email/unsubscribe/token")
-
-    assert headers["List-Unsubscribe"] == (
-        "<https://mintistudio.com/email/unsubscribe/token>, "
-        "<mailto:info@mintistudio.com?subject=unsubscribe>"
-    )
-    assert headers["List-Unsubscribe-Post"] == "List-Unsubscribe=One-Click"
-
-
-def test_nurture_link_rewrite_excludes_unsubscribe():
-    unsubscribe = "https://mintistudio.com/email/unsubscribe/abc"
+def test_nurture_link_rewrite_remains_enabled():
     body, links = rewrite_nurture_links(
-        f"Read https://example.com/post.\n\nUnsubscribe: {unsubscribe}",
+        "Read https://example.com/post.",
         send_token="send-token",
-        unsubscribe_link=unsubscribe,
+        unsubscribe_link="",
     )
 
     assert links == ["https://example.com/post"]
     assert "https://mintistudio.com/e/c/send-token/1." in body
-    assert unsubscribe in body
 
 
 def test_nurture_flag_off_returns_without_database(monkeypatch):
@@ -54,7 +41,7 @@ def test_nurture_flag_off_returns_without_database(monkeypatch):
 
 
 def test_shared_zoho_sender_plain_text_and_outreach_html(monkeypatch):
-    sent_messages = []
+    sent_messages: list[bytes] = []
 
     class FakeSmtp:
         def __init__(self, *_args, **_kwargs):
@@ -69,7 +56,7 @@ def test_shared_zoho_sender_plain_text_and_outreach_html(monkeypatch):
         def login(self, *_args):
             return None
 
-        def send_message(self, message, **_kwargs):
+        def sendmail(self, _from_addr, _to_addrs, message, *_args, **_kwargs):
             sent_messages.append(message)
             return {}
 
@@ -83,8 +70,7 @@ def test_shared_zoho_sender_plain_text_and_outreach_html(monkeypatch):
     outreach_email_send.send_zoho_email(
         to_email="admin@example.com",
         subject="Plain",
-        text="Body",
-        extra_headers={"List-Unsubscribe-Post": "List-Unsubscribe=One-Click"},
+        text="Body\nFrom time to time\nDone",
     )
     outreach_email_send.send_zoho_outreach_email(
         to_email="lead@example.com",
@@ -93,7 +79,14 @@ def test_shared_zoho_sender_plain_text_and_outreach_html(monkeypatch):
         html="<p>HTML body</p>",
     )
 
-    assert sent_messages[0].is_multipart() is False
-    assert sent_messages[0]["List-Unsubscribe-Post"] == "List-Unsubscribe=One-Click"
-    assert sent_messages[1].is_multipart() is True
-    assert sent_messages[1].get_body(preferencelist=("html",)).get_content().strip() == "<p>HTML body</p>"
+    plain_message = BytesParser(policy=policy.default).parsebytes(sent_messages[0])
+    outreach_message = BytesParser(policy=policy.default).parsebytes(sent_messages[1])
+    assert plain_message.is_multipart() is False
+    assert plain_message.get_content_type() == "text/plain"
+    assert plain_message["List-Unsubscribe"] is None
+    assert plain_message["List-Unsubscribe-Post"] is None
+    assert "\nFrom time to time\n" in plain_message.get_content().replace("\r\n", "\n")
+    assert b"\r\n>From time to time\r\n" not in sent_messages[0]
+    assert b"\r\nFrom time to time\r\n" in sent_messages[0]
+    assert outreach_message.is_multipart() is True
+    assert outreach_message.get_body(preferencelist=("html",)).get_content().strip() == "<p>HTML body</p>"
