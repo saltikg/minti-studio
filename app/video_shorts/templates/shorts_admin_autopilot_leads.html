@@ -3,7 +3,7 @@
 {% block title %}Autopilot Customers{% endblock %}
 {% block admin_heading %}Autopilot Customers{% endblock %}
 {% block admin_subheading %}
-  <p>Confirmed autopilot customers, plus any older pricing-only leads.</p>
+  <p>Confirmed autopilot customers.</p>
 {% endblock %}
 
 {% block extra_styles %}
@@ -126,7 +126,7 @@
       </div>
     </form>
 
-    <div class="admin-autopilot-meta">{{ total_customers }} autopilot customers · {{ total_leads }} legacy pricing leads</div>
+    <div class="admin-autopilot-meta">{{ total_customers }} autopilot customers</div>
 
     <div class="admin-autopilot-table-wrap">
       <h2 class="h6 text-uppercase text-white-50 mb-3">Autopilot Customers</h2>
@@ -175,36 +175,6 @@
         </tbody>
       </table>
 
-      <h2 class="h6 text-uppercase text-white-50 mb-3">Legacy Pricing Leads</h2>
-      <table class="admin-autopilot-table">
-        <thead>
-          <tr>
-            <th>Email</th>
-            <th>Tier</th>
-            <th>Source</th>
-            <th>Created</th>
-          </tr>
-        </thead>
-        <tbody>
-          {% for lead in leads %}
-            <tr>
-              <td class="admin-autopilot-email">{{ lead.email }}</td>
-              <td>
-                <span class="admin-autopilot-tier">
-                  {{ lead.monthly_shorts }} Shorts/mo · ${{ lead.monthly_price }}/mo
-                </span>
-                <span class="admin-autopilot-compare">${{ lead.compare_price }}</span>
-              </td>
-              <td>{{ lead.source or 'pricing' }}</td>
-              <td>{{ lead.created_at_pst or '—' }}</td>
-            </tr>
-          {% else %}
-            <tr>
-              <td colspan="4" class="text-center text-muted py-4">No autopilot leads yet.</td>
-            </tr>
-          {% endfor %}
-        </tbody>
-      </table>
     </div>
 
     <div class="admin-autopilot-pagination">

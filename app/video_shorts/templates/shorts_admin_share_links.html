@@ -20,7 +20,11 @@
       font-size: 0.9rem;
     }
     .admin-share-links-table-wrap {
-      overflow-x: auto;
+      height: calc(100vh - 180px);
+      height: calc(100dvh - 180px);
+      min-height: 420px;
+      overflow: auto;
+      scrollbar-gutter: stable;
     }
     .admin-share-links-table {
       width: 100%;
@@ -35,6 +39,10 @@
       white-space: nowrap;
     }
     .admin-share-links-table th {
+      position: sticky;
+      top: 0;
+      z-index: 5;
+      background: #0b141d;
       color: rgba(255, 255, 255, 0.58);
       font-size: 0.82rem;
       font-weight: 700;
@@ -75,14 +83,62 @@
       box-shadow: inset 4px 0 0 rgba(148, 163, 184, 0.72);
     }
     .admin-share-links-recipient {
+      max-width: 210px;
+      overflow: hidden;
       font-weight: 600;
+      text-overflow: ellipsis;
+      white-space: nowrap;
     }
     .admin-share-links-email {
+      display: flex;
+      align-items: center;
+      gap: 6px;
       color: rgba(255, 255, 255, 0.68);
       font-size: 0.88rem;
       margin-top: 4px;
-      word-break: break-word;
-      white-space: normal;
+      white-space: nowrap;
+    }
+    .admin-share-links-recipient-col {
+      width: 210px;
+      max-width: 210px;
+    }
+    .admin-share-links-recipient-copy-btn {
+      display: inline-flex;
+      flex: 0 0 auto;
+      align-items: center;
+      justify-content: center;
+      width: 24px;
+      height: 24px;
+      padding: 0;
+      border: 0;
+      border-radius: 6px;
+      background: transparent;
+      color: rgba(255, 255, 255, 0.54);
+    }
+    .admin-share-links-recipient-copy-btn:hover,
+    .admin-share-links-recipient-copy-btn:focus-visible {
+      background: rgba(255, 255, 255, 0.08);
+      color: #fff;
+    }
+    .admin-share-links-recipient-copy-btn svg {
+      width: 14px;
+      height: 14px;
+    }
+    .admin-share-links-date-col {
+      width: 118px;
+      max-width: 118px;
+      padding-right: 8px !important;
+      padding-left: 8px !important;
+    }
+    .admin-share-links-date {
+      display: flex;
+      flex-direction: column;
+      gap: 2px;
+      line-height: 1.25;
+    }
+    .admin-share-links-time {
+      color: rgba(255, 255, 255, 0.5);
+      font-size: 0.76rem;
     }
     .admin-share-links-title {
       max-width: 320px;
@@ -338,6 +394,11 @@
       .admin-share-links-funnel {
         grid-template-columns: 1fr;
       }
+      .admin-share-links-table-wrap {
+        height: calc(100vh - 120px);
+        height: calc(100dvh - 120px);
+        min-height: 360px;
+      }
     }
     .admin-share-links-trial-form {
       display: flex;
@@ -353,6 +414,17 @@
 {% endblock %}
 
 {% block content %}
+  {% macro compact_datetime(value) -%}
+    {% if value %}
+      {% set datetime_parts = value.split(' · ', 1) %}
+      <span class="admin-share-links-date">
+        <span>{{ datetime_parts[0] }}</span>
+        {% if datetime_parts|length > 1 %}<span class="admin-share-links-time">{{ datetime_parts[1] }}</span>{% endif %}
+      </span>
+    {% else %}
+      —
+    {% endif %}
+  {%- endmacro %}
   <section class="vs-admin-card p-3 p-lg-4">
     {% set next_first_seen_dir = 'asc' if sort_key != 'first_seen' or sort_dir == 'desc' else 'desc' %}
     {% set next_last_seen_dir = 'asc' if sort_key != 'last_seen' or sort_dir == 'desc' else 'desc' %}
@@ -420,7 +492,7 @@
             <th>Sent</th>
             <th>Archive</th>
             <th>Declined</th>
-            <th>
+            <th class="admin-share-links-date-col">
               <a
                 href="{{ url_for('video_shorts_bp.admin_share_links', email=email_query, engagement=selected_engagement, archive=selected_archive, funnel=selected_funnel, sort='first_seen', dir=next_first_seen_dir, page=1) }}"
                 class="admin-share-links-sort-link">
@@ -430,7 +502,7 @@
                 {% endif %}
               </a>
             </th>
-            <th>
+            <th class="admin-share-links-date-col">
               <a
                 href="{{ url_for('video_shorts_bp.admin_share_links', email=email_query, engagement=selected_engagement, archive=selected_archive, funnel=selected_funnel, sort='last_seen', dir=next_last_seen_dir, page=1) }}"
                 class="admin-share-links-sort-link">
@@ -440,7 +512,7 @@
                 {% endif %}
               </a>
             </th>
-            <th>Recipient</th>
+            <th class="admin-share-links-recipient-col">Recipient</th>
             <th>Free tool</th>
             <th>Clip</th>
             <th>Trial</th>
@@ -469,9 +541,9 @@
             <th>Converted?</th>
             <th>Redeemed?</th>
             <th>Connected?</th>
-            <th>Redeemed at</th>
+            <th class="admin-share-links-date-col">Redeemed at</th>
             <th>User</th>
-            <th>
+            <th class="admin-share-links-date-col">
               <a
                 href="{{ url_for('video_shorts_bp.admin_share_links', email=email_query, engagement=selected_engagement, archive=selected_archive, funnel=selected_funnel, sort='created', dir=next_created_dir, page=1) }}"
                 class="admin-share-links-sort-link">
@@ -525,11 +597,28 @@
                   </label>
                 </form>
               </td>
-              <td class="admin-share-links-meta">{{ link.first_seen_pst or '—' }}</td>
-              <td class="admin-share-links-meta">{{ link.last_seen_pst or '—' }}</td>
-              <td>
-                <div class="admin-share-links-recipient">{{ link.recipient_name }}</div>
-                <div class="admin-share-links-email">{{ link.recipient_email }}</div>
+              <td class="admin-share-links-meta admin-share-links-date-col">{{ compact_datetime(link.first_seen_pst) }}</td>
+              <td class="admin-share-links-meta admin-share-links-date-col">{{ compact_datetime(link.last_seen_pst) }}</td>
+              <td class="admin-share-links-recipient-col">
+                <div class="admin-share-links-recipient" title="{{ link.recipient_name }}">{{ link.recipient_name }}</div>
+                <div class="admin-share-links-email">
+                  <span {% if link.recipient_email|length > 20 %}title="{{ link.recipient_email }}"{% endif %}>
+                    {{ link.recipient_email[:20] }}{% if link.recipient_email|length > 20 %}…{% endif %}
+                  </span>
+                  {% if link.recipient_email and link.recipient_email != '—' %}
+                    <button
+                      type="button"
+                      class="admin-share-links-recipient-copy-btn"
+                      data-copy-text="{{ link.recipient_email }}"
+                      title="Copy recipient email"
+                      aria-label="Copy recipient email">
+                      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true">
+                        <rect x="9" y="9" width="11" height="11" rx="2"></rect>
+                        <path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"></path>
+                      </svg>
+                    </button>
+                  {% endif %}
+                </div>
               </td>
               <td class="admin-share-links-meta">
                 {% if link.free_tool_event_name %}
@@ -703,7 +792,7 @@
                   —
                 {% endif %}
               </td>
-              <td class="admin-share-links-meta">{{ link.redeemed_at_pst or '—' }}</td>
+              <td class="admin-share-links-meta admin-share-links-date-col">{{ compact_datetime(link.redeemed_at_pst) }}</td>
               <td class="admin-share-links-meta">
                 {% if link.redeemed_user_detail_url %}
                   <a href="{{ link.redeemed_user_detail_url }}">Open user</a>
@@ -711,7 +800,7 @@
                   —
                 {% endif %}
               </td>
-              <td class="admin-share-links-meta">{{ link.created_at_pst or '—' }}</td>
+              <td class="admin-share-links-meta admin-share-links-date-col">{{ compact_datetime(link.created_at_pst) }}</td>
             </tr>
           {% else %}
             <tr>
@@ -965,6 +1054,26 @@
     });
 
     document.addEventListener("click", async (event) => {
+      const recipientCopyButton = event.target.closest(".admin-share-links-recipient-copy-btn");
+      if (recipientCopyButton) {
+        const copyText = String(recipientCopyButton.dataset.copyText || "").trim();
+        if (!copyText) {
+          return;
+        }
+        try {
+          await navigator.clipboard.writeText(copyText);
+          recipientCopyButton.title = "Copied";
+          recipientCopyButton.setAttribute("aria-label", "Copied");
+          setTimeout(() => {
+            recipientCopyButton.title = "Copy recipient email";
+            recipientCopyButton.setAttribute("aria-label", "Copy recipient email");
+          }, 1200);
+        } catch (err) {
+          recipientCopyButton.title = "Copy failed";
+        }
+        return;
+      }
+
       const emailCopyButton = event.target.closest(".admin-share-links-email-copy-btn");
       if (emailCopyButton) {
         const row = emailCopyButton.closest(".admin-share-links-row");

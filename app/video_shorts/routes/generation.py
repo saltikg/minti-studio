@@ -22484,22 +22484,9 @@ def admin_autopilot_leads():
             limit=1,
             offset=0,
         )[1]
-        total_leads = _load_admin_autopilot_leads(
-            conn,
-            email_query=email_query,
-            limit=1,
-            offset=0,
-        )[1]
-        total_items = max(total_customers, total_leads)
-        total_pages = max(1, (total_items + per_page - 1) // per_page)
+        total_pages = max(1, (total_customers + per_page - 1) // per_page)
         page = min(page, total_pages)
         customers, total_customers = _load_admin_autopilot_customers(
-            conn,
-            email_query=email_query,
-            limit=per_page,
-            offset=(page - 1) * per_page,
-        )
-        leads, total_leads = _load_admin_autopilot_leads(
             conn,
             email_query=email_query,
             limit=per_page,
@@ -22512,11 +22499,9 @@ def admin_autopilot_leads():
         admin_title="Autopilot",
         customers=customers,
         total_customers=total_customers,
-        leads=leads,
         email_query=email_query,
         page=page,
         per_page=per_page,
-        total_leads=total_leads,
         total_pages=total_pages,
     )
 
