@@ -42,6 +42,21 @@
       letter-spacing: 0.08em;
       text-transform: uppercase;
     }
+    .admin-autopilot-open-col {
+      width: 1%;
+      white-space: nowrap;
+    }
+    .admin-autopilot-status-col {
+      width: 78px;
+      max-width: 78px;
+      padding-right: 8px !important;
+      padding-left: 8px !important;
+      text-align: center;
+    }
+    .admin-autopilot-table th.admin-autopilot-status-col {
+      line-height: 1.25;
+      white-space: normal;
+    }
     .admin-autopilot-table tr:last-child td {
       border-bottom: 0;
     }
@@ -108,19 +123,25 @@
       <table class="admin-autopilot-table mb-4">
         <thead>
           <tr>
+            <th class="admin-autopilot-open-col">Open</th>
             <th>Email</th>
             <th>Tier</th>
-            <th>Password set?</th>
-            <th>Google linked?</th>
+            <th class="admin-autopilot-status-col">Password<br>set?</th>
+            <th class="admin-autopilot-status-col">Google<br>linked?</th>
             <th>Chosen</th>
-            <th>Channel connected</th>
-            <th>Next action</th>
-            <th></th>
+            <th class="admin-autopilot-status-col">Channel<br>connected</th>
           </tr>
         </thead>
         <tbody>
           {% for customer in customers %}
             <tr>
+              <td class="admin-autopilot-open-col">
+                {% if customer.has_customer_workspace %}
+                  <a class="btn btn-sm btn-primary" href="{{ url_for('video_shorts_bp.admin_operation_customer_workspace', brand_id=customer.customer_brand_id) }}">Open</a>
+                {% else %}
+                  <span class="text-muted" title="No converted lead brand">—</span>
+                {% endif %}
+              </td>
               <td class="admin-autopilot-email">
                 {% if customer.user_detail_url %}
                   <a href="{{ customer.user_detail_url }}" class="text-decoration-none text-white">{{ customer.email }}</a>
@@ -131,22 +152,14 @@
               <td>
                 <span class="admin-autopilot-tier">{{ customer.service_tier }} Shorts/mo</span>
               </td>
-              <td>{{ customer.password_set_label }}</td>
-              <td>{{ customer.google_linked_label }}</td>
+              <td class="admin-autopilot-status-col">{{ customer.password_set_label }}</td>
+              <td class="admin-autopilot-status-col">{{ customer.google_linked_label }}</td>
               <td>{{ customer.chosen_at_pst or '—' }}</td>
-              <td>{{ customer.youtube_connected_label }}</td>
-              <td>{{ customer.next_action }}</td>
-              <td>
-                {% if customer.has_customer_workspace %}
-                  <a class="btn btn-sm btn-primary" href="{{ url_for('video_shorts_bp.admin_operation_customer_workspace', brand_id=customer.customer_brand_id) }}">Open workspace</a>
-                {% else %}
-                  <span class="text-muted small">No converted lead brand</span>
-                {% endif %}
-              </td>
+              <td class="admin-autopilot-status-col">{{ customer.youtube_connected_label }}</td>
             </tr>
           {% else %}
             <tr>
-              <td colspan="8" class="text-center text-muted py-4">No autopilot customers yet.</td>
+              <td colspan="7" class="text-center text-muted py-4">No autopilot customers yet.</td>
             </tr>
           {% endfor %}
         </tbody>
