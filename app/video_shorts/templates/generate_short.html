@@ -2500,12 +2500,20 @@
     width: 100%;
     max-width: 100%;
   }
+  .generate-v2-discard-backdrop {
+    position: fixed;
+    inset: 0;
+    z-index: 1080;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    padding: 20px;
+    background: rgba(3, 7, 18, 0.68);
+    backdrop-filter: blur(3px);
+  }
   .generate-v2-discard-dialog {
-    position: absolute;
-    left: var(--generate-v2-discard-left, 12px);
-    top: var(--generate-v2-discard-top, 76px);
+    position: relative;
     width: min(430px, calc(100% - 24px));
-    z-index: 70;
     display: flex;
     align-items: center;
     justify-content: space-between;
@@ -2516,17 +2524,18 @@
     background: rgba(9, 14, 27, 0.97);
     box-shadow: 0 20px 48px rgba(0, 0, 0, 0.38);
   }
-  .generate-v2-discard-dialog::before {
-    content: "";
+  .generate-v2-discard-close {
     position: absolute;
-    top: -7px;
-    left: var(--generate-v2-discard-arrow-left, 28px);
-    width: 12px;
-    height: 12px;
-    background: rgba(9, 14, 27, 0.97);
-    border-left: 1px solid rgba(245, 158, 11, 0.28);
-    border-top: 1px solid rgba(245, 158, 11, 0.28);
-    transform: rotate(45deg);
+    top: 6px;
+    right: 6px;
+    width: 32px;
+    height: 32px;
+    padding: 0;
+    border: 0;
+    background: transparent;
+    color: rgba(255, 255, 255, 0.62);
+    font-size: 1.25rem;
+    line-height: 1;
   }
   .generate-v2-discard-dialog-title {
     color: #fff;
@@ -6977,7 +6986,10 @@
                   <div class="generate-v2-editor-section" id="generate-v2-editor-section-subscribe" data-v2-editor-section-panel="subscribe"></div>
                 </div>
               </div>
-              <div class="generate-v2-discard-dialog d-none" id="generate-v2-discard-dialog" role="dialog" aria-live="polite" aria-labelledby="generate-v2-discard-title">
+            </div>
+            <div class="generate-v2-discard-backdrop d-none" id="generate-v2-discard-dialog" aria-hidden="true">
+              <div class="generate-v2-discard-dialog" role="dialog" aria-modal="true" aria-live="polite" aria-labelledby="generate-v2-discard-title">
+                <button type="button" class="generate-v2-discard-close" id="generate-v2-discard-close" aria-label="Close">&times;</button>
                 <div>
                   <div class="generate-v2-discard-dialog-title" id="generate-v2-discard-title">Discard changes?</div>
                   <div class="generate-v2-discard-dialog-copy">Your edits have not been saved.</div>
@@ -12118,6 +12130,36 @@ const snapshotGenerateV2ClipEditForm = (form) => {
   }));
 };
 
+const rememberGenerateV2ClipEditSnapshot = (form = generateV2ClipEditState.form) => {
+  if (!form) return;
+  form.dataset.transcriptDirty = "0";
+  generateV2ClipEditState.snapshot = snapshotGenerateV2ClipEditForm(form);
+};
+
+const getGenerateV2ClipEditDifferences = () => {
+  const form = generateV2ClipEditState.form;
+  const differences = [];
+  if (form?.dataset.transcriptDirty === "1") {
+    differences.push({ field: "transcript", before: "saved", after: "edited" });
+  }
+  (generateV2ClipEditState.snapshot || []).forEach(({ field, value, checked, selectedIndex }) => {
+    if (!field) return;
+    const label = field.name || field.id || field.dataset?.editField || field.tagName.toLowerCase();
+    if (field.type === "checkbox" || field.type === "radio") {
+      if (field.checked !== !!checked) differences.push({ field: label, before: !!checked, after: field.checked });
+      return;
+    }
+    if (field.tagName === "SELECT" && Number.isInteger(selectedIndex) && field.selectedIndex !== selectedIndex) {
+      differences.push({ field: label, before: value, after: field.value });
+      return;
+    }
+    if (String(field.value ?? "") !== String(value ?? "")) {
+      differences.push({ field: label, before: value, after: field.value });
+    }
+  });
+  return differences;
+};
+
 const restoreGenerateV2ClipEditSnapshot = (snapshot) => {
   (snapshot || []).forEach(({ field, value, checked, selectedIndex }) => {
     if (!field) return;
@@ -12133,20 +12175,14 @@ const restoreGenerateV2ClipEditSnapshot = (snapshot) => {
 };
 
 const isGenerateV2ClipEditDirty = () => {
-  if (generateV2ClipEditState.form?.dataset.transcriptDirty === "1") {
-    return true;
+  const differences = getGenerateV2ClipEditDifferences();
+  if (differences.length) {
+    console.debug("[generate-v2] clip form is dirty", {
+      planIndex: generateV2ClipEditState.planIndex,
+      fields: differences,
+    });
   }
-  const snapshot = generateV2ClipEditState.snapshot || [];
-  return snapshot.some(({ field, value, checked, selectedIndex }) => {
-    if (!field) return false;
-    if (field.type === "checkbox" || field.type === "radio") {
-      return field.checked !== !!checked;
-    }
-    if (field.tagName === "SELECT" && Number.isInteger(selectedIndex) && field.selectedIndex !== selectedIndex) {
-      return true;
-    }
-    return String(field.value ?? "") !== String(value ?? "");
-  });
+  return differences.length > 0;
 };
 
 const restoreGenerateV2ClipEditForm = ({ discard = false } = {}) => {
@@ -12279,34 +12315,17 @@ const setGenerateV2EditorBusy = (busy, { message = "", saveLabel = "" } = {}) =>
 window.setGenerateV2EditorBusy = setGenerateV2EditorBusy;
 window.setGenerateV2EditorStatus = setGenerateV2EditorStatus;
 
-const positionGenerateV2DiscardDialog = (anchor = null) => {
-  const root = getGenerateV2Root();
-  const dialog = document.getElementById("generate-v2-discard-dialog");
-  if (!root || !dialog) {
-    return;
-  }
-  const card = root.querySelector(".generate-v2-left-card") || root;
-  const tabsRow = root.querySelector(".generate-v2-tabs-row");
-  const cardRect = card.getBoundingClientRect();
-  const anchorRect = anchor?.getBoundingClientRect?.() || tabsRow?.getBoundingClientRect?.() || cardRect;
-  const width = Math.min(430, Math.max(260, cardRect.width - 24));
-  const rawLeft = anchorRect.left + (anchorRect.width / 2) - cardRect.left - 32;
-  const left = Math.max(12, Math.min(cardRect.width - width - 12, rawLeft));
-  const top = Math.max(12, anchorRect.bottom - cardRect.top + 10);
-  const arrowLeft = Math.max(18, Math.min(width - 24, anchorRect.left + (anchorRect.width / 2) - cardRect.left - left));
-  dialog.style.setProperty("--generate-v2-discard-left", `${Math.round(left)}px`);
-  dialog.style.setProperty("--generate-v2-discard-top", `${Math.round(top)}px`);
-  dialog.style.setProperty("--generate-v2-discard-arrow-left", `${Math.round(arrowLeft)}px`);
-};
-
-const requestGenerateV2DiscardConfirm = (anchor = null) => new Promise((resolve) => {
+let closeActiveGenerateV2DiscardDialog = null;
+const requestGenerateV2DiscardConfirm = () => new Promise((resolve) => {
   const dialog = document.getElementById("generate-v2-discard-dialog");
   const keep = document.getElementById("generate-v2-discard-keep");
   const discard = document.getElementById("generate-v2-discard-confirm");
-  if (!dialog || !keep || !discard) {
+  const close = document.getElementById("generate-v2-discard-close");
+  if (!dialog || !keep || !discard || !close) {
     resolve(window.confirm("Discard changes?"));
     return;
   }
+  closeActiveGenerateV2DiscardDialog?.(false);
   let settled = false;
   const cleanup = (result) => {
     if (settled) {
@@ -12314,13 +12333,21 @@ const requestGenerateV2DiscardConfirm = (anchor = null) => new Promise((resolve)
     }
     settled = true;
     dialog.classList.add("d-none");
+    dialog.setAttribute("aria-hidden", "true");
     document.removeEventListener("keydown", onKeydown, true);
     keep.removeEventListener("click", onKeep);
     discard.removeEventListener("click", onDiscard);
+    close.removeEventListener("click", onClose);
+    dialog.removeEventListener("click", onBackdrop);
+    if (closeActiveGenerateV2DiscardDialog === cleanup) closeActiveGenerateV2DiscardDialog = null;
     resolve(result);
   };
   const onKeep = () => cleanup(false);
   const onDiscard = () => cleanup(true);
+  const onClose = () => cleanup(false);
+  const onBackdrop = (event) => {
+    if (event.target === dialog) cleanup(false);
+  };
   const onKeydown = (event) => {
     if (event.key === "Escape") {
       event.preventDefault();
@@ -12328,11 +12355,14 @@ const requestGenerateV2DiscardConfirm = (anchor = null) => new Promise((resolve)
       cleanup(false);
     }
   };
+  closeActiveGenerateV2DiscardDialog = cleanup;
   keep.addEventListener("click", onKeep);
   discard.addEventListener("click", onDiscard);
+  close.addEventListener("click", onClose);
+  dialog.addEventListener("click", onBackdrop);
   document.addEventListener("keydown", onKeydown, true);
-  positionGenerateV2DiscardDialog(anchor);
   dialog.classList.remove("d-none");
+  dialog.setAttribute("aria-hidden", "false");
   keep.focus({ preventScroll: true });
 });
 
@@ -12537,7 +12567,7 @@ window.exitGenerateV2EditMode = ({ saved = false } = {}) => {
   if (!saved) {
     window.restoreCropEditorDesignState?.();
   }
-  document.getElementById("generate-v2-discard-dialog")?.classList.add("d-none");
+  closeActiveGenerateV2DiscardDialog?.(false);
   setGenerateV2EditorTitleLabels(false);
   window.teardownCropEditor?.();
   restoreGenerateV2EditorNodes();
@@ -13362,7 +13392,7 @@ const mountGenerateV2ClipEditor = (planIndex = "") => {
   row.classList.add("is-editing");
   if (!keepMountedForm) {
     renderClipTextTrimEditor(form);
-    generateV2ClipEditState.snapshot = snapshotGenerateV2ClipEditForm(form);
+    rememberGenerateV2ClipEditSnapshot(form);
   }
 };
 
@@ -15466,7 +15496,7 @@ const initGenerateV2ClipTitleTimeEditors = () => {
         restoreGenerateV2ClipEditSnapshot(generateV2ClipEditState.snapshot);
         renderClipTextTrimEditor(form);
         setClipEditError(form, "");
-        generateV2ClipEditState.snapshot = snapshotGenerateV2ClipEditForm(form);
+        rememberGenerateV2ClipEditSnapshot(form);
         return;
       }
       closeClipEditForm(form.closest(".clip-rail-row"));
@@ -15520,7 +15550,7 @@ const initGenerateV2ClipTitleTimeEditors = () => {
         }
         closeClipEditForm(row);
         if (form.classList.contains("is-mounted-in-v2-editor")) {
-          generateV2ClipEditState.snapshot = snapshotGenerateV2ClipEditForm(form);
+          rememberGenerateV2ClipEditSnapshot(form);
         }
         if (payload.job_id) {
           form.dataset.transcriptDirty = "0";
@@ -15830,6 +15860,9 @@ const refreshClipList = async (preferredPlanIndex = null, preferredViewMode = nu
       hydrateGenerateV2RailThumbnailAspect(newClipPanel);
       window.initGenerateV2TextTranscript?.();
       resumeQueuedClipJobs();
+      if (!selectedEditorDirty && generateV2ClipEditState.form) {
+        rememberGenerateV2ClipEditSnapshot(generateV2ClipEditState.form);
+      }
       window.__generateV2PreserveSelectedPlanIndex = "";
     }
     const latestInfo = document.getElementById("youtube-latest-scheduled");
@@ -16636,6 +16669,9 @@ const finalizeClipJobSuccess = async (planIndex, { cached = false, freshness = n
       }
     }
   } finally {
+    if (String(generateV2ClipEditState.planIndex || "") === String(planIndex || "")) {
+      rememberGenerateV2ClipEditSnapshot(generateV2ClipEditState.form);
+    }
     clearTerminalUi();
   }
 };
