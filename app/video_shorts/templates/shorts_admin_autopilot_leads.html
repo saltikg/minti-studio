@@ -57,6 +57,16 @@
       line-height: 1.25;
       white-space: normal;
     }
+    .admin-autopilot-date-col {
+      width: 116px;
+      max-width: 116px;
+      padding-right: 8px !important;
+      padding-left: 8px !important;
+    }
+    .admin-autopilot-table th.admin-autopilot-date-col {
+      line-height: 1.25;
+      white-space: normal;
+    }
     .admin-autopilot-table tr:last-child td {
       border-bottom: 0;
     }
@@ -128,7 +138,7 @@
             <th>Tier</th>
             <th class="admin-autopilot-status-col">Password<br>set?</th>
             <th class="admin-autopilot-status-col">Google<br>linked?</th>
-            <th>Chosen</th>
+            <th class="admin-autopilot-date-col">Created<br>date</th>
             <th class="admin-autopilot-status-col">Channel<br>connected</th>
           </tr>
         </thead>
@@ -154,7 +164,7 @@
               </td>
               <td class="admin-autopilot-status-col">{{ customer.password_set_label }}</td>
               <td class="admin-autopilot-status-col">{{ customer.google_linked_label }}</td>
-              <td>{{ customer.chosen_at_pst or '—' }}</td>
+              <td class="admin-autopilot-date-col">{{ customer.chosen_date_pst or '—' }}</td>
               <td class="admin-autopilot-status-col">{{ customer.youtube_connected_label }}</td>
             </tr>
           {% else %}

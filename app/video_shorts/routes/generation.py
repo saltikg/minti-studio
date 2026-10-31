@@ -21188,6 +21188,7 @@ def _load_admin_autopilot_customers(
                 "service_tier": int(row[2] or 15),
                 "chosen_at": row[3],
                 "chosen_at_pst": _format_datetime_pst(row[3]),
+                "chosen_date_pst": _format_datetime_pst(row[3]).split(" · ", 1)[0],
                 "password_set": bool(row[4]),
                 "password_set_label": "Yes" if bool(row[4]) else "No",
                 "google_linked": bool(row[5]),
