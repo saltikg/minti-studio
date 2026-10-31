@@ -226,14 +226,6 @@
             </span>
           </a>
           <a
-            href="{{ url_for('video_shorts_bp.admin_email_sequence') }}"
-            class="vs-admin-nav-link {% if request.path.startswith('/video_shorts/admin/email-sequence') %}is-active{% endif %}">
-            <span aria-hidden="true">●</span>
-            <span class="vs-admin-nav-label">
-              <span>Signup Emails</span>
-            </span>
-          </a>
-          <a
             href="{{ url_for('video_shorts_bp.admin_leads_pipeline_overview') }}"
             class="vs-admin-nav-link {% if request.endpoint == 'video_shorts_bp.admin_leads_pipeline_overview' %}is-active{% endif %}">
             <span aria-hidden="true">●</span>
@@ -247,6 +239,34 @@
             <span aria-hidden="true">●</span>
             <span class="vs-admin-nav-label">
               <span>Share Links</span>
+            </span>
+          </a>
+        </div>
+
+        <div class="vs-admin-nav-group">
+          <div class="vs-admin-nav-heading">Email</div>
+          <a
+            href="{{ url_for('video_shorts_bp.admin_email_sequence') }}"
+            class="vs-admin-nav-link {% if request.endpoint == 'video_shorts_bp.admin_email_sequence' %}is-active{% endif %}">
+            <span aria-hidden="true">●</span>
+            <span class="vs-admin-nav-label">
+              <span>Signup Sequence</span>
+            </span>
+          </a>
+          <a
+            href="{{ url_for('video_shorts_bp.admin_email_sequence_recipients') }}"
+            class="vs-admin-nav-link {% if request.endpoint == 'video_shorts_bp.admin_email_sequence_recipients' %}is-active{% endif %}">
+            <span aria-hidden="true">●</span>
+            <span class="vs-admin-nav-label">
+              <span>Recipients</span>
+            </span>
+          </a>
+          <a
+            href="{{ url_for('video_shorts_bp.admin_email_sequence_log') }}"
+            class="vs-admin-nav-link {% if request.endpoint == 'video_shorts_bp.admin_email_sequence_log' %}is-active{% endif %}">
+            <span aria-hidden="true">●</span>
+            <span class="vs-admin-nav-label">
+              <span>Send Log</span>
             </span>
           </a>
         </div>

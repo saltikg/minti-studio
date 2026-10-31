@@ -1,9 +1,11 @@
 {% extends "vs_admin_base.html" %}
 
-{% block title %}Signup Email Sequence{% endblock %}
-{% block admin_heading %}Signup Email Sequence{% endblock %}
+{% block title %}{{ admin_title }}{% endblock %}
+{% block admin_heading %}{{ admin_title }}{% endblock %}
 {% block admin_subheading %}
-  <p>Seven plain-text emails for manually enrolled recipients. Worker sending remains off unless <code>NURTURE_ENABLED=true</code>.</p>
+  {% if sequence_page == 'steps' %}<p>Edit and preview the seven plain-text signup sequence emails.</p>{% endif %}
+  {% if sequence_page == 'recipients' %}<p>Search verified users and manage manual sequence enrollment.</p>{% endif %}
+  {% if sequence_page == 'log' %}<p>Review sequence delivery and click results.</p>{% endif %}
 {% endblock %}
 
 {% block extra_styles %}
@@ -13,7 +15,8 @@
     .email-sequence-head { display: flex; justify-content: space-between; gap: 16px; align-items: center; margin-bottom: 16px; }
     .email-sequence-title { margin: 0; font-size: 1.15rem; }
     .email-sequence-fields { display: grid; gap: 14px; }
-    .email-sequence-body { min-height: 180px; }
+    .email-sequence-body { min-height: 28rem; overflow-y: hidden; }
+    .email-sequence-subject { width: 100%; }
     .email-sequence-preview { margin: 0; padding: 16px; border-radius: 12px; background: rgba(0,0,0,.25); color: rgba(255,255,255,.82); white-space: pre-wrap; overflow-wrap: anywhere; }
     .email-sequence-preview-label { margin-bottom: 8px; color: rgba(255,255,255,.56); font-size: .78rem; text-transform: uppercase; letter-spacing: .08em; }
     .email-sequence-actions { display: flex; flex-wrap: wrap; align-items: center; gap: 10px; }
@@ -27,6 +30,7 @@
 
 {% block content %}
   <div class="email-sequence-grid">
+    {% if sequence_page == 'recipients' %}
     <section class="vs-admin-card email-sequence-card">
       <h2 class="email-sequence-title mb-3">Recipient bucket</h2>
       <form method="get" class="email-sequence-inline mb-3">
@@ -80,7 +84,9 @@
         </table>
       </div>
     </section>
+    {% endif %}
 
+    {% if sequence_page == 'steps' %}
     {% for step in steps %}
       <section class="vs-admin-card email-sequence-card" id="step-{{ step.step }}">
         <form method="post" class="email-sequence-fields">
@@ -89,8 +95,6 @@
             <div>
               <h2 class="email-sequence-title">Step {{ step.step }} · Day {{ step.delay_days }}</h2>
               <div class="vs-admin-muted">Available placeholders: <code>{name}</code>, <code>{first_name}</code>; missing names fall back to “there”.</div>
-              {% set metric = counts.get(step.step, {}) %}
-              <div class="email-sequence-metrics mt-2"><span>Sent {{ metric.get('sent', 0) }}</span><span>Clicked {{ metric.get('clicked', 0) }}</span><span>Skipped {{ metric.get('skipped', 0) }}</span><span>Failed {{ metric.get('failed', 0) }}</span></div>
             </div>
             <div class="form-check form-switch">
               <input class="form-check-input" type="checkbox" role="switch" name="active" value="1" id="active-{{ step.step }}" {% if step.active %}checked{% endif %}>
@@ -99,11 +103,11 @@
           </div>
           <div>
             <label class="form-label" for="subject-{{ step.step }}">Subject</label>
-            <input class="form-control" id="subject-{{ step.step }}" name="subject" value="{{ step.subject }}" maxlength="500">
+            <input class="form-control email-sequence-subject" id="subject-{{ step.step }}" name="subject" value="{{ step.subject }}" maxlength="500">
           </div>
           <div>
             <label class="form-label" for="body-{{ step.step }}">Body (plain text)</label>
-            <textarea class="form-control email-sequence-body" id="body-{{ step.step }}" name="body_text">{{ step.body_text }}</textarea>
+            <textarea class="form-control email-sequence-body" id="body-{{ step.step }}" name="body_text" rows="18" data-autogrow>{{ step.body_text }}</textarea>
           </div>
           <div>
             <div class="email-sequence-preview-label">Preview as {{ sample_name }} — footer included</div>
@@ -119,6 +123,23 @@
         </form>
       </section>
     {% endfor %}
+    {% endif %}
+
+    {% if sequence_page == 'log' %}
+    <section class="vs-admin-card email-sequence-card">
+      <h2 class="email-sequence-title mb-3">Per-step summary</h2>
+      <div class="table-responsive">
+        <table class="email-sequence-table">
+          <thead><tr><th>Step</th><th>Sent</th><th>Clicked</th><th>Skipped</th><th>Failed</th></tr></thead>
+          <tbody>
+            {% for step in range(1, 8) %}
+              {% set metric = counts.get(step, {}) %}
+              <tr><td>{{ step }}</td><td>{{ metric.get('sent', 0) }}</td><td>{{ metric.get('clicked', 0) }}</td><td>{{ metric.get('skipped', 0) }}</td><td>{{ metric.get('failed', 0) }}</td></tr>
+            {% endfor %}
+          </tbody>
+        </table>
+      </div>
+    </section>
 
     <section class="vs-admin-card email-sequence-card">
       <h2 class="email-sequence-title mb-3">Send log</h2>
@@ -133,5 +154,21 @@
         {% else %}<tr><td colspan="5" class="vs-admin-muted">No sends match these filters.</td></tr>{% endfor %}
       </tbody></table></div>
     </section>
+    {% endif %}
   </div>
+{% endblock %}
+
+{% block extra_scripts %}
+  {% if sequence_page == 'steps' %}
+  <script>
+    document.querySelectorAll("textarea[data-autogrow]").forEach((textarea) => {
+      const resize = () => {
+        textarea.style.height = "auto";
+        textarea.style.height = `${Math.max(textarea.scrollHeight, 448)}px`;
+      };
+      textarea.addEventListener("input", resize);
+      resize();
+    });
+  </script>
+  {% endif %}
 {% endblock %}
