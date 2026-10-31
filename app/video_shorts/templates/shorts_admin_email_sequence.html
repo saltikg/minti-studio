@@ -56,6 +56,9 @@
                         <input type="hidden" name="action" value="add_recipient">
                         <input type="hidden" name="user_id" value="{{ user.id }}">
                         {% if user.restart %}<input type="hidden" name="confirm_restart" value="1">{% endif %}
+                        <select class="form-select form-select-sm d-inline-block w-auto" name="language" aria-label="Sequence language">
+                          <option value="en" selected>EN</option><option value="tr">TR</option>
+                        </select>
                         <button class="btn btn-sm btn-primary" type="submit">{% if user.restart %}Restart sequence{% else %}Add to sequence{% endif %}</button>
                       </form>
                     {% endif %}
@@ -68,18 +71,29 @@
       {% endif %}
       <div class="table-responsive">
         <table class="email-sequence-table">
-          <thead><tr><th>Name</th><th>Email</th><th>Enrolled</th><th>Next</th><th>Last sent</th><th>Status</th><th></th></tr></thead>
+          <thead><tr><th>Name</th><th>Email</th><th>Language</th><th>Enrolled</th><th>Next</th><th>Last sent</th><th>Status</th><th></th></tr></thead>
           <tbody>
             {% for recipient in bucket %}
               <tr>
                 <td>{{ recipient.name or '—' }}</td><td>{{ recipient.email }}</td>
+                <td>
+                  <form method="post" class="d-flex gap-2 align-items-center">
+                    <input type="hidden" name="action" value="update_language">
+                    <input type="hidden" name="user_id" value="{{ recipient.user_id }}">
+                    <select class="form-select form-select-sm" name="language" aria-label="Language for {{ recipient.email }}">
+                      <option value="en" {% if recipient.language == 'en' %}selected{% endif %}>EN</option>
+                      <option value="tr" {% if recipient.language == 'tr' %}selected{% endif %}>TR</option>
+                    </select>
+                    <button class="btn btn-sm btn-outline-light" type="submit">Update</button>
+                  </form>
+                </td>
                 <td>{{ recipient.enrolled_at|admin_datetime }}</td>
                 <td>{% if recipient.next_step %}Step {{ recipient.next_step }} · {{ recipient.due_at|admin_datetime }}{% else %}Complete{% endif %}</td>
                 <td>{% if recipient.last_sent_step %}Step {{ recipient.last_sent_step }}{% else %}—{% endif %}</td>
                 <td>{{ recipient.status }}</td>
                 <td>{% if recipient.status == 'in sequence' %}<form method="post"><input type="hidden" name="action" value="remove_recipient"><input type="hidden" name="user_id" value="{{ recipient.user_id }}"><button class="btn btn-sm btn-outline-danger" type="submit">Remove</button></form>{% endif %}</td>
               </tr>
-            {% else %}<tr><td colspan="7" class="vs-admin-muted">No recipients have been enrolled.</td></tr>{% endfor %}
+            {% else %}<tr><td colspan="8" class="vs-admin-muted">No recipients have been enrolled.</td></tr>{% endfor %}
           </tbody>
         </table>
       </div>
@@ -89,38 +103,55 @@
     {% if sequence_page == 'steps' %}
     {% for step in steps %}
       <section class="vs-admin-card email-sequence-card" id="step-{{ step.step }}">
-        <form method="post" class="email-sequence-fields">
-          <input type="hidden" name="step" value="{{ step.step }}">
-          <div class="email-sequence-head">
-            <div>
-              <h2 class="email-sequence-title">Step {{ step.step }} · Day {{ step.delay_days }}</h2>
-              <div class="vs-admin-muted">Available placeholders: <code>{name}</code>, <code>{first_name}</code>; missing names fall back to “there”.</div>
-            </div>
-            <div class="form-check form-switch">
-              <input class="form-check-input" type="checkbox" role="switch" name="active" value="1" id="active-{{ step.step }}" {% if step.active %}checked{% endif %}>
-              <label class="form-check-label" for="active-{{ step.step }}">Active</label>
-            </div>
-          </div>
+        <div class="email-sequence-head">
           <div>
-            <label class="form-label" for="subject-{{ step.step }}">Subject</label>
-            <input class="form-control email-sequence-subject" id="subject-{{ step.step }}" name="subject" value="{{ step.subject }}" maxlength="500">
+            <h2 class="email-sequence-title">Step {{ step.step }} · Day {{ step.delay_days }}</h2>
+            <div class="vs-admin-muted">Available placeholders: <code>{name}</code>, <code>{first_name}</code>; missing names fall back to “there”.</div>
           </div>
-          <div>
-            <label class="form-label" for="body-{{ step.step }}">Body (plain text)</label>
-            <textarea class="form-control email-sequence-body" id="body-{{ step.step }}" name="body_text" rows="18" data-autogrow>{{ step.body_text }}</textarea>
-          </div>
-          <div>
-            <div class="email-sequence-preview-label">Preview as {{ sample_name }} — footer included</div>
-            <pre class="email-sequence-preview"><strong>Subject: {{ step.preview.subject or '—' }}</strong>
+        </div>
+        <ul class="nav nav-tabs mb-3" role="tablist">
+          {% for language in ['en', 'tr'] %}
+            <li class="nav-item" role="presentation"><button class="nav-link {% if selected_language == language %}active{% endif %}" id="step-{{ step.step }}-{{ language }}-tab" data-bs-toggle="tab" data-bs-target="#step-{{ step.step }}-{{ language }}" type="button" role="tab">{{ language|upper }}</button></li>
+          {% endfor %}
+        </ul>
+        <div class="tab-content">
+          {% for language in ['en', 'tr'] %}
+            {% set version = step.versions.get(language) %}
+            {% set metric = counts.get(step.step, {}).get(language, {}) %}
+            <div class="tab-pane fade {% if selected_language == language %}show active{% endif %}" id="step-{{ step.step }}-{{ language }}" role="tabpanel">
+              <form method="post" class="email-sequence-fields">
+                <input type="hidden" name="step" value="{{ step.step }}">
+                <input type="hidden" name="language" value="{{ language }}">
+                <div class="d-flex justify-content-between gap-3 align-items-center">
+                  <div class="email-sequence-metrics"><span>Sent {{ metric.get('sent', 0) }}</span><span>Clicked {{ metric.get('clicked', 0) }}</span><span>Skipped {{ metric.get('skipped', 0) }}</span><span>Failed {{ metric.get('failed', 0) }}</span></div>
+                  <div class="form-check form-switch">
+                    <input class="form-check-input" type="checkbox" role="switch" name="active" value="1" id="active-{{ step.step }}-{{ language }}" {% if version and version.active %}checked{% endif %}>
+                    <label class="form-check-label" for="active-{{ step.step }}-{{ language }}">Active</label>
+                  </div>
+                </div>
+                <div>
+                  <label class="form-label" for="subject-{{ step.step }}-{{ language }}">Subject</label>
+                  <input class="form-control email-sequence-subject" id="subject-{{ step.step }}-{{ language }}" name="subject" value="{{ version.subject if version else '' }}" maxlength="500">
+                </div>
+                <div>
+                  <label class="form-label" for="body-{{ step.step }}-{{ language }}">Body (plain text)</label>
+                  <textarea class="form-control email-sequence-body" id="body-{{ step.step }}-{{ language }}" name="body_text" rows="18" data-autogrow>{{ version.body_text if version else '' }}</textarea>
+                </div>
+                <div>
+                  <div class="email-sequence-preview-label">{{ language|upper }} preview as {{ sample_name }}</div>
+                  <pre class="email-sequence-preview"><strong>Subject: {{ version.preview.subject if version and version.preview.subject else '—' }}</strong>
 
-{{ step.preview.body_text }}</pre>
-          </div>
-          <div class="email-sequence-actions">
-            <button class="btn btn-primary" type="submit" name="action" value="save">Save step</button>
-            <button class="btn btn-outline-light" type="submit" name="action" value="test">Send test to me</button>
-            {% if step.updated_at %}<span class="vs-admin-muted small">Last updated {{ step.updated_at|admin_datetime }}</span>{% endif %}
-          </div>
-        </form>
+{{ version.preview.body_text if version else '' }}</pre>
+                </div>
+                <div class="email-sequence-actions">
+                  <button class="btn btn-primary" type="submit" name="action" value="save">Save {{ language|upper }}</button>
+                  <button class="btn btn-outline-light" type="submit" name="action" value="test">Send test {{ language|upper }}</button>
+                  {% if version and version.updated_at %}<span class="vs-admin-muted small">Last updated {{ version.updated_at|admin_datetime }}</span>{% endif %}
+                </div>
+              </form>
+            </div>
+          {% endfor %}
+        </div>
       </section>
     {% endfor %}
     {% endif %}
@@ -132,9 +163,10 @@
         <table class="email-sequence-table">
           <thead><tr><th>Step</th><th>Sent</th><th>Clicked</th><th>Skipped</th><th>Failed</th></tr></thead>
           <tbody>
-            {% for step in range(1, 8) %}
-              {% set metric = counts.get(step, {}) %}
-              <tr><td>{{ step }}</td><td>{{ metric.get('sent', 0) }}</td><td>{{ metric.get('clicked', 0) }}</td><td>{{ metric.get('skipped', 0) }}</td><td>{{ metric.get('failed', 0) }}</td></tr>
+            {% for step in range(1, 8) %}{% for language in ['en', 'tr'] %}
+              {% set metric = counts.get(step, {}).get(language, {}) %}
+              <tr><td>{{ step }} · {{ language|upper }}</td><td>{{ metric.get('sent', 0) }}</td><td>{{ metric.get('clicked', 0) }}</td><td>{{ metric.get('skipped', 0) }}</td><td>{{ metric.get('failed', 0) }}</td></tr>
+            {% endfor %}
             {% endfor %}
           </tbody>
         </table>
@@ -146,12 +178,13 @@
       <form method="get" class="email-sequence-inline mb-3">
         <div><label class="form-label" for="log-step">Step</label><select class="form-select" id="log-step" name="log_step"><option value="">All</option>{% for n in range(1, 8) %}<option value="{{ n }}" {% if log_step == n %}selected{% endif %}>{{ n }}</option>{% endfor %}</select></div>
         <div><label class="form-label" for="log-status">Status</label><select class="form-select" id="log-status" name="log_status"><option value="">All</option>{% for value in ['scheduled', 'processing', 'sent', 'failed', 'skipped'] %}<option value="{{ value }}" {% if log_status == value %}selected{% endif %}>{{ value }}</option>{% endfor %}</select></div>
+        <div><label class="form-label" for="log-language">Language</label><select class="form-select" id="log-language" name="log_language"><option value="">All</option><option value="en" {% if log_language == 'en' %}selected{% endif %}>EN</option><option value="tr" {% if log_language == 'tr' %}selected{% endif %}>TR</option></select></div>
         <label class="form-check"><input class="form-check-input" type="checkbox" name="include_tests" value="1" {% if include_tests %}checked{% endif %}> Include tests</label>
         <button class="btn btn-outline-light" type="submit">Filter</button>
       </form>
-      <div class="table-responsive"><table class="email-sequence-table"><thead><tr><th>Recipient</th><th>Step</th><th>Status</th><th>Sent</th><th>Clicked</th></tr></thead><tbody>
-        {% for item in send_log %}<tr><td>{{ item.name or item.email }}<div class="vs-admin-muted small">{{ item.email }}{% if item.is_test %} · test{% endif %}</div></td><td>{{ item.step }}</td><td>{{ item.status }}</td><td>{% if item.sent_at %}{{ item.sent_at|admin_datetime }}{% else %}—{% endif %}</td><td>{% if item.clicked_at %}{{ item.clicked_at|admin_datetime }}{% else %}—{% endif %}</td></tr>
-        {% else %}<tr><td colspan="5" class="vs-admin-muted">No sends match these filters.</td></tr>{% endfor %}
+      <div class="table-responsive"><table class="email-sequence-table"><thead><tr><th>Recipient</th><th>Step</th><th>Language</th><th>Status</th><th>Sent</th><th>Clicked</th></tr></thead><tbody>
+        {% for item in send_log %}<tr><td>{{ item.name or item.email }}<div class="vs-admin-muted small">{{ item.email }}{% if item.is_test %} · test{% endif %}</div></td><td>{{ item.step }}</td><td>{{ item.language|upper }}</td><td>{{ item.status }}</td><td>{% if item.sent_at %}{{ item.sent_at|admin_datetime }}{% else %}—{% endif %}</td><td>{% if item.clicked_at %}{{ item.clicked_at|admin_datetime }}{% else %}—{% endif %}</td></tr>
+        {% else %}<tr><td colspan="6" class="vs-admin-muted">No sends match these filters.</td></tr>{% endfor %}
       </tbody></table></div>
     </section>
     {% endif %}
@@ -161,13 +194,19 @@
 {% block extra_scripts %}
   {% if sequence_page == 'steps' %}
   <script>
+    const resizeSequenceTextarea = (textarea) => {
+      textarea.style.height = "auto";
+      textarea.style.height = `${Math.max(textarea.scrollHeight, 448)}px`;
+    };
     document.querySelectorAll("textarea[data-autogrow]").forEach((textarea) => {
-      const resize = () => {
-        textarea.style.height = "auto";
-        textarea.style.height = `${Math.max(textarea.scrollHeight, 448)}px`;
-      };
-      textarea.addEventListener("input", resize);
-      resize();
+      textarea.addEventListener("input", () => resizeSequenceTextarea(textarea));
+      resizeSequenceTextarea(textarea);
+    });
+    document.querySelectorAll('[data-bs-toggle="tab"]').forEach((tab) => {
+      tab.addEventListener("shown.bs.tab", () => {
+        document.querySelector(tab.dataset.bsTarget)?.querySelectorAll("textarea[data-autogrow]")
+          .forEach(resizeSequenceTextarea);
+      });
     });
   </script>
   {% endif %}

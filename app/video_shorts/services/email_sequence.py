@@ -14,6 +14,7 @@ from zoneinfo import ZoneInfo
 SIGNUP_SEQUENCE_KEY = "signup"
 SIGNUP_SUBSCRIPTION_LIST = "signup_sequence"
 SIGNUP_SEQUENCE_DELAYS = (2, 5, 9, 14, 21, 28, 35)
+SIGNUP_SEQUENCE_LANGUAGES = ("en", "tr")
 NURTURE_MAX_ATTEMPTS = 3
 NURTURE_BACKOFF_MINUTES = 5
 NURTURE_PACIFIC_ZONE = ZoneInfo("America/Los_Angeles")
@@ -43,6 +44,7 @@ def ensure_email_sequence_schema(conn) -> None:
             enrolled_at {timestamp_type},
             enrolled_by VARCHAR,
             removed_at {timestamp_type},
+            language VARCHAR NOT NULL DEFAULT 'en',
             UNIQUE (list, email_normalized)
         )
         """
@@ -59,7 +61,8 @@ def ensure_email_sequence_schema(conn) -> None:
             active BOOLEAN NOT NULL DEFAULT FALSE,
             updated_at {timestamp_type} NOT NULL DEFAULT {now_sql},
             updated_by VARCHAR,
-            UNIQUE (sequence_key, step)
+            language VARCHAR NOT NULL DEFAULT 'en',
+            UNIQUE (sequence_key, step, language)
         )
         """
     )
@@ -83,6 +86,7 @@ def ensure_email_sequence_schema(conn) -> None:
             sent_at {timestamp_type},
             clicked_at {timestamp_type},
             link_urls TEXT NOT NULL DEFAULT '[]',
+            language VARCHAR,
             is_test BOOLEAN NOT NULL DEFAULT FALSE,
             created_at {timestamp_type} NOT NULL DEFAULT {now_sql}
         )
@@ -92,6 +96,27 @@ def ensure_email_sequence_schema(conn) -> None:
     conn.execute("ALTER TABLE email_subscriptions ADD COLUMN IF NOT EXISTS enrolled_by VARCHAR")
     conn.execute(f"ALTER TABLE email_subscriptions ADD COLUMN IF NOT EXISTS removed_at {timestamp_type}")
     if backend_name == "postgres":
+        conn.execute(
+            "ALTER TABLE email_subscriptions ADD COLUMN IF NOT EXISTS language VARCHAR NOT NULL DEFAULT 'en'"
+        )
+        conn.execute(
+            "ALTER TABLE email_sequence_steps ADD COLUMN IF NOT EXISTS language VARCHAR NOT NULL DEFAULT 'en'"
+        )
+    else:
+        conn.execute("ALTER TABLE email_subscriptions ADD COLUMN IF NOT EXISTS language VARCHAR DEFAULT 'en'")
+        conn.execute("ALTER TABLE email_sequence_steps ADD COLUMN IF NOT EXISTS language VARCHAR DEFAULT 'en'")
+    conn.execute("ALTER TABLE email_sends ADD COLUMN IF NOT EXISTS language VARCHAR")
+    conn.execute("UPDATE email_sends SET language = 'en' WHERE language IS NULL")
+    if backend_name == "postgres":
+        conn.execute(
+            "ALTER TABLE email_sequence_steps DROP CONSTRAINT IF EXISTS email_sequence_steps_sequence_key_step_key"
+        )
+        conn.execute(
+            """
+            CREATE UNIQUE INDEX IF NOT EXISTS idx_email_sequence_steps_key_step_language
+            ON email_sequence_steps(sequence_key, step, language)
+            """
+        )
         conn.execute("ALTER TABLE email_sends ADD COLUMN IF NOT EXISTS link_urls TEXT NOT NULL DEFAULT '[]'")
     else:
         conn.execute("ALTER TABLE email_sends ADD COLUMN IF NOT EXISTS link_urls TEXT DEFAULT '[]'")
@@ -123,17 +148,28 @@ def ensure_email_sequence_schema(conn) -> None:
         ON email_subscriptions(list, status, enrolled_at){eligibility_where}
         """
     )
-    for step, delay_days in enumerate(SIGNUP_SEQUENCE_DELAYS, start=1):
-        conn.execute(
-            """
-            INSERT INTO email_sequence_steps (
-                id, sequence_key, step, delay_days, subject, body_text, active
+    for language in SIGNUP_SEQUENCE_LANGUAGES:
+        for step, delay_days in enumerate(SIGNUP_SEQUENCE_DELAYS, start=1):
+            conn.execute(
+                """
+                INSERT INTO email_sequence_steps (
+                    id, sequence_key, step, delay_days, subject, body_text, active, language
+                )
+                VALUES (?, 'signup', ?, ?, '', '', FALSE, ?)
+                ON CONFLICT (sequence_key, step, language) DO NOTHING
+                """,
+                [str(uuid4()), step, delay_days, language],
             )
-            VALUES (?, 'signup', ?, ?, '', '', FALSE)
-            ON CONFLICT (sequence_key, step) DO NOTHING
-            """,
-            [str(uuid4()), step, delay_days],
-        )
+    conn.execute(
+        """
+        UPDATE email_sequence_steps target
+        SET delay_days = source.delay_days
+        FROM email_sequence_steps source
+        WHERE target.sequence_key = 'signup' AND target.language = 'tr'
+          AND source.sequence_key = target.sequence_key AND source.step = target.step
+          AND source.language = 'en' AND target.delay_days <> source.delay_days
+        """
+    )
 
 
 def normalize_sequence_email(value: object) -> str:
@@ -235,7 +271,7 @@ def _claim_due_nurture_send(conn, *, now_utc: datetime) -> dict[str, Any] | None
             LIMIT 1
         )
         RETURNING id, step, user_id, email_normalized, subject_sent, body_sent,
-                  send_token, attempts, link_urls
+                  send_token, attempts, link_urls, COALESCE(language, 'en')
         """,
         [NURTURE_MAX_ATTEMPTS],
     ).fetchone()
@@ -245,7 +281,7 @@ def _claim_due_nurture_send(conn, *, now_utc: datetime) -> dict[str, Any] | None
             "id": str(retry[0]), "step": int(retry[1]), "user_id": str(retry[2]),
             "email": str(retry[3]), "subject": str(retry[4]), "body": str(retry[5]),
             "send_token": str(retry[6]), "attempts": int(retry[7]),
-            "link_urls": str(retry[8] or "[]"),
+            "link_urls": str(retry[8] or "[]"), "language": str(retry[9] or "en"),
         }
 
     reserved_today = conn.execute(
@@ -265,10 +301,12 @@ def _claim_due_nurture_send(conn, *, now_utc: datetime) -> dict[str, Any] | None
     row = conn.execute(
         """
         SELECT s.id, s.user_id, s.email_normalized, u.name,
-               st.step, st.subject, st.body_text, st.active, s.unsubscribe_token
+               st.step, st.subject, st.body_text, st.active, s.unsubscribe_token,
+               COALESCE(s.language, 'en')
         FROM email_subscriptions s
         JOIN shorts_users u ON CAST(u.id AS VARCHAR) = CAST(s.user_id AS VARCHAR)
         JOIN email_sequence_steps st ON st.sequence_key = 'signup'
+         AND st.language = COALESCE(s.language, 'en')
         WHERE s.list = 'signup_sequence' AND s.enrolled_at IS NOT NULL
           AND s.removed_at IS NULL AND s.status = 'subscribed'
           AND COALESCE(s.global_unsubscribed, FALSE) = FALSE
@@ -282,6 +320,7 @@ def _claim_due_nurture_send(conn, *, now_utc: datetime) -> dict[str, Any] | None
           AND NOT EXISTS (
               SELECT 1 FROM email_sequence_steps earlier
               WHERE earlier.sequence_key = 'signup' AND earlier.step < st.step
+                AND earlier.language = st.language
                 AND NOT EXISTS (
                     SELECT 1 FROM email_sends prior
                     WHERE prior.sequence_key = 'signup' AND prior.step = earlier.step
@@ -308,7 +347,7 @@ def _claim_due_nurture_send(conn, *, now_utc: datetime) -> dict[str, Any] | None
     if not row:
         return None
 
-    _subscription_id, user_id, email, name, step, subject, body_text, active, _token = row
+    _subscription_id, user_id, email, name, step, subject, body_text, active, _token, language = row
     send_id = str(uuid4())
     send_token = new_email_token()
     if not bool(active) or not str(subject or "").strip() or not str(body_text or "").strip():
@@ -317,12 +356,12 @@ def _claim_due_nurture_send(conn, *, now_utc: datetime) -> dict[str, Any] | None
             INSERT INTO email_sends (
                 id, sequence_key, step, user_id, email_normalized, subject_sent,
                 body_sent, send_token, status, error, attempts, scheduled_at,
-                is_test, created_at
+                language, is_test, created_at
             ) VALUES (?, 'signup', ?, ?, ?, ?, ?, ?, 'skipped', ?, 0,
-                      CURRENT_TIMESTAMP, FALSE, CURRENT_TIMESTAMP)
+                      CURRENT_TIMESTAMP, ?, FALSE, CURRENT_TIMESTAMP)
             """,
             [send_id, step, str(user_id), str(email), str(subject or ""), str(body_text or ""),
-             send_token, "inactive_or_empty_step"],
+             send_token, "inactive_or_empty_step", str(language or "en")],
         )
         conn.commit()
         return {"skipped": True, "id": send_id}
@@ -343,18 +382,18 @@ def _claim_due_nurture_send(conn, *, now_utc: datetime) -> dict[str, Any] | None
         INSERT INTO email_sends (
             id, sequence_key, step, user_id, email_normalized, subject_sent,
             body_sent, send_token, status, attempts, scheduled_at, link_urls,
-            is_test, created_at
+            language, is_test, created_at
         ) VALUES (?, 'signup', ?, ?, ?, ?, ?, ?, 'processing', 1,
-                  CURRENT_TIMESTAMP, ?, FALSE, CURRENT_TIMESTAMP)
+                  CURRENT_TIMESTAMP, ?, ?, FALSE, CURRENT_TIMESTAMP)
         """,
         [send_id, step, str(user_id), str(email), rendered["subject"], tracked_body,
-         send_token, json.dumps(link_urls)],
+         send_token, json.dumps(link_urls), str(language or "en")],
     )
     conn.commit()
     return {
         "id": send_id, "step": int(step), "user_id": str(user_id), "email": str(email),
         "subject": rendered["subject"], "body": tracked_body, "send_token": send_token,
-        "attempts": 1,
+        "attempts": 1, "language": str(language or "en"),
     }
 
 
@@ -432,10 +471,11 @@ def process_due_signup_nurture_email() -> bool:
 def load_signup_sequence_steps(conn) -> list[dict[str, Any]]:
     rows = conn.execute(
         """
-        SELECT id, step, delay_days, subject, body_text, active, updated_at, updated_by
+        SELECT id, step, delay_days, subject, body_text, active, updated_at, updated_by,
+               COALESCE(language, 'en')
         FROM email_sequence_steps
         WHERE sequence_key = 'signup'
-        ORDER BY step
+        ORDER BY step, language
         """
     ).fetchall()
     return [
@@ -448,6 +488,7 @@ def load_signup_sequence_steps(conn) -> list[dict[str, Any]]:
             "active": bool(row[5]),
             "updated_at": row[6],
             "updated_by": str(row[7] or ""),
+            "language": str(row[8] or "en"),
         }
         for row in rows
     ]

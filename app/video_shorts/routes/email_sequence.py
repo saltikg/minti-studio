@@ -22,15 +22,19 @@ from app.video_shorts.services.outreach_email_send import send_zoho_email
 SAMPLE_RECIPIENT_NAME = "Alex Morgan"
 
 
-def _load_step(conn, step: int):
+def _parsed_language(value: object) -> str:
+    return "tr" if str(value or "").strip().lower() == "tr" else "en"
+
+
+def _load_step(conn, step: int, language: str):
     return conn.execute(
         """
-        SELECT id, step, delay_days, subject, body_text, active
+        SELECT id, step, delay_days, subject, body_text, active, language
         FROM email_sequence_steps
-        WHERE sequence_key = 'signup' AND step = ?
+        WHERE sequence_key = 'signup' AND step = ? AND language = ?
         LIMIT 1
         """,
-        [step],
+        [step, language],
     ).fetchone()
 
 
@@ -46,6 +50,27 @@ def _base_url() -> str:
     return str(current_app.config.get("BASE_URL") or "https://mintistudio.com").rstrip("/")
 
 
+def _load_sequence_counts(conn) -> dict[int, dict[str, dict[str, int]]]:
+    rows = conn.execute(
+        """
+        SELECT step, COALESCE(language, 'en'),
+               SUM(CASE WHEN status = 'sent' THEN 1 ELSE 0 END),
+               SUM(CASE WHEN clicked_at IS NOT NULL THEN 1 ELSE 0 END),
+               SUM(CASE WHEN status = 'skipped' THEN 1 ELSE 0 END),
+               SUM(CASE WHEN status = 'failed' THEN 1 ELSE 0 END)
+        FROM email_sends WHERE sequence_key = 'signup' AND is_test = FALSE
+        GROUP BY step, COALESCE(language, 'en')
+        """
+    ).fetchall()
+    counts: dict[int, dict[str, dict[str, int]]] = {}
+    for row in rows:
+        counts.setdefault(int(row[0]), {})[str(row[1] or "en")] = {
+            "sent": int(row[2] or 0), "clicked": int(row[3] or 0),
+            "skipped": int(row[4] or 0), "failed": int(row[5] or 0),
+        }
+    return counts
+
+
 @video_shorts_bp.route("/admin/email-sequence", methods=["GET", "POST"])
 @require_admin
 def admin_email_sequence():
@@ -55,7 +80,8 @@ def admin_email_sequence():
         if request.method == "POST":
             action = str(request.form.get("action") or "save").strip().lower()
             step = _parsed_step(request.form.get("step"))
-            row = _load_step(conn, step) if step is not None else None
+            language = _parsed_language(request.form.get("language"))
+            row = _load_step(conn, step, language) if step is not None else None
             if not row:
                 flash("Sequence step not found.", "danger")
                 return redirect(url_for("video_shorts_bp.admin_email_sequence"))
@@ -72,22 +98,22 @@ def admin_email_sequence():
                         UPDATE email_sequence_steps
                         SET subject = ?, body_text = ?, active = ?,
                             updated_at = CURRENT_TIMESTAMP, updated_by = ?
-                        WHERE sequence_key = 'signup' AND step = ?
+                        WHERE sequence_key = 'signup' AND step = ? AND language = ?
                         """,
-                        [subject, body_text, active, str(current_user.get("id") or ""), step],
+                        [subject, body_text, active, str(current_user.get("id") or ""), step, language],
                     )
                     conn.commit()
-                    flash(f"Step {step} saved.", "success")
-                return redirect(url_for("video_shorts_bp.admin_email_sequence", step=step))
+                    flash(f"Step {step} {language.upper()} saved.", "success")
+                return redirect(url_for("video_shorts_bp.admin_email_sequence", step=step, language=language))
 
             if action == "test":
                 admin_email = normalize_sequence_email(current_user.get("email") or current_user.get("username"))
                 if not admin_email or "@" not in admin_email:
                     flash("Your admin account does not have a valid email address.", "danger")
-                    return redirect(url_for("video_shorts_bp.admin_email_sequence", step=step))
+                    return redirect(url_for("video_shorts_bp.admin_email_sequence", step=step, language=language))
                 if not subject or not body_text:
                     flash("Add both a subject and body before sending a test.", "warning")
-                    return redirect(url_for("video_shorts_bp.admin_email_sequence", step=step))
+                    return redirect(url_for("video_shorts_bp.admin_email_sequence", step=step, language=language))
                 send_token = new_email_token()
                 rendered = render_sequence_email(
                     subject=subject,
@@ -100,10 +126,10 @@ def admin_email_sequence():
                     INSERT INTO email_sends (
                         id, sequence_key, step, user_id, email_normalized,
                         subject_sent, body_sent, send_token, status, attempts,
-                        scheduled_at, is_test, created_at
+                        scheduled_at, language, is_test, created_at
                     )
                     VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'processing', 1,
-                            CURRENT_TIMESTAMP, TRUE, CURRENT_TIMESTAMP)
+                            CURRENT_TIMESTAMP, ?, TRUE, CURRENT_TIMESTAMP)
                     """,
                     [
                         send_id,
@@ -114,6 +140,7 @@ def admin_email_sequence():
                         rendered["subject"],
                         rendered["body_text"],
                         send_token,
+                        language,
                     ],
                 )
                 conn.commit()
@@ -133,7 +160,9 @@ def admin_email_sequence():
                         [str(exc)[:2000], send_id],
                     )
                     conn.commit()
-                    current_app.logger.exception("Signup sequence test email failed step=%s", step)
+                    current_app.logger.exception(
+                        "Signup sequence test email failed step=%s language=%s", step, language
+                    )
                     flash("Test email failed; the attempt was logged.", "danger")
                 else:
                     conn.execute(
@@ -145,25 +174,33 @@ def admin_email_sequence():
                         [str(result.get("message_id") or result.get("request_id") or ""), send_id],
                     )
                     conn.commit()
-                    flash(f"Test for step {step} sent to {admin_email}.", "success")
-                return redirect(url_for("video_shorts_bp.admin_email_sequence", step=step))
+                    flash(f"Test for step {step} {language.upper()} sent to {admin_email}.", "success")
+                return redirect(url_for("video_shorts_bp.admin_email_sequence", step=step, language=language))
 
             flash("Unknown sequence action.", "danger")
             return redirect(url_for("video_shorts_bp.admin_email_sequence"))
 
-        steps = load_signup_sequence_steps(conn)
-        for step in steps:
-            step["preview"] = render_sequence_email(
-                subject=step["subject"],
-                body_text=step["body_text"],
+        step_versions = load_signup_sequence_steps(conn)
+        grouped_steps: dict[int, dict] = {}
+        for version in step_versions:
+            version["preview"] = render_sequence_email(
+                subject=version["subject"],
+                body_text=version["body_text"],
                 recipient_name=SAMPLE_RECIPIENT_NAME,
             )
+            group = grouped_steps.setdefault(
+                version["step"],
+                {"step": version["step"], "delay_days": version["delay_days"], "versions": {}},
+            )
+            group["versions"][version["language"]] = version
         return render_template(
             "shorts_admin_email_sequence.html",
             admin_title="Signup Email Sequence",
             sequence_page="steps",
-            steps=steps,
+            steps=list(grouped_steps.values()),
+            counts=_load_sequence_counts(conn),
             sample_name=SAMPLE_RECIPIENT_NAME,
+            selected_language=_parsed_language(request.args.get("language")),
         )
     finally:
         conn.close()
@@ -172,6 +209,7 @@ def admin_email_sequence():
 def _handle_recipient_action(conn, current_user: dict):
     action = str(request.form.get("action") or "").strip().lower()
     user_id = str(request.form.get("user_id") or "").strip()
+    language = _parsed_language(request.form.get("language"))
     recipients_endpoint = "video_shorts_bp.admin_email_sequence_recipients"
     if action == "remove_recipient":
         existing_recipient = conn.execute(
@@ -194,6 +232,21 @@ def _handle_recipient_action(conn, current_user: dict):
         )
         conn.commit()
         flash(f"{existing_recipient[0]} removed from the sequence.", "success")
+        return redirect(url_for(recipients_endpoint))
+
+    if action == "update_language":
+        updated = conn.execute(
+            """
+            UPDATE email_subscriptions SET language = ?
+            WHERE list = 'signup_sequence' AND CAST(user_id AS VARCHAR) = ?
+            """,
+            [language, user_id],
+        )
+        if getattr(updated, "rowcount", 0) <= 0:
+            flash("Sequence recipient not found.", "danger")
+        else:
+            conn.commit()
+            flash(f"Recipient language changed to {language.upper()}.", "success")
         return redirect(url_for(recipients_endpoint))
 
     if action != "add_recipient":
@@ -238,10 +291,10 @@ def _handle_recipient_action(conn, current_user: dict):
                 email_normalized = ?, user_id = ?, status = 'subscribed', source = 'admin',
                 subscribed_at = CURRENT_TIMESTAMP, unsubscribed_at = NULL,
                 global_unsubscribed = FALSE, enrolled_at = CURRENT_TIMESTAMP,
-                enrolled_by = ?, removed_at = NULL
+                enrolled_by = ?, removed_at = NULL, language = ?
             WHERE id = ?
             """,
-            [user[2], user_id, str(current_user.get("id") or ""), existing[0]],
+            [user[2], user_id, str(current_user.get("id") or ""), language, existing[0]],
         )
     else:
         conn.execute(
@@ -249,11 +302,14 @@ def _handle_recipient_action(conn, current_user: dict):
             INSERT INTO email_subscriptions (
                 id, email_normalized, user_id, list, status, source,
                 unsubscribe_token, subscribed_at, global_unsubscribed,
-                enrolled_at, enrolled_by, removed_at
+                enrolled_at, enrolled_by, removed_at, language
             ) VALUES (?, ?, ?, 'signup_sequence', 'subscribed', 'admin', ?,
-                      CURRENT_TIMESTAMP, FALSE, CURRENT_TIMESTAMP, ?, NULL)
+                      CURRENT_TIMESTAMP, FALSE, CURRENT_TIMESTAMP, ?, NULL, ?)
             """,
-            [str(uuid4()), user[2], user_id, new_email_token(), str(current_user.get("id") or "")],
+            [
+                str(uuid4()), user[2], user_id, new_email_token(),
+                str(current_user.get("id") or ""), language,
+            ],
         )
     conn.commit()
     flash(f"{user[2]} added to the sequence; timing starts now.", "success")
@@ -261,7 +317,7 @@ def _handle_recipient_action(conn, current_user: dict):
 
 
 def _load_recipient_page_data(conn) -> dict:
-    steps = load_signup_sequence_steps(conn)
+    steps = [step for step in load_signup_sequence_steps(conn) if step["language"] == "en"]
     query = str(request.args.get("q") or "").strip()
     search_results = []
     if query:
@@ -295,7 +351,8 @@ def _load_recipient_page_data(conn) -> dict:
     bucket_rows = conn.execute(
         """
         SELECT CAST(s.user_id AS VARCHAR), COALESCE(u.name, ''), s.email_normalized,
-               s.enrolled_at, s.status, COALESCE(s.global_unsubscribed, FALSE), s.removed_at
+               s.enrolled_at, s.status, COALESCE(s.global_unsubscribed, FALSE), s.removed_at,
+               COALESCE(s.language, 'en')
         FROM email_subscriptions s
         LEFT JOIN shorts_users u ON CAST(u.id AS VARCHAR) = CAST(s.user_id AS VARCHAR)
         WHERE s.list = 'signup_sequence' AND s.enrolled_at IS NOT NULL
@@ -328,6 +385,7 @@ def _load_recipient_page_data(conn) -> dict:
             "enrolled_at": row[3], "status": status, "last_sent_step": last_sent,
             "next_step": next_step["step"] if next_step else None,
             "due_at": row[3] + timedelta(days=next_step["delay_days"]) if next_step and row[3] else None,
+            "language": str(row[7] or "en"),
         })
     return {"search_query": query, "search_results": search_results, "bucket": bucket}
 
@@ -351,25 +409,11 @@ def admin_email_sequence_recipients():
 
 
 def _load_send_log_page_data(conn) -> dict:
-    count_rows = conn.execute(
-        """
-        SELECT step,
-               SUM(CASE WHEN status = 'sent' THEN 1 ELSE 0 END),
-               SUM(CASE WHEN clicked_at IS NOT NULL THEN 1 ELSE 0 END),
-               SUM(CASE WHEN status = 'skipped' THEN 1 ELSE 0 END),
-               SUM(CASE WHEN status = 'failed' THEN 1 ELSE 0 END)
-        FROM email_sends WHERE sequence_key = 'signup' AND is_test = FALSE
-        GROUP BY step
-        """
-    ).fetchall()
-    counts = {
-        int(row[0]): {
-            "sent": int(row[1] or 0), "clicked": int(row[2] or 0),
-            "skipped": int(row[3] or 0), "failed": int(row[4] or 0),
-        }
-        for row in count_rows
-    }
+    counts = _load_sequence_counts(conn)
     log_step = _parsed_step(request.args.get("log_step"))
+    log_language = str(request.args.get("log_language") or "").strip().lower()
+    if log_language not in {"en", "tr"}:
+        log_language = ""
     allowed_statuses = {"scheduled", "processing", "sent", "failed", "skipped"}
     log_status = str(request.args.get("log_status") or "").lower()
     if log_status not in allowed_statuses:
@@ -385,10 +429,13 @@ def _load_send_log_page_data(conn) -> dict:
     if log_status:
         clauses.append("es.status = ?")
         params.append(log_status)
+    if log_language:
+        clauses.append("COALESCE(es.language, 'en') = ?")
+        params.append(log_language)
     send_log_rows = conn.execute(
         f"""
         SELECT es.email_normalized, COALESCE(u.name, ''), es.step, es.status,
-               es.sent_at, es.clicked_at, es.is_test
+               es.sent_at, es.clicked_at, es.is_test, COALESCE(es.language, 'en')
         FROM email_sends es
         LEFT JOIN shorts_users u ON CAST(u.id AS VARCHAR) = CAST(es.user_id AS VARCHAR)
         WHERE {' AND '.join(clauses)}
@@ -399,13 +446,14 @@ def _load_send_log_page_data(conn) -> dict:
     send_log = [
         {
             "email": str(row[0]), "name": str(row[1]), "step": int(row[2]),
-            "status": str(row[3]), "sent_at": row[4], "clicked_at": row[5], "is_test": bool(row[6]),
+            "status": str(row[3]), "sent_at": row[4], "clicked_at": row[5],
+            "is_test": bool(row[6]), "language": str(row[7] or "en"),
         }
         for row in send_log_rows
     ]
     return {
         "counts": counts, "send_log": send_log, "log_step": log_step,
-        "log_status": log_status, "include_tests": include_tests,
+        "log_status": log_status, "log_language": log_language, "include_tests": include_tests,
     }
 
 

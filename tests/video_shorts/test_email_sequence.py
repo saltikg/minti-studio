@@ -1,13 +1,32 @@
 from email import policy
 from email.parser import BytesParser
 
+import duckdb
+
 from app.video_shorts.services.email_sequence import (
+    ensure_email_sequence_schema,
+    load_signup_sequence_steps,
     process_due_signup_nurture_email,
     render_sequence_email,
     render_sequence_placeholders,
     rewrite_nurture_links,
 )
 from app.video_shorts.services import outreach_email_send
+
+
+def test_bilingual_sequence_schema_seeds_synced_languages():
+    conn = duckdb.connect(":memory:")
+    ensure_email_sequence_schema(conn)
+    ensure_email_sequence_schema(conn)
+
+    steps = load_signup_sequence_steps(conn)
+    assert len(steps) == 14
+    assert {step["language"] for step in steps} == {"en", "tr"}
+    for step_number in range(1, 8):
+        versions = [step for step in steps if step["step"] == step_number]
+        assert len(versions) == 2
+        assert len({version["delay_days"] for version in versions}) == 1
+        assert all(version["active"] is False for version in versions)
 
 
 def test_sequence_placeholders_without_footer():
