@@ -1,6 +1,8 @@
 from app.video_shorts.services.email_sequence import (
+    process_due_signup_nurture_email,
     render_sequence_email,
     render_sequence_placeholders,
+    rewrite_nurture_links,
     sequence_email_headers,
 )
 from app.video_shorts.services import outreach_email_send
@@ -30,6 +32,25 @@ def test_sequence_headers_include_one_click():
         "<mailto:info@mintistudio.com?subject=unsubscribe>"
     )
     assert headers["List-Unsubscribe-Post"] == "List-Unsubscribe=One-Click"
+
+
+def test_nurture_link_rewrite_excludes_unsubscribe():
+    unsubscribe = "https://mintistudio.com/email/unsubscribe/abc"
+    body, links = rewrite_nurture_links(
+        f"Read https://example.com/post.\n\nUnsubscribe: {unsubscribe}",
+        send_token="send-token",
+        unsubscribe_link=unsubscribe,
+    )
+
+    assert links == ["https://example.com/post"]
+    assert "https://mintistudio.com/e/c/send-token/1." in body
+    assert unsubscribe in body
+
+
+def test_nurture_flag_off_returns_without_database(monkeypatch):
+    monkeypatch.delenv("NURTURE_ENABLED", raising=False)
+
+    assert process_due_signup_nurture_email() is False
 
 
 def test_shared_zoho_sender_plain_text_and_outreach_html(monkeypatch):

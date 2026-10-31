@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 import os
+import json
+from datetime import timedelta
 from uuid import uuid4
 
 from flask import current_app, flash, g, redirect, render_template, request, url_for
@@ -54,13 +56,98 @@ def admin_email_sequence():
     conn = get_db()
     try:
         if request.method == "POST":
+            action = str(request.form.get("action") or "save").strip().lower()
+            if action in {"add_recipient", "remove_recipient"}:
+                user_id = str(request.form.get("user_id") or "").strip()
+                if action == "remove_recipient":
+                    existing_recipient = conn.execute(
+                        """
+                        SELECT email_normalized FROM email_subscriptions
+                        WHERE list = 'signup_sequence' AND CAST(user_id AS VARCHAR) = ?
+                        LIMIT 1
+                        """,
+                        [user_id],
+                    ).fetchone()
+                    if not existing_recipient:
+                        flash("Sequence recipient not found.", "danger")
+                        return redirect(url_for("video_shorts_bp.admin_email_sequence"))
+                    conn.execute(
+                        """
+                        UPDATE email_subscriptions SET removed_at = CURRENT_TIMESTAMP
+                        WHERE list = 'signup_sequence' AND CAST(user_id AS VARCHAR) = ?
+                        """,
+                        [user_id],
+                    )
+                    conn.commit()
+                    flash(f"{existing_recipient[0]} removed from the sequence.", "success")
+                    return redirect(url_for("video_shorts_bp.admin_email_sequence"))
+
+                user = conn.execute(
+                    """
+                    SELECT CAST(id AS VARCHAR), COALESCE(name, ''), lower(trim(COALESCE(email, username, '')))
+                    FROM shorts_users
+                    WHERE CAST(id AS VARCHAR) = ? AND COALESCE(is_guest, FALSE) = FALSE
+                      AND COALESCE(email_verified, FALSE) = TRUE
+                      AND position('@' in COALESCE(email, username, '')) > 1
+                    LIMIT 1
+                    """,
+                    [user_id],
+                ).fetchone()
+                if not user:
+                    flash("Eligible verified user not found.", "danger")
+                    return redirect(url_for("video_shorts_bp.admin_email_sequence"))
+                existing = conn.execute(
+                    """
+                    SELECT id, status, COALESCE(global_unsubscribed, FALSE), removed_at, enrolled_at
+                    FROM email_subscriptions
+                    WHERE list = 'signup_sequence'
+                      AND (email_normalized = ? OR CAST(user_id AS VARCHAR) = ?)
+                    LIMIT 1
+                    """,
+                    [user[2], user_id],
+                ).fetchone()
+                restart_needed = bool(existing and (str(existing[1]) != "subscribed" or bool(existing[2]) or existing[3]))
+                confirmed = str(request.form.get("confirm_restart") or "") == "1"
+                if restart_needed and not confirmed:
+                    flash("This recipient was removed or unsubscribed. Confirm restart before adding again.", "warning")
+                    return redirect(url_for("video_shorts_bp.admin_email_sequence", q=user[2]))
+                if existing and not restart_needed and existing[4]:
+                    flash(f"{user[2]} is already in the sequence.", "info")
+                    return redirect(url_for("video_shorts_bp.admin_email_sequence"))
+                if existing:
+                    conn.execute(
+                        """
+                        UPDATE email_subscriptions SET
+                            email_normalized = ?, user_id = ?, status = 'subscribed', source = 'admin',
+                            subscribed_at = CURRENT_TIMESTAMP, unsubscribed_at = NULL,
+                            global_unsubscribed = FALSE, enrolled_at = CURRENT_TIMESTAMP,
+                            enrolled_by = ?, removed_at = NULL
+                        WHERE id = ?
+                        """,
+                        [user[2], user_id, str(current_user.get("id") or ""), existing[0]],
+                    )
+                else:
+                    conn.execute(
+                        """
+                        INSERT INTO email_subscriptions (
+                            id, email_normalized, user_id, list, status, source,
+                            unsubscribe_token, subscribed_at, global_unsubscribed,
+                            enrolled_at, enrolled_by, removed_at
+                        ) VALUES (?, ?, ?, 'signup_sequence', 'subscribed', 'admin', ?,
+                                  CURRENT_TIMESTAMP, FALSE, CURRENT_TIMESTAMP, ?, NULL)
+                        """,
+                        [str(uuid4()), user[2], user_id, new_email_token(), str(current_user.get("id") or "")],
+                    )
+                conn.commit()
+                flash(f"{user[2]} added to the sequence; timing starts now.", "success")
+                return redirect(url_for("video_shorts_bp.admin_email_sequence"))
+
             step = _parsed_step(request.form.get("step"))
             row = _load_step(conn, step) if step is not None else None
             if not row:
                 flash("Sequence step not found.", "danger")
                 return redirect(url_for("video_shorts_bp.admin_email_sequence"))
 
-            action = str(request.form.get("action") or "save").strip().lower()
             subject = str(request.form.get("subject") or "").strip()
             body_text = str(request.form.get("body_text") or "").strip()
             active = str(request.form.get("active") or "").lower() in {"1", "true", "yes", "on"}
@@ -167,11 +254,127 @@ def admin_email_sequence():
                 recipient_name=SAMPLE_RECIPIENT_NAME,
                 unsubscribe_link=preview_link,
             )
+        query = str(request.args.get("q") or "").strip()
+        search_results = []
+        if query:
+            like_query = f"%{query.lower()}%"
+            rows = conn.execute(
+                """
+                SELECT CAST(u.id AS VARCHAR), COALESCE(u.name, ''),
+                       lower(trim(COALESCE(u.email, u.username, ''))),
+                       s.status, COALESCE(s.global_unsubscribed, FALSE), s.removed_at, s.enrolled_at
+                FROM shorts_users u
+                LEFT JOIN email_subscriptions s
+                  ON s.list = 'signup_sequence'
+                 AND s.email_normalized = lower(trim(COALESCE(u.email, u.username, '')))
+                WHERE COALESCE(u.is_guest, FALSE) = FALSE
+                  AND COALESCE(u.email_verified, FALSE) = TRUE
+                  AND position('@' in COALESCE(u.email, u.username, '')) > 1
+                  AND (lower(COALESCE(u.email, u.username, '')) LIKE ? OR lower(COALESCE(u.name, '')) LIKE ?)
+                ORDER BY u.created_at DESC LIMIT 20
+                """,
+                [like_query, like_query],
+            ).fetchall()
+            search_results = [
+                {
+                    "id": str(row[0]), "name": str(row[1]), "email": str(row[2]),
+                    "in_sequence": bool(row[6] and not row[5] and str(row[3]) == "subscribed" and not row[4]),
+                    "restart": bool(row[3] and (str(row[3]) != "subscribed" or row[4] or row[5])),
+                }
+                for row in rows
+            ]
+
+        bucket_rows = conn.execute(
+            """
+            SELECT CAST(s.user_id AS VARCHAR), COALESCE(u.name, ''), s.email_normalized,
+                   s.enrolled_at, s.status, COALESCE(s.global_unsubscribed, FALSE), s.removed_at
+            FROM email_subscriptions s
+            LEFT JOIN shorts_users u ON CAST(u.id AS VARCHAR) = CAST(s.user_id AS VARCHAR)
+            WHERE s.list = 'signup_sequence' AND s.enrolled_at IS NOT NULL
+            ORDER BY s.enrolled_at DESC
+            """
+        ).fetchall()
+        sent_rows = conn.execute(
+            """
+            SELECT CAST(user_id AS VARCHAR), step, status, sent_at
+            FROM email_sends WHERE sequence_key = 'signup' AND is_test = FALSE
+            ORDER BY step
+            """
+        ).fetchall()
+        sends_by_user: dict[str, list] = {}
+        for row in sent_rows:
+            sends_by_user.setdefault(str(row[0]), []).append(row)
+        bucket = []
+        for row in bucket_rows:
+            user_sends = sends_by_user.get(str(row[0]), [])
+            completed = {int(item[1]) for item in user_sends}
+            next_step = next((item for item in steps if item["step"] not in completed), None)
+            last_sent = max((int(item[1]) for item in user_sends if str(item[2]) == "sent"), default=None)
+            status = "in sequence"
+            if row[6]:
+                status = "removed"
+            elif str(row[4]) == "unsubscribed" or bool(row[5]):
+                status = "unsubscribed"
+            bucket.append({
+                "user_id": str(row[0]), "name": str(row[1]), "email": str(row[2]),
+                "enrolled_at": row[3], "status": status, "last_sent_step": last_sent,
+                "next_step": next_step["step"] if next_step else None,
+                "due_at": row[3] + timedelta(days=next_step["delay_days"]) if next_step and row[3] else None,
+            })
+
+        count_rows = conn.execute(
+            """
+            SELECT step,
+                   SUM(CASE WHEN status = 'sent' THEN 1 ELSE 0 END),
+                   SUM(CASE WHEN clicked_at IS NOT NULL THEN 1 ELSE 0 END),
+                   SUM(CASE WHEN status = 'skipped' THEN 1 ELSE 0 END),
+                   SUM(CASE WHEN status = 'failed' THEN 1 ELSE 0 END)
+            FROM email_sends WHERE sequence_key = 'signup' AND is_test = FALSE
+            GROUP BY step
+            """
+        ).fetchall()
+        counts = {int(row[0]): {"sent": int(row[1] or 0), "clicked": int(row[2] or 0), "skipped": int(row[3] or 0), "failed": int(row[4] or 0)} for row in count_rows}
+        log_step = _parsed_step(request.args.get("log_step"))
+        allowed_statuses = {"scheduled", "processing", "sent", "failed", "skipped"}
+        log_status = str(request.args.get("log_status") or "").lower()
+        if log_status not in allowed_statuses:
+            log_status = ""
+        include_tests = str(request.args.get("include_tests") or "") == "1"
+        clauses = ["es.sequence_key = 'signup'"]
+        params: list[object] = []
+        if not include_tests:
+            clauses.append("es.is_test = FALSE")
+        if log_step:
+            clauses.append("es.step = ?")
+            params.append(log_step)
+        if log_status:
+            clauses.append("es.status = ?")
+            params.append(log_status)
+        send_log_rows = conn.execute(
+            f"""
+            SELECT es.email_normalized, COALESCE(u.name, ''), es.step, es.status,
+                   es.sent_at, es.clicked_at, es.is_test
+            FROM email_sends es
+            LEFT JOIN shorts_users u ON CAST(u.id AS VARCHAR) = CAST(es.user_id AS VARCHAR)
+            WHERE {' AND '.join(clauses)}
+            ORDER BY es.created_at DESC LIMIT 100
+            """,
+            params,
+        ).fetchall()
+        send_log = [{"email": str(row[0]), "name": str(row[1]), "step": int(row[2]), "status": str(row[3]), "sent_at": row[4], "clicked_at": row[5], "is_test": bool(row[6])} for row in send_log_rows]
         return render_template(
             "shorts_admin_email_sequence.html",
             admin_title="Signup Email Sequence",
             steps=steps,
             sample_name=SAMPLE_RECIPIENT_NAME,
+            search_query=query,
+            search_results=search_results,
+            bucket=bucket,
+            counts=counts,
+            send_log=send_log,
+            log_step=log_step,
+            log_status=log_status,
+            include_tests=include_tests,
         )
     finally:
         conn.close()
@@ -208,5 +411,52 @@ def public_email_unsubscribe(token: str):
             subscription_found=bool(row),
             already_unsubscribed=bool(row and (str(row[2]) == "unsubscribed" or bool(row[3]))),
         )
+    finally:
+        conn.close()
+
+
+def public_nurture_click(send_token: str, link_index: str):
+    homepage = _base_url() + "/"
+    conn = get_db()
+    try:
+        row = conn.execute(
+            """
+            SELECT id, user_id, step, link_urls
+            FROM email_sends
+            WHERE send_token = ? AND sequence_key = 'signup' AND is_test = FALSE
+            LIMIT 1
+            """,
+            [str(send_token or "")],
+        ).fetchone()
+        if not row:
+            return redirect(homepage, code=302)
+        try:
+            links = json.loads(str(row[3] or "[]"))
+            destination = str(links[int(link_index) - 1]) if int(link_index) >= 1 else ""
+        except (TypeError, ValueError, IndexError, json.JSONDecodeError):
+            destination = ""
+        if not destination.startswith(("http://", "https://")):
+            return redirect(homepage, code=302)
+
+        user_agent = str(request.headers.get("User-Agent") or "")
+        prefetch = any(
+            str(request.headers.get(name) or "").lower() in {"prefetch", "prerender"}
+            for name in ("Purpose", "Sec-Purpose", "X-Purpose")
+        )
+        from app.video_shorts.routes.generation import _is_share_watch_bot_user_agent
+        is_bot = _is_share_watch_bot_user_agent(user_agent)
+        if not prefetch and not is_bot:
+            updated = conn.execute(
+                "UPDATE email_sends SET clicked_at = CURRENT_TIMESTAMP WHERE id = ? AND clicked_at IS NULL",
+                [row[0]],
+            )
+            conn.commit()
+            if getattr(updated, "rowcount", 0) > 0:
+                from app.video_shorts.services.user_events import track_event
+                track_event(
+                    str(row[1]), "nurture_click",
+                    metadata={"send_id": str(row[0]), "step": int(row[2]), "url": destination},
+                )
+        return redirect(destination, code=302)
     finally:
         conn.close()

@@ -126,6 +126,12 @@ def create_app():
 
         return public_email_unsubscribe(token)
 
+    @app.get("/e/c/<send_token>/<link_index>")
+    def public_nurture_click_alias(send_token, link_index):
+        from app.video_shorts.routes.email_sequence import public_nurture_click
+
+        return public_nurture_click(send_token, link_index)
+
     @app.get("/onboard/<token>")
     def onboarding_magic_link_alias(token):
         from app.video_shorts.routes.auth import redeem_onboarding_magic_link

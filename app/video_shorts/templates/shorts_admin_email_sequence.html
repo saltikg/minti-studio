@@ -3,7 +3,7 @@
 {% block title %}Signup Email Sequence{% endblock %}
 {% block admin_heading %}Signup Email Sequence{% endblock %}
 {% block admin_subheading %}
-  <p>Seven plain-text emails scheduled from email verification. Automated enrollment and sending are not enabled yet.</p>
+  <p>Seven plain-text emails for manually enrolled recipients. Worker sending remains off unless <code>NURTURE_ENABLED=true</code>.</p>
 {% endblock %}
 
 {% block extra_styles %}
@@ -17,11 +17,70 @@
     .email-sequence-preview { margin: 0; padding: 16px; border-radius: 12px; background: rgba(0,0,0,.25); color: rgba(255,255,255,.82); white-space: pre-wrap; overflow-wrap: anywhere; }
     .email-sequence-preview-label { margin-bottom: 8px; color: rgba(255,255,255,.56); font-size: .78rem; text-transform: uppercase; letter-spacing: .08em; }
     .email-sequence-actions { display: flex; flex-wrap: wrap; align-items: center; gap: 10px; }
+    .email-sequence-table { width: 100%; border-collapse: collapse; }
+    .email-sequence-table th, .email-sequence-table td { padding: 10px 8px; border-bottom: 1px solid rgba(255,255,255,.1); text-align: left; vertical-align: middle; }
+    .email-sequence-inline { display: flex; gap: 10px; align-items: end; flex-wrap: wrap; }
+    .email-sequence-inline .form-control, .email-sequence-inline .form-select { min-width: 180px; }
+    .email-sequence-metrics { display: flex; gap: 14px; flex-wrap: wrap; color: rgba(255,255,255,.65); font-size: .86rem; }
   </style>
 {% endblock %}
 
 {% block content %}
   <div class="email-sequence-grid">
+    <section class="vs-admin-card email-sequence-card">
+      <h2 class="email-sequence-title mb-3">Recipient bucket</h2>
+      <form method="get" class="email-sequence-inline mb-3">
+        <div>
+          <label class="form-label" for="recipient-search">Search verified users</label>
+          <input class="form-control" id="recipient-search" name="q" value="{{ search_query }}" placeholder="Name or email">
+        </div>
+        <button class="btn btn-outline-light" type="submit">Search</button>
+      </form>
+      {% if search_query %}
+        <div class="table-responsive mb-4">
+          <table class="email-sequence-table">
+            <thead><tr><th>Name</th><th>Email</th><th></th></tr></thead>
+            <tbody>
+              {% for user in search_results %}
+                <tr>
+                  <td>{{ user.name or '—' }}</td><td>{{ user.email }}</td>
+                  <td>
+                    {% if user.in_sequence %}
+                      <span class="vs-admin-muted">Already in sequence</span>
+                    {% else %}
+                      <form method="post" {% if user.restart %}onsubmit="return confirm('Restart this recipient from day zero?');"{% endif %}>
+                        <input type="hidden" name="action" value="add_recipient">
+                        <input type="hidden" name="user_id" value="{{ user.id }}">
+                        {% if user.restart %}<input type="hidden" name="confirm_restart" value="1">{% endif %}
+                        <button class="btn btn-sm btn-primary" type="submit">{% if user.restart %}Restart sequence{% else %}Add to sequence{% endif %}</button>
+                      </form>
+                    {% endif %}
+                  </td>
+                </tr>
+              {% else %}<tr><td colspan="3" class="vs-admin-muted">No eligible verified users found.</td></tr>{% endfor %}
+            </tbody>
+          </table>
+        </div>
+      {% endif %}
+      <div class="table-responsive">
+        <table class="email-sequence-table">
+          <thead><tr><th>Name</th><th>Email</th><th>Enrolled</th><th>Next</th><th>Last sent</th><th>Status</th><th></th></tr></thead>
+          <tbody>
+            {% for recipient in bucket %}
+              <tr>
+                <td>{{ recipient.name or '—' }}</td><td>{{ recipient.email }}</td>
+                <td>{{ recipient.enrolled_at|admin_datetime }}</td>
+                <td>{% if recipient.next_step %}Step {{ recipient.next_step }} · {{ recipient.due_at|admin_datetime }}{% else %}Complete{% endif %}</td>
+                <td>{% if recipient.last_sent_step %}Step {{ recipient.last_sent_step }}{% else %}—{% endif %}</td>
+                <td>{{ recipient.status }}</td>
+                <td>{% if recipient.status == 'in sequence' %}<form method="post"><input type="hidden" name="action" value="remove_recipient"><input type="hidden" name="user_id" value="{{ recipient.user_id }}"><button class="btn btn-sm btn-outline-danger" type="submit">Remove</button></form>{% endif %}</td>
+              </tr>
+            {% else %}<tr><td colspan="7" class="vs-admin-muted">No recipients have been enrolled.</td></tr>{% endfor %}
+          </tbody>
+        </table>
+      </div>
+    </section>
+
     {% for step in steps %}
       <section class="vs-admin-card email-sequence-card" id="step-{{ step.step }}">
         <form method="post" class="email-sequence-fields">
@@ -30,6 +89,8 @@
             <div>
               <h2 class="email-sequence-title">Step {{ step.step }} · Day {{ step.delay_days }}</h2>
               <div class="vs-admin-muted">Available placeholders: <code>{name}</code>, <code>{first_name}</code>; missing names fall back to “there”.</div>
+              {% set metric = counts.get(step.step, {}) %}
+              <div class="email-sequence-metrics mt-2"><span>Sent {{ metric.get('sent', 0) }}</span><span>Clicked {{ metric.get('clicked', 0) }}</span><span>Skipped {{ metric.get('skipped', 0) }}</span><span>Failed {{ metric.get('failed', 0) }}</span></div>
             </div>
             <div class="form-check form-switch">
               <input class="form-check-input" type="checkbox" role="switch" name="active" value="1" id="active-{{ step.step }}" {% if step.active %}checked{% endif %}>
@@ -58,5 +119,19 @@
         </form>
       </section>
     {% endfor %}
+
+    <section class="vs-admin-card email-sequence-card">
+      <h2 class="email-sequence-title mb-3">Send log</h2>
+      <form method="get" class="email-sequence-inline mb-3">
+        <div><label class="form-label" for="log-step">Step</label><select class="form-select" id="log-step" name="log_step"><option value="">All</option>{% for n in range(1, 8) %}<option value="{{ n }}" {% if log_step == n %}selected{% endif %}>{{ n }}</option>{% endfor %}</select></div>
+        <div><label class="form-label" for="log-status">Status</label><select class="form-select" id="log-status" name="log_status"><option value="">All</option>{% for value in ['scheduled', 'processing', 'sent', 'failed', 'skipped'] %}<option value="{{ value }}" {% if log_status == value %}selected{% endif %}>{{ value }}</option>{% endfor %}</select></div>
+        <label class="form-check"><input class="form-check-input" type="checkbox" name="include_tests" value="1" {% if include_tests %}checked{% endif %}> Include tests</label>
+        <button class="btn btn-outline-light" type="submit">Filter</button>
+      </form>
+      <div class="table-responsive"><table class="email-sequence-table"><thead><tr><th>Recipient</th><th>Step</th><th>Status</th><th>Sent</th><th>Clicked</th></tr></thead><tbody>
+        {% for item in send_log %}<tr><td>{{ item.name or item.email }}<div class="vs-admin-muted small">{{ item.email }}{% if item.is_test %} · test{% endif %}</div></td><td>{{ item.step }}</td><td>{{ item.status }}</td><td>{% if item.sent_at %}{{ item.sent_at|admin_datetime }}{% else %}—{% endif %}</td><td>{% if item.clicked_at %}{{ item.clicked_at|admin_datetime }}{% else %}—{% endif %}</td></tr>
+        {% else %}<tr><td colspan="5" class="vs-admin-muted">No sends match these filters.</td></tr>{% endfor %}
+      </tbody></table></div>
+    </section>
   </div>
 {% endblock %}

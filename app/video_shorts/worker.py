@@ -108,6 +108,7 @@ from app.video_shorts.services.discovery_promote_queue import customer_job_waiti
 from app.video_shorts.services.instagram_comment_webhook import process_instagram_comment_webhook_job
 from app.video_shorts.services.lead_pipeline import record_lead_pipeline_event_for_scope
 from app.video_shorts.services.outreach_email_send import process_due_scheduled_outreach_email
+from app.video_shorts.services.email_sequence import process_due_signup_nurture_email
 from app.video_shorts.services.disk_guard import disk_guard_triggered
 from app.video_shorts.services.storage import (
     build_storage_reference,
@@ -2431,6 +2432,11 @@ def run_worker_loop() -> None:
                         processed_any = True
                 except Exception:
                     app.logger.exception("Scheduled outreach email processing failed")
+                try:
+                    if process_due_signup_nurture_email():
+                        processed_any = True
+                except Exception:
+                    app.logger.exception("Signup nurture email processing failed")
                 try:
                     if generation.process_new_lead_autodownload():
                         processed_any = True
