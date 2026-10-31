@@ -286,10 +286,50 @@ def _append_face_track_shot_cut_check(rows: list[tuple[str, str, str]]) -> None:
         "x",
     )
     ok = ok and bool(expr and "if(lt(t,3.000000)" in expr and "(0.500000)*(t-2.500000)" not in expr)
+    duplicate_expr = compositor._piecewise_linear_ratio_expr(
+        [
+            {"t": 2.5, "x": 0.25},
+            {"t": 3.0, "x": 0.75, "cut": True},
+            {"t": 3.00000000000025, "x": 0.75},
+            {"t": 3.5, "x": 0.75},
+        ],
+        "x",
+    )
+    duplicate_ok = bool(
+        duplicate_expr
+        and "/0.000000" not in duplicate_expr
+        and "if(lt(t,3.000000)" in duplicate_expr
+        and "0.750000" in duplicate_expr
+    )
+    boundary_raw = [
+        {
+            "t": time_value,
+            "cx_ratio": 0.566 if time_value < 7.0 else 0.439,
+            "cy_ratio": 0.33,
+            "w_ratio": 0.20,
+            "h_ratio": 0.30,
+            "found": True,
+        }
+        for time_value in (4.5, 5.0, 5.5, 6.0, 6.5, 7.0, 7.5, 8.0)
+    ]
+    boundary_smoothed = generation._smooth_preview_face_track_rows(
+        boundary_raw,
+        shot_cuts=[7.034],
+    )
+    before_cut = [
+        float(item.get("cx_ratio") or 0.0)
+        for item in boundary_smoothed
+        if float(item.get("t") or 0.0) < 7.034
+    ]
+    boundary_ok = bool(before_cut and max(abs(value - 0.566) for value in before_cut) < 1e-6)
+    post_join_crop_x = (0.440355 - 0.115873) * 1920.0
+    crop_ok = abs(post_join_crop_x - 623.00544) < 0.01
+    ok = ok and duplicate_ok and boundary_ok and crop_ok
     rows.append((
         "face_track_shot_cut",
         "PASS" if ok else "FAIL",
-        f"after={after} within_shot={within_shot} expr={expr}",
+        f"after={after} within_shot={within_shot} boundary={before_cut} "
+        f"post_join_x={post_join_crop_x:.3f} expr={expr} duplicate_expr={duplicate_expr}",
     ))
 
 

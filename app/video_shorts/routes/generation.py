@@ -14,6 +14,7 @@ import shutil
 import string
 import subprocess
 import secrets
+import statistics
 import tempfile
 import threading
 import time
@@ -94,6 +95,9 @@ from app.video_shorts.config import (
     FACE_AWARE_SNAP_WINDOW_SEC,
     FACE_CUT_JUMP_THRESHOLD,
     FACE_CUT_ON_SHOT_CHANGE,
+    FACE_LOCK_PER_SHOT,
+    FACE_LOCK_SAFE_X,
+    FACE_LOCK_SAFE_Y,
     FACE_MIN_SHOT_S,
     FFMPEG_RENDER_TIMEOUT,
     FFMPEG_SHORT_TIMEOUT,
@@ -3674,6 +3678,114 @@ def _moving_average_track_values(rows: list[dict[str, Any]], index: int) -> dict
     }
 
 
+_FACE_CUT_SAMPLE_EXCLUSION_SECONDS = 0.15
+_FACE_LOCK_DRIFT_SECONDS = 1.0
+_FACE_LOCK_EASE_SECONDS = 0.4
+
+
+def _median_track_values(rows: list[dict[str, Any]]) -> dict[str, float] | None:
+    values = [_track_row_values(row) for row in rows]
+    values = [value for value in values if value]
+    if not values:
+        return None
+    return {
+        key: statistics.median(value[key] for value in values)
+        for key in ("cx_ratio", "cy_ratio", "w_ratio", "h_ratio")
+    }
+
+
+def _lock_face_track_for_shot(rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    if not FACE_LOCK_PER_SHOT or not rows:
+        return rows
+    ordered = sorted(rows, key=lambda row: float(row.get("t") or 0.0))
+    first_time = float(ordered[0].get("t") or 0.0)
+    initial_rows = [
+        row for row in ordered
+        if float(row.get("t") or 0.0) <= first_time + _FACE_LOCK_DRIFT_SECONDS
+    ]
+    locked = _median_track_values(initial_rows) or _median_track_values(ordered)
+    if not locked:
+        return rows
+
+    transitions: list[tuple[float, float, dict[str, float], dict[str, float]]] = []
+    index = 0
+    while index < len(ordered):
+        values = _track_row_values(ordered[index])
+        if not values:
+            index += 1
+            continue
+        outside = (
+            abs(values["cx_ratio"] - locked["cx_ratio"]) > float(FACE_LOCK_SAFE_X)
+            or abs(values["cy_ratio"] - locked["cy_ratio"]) > float(FACE_LOCK_SAFE_Y)
+        )
+        if not outside:
+            index += 1
+            continue
+        run_start = index
+        run_end = index
+        while run_end + 1 < len(ordered):
+            candidate = _track_row_values(ordered[run_end + 1])
+            if not candidate or not (
+                abs(candidate["cx_ratio"] - locked["cx_ratio"]) > float(FACE_LOCK_SAFE_X)
+                or abs(candidate["cy_ratio"] - locked["cy_ratio"]) > float(FACE_LOCK_SAFE_Y)
+            ):
+                break
+            run_end += 1
+        start_time = float(ordered[run_start].get("t") or 0.0)
+        end_time = float(ordered[run_end].get("t") or 0.0)
+        if end_time - start_time < _FACE_LOCK_DRIFT_SECONDS:
+            index = run_end + 1
+            continue
+        confirmation_time = start_time + _FACE_LOCK_DRIFT_SECONDS
+        new_locked = _median_track_values(ordered[run_start:run_end + 1])
+        if new_locked:
+            ease_end = confirmation_time + _FACE_LOCK_EASE_SECONDS
+            transitions.append((confirmation_time, ease_end, dict(locked), dict(new_locked)))
+            locked = new_locked
+        index = run_end + 1
+
+    output: list[dict[str, Any]] = []
+    current = _median_track_values(initial_rows) or locked
+    transition_index = 0
+    for row in ordered:
+        row_time = float(row.get("t") or 0.0)
+        while transition_index < len(transitions) and row_time >= transitions[transition_index][1]:
+            current = transitions[transition_index][3]
+            transition_index += 1
+        rendered = dict(current)
+        source = "shot_lock"
+        if transition_index < len(transitions):
+            start, end, previous, nxt = transitions[transition_index]
+            if start <= row_time < end:
+                fraction = max(0.0, min(1.0, (row_time - start) / max(0.001, end - start)))
+                rendered = _interpolate_track_values(previous, nxt, fraction)
+                source = "shot_lock:reposition"
+        output.append({
+            **row,
+            **rendered,
+            "found": True,
+            "source": source,
+        })
+    for start, end, previous, nxt in transitions:
+        if not any(abs(float(row.get("t") or 0.0) - end) < 1e-6 for row in output):
+            output.append({
+                "t": end,
+                **nxt,
+                "found": True,
+                "source": "shot_lock:reposition_end",
+            })
+        current_app.logger.info(
+            "Face shot lock reposition start=%.3f end=%.3f from=(%.6f,%.6f) to=(%.6f,%.6f)",
+            start,
+            end,
+            previous["cx_ratio"],
+            previous["cy_ratio"],
+            nxt["cx_ratio"],
+            nxt["cy_ratio"],
+        )
+    return sorted(output, key=lambda row: float(row.get("t") or 0.0))
+
+
 def _smooth_preview_face_track_rows(
     rows: list[dict[str, Any]],
     *,
@@ -3696,7 +3808,20 @@ def _smooth_preview_face_track_rows(
         rows = held_rows
     clean_cuts = sorted({float(value) for value in (shot_cuts or [])})
     if clean_cuts:
-        ordered_rows = sorted(rows, key=lambda row: float(row.get("t") or 0.0))
+        ordered_rows = []
+        for original in sorted(rows, key=lambda row: float(row.get("t") or 0.0)):
+            row = dict(original)
+            row_time = float(row.get("t") or 0.0)
+            if any(abs(row_time - cut_time) <= _FACE_CUT_SAMPLE_EXCLUSION_SECONDS for cut_time in clean_cuts):
+                row.update({
+                    "cx_ratio": None,
+                    "cy_ratio": None,
+                    "w_ratio": None,
+                    "h_ratio": None,
+                    "found": False,
+                    "source": "shot_cut:excluded",
+                })
+            ordered_rows.append(row)
         shot_rows: list[list[dict[str, Any]]] = [[] for _ in range(len(clean_cuts) + 1)]
         for row in ordered_rows:
             row_time = float(row.get("t") or 0.0)
@@ -3718,6 +3843,10 @@ def _smooth_preview_face_track_rows(
                 cut_time = clean_cuts[shot_index - 1]
                 next_values = _track_row_values(smoothed[0])
                 if next_values:
+                    stitched = [
+                        row for row in stitched
+                        if abs(float(row.get("t") or 0.0) - cut_time) >= 0.001
+                    ]
                     stitched.append({
                         "t": round(cut_time, 6),
                         **next_values,
@@ -3725,7 +3854,14 @@ def _smooth_preview_face_track_rows(
                         "cut": True,
                         "source": "shot_cut:after",
                     })
-            stitched.extend(smoothed)
+            stitched.extend(
+                row for row in smoothed
+                if not (
+                    stitched
+                    and stitched[-1].get("cut")
+                    and abs(float(row.get("t") or 0.0) - float(stitched[-1].get("t") or 0.0)) < 0.001
+                )
+            )
         return sorted(stitched, key=lambda row: float(row.get("t") or 0.0))
 
     filled = _remove_preview_face_track_outliers(_fill_preview_face_track(rows))
@@ -3767,7 +3903,7 @@ def _smooth_preview_face_track_rows(
         }
         previous_output = averaged
         smoothed.append(smoothed_row)
-    return smoothed
+    return _lock_face_track_for_shot(smoothed)
 
 
 def _write_preview_face_track_smooth(

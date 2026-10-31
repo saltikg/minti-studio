@@ -1169,11 +1169,12 @@ def _piecewise_linear_ratio_expr(
             t1 = float(nxt["t"])
             v0 = float(current[key])
             v1 = float(nxt[key])
-            if t1 <= t0:
+            if t1 - t0 < 1e-4:
                 segment_expr = f"{v0:.6f}"
             else:
                 segment_expr = f"({v0:.6f}+({v1 - v0:.6f})*({t_var}-{t0:.6f})/{t1 - t0:.6f})"
-            parts.append(f"(gte({t_var},{t0:.6f})*lt({t_var},{t1:.6f})*{segment_expr})")
+            if t1 - t0 >= 1e-4:
+                parts.append(f"(gte({t_var},{t0:.6f})*lt({t_var},{t1:.6f})*{segment_expr})")
         last = linear_points[-1]
         parts.append(f"(gte({t_var},{float(last['t']):.6f})*{float(last[key]):.6f})")
         return "+".join(parts)
