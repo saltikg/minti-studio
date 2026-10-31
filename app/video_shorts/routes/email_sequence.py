@@ -10,7 +10,6 @@ from app.video_shorts.routes.auth import require_admin
 from app.video_shorts.services.db import get_db
 from app.video_shorts.services.email_sequence import (
     SIGNUP_SEQUENCE_KEY,
-    ensure_email_sequence_schema,
     load_signup_sequence_steps,
     new_email_token,
     normalize_sequence_email,
@@ -54,8 +53,6 @@ def admin_email_sequence():
     current_user = getattr(g, "vs_current_user", None) or {}
     conn = get_db()
     try:
-        ensure_email_sequence_schema(conn)
-        conn.commit()
         if request.method == "POST":
             step = _parsed_step(request.form.get("step"))
             row = _load_step(conn, step) if step is not None else None
@@ -189,8 +186,6 @@ def public_email_unsubscribe(token: str):
     clean_token = str(token or "").strip()
     conn = get_db()
     try:
-        ensure_email_sequence_schema(conn)
-        conn.commit()
         row = conn.execute(
             """
             SELECT id, email_normalized, status, global_unsubscribed
