@@ -53,6 +53,56 @@
       color: rgba(255, 255, 255, 0.66);
       font-size: 0.92rem;
     }
+    .admin-users-customer {
+      width: 250px;
+      max-width: 250px;
+    }
+    .admin-users-name {
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+    }
+    .admin-users-email-row {
+      display: flex;
+      align-items: center;
+      gap: 6px;
+      min-width: 0;
+    }
+    .admin-users-email-text {
+      white-space: nowrap;
+    }
+    .admin-users-copy {
+      display: inline-flex;
+      flex: 0 0 auto;
+      align-items: center;
+      justify-content: center;
+      width: 24px;
+      height: 24px;
+      padding: 0;
+      border: 0;
+      border-radius: 6px;
+      background: transparent;
+      color: rgba(255, 255, 255, 0.54);
+    }
+    .admin-users-copy:hover,
+    .admin-users-copy:focus-visible {
+      background: rgba(255, 255, 255, 0.08);
+      color: #fff;
+    }
+    .admin-users-copy svg {
+      width: 14px;
+      height: 14px;
+    }
+    .admin-users-sort-link {
+      display: inline-flex;
+      align-items: center;
+      gap: 6px;
+      color: inherit;
+      text-decoration: none;
+    }
+    .admin-users-sort-link:hover {
+      color: rgba(255, 255, 255, 0.9);
+    }
     .admin-users-pill {
       display: inline-flex;
       align-items: center;
@@ -154,6 +204,7 @@
 {% block content %}
   <section class="vs-admin-card p-3 p-lg-4">
     <form method="get" class="admin-users-toolbar">
+      <input type="hidden" name="activity_dir" value="{{ activity_sort_dir }}">
       <div>
         <label for="admin-users-search" class="form-label mb-2">Email search</label>
         <input
@@ -191,7 +242,15 @@
         <thead>
           <tr>
             <th>Open</th>
-            <th>Last activity</th>
+            <th>
+              <a
+                class="admin-users-sort-link"
+                href="{{ url_for('video_shorts_bp.admin_users', q=search_text, activity_dir='asc' if activity_sort_dir == 'desc' else 'desc') }}"
+                title="Sort {{ 'oldest first' if activity_sort_dir == 'desc' else 'newest first' }}">
+                <span>Last activity</span>
+                <span aria-hidden="true">{{ '↓' if activity_sort_dir == 'desc' else '↑' }}</span>
+              </a>
+            </th>
             <th>Customer</th>
             <th>Mode</th>
             <th>Stage</th>
@@ -216,9 +275,27 @@
               <td class="admin-users-meta">
                 {{ user.last_activity_at|admin_datetime }}
               </td>
-              <td>
-                <div class="fw-semibold">{{ user.name }}</div>
-                <div class="admin-users-email">{{ user.email or user.username or user.id }}</div>
+              <td class="admin-users-customer">
+                {% set customer_identifier = user.email or user.username or user.id %}
+                <div class="admin-users-name fw-semibold" title="{{ user.name }}">{{ user.name }}</div>
+                <div class="admin-users-email admin-users-email-row">
+                  <span
+                    class="admin-users-email-text"
+                    {% if customer_identifier|length > 20 %}title="{{ customer_identifier }}"{% endif %}>
+                    {{ customer_identifier[:20] }}{% if customer_identifier|length > 20 %}…{% endif %}
+                  </span>
+                  <button
+                    type="button"
+                    class="admin-users-copy"
+                    data-copy-value="{{ customer_identifier }}"
+                    title="Copy email"
+                    aria-label="Copy email">
+                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true">
+                      <rect x="9" y="9" width="11" height="11" rx="2"></rect>
+                      <path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"></path>
+                    </svg>
+                  </button>
+                </div>
               </td>
               <td><span class="admin-users-pill {% if user.service_mode == 'autopilot' %}is-autopilot{% endif %}">{{ user.service_mode_label }}</span></td>
               <td>
@@ -271,12 +348,33 @@
       <div class="admin-users-meta">Page {{ page }} of {{ total_pages }}</div>
       <div class="admin-users-pagination-links">
         {% if page > 1 %}
-          <a href="{{ url_for('video_shorts_bp.admin_users', q=search_text, page=page - 1) }}" class="btn btn-sm btn-outline-light">Previous</a>
+          <a href="{{ url_for('video_shorts_bp.admin_users', q=search_text, activity_dir=activity_sort_dir, page=page - 1) }}" class="btn btn-sm btn-outline-light">Previous</a>
         {% endif %}
         {% if page < total_pages %}
-          <a href="{{ url_for('video_shorts_bp.admin_users', q=search_text, page=page + 1) }}" class="btn btn-sm btn-outline-light">Next</a>
+          <a href="{{ url_for('video_shorts_bp.admin_users', q=search_text, activity_dir=activity_sort_dir, page=page + 1) }}" class="btn btn-sm btn-outline-light">Next</a>
         {% endif %}
       </div>
     </div>
   </section>
+
+  <script>
+    document.querySelectorAll('.admin-users-copy').forEach((button) => {
+      button.addEventListener('click', async () => {
+        const value = button.dataset.copyValue || '';
+        if (!value) return;
+
+        try {
+          await navigator.clipboard.writeText(value);
+          button.title = 'Copied';
+          button.setAttribute('aria-label', 'Copied');
+          window.setTimeout(() => {
+            button.title = 'Copy email';
+            button.setAttribute('aria-label', 'Copy email');
+          }, 1200);
+        } catch (error) {
+          button.title = 'Copy failed';
+        }
+      });
+    });
+  </script>
 {% endblock %}

@@ -17976,10 +17976,15 @@ def _load_storage_plan_admin_users(
 def _load_admin_auth_users(
     conn,
     search_text: str = "",
+    activity_sort_dir: str = "desc",
     limit: int = 50,
     offset: int = 0,
 ) -> Tuple[List[Dict[str, Any]], int]:
     normalized_search = (search_text or "").strip().lower()
+    normalized_activity_sort_dir = (
+        "asc" if str(activity_sort_dir or "").strip().lower() == "asc" else "desc"
+    )
+    activity_order_sql = "ASC" if normalized_activity_sort_dir == "asc" else "DESC"
     where_clauses: List[str] = []
     params: List[Any] = []
 
@@ -18132,7 +18137,10 @@ def _load_admin_auth_users(
         {youtube_join}
         {generated_join}
         {where_sql}
-        ORDER BY coalesce(u.created_at, u.updated_at) DESC, CAST(u.id AS VARCHAR) DESC
+        ORDER BY
+          GREATEST(yv.last_video_activity, gv.last_short_activity) {activity_order_sql} NULLS LAST,
+          coalesce(u.created_at, u.updated_at) DESC,
+          CAST(u.id AS VARCHAR) DESC
         LIMIT ? OFFSET ?
         """,
         params + [limit, offset],
@@ -22077,6 +22085,9 @@ def admin_users():
         return redirect(url_for("video_shorts_bp.admin_users", **redirect_args))
 
     search_text = (request.args.get("q") or "").strip()
+    activity_sort_dir = (
+        "asc" if (request.args.get("activity_dir") or "").strip().lower() == "asc" else "desc"
+    )
     try:
         requested_page = int(request.args.get("page") or 1)
     except (TypeError, ValueError):
@@ -22097,6 +22108,7 @@ def admin_users():
     total_users = _load_admin_auth_users(
         conn,
         search_text=search_text,
+        activity_sort_dir=activity_sort_dir,
         limit=1,
         offset=0,
     )[1]
@@ -22105,6 +22117,7 @@ def admin_users():
     users, total_users = _load_admin_auth_users(
         conn,
         search_text=search_text,
+        activity_sort_dir=activity_sort_dir,
         limit=per_page,
         offset=(page - 1) * per_page,
     )
@@ -22115,6 +22128,7 @@ def admin_users():
         admin_title="Users",
         users=users,
         search_text=search_text,
+        activity_sort_dir=activity_sort_dir,
         page=page,
         per_page=per_page,
         total_users=total_users,
