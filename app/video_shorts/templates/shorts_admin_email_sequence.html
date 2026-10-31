@@ -21,9 +21,6 @@
 {% endblock %}
 
 {% block content %}
-  {% if not postal_address_configured %}
-    <div class="alert alert-warning">COMPANY_POSTAL_ADDRESS is not configured. Preview remains available, but test sends are blocked.</div>
-  {% endif %}
   <div class="email-sequence-grid">
     {% for step in steps %}
       <section class="vs-admin-card email-sequence-card" id="step-{{ step.step }}">

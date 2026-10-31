@@ -90,10 +90,6 @@ def admin_email_sequence():
                 if not subject or not body_text:
                     flash("Add both a subject and body before sending a test.", "warning")
                     return redirect(url_for("video_shorts_bp.admin_email_sequence", step=step))
-                if not postal_address:
-                    flash("COMPANY_POSTAL_ADDRESS must be configured before sending sequence email.", "danger")
-                    return redirect(url_for("video_shorts_bp.admin_email_sequence", step=step))
-
                 send_token = new_email_token()
                 test_unsubscribe_url = unsubscribe_url(base_url=_base_url(), token=f"test-{send_token}")
                 rendered = render_sequence_email(
@@ -176,7 +172,6 @@ def admin_email_sequence():
             admin_title="Signup Email Sequence",
             steps=steps,
             sample_name=SAMPLE_RECIPIENT_NAME,
-            postal_address_configured=bool(str(os.getenv("COMPANY_POSTAL_ADDRESS") or "").strip()),
         )
     finally:
         conn.close()
