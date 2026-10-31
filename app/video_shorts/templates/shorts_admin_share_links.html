@@ -494,6 +494,16 @@
             <th>Declined</th>
             <th class="admin-share-links-date-col">
               <a
+                href="{{ url_for('video_shorts_bp.admin_share_links', email=email_query, engagement=selected_engagement, archive=selected_archive, funnel=selected_funnel, sort='created', dir=next_created_dir, page=1) }}"
+                class="admin-share-links-sort-link">
+                <span>Created</span>
+                {% if sort_key == 'created' %}
+                  <span class="admin-share-links-sort-arrow">{{ '↑' if sort_dir == 'asc' else '↓' }}</span>
+                {% endif %}
+              </a>
+            </th>
+            <th class="admin-share-links-date-col">
+              <a
                 href="{{ url_for('video_shorts_bp.admin_share_links', email=email_query, engagement=selected_engagement, archive=selected_archive, funnel=selected_funnel, sort='first_seen', dir=next_first_seen_dir, page=1) }}"
                 class="admin-share-links-sort-link">
                 <span>First seen</span>
@@ -512,8 +522,8 @@
                 {% endif %}
               </a>
             </th>
+            <th class="admin-share-links-date-col">Free tool</th>
             <th class="admin-share-links-recipient-col">Recipient</th>
-            <th>Free tool</th>
             <th>Clip</th>
             <th>Trial</th>
             <th>Views</th>
@@ -540,19 +550,8 @@
             <th>Trial CTA?</th>
             <th>Converted?</th>
             <th>Redeemed?</th>
-            <th>Connected?</th>
             <th class="admin-share-links-date-col">Redeemed at</th>
             <th>User</th>
-            <th class="admin-share-links-date-col">
-              <a
-                href="{{ url_for('video_shorts_bp.admin_share_links', email=email_query, engagement=selected_engagement, archive=selected_archive, funnel=selected_funnel, sort='created', dir=next_created_dir, page=1) }}"
-                class="admin-share-links-sort-link">
-                <span>Created</span>
-                {% if sort_key == 'created' %}
-                  <span class="admin-share-links-sort-arrow">{{ '↑' if sort_dir == 'asc' else '↓' }}</span>
-                {% endif %}
-              </a>
-            </th>
           </tr>
         </thead>
         <tbody>
@@ -597,8 +596,14 @@
                   </label>
                 </form>
               </td>
+              <td class="admin-share-links-meta admin-share-links-date-col">{{ compact_datetime(link.created_at_pst) }}</td>
               <td class="admin-share-links-meta admin-share-links-date-col">{{ compact_datetime(link.first_seen_pst) }}</td>
               <td class="admin-share-links-meta admin-share-links-date-col">{{ compact_datetime(link.last_seen_pst) }}</td>
+              <td
+                class="admin-share-links-meta admin-share-links-date-col"
+                {% if link.free_tool_event_name %}title="{{ link.free_tool_label }}"{% endif %}>
+                {{ compact_datetime(link.free_tool_event_at_pst) }}
+              </td>
               <td class="admin-share-links-recipient-col">
                 <div class="admin-share-links-recipient" title="{{ link.recipient_name }}">{{ link.recipient_name }}</div>
                 <div class="admin-share-links-email">
@@ -619,18 +624,6 @@
                     </button>
                   {% endif %}
                 </div>
-              </td>
-              <td class="admin-share-links-meta">
-                {% if link.free_tool_event_name %}
-                  <div class="admin-share-links-feed-detail">
-                    <span class="admin-share-links-feed-strong">{{ link.free_tool_label }}</span>
-                    {% if link.free_tool_event_at_pst %}
-                      <span>{{ link.free_tool_event_at_pst }}</span>
-                    {% endif %}
-                  </div>
-                {% else %}
-                  —
-                {% endif %}
               </td>
               <td class="admin-share-links-title">
                 <div>{{ link.clip_title }}</div>
@@ -785,13 +778,6 @@
                 {% endif %}
               </td>
               <td><span class="admin-share-links-pill {% if link.redeemed %}is-yes{% else %}is-no{% endif %}">{{ 'Yes' if link.redeemed else 'No' }}</span></td>
-              <td class="admin-share-links-meta">
-                {% if link.channel_connected %}
-                  {{ link.connected_platforms }}
-                {% else %}
-                  —
-                {% endif %}
-              </td>
               <td class="admin-share-links-meta admin-share-links-date-col">{{ compact_datetime(link.redeemed_at_pst) }}</td>
               <td class="admin-share-links-meta">
                 {% if link.redeemed_user_detail_url %}
@@ -800,7 +786,6 @@
                   —
                 {% endif %}
               </td>
-              <td class="admin-share-links-meta admin-share-links-date-col">{{ compact_datetime(link.created_at_pst) }}</td>
             </tr>
           {% else %}
             <tr>
