@@ -17,6 +17,7 @@ from app.video_shorts.services.db import (
     get_db,
     get_db_readonly,
     ensure_channel_owner_schema,
+    table_columns,
 )
 from app.video_shorts.services.media_utils import purge_source_cache_for_video
 from app.video_shorts.services.ingestion_progress import (
@@ -1744,6 +1745,20 @@ def channels_page():
             params.append(brand_id)
         else:
             where_clause += " AND c.brand_id IS NULL"
+    if "channel_id" in table_columns(conn, "autopilot_leads"):
+        outreach_exclusion_sql = """
+            lower(trim(coalesce(c.notes, ''))) <> 'autopilot lead import'
+            AND NOT EXISTS (
+                    SELECT 1
+                    FROM autopilot_leads outreach_lead
+                    WHERE CAST(outreach_lead.channel_id AS VARCHAR) = CAST(c.channel_id AS VARCHAR)
+            )
+        """
+        where_clause += (
+            f" AND {outreach_exclusion_sql}"
+            if where_clause
+            else f"WHERE {outreach_exclusion_sql}"
+        )
     rows = conn.execute(
         f"""
         SELECT
