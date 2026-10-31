@@ -7672,9 +7672,10 @@
                           <span class="material-symbols-outlined" aria-hidden="true">open_in_new</span>
                           <span>Open</span>
                         </a>
+                        {% set clip_download_url = editor_url('download_generated_clip', video_pk=video.id, plan_index=row.plan_index) %}
                         <a
                           class="btn btn-sm generate-v2-tile generate-v2-download-btn"
-                          href="{{ editor_url('download_generated_clip', video_pk=video.id, plan_index=row.plan_index) }}{% if row.media_version %}?v={{ row.media_version }}{% endif %}"
+                          href="{{ clip_download_url }}{% if row.media_version %}{{ '&' if '?' in clip_download_url else '?' }}v={{ row.media_version | urlencode }}{% endif %}"
                           title="Download"
                           aria-label="Download">
                           <i class="bi bi-download" aria-hidden="true"></i>
