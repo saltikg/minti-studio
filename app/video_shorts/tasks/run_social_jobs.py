@@ -17,6 +17,7 @@ if str(PROJECT_ROOT) not in sys.path:
 
 from app.video_shorts.config import SHORTS_DIR
 from app.video_shorts.services.db import get_db
+from app.video_shorts.services.feature_flags import comments_enabled
 from app.video_shorts.tasks.process_facebook_queue import process_queue as process_facebook_queue
 from app.video_shorts.tasks.process_instagram_queue import process_queue as process_instagram_queue
 from app.video_shorts.tasks.process_tiktok_queue import process_queue as process_tiktok_queue
@@ -83,6 +84,10 @@ def main() -> int:
         help="YouTube comment scan scope for --only-youtube-comments runs",
     )
     args = ap.parse_args()
+
+    if args.only_youtube_comments and not comments_enabled():
+        print("comments disabled")
+        return 0
 
     SHORTS_DIR.mkdir(parents=True, exist_ok=True)
     started_at = datetime.now(timezone.utc)

@@ -37,6 +37,7 @@ from app.video_shorts.services.db import (
     table_columns,
 )
 from app.video_shorts.services.facebook_queue import update_facebook_queue_metrics, load_facebook_queue_map
+from app.video_shorts.services.feature_flags import comments_enabled
 from app.video_shorts.services.instagram_queue import load_instagram_queue_map
 from app.video_shorts.services.instagram_api import refresh_instagram_media, InstagramActionError
 from app.video_shorts.services.ai_video_workspace import list_ai_broadcast_entries
@@ -893,6 +894,10 @@ def _load_owner_user_ids() -> List[str]:
 
 
 def main(*, comment_scan_scope: str = "recent50") -> int:
+    if not comments_enabled():
+        logger.info("comments disabled")
+        print("comments disabled")
+        return 0
     app = create_app()
     with app.app_context():
         comment_sync_enabled = os.getenv("YT_COMMENT_SYNC_ENABLED", "0").strip().lower() in {

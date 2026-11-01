@@ -70,6 +70,7 @@ from app.video_shorts.services.facebook_queue import (
     update_facebook_last_seen_comment_count,
     update_facebook_queue_metrics,
 )
+from app.video_shorts.services.feature_flags import comments_enabled
 from app.video_shorts.services.instagram_api import (
     InstagramActionError,
     refresh_instagram_media,
@@ -4101,13 +4102,14 @@ def add_video_by_url(channel_id):
 @video_shorts_bp.route("/shorts/overview")
 def shorts_overview():
     current_user = getattr(g, "vs_current_user", None)
+    comments_feature_enabled = comments_enabled()
     brand_id = current_brand_id()
     is_admin = current_user and current_user.get("role") == "admin"
     brand_owner_user_id, _brand_name = _load_brand_scope_context(brand_id)
     owner_scope_user_id = brand_owner_user_id or (str((current_user or {}).get("id") or "").strip() or None)
     user_tz = (current_user or {}).get("time_zone") or DEFAULT_TIME_ZONE
     status_filter = (request.args.get("status") or "").strip().lower()
-    comments_filter = (request.args.get("comments") or "").strip().lower()
+    comments_filter = (request.args.get("comments") or "").strip().lower() if comments_feature_enabled else ""
     if comments_filter not in {"new"}:
         comments_filter = ""
     search_q = (request.args.get("q") or "").strip()
@@ -4117,7 +4119,7 @@ def shorts_overview():
     sort_dir = (request.args.get("dir") or "desc").strip().lower()
     sort_dir = "asc" if sort_dir == "asc" else "desc"
     pending_only_raw = (request.args.get("pending_only") or "").strip().lower()
-    pending_only = pending_only_raw in {"1", "true", "yes", "pending"}
+    pending_only = comments_feature_enabled and pending_only_raw in {"1", "true", "yes", "pending"}
     refresh_stats = (request.args.get("refresh_stats") or "").strip().lower() in {"1", "true", "yes"}
 
     all_entries = _collect_short_broadcast_entries(
@@ -4234,7 +4236,7 @@ def shorts_overview():
                 "short_video_id": short_video_id,
                 "short_video_url": short_video_id
                 and f"https://www.youtube.com/watch?v={short_video_id}",
-                "comments_url": short_video_id
+                "comments_url": comments_feature_enabled and short_video_id
                 and url_for("video_shorts_bp.shorts_comments", video_id=short_video_id),
                 "clip_preview_url": clip_preview_url,
                 "short_view_count": None,
@@ -4256,10 +4258,14 @@ def shorts_overview():
             if str(record.get("instagram_media_id") or "").strip()
         }
     )
-    instagram_comment_cache: Dict[str, Optional[Dict[str, object]]] = {
-        media_id: cache
-        for media_id, cache in load_instagram_comment_cache_map(instagram_media_ids).items()
-    }
+    instagram_comment_cache: Dict[str, Optional[Dict[str, object]]] = (
+        {
+            media_id: cache
+            for media_id, cache in load_instagram_comment_cache_map(instagram_media_ids).items()
+        }
+        if comments_feature_enabled
+        else {}
+    )
     for entry in processed_entries:
         entry["publish_label"] = (
             _format_display_timestamp(entry.get("publish_at_iso"), user_tz)
@@ -4276,7 +4282,9 @@ def shorts_overview():
                 cache = instagram_comment_cache.get(media_id)
             else:
                 cache = None
-            has_flagged = _has_flagged_instagram_comments(cache.get("comments") if cache else [])
+            has_flagged = comments_feature_enabled and _has_flagged_instagram_comments(
+                cache.get("comments") if cache else []
+            )
             current_count = record.get("comment_count")
             if not isinstance(current_count, int):
                 cached_count = cache.get("comment_count") if cache else None
@@ -4285,7 +4293,7 @@ def shorts_overview():
                 else:
                     current_count = len(cache.get("comments") or []) if cache else 0
             last_seen = record.get("last_seen_comment_count") or 0
-            has_unread = current_count > last_seen
+            has_unread = comments_feature_enabled and current_count > last_seen
             ig_entries.append(
                 {
                     "queue_id": record.get("id"),
@@ -4374,7 +4382,7 @@ def shorts_overview():
                     "reactions": record.get("reactions"),
                     "comment_count": record.get("comment_count"),
                     "last_seen_comment_count": record.get("last_seen_comment_count"),
-                    "has_unread_comments": current_count > last_seen,
+                    "has_unread_comments": comments_feature_enabled and current_count > last_seen,
                 }
             )
         entry["facebook_entries"] = fb_entries
@@ -4384,11 +4392,17 @@ def shorts_overview():
         for entry in processed_entries
         if entry.get("short_video_id")
     ]
-    refresh_entries = _select_recent_comment_entries(
-        processed_entries,
-        COMMENT_COUNT_REFRESH_MAX_VIDEOS,
+    refresh_entries = (
+        _select_recent_comment_entries(
+            processed_entries,
+            COMMENT_COUNT_REFRESH_MAX_VIDEOS,
+        )
+        if comments_feature_enabled
+        else []
     )
-    short_comment_cache: Dict[str, Dict[str, Any]] = _load_short_comment_cache(short_video_ids)
+    short_comment_cache: Dict[str, Dict[str, Any]] = (
+        _load_short_comment_cache(short_video_ids) if comments_feature_enabled else {}
+    )
     for entry in processed_entries:
         counts = short_comment_cache.get(entry.get("short_video_id") or "", {}) if entry.get("short_video_id") else {}
         entry["pending_comment_count"] = counts.get("pending_comment_count", 0)

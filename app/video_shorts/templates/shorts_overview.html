@@ -34,8 +34,10 @@
     <form method="get" id="shortsFiltersForm" class="publishing-filter-form">
       <input type="hidden" name="day" id="calendarDayInput" value="{{ day_filter }}">
       <input type="hidden" name="status" id="statusInput" value="{{ status_filter }}">
-      <input type="hidden" name="comments" id="commentsInput" value="{{ comments_filter }}">
-      <input type="hidden" name="pending_only" id="pendingOnlyInput" value="{{ '1' if pending_only else '' }}">
+      {% if comments_enabled %}
+        <input type="hidden" name="comments" id="commentsInput" value="{{ comments_filter }}">
+        <input type="hidden" name="pending_only" id="pendingOnlyInput" value="{{ '1' if pending_only else '' }}">
+      {% endif %}
       <div class="row g-3 align-items-start">
         <div class="col-lg-7">
           <div class="row g-2">
@@ -67,7 +69,7 @@
             </div>
             <div class="col-12 mt-2">
               <div class="row g-2">
-                <div class="col-12 col-md-4">
+                <div class="col-12 col-md-{{ 4 if comments_enabled else 6 }}">
                   <div class="kpi-card {% if status_filter == 'published' %}kpi-card-active{% endif %}">
                     <div class="kpi-label">Published</div>
                     <button type="button"
@@ -78,7 +80,7 @@
                     <div class="kpi-spacer"></div>
                   </div>
                 </div>
-                <div class="col-12 col-md-4">
+                <div class="col-12 col-md-{{ 4 if comments_enabled else 6 }}">
                   <div class="kpi-card {% if status_filter == 'scheduled' %}kpi-card-active{% endif %}">
                     <div class="kpi-label">Scheduled</div>
                     <button type="button"
@@ -89,22 +91,24 @@
                     <div class="kpi-spacer"></div>
                   </div>
                 </div>
-                <div class="col-12 col-md-4">
-                  <div class="kpi-card {% if comments_filter == 'new' %}kpi-card-active{% endif %}">
-                    <div class="kpi-label">Videos with new comments</div>
-                    <button type="button"
-                            class="kpi-value kpi-link"
-                            data-comments-filter="new">
-                      {{ unread_videos_total }}
-                    </button>
-                    <div class="kpi-spacer"></div>
+                {% if comments_enabled %}
+                  <div class="col-12 col-md-4">
+                    <div class="kpi-card {% if comments_filter == 'new' %}kpi-card-active{% endif %}">
+                      <div class="kpi-label">Videos with new comments</div>
+                      <button type="button"
+                              class="kpi-value kpi-link"
+                              data-comments-filter="new">
+                        {{ unread_videos_total }}
+                      </button>
+                      <div class="kpi-spacer"></div>
+                    </div>
                   </div>
-                </div>
-                <div class="col-12">
-                  <div class="small vs-text-body">
-                    Last comment check: {{ last_comment_check_display or '—' }}
+                  <div class="col-12">
+                    <div class="small vs-text-body">
+                      Last comment check: {{ last_comment_check_display or '—' }}
+                    </div>
                   </div>
-                </div>
+                {% endif %}
               </div>
             </div>
           </div>
@@ -142,7 +146,7 @@
   </div>
 </div>
 
-{% if pending_videos_total %}
+{% if comments_enabled and pending_videos_total %}
   <div class="publishing-pending-bar d-flex justify-content-between align-items-center flex-wrap gap-3">
     <div class="pending-message">
       <strong>{{ pending_videos_total }}</strong> videos have comments waiting for approval.
@@ -196,7 +200,7 @@
         </thead>
         <tbody>
           {% for entry in entries %}
-            <tr class="{% if entry.pending_comment_count %}short-row-pending{% endif %}"
+            <tr class="{% if comments_enabled and entry.pending_comment_count %}short-row-pending{% endif %}"
                 {% if entry.short_video_id %}data-short-row="{{ entry.short_video_id }}"{% endif %}>
             <td>
               <div class="d-flex align-items-center gap-2">
@@ -217,7 +221,7 @@
                   </div>
                   <div class="flex-grow-1">
                     <div class="short-title fw-semibold mb-0 d-flex align-items-center gap-2">
-                      {% if entry.short_video_id %}
+                      {% if comments_enabled and entry.short_video_id %}
                         <span class="pending-indicator {% if not entry.pending_comment_count %}d-none{% endif %}" data-role="pending-indicator"></span>
                       {% endif %}
                       <span>{{ entry.plan_title or entry.video_title or 'Untitled clip' }}</span>
@@ -256,33 +260,35 @@
                       <i class="bi bi-hand-thumbs-up"></i>
                       {{ entry.short_like_count if entry.short_like_count is not none else '-' }}
                     </span>
-                    {% set pending_count = entry.pending_comment_count or 0 %}
-                    {% set total_comments = entry.platform_comment_count %}
-                    {% if total_comments is none %}
-                      {% set total_comments = 0 %}
-                    {% endif %}
-                    <span class="d-flex align-items-center gap-1 text-muted position-relative">
-                      {% if entry.comments_url %}
-                        <span
-                          role="button"
-                          tabindex="0"
-                          class="short-comments-btn {% if entry.has_unread_comments or pending_count > 0 %}short-comments-btn-unread{% else %}short-comments-btn-default{% endif %}"
-                          data-comments-url="{{ entry.comments_url }}"
-                          data-comments-status="all"
-                          data-video-title="{{ (entry.plan_title or entry.video_title or entry.short_video_id or 'Short comments')|e }}"
-                          data-video-id="{{ (entry.short_video_id or '')|e }}"
-                          {% if entry.short_video_id %}data-comments-trigger="{{ entry.short_video_id }}"{% endif %}
-                          data-pending-count="{{ pending_count }}"
-                          data-platform-comment-count="{{ total_comments }}"
-                          title="View comments">
-                          <i class="bi bi-chat-dots"></i>
-                          <span class="fw-semibold" data-role="comment-count">({{ total_comments }})</span>
-                        </span>
-                      {% else %}
-                        <i class="bi bi-chat-dots"></i>
-                        <span class="fw-semibold">{{ entry.short_comment_count if entry.short_comment_count is not none else 0 }}</span>
+                    {% if comments_enabled %}
+                      {% set pending_count = entry.pending_comment_count or 0 %}
+                      {% set total_comments = entry.platform_comment_count %}
+                      {% if total_comments is none %}
+                        {% set total_comments = 0 %}
                       {% endif %}
-                    </span>
+                      <span class="d-flex align-items-center gap-1 text-muted position-relative">
+                        {% if entry.comments_url %}
+                          <span
+                            role="button"
+                            tabindex="0"
+                            class="short-comments-btn {% if entry.has_unread_comments or pending_count > 0 %}short-comments-btn-unread{% else %}short-comments-btn-default{% endif %}"
+                            data-comments-url="{{ entry.comments_url }}"
+                            data-comments-status="all"
+                            data-video-title="{{ (entry.plan_title or entry.video_title or entry.short_video_id or 'Short comments')|e }}"
+                            data-video-id="{{ (entry.short_video_id or '')|e }}"
+                            {% if entry.short_video_id %}data-comments-trigger="{{ entry.short_video_id }}"{% endif %}
+                            data-pending-count="{{ pending_count }}"
+                            data-platform-comment-count="{{ total_comments }}"
+                            title="View comments">
+                            <i class="bi bi-chat-dots"></i>
+                            <span class="fw-semibold" data-role="comment-count">({{ total_comments }})</span>
+                          </span>
+                        {% else %}
+                          <i class="bi bi-chat-dots"></i>
+                          <span class="fw-semibold">{{ entry.short_comment_count if entry.short_comment_count is not none else 0 }}</span>
+                        {% endif %}
+                      </span>
+                    {% endif %}
                   </div>
                 </div>
               </td>
@@ -324,6 +330,7 @@
                           <i class="bi bi-heart"></i>
                           {{ ig.like_count if ig.like_count is not none else '-' }}
                         </span>
+                        {% if comments_enabled %}
                         <span class="d-flex align-items-center gap-1 text-muted">
                           {% if ig.queue_id %}
                             <span
@@ -341,6 +348,7 @@
                             {{ ig.comment_count if ig.comment_count is not none else '-' }}
                           {% endif %}
                         </span>
+                        {% endif %}
                       </div>
                     </div>
                   {% endfor %}
@@ -422,6 +430,7 @@
                           <i class="bi bi-hand-thumbs-up"></i>
                           {{ fb.reactions if fb.reactions is not none else '-' }}
                         </span>
+                        {% if comments_enabled %}
                         <span class="d-flex align-items-center gap-1 text-muted">
                           {% if fb.queue_id %}
                             <span
@@ -439,6 +448,7 @@
                             {{ fb.comment_count if fb.comment_count is not none else '-' }}
                           {% endif %}
                         </span>
+                        {% endif %}
                       </div>
                     </div>
                   {% endfor %}
@@ -499,6 +509,7 @@
   </div>
 </div>
 
+{% if comments_enabled %}
 <div class="modal fade" id="shortCommentsModal" tabindex="-1" aria-labelledby="shortCommentsLabel" aria-hidden="true">
   <div class="modal-dialog modal-lg modal-dialog-scrollable">
     <div class="modal-content vs-modal">
@@ -582,6 +593,7 @@
     </div>
   </div>
 </div>
+{% endif %}
 
 <div class="modal fade" id="tiktokErrorModal" tabindex="-1" aria-labelledby="tiktokErrorLabel" aria-hidden="true">
   <div class="modal-dialog modal-lg modal-dialog-scrollable">
@@ -903,6 +915,7 @@
       }
     }
 
+    {% if comments_enabled %}
     const modalEl = document.getElementById("shortCommentsModal");
     if (!modalEl || typeof bootstrap === "undefined") {
       return;
@@ -2508,6 +2521,7 @@
         applyFilter(currentFilter);
       }
     }
+    {% endif %}
   });
 </script>
 
