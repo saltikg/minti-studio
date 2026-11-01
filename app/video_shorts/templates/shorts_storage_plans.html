@@ -341,9 +341,27 @@
           <div class="usage-reset">{{ autopilot_card_notice }}</div>
         {% endif %}
       </div>
-      <button type="button" class="btn btn-sm vs-btn vs-btn-secondary usage-upgrade-btn" data-bs-toggle="modal" data-bs-target="#planCompareModal">
-        Upgrade / Compare plans
-      </button>
+      <div class="d-flex align-items-center gap-2 flex-wrap">
+        {% if not billing_has_managed_subscription %}
+          <button
+            type="button"
+            class="btn btn-sm vs-btn vs-btn-primary usage-upgrade-btn plan-select-btn"
+            id="autopilot-card-payment-btn"
+            data-plan-id="autopilot_{{ autopilot_tier }}"
+            data-plan-name="Autopilot {{ autopilot_tier }}"
+            data-plan-quota="{{ autopilot_tier }} Shorts / month"
+            data-price-monthly="{{ autopilot_monthly_price }}"
+            data-price-yearly="{{ autopilot_monthly_price * 12 }}"
+            data-billing-mode="autopilot"
+            data-service-tier="{{ autopilot_tier }}"
+            data-add-payment="true">
+            Add payment method
+          </button>
+        {% endif %}
+        <button type="button" class="btn btn-sm vs-btn vs-btn-secondary usage-upgrade-btn" data-bs-toggle="modal" data-bs-target="#planCompareModal">
+          Upgrade / Compare plans
+        </button>
+      </div>
     </div>
     <div class="usage-meter usage-state-ok">
       <div class="usage-meter-label mb-2">Shorts prepared this month</div>
@@ -495,7 +513,22 @@
             {% endif %}
           </ul>
           <div class="plan-actions">
-            {% if is_selected_plan %}
+            {% if is_selected_plan and is_autopilot and not billing_has_managed_subscription %}
+              <button
+                type="button"
+                class="btn btn-sm vs-btn vs-btn-primary plan-cta plan-select-btn"
+                id="autopilot-current-payment-btn"
+                data-plan-id="{{ plan.plan_id }}"
+                data-plan-name="{{ tier_label }}"
+                data-plan-quota="{{ plan.quota_label }}"
+                data-price-monthly="{{ monthly_price }}"
+                data-price-yearly="{{ yearly_total }}"
+                data-billing-mode="autopilot"
+                data-service-tier="{{ plan.service_tier }}"
+                data-add-payment="true">
+                Add payment method
+              </button>
+            {% elif is_selected_plan %}
               <button class="btn btn-sm vs-btn vs-btn-secondary plan-cta" disabled>
                 {% if subscription_cancel_at_period_end %}
                   Current plan · Cancels {{ subscription_cancel_effective_date or "soon" }}
@@ -1110,6 +1143,7 @@
         const planId = button.dataset.planId;
         const billingMode = button.dataset.billingMode || "self";
         const serviceTier = Number(button.dataset.serviceTier || 0) || null;
+        const isPaymentSetup = button.dataset.addPayment === "true";
         const isFreePlan = planId === "plan_free";
         const shouldUsePortal = billingHasManagedSubscription && !isAutopilot;
         const shouldUpdateSubscription = billingHasManagedSubscription && isAutopilot;
@@ -1123,10 +1157,13 @@
           shouldUpdateSubscription,
           billingMode,
           serviceTier,
+          isPaymentSetup,
         };
 
         if (planTitleEl) {
-          planTitleEl.textContent = `Switch to ${planName}?`;
+          planTitleEl.textContent = isPaymentSetup
+            ? `Add payment method for ${planName}?`
+            : `Switch to ${planName}?`;
         }
         if (planPriceEl) {
           planPriceEl.textContent = `$${displayPrice}`;
@@ -1197,6 +1234,13 @@
         }
       });
     });
+
+    if (isAutopilot && !billingHasManagedSubscription) {
+      const checkoutTarget = new URLSearchParams(window.location.search).get("checkout");
+      if (checkoutTarget === "current") {
+        document.getElementById("autopilot-current-payment-btn")?.click();
+      }
+    }
 
     if (confirmForm && confirmBtn) {
       confirmForm.addEventListener("submit", async (event) => {

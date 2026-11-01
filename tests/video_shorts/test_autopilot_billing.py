@@ -224,6 +224,9 @@ def test_deadline_sends_day_25_reminder_then_pauses_at_day_30(monkeypatch, tmp_p
     assert billing.process_autopilot_billing_deadlines(now=now) is True
     assert sent[0]["to_email"] == "autopilot@example.com"
     assert sent[0]["trial_end_label"] == "October 31, 2026"
+    assert sent[0]["billing_url"].endswith(
+        "/video_shorts/shorts/storage/plans?checkout=current"
+    )
 
     conn = db_service.get_db_readonly()
     try:

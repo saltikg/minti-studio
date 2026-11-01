@@ -622,7 +622,10 @@ def process_autopilot_billing_deadlines(*, now: Optional[datetime] = None) -> bo
 
     trial_end = autopilot_trial_end(reminder[3])
     trial_end_label = trial_end.strftime("%B %d, %Y") if trial_end else "your trial end date"
-    billing_url = f"{(os.getenv('BASE_URL') or 'https://mintistudio.com').rstrip('/')}/video_shorts/shorts/storage/plans"
+    billing_url = (
+        f"{(os.getenv('BASE_URL') or 'https://mintistudio.com').rstrip('/')}"
+        "/video_shorts/shorts/storage/plans?checkout=current"
+    )
     try:
         from app.video_shorts.services.email_verification import send_autopilot_billing_reminder_email
 

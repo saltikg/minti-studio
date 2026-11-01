@@ -21897,6 +21897,7 @@ def shorts_storage_plans():
     )
     has_managed_subscription = user_has_managed_subscription(billing_user)
     autopilot_tier = int((billing_user or {}).get("service_tier") or current_user.get("service_tier") or 15)
+    autopilot_monthly_price = AUTOPILOT_TIER_MONTHLY_PRICES.get(autopilot_tier, 20)
     autopilot_plans = [
         {
             "plan_id": f"autopilot_{tier}",
@@ -21997,6 +21998,7 @@ def shorts_storage_plans():
         plans=plans,
         autopilot_plans=autopilot_plans,
         autopilot_tier=autopilot_tier,
+        autopilot_monthly_price=autopilot_monthly_price,
         autopilot_shorts_prepared=autopilot_shorts_prepared,
         autopilot_trial_end_label=autopilot_trial_end_label,
         autopilot_free_until_label=autopilot_free_until_label,
