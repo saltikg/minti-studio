@@ -123,6 +123,29 @@ def autopilot_trial_end(service_mode_chosen_at: Any) -> Optional[datetime]:
     return chosen_at + timedelta(days=30)
 
 
+def autopilot_checkout_trial_end(
+    service_mode_chosen_at: Any,
+    *,
+    now: Optional[datetime] = None,
+) -> Optional[datetime]:
+    """Return a Stripe-safe trial timestamp on the logical trial-end date."""
+    logical_trial_end = autopilot_trial_end(service_mode_chosen_at)
+    if logical_trial_end is None:
+        return None
+    current = now or datetime.now(timezone.utc)
+    if current.tzinfo is None:
+        current = current.replace(tzinfo=timezone.utc)
+    else:
+        current = current.astimezone(timezone.utc)
+    minimum_trial_end = current + timedelta(hours=48)
+    noon_utc = logical_trial_end.replace(hour=12, minute=0, second=0, microsecond=0)
+    if noon_utc >= minimum_trial_end:
+        return noon_utc
+    if logical_trial_end >= minimum_trial_end:
+        return logical_trial_end
+    return None
+
+
 def interval_is_supported(interval: str) -> bool:
     return (interval or "").strip().lower() in {"month", "year"}
 

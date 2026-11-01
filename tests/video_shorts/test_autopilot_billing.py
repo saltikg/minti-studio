@@ -50,6 +50,28 @@ def test_autopilot_trial_end_is_anchored_to_service_choice() -> None:
     )
 
 
+def test_autopilot_checkout_trial_end_uses_noon_utc_on_calendar_date() -> None:
+    chosen_at = datetime(2026, 11, 1, 0, 0, 0)
+    checkout_end = billing.autopilot_checkout_trial_end(
+        chosen_at,
+        now=datetime(2026, 11, 1, tzinfo=timezone.utc),
+    )
+    assert checkout_end == datetime(2026, 12, 1, 12, 0, 0, tzinfo=timezone.utc)
+    assert int(checkout_end.timestamp()) == 1796126400
+
+
+def test_autopilot_checkout_trial_end_preserves_stripe_minimum_fallback() -> None:
+    chosen_at = datetime(2026, 11, 1, 23, 0, 0)
+    assert billing.autopilot_checkout_trial_end(
+        chosen_at,
+        now=datetime(2026, 11, 29, 23, 0, 0, tzinfo=timezone.utc),
+    ) == datetime(2026, 12, 1, 23, 0, 0, tzinfo=timezone.utc)
+    assert billing.autopilot_checkout_trial_end(
+        chosen_at,
+        now=datetime(2026, 11, 30, 0, 0, 1, tzinfo=timezone.utc),
+    ) is None
+
+
 def test_embedded_checkout_uses_exact_trial_end_and_collects_card(monkeypatch) -> None:
     captured = {}
     monkeypatch.setattr(
@@ -102,8 +124,8 @@ def test_autopilot_checkout_route_anchors_trial_and_leaves_diy_unchanged(monkeyp
     )
     monkeypatch.setattr(
         billing_routes,
-        "datetime",
-        SimpleNamespace(now=lambda _tz: datetime(2026, 10, 31, tzinfo=timezone.utc)),
+        "autopilot_checkout_trial_end",
+        lambda _chosen_at: datetime(2026, 11, 26, 12, 0, 0, tzinfo=timezone.utc),
     )
 
     with app.test_request_context(
@@ -117,7 +139,7 @@ def test_autopilot_checkout_route_anchors_trial_and_leaves_diy_unchanged(monkeyp
 
     assert captured[0]["price_id"] == "price_auto_15"
     assert captured[0]["interval"] == "month"
-    assert captured[0]["trial_end"] == datetime(2026, 11, 26, 15, 4, 51, tzinfo=timezone.utc)
+    assert captured[0]["trial_end"] == datetime(2026, 11, 26, 12, 0, 0, tzinfo=timezone.utc)
     assert captured[0]["trial_days"] is None
 
     user.update({"service_mode": "self", "service_tier": None, "service_mode_chosen_at": None})

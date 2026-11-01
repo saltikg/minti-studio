@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import logging
-from datetime import datetime, timezone
 from urllib.parse import urlparse
 from typing import Any, Dict, Optional
 
@@ -12,7 +11,7 @@ from app.video_shorts import video_shorts_bp
 from app.video_shorts.services.billing import (
     STRIPE_PUBLISHABLE_KEY,
     STRIPE_WEBHOOK_SECRET,
-    autopilot_trial_end,
+    autopilot_checkout_trial_end,
     build_checkout_return_url,
     create_billing_portal_session,
     construct_webhook_event,
@@ -385,9 +384,7 @@ def create_checkout_session_route():
         price_id = get_price_id_for_autopilot_tier(requested_service_tier)
         if not price_id:
             return _billing_error("invalid_price_mapping", 400)
-        candidate_trial_end = autopilot_trial_end(user.get("service_mode_chosen_at"))
-        if candidate_trial_end and candidate_trial_end > datetime.now(timezone.utc):
-            trial_end = candidate_trial_end
+        trial_end = autopilot_checkout_trial_end(user.get("service_mode_chosen_at"))
     else:
         if is_autopilot:
             return _billing_error("autopilot_billing_mode_required", 400)
