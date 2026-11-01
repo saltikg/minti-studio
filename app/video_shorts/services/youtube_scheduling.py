@@ -616,7 +616,24 @@ def _project_upload(row, payload):
         elif payload.get("kind") == "long":
             generation._update_long_comp_publish_state(payload["filename"], {"youtube": {"status": _result(row)["status"], "yt_video_id": row["youtube_video_id"], "publish_at": iso(row["publish_at"])}})
         elif payload.get("video_pk") and payload.get("plan_index"):
-            generation._update_plan_entry_publish_state(video_pk=payload["video_pk"], plan_index=str(payload["plan_index"]), filename=payload["filename"], publish_status=_result(row)["status"], publish_at_local=payload.get("publish_at_local"), publish_at_iso=iso(row["publish_at"]), title=payload["title"], description=payload["description"], youtube_id=row.get("youtube_video_id"))
+            projected = generation._update_plan_entry_publish_state(
+                video_pk=payload["video_pk"],
+                plan_index=str(payload["plan_index"]),
+                filename=payload["filename"],
+                publish_status=_result(row)["status"],
+                publish_at_local=payload.get("publish_at_local"),
+                publish_at_iso=iso(row["publish_at"]),
+                title=payload["title"],
+                description=payload["description"],
+                youtube_id=row.get("youtube_video_id"),
+                owner_user_id=row["user_id"],
+                brand_id=row["brand_id"],
+            )
+            if not projected:
+                logger.warning(
+                    "YouTube schedule projection will retry schedule_id=%s",
+                    row["id"],
+                )
     except Exception:
         logger.warning("YouTube schedule saved; UI projection needs refresh schedule_id=%s", row["id"])
 

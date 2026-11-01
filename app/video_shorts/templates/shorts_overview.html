@@ -209,9 +209,9 @@
                    target="_blank"
                    rel="noopener">
                   <div class="shorts-thumb-wrapper">
-                    {% if entry.publish_status == 'published' and (entry.short_thumbnail_url or entry.thumbnail_url) %}
+                    {% if entry.display_thumbnail_url %}
                       <img class="shorts-thumb"
-                           src="{{ entry.short_thumbnail_url or entry.thumbnail_url }}"
+                           src="{{ entry.display_thumbnail_url }}"
                            alt="short thumbnail">
                     {% else %}
                       <div class="shorts-thumb-placeholder placeholder-icon-only" title="Preview unavailable">

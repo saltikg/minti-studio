@@ -20,6 +20,7 @@ from app.video_shorts.services.db import (
     table_columns,
 )
 from app.video_shorts.services.media_utils import purge_source_cache_for_video
+from app.video_shorts.services.media_access import short_card_media_urls as _short_card_media_urls
 from app.video_shorts.services.ingestion_progress import (
     IMPORT_PROGRESS_MAX_AGE_HOURS,
     IMPORT_STALE_AFTER_MINUTES,
@@ -272,35 +273,6 @@ def _cached_preview_frame_url(video_id: str) -> str:
         return ""
     from app.video_shorts.services.media_access import preview_url
     return preview_url(video_id, preview_path.name)
-
-
-def _short_card_media_urls(
-    filename: str,
-    owner_user_id: str,
-    brand_id: str | None,
-    poster_filename: str = "",
-    *,
-    storage_file_key: str = "",
-) -> tuple[str, str]:
-    # Recent-short queries already join the tenant-owned active storage row.
-    # Sign that exact key directly so preload="none" does not need to resolve an
-    # application redirect before the user presses play.
-    if storage_file_key:
-        storage = get_media_storage()
-        return (
-            storage.public_url(str(storage_file_key).lstrip("/")),
-            storage.public_url(tenant_media.poster_key(poster_filename)) if poster_filename else "",
-        )
-    from app.video_shorts.services.media_access import (
-        media_url_for_authorized_asset,
-        poster_url_for_authorized_asset,
-    )
-    # The caller's query has already joined the lifecycle row to a tenant-owned,
-    # active asset. Signing that fact must not repeat ownership queries or touch S3.
-    return (
-        media_url_for_authorized_asset(filename, owner_user_id, brand_id),
-        poster_url_for_authorized_asset(filename, poster_filename, owner_user_id, brand_id),
-    )
 
 
 def _visible_short_rows(conn, user_id, brand_id):

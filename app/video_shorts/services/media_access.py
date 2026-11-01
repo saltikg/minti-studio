@@ -233,6 +233,27 @@ def poster_url_for_authorized_asset(filename, poster_filename, owner_user_id, br
         return ""
 
 
+def short_card_media_urls(
+    filename,
+    owner_user_id,
+    brand_id,
+    poster_filename="",
+    *,
+    storage_file_key="",
+):
+    """Sign a rendered Short and poster after a tenant-scoped asset query."""
+    if storage_file_key:
+        storage = get_media_storage()
+        return (
+            storage.public_url(str(storage_file_key).lstrip("/")),
+            storage.public_url(tenant_media.poster_key(poster_filename)) if poster_filename else "",
+        )
+    return (
+        media_url_for_authorized_asset(filename, owner_user_id, brand_id),
+        poster_url_for_authorized_asset(filename, poster_filename, owner_user_id, brand_id),
+    )
+
+
 def read_media_grant(filename, grant):
     data = _serializer().loads(grant, max_age=MEDIA_TOKEN_MAX_AGE)
     if data.get("filename") != filename:

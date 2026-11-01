@@ -11742,6 +11742,9 @@ def _update_plan_entry_publish_state(
     title: Optional[str],
     description: Optional[str],
     youtube_id: Optional[str] = None,
+    owner_user_id: Optional[str] = None,
+    brand_id: Optional[str] = None,
+    youtube_published_at: Optional[str] = None,
 ) -> bool:
     video_id = _resolve_video_id_from_pk(video_pk)
     if not video_id:
@@ -11798,15 +11801,19 @@ def _update_plan_entry_publish_state(
             ).strip()
         )
         if clip_name:
-            youtube_published_at = (
+            explicit_scope = bool(str(owner_user_id or "").strip())
+            published_timestamp = youtube_published_at or (
                 datetime.utcnow().replace(microsecond=0).isoformat()
                 if publish_status == "published"
                 else None
             )
-            publish_owner_user_id, publish_brand_id = resolve_stored_token_owner_brand(
-                getattr(g, "vs_current_user", {}).get("id"),
-                current_brand_id(),
-            )
+            publish_owner_user_id = str(owner_user_id or "").strip() or None
+            publish_brand_id = str(brand_id or "").strip() or None
+            if not publish_owner_user_id:
+                publish_owner_user_id, publish_brand_id = resolve_stored_token_owner_brand(
+                    getattr(g, "vs_current_user", {}).get("id"),
+                    current_brand_id(),
+                )
             upsert_generated_video_record(
                 user_id=publish_owner_user_id,
                 brand_id=publish_brand_id,
@@ -11819,18 +11826,56 @@ def _update_plan_entry_publish_state(
                 publish_status=publish_status,
                 youtube_video_id=youtube_id or target_entry.get("yt_video_id"),
                 planned_publish_at=publish_at_iso,
-                published_at=youtube_published_at,
+                # An explicit worker projection must not replace an existing
+                # Instagram/Facebook publication timestamp or primary platform.
+                published_at=None if explicit_scope else published_timestamp,
                 plan_run_id=target_entry.get("plan_run_id") or target_entry.get("batch_id"),
                 generated_title=target_entry.get("yt_title") or target_entry.get("title"),
                 generated_description=target_entry.get("yt_description") or target_entry.get("description"),
                 generated_excerpt=target_entry.get("excerpt"),
                 generated_transcript_full=target_entry.get("transcript_full"),
-                youtube_published_at=youtube_published_at,
-                primary_publish_platform="youtube" if publish_status == "published" else None,
+                youtube_published_at=published_timestamp,
+                primary_publish_platform=(
+                    None
+                    if explicit_scope
+                    else ("youtube" if publish_status == "published" else None)
+                ),
                 raw_plan_entry=target_entry,
             )
+            if explicit_scope and published_timestamp:
+                conn = get_db()
+                try:
+                    conn.execute(
+                        """
+                        UPDATE shorts_generated_videos
+                           SET published_at = COALESCE(published_at, ?),
+                               youtube_published_at = COALESCE(youtube_published_at, ?),
+                               primary_publish_platform = COALESCE(primary_publish_platform, 'youtube'),
+                               updated_at = CURRENT_TIMESTAMP
+                         WHERE CAST(user_id AS VARCHAR) = ?
+                           AND brand_id IS NOT DISTINCT FROM ?
+                           AND source_video_id = ?
+                           AND (clip_filename = ? OR output_filename = ?)
+                        """,
+                        [
+                            published_timestamp,
+                            published_timestamp,
+                            publish_owner_user_id,
+                            publish_brand_id,
+                            video_id,
+                            clip_name,
+                            clip_name,
+                        ],
+                    )
+                    conn.commit()
+                except Exception:
+                    conn.rollback()
+                    raise
+                finally:
+                    conn.close()
     except Exception as exc:
         current_app.logger.warning("Could not sync lifecycle row for %s: %s", video_id, exc)
+        return False
 
     return True
 
@@ -12380,6 +12425,7 @@ def reconcile_overdue_youtube_publish_statuses(
     missing = 0
     private_or_processing = 0
     api_calls = 0
+    projection_failed = 0
     try:
         where_clauses = [
             "youtube_video_id IS NOT NULL",
@@ -12405,7 +12451,7 @@ def reconcile_overdue_youtube_publish_statuses(
             )
             params.extend(clean_source_ids)
         params.append(limit)
-        rows = conn.execute(
+        lifecycle_rows = conn.execute(
             f"""
             SELECT id,
                    CAST(user_id AS VARCHAR),
@@ -12421,21 +12467,119 @@ def reconcile_overdue_youtube_publish_statuses(
             """,
             params,
         ).fetchall()
-        if not rows:
-            return {
-                "checked": 0,
-                "updated": 0,
-                "skipped_token": 0,
-                "missing": 0,
-                "private_or_processing": 0,
-                "api_calls": 0,
-            }
 
-        grouped: Dict[Tuple[str, str], List[Any]] = {}
-        for row in rows:
-            user_id = str(row[1] or "").strip()
-            brand_id = str(row[2] or "").strip()
-            grouped.setdefault((user_id, brand_id), []).append(row)
+        candidates: List[Dict[str, Any]] = [
+            {
+                "kind": "lifecycle",
+                "generated_id": row[0],
+                "user_id": str(row[1] or "").strip(),
+                "brand_id": str(row[2] or "").strip(),
+                "source_video_id": str(row[3] or "").strip(),
+                "clip_filename": str(row[4] or "").strip(),
+                "youtube_video_id": str(row[5] or "").strip(),
+                "publish_at": row[6],
+            }
+            for row in lifecycle_rows
+        ]
+
+        schedule_where = [
+            "status = 'uploaded'",
+            "youtube_video_id IS NOT NULL",
+            "trim(CAST(youtube_video_id AS VARCHAR)) <> ''",
+            "publish_at IS NOT NULL",
+            "publish_at <= now()",
+        ]
+        schedule_params: List[Any] = []
+        if owner_user_id:
+            schedule_where.append("CAST(user_id AS VARCHAR) = ?")
+            schedule_params.append(str(owner_user_id))
+        if owner_brand_id is not None:
+            schedule_where.append("brand_id IS NOT DISTINCT FROM ?")
+            schedule_params.append(owner_brand_id)
+        schedule_params.append(limit)
+        schedule_rows = conn.execute(
+            f"""
+            SELECT id,
+                   CAST(user_id AS VARCHAR),
+                   CAST(brand_id AS VARCHAR),
+                   payload_json,
+                   youtube_video_id,
+                   publish_at
+              FROM shorts_youtube_schedules
+             WHERE {' AND '.join(schedule_where)}
+             ORDER BY publish_at ASC, id ASC
+             LIMIT ?
+            """,
+            schedule_params,
+        ).fetchall()
+        for row in schedule_rows:
+            try:
+                payload = json.loads(row[3] or "{}")
+            except (TypeError, ValueError):
+                current_app.logger.warning(
+                    "YouTube schedule projection retry skipped invalid payload schedule_id=%s",
+                    row[0],
+                )
+                projection_failed += 1
+                continue
+            filename = str(payload.get("filename") or "").strip()
+            video_pk = payload.get("video_pk")
+            plan_index = str(payload.get("plan_index") or "").strip()
+            if not filename or not video_pk or not plan_index:
+                current_app.logger.warning(
+                    "YouTube schedule projection retry missing identity schedule_id=%s",
+                    row[0],
+                )
+                projection_failed += 1
+                continue
+            video_row = conn.execute(
+                "SELECT CAST(video_id AS VARCHAR) FROM youtube_videos WHERE id = ? LIMIT 1",
+                [video_pk],
+            ).fetchone()
+            source_video_id = str(video_row[0] or "").strip() if video_row else ""
+            if clean_source_ids and source_video_id not in clean_source_ids:
+                continue
+            projected = conn.execute(
+                """
+                SELECT youtube_video_id, youtube_published_at, publish_status
+                  FROM shorts_generated_videos
+                 WHERE CAST(user_id AS VARCHAR) = ?
+                   AND brand_id IS NOT DISTINCT FROM ?
+                   AND source_video_id = ?
+                   AND (clip_filename = ? OR output_filename = ?)
+                 LIMIT 1
+                """,
+                [str(row[1] or ""), row[2] or None, source_video_id, filename, filename],
+            ).fetchone()
+            if (
+                projected
+                and str(projected[0] or "").strip() == str(row[4] or "").strip()
+                and projected[1]
+                and str(projected[2] or "").strip().lower() == "published"
+            ):
+                continue
+            candidates.append(
+                {
+                    "kind": "schedule",
+                    "schedule_id": str(row[0]),
+                    "user_id": str(row[1] or "").strip(),
+                    "brand_id": str(row[2] or "").strip(),
+                    "source_video_id": source_video_id,
+                    "clip_filename": filename,
+                    "youtube_video_id": str(row[4] or "").strip(),
+                    "publish_at": row[5],
+                    "payload": payload,
+                }
+            )
+
+        candidates.sort(key=lambda item: (item.get("publish_at") or datetime.max, item.get("youtube_video_id") or ""))
+        candidates = candidates[:limit]
+        grouped: Dict[Tuple[str, str], List[Dict[str, Any]]] = {}
+        for candidate in candidates:
+            grouped.setdefault(
+                (candidate["user_id"], candidate["brand_id"]),
+                [],
+            ).append(candidate)
 
     finally:
         conn.close()
@@ -12455,7 +12599,7 @@ def reconcile_overdue_youtube_publish_statuses(
             by_youtube_id: Dict[str, List[Any]] = {}
             youtube_ids: List[str] = []
             for row in group_rows:
-                youtube_id = str(row[5] or "").strip()
+                youtube_id = str(row.get("youtube_video_id") or "").strip()
                 if not youtube_id:
                     continue
                 if youtube_id not in by_youtube_id:
@@ -12489,11 +12633,13 @@ def reconcile_overdue_youtube_publish_statuses(
                         if state == "removed":
                             missing += len(rows_for_video)
                             for row in rows_for_video:
+                                if row["kind"] != "lifecycle":
+                                    continue
                                 if _mark_generated_youtube_video_removed(
                                     update_conn,
-                                    generated_video_id=row[0],
-                                    source_video_id=str(row[3] or "").strip(),
-                                    clip_filename=str(row[4] or "").strip(),
+                                    generated_video_id=row["generated_id"],
+                                    source_video_id=row["source_video_id"],
+                                    clip_filename=row["clip_filename"],
                                     youtube_video_id=youtube_id,
                                     user_id=user_id,
                                     brand_id=brand_id or None,
@@ -12506,11 +12652,13 @@ def reconcile_overdue_youtube_publish_statuses(
                             private_or_processing += len(rows_for_video)
                             continue
                         for row in rows_for_video:
+                            if row["kind"] != "lifecycle":
+                                continue
                             if _mark_generated_youtube_video_published(
                                 update_conn,
-                                generated_video_id=row[0],
-                                source_video_id=str(row[3] or "").strip(),
-                                clip_filename=str(row[4] or "").strip(),
+                                generated_video_id=row["generated_id"],
+                                source_video_id=row["source_video_id"],
+                                clip_filename=row["clip_filename"],
                                 youtube_video_id=youtube_id,
                                 published_at=published_at,
                             ):
@@ -12525,6 +12673,41 @@ def reconcile_overdue_youtube_publish_statuses(
                     raise
                 finally:
                     update_conn.close()
+                for youtube_id in batch_ids:
+                    status = statuses.get(youtube_id) or {}
+                    if youtube_reconciliation_state(status) != "published":
+                        continue
+                    for row in by_youtube_id.get(youtube_id) or []:
+                        if row["kind"] != "schedule":
+                            continue
+                        payload = row["payload"]
+                        projected = _update_plan_entry_publish_state(
+                            video_pk=payload["video_pk"],
+                            plan_index=str(payload["plan_index"]),
+                            filename=row["clip_filename"],
+                            publish_status="published",
+                            publish_at_local=payload.get("publish_at_local"),
+                            publish_at_iso=(
+                                row["publish_at"].replace(tzinfo=timezone.utc).isoformat().replace("+00:00", "Z")
+                                if isinstance(row["publish_at"], datetime)
+                                else str(row["publish_at"] or "")
+                            ),
+                            title=payload.get("title"),
+                            description=payload.get("description"),
+                            youtube_id=youtube_id,
+                            owner_user_id=row["user_id"],
+                            brand_id=row["brand_id"] or None,
+                            youtube_published_at=published_at,
+                        )
+                        if projected:
+                            updated += 1
+                        else:
+                            projection_failed += 1
+                            current_app.logger.warning(
+                                "YouTube schedule projection retry failed schedule_id=%s youtube_video_id=%s",
+                                row["schedule_id"],
+                                youtube_id,
+                            )
                 for plan_video, plan_entries in pending_plan_updates:
                     try:
                         _write_plan_entries(plan_video, plan_entries)
@@ -12533,14 +12716,15 @@ def reconcile_overdue_youtube_publish_statuses(
                             "YouTube removal reconcile could not write plan source_video_id=%s",
                             plan_video.youtube_id,
                         )
-        if checked or updated or skipped_token:
+        if checked or updated or skipped_token or projection_failed:
             current_app.logger.info(
-                "YouTube publish reconcile checked=%s updated=%s skipped_token=%s missing=%s private_or_processing=%s api_calls=%s",
+                "YouTube publish reconcile checked=%s updated=%s skipped_token=%s missing=%s private_or_processing=%s projection_failed=%s api_calls=%s",
                 checked,
                 updated,
                 skipped_token,
                 missing,
                 private_or_processing,
+                projection_failed,
                 api_calls,
             )
         return {
@@ -12549,16 +12733,12 @@ def reconcile_overdue_youtube_publish_statuses(
             "skipped_token": skipped_token,
             "missing": missing,
             "private_or_processing": private_or_processing,
+            "projection_failed": projection_failed,
             "api_calls": api_calls,
         }
     except Exception:
-        try:
-            conn.rollback()
-        except Exception:
-            pass
+        current_app.logger.exception("YouTube publish reconcile failed")
         raise
-    finally:
-        pass
 
 
 def process_due_youtube_publish_reconcile(*, force: bool = False) -> bool:
@@ -12568,7 +12748,12 @@ def process_due_youtube_publish_reconcile(*, force: bool = False) -> bool:
         return False
     _YOUTUBE_PUBLISH_RECONCILE_LAST_RUN_TS = now
     result = reconcile_overdue_youtube_publish_statuses(limit=_YOUTUBE_PUBLISH_RECONCILE_BATCH_SIZE)
-    return bool(int(result.get("checked") or 0) or int(result.get("updated") or 0) or int(result.get("skipped_token") or 0))
+    return bool(
+        int(result.get("checked") or 0)
+        or int(result.get("updated") or 0)
+        or int(result.get("skipped_token") or 0)
+        or int(result.get("projection_failed") or 0)
+    )
 
 
 def _build_display_timing(start: Any, end: Any, plan_start: Any = None, plan_end: Any = None) -> Dict[str, Optional[str]]:

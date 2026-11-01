@@ -94,7 +94,20 @@ from app.video_shorts.youtube_api import (
 from app.video_shorts.services.youtube_oauth import build_authenticated_youtube
 from app.video_shorts.services.youtube_quota import record_youtube_data_api_call
 from app.video_shorts.services.storage import get_media_storage
+from app.video_shorts.services.media_access import short_card_media_urls
 from app.video_shorts.services.ai_video_workspace import list_ai_broadcast_entries
+
+
+def _publishing_thumbnail_url(entry: Dict[str, Any]) -> str:
+    if entry.get("publish_status") == "published":
+        return str(
+            entry.get("short_thumbnail_url")
+            or entry.get("poster_url")
+            or entry.get("thumbnail_url")
+            or ""
+        )
+    return str(entry.get("poster_url") or entry.get("thumbnail_url") or "")
+
 
 def _pretty_duration(seconds):
     try:
@@ -2906,6 +2919,7 @@ def _collect_short_broadcast_entries(
                     "publish_label": publish_label,
                     "publish_sort_key": publish_iso or queue_publish_iso or "",
                     "clip_filename": clip_filename,
+                    "poster_filename": plan_entry.get("poster_filename"),
                     "clip_ready": clip_ready,
                     "status_value": status_value,
                     "status_label": status_label.capitalize() if status_label else "Pending",
@@ -4144,6 +4158,7 @@ def shorts_overview():
     channel_rows: List[Any] = []
     channel_map: Dict[Any, str] = {}
     video_map: Dict[str, Dict[str, Any]] = {}
+    active_poster_names: set[str] = set()
     conn = get_db_readonly()
     try:
         channel_sql = """
@@ -4208,6 +4223,36 @@ def shorts_overview():
                     "owner_user_id": row[11],
                     "brand_id": row[12],
                 }
+        poster_names = sorted(
+            {
+                str(entry.get("poster_filename") or "").strip()
+                for entry in all_entries
+                if str(entry.get("poster_filename") or "").strip()
+            }
+        )
+        if poster_names and owner_scope_user_id and brand_id:
+            poster_placeholders = ", ".join("?" for _ in poster_names)
+            poster_rows = conn.execute(
+                f"""
+                SELECT file_key
+                FROM shorts_storage_assets
+                WHERE file_key IN ({poster_placeholders})
+                  AND CAST(user_id AS VARCHAR) = ?
+                  AND brand_id IS NOT DISTINCT FROM ?
+                  AND lower(coalesce(status, 'active')) = 'active'
+                  AND size_bytes > 0
+                """,
+                [
+                    *[tenant_media.poster_key(name) for name in poster_names],
+                    owner_scope_user_id,
+                    brand_id,
+                ],
+            ).fetchall()
+            active_poster_names = {
+                str(row[0]).removeprefix("shorts/posters/")
+                for row in poster_rows
+                if row and row[0]
+            }
     finally:
         conn.close()
 
@@ -4223,8 +4268,17 @@ def shorts_overview():
         short_video_id = entry.get("short_video_id")
         clip_preview_url = None
         clip_filename = entry.get("clip_filename")
+        poster_filename = str(entry.get("poster_filename") or "").strip()
+        poster_url = ""
         if clip_filename:
             clip_preview_url = _short_public_url(clip_filename)
+            if poster_filename in active_poster_names:
+                _video_url, poster_url = short_card_media_urls(
+                    clip_filename,
+                    owner_scope_user_id,
+                    brand_id,
+                    poster_filename,
+                )
         thumbnail_url = video_meta.get("thumbnail_url")
         processed_entries.append(
             {
@@ -4248,6 +4302,7 @@ def shorts_overview():
                 "comments_url": comments_feature_enabled and short_video_id
                 and url_for("video_shorts_bp.shorts_comments", video_id=short_video_id),
                 "clip_preview_url": clip_preview_url,
+                "poster_url": poster_url,
                 "short_view_count": None,
                 "short_like_count": None,
                 "short_comment_count": None,
@@ -4498,6 +4553,7 @@ def shorts_overview():
             if published_at:
                 entry["publish_status"] = "published"
                 entry["publish_status_label"] = "Published"
+        entry["display_thumbnail_url"] = _publishing_thumbnail_url(entry)
         total_comments = _normalize_nonnegative_int(entry.get("platform_comment_count")) or 0
         last_seen = entry.get("last_seen_comment_count") or 0
         entry["has_unread_comments"] = total_comments > last_seen
