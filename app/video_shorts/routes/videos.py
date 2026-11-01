@@ -70,7 +70,7 @@ from app.video_shorts.services.facebook_queue import (
     update_facebook_last_seen_comment_count,
     update_facebook_queue_metrics,
 )
-from app.video_shorts.services.feature_flags import comments_enabled
+from app.video_shorts.services.feature_flags import comments_enabled, tiktok_enabled
 from app.video_shorts.services.instagram_api import (
     InstagramActionError,
     refresh_instagram_media,
@@ -4111,6 +4111,7 @@ def add_video_by_url(channel_id):
 def shorts_overview():
     current_user = getattr(g, "vs_current_user", None)
     comments_feature_enabled = comments_enabled()
+    tiktok_feature_enabled = tiktok_enabled()
     brand_id = current_brand_id()
     is_admin = current_user and current_user.get("role") == "admin"
     brand_owner_user_id, _brand_name = _load_brand_scope_context(brand_id)
@@ -4594,18 +4595,19 @@ def shorts_overview():
                 bucket["published"] += 1
             elif status_value in {"pending", "retry", "uploading"}:
                 bucket["scheduled"] += 1
-        for tt_entry in entry.get("tiktok_entries") or []:
-            tt_publish_iso = tt_entry.get("publish_iso")
-            tt_dt = _normalize_timestamp(tt_publish_iso)
-            if not tt_dt:
-                continue
-            date_key = tt_dt.date().isoformat()
-            status_value = (tt_entry.get("status") or "").lower()
-            bucket = _platform_bucket(date_key, "tiktok")
-            if status_value == "published":
-                bucket["published"] += 1
-            elif status_value in {"pending", "retry", "uploading"}:
-                bucket["scheduled"] += 1
+        if tiktok_feature_enabled:
+            for tt_entry in entry.get("tiktok_entries") or []:
+                tt_publish_iso = tt_entry.get("publish_iso")
+                tt_dt = _normalize_timestamp(tt_publish_iso)
+                if not tt_dt:
+                    continue
+                date_key = tt_dt.date().isoformat()
+                status_value = (tt_entry.get("status") or "").lower()
+                bucket = _platform_bucket(date_key, "tiktok")
+                if status_value == "published":
+                    bucket["published"] += 1
+                elif status_value in {"pending", "retry", "uploading"}:
+                    bucket["scheduled"] += 1
         for fb_entry in entry.get("facebook_entries") or []:
             fb_publish_iso = fb_entry.get("publish_iso")
             fb_dt = _normalize_timestamp(fb_publish_iso)
@@ -4672,6 +4674,7 @@ def shorts_overview():
         total_pending_comments=total_pending_comments,
         last_comment_check_display=last_comment_check_display,
         unread_videos_total=unread_videos_total,
+        tiktok_enabled=tiktok_feature_enabled,
     )
 
 COMMENTS_PAGE_BATCH_SIZE = 100

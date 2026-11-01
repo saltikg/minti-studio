@@ -193,7 +193,7 @@
             <th>Short</th>
             <th>{{ sort_header("date", "YouTube") }}</th>
             <th>{{ sort_header("status", "Instagram") }}</th>
-            <th>TikTok</th>
+            {% if tiktok_enabled %}<th>TikTok</th>{% endif %}
             <th>Facebook Page</th>
             <th class="text-center">Plan &amp; Editor</th>
           </tr>
@@ -358,6 +358,7 @@
                   </div>
                 {% endif %}
               </td>
+              {% if tiktok_enabled %}
               <td>
                 {% if entry.tiktok_entries %}
                   {% for tt in entry.tiktok_entries %}
@@ -395,6 +396,7 @@
                   </div>
                 {% endif %}
               </td>
+              {% endif %}
               <td>
                 {% if entry.facebook_entries %}
                   {% for fb in entry.facebook_entries %}
@@ -472,7 +474,7 @@
             </tr>
         {% else %}
           <tr>
-            <td colspan="6" class="text-center text-muted py-4">
+            <td colspan="{{ 6 if tiktok_enabled else 5 }}" class="text-center text-muted py-4">
               No published or scheduled shorts yet.
             </td>
           </tr>
@@ -595,6 +597,7 @@
 </div>
 {% endif %}
 
+{% if tiktok_enabled %}
 <div class="modal fade" id="tiktokErrorModal" tabindex="-1" aria-labelledby="tiktokErrorLabel" aria-hidden="true">
   <div class="modal-dialog modal-lg modal-dialog-scrollable">
     <div class="modal-content vs-modal">
@@ -640,6 +643,7 @@
     </div>
   </div>
 </div>
+{% endif %}
 
 <script>
   document.addEventListener("DOMContentLoaded", function () {
@@ -648,6 +652,7 @@
     setupShortsCalendar(calendarSummary, selectedDayInitial);
     attachStatusCardFilters();
 
+    {% if tiktok_enabled %}
     const errorModalEl = document.getElementById("tiktokErrorModal");
     const errorMeta = document.getElementById("tiktokErrorMeta");
     const errorHttpStatus = document.getElementById("tiktokErrorHttpStatus");
@@ -700,6 +705,7 @@
         }
       });
     }
+    {% endif %}
 
     function setupShortsCalendar(summaryData, initialDay) {
       const labelEl = document.querySelector("[data-calendar-label]");
@@ -775,6 +781,7 @@
                 scheduledClass: "instagram-scheduled",
                 publishedClass: "instagram-published",
               },
+              {% if tiktok_enabled %}
               {
                 key: "tiktok",
                 label: "TikTok",
@@ -782,6 +789,7 @@
                 scheduledClass: "tiktok-scheduled",
                 publishedClass: "tiktok-published",
               },
+              {% endif %}
               {
                 key: "facebook",
                 label: "Facebook",
