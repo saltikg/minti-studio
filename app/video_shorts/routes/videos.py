@@ -1,4 +1,4 @@
-from app.video_shorts.services import tenant_media
+from app.video_shorts.services import tenant_media, youtube_scheduling
 from datetime import datetime, timedelta, timezone, time as dt_time
 from collections import deque
 import base64
@@ -2844,9 +2844,17 @@ def _collect_short_broadcast_entries(
                     for key in ("clip_filename", "output_filename")
                 )
             ]
+        plan_entries = youtube_scheduling.overlay_plan(
+            plan_entries,
+            user_id=plan_video.owner_user_id,
+            brand_id=plan_video.brand_id,
+            video_pk=plan_video.video_pk,
+        )
         seen_plan_keys = set()
         for plan_entry in plan_entries:
             publish_status = (plan_entry.get("publish_status") or "").lower()
+            if publish_status == "pending" and plan_entry.get("upload_due_at"):
+                publish_status = "scheduled"
             plan_index_raw = plan_entry.get("plan_index")
             plan_index_key = str(plan_index_raw or "").strip()
             plan_index_value = plan_entry.get("plan_index")
@@ -2862,7 +2870,7 @@ def _collect_short_broadcast_entries(
             tt_records = tiktok_queue_map.get(queue_key) or []
             fb_records = facebook_queue_map.get(queue_key) or []
             has_queue = bool(ig_records or tt_records or fb_records)
-            has_youtube = publish_status in ("scheduled", "published")
+            has_youtube = publish_status in ("scheduled", "uploaded", "published")
             if not has_youtube and not has_queue:
                 continue
             status_value = (plan_entry.get("status") or "").lower()
