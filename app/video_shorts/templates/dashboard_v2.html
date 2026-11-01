@@ -1156,8 +1156,9 @@
         const platformPalette = {
           youtube: "#ef4444",
           instagram: "#f59e0b",
-          facebook: "#3b82f6",
+          facebook: "#3b82f6"{% if tiktok_enabled %},
           tiktok: "#22d3ee"
+          {% endif %}
         };
         const hexToRgba = (hex, alpha) => {
           const clean = (hex || "").replace("#", "");

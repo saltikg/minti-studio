@@ -4957,6 +4957,7 @@ def shorts_social_logs():
         rows=rows,
         last_run=last_run,
         limit=limit,
+        tiktok_enabled=tiktok_enabled(),
     )
 
 

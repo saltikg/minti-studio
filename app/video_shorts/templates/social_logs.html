@@ -59,7 +59,7 @@
               <tr>
                 <th>Date/Time</th>
                 <th><i class="bi bi-instagram"></i></th>
-                <th><i class="bi bi-tiktok"></i></th>
+                {% if tiktok_enabled %}<th><i class="bi bi-tiktok"></i></th>{% endif %}
                 <th><i class="bi bi-facebook"></i></th>
                 <th><i class="bi bi-youtube"></i> <i class="bi bi-chat-dots"></i></th>
                 <th><i class="bi bi-instagram"></i> <i class="bi bi-chat-dots"></i></th>
@@ -76,13 +76,13 @@
                       <i class="bi bi-check-lg text-success"></i>
                     {% endif %}
                   </td>
-                  <td>
+                  {% if tiktok_enabled %}<td>
                     {% if row.tiktok %}
                       <div class="vs-log-error">{{ row.tiktok }}</div>
                     {% else %}
                       <i class="bi bi-check-lg text-success"></i>
                     {% endif %}
-                  </td>
+                  </td>{% endif %}
                   <td>
                     {% if row.facebook %}
                       <div class="vs-log-error">{{ row.facebook }}</div>

@@ -13,6 +13,7 @@ from app.video_shorts import video_shorts_bp
 from app.video_shorts.config import PRIVATE_STATE_DIR, SHORTS_DIR
 from app.video_shorts.services.brands import current_brand_id
 from app.video_shorts.services.db import get_db_readonly
+from app.video_shorts.services.feature_flags import tiktok_enabled
 from app.video_shorts.services.video_metrics import (
     SNAPSHOT_TABLE,
 )
@@ -1217,9 +1218,12 @@ def video_stats_page():
 
 
 def _render_video_stats(*, load_widgets: bool):
+    tiktok_feature_enabled = tiktok_enabled()
     end_param = request.args.get("end")
     start_param = request.args.get("start")
     channel_type = request.args.get("channel", "all")
+    if not tiktok_feature_enabled and channel_type == "tiktok":
+        channel_type = "all"
     selected_metric = request.args.get("metric", "views")
     videos_page = _parse_page_arg("videos_page", 1)
 
@@ -1249,6 +1253,7 @@ def _render_video_stats(*, load_widgets: bool):
         return render_template(
             "video_metrics.html",
             dashboard_shell=True,
+            tiktok_enabled=tiktok_feature_enabled,
             start_date=start_date,
             end_date=end_date,
             channel_type=channel_type,
@@ -2061,7 +2066,9 @@ def _render_video_stats(*, load_widgets: bool):
         end_date=end_date,
         channel_type=channel_type,
         selected_metric=selected_metric,
-        channel_options=CHANNEL_OPTIONS,
+        channel_options=[
+            option for option in CHANNEL_OPTIONS if tiktok_feature_enabled or option["value"] != "tiktok"
+        ],
         daily_totals=daily_totals,
         range_totals=period_totals_by_channel.get(selected_channel) or period_totals_by_channel.get("all", {}),
         summary_cards=summary_cards,
@@ -2091,6 +2098,7 @@ def _render_video_stats(*, load_widgets: bool):
         ),
         last_api_at=last_api_at,
         stats_connect_empty=bool(not youtube_connected and not channel_rows),
+        tiktok_enabled=tiktok_feature_enabled,
     )
     template = current_app.jinja_env.get_template("video_metrics.html")
     fragment_context = template.new_context(

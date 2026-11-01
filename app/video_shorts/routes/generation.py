@@ -162,6 +162,7 @@ from app.video_shorts.services.clip_planning import _fallback_clip_plan
 from app.video_shorts.services.clip_title import generate_clip_title
 from app.video_shorts.services.clip_title import _detect_title_language
 from app.video_shorts.services.clip_ranges import ClipRangeResolution, resolve_clip_ranges
+from app.video_shorts.services.feature_flags import tiktok_enabled
 from app.video_shorts.services.media_duration import get_or_backfill_media_duration_seconds
 from app.video_shorts.services import render_timing
 from app.video_shorts.services.music import (
@@ -15209,6 +15210,7 @@ def generate_short(video_pk):
         face_aware_layout_available=face_aware_layout_available,
         instagram_connected=instagram_connected,
         tiktok_connected=tiktok_connected,
+        tiktok_enabled=tiktok_enabled(),
         facebook_connected=facebook_connected,
         user_time_zone_label=user_tz_label,
         user_time_zone=user_tz,
@@ -27069,13 +27071,16 @@ def social_connect():
     instagram_business_id = (
         instagram_info.get("instagram_business_account_id") if instagram_info else None
     )
-    tiktok_configured = bool(TIKTOK_CLIENT_KEY and TIKTOK_CLIENT_SECRET and TIKTOK_REDIRECT_URI)
+    tiktok_feature_enabled = tiktok_enabled()
+    tiktok_configured = bool(
+        tiktok_feature_enabled and TIKTOK_CLIENT_KEY and TIKTOK_CLIENT_SECRET and TIKTOK_REDIRECT_URI
+    )
     tiktok_info = None
     tiktok_connected = False
     tiktok_warning = None
     tiktok_connected_at = None
     tiktok_status = "not_connected"
-    if current_user:
+    if current_user and tiktok_feature_enabled:
         try:
             tiktok_info = get_tiktok_data(current_user["id"])
         except TikTokTokenStoreError as exc:
@@ -27962,6 +27967,10 @@ def tiktok_authorize():
     if not current_user:
         flash("Sign in to connect TikTok.", "danger")
         return redirect(url_for("video_shorts_bp.login", next=request.url))
+    if not tiktok_enabled():
+        session.pop("tt_oauth_state", None)
+        flash("TikTok connections are currently unavailable.", "warning")
+        return redirect(url_for("video_shorts_bp.social_connect"))
     if not (TIKTOK_CLIENT_KEY and TIKTOK_CLIENT_SECRET and TIKTOK_REDIRECT_URI):
         flash(
             "TikTok isn't configured yet. Please finish setup.",

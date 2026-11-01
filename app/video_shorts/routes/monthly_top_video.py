@@ -17,6 +17,7 @@ from zoneinfo import ZoneInfo
 from app.video_shorts import video_shorts_bp
 from app.video_shorts.config import FFMPEG_RENDER_TIMEOUT, FFPROBE_TIMEOUT, SHORTS_DIR, YT_DLP_COOKIES
 from app.video_shorts.services.facebook_queue import enqueue_facebook_clip
+from app.video_shorts.services.feature_flags import tiktok_enabled
 from app.video_shorts.services.brands import current_brand_id
 from app.video_shorts.services.instagram_queue import enqueue_instagram_clip
 from app.video_shorts.services.db import get_db_readonly, table_columns
@@ -993,10 +994,13 @@ def _build_monthly_compilation(
 
 @video_shorts_bp.route("/workflow/monthly-top-video", methods=["GET", "POST"])
 def workflow_monthly_top_video():
+    tiktok_feature_enabled = tiktok_enabled()
     is_ajax = request.headers.get("X-Requested-With") == "XMLHttpRequest"
     month_raw, month_start, month_end = _month_bounds(request.values.get("month"))
     channel_type = (request.values.get("channel") or "all").strip().lower()
-    if channel_type not in {opt["value"] for opt in CHANNEL_OPTIONS}:
+    if channel_type not in {opt["value"] for opt in CHANNEL_OPTIONS} or (
+        channel_type == "tiktok" and not tiktok_feature_enabled
+    ):
         channel_type = "all"
     try:
         top_n = int(request.values.get("top_n") or 3)
@@ -1089,11 +1093,14 @@ def workflow_monthly_top_video():
             facebook_connected = bool(fb_info and fb_info.get("page_access_token"))
         except FacebookTokenStoreError:
             facebook_connected = False
-        try:
-            tt_info = get_tiktok_data(user_id)
-            tiktok_connected = bool(tt_info and tt_info.get("access_token") and not _is_token_expired(tt_info.get("expires_at")))
-        except TikTokTokenStoreError:
-            tiktok_connected = False
+        if tiktok_feature_enabled:
+            try:
+                tt_info = get_tiktok_data(user_id)
+                tiktok_connected = bool(
+                    tt_info and tt_info.get("access_token") and not _is_token_expired(tt_info.get("expires_at"))
+                )
+            except TikTokTokenStoreError:
+                tiktok_connected = False
     return render_template(
         "workflow_monthly_top_video.html",
         month_value=month_raw,
@@ -1102,7 +1109,9 @@ def workflow_monthly_top_video():
         channel_type=channel_type,
         top_n=top_n,
         top_n_options=TOP_N_OPTIONS,
-        channel_options=CHANNEL_OPTIONS,
+        channel_options=[
+            option for option in CHANNEL_OPTIONS if tiktok_feature_enabled or option["value"] != "tiktok"
+        ],
         top_rows=top_rows,
         render_order=render_order,
         output_video_url=output_video_url,
@@ -1114,6 +1123,7 @@ def workflow_monthly_top_video():
         instagram_connected=instagram_connected,
         facebook_connected=facebook_connected,
         tiktok_connected=tiktok_connected,
+        tiktok_enabled=tiktok_feature_enabled,
     )
 
 
@@ -1196,8 +1206,8 @@ def workflow_monthly_top_video_publish():
     instagram_feed = _as_bool("instagram_feed", "schedule_instagram_feed")
     facebook_reel = _as_bool("facebook_reel", "schedule_facebook_reel")
     facebook_feed = _as_bool("facebook_feed", "schedule_facebook_feed")
-    tiktok_enabled = _as_bool("tiktok_enabled", "schedule_tiktok")
-    if not any([youtube_enabled, instagram_reel, instagram_feed, facebook_reel, facebook_feed, tiktok_enabled]):
+    tiktok_requested = tiktok_enabled() and _as_bool("tiktok_enabled", "schedule_tiktok")
+    if not any([youtube_enabled, instagram_reel, instagram_feed, facebook_reel, facebook_feed, tiktok_requested]):
         return jsonify({"ok": False, "message": "Select at least one platform."}), 400
 
     def _schedule_iso(*field_names: str) -> Optional[str]:
@@ -1307,7 +1317,7 @@ def workflow_monthly_top_video_publish():
             )
             results["facebook"].append({"media_type": media_type, "queue_id": qid})
 
-    if tiktok_enabled:
+    if tiktok_requested:
         if not user_id:
             return jsonify({"ok": False, "message": "Login required for TikTok queue."}), 403
         try:

@@ -427,7 +427,7 @@
   </div>
 
   <div class="row g-3 mb-3" data-dashboard-widget="audience-summary">
-    <div class="col-sm-6 col-md-3">
+    <div class="col-sm-6 {{ 'col-md-3' if tiktok_enabled else 'col-md-4' }}">
       <div class="card metric-card shadow-sm vs-card">
         <div class="card-body">
           <p class="kpi-label vs-card-title mb-1">YouTube subscribers</p>
@@ -435,7 +435,7 @@
         </div>
       </div>
     </div>
-    <div class="col-sm-6 col-md-3">
+    <div class="col-sm-6 {{ 'col-md-3' if tiktok_enabled else 'col-md-4' }}">
       <div class="card metric-card shadow-sm vs-card">
         <div class="card-body">
           <p class="kpi-label vs-card-title mb-1">Instagram followers</p>
@@ -443,7 +443,7 @@
         </div>
       </div>
     </div>
-    <div class="col-sm-6 col-md-3">
+    <div class="col-sm-6 {{ 'col-md-3' if tiktok_enabled else 'col-md-4' }}">
       <div class="card metric-card shadow-sm vs-card">
         <div class="card-body">
           <p class="kpi-label vs-card-title mb-1">Facebook page followers</p>
@@ -451,6 +451,7 @@
         </div>
       </div>
     </div>
+    {% if tiktok_enabled %}
     <div class="col-sm-6 col-md-3">
       <div class="card metric-card shadow-sm vs-card">
         <div class="card-body">
@@ -459,6 +460,7 @@
         </div>
       </div>
     </div>
+    {% endif %}
   </div>
 
   <div class="card shadow-sm mb-4 vs-card" data-dashboard-widget="audience-chart">
@@ -488,7 +490,7 @@
                     <th class="text-center"><i class="bi bi-youtube fs-5" aria-hidden="true"></i></th>
                     <th class="text-center"><i class="bi bi-instagram fs-5" aria-hidden="true"></i></th>
                     <th class="text-center"><i class="bi bi-facebook fs-5" aria-hidden="true"></i></th>
-                    <th class="text-center"><i class="bi bi-tiktok fs-5" aria-hidden="true"></i></th>
+                    {% if tiktok_enabled %}<th class="text-center"><i class="bi bi-tiktok fs-5" aria-hidden="true"></i></th>{% endif %}
                   </tr>
                 </thead>
                 <tbody id="subscriberDeltaTable"></tbody>
@@ -902,9 +904,9 @@
           if (key.includes("facebook")) {
             return row.facebook_total;
           }
-          if (key.includes("tiktok")) {
+          {% if tiktok_enabled %}if (key.includes("tiktok")) {
             return row.tiktok_total;
-          }
+          }{% endif %}
           return 0;
         };
         const rawSubscriberDatasets = [
@@ -944,7 +946,7 @@
             pointBorderColor: "#3b82f6",
             pointBorderWidth: 2,
           },
-          {
+          {% if tiktok_enabled %}{
             label: "TikTok",
             data: subscriberSeries.map((item, index) => (index === 0 ? null : (item.tiktok_net ?? null))),
             borderColor: "#ec4899",
@@ -955,7 +957,7 @@
             pointBackgroundColor: "#0b1220",
             pointBorderColor: "#ec4899",
             pointBorderWidth: 2,
-          },
+          },{% endif %}
         ];
         const subscriberDatasets = rawSubscriberDatasets.filter((dataset) =>
           dataset.data.some((value) => value !== null && value !== 0)
@@ -1037,10 +1039,10 @@
             } else if (label.includes("facebook")) {
               iconClass = "bi-facebook";
               dotClass = "legend-facebook";
-            } else if (label.includes("tiktok")) {
+            {% if tiktok_enabled %}} else if (label.includes("tiktok")) {
               iconClass = "bi-tiktok";
               dotClass = "legend-tiktok";
-            }
+            {% endif %}}
             const item = document.createElement("span");
             item.className = "d-inline-flex align-items-center gap-2 legend-item";
             if (!chart.isDatasetVisible(index)) {
@@ -1249,8 +1251,8 @@
             instagramNet: current.instagram_net,
             facebookTotal: current.facebook_total || 0,
             facebookNet: current.facebook_net,
-            tiktokTotal: current.tiktok_total || 0,
-            tiktokNet: current.tiktok_net,
+            {% if tiktok_enabled %}tiktokTotal: current.tiktok_total || 0,
+            tiktokNet: current.tiktok_net,{% endif %}
           });
         }
         return deltas.slice(1);
@@ -1271,12 +1273,12 @@
                 <td class="text-end">${formatSubscriberDelta(row.youtubeNet)}</td>
                 <td class="text-end">${formatSubscriberDelta(row.instagramNet)}</td>
                 <td class="text-end">${formatSubscriberDelta(row.facebookNet)}</td>
-                <td class="text-end">${formatSubscriberDelta(row.tiktokNet)}</td>
+                {% if tiktok_enabled %}<td class="text-end">${formatSubscriberDelta(row.tiktokNet)}</td>{% endif %}
               </tr>
             `;
           })
           .join("");
-        subscriberTableEl.innerHTML = rows || `<tr><td colspan="5" class="text-center text-muted py-3">No data yet.</td></tr>`;
+        subscriberTableEl.innerHTML = rows || `<tr><td colspan="{{ 5 if tiktok_enabled else 4 }}" class="text-center text-muted py-3">No data yet.</td></tr>`;
       };
       renderSubscriberTable();
 

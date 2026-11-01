@@ -44,6 +44,7 @@ from app.video_shorts.services.ai_video_workspace import (
 )
 from app.video_shorts.services.db import get_db, table_columns
 from app.video_shorts.services.facebook_queue import enqueue_facebook_clip, load_facebook_queue_map
+from app.video_shorts.services.feature_flags import tiktok_enabled
 from app.video_shorts.services.heygen import HeyGenClient, HeyGenError, get_heygen_background_capabilities
 from app.video_shorts.services.instagram_queue import enqueue_instagram_clip, load_instagram_queue_map
 from app.video_shorts.services.storage import get_media_storage
@@ -306,7 +307,8 @@ def ai_video_create():
     instagram_connected = bool(get_instagram_credentials(user_id))
     facebook_info = get_facebook_page_data(user_id) or {}
     facebook_connected = bool(facebook_info.get("page_access_token"))
-    tiktok_info = get_tiktok_data(user_id) or {}
+    tiktok_feature_enabled = tiktok_enabled()
+    tiktok_info = (get_tiktok_data(user_id) or {}) if tiktok_feature_enabled else {}
     tiktok_connected = bool(tiktok_info.get("access_token")) and not _is_token_expired(tiktok_info.get("expires_at"))
     return render_template(
         "ai_video_create.html",
@@ -314,6 +316,7 @@ def ai_video_create():
         instagram_connected=instagram_connected,
         facebook_connected=facebook_connected,
         tiktok_connected=tiktok_connected,
+        tiktok_enabled=tiktok_feature_enabled,
         youtube_connected=has_refresh_token(user_id, brand_id=brand_id),
         user_time_zone=user_tz,
         user_time_zone_label=TIMEZONE_LABELS.get(user_tz, user_tz),
@@ -347,10 +350,10 @@ def ai_video_publish(ai_video_id: str):
     instagram_feed = str(request.form.get("schedule_instagram_feed") or "").lower() in {"on", "1", "true", "yes"}
     facebook_reel = str(request.form.get("schedule_facebook_reel") or "").lower() in {"on", "1", "true", "yes"}
     facebook_feed = str(request.form.get("schedule_facebook_feed") or "").lower() in {"on", "1", "true", "yes"}
-    tiktok_enabled = str(request.form.get("schedule_tiktok") or "").lower() in {"on", "1", "true", "yes"}
+    tiktok_requested = tiktok_enabled() and str(request.form.get("schedule_tiktok") or "").lower() in {"on", "1", "true", "yes"}
     force_requeue_instagram = str(request.form.get("force_requeue_instagram") or "").lower() in {"on", "1", "true", "yes"}
     force_requeue_tiktok = str(request.form.get("force_requeue_tiktok") or "").lower() in {"on", "1", "true", "yes"}
-    if not any([youtube_enabled, instagram_reel, instagram_feed, facebook_reel, facebook_feed, tiktok_enabled]):
+    if not any([youtube_enabled, instagram_reel, instagram_feed, facebook_reel, facebook_feed, tiktok_requested]):
         return jsonify({"success": False, "message": "Select at least one platform."}), 400
 
     title = (request.form.get("title") or item.get("title") or "").strip()[:100]
@@ -453,7 +456,7 @@ def ai_video_publish(ai_video_id: str):
                 media_type=media_type,
             )
 
-    if tiktok_enabled:
+    if tiktok_requested:
         tt_info = get_tiktok_data(user_id) or {}
         if not tt_info.get("access_token") or _is_token_expired(tt_info.get("expires_at")):
             return jsonify({"success": False, "message": "TikTok account not connected."}), 403

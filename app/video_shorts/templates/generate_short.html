@@ -6761,7 +6761,7 @@
                   <i class="bi bi-instagram {{ item.instagram_icon_class or 'text-warning' }} gs-schedule-icon" aria-hidden="true"></i>
                 </span>
               {% endif %}
-              {% if item.tiktok_label or item.tiktok_display %}
+              {% if tiktok_enabled and (item.tiktok_label or item.tiktok_display) %}
                 {% set tt_tip = item.tiktok_display or item.tiktok_label %}
                 <span class="d-inline-flex align-items-center gap-1" data-bs-toggle="tooltip" title="{{ tt_tip }}">
                   <i class="bi bi-tiktok {{ item.tiktok_icon_class or 'text-warning' }} gs-schedule-icon" aria-hidden="true"></i>
@@ -7621,7 +7621,7 @@
                         <i class="bi bi-instagram {{ ig_icon_class }} gs-schedule-icon" aria-hidden="true"></i>
                       </span>
                     {% endif %}
-                    {% if row.tiktok_display %}
+                    {% if tiktok_enabled and row.tiktok_display %}
                       {% set tt_label_lower = (row.tiktok_label or "")|lower %}
                       {% if "published" in tt_label_lower %}
                         {% set tt_icon_class = "text-success" %}
@@ -7886,9 +7886,11 @@
                                 data-instagram-feed="{{ '1' if row.instagram_feed else '' }}"
                                 data-instagram-mode="{{ row.instagram_mode or '' }}"
                                 data-instagram-publish-at="{{ row.instagram_publish_at or '' }}"
+                                {% if tiktok_enabled %}
                                 data-tiktok-enabled="{{ '1' if row.tiktok_enabled else '' }}"
                                 data-tiktok-mode="{{ row.tiktok_mode or '' }}"
                                 data-tiktok-publish-at="{{ row.tiktok_publish_at or '' }}"
+                                {% endif %}
                                 data-facebook-reel="{{ '1' if row.facebook_reel else '' }}"
                                 data-facebook-feed="{{ '1' if row.facebook_feed else '' }}"
                                 data-facebook-mode="{{ row.facebook_mode or '' }}"
@@ -8417,6 +8419,7 @@
                   <div id="facebookTimingHint" class="small text-white-50 d-none mt-2">Will follow the YouTube schedule.</div>
                 </div>
               </div>
+              {% if tiktok_enabled %}
               <div class="card bg-dark text-white border border-secondary-subtle d-none" id="tiktokSettingsCard">
                 <div class="card-header bg-transparent border-0 d-flex justify-content-between align-items-center">
                   <div class="d-flex align-items-center gap-2">
@@ -8487,6 +8490,7 @@
                   <div id="tiktokTimingHint" class="small text-white-50 d-none mt-2">Will follow the YouTube schedule.</div>
                 </div>
               </div>
+              {% endif %}
             </div>
           </div>
         </div>

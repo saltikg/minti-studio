@@ -98,6 +98,7 @@ from app.video_shorts.services.free_tool_analytics import (
     attribution_metadata as free_tool_attribution_metadata,
     track_free_tool_event,
 )
+from app.video_shorts.services.feature_flags import tiktok_enabled
 from app.video_shorts.services.autopilot_leads import (
     autopilot_leads_table_ready,
     ensure_converted_autopilot_lead_for_activation,
@@ -3121,7 +3122,11 @@ def account_page():
         {
             "title": "Connections",
             "subtitle": "Manage your publishing accounts",
-            "meta": "Connect and manage YouTube, Instagram, TikTok and Facebook for publishing.",
+            "meta": (
+                "Connect and manage YouTube, Instagram, TikTok and Facebook for publishing."
+                if tiktok_enabled()
+                else "Connect and manage YouTube, Instagram and Facebook for publishing."
+            ),
             "icon": "public",
             "href": url_for("video_shorts_bp.social_connect"),
         },

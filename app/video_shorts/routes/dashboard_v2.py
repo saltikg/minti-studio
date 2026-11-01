@@ -11,6 +11,7 @@ from flask import current_app, g, render_template, request
 from app.video_shorts import video_shorts_bp
 from app.video_shorts.services.brands import current_brand_id
 from app.video_shorts.services.db import get_db_readonly
+from app.video_shorts.services.feature_flags import tiktok_enabled
 
 
 logger = logging.getLogger(__name__)
@@ -118,7 +119,11 @@ def _normalize_filters() -> Tuple[str, date, date]:
         )
         or "all"
     )
-    valid_values = {option["value"] for option in PLATFORM_OPTIONS}
+    valid_values = {
+        option["value"]
+        for option in PLATFORM_OPTIONS
+        if tiktok_enabled() or option["value"] != "tiktok"
+    }
     if selected_platform not in valid_values:
         selected_platform = "all"
     return selected_platform, start_date, end_date
@@ -835,6 +840,7 @@ def _fetch_dashboard_video_rows(
 
 @video_shorts_bp.route("/dashboard-v2", methods=["GET"])
 def dashboard_v2_page():
+    tiktok_feature_enabled = tiktok_enabled()
     selected_platform, start_date, end_date = _normalize_filters()
     videos_page = _parse_page_arg("videos_page", 1)
     brand_id = current_brand_id()
@@ -975,6 +981,12 @@ def dashboard_v2_page():
         )
     finally:
         conn.close()
+
+    if not tiktok_feature_enabled:
+        chart_rows = [row for row in chart_rows if (row.get("channel_type") or "").lower() != "tiktok"]
+        daily_channel_views_rows = [
+            row for row in daily_channel_views_rows if (row.get("channel_type") or "").lower() != "tiktok"
+        ]
 
     chart_dates = sorted(
         {
@@ -1139,7 +1151,10 @@ def dashboard_v2_page():
 
     return render_template(
         "dashboard_v2.html",
-        platform_options=PLATFORM_OPTIONS,
+        platform_options=[
+            option for option in PLATFORM_OPTIONS if tiktok_feature_enabled or option["value"] != "tiktok"
+        ],
+        tiktok_enabled=tiktok_feature_enabled,
         selected_platform=selected_platform,
         start_date=start_date,
         end_date=end_date,
