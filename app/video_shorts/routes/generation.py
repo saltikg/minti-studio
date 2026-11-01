@@ -283,6 +283,7 @@ from app.video_shorts.services.user_events import prepare_transcript_completed_t
 from app.video_shorts.services.billing import (
     AUTOPILOT_TIER_MONTHLY_PRICES,
     STRIPE_PUBLISHABLE_KEY,
+    autopilot_checkout_display_terms,
     autopilot_trial_end,
     load_billing_user_state,
     stripe_is_configured,
@@ -21916,6 +21917,14 @@ def shorts_storage_plans():
     autopilot_trial_end_at = autopilot_trial_end((billing_user or {}).get("service_mode_chosen_at"))
     now_utc = datetime.now(timezone.utc)
     autopilot_trial_end_label = autopilot_trial_end_at.strftime("%B %d, %Y") if autopilot_trial_end_at else ""
+    autopilot_checkout_terms = {
+        str(tier): autopilot_checkout_display_terms(
+            (billing_user or {}).get("service_mode_chosen_at"),
+            monthly_price=price,
+            trial_end_label=autopilot_trial_end_label,
+        )
+        for tier, price in AUTOPILOT_TIER_MONTHLY_PRICES.items()
+    } if is_autopilot else {}
     autopilot_free_until_label = ""
     if autopilot_trial_end_at and autopilot_trial_end_at > now_utc:
         autopilot_free_until_label = autopilot_trial_end_label
@@ -22001,6 +22010,7 @@ def shorts_storage_plans():
         autopilot_monthly_price=autopilot_monthly_price,
         autopilot_shorts_prepared=autopilot_shorts_prepared,
         autopilot_trial_end_label=autopilot_trial_end_label,
+        autopilot_checkout_terms=autopilot_checkout_terms,
         autopilot_free_until_label=autopilot_free_until_label,
         autopilot_card_notice=autopilot_card_notice,
         is_admin=is_admin,

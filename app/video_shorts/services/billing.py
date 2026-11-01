@@ -146,6 +146,29 @@ def autopilot_checkout_trial_end(
     return None
 
 
+def autopilot_checkout_display_terms(
+    service_mode_chosen_at: Any,
+    *,
+    monthly_price: int,
+    trial_end_label: str,
+    now: Optional[datetime] = None,
+) -> Dict[str, Any]:
+    """Return checkout copy driven by the same trial decision sent to Stripe."""
+    checkout_trial_end = autopilot_checkout_trial_end(service_mode_chosen_at, now=now)
+    if checkout_trial_end is not None:
+        return {
+            "trial_applied": True,
+            "modal": f"No charge until {trial_end_label}. $0 due today.",
+            "panel": f"Add your card below. $0 due today; first charge {trial_end_label}.",
+        }
+    price = f"${int(monthly_price)}"
+    return {
+        "trial_applied": False,
+        "modal": f"{price} due today, then {price}/month.",
+        "panel": f"Add your card below. {price} due today.",
+    }
+
+
 def interval_is_supported(interval: str) -> bool:
     return (interval or "").strip().lower() in {"month", "year"}
 

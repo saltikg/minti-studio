@@ -72,6 +72,38 @@ def test_autopilot_checkout_trial_end_preserves_stripe_minimum_fallback() -> Non
     ) is None
 
 
+def test_autopilot_checkout_copy_charges_today_when_trial_ends_in_one_day() -> None:
+    now = datetime(2026, 11, 30, 12, 0, 0, tzinfo=timezone.utc)
+    terms = billing.autopilot_checkout_display_terms(
+        now - timedelta(days=29),
+        monthly_price=20,
+        trial_end_label="December 01, 2026",
+        now=now,
+    )
+
+    assert terms == {
+        "trial_applied": False,
+        "modal": "$20 due today, then $20/month.",
+        "panel": "Add your card below. $20 due today.",
+    }
+
+
+def test_autopilot_checkout_copy_keeps_zero_due_for_ten_day_trial() -> None:
+    now = datetime(2026, 11, 21, 12, 0, 0, tzinfo=timezone.utc)
+    terms = billing.autopilot_checkout_display_terms(
+        now - timedelta(days=20),
+        monthly_price=20,
+        trial_end_label="December 01, 2026",
+        now=now,
+    )
+
+    assert terms == {
+        "trial_applied": True,
+        "modal": "No charge until December 01, 2026. $0 due today.",
+        "panel": "Add your card below. $0 due today; first charge December 01, 2026.",
+    }
+
+
 def test_embedded_checkout_uses_exact_trial_end_and_collects_card(monkeypatch) -> None:
     captured = {}
     monkeypatch.setattr(

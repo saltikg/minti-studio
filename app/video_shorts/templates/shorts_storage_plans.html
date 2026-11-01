@@ -763,8 +763,7 @@
 
     const usageMonthDetails = new Map();
     const isAutopilot = {{ is_autopilot|tojson }};
-    const autopilotTrialEndLabel = {{ autopilot_trial_end_label|tojson }};
-    const autopilotFreeUntilLabel = {{ autopilot_free_until_label|tojson }};
+    const autopilotCheckoutTerms = {{ autopilot_checkout_terms|tojson }};
     const billingHasManagedSubscription = {{ billing_has_managed_subscription|tojson }};
     const subscriptionCancelAtPeriodEnd = {{ subscription_cancel_at_period_end|tojson }};
     const subscriptionCancelEffectiveDate = {{ subscription_cancel_effective_date|tojson }};
@@ -1149,6 +1148,7 @@
         const isFreePlan = planId === "plan_free";
         const shouldUsePortal = billingHasManagedSubscription && !isAutopilot;
         const shouldUpdateSubscription = billingHasManagedSubscription && isAutopilot;
+        const checkoutTerms = isAutopilot ? autopilotCheckoutTerms[String(serviceTier)] : null;
 
         selectedPlan = {
           planId,
@@ -1160,6 +1160,7 @@
           billingMode,
           serviceTier,
           isPaymentSetup,
+          checkoutTerms,
         };
 
         if (planTitleEl) {
@@ -1201,10 +1202,8 @@
         if (planConfirmHint) {
           if (isAutopilot && shouldUpdateSubscription) {
             planConfirmHint.textContent = "Your tier changes now. The new monthly price applies at your next renewal.";
-          } else if (isAutopilot && autopilotFreeUntilLabel) {
-            planConfirmHint.textContent = `No charge until ${autopilotFreeUntilLabel}. $0 due today.`;
-          } else if (isAutopilot) {
-            planConfirmHint.textContent = "Your free period has ended. The first monthly charge is due today.";
+          } else if (isAutopilot && checkoutTerms) {
+            planConfirmHint.textContent = checkoutTerms.modal;
           } else if (isFreePlan && subscriptionCancelAtPeriodEnd) {
             planConfirmHint.textContent = `Your paid subscription is already set to cancel on ${subscriptionCancelEffectiveDate || "the end of your billing period"}.`;
           } else if (shouldUsePortal) {
@@ -1339,11 +1338,9 @@
             },
             onMounted: () => {
               if (planCheckoutStatus) {
-                planCheckoutStatus.textContent = isAutopilot && autopilotFreeUntilLabel
-                  ? `Add your card below. $0 due today; first charge ${autopilotTrialEndLabel}.`
-                  : isAutopilot
-                    ? "Add your card below. Your first monthly charge is due today."
-                    : "Complete payment below. Your plan updates after Stripe confirms the subscription.";
+                planCheckoutStatus.textContent = isAutopilot && selectedPlan.checkoutTerms
+                  ? selectedPlan.checkoutTerms.panel
+                  : "Complete payment below. Your plan updates after Stripe confirms the subscription.";
               }
             },
             onComplete: () => {
