@@ -8854,7 +8854,13 @@ def apply_short_editor_defaults_to_video_if_null(*, owner_user_id: str, brand_id
             conn.commit()
             return {"updated": False, "fields": [], "reason": "video_not_found"}
         current_by_column = dict(zip(select_columns, row))
-        if not any(current_by_column.get(column) is None for column in selectable):
+        saved_defaults = _load_short_editor_defaults(owner_user_id, brand_id)
+        explicit_saved_fields = {
+            name
+            for name in AUTO_RENDER_DESIGN_FIELD_MAP
+            if name in saved_defaults and not _is_blank_editor_default_value(saved_defaults.get(name))
+        }
+        if not any(current_by_column.get(column) is None for column in selectable) and not explicit_saved_fields:
             conn.commit()
             return {"updated": False, "fields": []}
         raw_values = {
@@ -8862,24 +8868,35 @@ def apply_short_editor_defaults_to_video_if_null(*, owner_user_id: str, brand_id
             for default_name, column_name in AUTO_RENDER_DESIGN_FIELD_MAP.items()
             if column_name in current_by_column
         }
-        resolved = _apply_short_editor_defaults(raw_values, _load_short_editor_defaults(owner_user_id, brand_id))
-        resolved_anchor, resolved_margin = _resolve_caption_position(
-            stored_anchor=current_by_column.get("caption_anchor"),
-            stored_margin=current_by_column.get("subtitle_margin"),
-            margin_custom=current_by_column.get("subtitle_margin_custom"),
-            user_defaults=_load_short_editor_defaults(owner_user_id, brand_id),
-        )
+        resolved = _apply_short_editor_defaults(raw_values, saved_defaults)
+        if explicit_saved_fields:
+            normalized_saved_defaults = _clean_short_editor_default_payload(saved_defaults)
+            for name in explicit_saved_fields:
+                if name in normalized_saved_defaults:
+                    resolved[name] = normalized_saved_defaults[name]
+        if {"caption_anchor", "sub_margin"} & explicit_saved_fields:
+            resolved_anchor = str(resolved.get("caption_anchor") or "top")
+            resolved_margin = int(resolved.get("sub_margin") or SUB_MARGIN_DEFAULT)
+        else:
+            resolved_anchor, resolved_margin = _resolve_caption_position(
+                stored_anchor=current_by_column.get("caption_anchor"),
+                stored_margin=current_by_column.get("subtitle_margin"),
+                margin_custom=current_by_column.get("subtitle_margin_custom"),
+                user_defaults=saved_defaults,
+            )
         resolved["caption_anchor"] = resolved_anchor
         resolved["sub_margin"] = resolved_margin
         assignments: List[str] = []
         params: List[Any] = []
         updated_fields: List[str] = []
         for default_name, column_name in AUTO_RENDER_DESIGN_FIELD_MAP.items():
-            if column_name not in current_by_column or current_by_column.get(column_name) is not None:
+            if column_name not in current_by_column:
+                continue
+            if current_by_column.get(column_name) is not None and default_name not in explicit_saved_fields:
                 continue
             if default_name not in resolved:
                 continue
-            assignments.append(f"{column_name} = COALESCE({column_name}, ?)")
+            assignments.append(f"{column_name} = ?")
             value = resolved.get(default_name)
             if default_name == "overlay_shapes":
                 value = json.dumps(_normalize_overlay_shapes(value), ensure_ascii=False, separators=(",", ":"))
