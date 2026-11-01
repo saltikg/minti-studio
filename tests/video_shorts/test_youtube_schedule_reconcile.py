@@ -122,3 +122,53 @@ def test_already_projected_schedule_is_untouched(monkeypatch) -> None:
     assert projected == []
     assert result["checked"] == 0
     assert result["updated"] == 0
+
+
+def test_worker_projection_uses_explicit_scope_without_request_context(monkeypatch) -> None:
+    calls = []
+    entry = {
+        "plan_index": 7,
+        "clip_filename": "7_source_v42.mp4",
+        "status": "created",
+    }
+    monkeypatch.setattr(
+        generation,
+        "_resolve_video_id_from_pk",
+        lambda video_pk, **scope: calls.append(("resolve", video_pk, scope)) or "source",
+    )
+    monkeypatch.setattr(
+        generation,
+        "_load_plan_entries",
+        lambda video_id, **scope: calls.append(("load", video_id, scope)) or [entry],
+    )
+    monkeypatch.setattr(
+        generation,
+        "_write_plan_entries",
+        lambda video_id, entries, **scope: calls.append(("write", video_id, scope)),
+    )
+    monkeypatch.setattr(
+        generation,
+        "upsert_generated_video_record",
+        lambda **kwargs: calls.append(("lifecycle", kwargs)),
+    )
+    app = Flask(__name__)
+    with app.app_context():
+        assert generation._update_plan_entry_publish_state(
+            video_pk="42",
+            plan_index="7",
+            filename="7_source_v42.mp4",
+            publish_status="scheduled",
+            publish_at_local="2026-10-28T00:00",
+            publish_at_iso="2026-10-28T07:00:00Z",
+            title="Test Short",
+            description="Description",
+            youtube_id="youtube-1",
+            owner_user_id="owner",
+            brand_id="brand",
+        )
+
+    for call in calls[:3]:
+        assert call[2]["owner_user_id"] == "owner"
+        assert call[2]["brand_id"] == "brand"
+    assert calls[3][1]["user_id"] == "owner"
+    assert calls[3][1]["brand_id"] == "brand"

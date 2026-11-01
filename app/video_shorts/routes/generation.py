@@ -6016,12 +6016,26 @@ def _plan_path(video_id: str, *, video_pk=None, read=False) -> Path:
     return tenant_media.state_path(video_id, "plan", video_pk=video_pk, read=read)
 
 
-def _load_plan_entries(video_id: str, *, video_pk=None) -> List[Dict[str, Any]]:
+def _load_plan_entries(
+    video_id: str,
+    *,
+    video_pk=None,
+    owner_user_id: Optional[str] = None,
+    brand_id: Optional[str] = None,
+) -> List[Dict[str, Any]]:
     data = tenant_media.load_state(video_id, "plan", video_pk=video_pk)
     entries = data.get("plan") or data.get("clips") or []
     entries = [dict(entry) for entry in entries if isinstance(entry, dict)] if isinstance(entries, list) else []
-    context = _active_editor_context()
-    return youtube_scheduling.overlay_plan(entries, user_id=context["owner_user_id"], brand_id=context["brand_id"], video_pk=video_pk)
+    if owner_user_id is None:
+        context = _active_editor_context()
+        owner_user_id = context["owner_user_id"]
+        brand_id = context["brand_id"]
+    return youtube_scheduling.overlay_plan(
+        entries,
+        user_id=owner_user_id,
+        brand_id=brand_id,
+        video_pk=video_pk,
+    )
 
 
 def _plan_path_v2(video_id: str, *, video_pk=None, read=False) -> Path:
@@ -6054,9 +6068,24 @@ def _load_plan_entries_v4(video_id: str, *, video_pk=None) -> List[Dict[str, Any
     return [dict(entry) for entry in entries if isinstance(entry, dict)] if isinstance(entries, list) else []
 
 
-def _write_plan_entries(video_id: str, entries: List[Dict[str, Any]], *, video_pk=None) -> None:
-    context = _active_editor_context()
-    youtube_scheduling.sync_plan_metadata(entries, user_id=context["owner_user_id"], brand_id=context["brand_id"], video_pk=video_pk)
+def _write_plan_entries(
+    video_id: str,
+    entries: List[Dict[str, Any]],
+    *,
+    video_pk=None,
+    owner_user_id: Optional[str] = None,
+    brand_id: Optional[str] = None,
+) -> None:
+    if owner_user_id is None:
+        context = _active_editor_context()
+        owner_user_id = context["owner_user_id"]
+        brand_id = context["brand_id"]
+    youtube_scheduling.sync_plan_metadata(
+        entries,
+        user_id=owner_user_id,
+        brand_id=brand_id,
+        video_pk=video_pk,
+    )
     tenant_media.write_state(video_id, {"plan": entries}, video_pk=video_pk)
 
 
@@ -11043,16 +11072,22 @@ def _build_transcript_player_source(video: Dict[str, Any]) -> Dict[str, str]:
     }
 
 
-def _resolve_video_id_from_pk(video_pk: Any) -> Optional[str]:
+def _resolve_video_id_from_pk(
+    video_pk: Any,
+    *,
+    owner_user_id: Optional[str] = None,
+    brand_id: Optional[str] = None,
+) -> Optional[str]:
     if not video_pk:
         return None
     try:
         pk_int = int(video_pk)
     except (TypeError, ValueError):
         return None
-    editor_context = _active_editor_context()
-    owner_user_id = editor_context["owner_user_id"]
-    brand_id = editor_context["brand_id"]
+    if owner_user_id is None:
+        editor_context = _active_editor_context()
+        owner_user_id = editor_context["owner_user_id"]
+        brand_id = editor_context["brand_id"]
     conn = get_db_readonly()
     sql = "SELECT video_id FROM youtube_videos WHERE id = ?"
     params: List[Any] = [pk_int]
@@ -11746,11 +11781,20 @@ def _update_plan_entry_publish_state(
     brand_id: Optional[str] = None,
     youtube_published_at: Optional[str] = None,
 ) -> bool:
-    video_id = _resolve_video_id_from_pk(video_pk)
+    video_id = _resolve_video_id_from_pk(
+        video_pk,
+        owner_user_id=owner_user_id,
+        brand_id=brand_id,
+    )
     if not video_id:
         return False
 
-    entries = _load_plan_entries(video_id, video_pk=video_pk)
+    entries = _load_plan_entries(
+        video_id,
+        video_pk=video_pk,
+        owner_user_id=owner_user_id,
+        brand_id=brand_id,
+    )
     if not entries:
         return False
 
@@ -11786,7 +11830,13 @@ def _update_plan_entry_publish_state(
     target_entry["yt_status"] = publish_status
 
     try:
-        _write_plan_entries(video_id, entries, video_pk=video_pk)
+        _write_plan_entries(
+            video_id,
+            entries,
+            video_pk=video_pk,
+            owner_user_id=owner_user_id,
+            brand_id=brand_id,
+        )
     except Exception as exc:
         current_app.logger.warning("Could not update publish state for %s: %s", video_id, exc)
         return False
