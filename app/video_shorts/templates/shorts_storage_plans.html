@@ -666,7 +666,7 @@
   <div class="modal-dialog modal-dialog-centered">
     <div class="modal-content vs-modal">
       <div class="modal-header vs-modal-header">
-        <h5 class="modal-title vs-modal-title">Confirm plan change</h5>
+        <h5 class="modal-title vs-modal-title" id="planConfirmModalTitle">Confirm plan change</h5>
         <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
       </div>
       <div class="modal-body vs-modal-body">
@@ -683,7 +683,7 @@
                 <div class="vs-modal-key">{{ 'Tier' if is_autopilot else 'Storage' }}</div>
                 <div class="vs-modal-value" id="planConfirmStorage"></div>
               </div>
-              <div class="vs-modal-item">
+              <div class="vs-modal-item" id="planConfirmCurrentItem">
                 <div class="vs-modal-key">Current plan</div>
                 <div class="vs-modal-value" id="planConfirmCurrent"></div>
               </div>
@@ -725,11 +725,13 @@
     const storageLimitModalEl = document.getElementById("storageLimitModal");
     const transcriptionMonthModalEl = document.getElementById("transcriptionMonthModal");
     const planCompareModalEl = document.getElementById("planCompareModal");
+    const planConfirmModalTitle = document.getElementById("planConfirmModalTitle");
     const planTitleEl = document.getElementById("planConfirmTitle");
     const planPriceEl = document.getElementById("planConfirmPrice");
     const planBillingEl = document.getElementById("planConfirmBilling");
     const planStorageEl = document.getElementById("planConfirmStorage");
     const planCurrentEl = document.getElementById("planConfirmCurrent");
+    const planCurrentItem = document.getElementById("planConfirmCurrentItem");
     const planIdInput = document.getElementById("planConfirmPlanId");
     const planIntervalInput = document.getElementById("planConfirmInterval");
     const confirmForm = document.getElementById("planConfirmForm");
@@ -1162,8 +1164,13 @@
 
         if (planTitleEl) {
           planTitleEl.textContent = isPaymentSetup
-            ? `Add payment method for ${planName}?`
+            ? `Start ${planName}?`
             : `Switch to ${planName}?`;
+        }
+        if (planConfirmModalTitle) {
+          planConfirmModalTitle.textContent = isPaymentSetup
+            ? "Confirm subscription"
+            : "Confirm plan change";
         }
         if (planPriceEl) {
           planPriceEl.textContent = `$${displayPrice}`;
@@ -1178,6 +1185,9 @@
           const currentPlanName =
             document.querySelector(".plan-card-selected .plan-name")?.textContent?.trim() || "None";
           planCurrentEl.textContent = currentPlanName;
+        }
+        if (planCurrentItem) {
+          planCurrentItem.classList.toggle("d-none", isPaymentSetup);
         }
         if (planIdInput) {
           planIdInput.value = planId;
