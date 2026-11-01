@@ -5,7 +5,7 @@ from datetime import datetime, timedelta
 from typing import Dict, List, Optional, Tuple
 
 from app.video_shorts.services.brands import brand_scoped_user_id
-from app.video_shorts.services.db import get_db, get_db_readonly, ensure_tiktok_queue_schema
+from app.video_shorts.services.db import autopilot_billing_paused_sql, get_db, get_db_readonly, ensure_tiktok_queue_schema
 from app.video_shorts.services.generated_video_lifecycle import upsert_generated_video_record
 
 
@@ -152,6 +152,7 @@ def fetch_due_tiktok_jobs(limit: int = 5) -> List[Dict[str, Optional[str]]]:
         backend_name = getattr(conn, "backend_name", "duckdb")
         publish_ts_expr = _queue_timestamp_expr("publish_at_clean", backend_name)
         created_ts_expr = _queue_timestamp_expr("created_at_clean", backend_name)
+        billing_paused_expr = autopilot_billing_paused_sql(conn, "queue.user_id")
         if backend_name == "postgres":
             sort_ts_expr = f"COALESCE(EXTRACT(EPOCH FROM {publish_ts_expr}), EXTRACT(EPOCH FROM {created_ts_expr}))"
         else:
@@ -225,6 +226,7 @@ def fetch_due_tiktok_jobs(limit: int = 5) -> List[Dict[str, Optional[str]]]:
             FROM queue
             WHERE status IN ('pending','retry')
               AND (publish_ts IS NULL OR publish_ts <= NOW())
+              AND NOT ({billing_paused_expr})
             ORDER BY sort_ts ASC
             LIMIT ?
             """,

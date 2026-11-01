@@ -634,6 +634,43 @@ def send_autopilot_upgrade_request_email(
     )
 
 
+def send_autopilot_billing_reminder_email(
+    *,
+    to_email: str,
+    recipient_name: str = "",
+    billing_url: str,
+    trial_end_label: str,
+) -> dict[str, object]:
+    greeting = html.escape((recipient_name or "").strip() or "there")
+    safe_url = html.escape((billing_url or "").strip())
+    safe_trial_end = html.escape((trial_end_label or "").strip())
+    subject = "Add your card to keep Minti Autopilot running"
+    html_body = f"""
+    <div style="font-family:Arial,sans-serif;line-height:1.6;color:#0f172a;max-width:560px;margin:0 auto;">
+      <div style="padding:24px;border:1px solid #dbe4f0;border-radius:16px;background:#ffffff;">
+        <div style="font-size:24px;font-weight:700;margin-bottom:12px;">MintiStudio</div>
+        <p style="margin:0 0 12px;">Hi {greeting},</p>
+        <p style="margin:0 0 16px;">Your free Autopilot period ends on {safe_trial_end}. Add a card now to keep Short creation and publishing running without interruption.</p>
+        <p style="margin:0 0 20px;"><a href="{safe_url}" style="display:inline-block;padding:12px 18px;border-radius:999px;background:#5df0d2;color:#07161d;text-decoration:none;font-weight:700;">Add billing details</a></p>
+        <p style="margin:0;">No charge is due before {safe_trial_end}.</p>
+      </div>
+    </div>
+    """.strip()
+    text_body = (
+        f"Hi {(recipient_name or '').strip() or 'there'},\n\n"
+        f"Your free Autopilot period ends on {trial_end_label}. Add a card now to keep Short creation and publishing running without interruption.\n\n"
+        f"Add billing details: {billing_url}\n\n"
+        f"No charge is due before {trial_end_label}."
+    )
+    return send_resend_email(
+        to_email=to_email,
+        subject=subject,
+        html=html_body,
+        text=text_body,
+        error_message="Autopilot billing reminder could not be sent.",
+    )
+
+
 def send_membership_activated_emails(*, user_id: str, signup_method: str) -> None:
     from app.video_shorts.services.db import (
         ensure_auth_user_schema,

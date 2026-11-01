@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import logging
+from datetime import datetime, timezone
 from urllib.parse import urlparse
 from typing import Any, Dict, Optional
 
@@ -11,12 +12,14 @@ from app.video_shorts import video_shorts_bp
 from app.video_shorts.services.billing import (
     STRIPE_PUBLISHABLE_KEY,
     STRIPE_WEBHOOK_SECRET,
+    autopilot_trial_end,
     build_checkout_return_url,
     create_billing_portal_session,
     construct_webhook_event,
     create_customer,
     create_embedded_checkout_session,
     get_plan_for_price_id,
+    get_price_id_for_autopilot_tier,
     get_price_id_for_plan,
     interval_is_supported,
     normalize_subscription_payload,
@@ -26,6 +29,7 @@ from app.video_shorts.services.billing import (
     retrieve_checkout_session,
     retrieve_subscription,
     stripe_is_configured,
+    update_subscription_price,
 )
 from app.video_shorts.services.db import ensure_auth_user_schema, get_db, get_db_readonly
 
@@ -90,7 +94,12 @@ def _load_billing_user(user_id: str) -> Optional[Dict[str, Any]]:
                 subscription_current_period_end,
                 subscription_cancel_at_period_end,
                 billing_interval,
-                plan_id
+                plan_id,
+                service_mode,
+                service_tier,
+                service_mode_chosen_at,
+                autopilot_billing_reminder_sent_at,
+                autopilot_billing_paused_at
             FROM shorts_users
             WHERE id = ?
             """,
@@ -110,6 +119,11 @@ def _load_billing_user(user_id: str) -> Optional[Dict[str, Any]]:
         "subscription_cancel_at_period_end": bool(row[6]) if row[6] is not None else False,
         "billing_interval": row[7],
         "plan_id": row[8],
+        "service_mode": str(row[9] or "").strip().lower(),
+        "service_tier": int(row[10]) if row[10] is not None else None,
+        "service_mode_chosen_at": row[11],
+        "autopilot_billing_reminder_sent_at": row[12],
+        "autopilot_billing_paused_at": row[13],
     }
 
 
@@ -168,7 +182,8 @@ def _find_user_by_customer_id(conn, customer_id: str) -> Optional[str]:
 def _update_user_subscription_state(
     *,
     user_id: str,
-    plan_id: str,
+    plan_id: Optional[str],
+    service_tier: Optional[int],
     stripe_customer_id: Optional[str],
     stripe_subscription_id: Optional[str],
     subscription_status: Optional[str],
@@ -182,24 +197,31 @@ def _update_user_subscription_state(
         conn.execute(
             """
             UPDATE shorts_users
-            SET plan_id = ?,
+            SET plan_id = COALESCE(?, plan_id),
+                service_tier = COALESCE(?, service_tier),
                 stripe_customer_id = ?,
                 stripe_subscription_id = ?,
                 subscription_status = ?,
                 subscription_current_period_end = ?,
                 subscription_cancel_at_period_end = ?,
                 billing_interval = ?,
+                autopilot_billing_paused_at = CASE
+                    WHEN lower(COALESCE(?, '')) IN ('active', 'trialing') THEN NULL
+                    ELSE autopilot_billing_paused_at
+                END,
                 updated_at = now()
             WHERE id = ?
             """,
             [
                 plan_id,
+                service_tier,
                 stripe_customer_id,
                 stripe_subscription_id,
                 subscription_status,
                 subscription_current_period_end,
                 subscription_cancel_at_period_end,
                 billing_interval,
+                subscription_status,
                 user_id,
             ],
         )
@@ -265,9 +287,23 @@ def _sync_terminal_subscription_to_free(
     normalized: Dict[str, Any],
     status_override: Optional[str] = None,
 ) -> bool:
+    if normalized.get("service_tier") is not None:
+        _update_user_subscription_state(
+            user_id=user_id,
+            plan_id=None,
+            service_tier=normalized.get("service_tier"),
+            stripe_customer_id=normalized.get("stripe_customer_id"),
+            stripe_subscription_id=None,
+            subscription_status=status_override or normalized.get("subscription_status") or "canceled",
+            subscription_current_period_end=normalized.get("subscription_current_period_end"),
+            subscription_cancel_at_period_end=False,
+            billing_interval=None,
+        )
+        return True
     _update_user_subscription_state(
         user_id=user_id,
         plan_id="plan_free",
+        service_tier=None,
         stripe_customer_id=normalized.get("stripe_customer_id"),
         stripe_subscription_id=None,
         subscription_status=status_override or normalized.get("subscription_status") or "canceled",
@@ -325,30 +361,61 @@ def create_checkout_session_route():
     payload = request.get_json(silent=True) or {}
     plan_id = (payload.get("plan_id") or "").strip()
     interval = (payload.get("interval") or "").strip().lower()
+    billing_mode = (payload.get("billing_mode") or "self").strip().lower()
+    try:
+        requested_service_tier = int(payload.get("service_tier") or 0)
+    except (TypeError, ValueError):
+        requested_service_tier = 0
+    update_existing = bool(payload.get("update_existing"))
     requested_trial_days = 0
     try:
         requested_trial_days = int(payload.get("trial_days") or 0)
     except (TypeError, ValueError):
         requested_trial_days = 0
-    if not plan_is_paid(plan_id) or not interval_is_supported(interval):
-        return _billing_error("invalid_plan", 400)
-    if requested_trial_days:
-        lead_autopilot_context = (
-            str(current_user.get("pending_service_intent") or "").strip().lower() == "autopilot"
-            or str(current_user.get("service_mode") or "").strip().lower() == "autopilot"
-        )
-        if requested_trial_days != 30 or plan_id != "plan_10gb" or interval != "month" or not lead_autopilot_context:
-            return _billing_error("invalid_trial", 400)
-
-    price_id = get_price_id_for_plan(plan_id, interval)
-    if not price_id:
-        return _billing_error("invalid_price_mapping", 400)
-
     user = _load_billing_user(current_user["id"])
     if not user:
         return _billing_error("user_not_found", 404)
+    is_autopilot = user.get("service_mode") == "autopilot"
+    trial_end = None
+    if billing_mode == "autopilot":
+        if not is_autopilot or requested_service_tier not in {15, 30, 45, 60}:
+            return _billing_error("invalid_autopilot_tier", 400)
+        interval = "month"
+        plan_id = ""
+        price_id = get_price_id_for_autopilot_tier(requested_service_tier)
+        if not price_id:
+            return _billing_error("invalid_price_mapping", 400)
+        candidate_trial_end = autopilot_trial_end(user.get("service_mode_chosen_at"))
+        if candidate_trial_end and candidate_trial_end > datetime.now(timezone.utc):
+            trial_end = candidate_trial_end
+    else:
+        if is_autopilot:
+            return _billing_error("autopilot_billing_mode_required", 400)
+        if not plan_is_paid(plan_id) or not interval_is_supported(interval):
+            return _billing_error("invalid_plan", 400)
+        if requested_trial_days:
+            return _billing_error("invalid_trial", 400)
+        price_id = get_price_id_for_plan(plan_id, interval)
+        if not price_id:
+            return _billing_error("invalid_price_mapping", 400)
+
     if _user_has_managed_subscription(user):
-        return _billing_error("subscription_managed_in_portal", 409)
+        if billing_mode != "autopilot" or not update_existing:
+            return _billing_error("subscription_managed_in_portal", 409)
+        try:
+            subscription = update_subscription_price(
+                subscription_id=(user.get("stripe_subscription_id") or "").strip(),
+                price_id=price_id,
+            )
+            if not _sync_subscription_to_user(subscription, metadata={"shorts_user_id": current_user["id"]}):
+                raise RuntimeError("subscription_sync_failed")
+        except stripe.StripeError as exc:
+            logger.exception("Stripe autopilot tier update failed user_id=%s tier=%s", current_user["id"], requested_service_tier)
+            return _billing_error(getattr(exc, "user_message", None) or str(exc) or "Stripe tier update failed.", 500)
+        except Exception as exc:
+            logger.exception("Unexpected autopilot tier update failure user_id=%s tier=%s", current_user["id"], requested_service_tier)
+            return _billing_error(str(exc) or "Unexpected tier update failure.", 500)
+        return jsonify({"updated": True, "service_tier": requested_service_tier})
 
     customer_id = (user.get("stripe_customer_id") or "").strip()
     if not customer_id:
@@ -388,6 +455,9 @@ def create_checkout_session_route():
                 interval=interval,
                 return_url=return_url,
                 trial_days=requested_trial_days or None,
+                trial_end=trial_end,
+                billing_mode=billing_mode,
+                service_tier=requested_service_tier or None,
             )
         except stripe.StripeError as exc:
             if customer_id and _is_missing_stripe_customer_error(exc):
@@ -400,6 +470,9 @@ def create_checkout_session_route():
                     interval=interval,
                     return_url=return_url,
                     trial_days=requested_trial_days or None,
+                    trial_end=trial_end,
+                    billing_mode=billing_mode,
+                    service_tier=requested_service_tier or None,
                 )
             else:
                 raise
@@ -548,7 +621,10 @@ def _sync_subscription_to_user(subscription: Any, *, metadata: Optional[Dict[str
         return False
     if normalized_status in _TERMINAL_SUBSCRIPTION_STATUSES:
         return _sync_terminal_subscription_to_free(user_id=user_id, normalized=normalized)
-    if not normalized.get("plan_id") or not normalized.get("billing_interval"):
+    if (
+        not normalized.get("billing_interval")
+        or (not normalized.get("plan_id") and normalized.get("service_tier") is None)
+    ):
         logger.warning(
             "Stripe webhook subscription price mapping missing subscription_id=%s price_id=%s",
             normalized.get("stripe_subscription_id") or "-",
@@ -557,7 +633,8 @@ def _sync_subscription_to_user(subscription: Any, *, metadata: Optional[Dict[str
         return False
     _update_user_subscription_state(
         user_id=user_id,
-        plan_id=normalized["plan_id"],
+        plan_id=normalized.get("plan_id"),
+        service_tier=normalized.get("service_tier"),
         stripe_customer_id=normalized.get("stripe_customer_id"),
         stripe_subscription_id=normalized.get("stripe_subscription_id"),
         subscription_status=normalized.get("subscription_status"),

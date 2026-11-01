@@ -10,6 +10,7 @@ from typing import Dict, List, Optional, Tuple
 import duckdb
 
 from app.video_shorts.services.db import (
+    autopilot_billing_paused_sql,
     get_db,
     get_db_readonly,
     ensure_instagram_queue_schema,
@@ -249,6 +250,7 @@ def fetch_due_instagram_jobs(limit: int = 5) -> List[Dict[str, Optional[str]]]:
         backend_name = getattr(conn, "backend_name", "duckdb")
         publish_ts_expr = _queue_timestamp_expr("publish_at_clean", backend_name)
         created_ts_expr = _queue_timestamp_expr("created_at_clean", backend_name)
+        billing_paused_expr = autopilot_billing_paused_sql(conn, "queue.user_id")
         z_suffix_like = "'%%Z'" if backend_name == "postgres" else "'%Z'"
         stale_cutoff = (
             datetime.utcnow().replace(microsecond=0) - timedelta(seconds=STALE_UPLOAD_SECONDS)
@@ -294,7 +296,7 @@ def fetch_due_instagram_jobs(limit: int = 5) -> List[Dict[str, Optional[str]]]:
                 SELECT *,
                        {publish_ts_expr} AS publish_ts,
                        CASE
-                           WHEN publish_at IS NULL OR btrim(CAST(publish_at AS VARCHAR)) = '' THEN TRUE
+                           WHEN publish_at IS NULL OR trim(CAST(publish_at AS VARCHAR)) = '' THEN TRUE
                            WHEN {publish_ts_expr} IS NULL THEN FALSE
                            ELSE {publish_ts_expr} <= NOW()
                        END AS ready_now
@@ -303,6 +305,7 @@ def fetch_due_instagram_jobs(limit: int = 5) -> List[Dict[str, Optional[str]]]:
             SELECT COUNT(*) FROM queue
             WHERE status IN ('pending','retry')
               AND ready_now
+              AND NOT ({billing_paused_expr})
             """
         ).fetchone()[0]
         print(f"Instagram queue status counts={status_counts} due_now={due_count}")
@@ -336,7 +339,7 @@ def fetch_due_instagram_jobs(limit: int = 5) -> List[Dict[str, Optional[str]]]:
                        {created_ts_expr} AS created_ts,
                        {sort_ts_expr} AS sort_ts,
                        CASE
-                           WHEN publish_at IS NULL OR btrim(CAST(publish_at AS VARCHAR)) = '' THEN TRUE
+                           WHEN publish_at IS NULL OR trim(CAST(publish_at AS VARCHAR)) = '' THEN TRUE
                            WHEN {publish_ts_expr} IS NULL THEN FALSE
                            ELSE {publish_ts_expr} <= NOW()
                        END AS ready_now
@@ -366,6 +369,7 @@ def fetch_due_instagram_jobs(limit: int = 5) -> List[Dict[str, Optional[str]]]:
             FROM queue
             WHERE status IN ('pending','retry')
               AND ready_now
+              AND NOT ({billing_paused_expr})
             ORDER BY sort_ts ASC
             LIMIT ?
             """,

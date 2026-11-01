@@ -15,7 +15,7 @@ from app.video_shorts.config import (
     MAX_GLOBAL_CONCURRENT_JOBS,
     SECOND_RENDER_MIN_MEM_AVAILABLE_MB,
 )
-from app.video_shorts.services.db import get_db, get_db_readonly, table_columns
+from app.video_shorts.services.db import autopilot_billing_paused_sql, get_db, get_db_readonly, table_columns
 from app.video_shorts.services.usage_metering import (
     ensure_usage_metering_schema,
     finalize_export,
@@ -107,6 +107,24 @@ def _guest_job_clause(conn, alias: str = "") -> str:
 
 def _auto_job_clause(conn, alias: str = "") -> str:
     return f"{_payload_origin_sql(conn, alias)} = '{AUTO_RENDER_JOB_ORIGIN}'"
+
+
+def _autopilot_billing_paused_clause(conn, alias: str = "candidate") -> str:
+    paused_job_types = ", ".join(
+        f"'{value}'"
+        for value in (
+            JOB_TYPE_INGEST_YOUTUBE,
+            JOB_TYPE_NORMALIZE_UPLOAD,
+            JOB_TYPE_TRANSCRIBE_UPLOAD,
+            JOB_TYPE_AUTO_SUGGEST_RENDER,
+            JOB_TYPE_RENDER_SHORT,
+            JOB_TYPE_PUBLISH_SHORT,
+        )
+    )
+    return f"""
+        {alias}.type IN ({paused_job_types})
+        AND {autopilot_billing_paused_sql(conn, f'{alias}.user_id')}
+    """.strip()
 
 
 def _is_guest_user(conn, user_id: Any) -> bool:
@@ -1135,6 +1153,7 @@ def claim_next_job(
             guest_clause = _guest_job_clause(conn, "candidate")
             customer_queued_exists = _customer_queued_exists_sql(conn)
             fair_order = _fair_customer_order_sql(conn)
+            billing_paused_clause = _autopilot_billing_paused_clause(conn, "candidate")
             origin_clause = ""
             if customer_only:
                 origin_clause = f"AND NOT ({discovery_clause})"
@@ -1151,6 +1170,7 @@ def claim_next_job(
                     {discovery_clause}
                     AND {customer_queued_exists}
                   )
+                  AND NOT ({billing_paused_clause})
                 ORDER BY
                   CASE
                     WHEN {discovery_clause} THEN 3
@@ -1223,6 +1243,7 @@ def claim_next_job(
             guest_clause = _guest_job_clause(conn, "candidate")
             customer_queued_exists = _customer_queued_exists_sql(conn)
             fair_order = _fair_customer_order_sql(conn)
+            billing_paused_clause = _autopilot_billing_paused_clause(conn, "candidate")
             origin_clause = ""
             if customer_only:
                 origin_clause = f"AND NOT ({discovery_clause})"
@@ -1239,6 +1260,7 @@ def claim_next_job(
                     {discovery_clause}
                     AND {customer_queued_exists}
                   )
+                  AND NOT ({billing_paused_clause})
                 ORDER BY
                   CASE
                     WHEN {discovery_clause} THEN 3

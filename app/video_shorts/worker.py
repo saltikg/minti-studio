@@ -118,6 +118,7 @@ from app.video_shorts.services.storage import (
 )
 from app.video_shorts.services.transcript_service import _transcribe_with_whisper
 from app.video_shorts.services.usage_metering import add_transcription_minutes
+from app.video_shorts.services.billing import process_autopilot_billing_deadlines
 from app.video_shorts.services.usage_metering import (
     check_source_video_quota,
     is_transcription_quota_exempt_user,
@@ -2422,6 +2423,11 @@ def run_worker_loop() -> None:
                     time.sleep(JOB_POLL_INTERVAL_SECONDS)
                 continue
             if mode in {"all", "customer"}:
+                try:
+                    if process_autopilot_billing_deadlines():
+                        processed_any = True
+                except Exception:
+                    app.logger.exception("Autopilot billing deadline processing failed")
                 try:
                     if youtube_scheduling.scheduler_tick():
                         processed_any = True

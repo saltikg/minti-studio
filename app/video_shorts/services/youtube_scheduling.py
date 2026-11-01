@@ -16,7 +16,7 @@ from uuid import uuid4
 from flask import g, has_app_context
 from httplib2 import HttpLib2Error
 
-from app.video_shorts.services.db import get_db, get_db_readonly
+from app.video_shorts.services.db import autopilot_billing_paused_sql, get_db, get_db_readonly
 
 logger = logging.getLogger(__name__)
 TABLE = "shorts_youtube_schedules"
@@ -492,7 +492,19 @@ def scheduler_tick(*, now=None):
     with connection() as conn:
         conn.execute(f"UPDATE {TABLE} SET status='missed',notification='missed',notified_at=NULL,error='Missed — more than 6 hours late; no upload will be attempted.' WHERE status='failed' AND youtube_video_id IS NULL AND resumable_uri IS NULL AND publish_at<?", [now-timedelta(hours=6)])
         lock = " FOR UPDATE SKIP LOCKED" if getattr(conn, "backend_name", "") == "postgres" else ""
-        rows = conn.execute(f"SELECT id FROM {TABLE} WHERE status='pending' AND upload_due_at<=? ORDER BY upload_due_at LIMIT 100{lock}", [now]).fetchall()
+        billing_paused_expr = autopilot_billing_paused_sql(conn, "schedule.user_id")
+        rows = conn.execute(
+            f"""
+            SELECT schedule.id
+            FROM {TABLE} schedule
+            WHERE schedule.status='pending'
+              AND schedule.upload_due_at<=?
+              AND NOT ({billing_paused_expr})
+            ORDER BY schedule.upload_due_at
+            LIMIT 100{lock}
+            """,
+            [now],
+        ).fetchall()
         claimed = any(_enqueue(conn, row[0], now) for row in rows)
     send_pending_notifications()
     return claimed

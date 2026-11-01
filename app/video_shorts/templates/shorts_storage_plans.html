@@ -320,7 +320,7 @@
     <h3 class="mb-1 vs-card-title">Plan &amp; storage</h3>
     <div class="vs-text-muted">Your plan usage this month.</div>
   </div>
-  {% if billing_has_managed_subscription and not is_autopilot %}
+  {% if billing_has_managed_subscription %}
     <a href="{{ billing_portal_url }}" class="btn btn-sm vs-btn vs-btn-secondary plan-manage-link">
       <i class="bi bi-credit-card-2-front" aria-hidden="true"></i>
       <span>Manage subscription</span>
@@ -331,8 +331,28 @@
 {% if is_autopilot %}
 <div class="card shadow-sm usage-panel mb-4">
   <div class="card-body p-4">
-    <div class="vs-card-title mb-1">Autopilot is managed by Minti</div>
-    <div class="vs-text-muted">Usage limits do not apply while your account is in Autopilot mode.</div>
+    <div class="d-flex justify-content-between align-items-start gap-3 flex-wrap mb-3">
+      <div>
+        <div class="vs-card-title mb-1">Current plan: Autopilot — {{ autopilot_tier }} Shorts/month</div>
+        {% if autopilot_free_until_label %}
+          <div class="usage-reset">Free until {{ autopilot_free_until_label }}</div>
+        {% endif %}
+        {% if autopilot_card_notice %}
+          <div class="usage-reset">{{ autopilot_card_notice }}</div>
+        {% endif %}
+      </div>
+      <button type="button" class="btn btn-sm vs-btn vs-btn-secondary usage-upgrade-btn" data-bs-toggle="modal" data-bs-target="#planCompareModal">
+        Upgrade / Compare plans
+      </button>
+    </div>
+    <div class="usage-meter usage-state-ok">
+      <div class="usage-meter-label mb-2">Shorts prepared this month</div>
+      <div class="d-flex align-items-end justify-content-between gap-3">
+        <div class="usage-meter-value">{{ autopilot_shorts_prepared }} / {{ autopilot_tier }}</div>
+        <div class="vs-text-muted vs-text-small">prepared by Minti</div>
+      </div>
+      <div class="progress mt-2"><div class="progress-bar" style="width: {{ [100, (autopilot_shorts_prepared * 100 / autopilot_tier)]|min }}%"></div></div>
+    </div>
   </div>
 </div>
 {% else %}
@@ -398,7 +418,6 @@
 </div>
 {% endif %}
 
-{% if not is_autopilot %}
 <div class="modal fade plan-compare-modal" id="planCompareModal" tabindex="-1" aria-hidden="true">
   <div class="modal-dialog modal-dialog-centered modal-dialog-scrollable">
     <div class="modal-content vs-modal">
@@ -410,17 +429,18 @@
         <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
       </div>
       <div class="modal-body vs-modal-body">
-        <div class="plan-compare-toolbar">
+        {% if not is_autopilot %}<div class="plan-compare-toolbar">
           <div class="billing-toggle btn-group btn-group-sm" role="group" aria-label="Billing cycle">
             <input type="radio" class="btn-check" name="billingCycle" id="billingMonthly" autocomplete="off" checked>
             <label class="btn vs-btn vs-btn-secondary" for="billingMonthly">Monthly</label>
             <input type="radio" class="btn-check" name="billingCycle" id="billingYearly" autocomplete="off">
             <label class="btn vs-btn vs-btn-secondary" for="billingYearly">Yearly</label>
           </div>
-        </div>
+        </div>{% endif %}
         <div class="row g-3 mb-2">
-  {% for plan in plans %}
-    {% set is_selected_plan = current_plan_id == plan.plan_id %}
+  {% set displayed_plans = autopilot_plans if is_autopilot else plans %}
+  {% for plan in displayed_plans %}
+    {% set is_selected_plan = (plan.service_tier == autopilot_tier) if is_autopilot else (current_plan_id == plan.plan_id) %}
     {% set tier_label = plan.label %}
     {% set monthly_price = plan.price_monthly %}
     {% set yearly_total = plan.price_yearly %}
@@ -445,9 +465,14 @@
               </div>
               <div class="price-period">per month</div>
             </div>
-            <div class="vs-text-muted vs-text-small">{{ plan.quota_label }} storage</div>
+            <div class="vs-text-muted vs-text-small">{{ plan.quota_label }}{% if not is_autopilot %} storage{% endif %}</div>
           </div>
           <ul class="plan-bullets text-start">
+            {% if is_autopilot %}
+              <li><i class="bi bi-check-circle"></i><span>{{ plan.service_tier }} Shorts prepared every month</span></li>
+              <li><i class="bi bi-check-circle"></i><span>Created, scheduled, and published for you</span></li>
+              <li><i class="bi bi-check-circle"></i><span>Monthly performance report</span></li>
+            {% else %}
             <li>
               <i class="bi bi-check-circle"></i>
               <span>{{ plan.monthly_export_limit }} exports per month</span>
@@ -467,6 +492,7 @@
               <li><i class="bi bi-check-circle"></i><span>Priority processing</span></li>
               <li><i class="bi bi-check-circle"></i><span>Everything in Creator</span></li>
             {% endif %}
+            {% endif %}
           </ul>
           <div class="plan-actions">
             {% if is_selected_plan %}
@@ -485,8 +511,12 @@
                 data-plan-name="{{ tier_label }}"
                 data-plan-quota="{{ plan.quota_label }}"
                 data-price-monthly="{{ monthly_price }}"
-                data-price-yearly="{{ yearly_total }}">
-                {% if tier_label == "Free" %}
+                data-price-yearly="{{ yearly_total }}"
+                data-billing-mode="{{ 'autopilot' if is_autopilot else 'self' }}"
+                data-service-tier="{{ plan.service_tier or '' }}">
+                {% if is_autopilot %}
+                  Choose {{ plan.service_tier }} Shorts
+                {% elif tier_label == "Free" %}
                   Switch to Free
                 {% elif tier_label == "Starter" %}
                   Switch to Starter
@@ -508,8 +538,12 @@
                 data-plan-name="{{ tier_label }}"
                 data-plan-quota="{{ plan.quota_label }}"
                 data-price-monthly="{{ monthly_price }}"
-                data-price-yearly="{{ yearly_total }}">
-                {% if tier_label == "Free" %}
+                data-price-yearly="{{ yearly_total }}"
+                data-billing-mode="{{ 'autopilot' if is_autopilot else 'self' }}"
+                data-service-tier="{{ plan.service_tier or '' }}">
+                {% if is_autopilot %}
+                  Choose {{ plan.service_tier }} Shorts
+                {% elif tier_label == "Free" %}
                   {% if subscription_cancel_at_period_end %}
                     Cancels {{ subscription_cancel_effective_date or "soon" }}
                   {% elif billing_has_managed_subscription %}
@@ -530,14 +564,13 @@
         </div>
       </div>
     </div>
-  {% endfor %}
+{% endfor %}
         </div>
-        <div class="vs-text-muted vs-text-small mt-2">Every plan includes plenty of storage for your library — fair-use limits apply.</div>
+        <div class="vs-text-muted vs-text-small mt-2">{% if is_autopilot %}Monthly billing · change tiers anytime.{% else %}Every plan includes plenty of storage for your library — fair-use limits apply.{% endif %}</div>
       </div>
     </div>
   </div>
 </div>
-{% endif %}
 
 <div class="modal fade" id="storageLimitModal" tabindex="-1" aria-hidden="true">
   <div class="modal-dialog modal-dialog-centered">
@@ -596,7 +629,6 @@
   </div>
 </div>
 
-{% if not is_autopilot %}
 <div class="modal fade plan-confirm-modal" id="planConfirmModal" tabindex="-1" aria-hidden="true">
   <div class="modal-dialog modal-dialog-centered">
     <div class="modal-content vs-modal">
@@ -615,7 +647,7 @@
                 <div class="vs-modal-sub" id="planConfirmBilling"></div>
               </div>
               <div class="vs-modal-item">
-                <div class="vs-modal-key">Storage</div>
+                <div class="vs-modal-key">{{ 'Tier' if is_autopilot else 'Storage' }}</div>
                 <div class="vs-modal-value" id="planConfirmStorage"></div>
               </div>
               <div class="vs-modal-item">
@@ -645,7 +677,6 @@
     </div>
   </div>
 </div>
-{% endif %}
 
 {% include "_billing_embedded_checkout_script.html" %}
 
@@ -696,7 +727,9 @@
     const transcriptionMonthModalEmpty = document.getElementById("transcriptionMonthModalEmpty");
 
     const usageMonthDetails = new Map();
-    const autopilotUpgradeResult = document.getElementById("autopilot-upgrade-result");
+    const isAutopilot = {{ is_autopilot|tojson }};
+    const autopilotTrialEndLabel = {{ autopilot_trial_end_label|tojson }};
+    const autopilotFreeUntilLabel = {{ autopilot_free_until_label|tojson }};
     const billingHasManagedSubscription = {{ billing_has_managed_subscription|tojson }};
     const subscriptionCancelAtPeriodEnd = {{ subscription_cancel_at_period_end|tojson }};
     const subscriptionCancelEffectiveDate = {{ subscription_cancel_effective_date|tojson }};
@@ -1066,7 +1099,7 @@
 
     planButtons.forEach((button) => {
       button.addEventListener("click", () => {
-        const isYearly = yearlyToggle && yearlyToggle.checked;
+        const isYearly = !isAutopilot && yearlyToggle && yearlyToggle.checked;
         const billingInterval = isYearly ? "year" : "month";
         const planName = button.dataset.planName;
         const planQuota = button.dataset.planQuota;
@@ -1075,8 +1108,11 @@
         const displayPrice = isYearly ? yearlyPrice : monthlyPrice;
         const displayPeriod = isYearly ? "per year" : "per month";
         const planId = button.dataset.planId;
+        const billingMode = button.dataset.billingMode || "self";
+        const serviceTier = Number(button.dataset.serviceTier || 0) || null;
         const isFreePlan = planId === "plan_free";
-        const shouldUsePortal = billingHasManagedSubscription;
+        const shouldUsePortal = billingHasManagedSubscription && !isAutopilot;
+        const shouldUpdateSubscription = billingHasManagedSubscription && isAutopilot;
 
         selectedPlan = {
           planId,
@@ -1084,6 +1120,9 @@
           interval: billingInterval,
           isFreePlan,
           shouldUsePortal,
+          shouldUpdateSubscription,
+          billingMode,
+          serviceTier,
         };
 
         if (planTitleEl) {
@@ -1113,7 +1152,13 @@
           confirmForm.action = defaultConfirmFormAction;
         }
         if (planConfirmHint) {
-          if (isFreePlan && subscriptionCancelAtPeriodEnd) {
+          if (isAutopilot && shouldUpdateSubscription) {
+            planConfirmHint.textContent = "Your tier changes now. The new monthly price applies at your next renewal.";
+          } else if (isAutopilot && autopilotFreeUntilLabel) {
+            planConfirmHint.textContent = `No charge until ${autopilotFreeUntilLabel}. $0 due today.`;
+          } else if (isAutopilot) {
+            planConfirmHint.textContent = "Your free period has ended. The first monthly charge is due today.";
+          } else if (isFreePlan && subscriptionCancelAtPeriodEnd) {
             planConfirmHint.textContent = `Your paid subscription is already set to cancel on ${subscriptionCancelEffectiveDate || "the end of your billing period"}.`;
           } else if (shouldUsePortal) {
             planConfirmHint.textContent = isFreePlan
@@ -1126,7 +1171,9 @@
           }
         }
         if (confirmBtn) {
-          if (isFreePlan && subscriptionCancelAtPeriodEnd) {
+          if (shouldUpdateSubscription) {
+            confirmBtn.textContent = "Confirm tier change";
+          } else if (isFreePlan && subscriptionCancelAtPeriodEnd) {
             confirmBtn.textContent = "Open Billing Portal";
           } else if (shouldUsePortal) {
             confirmBtn.textContent = isFreePlan ? "Open Billing Portal to cancel" : "Open Billing Portal";
@@ -1151,29 +1198,6 @@
       });
     });
 
-    document.querySelectorAll("[data-autopilot-tier]").forEach((button) => {
-      button.addEventListener("click", async () => {
-        const tier = Number(button.dataset.autopilotTier || 0);
-        button.disabled = true;
-        if (autopilotUpgradeResult) autopilotUpgradeResult.textContent = "Sending your request…";
-        try {
-          const response = await fetch("{{ url_for('video_shorts_bp.autopilot_upgrade_request_api') }}", {
-            method: "POST",
-            credentials: "same-origin",
-            headers: { "Content-Type": "application/json", "X-Requested-With": "XMLHttpRequest" },
-            body: JSON.stringify({ tier }),
-          });
-          const payload = await response.json().catch(() => ({}));
-          if (!response.ok || !payload.ok) throw new Error(payload.error || "Could not send your request.");
-          if (autopilotUpgradeResult) autopilotUpgradeResult.textContent = payload.message;
-          button.textContent = "Requested";
-        } catch (error) {
-          button.disabled = false;
-          if (autopilotUpgradeResult) autopilotUpgradeResult.textContent = error.message || "Could not send your request.";
-        }
-      });
-    });
-
     if (confirmForm && confirmBtn) {
       confirmForm.addEventListener("submit", async (event) => {
         if (!selectedPlan) {
@@ -1190,6 +1214,30 @@
           confirmBtn.disabled = true;
           confirmBtn.textContent = "Opening…";
           window.location.href = portalUrl;
+          return;
+        }
+        if (selectedPlan.shouldUpdateSubscription) {
+          event.preventDefault();
+          confirmBtn.disabled = true;
+          confirmBtn.textContent = "Updating…";
+          try {
+            const payload = await window.MintiEmbeddedCheckout.update({
+              billingMode: selectedPlan.billingMode,
+              serviceTier: selectedPlan.serviceTier,
+              planId: selectedPlan.planId,
+              interval: selectedPlan.interval,
+            });
+            if (!payload?.updated) throw new Error("Could not update your Autopilot tier.");
+            confirmBtn.textContent = "Updated";
+            window.setTimeout(() => {
+              getModal(planModalEl)?.hide();
+              window.location.href = {{ url_for('video_shorts_bp.shorts_storage_plans')|tojson }};
+            }, 700);
+          } catch (error) {
+            confirmBtn.disabled = false;
+            confirmBtn.textContent = "Confirm tier change";
+            if (planConfirmHint) planConfirmHint.textContent = error?.message || "Could not update your Autopilot tier.";
+          }
           return;
         }
         if (!selectedPlan.isFreePlan) {
@@ -1226,6 +1274,8 @@
           await window.MintiEmbeddedCheckout.mount({
             planId: selectedPlan.planId,
             interval: selectedPlan.interval,
+            billingMode: selectedPlan.billingMode,
+            serviceTier: selectedPlan.serviceTier,
             mountSelector: "#planEmbeddedCheckout",
             errorSelector: "#planCheckoutError",
             onMounting: () => {
@@ -1235,7 +1285,11 @@
             },
             onMounted: () => {
               if (planCheckoutStatus) {
-                planCheckoutStatus.textContent = "Complete payment below. Your plan updates after Stripe confirms the subscription.";
+                planCheckoutStatus.textContent = isAutopilot && autopilotFreeUntilLabel
+                  ? `Add your card below. $0 due today; first charge ${autopilotTrialEndLabel}.`
+                  : isAutopilot
+                    ? "Add your card below. Your first monthly charge is due today."
+                    : "Complete payment below. Your plan updates after Stripe confirms the subscription.";
               }
             },
             onComplete: () => {

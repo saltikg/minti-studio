@@ -1702,9 +1702,10 @@
     }
     if (conversionCheckoutShell) conversionCheckoutShell.classList.remove('d-none');
     await window.MintiEmbeddedCheckout.mount({
-      planId: 'plan_10gb',
+      planId: '',
       interval: 'month',
-      trialDays: 30,
+      billingMode: 'autopilot',
+      serviceTier: {{ ((vs_current_user.get('pending_service_tier') or vs_current_user.get('service_tier') or 15) if vs_current_user else 15)|tojson }},
       mountSelector: '#mvAutopilotCheckoutMount',
       errorSelector: '#mvAutopilotCheckoutError',
       onMounting: () => {

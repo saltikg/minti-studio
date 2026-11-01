@@ -19,11 +19,34 @@
         return stripeInstance;
       }
 
+      async function requestBillingChange(options, updateExisting) {
+        const response = await fetch({{ url_for('video_shorts_bp.create_checkout_session_route')|tojson }}, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          credentials: "same-origin",
+          body: JSON.stringify({
+            plan_id: options?.planId,
+            interval: options?.interval,
+            trial_days: options?.trialDays || undefined,
+            billing_mode: options?.billingMode || "self",
+            service_tier: options?.serviceTier || undefined,
+            update_existing: Boolean(updateExisting),
+          }),
+        });
+        const payload = await response.json().catch(() => null);
+        if (!response.ok || !payload) {
+          throw new Error((payload && payload.error) || `Could not update billing (HTTP ${response.status}).`);
+        }
+        return payload;
+      }
+
       async function mountEmbeddedCheckout(options) {
         const {
           planId,
           interval,
           trialDays,
+          billingMode,
+          serviceTier,
           mountSelector,
           errorSelector,
           onMounting,
@@ -72,19 +95,15 @@
           mountEl.innerHTML = "";
           const checkout = await stripe.initEmbeddedCheckout({
             fetchClientSecret: async () => {
-              const response = await fetch({{ url_for('video_shorts_bp.create_checkout_session_route')|tojson }}, {
-                method: "POST",
-                headers: { "Content-Type": "application/json" },
-                credentials: "same-origin",
-                body: JSON.stringify({
-                  plan_id: planId,
-                  interval: interval,
-                  trial_days: trialDays || undefined
-                })
-              });
-              const payload = await response.json().catch(() => null);
-              if (!response.ok || !payload || !payload.client_secret) {
-                throw new Error((payload && payload.error) || `Could not create checkout session (HTTP ${response.status}).`);
+              const payload = await requestBillingChange({
+                planId,
+                interval,
+                trialDays,
+                billingMode,
+                serviceTier,
+              }, false);
+              if (!payload.client_secret) {
+                throw new Error("Could not create checkout session.");
               }
               return payload.client_secret;
             },
@@ -109,6 +128,7 @@
 
       window.MintiEmbeddedCheckout = {
         mount: mountEmbeddedCheckout,
+        update: (options) => requestBillingChange(options, true),
       };
     })();
   </script>

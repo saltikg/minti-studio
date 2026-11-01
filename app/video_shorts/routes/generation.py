@@ -281,7 +281,9 @@ NOISE_404_PATH_LIKE_PATTERNS = [
 ]
 from app.video_shorts.services.user_events import prepare_transcript_completed_transition, track_event
 from app.video_shorts.services.billing import (
+    AUTOPILOT_TIER_MONTHLY_PRICES,
     STRIPE_PUBLISHABLE_KEY,
+    autopilot_trial_end,
     load_billing_user_state,
     stripe_is_configured,
     user_has_managed_subscription,
@@ -21894,6 +21896,38 @@ def shorts_storage_plans():
         or "plan_free"
     )
     has_managed_subscription = user_has_managed_subscription(billing_user)
+    autopilot_tier = int((billing_user or {}).get("service_tier") or current_user.get("service_tier") or 15)
+    autopilot_plans = [
+        {
+            "plan_id": f"autopilot_{tier}",
+            "label": f"Autopilot {tier}",
+            "quota_label": f"{tier} Shorts / month",
+            "price_monthly": price,
+            "price_yearly": price * 12,
+            "yearly_compare_monthly": price * 12,
+            "monthly_export_limit": tier,
+            "monthly_transcription_minutes": 0,
+            "transcription_limit_label": "",
+            "service_tier": tier,
+        }
+        for tier, price in AUTOPILOT_TIER_MONTHLY_PRICES.items()
+    ]
+    autopilot_trial_end_at = autopilot_trial_end((billing_user or {}).get("service_mode_chosen_at"))
+    now_utc = datetime.now(timezone.utc)
+    autopilot_trial_end_label = autopilot_trial_end_at.strftime("%B %d, %Y") if autopilot_trial_end_at else ""
+    autopilot_free_until_label = ""
+    if autopilot_trial_end_at and autopilot_trial_end_at > now_utc:
+        autopilot_free_until_label = autopilot_trial_end_label
+    billing_status = str((billing_user or {}).get("subscription_status") or "").strip().lower()
+    autopilot_card_notice = ""
+    if has_managed_subscription:
+        autopilot_card_notice = (
+            f"Card on file — first charge on {autopilot_trial_end_label}"
+            if billing_status == "trialing" and autopilot_trial_end_label
+            else "Card on file"
+        )
+    elif billing_status == "paused":
+        autopilot_card_notice = "Autopilot is paused — add a card to resume work and publishing."
     subscription_cancel_notice = None
     subscription_cancel_effective_date = None
     free_period_notice = None
@@ -21925,7 +21959,7 @@ def shorts_storage_plans():
     if request.method == "POST":
         if is_autopilot:
             conn.close()
-            flash("Autopilot plan changes are handled by Minti. Send a tier request from this page and we'll contact you.", "info")
+            flash("Autopilot plan changes must go through checkout.", "warning")
             return redirect(url_for("video_shorts_bp.shorts_storage_plans"))
         plan_id = (request.form.get("plan_id") or "").strip() or None
         normalized_plan_id = (plan_id or "").strip()
@@ -21951,6 +21985,8 @@ def shorts_storage_plans():
         conn.close()
         return redirect(url_for("video_shorts_bp.shorts_storage_plans"))
     plans = _load_storage_plan_catalog(conn)
+    autopilot_counts = _load_monthly_autopilot_short_actor_counts(conn, [str(current_user["id"])]) if is_autopilot else {}
+    autopilot_shorts_prepared = int((autopilot_counts.get(str(current_user["id"])) or {}).get("total") or 0)
     conn.close()
     current_plan = next((plan for plan in plans if plan["plan_id"] == effective_plan_id), None)
     if billing_user and billing_user.get("subscription_cancel_at_period_end"):
@@ -21959,6 +21995,12 @@ def shorts_storage_plans():
     return render_template(
         "shorts_storage_plans.html",
         plans=plans,
+        autopilot_plans=autopilot_plans,
+        autopilot_tier=autopilot_tier,
+        autopilot_shorts_prepared=autopilot_shorts_prepared,
+        autopilot_trial_end_label=autopilot_trial_end_label,
+        autopilot_free_until_label=autopilot_free_until_label,
+        autopilot_card_notice=autopilot_card_notice,
         is_admin=is_admin,
         is_autopilot=is_autopilot,
         autopilot_plan_label=autopilot_plan_label,

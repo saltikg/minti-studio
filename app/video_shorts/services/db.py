@@ -264,6 +264,22 @@ def table_columns(conn, table_name: str) -> set:
     return {row[1] for row in rows}
 
 
+def autopilot_billing_paused_sql(conn, user_id_expression: str) -> str:
+    """Return a portable SQL predicate for an owner paused by Autopilot billing."""
+    columns = table_columns(conn, "shorts_users")
+    if not {"id", "service_mode", "subscription_status"}.issubset(columns):
+        return "FALSE"
+    return f"""
+        EXISTS (
+            SELECT 1
+            FROM shorts_users billing_user
+            WHERE CAST(billing_user.id AS VARCHAR) = CAST({user_id_expression} AS VARCHAR)
+              AND lower(COALESCE(billing_user.service_mode, '')) = 'autopilot'
+              AND lower(COALESCE(billing_user.subscription_status, '')) = 'paused'
+        )
+    """.strip()
+
+
 def close_request_db_connections(_error=None) -> None:
     """Release request-scoped database handles, including on exceptions."""
     if not has_request_context():
@@ -900,6 +916,8 @@ def ensure_auth_user_schema(conn) -> None:
         ("service_mode_chosen_at", "TIMESTAMP"),
         ("pending_service_intent", "VARCHAR"),
         ("pending_service_tier", "INTEGER"),
+        ("autopilot_billing_reminder_sent_at", "TIMESTAMP"),
+        ("autopilot_billing_paused_at", "TIMESTAMP"),
         ("is_guest", "BOOLEAN DEFAULT FALSE"),
         ("guest_created_at", "TIMESTAMP"),
         ("guest_ip_hash", "TEXT"),
