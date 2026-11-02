@@ -23896,6 +23896,7 @@ def admin_discovery_lead_pipeline():
                 if "outreach_first_name_edited_by_admin" in discovery_columns
                 else "false"
             )
+            is_clinician_sql = "COALESCE(is_clinician, false)" if "is_clinician" in discovery_columns else "false"
             promoted_source_video_title_sql = (
                 "(SELECT yv.title FROM youtube_videos yv WHERE yv.id = discovery_leads.promoted_source_video_id LIMIT 1)"
                 if "promoted_source_video_id" in discovery_columns
@@ -24054,7 +24055,8 @@ def admin_discovery_lead_pipeline():
                     {promoted_source_youtube_video_id_sql} AS promoted_source_youtube_video_id,
                     {raw_json_sql} AS raw_json,
                     {outreach_first_name_sql} AS outreach_first_name,
-                    {outreach_first_name_edited_sql} AS outreach_first_name_edited_by_admin
+                    {outreach_first_name_edited_sql} AS outreach_first_name_edited_by_admin,
+                    {is_clinician_sql} AS is_clinician
                 FROM discovery_leads
                 {ready_filter_sql}
                 ORDER BY {lead_order_column} {lead_order_direction} {lead_nulls}, {lead_tie_order}
@@ -24122,6 +24124,7 @@ def admin_discovery_lead_pipeline():
                     "outreach_first_name": "" if stored_outreach_first_name is None else str(stored_outreach_first_name),
                     "outreach_first_name_stored": stored_outreach_first_name is not None,
                     "outreach_first_name_edited_by_admin": bool(row[35]),
+                    "is_clinician": bool(row[36]),
                     "outreach_greeting_name": outreach_greeting_value,
                     "outreach_greeting_text": outreach_greeting_text,
                     "outreach_greeting_is_generic": not bool(outreach_greeting_value),
@@ -24344,6 +24347,7 @@ def admin_discovery_lead_pipeline():
                 "longform_last_60d",
                 "shorts_last_15d",
                 "icp_fit",
+                "is_clinician",
                 "creator_email",
                 "email_confidence",
                 "email_role",

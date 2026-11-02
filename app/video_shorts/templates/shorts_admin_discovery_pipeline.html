@@ -802,6 +802,7 @@
             <th>{{ lead_sort_link('shorts', 'Shorts 15d', 'desc') }}</th>
             <th>{{ lead_sort_link('sweetspot', 'Sweet spot', 'desc') }}</th>
             <th>ICP</th>
+            <th>Clinician</th>
             <th>Email</th>
             <th>Confidence</th>
             <th>Role</th>
@@ -934,6 +935,7 @@
                 {% endif %}
               </td>
               <td>{{ 'yes' if lead.icp_fit is true else ('no' if lead.icp_fit is false else '') }}</td>
+              <td>{{ 'yes' if lead.is_clinician else 'no' }}</td>
               <td>{{ lead.creator_email or '' }}</td>
               <td>{{ lead.email_confidence if lead.email_confidence is not none else '' }}</td>
               <td>{{ lead.email_role or '' }}</td>
@@ -958,7 +960,7 @@
             </tr>
           {% else %}
             <tr>
-              <td colspan="19" class="text-center text-white-50 py-4">No discovery leads yet.</td>
+              <td colspan="20" class="text-center text-white-50 py-4">No discovery leads yet.</td>
             </tr>
           {% endfor %}
         </tbody>

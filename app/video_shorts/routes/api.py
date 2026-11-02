@@ -109,6 +109,30 @@ DISCOVERY_KEYWORD_LANE_TARGETS = {
 }
 DISCOVERY_PROMOTION_OWNER_USER_ID = "f97df4cb-93de-4761-9c39-62d303261b0a"
 DISCOVERY_PROMOTION_BRAND_ID = "63f772f8-2d31-4416-9239-c546949bfa98"
+MEDICAL_DISCOVERY_SPECIALTIES = [
+    "OB/GYN & pregnancy", "Menopause & perimenopause", "Fertility", "PCOS & women's hormones",
+    "Orthopedics & bone/joint injuries", "Sports medicine", "Physical therapy & back/neck pain",
+    "Cardiology & heart health", "Blood pressure & cholesterol", "Endocrinology, diabetes & thyroid",
+    "Obesity medicine & GLP-1", "Gastroenterology & gut health", "Liver health", "Kidney health",
+    "Dermatology & skin", "Neurology, migraine & brain health", "Psychiatry & mental health",
+    "Sleep medicine", "Pediatrics (for parents)", "Urology & men's health",
+    "Rheumatology & autoimmune", "Lung health & asthma", "Allergy & immunology", "Eye health",
+    "Dental & oral health", "ENT, hearing & sinus", "Pain management", "Geriatrics & longevity",
+    "Clinical nutrition (dietitians)", "Cancer prevention & survivorship",
+]
+MEDICAL_DISCOVERY_OFF_FOCUS_TERMS = (
+    "beekeeping", "pollinator", "gardening", "garden", "farming", "aquaponics", "composting",
+    "plant", "herbalism", "foraging", "cooking", "culinary", "baking", "bread", "fermentation",
+    "brewing", "mixology", "food", "woodworking", "diy", "craft", "crafting", "leather",
+    "pottery", "ceramics", "textile", "fiber", "weaving", "dyeing", "sewing", "calligraphy",
+    "dollhouse", "miniature", "toy making", "candle", "soap", "antique", "vintage",
+    "reenactment", "instrument making", "aquascaping", "aquarium", "birdwatching", "astronomy",
+    "stargazing", "ai tools",
+)
+CLINICAL_CREDENTIAL_RE = re.compile(
+    r"(?i)(?:\bdr\.?(?=\s|$)|\bdoctor\b|\bm\.?d\.?\b|\bd\.?o\.?\b|\bdpt\b|\bpt\b|"
+    r"\brd\b|\brdn\b|\bnp\b|\bpa-c\b|\bpharmd\b|\bdnp\b|\brn\b|\blcsw\b|\bpsyd\b)"
+)
 
 
 def _duration_minutes(duration_seconds) -> float:
@@ -228,6 +252,10 @@ def _hard_numeric_disqualification_reason(row: Dict[str, Any]) -> Optional[str]:
     if not reasons:
         return None
     return "Hard numeric gate failed: " + "; ".join(reasons)
+
+
+def _has_clinical_credential(*values: Any) -> bool:
+    return bool(CLINICAL_CREDENTIAL_RE.search(" ".join(str(value or "") for value in values)))
 
 
 def _youtube_env_error_message(exc: Exception) -> str | None:
@@ -618,6 +646,7 @@ def diagnose_channel(
         "channel_id": resolved_channel_id,
         "channel_title": channel_title,
         "channel_description": channel_description,
+        "is_clinician": _has_clinical_credential(channel_title, channel_description),
         "recent_video_titles": [title for title in recent_video_titles if title],
         "subscriber_count": subscriber_count,
         "creator_name": creator_name,
@@ -974,6 +1003,7 @@ def _classify_lead_discovery_icp(niche: str, row: Dict[str, Any], *, run_id: Opt
         "{\"icp_fit\":true|false,\"reason\":\"one short sentence\"}.\n\n"
         "INCLUDE (icp_fit true) when most hold:\n"
         "- A single identifiable person's channel (personal brand; name/description points to a human)\n"
+        "- A single doctor who is the face of their own practice counts as a personal brand\n"
         "- Talking-to-camera long-form educational / teaching / guidance content\n"
         "- An independent creator growing their channel (educator, coach, consultant, therapist, faith/spiritual guide, expert). Selling a product is NOT required.\n"
         "- Content is in English.\n\n"
@@ -982,7 +1012,8 @@ def _classify_lead_discovery_icp(niche: str, row: Dict[str, Any], *, run_id: Opt
         "- TV channel, news outlet, media brand (e.g. BBC, TED)\n"
         "- Agency-managed big brand; multi-host / corporate / brand account\n"
         "- Podcast network, production company\n"
-        "- Faceless, compilation, music, gaming, kids, reaction content\n"
+        "- Faceless, compilation, music, gaming, kids, reaction content. Kids content means content made FOR children; a pediatrician or clinician speaking to parents/adults is allowed.\n"
+        "- Hospital or multi-doctor clinic channels\n"
         "- Not a personal brand and only a generic/role email (press@, podcast@, info@, ...@a-company)\n"
         "- Content language is not English (e.g. Turkish, Spanish)\n\n"
         f"Channel title: {channel_title}\n"
@@ -1008,7 +1039,9 @@ def _classify_lead_discovery_icp(niche: str, row: Dict[str, Any], *, run_id: Opt
                     "NOT need to sell anything — wanting to grow the channel is enough. Absolutely EXCLUDE: "
                     "companies, organizations, TV/news channels, media brands, agency-managed big brands, "
                     ".org/advocacy groups, podcast networks, production companies, multi-host/brand accounts, "
-                    "faceless/compilation/music/gaming/kids/reaction channels."
+                    "faceless/compilation/music/gaming/kids/reaction channels. A single doctor who is the face of "
+                    "their own practice is a personal brand. Kids content means content made FOR children; pediatric "
+                    "clinicians speaking to parents/adults are allowed. Exclude hospitals and multi-doctor clinics."
                 ),
             },
             {"role": "user", "content": prompt},
@@ -1042,6 +1075,55 @@ def _classify_lead_discovery_icp(niche: str, row: Dict[str, Any], *, run_id: Opt
 
 def _normalize_discovery_category_name(value: object) -> str:
     return " ".join(str(value or "").strip().split())[:120]
+
+
+def _normalized_discovery_name(value: Any) -> str:
+    return " ".join(re.sub(r"[^a-z0-9]+", " ", str(value or "").lower()).split())
+
+
+def _medical_discovery_rejection_reason(
+    category: Any,
+    keyword: Any,
+    *,
+    blocked_categories: Optional[List[str]] = None,
+) -> str:
+    category_text = _normalized_discovery_name(category)
+    keyword_text = _normalized_discovery_name(keyword)
+    for term in MEDICAL_DISCOVERY_OFF_FOCUS_TERMS:
+        normalized_term = _normalized_discovery_name(term)
+        if normalized_term and (normalized_term in category_text or normalized_term in keyword_text):
+            return f"off_focus:{term}"
+    blocked_names = {_normalized_discovery_name(item) for item in (blocked_categories or []) if item}
+    if category_text and category_text in blocked_names:
+        return "blocked_category_status"
+    word_count = len(re.findall(r"[A-Za-z0-9]+(?:[-'][A-Za-z0-9]+)?", str(keyword or "")))
+    if keyword and not 3 <= word_count <= 6:
+        return f"keyword_word_count:{word_count}"
+    return ""
+
+
+def _filter_medical_category_keyword_items(
+    items: List[Dict[str, str]],
+    *,
+    blocked_categories: Optional[List[str]] = None,
+) -> tuple[List[Dict[str, str]], List[Dict[str, str]]]:
+    kept: List[Dict[str, str]] = []
+    rejected: List[Dict[str, str]] = []
+    for item in items:
+        reason = _medical_discovery_rejection_reason(
+            item.get("category"), item.get("keyword"), blocked_categories=blocked_categories
+        )
+        if reason:
+            rejected_item = {
+                "category": str(item.get("category") or ""),
+                "keyword": str(item.get("keyword") or ""),
+                "reason": reason,
+            }
+            rejected.append(rejected_item)
+            current_app.logger.warning("Medical discovery hard filter rejected %s", rejected_item)
+            continue
+        kept.append(item)
+    return kept, rejected
 
 
 def ensure_discovery_category_schema(conn) -> None:
@@ -1546,10 +1628,13 @@ def _filter_close_discovery_keyword_variants(
     return kept, dropped
 
 
-def _insert_category_keyword_items_into_queue(conn, items: List[Dict[str, str]], *, source: str, default_category_id: Optional[int] = None, priority: int = 100, due_now: bool = False) -> Dict[str, Any]:
+def _insert_category_keyword_items_into_queue(conn, items: List[Dict[str, str]], *, source: str, default_category_id: Optional[int] = None, priority: int = 100, due_now: bool = False, blocked_categories: Optional[List[str]] = None, medical_focus: bool = True) -> Dict[str, Any]:
     inserted = 0
     already_present = 0
     inserted_keywords: List[str] = []
+    rejected: List[Dict[str, str]] = []
+    if medical_focus:
+        items, rejected = _filter_medical_category_keyword_items(items, blocked_categories=blocked_categories)
     columns = table_columns(conn, "keyword_queue")
     has_category_id = "category_id" in columns
     for item in items:
@@ -1591,7 +1676,7 @@ def _insert_category_keyword_items_into_queue(conn, items: List[Dict[str, str]],
             )
         inserted += 1
         inserted_keywords.append(keyword)
-    return {"newly_enqueued": inserted, "already_present": already_present, "keywords": inserted_keywords}
+    return {"newly_enqueued": inserted, "already_present": already_present, "keywords": inserted_keywords, "rejected": rejected}
 
 
 def discover_daily_categories_into_queue() -> Dict[str, Any]:
@@ -1613,19 +1698,18 @@ def discover_daily_categories_into_queue() -> Dict[str, Any]:
     finally:
         read_conn.close()
     prompt = (
-        "Minti helps individual, on-camera, long-form YouTube creators: solo educators, coaches, consultants, "
-        "and subject-matter experts who talk to camera and share information or personal/professional experience in any niche. "
-        "Propose 2 NEW categories of people similar to these ICP-fit creators, but in different consumer-facing subject areas. "
-        "For each category, first write a one-sentence persona describing the individual creator, for example: "
-        "\"a former teacher who shares practical homeschool routines and talks to parents on camera\". "
-        "Then give exactly 3 YouTube search queries. Each query must read like a long-form video title that this persona would give "
-        "their own video, aimed at consumers/B2C audiences, not at businesses. "
-        "Exclude B2B services, agencies, law/accounting firms, corporate consulting, news, product review, faceless channels, "
-        "compilation channels, and categories aimed at entrepreneurs, business owners, companies, or internal teams. "
-        "Balance two moves: propose genuinely new categories, and propose categories that open fresh long-tail subtopics adjacent "
-        "to proven categories without repeating saturated head terms. Avoid exhausted keywords/categories and close variants. "
-        "Do NOT propose dropped, saturated, current testing categories, or close variants. Return STRICT JSON only: "
-        "{\"categories\":[{\"name\":\"...\",\"persona\":\"...\",\"rationale\":\"...\",\"queries\":[\"...\",\"...\",\"...\"]}]}.\n\n"
+        "Minti targets individual physicians and credentialed clinicians who teach patients on camera in long-form YouTube videos. "
+        "Propose exactly 2 NEW condition-level or sub-specialty categories WITHIN the medical taxonomy below. The creator must be "
+        "a physician, clinician, nurse, physical therapist, dietitian, therapist, pharmacist, or similar credentialed expert. "
+        "Each category must name its parent specialty in parent_specialty and use a name formatted as 'Parent specialty — subtopic'. "
+        "For each category, give exactly 3 YouTube search queries. Queries must be 3-6 words and use patient problem/symptom phrasing "
+        "(for example 'knee pain after running' or 'AFib symptoms and treatment') or specialist-explains phrasing "
+        "(for example 'orthopedic surgeon explains'). Do not write long video titles or close variants of searched terms. "
+        "Exclude hobbies, crafts, food/cooking, gardening, product reviews, AI/business topics, faceless channels, hospitals, and "
+        "multi-doctor clinic channels. Pediatric clinicians speaking to parents/adults are allowed. Do NOT propose dropped, saturated, "
+        "current testing categories, or close variants. Return STRICT JSON only: "
+        "{\"categories\":[{\"name\":\"...\",\"parent_specialty\":\"...\",\"persona\":\"...\",\"rationale\":\"...\",\"queries\":[\"...\",\"...\",\"...\"]}]}.\n\n"
+        f"Medical taxonomy: {json.dumps(MEDICAL_DISCOVERY_SPECIALTIES, ensure_ascii=False)}\n\n"
         f"Top ICP-fit channels: {json.dumps(top_channels, ensure_ascii=False)}\n\n"
         f"Existing category metrics: {json.dumps(metrics, ensure_ascii=False)}\n\n"
         f"Exhausted or low-yield keywords/categories to avoid or move beyond: {json.dumps(exhaustion, ensure_ascii=False)}\n\n"
@@ -1635,7 +1719,7 @@ def discover_daily_categories_into_queue() -> Dict[str, Any]:
     response = _openai_client.chat.completions.create(
         model=OPENAI_MODEL,
         messages=[
-            {"role": "system", "content": "You discover high-yield consumer-facing YouTube creator categories for creator outreach. Return JSON only."},
+            {"role": "system", "content": "You discover medical YouTube sub-specialties taught by individual credentialed clinicians. Return JSON only."},
             {"role": "user", "content": prompt},
         ],
         temperature=0.45,
@@ -1650,28 +1734,44 @@ def discover_daily_categories_into_queue() -> Dict[str, Any]:
         keyword_items: List[Dict[str, str]] = []
         for raw_category in (payload.get("categories") or [])[:2]:
             name = _normalize_discovery_category_name(raw_category.get("name"))
-            if not name:
+            parent_specialty = _normalize_discovery_category_name(raw_category.get("parent_specialty"))
+            if not name or not parent_specialty:
                 continue
+            if _normalized_discovery_name(parent_specialty) not in {
+                _normalized_discovery_name(item) for item in MEDICAL_DISCOVERY_SPECIALTIES
+            }:
+                current_app.logger.warning("Medical category rejected for unknown parent specialty: %s", raw_category)
+                continue
+            if _normalized_discovery_name(parent_specialty) not in _normalized_discovery_name(name):
+                name = _normalize_discovery_category_name(f"{parent_specialty} — {name}")
             persona = " ".join(str(raw_category.get("persona") or "").strip().split())[:500]
-            category_id = _get_or_create_discovery_category(write_conn, name, source="llm", status="testing", persona=persona)
             queries = _normalize_seed_search_keywords(raw_category.get("queries"), limit=3)[:3]
+            candidate_items = [{"keyword": query, "category": name} for query in queries]
+            candidate_items, rejected = _filter_medical_category_keyword_items(
+                candidate_items, blocked_categories=blocked
+            )
+            if rejected or len(candidate_items) != 3:
+                current_app.logger.warning("Medical category rejected because queries failed hard filter: %s", rejected)
+                continue
+            category_id = _get_or_create_discovery_category(write_conn, name, source="llm", status="testing", persona=persona)
             proposed.append(
                 {
                     "id": category_id,
                     "name": name,
+                    "parent_specialty": parent_specialty,
                     "persona": persona,
                     "rationale": str(raw_category.get("rationale") or "").strip()[:300],
-                    "keywords": queries,
+                    "keywords": [item["keyword"] for item in candidate_items],
                 }
             )
-            for query in queries:
-                keyword_items.append({"keyword": query, "category": name})
+            keyword_items.extend(candidate_items)
         queue_counts = _insert_category_keyword_items_into_queue(
             write_conn,
             keyword_items,
             source="category_discovery",
             priority=0,
             due_now=True,
+            blocked_categories=blocked,
         )
         write_conn.commit()
         return {
@@ -2195,6 +2295,9 @@ def _persist_discovery_lead(row: Dict[str, Any]) -> str:
         if "best_source_video_minutes" in columns:
             optional_updates.append("best_source_video_minutes = ?")
             optional_params.append(row.get("best_source_video_minutes"))
+        if "is_clinician" in columns:
+            optional_updates.append("is_clinician = ?")
+            optional_params.append(bool(row.get("is_clinician")))
         if optional_updates:
             conn.execute(
                 f"""
@@ -2574,16 +2677,16 @@ def _generate_seed_search_keyword_items(
         except Exception:
             _log_discovery_exception("Could not load discovery category metrics for seed keyword generation")
     prompt = (
-        "These are real channels we target. Produce 20 YouTube search queries that would surface MORE channels "
-        "making videos like these. Use concrete topic language a viewer types into YouTube, not category labels "
-        "describing the creators.\n\n"
-        "Good examples: chronic fatigue recovery, mindset shifts after 50, how to journal for personal growth, "
-        "discipline neuroscience, frugal living tips.\n\n"
-        "Avoid meta or industry labels like: solo educator, online coach, consultant, consultant YouTube channel, "
-        "expert creator, personal brand, content creator.\n"
-        "Each query must be 2-5 words, specific to a topic/audience/problem, not a job title. "
-        "Make the queries more specific, niche, and long-tail; avoid the most popular generic head terms and broad saturated niches. "
+        "These are real clinician channels we target. Produce 20 YouTube search queries that find MORE individual physicians "
+        "or credentialed clinicians teaching patients on camera. Stay within the medical taxonomy. Each category must be one "
+        "medical specialty or a condition-level subtopic that names its parent specialty. Each query must be 3-6 words and use "
+        "patient problem/symptom phrasing (for example 'knee pain after running' or 'AFib symptoms and treatment') or "
+        "specialist-explains phrasing (for example 'orthopedic surgeon explains'). Do not write long video titles. "
+        "Exclude hobbies, crafts, cooking/food, gardening, product reviews, AI/business topics, hospitals, and multi-doctor clinics. "
         "Return STRICT JSON only: {\"keywords\":[{\"keyword\":\"query\", \"category\":\"category name\"}, ...]}.\n\n"
+        "Medical taxonomy:\n"
+        + json.dumps(MEDICAL_DISCOVERY_SPECIALTIES, ensure_ascii=False)
+        + "\n\n"
         "Seed channel signals:\n"
         + json.dumps(compact_items, ensure_ascii=False)
         + category_text
@@ -2595,7 +2698,7 @@ def _generate_seed_search_keyword_items(
     response = _openai_client.chat.completions.create(
         model=OPENAI_MODEL,
         messages=[
-            {"role": "system", "content": "You create searchable YouTube topic queries from seed video titles and transcript summaries."},
+            {"role": "system", "content": "You create concise medical YouTube search queries for clinician outreach."},
             {"role": "user", "content": prompt},
         ],
         temperature=0.35,
@@ -2626,16 +2729,17 @@ def _generate_icp_definition_keyword_items(discovery_context: Dict[str, Any], *,
     prompt = (
         f"You are generating YouTube discovery keywords for Minti's {lane_name} lane. "
         "Do NOT use seed channel examples. Use only the ICP definition and performance signals below.\n\n"
-        "ICP definition: an individual B2C creator who talks to camera in long-form YouTube videos, shares information, "
-        "teaches from expertise or lived experience, and likely has an offer, coaching, course, community, service, book, "
-        "curriculum, paid newsletter, or other thing to sell. Prefer solo educators, coaches, consultants, and subject-matter "
-        "experts. Exclude B2B agencies, corporate consulting, law/accounting firms, news, product review, faceless, compilation, "
-        "and pure entertainment channels.\n\n"
+        "ICP definition: an individual physician or credentialed clinician who talks to camera in long-form YouTube videos and "
+        "teaches patients or parents. This includes doctors, nurses, physical therapists, dietitians, therapists, pharmacists, "
+        "and similar clinical experts. A single doctor who is the face of a practice is allowed; exclude hospitals, multi-doctor "
+        "clinics, faceless channels, news, product reviews, hobbies, crafts, cooking/food, gardening, and AI/business topics.\n\n"
         f"{lane_instruction}\n"
-        "Return 20 YouTube search queries. Each query must be 2-5 words, specific, niche, long-tail, consumer-facing/B2C, "
-        "and written like something a viewer would search or a creator would title a long-form educational video. Avoid "
+        "Return 20 YouTube search queries within the medical taxonomy below. Each category must be a specialty or a "
+        "condition-level subtopic that names its parent specialty. Each query must be 3-6 words, use patient problem/symptom "
+        "phrasing or specialist-explains phrasing, and not be a long video title. Avoid "
         "popular/generic head terms and close variants of exhausted keywords/categories. Return STRICT JSON only: "
         "{\"keywords\":[{\"keyword\":\"query\", \"category\":\"category name\"}, ...]}.\n\n"
+        f"Medical taxonomy: {json.dumps(MEDICAL_DISCOVERY_SPECIALTIES, ensure_ascii=False)}\n\n"
         f"Active/kept/testing category metrics: {json.dumps(metrics, ensure_ascii=False)}\n\n"
         f"Dropped/saturated categories to avoid: {json.dumps(blocked, ensure_ascii=False)}\n\n"
         f"Exhausted or low-yield keywords/categories to avoid or move beyond: {json.dumps(exhaustion, ensure_ascii=False)}"
@@ -2644,7 +2748,7 @@ def _generate_icp_definition_keyword_items(discovery_context: Dict[str, Any], *,
     response = _openai_client.chat.completions.create(
         model=OPENAI_MODEL,
         messages=[
-            {"role": "system", "content": "You create seed-independent, long-tail YouTube discovery keywords for B2C creator outreach. Return JSON only."},
+            {"role": "system", "content": "You create concise medical YouTube search queries for clinician outreach. Return JSON only."},
             {"role": "user", "content": prompt},
         ],
         temperature=0.45 if lane == "icp_exploration" else 0.35,
@@ -2670,10 +2774,9 @@ def _filter_seed_keywords_against_profile(keywords: List[str], profile_text: str
     if not _openai_client:
         return {"kept": normalized, "dropped": []}
     prompt = (
-        "Filter these YouTube search keywords against the ICP profile. Keep keywords that could plausibly find "
-        "solo educators, coaches, consultants, expert creators, or long-form educational creators matching the profile. "
-        "Drop keywords clearly outside the persona, such as sports match analysis, soccer tactics, dating/courtship advice, "
-        "generic news, entertainment, or topics with no creator/business/educational angle. "
+        "Filter these YouTube search keywords for the medical discovery ICP. Keep only queries that could find an individual "
+        "physician or credentialed clinician teaching patients or parents on camera. Drop hobbies, crafts, cooking/food, gardening, "
+        "AI/business topics, entertainment, product reviews, hospitals, multi-doctor clinics, and non-medical queries. "
         "Return STRICT JSON only: {\"kept\":[\"keyword\"],\"dropped\":[\"keyword\"]}.\n\n"
         f"ICP profile:\n{profile[:2500]}\n\n"
         f"Keywords:\n{json.dumps(normalized, ensure_ascii=False)}"
@@ -2713,8 +2816,12 @@ def _filter_generated_keyword_items(
     blocked_keywords: List[str],
     profile_text: str,
     limit: int,
+    blocked_categories: Optional[List[str]] = None,
 ) -> Dict[str, Any]:
     normalized_items = _normalize_category_keyword_items(items, limit=max(len(items), 1))
+    normalized_items, medical_rejected = _filter_medical_category_keyword_items(
+        normalized_items, blocked_categories=blocked_categories
+    )
     filtered_items, variant_dropped_keywords = _filter_close_discovery_keyword_variants(normalized_items, blocked_keywords)
     generated_keywords = [item["keyword"] for item in filtered_items]
     filter_result = _filter_seed_keywords_against_profile(generated_keywords, profile_text)
@@ -2730,7 +2837,7 @@ def _filter_generated_keyword_items(
     return {
         "items": kept_items,
         "keywords": keywords,
-        "dropped_keywords": list(variant_dropped_keywords) + filter_result["dropped"],
+        "dropped_keywords": [item["keyword"] for item in medical_rejected] + list(variant_dropped_keywords) + filter_result["dropped"],
         "generated_raw": len(normalized_items),
     }
 
@@ -3184,7 +3291,13 @@ def generate_seed_keywords_into_queue(existing_keywords: Optional[List[str]] = N
             for item in _load_discovery_category_metrics(read_conn, days=14)
             if item.get("status") in DISCOVERY_CATEGORY_ACTIVE_STATUSES
         ]
-        blocked = [item["name"] for item in _load_discovery_categories(read_conn, statuses=DISCOVERY_CATEGORY_BLOCKED_STATUSES)]
+        blocked = [
+            item["name"]
+            for item in _load_discovery_categories(
+                read_conn,
+                statuses=set(DISCOVERY_CATEGORY_BLOCKED_STATUSES) | {"testing"},
+            )
+        ]
         read_conn.commit()
     except Exception:
         read_conn.rollback()
@@ -3237,7 +3350,13 @@ def generate_seed_keywords_into_queue(existing_keywords: Optional[List[str]] = N
             lane_counts[lane] = {"generated_raw": 0, "kept": 0, "newly_enqueued": 0, "already_present": 0}
             dropped_keywords.append(f"{lane}: {str(exc) or 'generation_failed'}")
             continue
-        filtered = _filter_generated_keyword_items(raw_items, blocked_keywords=blocked_keywords, profile_text=profile_text, limit=target)
+        filtered = _filter_generated_keyword_items(
+            raw_items,
+            blocked_keywords=blocked_keywords,
+            profile_text=profile_text,
+            limit=target,
+            blocked_categories=blocked,
+        )
         generated_raw_count += int(filtered.get("generated_raw") or 0)
         kept_items = list(filtered.get("items") or [])
         all_kept_items.extend(kept_items)
@@ -3248,7 +3367,14 @@ def generate_seed_keywords_into_queue(existing_keywords: Optional[List[str]] = N
     write_conn = get_db()
     try:
         for lane, kept_items, filtered in generated_by_lane:
-            queue_counts = _insert_category_keyword_items_into_queue(write_conn, kept_items, source=lane, priority=100, due_now=False)
+            queue_counts = _insert_category_keyword_items_into_queue(
+                write_conn,
+                kept_items,
+                source=lane,
+                priority=100,
+                due_now=False,
+                blocked_categories=blocked,
+            )
             inserted_keywords = list(queue_counts.get("keywords") or [])
             keywords.extend(inserted_keywords)
             lane_keywords[lane] = inserted_keywords
@@ -3310,13 +3436,25 @@ def _load_queue_keywords(conn, take_n: int) -> List[Dict[str, Any]]:
         WHERE status = 'queued'
           AND (next_run_at IS NULL OR next_run_at <= CURRENT_TIMESTAMP)
         ORDER BY times_searched ASC, priority ASC, created_at ASC, id ASC
-        LIMIT ?
-        """,
-        [take_n],
+        """
     ).fetchall()
+    selected: List[Any] = []
+    deferred: List[Any] = []
+    seen_categories: set[Any] = set()
+    for row in rows:
+        category_key = row[2]
+        if category_key not in seen_categories:
+            seen_categories.add(category_key)
+            selected.append(row)
+        else:
+            deferred.append(row)
+        if len(selected) >= take_n:
+            break
+    if len(selected) < take_n:
+        selected.extend(deferred[: take_n - len(selected)])
     return [
         {"id": row[0], "keyword": str(row[1] or "").strip(), "category_id": row[2]}
-        for row in rows
+        for row in selected
         if str(row[1] or "").strip()
     ]
 
