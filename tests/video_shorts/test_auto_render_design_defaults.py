@@ -41,6 +41,77 @@ class _DesignDefaultsConnection:
         pass
 
 
+def test_brand_scoped_defaults_never_merge_legacy_fields(monkeypatch):
+    scoped_key = "short_editor_defaults:brand-1"
+    values = {
+        scoped_key: '{"title_bg_color":"#FFFFFF","title_bg_alpha":100}',
+        "short_editor_defaults": '{"title_bg_color":"#14532D","font":"montserrat_black"}',
+    }
+    calls = []
+
+    def _load(_user_id, key):
+        calls.append(key)
+        return values.get(key)
+
+    monkeypatch.setattr(generation, "load_user_preference", _load)
+
+    loaded = generation._load_short_editor_defaults("owner-1", "brand-1")
+
+    assert loaded == {"title_bg_color": "#FFFFFF", "title_bg_alpha": 100}
+    assert calls == [scoped_key]
+    resolved = generation._apply_short_editor_defaults(
+        {"title_bg_color": None, "title_bg_alpha": None, "font": None},
+        loaded,
+    )
+    assert resolved["title_bg_color"] == "#FFFFFF"
+    assert resolved["title_bg_alpha"] == 100
+    assert resolved["font"] == generation.DEFAULT_EDITOR_TITLE_FONT_KEY
+
+
+def test_legacy_defaults_are_used_only_without_scoped_record(monkeypatch):
+    values = {
+        "short_editor_defaults": '{"title_bg_color":"#14532D","title_bg_alpha":0}',
+    }
+    calls = []
+
+    def _load(_user_id, key):
+        calls.append(key)
+        return values.get(key)
+
+    monkeypatch.setattr(generation, "load_user_preference", _load)
+
+    loaded = generation._load_short_editor_defaults("owner-1", "brand-without-default")
+
+    assert loaded["title_bg_color"] == "#14532D"
+    assert loaded["title_bg_alpha"] == 0
+    assert calls == ["short_editor_defaults:brand-without-default", "short_editor_defaults"]
+
+
+def test_scoped_snapshot_replaces_values_previously_copied_from_legacy():
+    legacy = {
+        "font": "montserrat_black",
+        "title_bg_color": "#14532D",
+        "title_bg_alpha": 0,
+    }
+    scoped = {
+        "font": "anton",
+        "title_bg_color": "#FFFFFF",
+        "title_bg_alpha": 100,
+    }
+    stored_video = {
+        "font": "montserrat_black",
+        "title_bg_color": "#14532D",
+        "title_bg_alpha": 0,
+    }
+
+    without_legacy = generation._discard_legacy_inherited_editor_values(stored_video, legacy)
+    resolved = generation._apply_short_editor_defaults(without_legacy, scoped)
+
+    assert resolved["font"] == "anton"
+    assert resolved["title_bg_color"] == "#FFFFFF"
+    assert resolved["title_bg_alpha"] == 100
+
+
 def test_auto_render_applies_explicit_saved_design_over_database_defaults(monkeypatch):
     current = {
         "title_font_key": "fjalla_one",

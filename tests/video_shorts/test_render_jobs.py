@@ -1363,7 +1363,28 @@ def test_admin_save_editor_default_is_video_tenant_scoped(monkeypatch, tmp_path)
     valid_shapes = json.dumps(
         [{"id": "shelley-logo", "type": "image", "asset_id": shelley_asset_id, "x": 0, "y": 0, "w": 100, "h": 100}]
     )
-    response = client.post(save_url, data={"font": "montserrat_black", "overlay_shapes": valid_shapes})
+    response = client.post(
+        save_url,
+        data={
+            "font": "anton",
+            "title_bg_color": "#FFFFFF",
+            "title_bg_alpha": "100",
+            "overlay_shapes": valid_shapes,
+            "layout_mode": "auto",
+            "split_enabled": "0",
+            "crop_aspect": "portrait",
+            "crop_locked": "0",
+            "crop_x_ratio": "0.368880",
+            "crop_y_ratio": "0",
+            "crop_w_ratio": "0.316406",
+            "crop_h_ratio": "1",
+            "crop2_x_ratio": "0",
+            "crop2_y_ratio": "0",
+            "crop2_w_ratio": "1",
+            "crop2_h_ratio": "1",
+            "background_visual_key": "userbg:shelley-background",
+        },
+    )
     assert response.status_code == 200
 
     conn = db_service.get_db_readonly()
@@ -1384,7 +1405,18 @@ def test_admin_save_editor_default_is_video_tenant_scoped(monkeypatch, tmp_path)
         ).fetchone()[0]
     finally:
         conn.close()
-    assert shelley_asset_id in json.loads(stored[0])["overlay_shapes"][0]["asset_id"]
+    stored_defaults = json.loads(stored[0])
+    assert shelley_asset_id in stored_defaults["overlay_shapes"][0]["asset_id"]
+    assert stored_defaults["title_bg_color"] == "#FFFFFF"
+    assert stored_defaults["title_bg_alpha"] == 100
+    assert stored_defaults["layout_mode"] == "auto"
+    assert stored_defaults["crop_aspect"] == "portrait"
+    assert stored_defaults["crop_x_ratio"] == 0.36888
+    assert stored_defaults["background_visual_key"] == "userbg:shelley-background"
+    assert set(generation.SHORT_EDITOR_DESIGN_FIELD_NAMES) <= set(stored_defaults)
+    loaded_defaults = generation._load_short_editor_defaults(owner_id, brand_id)
+    assert loaded_defaults["title_bg_color"] == "#FFFFFF"
+    assert loaded_defaults["title_bg_alpha"] == 100
     assert admin_rows == 0
 
     foreign_shapes = json.dumps(

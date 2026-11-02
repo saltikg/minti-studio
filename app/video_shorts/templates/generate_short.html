@@ -23015,40 +23015,7 @@ document.addEventListener("DOMContentLoaded", () => {
     applyPreviewLayout({ measureKinds: ["title"] });
   });
 
-  const shortDesignFieldNames = [
-    "font",
-    "sub_font",
-    "title_font_size",
-    "sub_font_size",
-    "sub_margin",
-    "caption_anchor",
-    "subtitle_style",
-    "subtitle_preset",
-    "title_uppercase",
-    "subtitle_uppercase",
-    "title_margin",
-    "title_line_spacing",
-    "title_display_mode",
-    "title_display_seconds",
-    "title_bg_color",
-    "title_bg_alpha",
-    "title_text_color",
-    "subtitle_text_color",
-    "subtitle_highlight_color",
-    "subtitle_text_alpha",
-    "subtitle_bg_color",
-    "subtitle_bg_alpha",
-    "subtitle_effect",
-    "video_date_text",
-    "video_date_top",
-    "video_overlay_offset",
-    "overlay_shapes",
-    "music_audio_id",
-    "music_level",
-    "music_start_seconds",
-    "music_duck",
-    "music_fade_out",
-  ];
+  const shortDesignFieldNames = {{ short_editor_design_field_names | tojson }};
 
   const appendShortDesignFields = (params, names = shortDesignFieldNames, options = {}) => {
     const includeCleanOverlayFields = !!options.includeCleanOverlayFields;
@@ -23066,17 +23033,14 @@ document.addEventListener("DOMContentLoaded", () => {
     }
   };
 
-  const collectShortEditorDefaultParams = () => {
+  const collectShortEditorDesignParams = ({ includeCleanOverlayFields = false } = {}) => {
     const params = new URLSearchParams();
-    appendShortDesignFields(
-      params,
-      shortDesignFieldNames.filter((name) => !["video_date_text", "video_date_top", "music_audio_id", "music_start_seconds"].includes(name)),
-      { includeCleanOverlayFields: true },
-    );
+    appendShortDesignFields(params, shortDesignFieldNames, { includeCleanOverlayFields });
     const subscribeToggle = getEditorField("enable_subscribe_overlay");
     if (subscribeToggle) {
       params.set("enable_subscribe_overlay", subscribeToggle.checked ? "1" : "0");
     }
+    params.set("subscribe_overlay_image", activeSubscribeKey || "");
     const showTitleField = getEditorField("show_title");
     if (showTitleField) {
       params.set("show_title", showTitleField.checked ? "1" : "0");
@@ -23085,7 +23049,24 @@ document.addEventListener("DOMContentLoaded", () => {
     if (showSubtitleField) {
       params.set("show_subtitle", showSubtitleField.checked ? "1" : "0");
     }
+    const musicOnlyToggle = getEditorField("is_music_only");
+    if (musicOnlyToggle) {
+      params.set("is_music_only", musicOnlyToggle.checked ? "1" : "0");
+    }
+    const podcastAudioField = getEditorField("podcast_audio_filename");
+    if (podcastAudioField && activeVisualMode === "podcast") {
+      params.set("podcast_audio_filename", podcastAudioField.value || "");
+    } else {
+      params.set("podcast_audio_filename", "");
+    }
+    params.set(
+      "podcast_overlay_short_ids",
+      activeVisualMode === "podcast"
+        ? JSON.stringify((podcastShortClipState.selectedIds || []).slice(0, 2))
+        : "[]",
+    );
     params.set("visual_mode", activeVisualMode || "video");
+    appendCurrentLayoutFields(params);
     return params;
   };
 
@@ -23099,7 +23080,7 @@ document.addEventListener("DOMContentLoaded", () => {
       headers: {
         "X-Requested-With": "XMLHttpRequest",
       },
-      body: collectShortEditorDefaultParams(),
+      body: collectShortEditorDesignParams({ includeCleanOverlayFields: true }),
     });
     const payload = await response.json().catch(() => ({}));
     if (!response.ok || !payload.success) {
@@ -23182,38 +23163,7 @@ document.addEventListener("DOMContentLoaded", () => {
 	    if (!settingsSaveUrl || !settingsContainer) {
 	      return;
 	    }
-	    const params = new URLSearchParams();
-	    appendShortDesignFields(params);
-	    const subscribeToggle = getEditorField("enable_subscribe_overlay");
-	    if (subscribeToggle) {
-	      params.set("enable_subscribe_overlay", subscribeToggle.checked ? "1" : "0");
-	    }
-	    params.set("subscribe_overlay_image", activeSubscribeKey || "");
-	    const showTitleField = getEditorField("show_title");
-	    if (showTitleField) {
-	      params.set("show_title", showTitleField.checked ? "1" : "0");
-	    }
-	    const showSubtitleField = getEditorField("show_subtitle");
-	    if (showSubtitleField) {
-	      params.set("show_subtitle", showSubtitleField.checked ? "1" : "0");
-	    }
-	    const musicOnlyToggle = getEditorField("is_music_only");
-	    if (musicOnlyToggle) {
-	      params.set("is_music_only", musicOnlyToggle.checked ? "1" : "0");
-	    }
-	    const podcastAudioField = getEditorField("podcast_audio_filename");
-	    if (podcastAudioField && activeVisualMode === "podcast") {
-	      params.set("podcast_audio_filename", podcastAudioField.value || "");
-	    } else {
-	      params.set("podcast_audio_filename", "");
-	    }
-    if (activeVisualMode === "podcast") {
-      params.set("podcast_overlay_short_ids", JSON.stringify((podcastShortClipState.selectedIds || []).slice(0, 2)));
-    } else {
-      params.set("podcast_overlay_short_ids", "[]");
-    }
-    params.set("visual_mode", activeVisualMode || "video");
-    appendCurrentLayoutFields(params);
+    const params = collectShortEditorDesignParams();
     console.debug("crop modal save payload", {
       loadedOverlayFieldValues: { ...loadedOverlayFieldValues },
       dirtyOverlayFields: Array.from(dirtyOverlayFields),

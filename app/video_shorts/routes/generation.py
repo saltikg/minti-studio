@@ -471,7 +471,7 @@ BRAND_SUBSCRIBE_OVERLAY_DIR = Path(__file__).resolve().parent.parent / "static" 
 HIDE_CLIP_COACHMARK_PREFERENCE_KEY = "hide_clip_coachmark"
 SHORT_EDITOR_DEFAULTS_PREFERENCE_KEY = "short_editor_defaults"
 FACE_AWARE_DEFAULT_PREFERENCE_KEY = "face_aware_layout_default"
-SHORT_EDITOR_DEFAULT_FIELD_NAMES = (
+SHORT_EDITOR_STYLE_FIELD_NAMES = (
     "font",
     "sub_font",
     "title_font_size",
@@ -505,6 +505,34 @@ SHORT_EDITOR_DEFAULT_FIELD_NAMES = (
     "music_duck",
     "music_fade_out",
 )
+SHORT_EDITOR_DESIGN_FIELD_NAMES = SHORT_EDITOR_STYLE_FIELD_NAMES + (
+    "subtitle_margin_custom",
+    "video_date_text",
+    "video_date_top",
+    "music_audio_id",
+    "music_start_seconds",
+    "subscribe_overlay_image",
+    "is_music_only",
+    "podcast_audio_filename",
+    "podcast_overlay_short_ids",
+    "layout_mode",
+    "split_enabled",
+    "crop_aspect",
+    "crop_locked",
+    "crop_x_ratio",
+    "crop_y_ratio",
+    "crop_w_ratio",
+    "crop_h_ratio",
+    "crop2_x_ratio",
+    "crop2_y_ratio",
+    "crop2_w_ratio",
+    "crop2_h_ratio",
+    "original_zoom_rect",
+    "static_visual_key",
+    "background_visual_key",
+)
+# Defaults and the regular Save design action intentionally share this field set.
+SHORT_EDITOR_DEFAULT_FIELD_NAMES = SHORT_EDITOR_DESIGN_FIELD_NAMES
 
 _TRANSCRIBE_JOB_LOCK = threading.Lock()
 _TRANSCRIBE_JOB_STATE: Dict[int, Dict[str, Any]] = {}
@@ -1017,6 +1045,30 @@ def _short_editor_config_defaults() -> Dict[str, Any]:
         "music_level": 50,
         "music_duck": True,
         "music_fade_out": True,
+        "subtitle_margin_custom": False,
+        "video_date_text": "",
+        "video_date_top": DEFAULT_VIDEO_DATE_TOP,
+        "music_audio_id": "",
+        "music_start_seconds": 0.0,
+        "subscribe_overlay_image": "",
+        "is_music_only": False,
+        "podcast_audio_filename": "",
+        "podcast_overlay_short_ids": [],
+        "layout_mode": "manual",
+        "split_enabled": False,
+        "crop_aspect": "landscape",
+        "crop_locked": False,
+        "crop_x_ratio": 0.0,
+        "crop_y_ratio": 0.0,
+        "crop_w_ratio": 1.0,
+        "crop_h_ratio": 1.0,
+        "crop2_x_ratio": 0.0,
+        "crop2_y_ratio": 0.0,
+        "crop2_w_ratio": 1.0,
+        "crop2_h_ratio": 1.0,
+        "original_zoom_rect": None,
+        "static_visual_key": "",
+        "background_visual_key": "",
     }
 
 
@@ -1048,10 +1100,7 @@ def _short_editor_defaults_preference_key(brand_id: Optional[str] = None) -> str
     return f"{SHORT_EDITOR_DEFAULTS_PREFERENCE_KEY}:{normalized_brand}" if normalized_brand else SHORT_EDITOR_DEFAULTS_PREFERENCE_KEY
 
 
-def _load_short_editor_defaults_json(user_id: Optional[str], brand_id: Optional[str] = None) -> Dict[str, Any]:
-    raw = load_user_preference(user_id, _short_editor_defaults_preference_key(brand_id))
-    if not raw and brand_id:
-        raw = load_user_preference(user_id, SHORT_EDITOR_DEFAULTS_PREFERENCE_KEY)
+def _decode_short_editor_defaults(raw: Optional[str], user_id: Optional[str]) -> Dict[str, Any]:
     if not raw:
         return {}
     try:
@@ -1059,14 +1108,48 @@ def _load_short_editor_defaults_json(user_id: Optional[str], brand_id: Optional[
     except Exception:
         current_app.logger.warning("Invalid short editor defaults JSON for user %s", user_id)
         return {}
-    if not isinstance(parsed, dict):
-        return {}
+    return parsed if isinstance(parsed, dict) else {}
+
+
+def _load_short_editor_defaults_record(
+    user_id: Optional[str], brand_id: Optional[str] = None
+) -> tuple[Dict[str, Any], str]:
+    raw = None
+    if brand_id:
+        # A scoped record is authoritative as a whole. Never fill individual
+        # missing keys from the legacy, unscoped preference.
+        raw = load_user_preference(user_id, _short_editor_defaults_preference_key(brand_id))
+        if raw is not None:
+            return _decode_short_editor_defaults(raw, user_id), "scoped"
+    if raw is None:
+        raw = load_user_preference(user_id, SHORT_EDITOR_DEFAULTS_PREFERENCE_KEY)
+    return _decode_short_editor_defaults(raw, user_id), ("legacy" if raw is not None else "none")
+
+
+def _load_short_editor_defaults_json(user_id: Optional[str], brand_id: Optional[str] = None) -> Dict[str, Any]:
+    parsed, _source = _load_short_editor_defaults_record(user_id, brand_id)
     return parsed
 
 
 def _load_short_editor_defaults(user_id: Optional[str], brand_id: Optional[str] = None) -> Dict[str, Any]:
     parsed = _load_short_editor_defaults_json(user_id, brand_id)
     return {name: parsed.get(name) for name in SHORT_EDITOR_DEFAULT_FIELD_NAMES if name in parsed}
+
+
+def _discard_legacy_inherited_editor_values(
+    raw_values: Dict[str, Any], legacy_defaults: Dict[str, Any]
+) -> Dict[str, Any]:
+    """Treat values copied from the old default as unset, never as clip overrides."""
+    if not legacy_defaults:
+        return dict(raw_values)
+    clean_legacy = _clean_short_editor_default_payload(legacy_defaults)
+    resolved = dict(raw_values)
+    for name in SHORT_EDITOR_DESIGN_FIELD_NAMES:
+        if name not in legacy_defaults or name not in resolved:
+            continue
+        if _values_equal_for_editor_default(resolved.get(name), clean_legacy.get(name)):
+            resolved[name] = None
+    return resolved
 
 
 def _clean_short_editor_default_payload(source: Any) -> Dict[str, Any]:
@@ -1144,6 +1227,72 @@ def _clean_short_editor_default_payload(source: Any) -> Dict[str, Any]:
     payload["music_level"] = normalize_music_level(source.get("music_level"), defaults["music_level"])
     payload["music_duck"] = _normalize_optional_bool(source.get("music_duck"), default=True)
     payload["music_fade_out"] = _normalize_optional_bool(source.get("music_fade_out"), default=True)
+
+    payload["subtitle_margin_custom"] = _normalize_optional_bool(
+        source.get("subtitle_margin_custom"), default=defaults["subtitle_margin_custom"]
+    )
+    payload["video_date_text"] = str(source.get("video_date_text") or "").strip()
+    try:
+        payload["video_date_top"] = int(float(source.get("video_date_top")))
+    except Exception:
+        payload["video_date_top"] = int(defaults["video_date_top"])
+    payload["music_audio_id"] = _normalize_music_audio_id(source.get("music_audio_id"))
+    payload["music_start_seconds"] = normalize_music_start_seconds(source.get("music_start_seconds"))
+    payload["subscribe_overlay_image"] = str(source.get("subscribe_overlay_image") or "").strip()
+    payload["is_music_only"] = _normalize_optional_bool(
+        source.get("is_music_only"), default=defaults["is_music_only"]
+    )
+    raw_podcast_filename = str(source.get("podcast_audio_filename") or "").strip()
+    payload["podcast_audio_filename"] = (
+        Path(raw_podcast_filename).name
+        if raw_podcast_filename and Path(raw_podcast_filename).name == raw_podcast_filename
+        else ""
+    )
+    raw_podcast_ids = source.get("podcast_overlay_short_ids")
+    if isinstance(raw_podcast_ids, list):
+        podcast_ids = raw_podcast_ids
+    else:
+        podcast_ids = _parse_podcast_overlay_short_ids(raw_podcast_ids)
+    payload["podcast_overlay_short_ids"] = list(
+        dict.fromkeys(
+            str(item).strip()
+            for item in podcast_ids
+            if str(item or "").strip().startswith("short:")
+        )
+    )[:2]
+
+    payload["layout_mode"] = _normalize_layout_mode(source.get("layout_mode"))
+    payload["split_enabled"] = _normalize_optional_bool(
+        source.get("split_enabled"), default=defaults["split_enabled"]
+    )
+    crop_aspect = str(source.get("crop_aspect") or defaults["crop_aspect"]).strip().lower()
+    payload["crop_aspect"] = crop_aspect if crop_aspect in {"landscape", "portrait", "original"} else defaults["crop_aspect"]
+    payload["crop_locked"] = _normalize_optional_bool(
+        source.get("crop_locked"), default=defaults["crop_locked"]
+    )
+
+    for prefix in ("crop", "crop2"):
+        x_name = f"{prefix}_x_ratio"
+        y_name = f"{prefix}_y_ratio"
+        w_name = f"{prefix}_w_ratio"
+        h_name = f"{prefix}_h_ratio"
+        try:
+            x_value = max(0.0, min(1.0, float(source.get(x_name))))
+            y_value = max(0.0, min(1.0, float(source.get(y_name))))
+            w_value = max(0.01, min(1.0 - x_value, float(source.get(w_name))))
+            h_value = max(0.01, min(1.0 - y_value, float(source.get(h_name))))
+        except Exception:
+            x_value = float(defaults[x_name])
+            y_value = float(defaults[y_name])
+            w_value = float(defaults[w_name])
+            h_value = float(defaults[h_name])
+        payload[x_name] = round(x_value, 6)
+        payload[y_name] = round(y_value, 6)
+        payload[w_name] = round(w_value, 6)
+        payload[h_name] = round(h_value, 6)
+    payload["original_zoom_rect"] = _normalize_original_zoom_rect(source.get("original_zoom_rect"))
+    payload["static_visual_key"] = str(source.get("static_visual_key") or "").strip()
+    payload["background_visual_key"] = str(source.get("background_visual_key") or "").strip()
     return payload
 
 
@@ -1151,10 +1300,11 @@ def _apply_short_editor_defaults(raw_values: Dict[str, Any], user_defaults: Dict
     config_defaults = _short_editor_config_defaults()
     clean_user_defaults = _clean_short_editor_default_payload(user_defaults) if user_defaults else {}
     resolved: Dict[str, Any] = {}
-    for name in SHORT_EDITOR_DEFAULT_FIELD_NAMES:
+    for name in SHORT_EDITOR_DESIGN_FIELD_NAMES:
         raw_value = raw_values.get(name)
         has_user_default = (
-            name in clean_user_defaults
+            name in user_defaults
+            and name in clean_user_defaults
             and not _is_blank_editor_default_value(clean_user_defaults.get(name))
         )
         if _is_blank_editor_default_value(raw_value):
@@ -8861,8 +9011,31 @@ AUTO_RENDER_DESIGN_FIELD_MAP: Dict[str, str] = {
     "video_overlay_offset": "video_overlay_offset",
     "overlay_shapes": "overlay_shapes",
     "music_level": "music_level",
+    "music_audio_id": "music_audio_id",
+    "music_start_seconds": "music_start_seconds",
     "music_duck": "music_duck",
     "music_fade_out": "music_fade_out",
+    "subtitle_margin_custom": "subtitle_margin_custom",
+    "video_date_text": "video_date_text",
+    "video_date_top": "video_date_top",
+    "is_music_only": "is_music_only",
+    "podcast_audio_filename": "podcast_audio_filename",
+    "podcast_overlay_short_ids": "podcast_overlay_short_ids",
+    "layout_mode": "layout_mode",
+    "split_enabled": "split_enabled",
+    "crop_aspect": "crop_aspect",
+    "crop_locked": "crop_locked",
+    "crop_x_ratio": "crop_x_ratio",
+    "crop_y_ratio": "crop_y_ratio",
+    "crop_w_ratio": "crop_w_ratio",
+    "crop_h_ratio": "crop_h_ratio",
+    "crop2_x_ratio": "crop2_x_ratio",
+    "crop2_y_ratio": "crop2_y_ratio",
+    "crop2_w_ratio": "crop2_w_ratio",
+    "crop2_h_ratio": "crop2_h_ratio",
+    "original_zoom_rect": "original_zoom_rect",
+    "static_visual_key": "static_visual_key",
+    "background_visual_key": "background_visual_key",
 }
 
 
@@ -8880,7 +9053,7 @@ def apply_short_editor_defaults_to_video_if_null(*, owner_user_id: str, brand_id
             conn.commit()
             return {"updated": False, "fields": []}
         select_columns = list(selectable)
-        if "subtitle_margin_custom" in columns:
+        if "subtitle_margin_custom" in columns and "subtitle_margin_custom" not in selectable:
             select_columns.append("subtitle_margin_custom")
         row = conn.execute(
             f"SELECT {', '.join(select_columns)} FROM youtube_videos WHERE id = ? AND owner_user_id = ? AND brand_id = ?",
@@ -8936,6 +9109,10 @@ def apply_short_editor_defaults_to_video_if_null(*, owner_user_id: str, brand_id
             value = resolved.get(default_name)
             if default_name == "overlay_shapes":
                 value = json.dumps(_normalize_overlay_shapes(value), ensure_ascii=False, separators=(",", ":"))
+            elif default_name == "podcast_overlay_short_ids":
+                value = json.dumps(value or [], ensure_ascii=False, separators=(",", ":"))
+            elif default_name == "original_zoom_rect":
+                value = json.dumps(value, sort_keys=True) if value else None
             params.append(value)
             updated_fields.append(column_name)
         if not assignments:
@@ -8951,6 +9128,13 @@ def apply_short_editor_defaults_to_video_if_null(*, owner_user_id: str, brand_id
             params,
         )
         conn.commit()
+        if "subscribe_overlay_image" in saved_defaults:
+            _save_subscribe_overlay_key(
+                owner_user_id,
+                brand_id,
+                video_pk,
+                str(normalized_saved_defaults.get("subscribe_overlay_image") or "").strip() or None,
+            )
         return {"updated": True, "fields": updated_fields}
     except Exception:
         conn.rollback()
@@ -13561,7 +13745,15 @@ def generate_short(video_pk):
         key=lambda item: (str(item.get("label") or ""), str(item.get("key") or "")),
     )
 
-    short_editor_defaults = _load_short_editor_defaults(editor_owner_user_id, brand_id)
+    short_editor_defaults_json, short_editor_defaults_source = _load_short_editor_defaults_record(
+        editor_owner_user_id,
+        brand_id,
+    )
+    short_editor_defaults = {
+        name: short_editor_defaults_json.get(name)
+        for name in SHORT_EDITOR_DEFAULT_FIELD_NAMES
+        if name in short_editor_defaults_json
+    }
     raw_style_values = {
         "font": video.get("title_font_key"),
         "sub_font": video.get("subtitle_font_key"),
@@ -13596,6 +13788,15 @@ def generate_short(video_pk):
         "music_duck": video.get("music_duck"),
         "music_fade_out": video.get("music_fade_out"),
     }
+    if short_editor_defaults_source == "scoped":
+        # Older videos may already contain values copied from the legacy
+        # unscoped default. Those values are not clip edits and must not be
+        # combined key-by-key with the authoritative scoped snapshot.
+        legacy_defaults = _decode_short_editor_defaults(
+            load_user_preference(editor_owner_user_id, SHORT_EDITOR_DEFAULTS_PREFERENCE_KEY),
+            editor_owner_user_id,
+        )
+        raw_style_values = _discard_legacy_inherited_editor_values(raw_style_values, legacy_defaults)
     if raw_style_values["title_uppercase"] is None and "title_uppercase" not in short_editor_defaults:
         raw_style_values["title_uppercase"] = _resolve_title_template_behavior(
             subtitle_preset=raw_style_values.get("subtitle_preset") or DEFAULT_SUBTITLE_PRESET,
@@ -13618,8 +13819,8 @@ def generate_short(video_pk):
     video_sub_font_size = resolved_style_values.get("sub_font_size") or DEFAULT_SUB_FONT_SIZE
     video_sub_margin_custom = _normalize_optional_bool(video.get("subtitle_margin_custom"), default=False)
     video_caption_anchor, video_sub_margin = _resolve_caption_position(
-        stored_anchor=video.get("caption_anchor"),
-        stored_margin=video.get("subtitle_margin"),
+        stored_anchor=resolved_style_values.get("caption_anchor"),
+        stored_margin=resolved_style_values.get("sub_margin"),
         margin_custom=video_sub_margin_custom,
         user_defaults=short_editor_defaults,
     )
@@ -15210,6 +15411,7 @@ def generate_short(video_pk):
         selected_music_start_seconds=selected_music_start_seconds,
         selected_music_duck=selected_music_duck,
         selected_music_fade_out=selected_music_fade_out,
+        short_editor_design_field_names=SHORT_EDITOR_DESIGN_FIELD_NAMES,
         debug_info=debug_info,
         clip_rows=clip_rows,
         clip_edit_words=clip_edit_words,
@@ -16860,6 +17062,27 @@ def save_short_editor_defaults(video_pk: int):
     source = source or {}
     try:
         payload = _clean_short_editor_default_payload(source)
+        raw_music_audio_id = str(source.get("music_audio_id") or "").strip()
+        if raw_music_audio_id and not payload.get("music_audio_id"):
+            return jsonify({"success": False, "message": "The selected music file is invalid."}), 422
+        if payload.get("music_audio_id"):
+            music_path = _resolve_user_audio_path(video_owner_id, payload["music_audio_id"])
+            if not music_path:
+                return jsonify({"success": False, "message": "The selected music file is unavailable."}), 422
+            if hasattr(music_path, "cleanup"):
+                music_path.cleanup()
+        raw_subscribe_key = str(source.get("subscribe_overlay_image") or "").strip()
+        normalized_subscribe_key = _normalize_subscribe_overlay_key(
+            raw_subscribe_key,
+            expected_owner_user_id=video_owner_id,
+            expected_brand_id=video_brand_id,
+        )
+        if raw_subscribe_key and not normalized_subscribe_key:
+            return jsonify({"success": False, "message": "The selected subscribe image is unavailable."}), 422
+        payload["subscribe_overlay_image"] = normalized_subscribe_key or ""
+        podcast_filename = str(payload.get("podcast_audio_filename") or "").strip()
+        if podcast_filename and not _resolve_user_podcast_audio_path(video_owner_id, podcast_filename):
+            return jsonify({"success": False, "message": "The selected podcast audio is unavailable."}), 422
         stored_defaults = _load_short_editor_defaults_json(video_owner_id, video_brand_id)
         stored_export_resolution = str(stored_defaults.get("export_resolution") or "").strip()
         # Preserve the legacy JSON field without using it to decide render resolution.
