@@ -23824,6 +23824,9 @@ def admin_discovery_lead_pipeline():
     offset = (page - 1) * per_page
     wants_csv = str(request.args.get("format") or "").strip().lower() == "csv"
     lead_filter = str(request.args.get("filter") or "").strip().lower()
+    face_verdict = str(request.args.get("face_verdict") or "").strip().lower()
+    if face_verdict not in {"", "face_pass", "face_fail", "face_unsure"}:
+        face_verdict = ""
     active_pipeline_tab = str(request.args.get("tab") or "daily").strip().lower()
     if active_pipeline_tab not in {"daily", "keywords", "leads", "settings"}:
         active_pipeline_tab = "daily"
@@ -23897,6 +23900,11 @@ def admin_discovery_lead_pipeline():
                 else "false"
             )
             is_clinician_sql = "COALESCE(is_clinician, false)" if "is_clinician" in discovery_columns else "false"
+            face_check_verdict_sql = "face_check_verdict" if "face_check_verdict" in discovery_columns else "NULL"
+            face_check_presenter_type_sql = "face_check_presenter_type" if "face_check_presenter_type" in discovery_columns else "NULL"
+            face_check_same_person_count_sql = "face_check_same_person_count" if "face_check_same_person_count" in discovery_columns else "NULL"
+            face_check_reason_sql = "face_check_reason" if "face_check_reason" in discovery_columns else "NULL"
+            face_checked_at_sql = "face_checked_at" if "face_checked_at" in discovery_columns else "NULL"
             promoted_source_video_title_sql = (
                 "(SELECT yv.title FROM youtube_videos yv WHERE yv.id = discovery_leads.promoted_source_video_id LIMIT 1)"
                 if "promoted_source_video_id" in discovery_columns
@@ -23935,6 +23943,9 @@ def admin_discovery_lead_pipeline():
                 ready_filter_sql = ready_to_promote_sql
             elif lead_filter == "dismissed":
                 ready_filter_sql = "WHERE COALESCE(status, '') = 'dismissed'"
+            if face_verdict and "face_check_verdict" in discovery_columns:
+                connector = " AND " if ready_filter_sql.strip() else "WHERE "
+                ready_filter_sql = f"{ready_filter_sql}{connector}face_check_verdict = '{face_verdict}'"
             for row in conn.execute(
                 """
                 SELECT COALESCE(status, 'discovered') AS status, COUNT(*)
@@ -24056,7 +24067,12 @@ def admin_discovery_lead_pipeline():
                     {raw_json_sql} AS raw_json,
                     {outreach_first_name_sql} AS outreach_first_name,
                     {outreach_first_name_edited_sql} AS outreach_first_name_edited_by_admin,
-                    {is_clinician_sql} AS is_clinician
+                    {is_clinician_sql} AS is_clinician,
+                    {face_check_verdict_sql} AS face_check_verdict,
+                    {face_check_presenter_type_sql} AS face_check_presenter_type,
+                    {face_check_same_person_count_sql} AS face_check_same_person_count,
+                    {face_check_reason_sql} AS face_check_reason,
+                    {face_checked_at_sql} AS face_checked_at
                 FROM discovery_leads
                 {ready_filter_sql}
                 ORDER BY {lead_order_column} {lead_order_direction} {lead_nulls}, {lead_tie_order}
@@ -24125,6 +24141,11 @@ def admin_discovery_lead_pipeline():
                     "outreach_first_name_stored": stored_outreach_first_name is not None,
                     "outreach_first_name_edited_by_admin": bool(row[35]),
                     "is_clinician": bool(row[36]),
+                    "face_check_verdict": str(row[37] or ""),
+                    "face_check_presenter_type": str(row[38] or ""),
+                    "face_check_same_person_count": row[39],
+                    "face_check_reason": str(row[40] or ""),
+                    "face_checked_at": _format_datetime_pst(row[41]),
                     "outreach_greeting_name": outreach_greeting_value,
                     "outreach_greeting_text": outreach_greeting_text,
                     "outreach_greeting_is_generic": not bool(outreach_greeting_value),
@@ -24348,6 +24369,11 @@ def admin_discovery_lead_pipeline():
                 "shorts_last_15d",
                 "icp_fit",
                 "is_clinician",
+                "face_check_verdict",
+                "face_check_presenter_type",
+                "face_check_same_person_count",
+                "face_check_reason",
+                "face_checked_at",
                 "creator_email",
                 "email_confidence",
                 "email_role",
@@ -24400,6 +24426,7 @@ def admin_discovery_lead_pipeline():
         promote_queue_count=promote_queue_count_value,
         leads=leads,
         lead_filter=lead_filter,
+        face_verdict=face_verdict,
         active_pipeline_tab=active_pipeline_tab,
         ready_to_promote_count=ready_to_promote_count,
         keyword_sort=keyword_sort,

@@ -8,7 +8,7 @@ from uuid import uuid4
 from flask import current_app, flash, g, has_app_context, jsonify, redirect, request, url_for
 
 from app.video_shorts import video_shorts_bp
-from app.video_shorts.config import CAPTION_API_TOKEN, OPENAI_MODEL, _openai_client
+from app.video_shorts.config import CAPTION_API_TOKEN, FACE_CHECK_ENFORCE, OPENAI_MODEL, _openai_client
 from app.video_shorts.services.auth_protection import RateLimitRule, check_rate_limits
 from app.video_shorts.services.brands import current_brand_id, ensure_brand_schema
 from app.video_shorts.services.db import (
@@ -31,6 +31,7 @@ from app.video_shorts.services.discovery_promote_queue import (
     promote_queue_count,
     store_outreach_first_name_if_needed,
 )
+from app.video_shorts.services.discovery_face_check import check_face_on_camera
 from app.video_shorts.services.transcript_service import _normalize_segments_for_use
 from app.video_shorts.services.user_events import prepare_transcript_completed_transition, track_event
 from app.video_shorts.services.usage_metering import add_transcription_minutes, get_usage_snapshot
@@ -129,9 +130,13 @@ MEDICAL_DISCOVERY_OFF_FOCUS_TERMS = (
     "reenactment", "instrument making", "aquascaping", "aquarium", "birdwatching", "astronomy",
     "stargazing", "ai tools",
 )
-CLINICAL_CREDENTIAL_RE = re.compile(
-    r"(?i)(?:\bdr\.?(?=\s|$)|\bdoctor\b|\bm\.?d\.?\b|\bd\.?o\.?\b|\bdpt\b|\bpt\b|"
-    r"\brd\b|\brdn\b|\bnp\b|\bpa-c\b|\bpharmd\b|\bdnp\b|\brn\b|\blcsw\b|\bpsyd\b)"
+CLINICAL_CREDENTIAL_TOKEN = r"(?:MD|M\.D\.|DO|D\.O\.|DPT|PT|RD|RDN|NP|PA-C|RN|DNP|LCSW|PsyD|PharmD)"
+CLINICAL_DR_TITLE_RE = re.compile(r"(?<![A-Za-z0-9])(?P<token>Dr\.?)\s+(?=[A-Z][A-Za-z'’.-]+(?:\s|$))")
+CLINICAL_COMMA_CREDENTIAL_RE = re.compile(
+    rf",\s*(?P<token>{CLINICAL_CREDENTIAL_TOKEN})(?![A-Za-z0-9])"
+)
+CLINICAL_NAME_CREDENTIAL_RE = re.compile(
+    rf"\b[A-Z][A-Za-z'’.-]+(?:\s+[A-Z][A-Za-z'’.-]+){{1,3}}\s+(?P<token>{CLINICAL_CREDENTIAL_TOKEN})(?![A-Za-z0-9])"
 )
 
 
@@ -254,8 +259,23 @@ def _hard_numeric_disqualification_reason(row: Dict[str, Any]) -> Optional[str]:
     return "Hard numeric gate failed: " + "; ".join(reasons)
 
 
+def _clinical_credential_match(*values: Any) -> Optional[Dict[str, str]]:
+    for value in values:
+        text = str(value or "")
+        for pattern in (CLINICAL_DR_TITLE_RE, CLINICAL_COMMA_CREDENTIAL_RE, CLINICAL_NAME_CREDENTIAL_RE):
+            match = pattern.search(text)
+            if match:
+                start = max(0, match.start() - 50)
+                end = min(len(text), match.end() + 50)
+                return {
+                    "token": str(match.group("token")),
+                    "context": text[start:end].replace("\n", " ").strip(),
+                }
+    return None
+
+
 def _has_clinical_credential(*values: Any) -> bool:
-    return bool(CLINICAL_CREDENTIAL_RE.search(" ".join(str(value or "") for value in values)))
+    return _clinical_credential_match(*values) is not None
 
 
 def _youtube_env_error_message(exc: Exception) -> str | None:
@@ -532,7 +552,10 @@ def _fetch_video_details(
                 "channel_id": str(snippet.get("channelId") or "").strip(),
                 "published_at": str(snippet.get("publishedAt") or "").strip(),
                 "thumbnail_url": (
-                    ((snippet.get("thumbnails") or {}).get("medium") or {}).get("url")
+                    ((snippet.get("thumbnails") or {}).get("maxres") or {}).get("url")
+                    or ((snippet.get("thumbnails") or {}).get("standard") or {}).get("url")
+                    or ((snippet.get("thumbnails") or {}).get("high") or {}).get("url")
+                    or ((snippet.get("thumbnails") or {}).get("medium") or {}).get("url")
                     or ((snippet.get("thumbnails") or {}).get("default") or {}).get("url")
                     or ""
                 ),
@@ -589,6 +612,7 @@ def diagnose_channel(
     latest_short_dt = None
     min_longform_seconds = max(0, int(min_longform_seconds or 0))
     short_max_seconds = max(0, int(short_max_seconds or 0))
+    face_check_thumbnail_urls: List[str] = []
     for item in recent_uploads:
         video_id = str(item.get("video_id") or "").strip()
         published_at = _parse_yt_timestamp(item.get("published_at"))
@@ -597,6 +621,9 @@ def diagnose_channel(
             duration_value = int(duration_seconds or 0)
         except (TypeError, ValueError):
             duration_value = 0
+        thumbnail_url = str((stats_map.get(video_id) or {}).get("thumbnail_url") or "").strip()
+        if duration_value >= 300 and thumbnail_url and len(face_check_thumbnail_urls) < 6:
+            face_check_thumbnail_urls.append(thumbnail_url)
         if duration_value <= short_max_seconds and (duration_value > 0 or count_unknown_as_short):
             if published_at and (latest_short_dt is None or published_at > latest_short_dt):
                 latest_short_dt = published_at
@@ -665,6 +692,7 @@ def diagnose_channel(
         "best_source_video_title": sweetspot.get("title") if sweetspot else None,
         "best_source_video_minutes": sweetspot.get("minutes") if sweetspot else None,
         "_email_candidate_descriptions": recent_video_descriptions,
+        "_face_check_thumbnail_urls": face_check_thumbnail_urls,
     }
 
 
@@ -941,6 +969,7 @@ def _store_discovery_icp_llm_usage(
     run_id: Optional[int],
     response: Any,
     purpose: str = "icp_classify",
+    model: Optional[str] = None,
     conn: Any = None,
 ) -> None:
     usage = getattr(response, "usage", None)
@@ -968,7 +997,7 @@ def _store_discovery_icp_llm_usage(
             )
             VALUES (?, ?, ?, ?, ?, CURRENT_TIMESTAMP)
             """,
-            [run_id, OPENAI_MODEL, str(purpose or "unknown")[:80], input_tokens, output_tokens],
+            [run_id, str(model or OPENAI_MODEL), str(purpose or "unknown")[:80], input_tokens, output_tokens],
         )
         if owns_conn:
             conn.commit()
@@ -2175,6 +2204,8 @@ def _lead_discovery_status(row: Dict[str, Any]) -> str:
     if row.get("icp_fit") is False:
         return "disqualified"
     if row.get("icp_fit") is True:
+        if FACE_CHECK_ENFORCE and row.get("face_check_verdict") == "face_fail":
+            return "disqualified"
         return "icp_qualified"
     return "discovered"
 
@@ -2298,6 +2329,17 @@ def _persist_discovery_lead(row: Dict[str, Any]) -> str:
         if "is_clinician" in columns:
             optional_updates.append("is_clinician = ?")
             optional_params.append(bool(row.get("is_clinician")))
+        for column in (
+            "face_check_verdict",
+            "face_check_presenter_type",
+            "face_check_same_person_count",
+            "face_check_reason",
+        ):
+            if column in columns and row.get(column) is not None:
+                optional_updates.append(f"{column} = ?")
+                optional_params.append(row.get(column))
+        if "face_checked_at" in columns and row.get("face_check_verdict"):
+            optional_updates.append("face_checked_at = CURRENT_TIMESTAMP")
         if optional_updates:
             conn.execute(
                 f"""
@@ -3988,11 +4030,26 @@ def run_lead_discovery_payload(payload: Dict[str, Any]) -> tuple[Dict[str, Any],
                         run_id=discovery_run_id or None,
                     )
                 )
+                if row.get("icp_fit") is True:
+                    face_result = check_face_on_camera(row.get("_face_check_thumbnail_urls") or [])
+                    face_response = face_result.pop("_face_check_response", None)
+                    face_model = face_result.pop("_face_check_model", None)
+                    row.update(face_result)
+                    if face_response is not None:
+                        _store_discovery_icp_llm_usage(
+                            run_id=discovery_run_id or None,
+                            response=face_response,
+                            purpose="face_check",
+                            model=face_model,
+                        )
+                    if FACE_CHECK_ENFORCE and row.get("face_check_verdict") == "face_fail":
+                        row["icp_reason"] = f"faceless: {row.get('face_check_presenter_type') or 'unknown'}"
             else:
                 _attach_lead_discovery_email(row)
                 row["icp_fit"] = None
                 row["icp_reason"] = ""
             row.pop("_email_candidate_descriptions", None)
+            row.pop("_face_check_thumbnail_urls", None)
             persistence_result = _persist_discovery_lead(row)
             if persistence_result in persistence_counts:
                 persistence_counts[persistence_result] += 1

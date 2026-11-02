@@ -26,7 +26,7 @@
 {% macro lead_sort_link(key, label, default_dir='asc') -%}
   <a
     class="discovery-sort-link"
-    href="{{ url_for('video_shorts_bp.admin_discovery_lead_pipeline', tab='leads', filter=lead_filter, per_page=per_page, lead_sort=key, lead_dir=(default_dir if lead_sort != key else ('asc' if lead_dir == 'desc' else 'desc'))) }}">
+    href="{{ url_for('video_shorts_bp.admin_discovery_lead_pipeline', tab='leads', filter=lead_filter, face_verdict=face_verdict, per_page=per_page, lead_sort=key, lead_dir=(default_dir if lead_sort != key else ('asc' if lead_dir == 'desc' else 'desc'))) }}">
     <span>{{ label }}</span>
     {% if lead_sort == key %}<span class="discovery-sort-arrow">{{ '↑' if lead_dir == 'asc' else '↓' }}</span>{% endif %}
   </a>
@@ -235,6 +235,21 @@
       border-color: rgba(248, 113, 113, 0.34);
       background: rgba(248, 113, 113, 0.14);
       color: #fecaca;
+    }
+    .discovery-status.face_pass {
+      border-color: rgba(34, 197, 94, 0.34);
+      background: rgba(34, 197, 94, 0.14);
+      color: #bbf7d0;
+    }
+    .discovery-status.face_fail {
+      border-color: rgba(248, 113, 113, 0.34);
+      background: rgba(248, 113, 113, 0.14);
+      color: #fecaca;
+    }
+    .discovery-status.face_unsure {
+      border-color: rgba(251, 191, 36, 0.34);
+      background: rgba(251, 191, 36, 0.14);
+      color: #fde68a;
     }
     .keyword-select-cell {
       width: 38px;
@@ -778,10 +793,15 @@
 
     <div data-pipeline-panel="leads">
     <div class="discovery-filter-tabs">
-      <a class="{{ 'is-active' if not lead_filter else '' }}" href="{{ url_for('video_shorts_bp.admin_discovery_lead_pipeline', tab='leads', lead_sort=lead_sort, lead_dir=lead_dir, per_page=per_page) }}">All leads</a>
-      <a class="{{ 'is-active' if lead_filter == 'ready_to_promote' else '' }}" href="{{ url_for('video_shorts_bp.admin_discovery_lead_pipeline', tab='leads', filter='ready_to_promote', lead_sort=lead_sort, lead_dir=lead_dir, per_page=per_page) }}">Ready to promote</a>
-      <a class="{{ 'is-active' if lead_filter == 'dismissed' else '' }}" href="{{ url_for('video_shorts_bp.admin_discovery_lead_pipeline', tab='leads', filter='dismissed', lead_sort=lead_sort, lead_dir=lead_dir, per_page=per_page) }}">Dismissed</a>
-      {% if lead_filter %}
+      <a class="{{ 'is-active' if not lead_filter else '' }}" href="{{ url_for('video_shorts_bp.admin_discovery_lead_pipeline', tab='leads', face_verdict=face_verdict, lead_sort=lead_sort, lead_dir=lead_dir, per_page=per_page) }}">All leads</a>
+      <a class="{{ 'is-active' if lead_filter == 'ready_to_promote' else '' }}" href="{{ url_for('video_shorts_bp.admin_discovery_lead_pipeline', tab='leads', filter='ready_to_promote', face_verdict=face_verdict, lead_sort=lead_sort, lead_dir=lead_dir, per_page=per_page) }}">Ready to promote</a>
+      <a class="{{ 'is-active' if lead_filter == 'dismissed' else '' }}" href="{{ url_for('video_shorts_bp.admin_discovery_lead_pipeline', tab='leads', filter='dismissed', face_verdict=face_verdict, lead_sort=lead_sort, lead_dir=lead_dir, per_page=per_page) }}">Dismissed</a>
+      <span class="discovery-muted">Face:</span>
+      <a class="{{ 'is-active' if not face_verdict else '' }}" href="{{ url_for('video_shorts_bp.admin_discovery_lead_pipeline', tab='leads', filter=lead_filter, lead_sort=lead_sort, lead_dir=lead_dir, per_page=per_page) }}">any</a>
+      {% for verdict, label in [('face_pass', 'pass'), ('face_fail', 'fail'), ('face_unsure', 'unsure')] %}
+        <a class="{{ 'is-active' if face_verdict == verdict else '' }}" href="{{ url_for('video_shorts_bp.admin_discovery_lead_pipeline', tab='leads', filter=lead_filter, face_verdict=verdict, lead_sort=lead_sort, lead_dir=lead_dir, per_page=per_page) }}">{{ label }}</a>
+      {% endfor %}
+      {% if lead_filter or face_verdict %}
         <span class="discovery-muted">Showing {{ filtered_total }} lead{{ '' if filtered_total == 1 else 's' }}</span>
       {% endif %}
       <button id="bulkPromoteButton" type="button" class="btn btn-sm btn-outline-info">Promote selected</button>
@@ -802,6 +822,7 @@
             <th>{{ lead_sort_link('shorts', 'Shorts 15d', 'desc') }}</th>
             <th>{{ lead_sort_link('sweetspot', 'Sweet spot', 'desc') }}</th>
             <th>ICP</th>
+            <th>Face</th>
             <th>Clinician</th>
             <th>Email</th>
             <th>Confidence</th>
@@ -935,6 +956,11 @@
                 {% endif %}
               </td>
               <td>{{ 'yes' if lead.icp_fit is true else ('no' if lead.icp_fit is false else '') }}</td>
+              <td>
+                {% if lead.face_check_verdict %}
+                  <span class="discovery-status {{ lead.face_check_verdict }}" title="{{ lead.face_check_reason }}">{{ lead.face_check_verdict|replace('face_', '') }}</span>
+                {% endif %}
+              </td>
               <td>{{ 'yes' if lead.is_clinician else 'no' }}</td>
               <td>{{ lead.creator_email or '' }}</td>
               <td>{{ lead.email_confidence if lead.email_confidence is not none else '' }}</td>
@@ -960,7 +986,7 @@
             </tr>
           {% else %}
             <tr>
-              <td colspan="20" class="text-center text-white-50 py-4">No discovery leads yet.</td>
+              <td colspan="21" class="text-center text-white-50 py-4">No discovery leads yet.</td>
             </tr>
           {% endfor %}
         </tbody>
@@ -971,10 +997,10 @@
       <div>Page {{ page }} of {{ total_pages }}</div>
       <div class="d-flex gap-2">
         {% if page > 1 %}
-          <a class="btn btn-sm btn-outline-light" href="{{ url_for('video_shorts_bp.admin_discovery_lead_pipeline', tab='leads', page=page-1, per_page=per_page, filter=lead_filter, lead_sort=lead_sort, lead_dir=lead_dir) }}">Previous</a>
+          <a class="btn btn-sm btn-outline-light" href="{{ url_for('video_shorts_bp.admin_discovery_lead_pipeline', tab='leads', page=page-1, per_page=per_page, filter=lead_filter, face_verdict=face_verdict, lead_sort=lead_sort, lead_dir=lead_dir) }}">Previous</a>
         {% endif %}
         {% if page < total_pages %}
-          <a class="btn btn-sm btn-outline-light" href="{{ url_for('video_shorts_bp.admin_discovery_lead_pipeline', tab='leads', page=page+1, per_page=per_page, filter=lead_filter, lead_sort=lead_sort, lead_dir=lead_dir) }}">Next</a>
+          <a class="btn btn-sm btn-outline-light" href="{{ url_for('video_shorts_bp.admin_discovery_lead_pipeline', tab='leads', page=page+1, per_page=per_page, filter=lead_filter, face_verdict=face_verdict, lead_sort=lead_sort, lead_dir=lead_dir) }}">Next</a>
         {% endif %}
       </div>
     </div>

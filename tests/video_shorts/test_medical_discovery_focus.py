@@ -13,6 +13,19 @@ def test_clinician_credentials_detected_without_making_it_an_icp_gate():
     assert _has_clinical_credential("Healthy Living", "General wellness education") is False
 
 
+def test_clinician_matcher_avoids_short_token_and_doctor_false_positives():
+    for text in ("how to do it", "Part 2", "learn", "Doctor Who"):
+        assert _has_clinical_credential(text) is False
+
+
+def test_clinician_matcher_accepts_case_sensitive_credentials_and_dr_title():
+    assert _has_clinical_credential("Jane Smith, MD") is True
+    assert _has_clinical_credential("Dr. Shelley Meyer") is True
+    assert _has_clinical_credential("Mark Lee DPT") is True
+    assert _has_clinical_credential("Things I do") is False
+    assert _has_clinical_credential("part two pt") is False
+
+
 def test_medical_hard_filter_rejects_off_focus_blocked_and_long_queries():
     app = Flask(__name__)
     with app.app_context():

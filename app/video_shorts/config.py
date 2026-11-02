@@ -709,6 +709,7 @@ MAX_CLIP_LEN = int(os.getenv("MAX_CLIP_LEN", "120"))  # safety cap for per-clip 
 SHORT_MIN_LEN = float(os.getenv("SHORT_MIN_LEN", "40"))
 SHORT_MAX_LEN = float(os.getenv("SHORT_MAX_LEN", str(MAX_CLIP_LEN)))
 OPENAI_MODEL = os.getenv("OPENAI_MODEL_GPT", "gpt-4.1-mini")
+FACE_CHECK_ENFORCE = _env_bool("FACE_CHECK_ENFORCE", False)
 CLIP_PLANNER_V10_MODEL = os.getenv("CLIP_PLANNER_V10_MODEL", "gpt-4.1")
 TITLE_MODEL = os.getenv("OPENAI_TITLE_MODEL", "gpt-4.1")
 TITLE_CHECK_MODEL = os.getenv("OPENAI_TITLE_CHECK_MODEL", "gpt-4.1")
