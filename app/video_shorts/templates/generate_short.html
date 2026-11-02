@@ -7291,7 +7291,7 @@
                       </span>
                       <span class="clip-rail-status{% if generate_v2 and row.render_job_status in ['queued', 'processing', 'running'] %} is-active{% else %} d-none{% endif %} text-white-50" aria-live="polite">
                         <span class="spinner-border spinner-border-sm{% if not (generate_v2 and row.render_job_status in ['queued', 'processing', 'running']) %} d-none{% endif %}" role="status" aria-hidden="true"></span>
-                        <span class="clip-rail-status-text">{% if generate_v2 and row.render_job_status in ['queued', 'processing', 'running'] %}{% if row.status == 'created' %}Updating...{% else %}Rendering...{% endif %}{% endif %}</span>
+                        <span class="clip-rail-status-text">{% if generate_v2 and row.render_job_status in ['queued', 'processing', 'running'] %}{% if row.status == 'created' %}Generating{% else %}Rendering...{% endif %}{% endif %}</span>
                       </span>
                       {% if generate_v2 and row.render_job_status in ['failed', 'error', 'cancelled', 'canceled'] %}
                         <span class="clip-rail-state-chip is-failed">
@@ -7669,7 +7669,7 @@
 	                    {% if generate_v2 %}
 	                      <div class="generate-v2-render-overlay{% if row.render_job_status not in ['queued', 'processing', 'running'] %} d-none{% endif %}" aria-live="polite">
 	                        <span class="spinner-border spinner-border-sm" role="status" aria-hidden="true"></span>
-	                        <span class="generate-v2-render-overlay-label">{% if row.render_job_status in ['queued', 'processing', 'running'] %}Updating clip…{% else %}Update failed{% endif %}</span>
+	                        <span class="generate-v2-render-overlay-label">{% if row.render_job_status in ['queued', 'processing', 'running'] %}Generating{% else %}Update failed{% endif %}</span>
 	                        <button type="button" class="btn btn-sm btn-outline-light generate-v2-render-retry d-none">Retry</button>
 	                      </div>
                       <div class="generate-v2-schedule-row"></div>
@@ -16341,7 +16341,7 @@ const setGenerateV2RenderOverlay = (planIndex, { active = false, failed = false,
   spinner?.classList.toggle("d-none", !!failed || !!success);
   retry?.classList.toggle("d-none", !failed);
   if (label) {
-    label.textContent = success ? "Video ready" : (failed ? "Update failed" : "Updating clip…");
+    label.textContent = success ? "Video ready" : (failed ? "Update failed" : "Generating");
   }
   if (video) {
     video.controls = !active;
@@ -16440,7 +16440,7 @@ const renderClipJobProgressState = (card, status, queuePosition, { mode = "" } =
   }
   const isRegenerate = mode === "regenerate" || Boolean(card?.querySelector("video"));
   setClipFeedbackState(card, {
-    message: isRegenerate ? "Updating…" : "Rendering…",
+    message: isRegenerate ? "Generating" : "Rendering…",
     tone: "text-white",
     busy: true,
   });
@@ -16946,7 +16946,7 @@ const setRegenerateFeedback = (planIndex, message, busy = false) => {
     }
     const label = button.querySelector("span:not(.spinner-border)");
     if (label) {
-      label.textContent = busy ? "Updating…" : "Regenerate";
+      label.textContent = busy ? "Generating" : "Regenerate";
     }
   }
   setGenerateV2RenderOverlay(planIndex, { active: busy, failed: false });
@@ -16961,7 +16961,7 @@ const enqueueRegenerateClip = async (card, options = {}) => {
   if (!planIndex || !regenerateUrl) {
     return false;
   }
-  setRegenerateFeedback(planIndex, "Updating...", true);
+  setRegenerateFeedback(planIndex, "Generating", true);
   const response = await fetch(regenerateUrl, {
     method: "POST",
     credentials: "same-origin",
