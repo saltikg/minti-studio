@@ -72,6 +72,9 @@ def _static_asset_scope(conn, current_user):
         "admin_operation_brand": scope["brand_id"],
         "admin_operation_kind": scope["workspace_kind"],
     }
+    video_pk = str(request.args.get("video_pk") or "").strip()
+    if video_pk:
+        query["video_pk"] = video_pk
     return scope["owner_user_id"], scope["brand_id"], query
 
 
@@ -811,7 +814,15 @@ def podcast_audios_page():
     current_user = getattr(g, "vs_current_user", None)
     if not current_user:
         return redirect(url_for("video_shorts_bp.login", next=request.url))
-    return render_template("shorts_podcast_audios.html")
+    scope_query = {
+        key: str(request.args.get(key) or "").strip()
+        for key in ("admin_operation_brand", "admin_operation_kind", "video_pk")
+        if str(request.args.get(key) or "").strip()
+    }
+    return render_template(
+        "shorts_podcast_audios.html",
+        media_scope_suffix=("?" + urlencode(scope_query)) if scope_query else "",
+    )
 
 
 @video_shorts_bp.route("/settings/static-images/<image_id>/category", methods=["POST"])

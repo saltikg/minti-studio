@@ -2518,8 +2518,9 @@ def list_podcast_audios():
     current_user = getattr(g, "vs_current_user", None)
     if not current_user:
         return jsonify({"error": "auth required"}), 401
-    user_id = current_user.get("id")
-    brand_id = current_brand_id()
+    editor_context = _active_editor_context()
+    user_id = editor_context["owner_user_id"]
+    brand_id = editor_context["brand_id"]
     storage = get_media_storage()
     local_entries = _merge_storage_entries(
         get_media_storage("local").list_prefix(_user_media_storage_key("podcast", user_id, "")),
@@ -2624,7 +2625,7 @@ def list_podcast_short_clips():
     current_user = getattr(g, "vs_current_user", None)
     if not current_user:
         return jsonify({"error": "auth required"}), 401
-    user_id = current_user.get("id")
+    user_id = _active_editor_context()["owner_user_id"]
     clips = _list_user_podcast_short_clip_options(user_id)
     return jsonify({"clips": clips})
 
@@ -2756,8 +2757,9 @@ def upload_podcast_audio():
     if ext not in _ALLOWED_STATIC_AUDIO_EXTS:
         return jsonify({"error": "unsupported audio format"}), 400
 
-    user_id = current_user.get("id")
-    brand_id = current_brand_id()
+    editor_context = _active_editor_context()
+    user_id = editor_context["owner_user_id"]
+    brand_id = editor_context["brand_id"]
     storage = get_media_storage()
     data = upload.read()
     size_bytes = len(data)
@@ -2877,8 +2879,9 @@ def delete_podcast_audio(audio_id: str):
     current_user = getattr(g, "vs_current_user", None)
     if not current_user:
         return jsonify({"error": "auth required"}), 401
-    user_id = current_user.get("id")
-    brand_id = current_brand_id()
+    editor_context = _active_editor_context()
+    user_id = editor_context["owner_user_id"]
+    brand_id = editor_context["brand_id"]
     safe_name = Path(audio_id or "").name
     if not safe_name or safe_name != (audio_id or ""):
         return jsonify({"error": "audio not found"}), 404
@@ -11524,15 +11527,27 @@ def _activate_admin_operation_editor_context() -> None:
     if not requested_brand_id or not requested_workspace_kind:
         _deny("incomplete_request_context")
     route_rule = str(getattr(request.url_rule, "rule", "") or "")
-    static_audio_endpoint = request.endpoint in {
+    scoped_media_endpoint = request.endpoint in {
         "video_shorts_bp.list_static_audios",
         "video_shorts_bp.upload_static_audio",
         "video_shorts_bp.rename_static_audio",
         "video_shorts_bp.delete_static_audio",
+        "video_shorts_bp.list_podcast_audios",
+        "video_shorts_bp.upload_podcast_audio",
+        "video_shorts_bp.delete_podcast_audio",
+        "video_shorts_bp.list_podcast_short_clips",
+        "video_shorts_bp.podcast_audios_page",
+        "video_shorts_bp.static_images_page",
+        "video_shorts_bp.update_static_image_category",
+        "video_shorts_bp.update_static_image_background",
+        "video_shorts_bp.update_selected_background",
+        "video_shorts_bp.delete_static_image",
     }
-    if not static_audio_endpoint and not route_rule.startswith(ADMIN_OPERATION_EDITOR_ROUTE_PREFIX) and request.endpoint != "video_shorts_bp.upload_clip_to_youtube":
+    if request.endpoint == "video_shorts_bp.legacy_save_short_editor_defaults":
+        abort(403)
+    if not scoped_media_endpoint and not route_rule.startswith(ADMIN_OPERATION_EDITOR_ROUTE_PREFIX) and request.endpoint != "video_shorts_bp.upload_clip_to_youtube":
         _deny("route_not_allowed")
-    video_pk = request.args.get("video_pk") if static_audio_endpoint else (request.view_args or {}).get("video_pk") or request.form.get("video_pk")
+    video_pk = request.args.get("video_pk") if scoped_media_endpoint else (request.view_args or {}).get("video_pk") or request.form.get("video_pk")
     try:
         video_pk = int(video_pk)
     except (TypeError, ValueError):
@@ -11564,12 +11579,15 @@ def _activate_admin_operation_editor_context() -> None:
     finally:
         conn.close()
     if not target_row:
-        _deny(
-            "target_video_owner_brand_mismatch",
-            video_pk=video_pk,
-            target_owner_id=scope["owner_user_id"],
-            target_brand_id=scope["brand_id"],
+        current_app.logger.warning(
+            "admin_operation_resolver_denied branch=target_video_owner_brand_mismatch "
+            "video_pk=%s route=%s target_owner_id=%s target_brand_id=%s",
+            video_pk,
+            request.endpoint,
+            scope["owner_user_id"],
+            scope["brand_id"],
         )
+        abort(403)
     set_request_admin_operation_scope(scope)
 
 
@@ -11698,21 +11716,70 @@ def _active_editor_context() -> Dict[str, Any]:
     """Return the only owner/brand pair editor code may use for this request."""
     operation_scope = request_admin_operation_scope()
     if operation_scope:
-        return {
+        context = {
             "owner_user_id": operation_scope["owner_user_id"],
             "brand_id": operation_scope["brand_id"],
             "workspace_kind": operation_scope["workspace_kind"],
             "is_admin_operation": True,
             "acting_admin_id": operation_scope["acting_admin_id"],
         }
-    current_user = getattr(g, "vs_current_user", None) or {}
-    return {
-        "owner_user_id": current_user.get("id"),
-        "brand_id": current_brand_id(),
-        "workspace_kind": "",
-        "is_admin_operation": False,
-        "acting_admin_id": "",
-    }
+    else:
+        current_user = getattr(g, "vs_current_user", None) or {}
+        context = {
+            "owner_user_id": current_user.get("id"),
+            "brand_id": current_brand_id(),
+            "workspace_kind": "",
+            "is_admin_operation": False,
+            "acting_admin_id": "",
+        }
+
+    # Every request carrying a video target must fail closed if its resolved
+    # tenant differs from the video's persisted tenant. This also catches an
+    # admin editor URL that accidentally drops its per-request scope markers.
+    target_video_pk = (
+        (request.view_args or {}).get("video_pk")
+        or request.args.get("video_pk")
+        or request.form.get("video_pk")
+    )
+    try:
+        target_video_pk = int(target_video_pk) if target_video_pk is not None else None
+    except (TypeError, ValueError):
+        target_video_pk = None
+    if target_video_pk is not None:
+        owner_user_id = str(context.get("owner_user_id") or "").strip()
+        brand_id = str(context.get("brand_id") or "").strip() or None
+        validation_key = (target_video_pk, owner_user_id, brand_id)
+        if getattr(g, "vs_editor_scope_validation_key", None) != validation_key:
+            conn = get_db_readonly()
+            try:
+                target = conn.execute(
+                    """
+                    SELECT CAST(owner_user_id AS VARCHAR), CAST(brand_id AS VARCHAR)
+                    FROM youtube_videos
+                    WHERE id = ? AND deleted_at IS NULL
+                    LIMIT 1
+                    """,
+                    [target_video_pk],
+                ).fetchone()
+            finally:
+                conn.close()
+            if target:
+                target_owner = str(target[0] or "").strip()
+                target_brand = str(target[1] or "").strip() or None
+                if target_owner != owner_user_id or target_brand != brand_id:
+                    current_app.logger.warning(
+                        "editor_scope_mismatch video_pk=%s target_owner=%s target_brand=%s "
+                        "resolved_owner=%s resolved_brand=%s admin_operation=%s",
+                        target_video_pk,
+                        target_owner,
+                        target_brand,
+                        owner_user_id,
+                        brand_id,
+                        bool(context.get("is_admin_operation")),
+                    )
+                    abort(403)
+            g.vs_editor_scope_validation_key = validation_key
+    return context
 
 
 def _editor_url(endpoint: str, *, video_pk: Any, **values: Any) -> str:
@@ -15201,6 +15268,7 @@ def generate_short(video_pk):
             **({
                 "admin_operation_brand": editor_context["brand_id"],
                 "admin_operation_kind": editor_context["workspace_kind"],
+                "video_pk": video_pk,
             } if editor_context["is_admin_operation"] else {}),
         ),
         clip_coachmark_preference_url=url_for("video_shorts_bp.update_clip_coachmark_preference"),
@@ -16752,35 +16820,61 @@ def update_clip_coachmark_preference():
 
 
 @video_shorts_bp.route("/shorts/settings/save-default", methods=["POST"])
-def save_short_editor_defaults():
+def legacy_save_short_editor_defaults():
+    """Fail closed: editor defaults must always be saved through a video tenant."""
+    abort(403)
+
+
+@video_shorts_bp.route("/generate/<int:video_pk>/settings/save-default", methods=["POST"])
+def save_short_editor_defaults(video_pk: int):
     current_user = getattr(g, "vs_current_user", None)
     current_user_id = str((current_user or {}).get("id") or "").strip()
     if not current_user_id:
         return jsonify({"success": False, "message": "Authentication required."}), 401
     editor_context = _active_editor_context()
     owner_user_id = str(editor_context.get("owner_user_id") or "").strip()
+    brand_id = str(editor_context.get("brand_id") or "").strip() or None
     if not owner_user_id:
         current_app.logger.warning("Cannot save short editor defaults without an editor owner.")
         return jsonify({"success": False, "message": "No editor owner found."}), 400
+    conn = get_db_readonly()
+    try:
+        video_tenant = conn.execute(
+            """
+            SELECT CAST(owner_user_id AS VARCHAR), CAST(brand_id AS VARCHAR)
+            FROM youtube_videos
+            WHERE id = ? AND deleted_at IS NULL
+            LIMIT 1
+            """,
+            [video_pk],
+        ).fetchone()
+    finally:
+        conn.close()
+    if not video_tenant:
+        return jsonify({"success": False, "message": "Video not found."}), 404
+    video_owner_id = str(video_tenant[0] or "").strip()
+    video_brand_id = str(video_tenant[1] or "").strip() or None
+    if video_owner_id != owner_user_id or video_brand_id != brand_id:
+        abort(403)
     source = request.get_json(silent=True) if request.is_json else request.form
     source = source or {}
     try:
         payload = _clean_short_editor_default_payload(source)
-        stored_defaults = _load_short_editor_defaults_json(owner_user_id, editor_context.get("brand_id"))
+        stored_defaults = _load_short_editor_defaults_json(video_owner_id, video_brand_id)
         stored_export_resolution = str(stored_defaults.get("export_resolution") or "").strip()
         # Preserve the legacy JSON field without using it to decide render resolution.
         if stored_export_resolution in {"720", "1080"}:
             payload["export_resolution"] = stored_export_resolution
         invalid_assets = _invalid_overlay_image_asset_ids(
             payload.get("overlay_shapes") or [],
-            owner_user_id=owner_user_id,
-            brand_id=editor_context.get("brand_id"),
+            owner_user_id=video_owner_id,
+            brand_id=video_brand_id,
         )
         if invalid_assets:
             return jsonify({"success": False, "message": "One or more overlay images are unavailable."}), 422
         save_user_preference(
-            owner_user_id,
-            _short_editor_defaults_preference_key(editor_context.get("brand_id")),
+            video_owner_id,
+            _short_editor_defaults_preference_key(video_brand_id),
             json.dumps(payload, ensure_ascii=False, sort_keys=True),
         )
     except Exception as exc:

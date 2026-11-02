@@ -1268,6 +1268,7 @@ def test_admin_customer_delete_rejects_video_outside_target_brand(monkeypatch, t
             "acting_admin_id": admin_id,
         },
     )
+    monkeypatch.setattr(generation, "current_brand_id", lambda: hoca_brand_id)
     shared_delete_called = False
 
     def _unexpected_shared_delete(**kwargs):
@@ -1289,6 +1290,129 @@ def test_admin_customer_delete_rejects_video_outside_target_brand(monkeypatch, t
             handler(brand_id, foreign_video_pk)
 
     assert shared_delete_called is False
+
+
+def test_admin_save_editor_default_is_video_tenant_scoped(monkeypatch, tmp_path):
+    _configure_duckdb(monkeypatch, tmp_path, "admin_save_editor_default_scope.duckdb")
+    admin_id = "f97df4cb-93de-4761-9c39-62d303261b0a"
+    owner_id = "4bd7e797-2c79-4882-9185-4dcfec47c31e"
+    brand_id = "3dab32b8-a17a-4b96-a027-e49774813247"
+    hoca_brand_id = "63f772f8-2d31-4416-9239-c546949bfa98"
+    other_owner_id = str(uuid4())
+    other_brand_id = str(uuid4())
+    video_pk = 7902
+    other_video_pk = 7923
+    shelley_asset_id = "83bf4222-a5e4-46cf-8684-d1fe6fa884e5"
+    hoca_asset_id = str(uuid4())
+
+    _insert_user(admin_id, "plan_10gb")
+    _insert_user(owner_id, "plan_10gb")
+    _insert_user(other_owner_id, "plan_10gb")
+    _insert_video(video_pk, "shelley-video", owner_id, brand_id=brand_id)
+    _insert_video(other_video_pk, "other-video", other_owner_id, brand_id=other_brand_id)
+
+    conn = db_service.get_db()
+    try:
+        db_service.ensure_auth_user_schema(conn)
+        conn.execute("UPDATE shorts_users SET role = 'admin' WHERE id = ?", [admin_id])
+        if "deleted_at" not in db_service.table_columns(conn, "youtube_videos"):
+            conn.execute("ALTER TABLE youtube_videos ADD COLUMN deleted_at TIMESTAMP")
+        db_service.ensure_static_images_schema(conn)
+        db_service.ensure_user_preferences_schema(conn)
+        conn.execute(
+            """
+            INSERT INTO shorts_static_images
+              (id, user_id, brand_id, asset_kind, filename, is_active, updated_at)
+            VALUES (?, ?, ?, 'overlay', ?, true, now()),
+                   (?, ?, ?, 'overlay', ?, true, now())
+            """,
+            [
+                shelley_asset_id,
+                owner_id,
+                brand_id,
+                f"overlay_{shelley_asset_id}.png",
+                hoca_asset_id,
+                admin_id,
+                hoca_brand_id,
+                f"overlay_{hoca_asset_id}.png",
+            ],
+        )
+        conn.commit()
+    finally:
+        conn.close()
+
+    monkeypatch.setattr(
+        generation,
+        "resolve_admin_operation_request_scope",
+        lambda *args, **kwargs: {
+            "owner_user_id": owner_id,
+            "brand_id": brand_id,
+            "workspace_kind": "customer",
+            "acting_admin_id": admin_id,
+        },
+    )
+
+    app = create_app()
+    app.secret_key = "test-secret"
+    client = app.test_client()
+    with client.session_transaction() as session:
+        session["vs_user_id"] = admin_id
+
+    scope_query = f"admin_operation_brand={brand_id}&admin_operation_kind=customer"
+    save_url = f"/video_shorts/generate/{video_pk}/settings/save-default?{scope_query}"
+    valid_shapes = json.dumps(
+        [{"id": "shelley-logo", "type": "image", "asset_id": shelley_asset_id, "x": 0, "y": 0, "w": 100, "h": 100}]
+    )
+    response = client.post(save_url, data={"font": "montserrat_black", "overlay_shapes": valid_shapes})
+    assert response.status_code == 200
+
+    conn = db_service.get_db_readonly()
+    try:
+        stored = conn.execute(
+            """
+            SELECT preference_value FROM shorts_user_preferences
+            WHERE user_id = ? AND preference_key = ?
+            """,
+            [owner_id, f"short_editor_defaults:{brand_id}"],
+        ).fetchone()
+        admin_rows = conn.execute(
+            """
+            SELECT COUNT(*) FROM shorts_user_preferences
+            WHERE user_id = ? AND preference_key LIKE 'short_editor_defaults%'
+            """,
+            [admin_id],
+        ).fetchone()[0]
+    finally:
+        conn.close()
+    assert shelley_asset_id in json.loads(stored[0])["overlay_shapes"][0]["asset_id"]
+    assert admin_rows == 0
+
+    foreign_shapes = json.dumps(
+        [{"id": "hoca-logo", "type": "image", "asset_id": hoca_asset_id, "x": 0, "y": 0, "w": 100, "h": 100}]
+    )
+    foreign_asset_response = client.post(
+        save_url,
+        data={"font": "montserrat_black", "overlay_shapes": foreign_shapes},
+    )
+    assert foreign_asset_response.status_code == 422
+
+    wrong_video_response = client.post(
+        f"/video_shorts/generate/{other_video_pk}/settings/save-default?{scope_query}",
+        data={"font": "montserrat_black", "overlay_shapes": "[]"},
+    )
+    assert wrong_video_response.status_code == 403
+
+    old_route_response = client.post(
+        f"/video_shorts/shorts/settings/save-default?{scope_query}&video_pk={video_pk}",
+        data={"font": "montserrat_black", "overlay_shapes": valid_shapes},
+    )
+    assert old_route_response.status_code == 403
+
+    dropped_scope_response = client.post(
+        f"/video_shorts/generate/{video_pk}/settings/save-default",
+        data={"font": "montserrat_black", "overlay_shapes": valid_shapes},
+    )
+    assert dropped_scope_response.status_code == 403
 
 
 def test_admin_customer_delete_uses_shared_target_owned_flow(monkeypatch):

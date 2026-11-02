@@ -108,7 +108,12 @@ document.addEventListener("DOMContentLoaded", () => {
     list: document.getElementById("pa-list"),
     empty: document.getElementById("pa-empty"),
   };
-  const API_URL = "{{ url_for('video_shorts_bp.list_podcast_audios') }}";
+  const API_URL = "{{ url_for('video_shorts_bp.list_podcast_audios') }}{{ media_scope_suffix }}";
+  const audioItemUrl = (audioId) => {
+    const url = new URL(API_URL, window.location.origin);
+    url.pathname = `${url.pathname.replace(/\/$/, "")}/${encodeURIComponent(audioId)}`;
+    return url.toString();
+  };
   let audios = [];
 
   const esc = (s) => String(s || "")
@@ -190,7 +195,7 @@ document.addEventListener("DOMContentLoaded", () => {
         btn.disabled = true;
         setStatus("Deleting audio...");
         try {
-          const res = await fetch(`${API_URL}/${encodeURIComponent(id)}`, {
+          const res = await fetch(audioItemUrl(id), {
             method: "DELETE",
             credentials: "same-origin",
           });

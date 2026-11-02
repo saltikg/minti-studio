@@ -8668,12 +8668,12 @@
             <div class="short-video-settings">
               <div class="short-video-body"
                data-save-url="{{ editor_url('save_short_settings', video_pk=video.id) }}"
-               data-default-save-url="{{ url_for('video_shorts_bp.save_short_editor_defaults') }}"
-               data-static-audios-url="{{ url_for('video_shorts_bp.list_podcast_audios') }}"
+               data-default-save-url="{{ editor_url('save_short_editor_defaults', video_pk=video.id) }}"
+               data-static-audios-url="{{ url_for('video_shorts_bp.list_podcast_audios') }}{{ static_audio_scope_query }}"
                data-selected-podcast-audio="{{ selected_podcast_audio_filename or '' }}"
                data-selected-visual-mode="{{ selected_visual_mode or 'video' }}"
                data-subtitle-margin-custom="{{ '1' if selected_sub_margin_custom else '0' }}"
-               data-podcast-short-clips-url="{{ url_for('video_shorts_bp.list_podcast_short_clips') }}"
+               data-podcast-short-clips-url="{{ url_for('video_shorts_bp.list_podcast_short_clips') }}{{ static_audio_scope_query }}"
                data-selected-podcast-short-ids='{{ (selected_podcast_overlay_short_ids or [])|tojson|safe }}'>
                 <div class="crop-modal-tab-panels">
                   <div class="crop-modal-tab-panel crop-modal-settings-panel crop-modal-layout-panel" data-crop-modal-panel="layout" hidden>
@@ -8804,7 +8804,7 @@
                             <option value="">No podcast audio</option>
                           </select>
                           <input type="hidden" name="podcast_audio_filename" id="podcastAudioFilename" value="{{ selected_podcast_audio_filename or '' }}">
-                          <span class="small text-muted">Manage: <a href="{{ url_for('video_shorts_bp.podcast_audios_page') }}" target="_blank" rel="noopener">Podcast Audio</a></span>
+                          <span class="small text-muted">Manage: <a href="{{ url_for('video_shorts_bp.podcast_audios_page') }}{{ static_audio_scope_query }}" target="_blank" rel="noopener">Podcast Audio</a></span>
                         </div>
                         <audio id="podcast-audio-preview" controls preload="none" class="w-100 d-none mt-2" style="max-height: 34px;"></audio>
                         <div id="podcast-audio-status" class="small text-muted mt-1"></div>
@@ -13199,7 +13199,7 @@ const postPendingYoutubeNow = async ({ filename, planIndex, videoPk, title, desc
     body.set("description", description || "");
     body.set("youtube_enabled", "1");
     body.set("publish_now", "1");
-    const response = await fetch("{{ url_for('video_shorts_bp.upload_clip_to_youtube') }}", {
+    const response = await fetch("{{ editor_url('upload_clip_to_youtube', video_pk=video.id) }}", {
       method: "POST",
       credentials: "same-origin",
       headers: {
@@ -17888,7 +17888,7 @@ const markClipAsScheduled = (clip, publishAt, options = {}) => {
 
 const scheduleOneClipToConnectedPlatforms = async (clip, publishAt) => {
   const uploadForm = document.getElementById("youtube-upload-form");
-  const uploadUrl = uploadForm?.getAttribute("action") || "{{ url_for('video_shorts_bp.upload_clip_to_youtube') }}";
+  const uploadUrl = uploadForm?.getAttribute("action") || "{{ editor_url('upload_clip_to_youtube', video_pk=video.id) }}";
   const body = new URLSearchParams();
   body.set("filename", clip.filename);
   body.set("plan_index", clip.planIndex);
@@ -18449,7 +18449,7 @@ const youtubeModalContext = (() => {
   const landscapeScheduleNote = document.getElementById("landscape-schedule-note");
   const defaultSubmitLabel = "Schedule & publish";
   const queueOnlyLabel = "Queue only";
-  const defaultUploadUrl = form.getAttribute("action") || "{{ url_for('video_shorts_bp.upload_clip_to_youtube') }}";
+  const defaultUploadUrl = form.getAttribute("action") || "{{ editor_url('upload_clip_to_youtube', video_pk=video.id) }}";
   const timeZoneUpdateUrl = {{ timezone_update_url | tojson }};
   let userTimeZone = {{ (user_time_zone or "America/Los_Angeles") | tojson }};
   const timezoneLabels = {{ timezone_label_map | tojson }};
@@ -19909,6 +19909,11 @@ document.addEventListener("DOMContentLoaded", () => {
   const subtitlePresetCards = queryEditorFields("[data-subtitle-preset-card]");
   const staticAudiosUrl = settingsContainer?.dataset.staticAudiosUrl || "";
   const podcastShortClipsUrl = settingsContainer?.dataset.podcastShortClipsUrl || "";
+  const podcastAudioItemUrl = (audioId) => {
+    const url = new URL(staticAudiosUrl, window.location.origin);
+    url.pathname = `${url.pathname.replace(/\/$/, "")}/${encodeURIComponent(audioId)}`;
+    return url.toString();
+  };
   const initialSelectedVisualMode = (settingsContainer?.dataset.selectedVisualMode || "video").toLowerCase();
   const titleFontSizeInput = getEditorField("title_font_size");
   const subtitleFontSizeInput = getEditorField("sub_font_size");
@@ -20170,7 +20175,7 @@ document.addEventListener("DOMContentLoaded", () => {
     if (podcastAudioDeleteBtn) podcastAudioDeleteBtn.disabled = true;
     setPodcastAudioStatus("Deleting audio...");
     try {
-      const response = await fetch(`${staticAudiosUrl}/${encodeURIComponent(selected)}`, {
+      const response = await fetch(podcastAudioItemUrl(selected), {
         method: "DELETE",
         credentials: "same-origin",
       });
