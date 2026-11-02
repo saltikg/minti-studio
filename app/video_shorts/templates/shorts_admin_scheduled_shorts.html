@@ -1,0 +1,315 @@
+{% extends "vs_admin_base.html" %}
+
+{% block title %}Scheduled Shorts{% endblock %}
+{% block admin_heading %}Scheduled Shorts{% endblock %}
+{% block admin_subheading %}
+  <p>Upcoming and recently published Shorts across YouTube, Instagram, and Facebook.</p>
+{% endblock %}
+
+{% block extra_styles %}
+  <style>
+    .scheduled-counters {
+      display: grid;
+      grid-template-columns: repeat(3, minmax(140px, 1fr));
+      gap: 12px;
+      margin-bottom: 18px;
+    }
+    .scheduled-counter {
+      padding: 16px 18px;
+      border: 1px solid rgba(255, 255, 255, 0.08);
+      border-radius: 14px;
+      background: rgba(255, 255, 255, 0.035);
+    }
+    .scheduled-counter-label {
+      color: rgba(255, 255, 255, 0.52);
+      font-size: 0.72rem;
+      font-weight: 700;
+      letter-spacing: 0.1em;
+      text-transform: uppercase;
+    }
+    .scheduled-counter-value {
+      margin-top: 4px;
+      font-size: 1.65rem;
+      font-weight: 700;
+    }
+    .scheduled-counter.is-problem .scheduled-counter-value { color: #fca5a5; }
+    .scheduled-filters {
+      display: grid;
+      grid-template-columns: minmax(180px, 1fr) minmax(160px, 220px) auto auto;
+      gap: 12px;
+      align-items: end;
+      margin-bottom: 18px;
+    }
+    .scheduled-toggle {
+      display: flex;
+      align-items: center;
+      min-height: 38px;
+      gap: 9px;
+      white-space: nowrap;
+    }
+    .scheduled-table-wrap { overflow-x: auto; }
+    .scheduled-table {
+      width: 100%;
+      min-width: 900px;
+      margin: 0;
+      color: rgba(255, 255, 255, 0.92);
+      border-collapse: separate;
+      border-spacing: 0;
+    }
+    .scheduled-table th,
+    .scheduled-table td {
+      padding: 13px 14px;
+      vertical-align: middle;
+      border-bottom: 1px solid rgba(255, 255, 255, 0.08);
+    }
+    .scheduled-table th {
+      color: rgba(255, 255, 255, 0.52);
+      font-size: 0.74rem;
+      font-weight: 700;
+      letter-spacing: 0.09em;
+      text-transform: uppercase;
+      white-space: nowrap;
+    }
+    .scheduled-row[data-href] { cursor: pointer; }
+    .scheduled-row[data-href]:hover { background: rgba(255, 255, 255, 0.045); }
+    .scheduled-row.is-mismatch {
+      background: rgba(239, 68, 68, 0.09);
+      box-shadow: inset 3px 0 0 #ef4444;
+    }
+    .scheduled-row.is-mismatch:hover { background: rgba(239, 68, 68, 0.14); }
+    .scheduled-divider td {
+      padding: 18px 14px 10px;
+      border-bottom-color: rgba(255, 255, 255, 0.14);
+      color: rgba(255, 255, 255, 0.54);
+      font-size: 0.74rem;
+      font-weight: 700;
+      letter-spacing: 0.12em;
+      text-transform: uppercase;
+    }
+    .scheduled-short {
+      display: flex;
+      align-items: center;
+      min-width: 270px;
+      gap: 12px;
+    }
+    .scheduled-thumb {
+      width: 74px;
+      height: 44px;
+      flex: 0 0 74px;
+      overflow: hidden;
+      border: 1px solid rgba(255, 255, 255, 0.1);
+      border-radius: 8px;
+      background: rgba(255, 255, 255, 0.06);
+    }
+    .scheduled-thumb img { width: 100%; height: 100%; object-fit: cover; }
+    .scheduled-thumb-placeholder {
+      display: grid;
+      width: 100%;
+      height: 100%;
+      place-items: center;
+      color: rgba(255, 255, 255, 0.36);
+      font-size: 0.72rem;
+    }
+    .scheduled-title {
+      max-width: 360px;
+      overflow: hidden;
+      font-weight: 600;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+    }
+    .scheduled-channel {
+      display: flex;
+      align-items: center;
+      min-width: 180px;
+      gap: 9px;
+    }
+    .scheduled-platform-icon {
+      display: inline-grid;
+      width: 26px;
+      height: 26px;
+      flex: 0 0 26px;
+      place-items: center;
+      border-radius: 8px;
+      color: white;
+      font-size: 0.72rem;
+      font-weight: 800;
+    }
+    .scheduled-platform-icon.youtube { background: #dc2626; }
+    .scheduled-platform-icon.instagram { background: linear-gradient(135deg, #7c3aed, #ec4899, #f59e0b); }
+    .scheduled-platform-icon.facebook { background: #2563eb; }
+    .scheduled-status,
+    .scheduled-mismatch {
+      display: inline-flex;
+      align-items: center;
+      border-radius: 999px;
+      padding: 5px 9px;
+      font-size: 0.76rem;
+      font-weight: 700;
+      line-height: 1;
+      white-space: nowrap;
+    }
+    .scheduled-status.scheduled { color: #d1d5db; background: rgba(156, 163, 175, 0.14); }
+    .scheduled-status.published { color: #86efac; background: rgba(34, 197, 94, 0.14); }
+    .scheduled-status.blocked,
+    .scheduled-status.failed { color: #fca5a5; background: rgba(239, 68, 68, 0.16); }
+    .scheduled-mismatch {
+      margin-left: 6px;
+      color: #fecaca;
+      background: rgba(239, 68, 68, 0.22);
+      letter-spacing: 0.04em;
+    }
+    .scheduled-live-link { color: #86efac; text-decoration: none; }
+    .scheduled-live-link:hover { color: #bbf7d0; text-decoration: underline; }
+    .scheduled-empty {
+      padding: 28px !important;
+      color: rgba(255, 255, 255, 0.48);
+      text-align: center;
+    }
+    @media (max-width: 900px) {
+      .scheduled-counters { grid-template-columns: 1fr; }
+      .scheduled-filters { grid-template-columns: 1fr; }
+    }
+  </style>
+{% endblock %}
+
+{% macro platform_icon(platform) -%}
+  <span class="scheduled-platform-icon {{ platform }}" aria-label="{{ platform|title }}">
+    {% if platform == 'youtube' %}▶{% elif platform == 'instagram' %}◎{% else %}f{% endif %}
+  </span>
+{%- endmacro %}
+
+{% macro schedule_row(item) -%}
+  <tr
+    class="scheduled-row{% if item.is_mismatch %} is-mismatch{% endif %}"
+    {% if item.editor_url %}data-href="{{ item.editor_url }}" tabindex="0"{% endif %}>
+    <td>{{ item.publish_time_label }}</td>
+    <td>
+      <div class="scheduled-short">
+        <div class="scheduled-thumb">
+          {% if item.thumbnail_url %}
+            <img src="{{ item.thumbnail_url }}" alt="" loading="lazy">
+          {% else %}
+            <span class="scheduled-thumb-placeholder">SHORT</span>
+          {% endif %}
+        </div>
+        <div class="scheduled-title" title="{{ item.short_title }}">{{ item.short_title }}</div>
+      </div>
+    </td>
+    <td>{{ item.brand_name }}</td>
+    <td>
+      <div class="scheduled-channel">
+        {{ platform_icon(item.platform) }}
+        <div>
+          <div>{{ item.channel_name }}</div>
+          <div class="small text-white-50">{{ item.platform_label }}</div>
+        </div>
+      </div>
+    </td>
+    <td>
+      {% if item.status_key == 'published' and item.live_url %}
+        <a class="scheduled-status published scheduled-live-link" href="{{ item.live_url }}" target="_blank" rel="noopener" data-no-row-nav>{{ item.status_label }}</a>
+      {% else %}
+        <span class="scheduled-status {{ item.status_key }}">{{ item.status_label }}</span>
+      {% endif %}
+      {% if item.is_mismatch %}
+        <span class="scheduled-mismatch" title="Expected {{ item.expected_target_id or 'missing' }}; current {{ item.current_target_id or 'missing' }}">MISMATCH</span>
+      {% endif %}
+    </td>
+  </tr>
+{%- endmacro %}
+
+{% block content %}
+  <div class="scheduled-counters">
+    <div class="scheduled-counter">
+      <div class="scheduled-counter-label">Upcoming</div>
+      <div class="scheduled-counter-value">{{ upcoming_count }}</div>
+    </div>
+    <div class="scheduled-counter">
+      <div class="scheduled-counter-label">Published (7d)</div>
+      <div class="scheduled-counter-value">{{ published_count }}</div>
+    </div>
+    <div class="scheduled-counter is-problem">
+      <div class="scheduled-counter-label">Problems</div>
+      <div class="scheduled-counter-value">{{ problem_count }}</div>
+    </div>
+  </div>
+
+  <section class="vs-admin-card p-3 p-lg-4">
+    <form method="get" class="scheduled-filters" id="scheduled-short-filters">
+      <div>
+        <label class="form-label" for="scheduled-brand">Brand</label>
+        <select class="form-select" id="scheduled-brand" name="brand">
+          <option value="">All visible brands</option>
+          {% for option in brand_options %}
+            <option value="{{ option.id }}" {% if option.id == brand_id %}selected{% endif %}>{{ option.name }}</option>
+          {% endfor %}
+        </select>
+      </div>
+      <div>
+        <label class="form-label" for="scheduled-platform">Platform</label>
+        <select class="form-select" id="scheduled-platform" name="platform">
+          <option value="">All platforms</option>
+          <option value="youtube" {% if platform == 'youtube' %}selected{% endif %}>YouTube</option>
+          <option value="instagram" {% if platform == 'instagram' %}selected{% endif %}>Instagram</option>
+          <option value="facebook" {% if platform == 'facebook' %}selected{% endif %}>Facebook</option>
+        </select>
+      </div>
+      <label class="scheduled-toggle">
+        <input class="form-check-input" type="checkbox" name="scope" value="all" {% if include_all_brands %}checked{% endif %} onchange="this.form.submit()">
+        <span>All brands</span>
+      </label>
+      <div class="d-flex gap-2">
+        <button class="btn btn-primary" type="submit">Apply</button>
+        <a class="btn btn-outline-light" href="{{ url_for('video_shorts_bp.admin_scheduled_shorts') }}">Reset</a>
+      </div>
+    </form>
+
+    <div class="scheduled-table-wrap">
+      <table class="scheduled-table">
+        <thead>
+          <tr>
+            <th>Publish time (PT)</th>
+            <th>Short</th>
+            <th>Brand</th>
+            <th>Channel</th>
+            <th>Status</th>
+          </tr>
+        </thead>
+        <tbody>
+          {% for item in upcoming %}
+            {{ schedule_row(item) }}
+          {% else %}
+            {% if not published %}
+              <tr><td colspan="5" class="scheduled-empty">No scheduled Shorts match these filters.</td></tr>
+            {% endif %}
+          {% endfor %}
+
+          {% if published %}
+            <tr class="scheduled-divider"><td colspan="5">Published in the last 7 days</td></tr>
+            {% for item in published %}
+              {{ schedule_row(item) }}
+            {% endfor %}
+          {% endif %}
+        </tbody>
+      </table>
+    </div>
+  </section>
+{% endblock %}
+
+{% block extra_scripts %}
+  <script>
+    document.querySelectorAll('.scheduled-row[data-href]').forEach((row) => {
+      const openRow = () => { window.location.href = row.dataset.href; };
+      row.addEventListener('click', (event) => {
+        if (event.target.closest('a, button, input, select, [data-no-row-nav]')) return;
+        openRow();
+      });
+      row.addEventListener('keydown', (event) => {
+        if (event.key === 'Enter' || event.key === ' ') {
+          event.preventDefault();
+          openRow();
+        }
+      });
+    });
+  </script>
+{% endblock %}

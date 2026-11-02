@@ -284,12 +284,24 @@
               {% endif %}
             </span>
           </a>
+        </div>
+
+        <div class="vs-admin-nav-group">
+          <div class="vs-admin-nav-heading">Autopilot</div>
           <a
             href="{{ url_for('video_shorts_bp.admin_autopilot_leads') }}"
             class="vs-admin-nav-link {% if request.path.startswith('/video_shorts/admin/autopilot-leads') %}is-active{% endif %}">
             <span aria-hidden="true">●</span>
             <span class="vs-admin-nav-label">
               <span>Autopilot customers</span>
+            </span>
+          </a>
+          <a
+            href="{{ url_for('video_shorts_bp.admin_scheduled_shorts') }}"
+            class="vs-admin-nav-link {% if request.path.startswith('/video_shorts/admin/scheduled-shorts') %}is-active{% endif %}">
+            <span aria-hidden="true">●</span>
+            <span class="vs-admin-nav-label">
+              <span>Scheduled Shorts</span>
             </span>
           </a>
         </div>

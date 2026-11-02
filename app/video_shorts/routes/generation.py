@@ -23137,6 +23137,54 @@ def admin_autopilot_leads():
     )
 
 
+@video_shorts_bp.route("/admin/scheduled-shorts", methods=["GET"])
+def admin_scheduled_shorts():
+    """Read-only, cross-platform schedule overview for administrators."""
+    current_user = getattr(g, "vs_current_user", None)
+    if not current_user or str(current_user.get("role") or "").strip().lower() != "admin":
+        abort(403)
+
+    from app.video_shorts.services.admin_scheduled_shorts import (
+        filter_scheduled_shorts,
+        load_scheduled_shorts,
+    )
+
+    include_all_brands = str(request.args.get("scope") or "").strip().lower() == "all"
+    selected_brand_id = str(request.args.get("brand") or "").strip()
+    selected_platform = str(request.args.get("platform") or "").strip().lower()
+    conn = get_db_readonly()
+    try:
+        schedule_items = load_scheduled_shorts(conn)
+    finally:
+        conn.close()
+    page_data = filter_scheduled_shorts(
+        schedule_items,
+        include_all_brands=include_all_brands,
+        brand_id=selected_brand_id,
+        platform=selected_platform,
+    )
+    acting_admin_id = str(current_user.get("id") or "").strip()
+    for item in [*page_data["upcoming"], *page_data["published"]]:
+        video_pk = item.get("video_pk")
+        if not video_pk:
+            item["editor_url"] = ""
+        elif item.get("has_customer_workspace"):
+            item["editor_url"] = url_for(
+                "video_shorts_bp.admin_operation_generate_customer_short",
+                brand_id=item["brand_id"],
+                video_pk=video_pk,
+            )
+        elif item.get("owner_user_id") == acting_admin_id:
+            item["editor_url"] = url_for("video_shorts_bp.generate_short", video_pk=video_pk)
+        else:
+            item["editor_url"] = ""
+    return render_template(
+        "shorts_admin_scheduled_shorts.html",
+        admin_title="Scheduled Shorts",
+        **page_data,
+    )
+
+
 @video_shorts_bp.route("/admin/leads", methods=["GET"])
 @require_admin
 def admin_leads():
