@@ -70,6 +70,9 @@ def enqueue_facebook_clip(
     plan_title: Optional[str],
     media_type: str,
 ) -> str:
+    page_id = str(page_id or "").strip()
+    if not page_id:
+        raise ValueError("Facebook scheduling requires a target Page.")
     scoped_user_id = brand_scoped_user_id(user_id, brand_id=brand_id)
     queue_owner, _, queue_brand = str(scoped_user_id or "").partition("::")
     queue_brand = queue_brand or None

@@ -401,10 +401,16 @@ from app.video_shorts.services.youtube_oauth import (
     fetch_video_statuses,
     youtube_reconciliation_state,
     get_connected_channel_info,
+    get_channel_identity_from_credentials,
     has_refresh_token,
     is_reauth_required,
     resolve_stored_token_owner_brand,
     store_refresh_token,
+)
+from app.video_shorts.services.social_oauth_state import (
+    OAuthStateError,
+    consume_oauth_state,
+    create_oauth_state,
 )
 from app.video_shorts.services.shorts_overview_quota import get_shorts_overview_quota_state
 from app.video_shorts.services.timezones import DEFAULT_TIME_ZONE, TIMEZONE_LABELS, TIMEZONE_OPTIONS
@@ -27356,6 +27362,7 @@ def social_connect():
                     try:
                         store_instagram_token(
                             user_id=current_user["id"],
+                            brand_id=brand_id,
                             page_access_token=instagram_info.get("page_access_token") or "",
                             instagram_business_account_id=instagram_info.get("instagram_business_account_id") or "",
                             instagram_username=fetched_username,
@@ -27500,11 +27507,15 @@ def facebook_connect():
     if not (FB_APP_ID and FB_APP_SECRET and FB_REDIRECT_URI):
         flash("Facebook isn't configured yet. Please finish setup.", "danger")
         return redirect(url_for("video_shorts_bp.social_connect"))
-    state_token = secrets.token_urlsafe(16)
-    session["fb_oauth_state"] = {
-        "nonce": state_token,
-        "user_id": current_user.get("id"),
-    }
+    try:
+        state_token = create_oauth_state(
+            platform="facebook",
+            current_user=current_user,
+            next_url=url_for("video_shorts_bp.social_connect"),
+        )
+    except OAuthStateError as exc:
+        flash(str(exc), "danger")
+        return redirect(url_for("video_shorts_bp.social_connect"))
     auth_url = _facebook_oauth_url(state_token)
     if not auth_url:
         flash("Could not build the Facebook OAuth URL.", "danger")
@@ -27518,6 +27529,17 @@ def facebook_oauth_callback():
     for key, value in request.args.items():
         safe_args[key] = "MASKED" if key == "code" else value
     current_app.logger.info("Facebook OAuth callback args: %s", safe_args)
+    current_user = getattr(g, "vs_current_user", None)
+    if not current_user:
+        flash("Sign in to finish connecting Facebook.", "danger")
+        return redirect(url_for("video_shorts_bp.login", next=request.url))
+    state = request.args.get("state")
+    try:
+        oauth_state = consume_oauth_state(platform="facebook", nonce=state, current_user=current_user)
+    except OAuthStateError:
+        flash("Facebook OAuth verification failed.", "danger")
+        return redirect(url_for("video_shorts_bp.social_connect"))
+    next_url = _safe_oauth_next(oauth_state.get("next_url"), url_for("video_shorts_bp.social_connect"))
     error = request.args.get("error")
     if error:
         error_reason = request.args.get("error_reason")
@@ -27532,24 +27554,10 @@ def facebook_oauth_callback():
         if error_desc:
             message = f"{message} ({error_desc})"
         flash(message, "danger")
-        return redirect(url_for("video_shorts_bp.social_connect"))
+        return redirect(next_url)
 
-    state = request.args.get("state")
-    saved_state = session.pop("fb_oauth_state", None)
-    expected_state = saved_state.get("nonce") if isinstance(saved_state, dict) else None
-    if not expected_state or state != expected_state:
-        current_app.logger.warning(
-            "Facebook OAuth state mismatch: %s vs %s",
-            state,
-            expected_state,
-        )
-        flash("Facebook OAuth verification failed.", "danger")
-        return redirect(url_for("video_shorts_bp.social_connect"))
-    user_id = saved_state.get("user_id") if isinstance(saved_state, dict) else None
-    if not user_id:
-        current_app.logger.warning("Facebook OAuth missing user_id in state payload.")
-        flash("Could not read the Facebook OAuth code.", "danger")
-        return redirect(url_for("video_shorts_bp.social_connect"))
+    user_id = oauth_state["owner_user_id"]
+    brand_id = oauth_state["brand_id"]
 
     code = request.args.get("code")
     if not code:
@@ -27745,6 +27753,7 @@ def facebook_oauth_callback():
 
     store_facebook_page_token(
         user_id=user_id,
+        brand_id=brand_id,
         fb_user_id=fb_user_id,
         page_id=target_page.get("id") or "",
         page_name=target_page.get("name"),
@@ -27753,7 +27762,7 @@ def facebook_oauth_callback():
         scopes=FB_OAUTH_SCOPES,
     )
     track_event(user_id, "channel_connected", platform="facebook")
-    saved = get_facebook_page_data(user_id)
+    saved = get_facebook_page_data(user_id, brand_id=brand_id)
     current_app.logger.info(
         "Facebook OAuth saved db_record_id=%s fb_user_id=%s page_id=%s token_tail=%s updated_at=%s",
         (saved or {}).get("user_id"),
@@ -27763,7 +27772,7 @@ def facebook_oauth_callback():
         (saved or {}).get("updated_at"),
     )
     flash("Facebook Page connected.", "success")
-    return redirect(url_for("video_shorts_bp.social_connect"))
+    return redirect(next_url)
 
 
 @video_shorts_bp.route("/facebook/disconnect", methods=["POST"])
@@ -28050,13 +28059,16 @@ def instagram_authorize():
         )
         return redirect(url_for("video_shorts_bp.social_connect"))
 
-    state_token = secrets.token_urlsafe(16)
     next_url = _safe_oauth_next(request.args.get("next"), url_for("video_shorts_bp.social_connect"))
-    session["ig_oauth_state"] = {
-        "nonce": state_token,
-        "user_id": current_user["id"],
-        "next": next_url,
-    }
+    try:
+        state_token = create_oauth_state(
+            platform="instagram",
+            current_user=current_user,
+            next_url=next_url,
+        )
+    except OAuthStateError as exc:
+        flash(str(exc), "danger")
+        return redirect(next_url)
     auth_url = _instagram_oauth_url(state_token)
     if not auth_url:
         flash("Could not build the Instagram OAuth URL.", "danger")
@@ -28072,6 +28084,17 @@ def instagram_oauth_callback():
     for key, value in request.args.items():
         safe_args[key] = "MASKED" if key == "code" else value
     current_app.logger.info("Instagram OAuth callback args: %s", safe_args)
+    current_user = getattr(g, "vs_current_user", None)
+    if not current_user:
+        flash("Sign in to finish connecting Instagram.", "danger")
+        return redirect(url_for("video_shorts_bp.login", next=request.url))
+    state = request.args.get("state")
+    try:
+        oauth_state = consume_oauth_state(platform="instagram", nonce=state, current_user=current_user)
+    except OAuthStateError:
+        flash("Instagram OAuth verification failed.", "danger")
+        return redirect(url_for("video_shorts_bp.social_connect"))
+    next_url = _safe_oauth_next(oauth_state.get("next_url"), url_for("video_shorts_bp.social_connect"))
     error = request.args.get("error")
     if error:
         current_app.logger.warning(
@@ -28081,20 +28104,9 @@ def instagram_oauth_callback():
             request.args.get("error_description"),
         )
         flash(f"Instagram OAuth error: {error}", "danger")
-        return redirect(url_for("video_shorts_bp.social_connect"))
-
-    state = request.args.get("state")
-    saved_state = session.pop("ig_oauth_state", None)
-    next_url = _safe_oauth_next((saved_state or {}).get("next"), url_for("video_shorts_bp.social_connect"))
-    expected_state = saved_state.get("nonce") if isinstance(saved_state, dict) else None
-    if not expected_state or state != expected_state:
-        current_app.logger.warning("Instagram OAuth state mismatch: %s vs %s", state, expected_state)
-        flash("Instagram OAuth verification failed.", "danger")
         return redirect(next_url)
-    user_id = saved_state.get("user_id") if isinstance(saved_state, dict) else None
-    if not user_id:
-        flash("Could not read the Instagram OAuth code.", "danger")
-        return redirect(next_url)
+    user_id = oauth_state["owner_user_id"]
+    brand_id = oauth_state["brand_id"]
 
     code = request.args.get("code")
     if not code:
@@ -28222,6 +28234,7 @@ def instagram_oauth_callback():
     _log_instagram_permissions(long_token)
     store_instagram_token(
         user_id=user_id,
+        brand_id=brand_id,
         page_access_token=long_token,
         instagram_business_account_id=graph_ig_id,
         instagram_username=instagram_profile.get("username"),
@@ -28246,7 +28259,7 @@ def instagram_oauth_callback():
             graph_ig_id,
             exc,
         )
-    saved = get_instagram_data(user_id)
+    saved = get_instagram_data(user_id, brand_id=brand_id)
     current_app.logger.info(
         "Instagram OAuth saved db_record_id=%s ig_id=%s username=%s account_type=%s token_tail=%s expires_at=%s",
         (saved or {}).get("user_id"),
@@ -28454,17 +28467,24 @@ def youtube_authorize():
         return redirect(url_for("video_shorts_bp.login", next=request.url))
     next_url = _safe_oauth_next(request.args.get("next"), url_for("video_shorts_bp.social_connect"))
     flow = build_oauth_flow()
+    requested_state = secrets.token_urlsafe(32)
     authorization_url, state = flow.authorization_url(
         access_type="offline",
         include_granted_scopes="true",
         prompt="consent",
+        state=requested_state,
     )
-    session["yt_oauth_state"] = {
-        "nonce": state,
-        "user_id": current_user.get("id"),
-        "code_verifier": flow.code_verifier,
-        "next": next_url,
-    }
+    try:
+        create_oauth_state(
+            platform="youtube",
+            current_user=current_user,
+            code_verifier=flow.code_verifier,
+            next_url=next_url,
+            nonce=state,
+        )
+    except OAuthStateError as exc:
+        flash(str(exc), "danger")
+        return redirect(next_url)
     return redirect(authorization_url)
 
 
@@ -28474,19 +28494,20 @@ def youtube_oauth_callback():
     if not current_user:
         flash("Sign in to reconnect YouTube.", "danger")
         return redirect(url_for("video_shorts_bp.login", next=request.url))
+    state = request.args.get("state")
+    try:
+        oauth_state = consume_oauth_state(platform="youtube", nonce=state, current_user=current_user)
+    except OAuthStateError:
+        flash("YouTube OAuth verification failed.", "danger")
+        return redirect(url_for("video_shorts_bp.social_connect"))
+    next_url = _safe_oauth_next(oauth_state.get("next_url"), url_for("video_shorts_bp.social_connect"))
     error = request.args.get("error")
-    saved_state = session.pop("yt_oauth_state", None)
-    next_url = _safe_oauth_next((saved_state or {}).get("next"), url_for("video_shorts_bp.social_connect"))
     if error:
         flash(f"YouTube OAuth error: {error}", "danger")
         return redirect(next_url)
 
-    state = request.args.get("state")
     flow = build_oauth_flow(state=state)
-    expected_state = saved_state.get("nonce") if isinstance(saved_state, dict) else None
-    saved_code_verifier = saved_state.get("code_verifier") if isinstance(saved_state, dict) else None
-    if expected_state and state != expected_state:
-        current_app.logger.warning("YouTube OAuth state mismatch: %s vs %s", state, expected_state)
+    saved_code_verifier = oauth_state.get("code_verifier")
     if saved_code_verifier:
         flow.code_verifier = saved_code_verifier
     try:
@@ -28503,28 +28524,40 @@ def youtube_oauth_callback():
         return redirect(next_url)
 
     try:
-        store_refresh_token(refresh_token, scopes=granted_scopes_from_flow(flow), user_id=current_user["id"])
+        channel_identity = get_channel_identity_from_credentials(credentials)
+        store_refresh_token(
+            refresh_token,
+            scopes=granted_scopes_from_flow(flow),
+            user_id=oauth_state["owner_user_id"],
+            brand_id=oauth_state["brand_id"],
+            youtube_channel_id=channel_identity["youtube_channel_id"],
+            channel_title=channel_identity["channel_title"],
+        )
     except YouTubeTokenStoreError as exc:
         flash(str(exc), "danger")
         return redirect(next_url)
+    except Exception:
+        current_app.logger.warning("Could not verify the authenticated YouTube channel.")
+        flash("Could not verify the connected YouTube channel.", "danger")
+        return redirect(next_url)
     try:
         generated_count = _backfill_missing_descriptions_after_youtube_connect(
-            current_user["id"],
-            current_brand_id(),
+            oauth_state["owner_user_id"],
+            oauth_state["brand_id"],
         )
         current_app.logger.info(
             "YouTube connect description backfill complete user_id=%s brand_id=%s generated=%s",
-            current_user["id"],
-            current_brand_id(),
+            oauth_state["owner_user_id"],
+            oauth_state["brand_id"],
             generated_count,
         )
     except Exception:
         current_app.logger.exception(
             "YouTube connect description backfill failed user_id=%s brand_id=%s",
-            current_user["id"],
-            current_brand_id(),
+            oauth_state["owner_user_id"],
+            oauth_state["brand_id"],
         )
-    track_event(current_user["id"], "channel_connected", platform="youtube")
+    track_event(oauth_state["owner_user_id"], "channel_connected", platform="youtube")
     flash("YouTube connection saved; you can upload videos to YouTube later.", "success")
     return redirect(next_url)
 

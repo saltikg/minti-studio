@@ -114,8 +114,21 @@ def _scope_owner(user_id: Optional[str], brand_id: Optional[str] = None) -> str:
     return owner
 
 
+def _required_scope_owner(user_id: Optional[str], brand_id: Optional[str]) -> str:
+    owner, separator, embedded_brand = str(user_id or "").partition("::")
+    target_brand = str(brand_id or "").strip()
+    if not owner or not target_brand:
+        raise InstagramTokenStoreError(
+            "Instagram token storage requires an explicit owner and brand."
+        )
+    if separator and embedded_brand != target_brand:
+        raise InstagramTokenStoreError("Instagram token owner/brand mismatch.")
+    return f"{owner}::{target_brand}"
+
+
 def store_instagram_token(
     user_id: Optional[str],
+    brand_id: str,
     page_access_token: str,
     instagram_business_account_id: str,
     instagram_username: Optional[str],
@@ -131,7 +144,7 @@ def store_instagram_token(
     conn = _connect(read_only=False)
     try:
         _ensure_table(conn)
-        token_owner = _scope_owner(user_id)
+        token_owner = _required_scope_owner(user_id, brand_id)
         now = datetime.datetime.utcnow().isoformat()
         conn.execute(
             """
@@ -504,8 +517,11 @@ def refresh_instagram_token_if_needed(
         refreshed_token,
         instagram_user_id=data.get("instagram_user_id") or data.get("instagram_business_account_id"),
     )
+    scoped_owner = _scope_owner(user_id, brand_id)
+    owner_user_id, _, owner_brand_id = scoped_owner.partition("::")
     store_instagram_token(
-        user_id=_scope_owner(user_id, brand_id),
+        user_id=owner_user_id,
+        brand_id=owner_brand_id,
         page_access_token=refreshed_token,
         instagram_business_account_id=profile.get("instagram_graph_id") or data.get("instagram_business_account_id") or "",
         instagram_username=profile.get("instagram_username") or data.get("instagram_username"),

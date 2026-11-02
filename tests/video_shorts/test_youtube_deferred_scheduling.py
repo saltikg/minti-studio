@@ -10,6 +10,7 @@ from googleapiclient.errors import HttpError
 
 from app.video_shorts.services import youtube_scheduling as scheduling
 from app.video_shorts.services import youtube_oauth as oauth
+from app.video_shorts.services import youtube_token_store
 
 
 @pytest.fixture
@@ -30,6 +31,20 @@ def db(monkeypatch, tmp_path):
     monkeypatch.setattr(media_access,'authorize_file',lambda *a,**kw: None)
     monkeypatch.setenv('YOUTUBE_UPLOAD_LEAD_MINUTES', '120')
     monkeypatch.setattr(oauth, 'upload_video_with_refresh_token', lambda **k: pytest.fail('unexpected upload'))
+    monkeypatch.setattr(
+        youtube_token_store,
+        'get_youtube_connection',
+        lambda user_id, brand_id: {
+            'user_id': f'{user_id}::{brand_id}',
+            'youtube_channel_id': 'channel-a',
+            'channel_title': 'Channel A',
+        },
+    )
+    monkeypatch.setattr(
+        oauth,
+        'get_connected_channel_info',
+        lambda user_id, brand_id: ({'id': 'channel-a', 'title': 'Channel A'}, None),
+    )
     return path
 
 
@@ -91,6 +106,24 @@ def test_success_replayed_job_never_uploads_twice(db, monkeypatch, tmp_path):
     assert len(calls) == 1 and calls[0]['privacy_status'] == 'private'
     with pytest.raises(scheduling.YouTubeScheduleLocked,match='studio.youtube.com/video/remote/edit'):
         schedule()
+
+
+def test_reconnected_channel_blocks_without_provider_call(db, monkeypatch, tmp_path):
+    media = tmp_path / 'clip.mp4'; media.write_bytes(b'fake')
+    calls = []
+    alerts = []
+    monkeypatch.setattr(oauth, 'upload_video_with_refresh_token', lambda **kw: calls.append(kw))
+    monkeypatch.setattr(
+        oauth,
+        'get_connected_channel_info',
+        lambda user_id, brand_id: ({'id': 'channel-b', 'title': 'Channel B'}, None),
+    )
+    monkeypatch.setattr(scheduling, 'send_target_mismatch_alert', alerts.append)
+    first = schedule(video_path=str(media), publish_at=None, async_immediate=True)
+    result = scheduling.execute_scheduled_upload(first['schedule_id'], video_path=media)
+    assert result['status'] == 'blocked_target_mismatch'
+    assert calls == []
+    assert len(alerts) == 1
 
 
 def test_immediate_upload_is_public_without_publish_at(db, monkeypatch, tmp_path):

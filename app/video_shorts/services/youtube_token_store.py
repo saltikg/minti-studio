@@ -64,7 +64,9 @@ CREATE TABLE IF NOT EXISTS {TOKEN_TABLE} (
     refresh_token TEXT NOT NULL,
     scopes TEXT,
     updated_at TEXT,
-    reauth_required INTEGER DEFAULT 0
+    reauth_required INTEGER DEFAULT 0,
+    youtube_channel_id VARCHAR,
+    channel_title VARCHAR
 )
 """
 LEGACY_TOKEN_TABLE_SQL = f"""
@@ -182,6 +184,10 @@ def _ensure_token_tables(conn):
             conn.execute(
                 f"ALTER TABLE {TOKEN_TABLE} ADD COLUMN reauth_required INTEGER DEFAULT 0"
             )
+        if "youtube_channel_id" not in columns:
+            conn.execute(f"ALTER TABLE {TOKEN_TABLE} ADD COLUMN youtube_channel_id VARCHAR")
+        if "channel_title" not in columns:
+            conn.execute(f"ALTER TABLE {TOKEN_TABLE} ADD COLUMN channel_title VARCHAR")
         conn.execute(LEGACY_TOKEN_TABLE_SQL)
         columns = list(table_columns(conn, LEGACY_TOKEN_TABLE))
         if "reauth_required" not in columns:
@@ -245,41 +251,42 @@ def store_refresh_token(
     scopes: Optional[List[str]] = None,
     user_id: Optional[str] = None,
     brand_id: Optional[str] = None,
+    youtube_channel_id: Optional[str] = None,
+    channel_title: Optional[str] = None,
 ):
+    clean_user_id = str(user_id or "").strip()
+    clean_brand_id = str(brand_id or "").strip()
+    if not clean_user_id or not clean_brand_id or "::" in clean_user_id:
+        raise YouTubeTokenStoreError("An explicit unscoped user_id and brand_id are required to save a YouTube token.")
     encrypted_token = _encode_refresh_token(refresh_token)
     recorded_scopes = ",".join(sorted(set(scopes or [])))
     conn = get_db()
     try:
         _ensure_token_tables(conn)
-        normalized_user_id = _normalize_user_id(user_id, brand_id)
-        if normalized_user_id:
-            conn.execute(
-                f"""
-                INSERT INTO {TOKEN_TABLE} (user_id, refresh_token, scopes, updated_at, reauth_required)
-                VALUES (?, ?, ?, ?, 0)
-                ON CONFLICT (user_id) DO UPDATE SET
-                    refresh_token = excluded.refresh_token,
-                    scopes = excluded.scopes,
-                    updated_at = excluded.updated_at,
-                    reauth_required = 0
-                """,
-                [
-                    normalized_user_id,
-                    encrypted_token,
-                    recorded_scopes,
-                    datetime.datetime.utcnow().isoformat(),
-                ],
-            )
-        else:
-            conn.execute(
-                f"""
-                INSERT INTO {LEGACY_TOKEN_TABLE} (id, refresh_token, scopes, updated_at, reauth_required)
-                VALUES (1, ?, ?, ?, 0)
-                ON CONFLICT (id) DO UPDATE SET refresh_token = excluded.refresh_token,
-                    scopes = excluded.scopes, updated_at = excluded.updated_at, reauth_required = 0
-                """,
-                [encrypted_token, recorded_scopes, datetime.datetime.utcnow().isoformat()],
-            )
+        normalized_user_id = f"{clean_user_id}::{clean_brand_id}"
+        conn.execute(
+            f"""
+            INSERT INTO {TOKEN_TABLE}
+                (user_id, refresh_token, scopes, updated_at, reauth_required,
+                 youtube_channel_id, channel_title)
+            VALUES (?, ?, ?, ?, 0, ?, ?)
+            ON CONFLICT (user_id) DO UPDATE SET
+                refresh_token = excluded.refresh_token,
+                scopes = excluded.scopes,
+                updated_at = excluded.updated_at,
+                reauth_required = 0,
+                youtube_channel_id = excluded.youtube_channel_id,
+                channel_title = excluded.channel_title
+            """,
+            [
+                normalized_user_id,
+                encrypted_token,
+                recorded_scopes,
+                datetime.datetime.utcnow().isoformat(),
+                str(youtube_channel_id or "").strip() or None,
+                str(channel_title or "").strip() or None,
+            ],
+        )
         conn.commit()
     except Exception:
         conn.rollback()
@@ -410,7 +417,8 @@ def list_stored_refresh_tokens() -> List[Dict[str, object]]:
             raise
         rows = conn.execute(
             f"""
-            SELECT user_id, refresh_token, scopes, updated_at, COALESCE(reauth_required, 0)
+            SELECT user_id, refresh_token, scopes, updated_at, COALESCE(reauth_required, 0),
+                   youtube_channel_id, channel_title
             FROM {TOKEN_TABLE}
             ORDER BY updated_at DESC
             """
@@ -428,10 +436,71 @@ def list_stored_refresh_tokens() -> List[Dict[str, object]]:
             "scopes": row[2],
             "updated_at": row[3],
             "reauth_required": bool(row[4]),
+            "youtube_channel_id": row[5],
+            "channel_title": row[6],
         }
         for row in rows
         if row and row[0] and row[1]
     ]
+
+
+def get_youtube_connection(user_id: str, brand_id: str) -> Optional[Dict[str, object]]:
+    clean_user_id = str(user_id or "").strip()
+    clean_brand_id = str(brand_id or "").strip()
+    if not clean_user_id or not clean_brand_id or "::" in clean_user_id:
+        return None
+    token_owner = f"{clean_user_id}::{clean_brand_id}"
+    conn = get_db_readonly()
+    try:
+        row = conn.execute(
+            f"""
+            SELECT user_id, youtube_channel_id, channel_title, COALESCE(reauth_required, 0)
+            FROM {TOKEN_TABLE}
+            WHERE user_id = ?
+            LIMIT 1
+            """,
+            [token_owner],
+        ).fetchone()
+    finally:
+        conn.close()
+    if not row:
+        return None
+    return {
+        "user_id": row[0],
+        "youtube_channel_id": row[1],
+        "channel_title": row[2],
+        "reauth_required": bool(row[3]),
+    }
+
+
+def update_youtube_connection_identity(
+    *, user_id: str, brand_id: str, youtube_channel_id: str, channel_title: Optional[str]
+) -> bool:
+    clean_user_id = str(user_id or "").strip()
+    clean_brand_id = str(brand_id or "").strip()
+    clean_channel_id = str(youtube_channel_id or "").strip()
+    if not clean_user_id or not clean_brand_id or not clean_channel_id or "::" in clean_user_id:
+        raise YouTubeTokenStoreError("Explicit user, brand, and YouTube channel identities are required.")
+    conn = get_db()
+    try:
+        row = conn.execute(
+            f"""
+            UPDATE {TOKEN_TABLE}
+            SET youtube_channel_id = ?, channel_title = ?, updated_at = ?
+            WHERE user_id = ?
+            RETURNING user_id
+            """,
+            [
+                clean_channel_id,
+                str(channel_title or "").strip() or None,
+                datetime.datetime.utcnow().isoformat(),
+                f"{clean_user_id}::{clean_brand_id}",
+            ],
+        ).fetchone()
+        conn.commit()
+        return bool(row)
+    finally:
+        conn.close()
 
 
 def resolve_token_lookup_user_id(

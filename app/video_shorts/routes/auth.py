@@ -105,11 +105,17 @@ from app.video_shorts.services.autopilot_leads import (
 )
 from app.video_shorts.services.youtube_oauth import (
     build_oauth_flow,
+    get_channel_identity_from_credentials,
     granted_scopes_from_flow,
     YouTubeTokenStoreError,
     has_refresh_token,
     is_reauth_required,
     store_refresh_token,
+)
+from app.video_shorts.services.social_oauth_state import (
+    OAuthStateError,
+    consume_oauth_state,
+    oauth_state_exists,
 )
 from app.video_shorts.services.timezones import DEFAULT_TIME_ZONE, TIMEZONE_LABELS, TIMEZONE_OPTIONS
 from src.trends.instagram_tokens import get_instagram_credentials
@@ -2831,53 +2837,66 @@ def google_login():
 
 @video_shorts_bp.route("/login/google/callback")
 def google_oauth_callback():
-    yt_state = session.get("yt_oauth_state")
-    yt_expected_state = yt_state.get("nonce") if isinstance(yt_state, dict) else yt_state
-    if yt_expected_state and request.args.get("state") == yt_expected_state:
+    incoming_state = request.args.get("state")
+    if oauth_state_exists(platform="youtube", nonce=incoming_state):
         current_user = getattr(g, "vs_current_user", None)
-        yt_user_id = yt_state.get("user_id") if isinstance(yt_state, dict) else None
-        effective_user_id = (current_user or {}).get("id") or yt_user_id
-        if not effective_user_id:
-            session.pop("yt_oauth_state", None)
+        if not current_user:
             flash("YouTube bağlantısı için giriş yapın.", "danger")
             return redirect(url_for("video_shorts_bp.login", next=request.url))
+        try:
+            oauth_state = consume_oauth_state(
+                platform="youtube", nonce=incoming_state, current_user=current_user
+            )
+        except OAuthStateError:
+            flash("YouTube OAuth verification failed.", "danger")
+            return redirect(url_for("video_shorts_bp.social_connect"))
+        next_url = _normalize_next_url(oauth_state.get("next_url")) or url_for(
+            "video_shorts_bp.social_connect"
+        )
         error = request.args.get("error")
         if error:
-            session.pop("yt_oauth_state", None)
             flash(f"YouTube OAuth hatası: {error}", "danger")
-            return redirect(url_for("video_shorts_bp.channels_page"))
+            return redirect(next_url)
 
-        state = request.args.get("state")
-        saved_state = session.pop("yt_oauth_state", None)
-        saved_nonce = saved_state.get("nonce") if isinstance(saved_state, dict) else saved_state
-        saved_code_verifier = saved_state.get("code_verifier") if isinstance(saved_state, dict) else None
-        flow = build_oauth_flow(state=state)
-        if saved_nonce and state != saved_nonce:
-            current_app.logger.warning("YouTube OAuth state mismatch: %s vs %s", state, saved_nonce)
+        flow = build_oauth_flow(state=incoming_state)
+        saved_code_verifier = oauth_state.get("code_verifier")
         if not saved_code_verifier:
             flash("YouTube sign-in session expired. Please try again.", "warning")
-            return redirect(url_for("video_shorts_bp.social_connect"))
+            return redirect(next_url)
         flow.code_verifier = saved_code_verifier
         try:
             flow.fetch_token(authorization_response=request.url)
         except Exception as exc:
             current_app.logger.warning("Failed to fetch YouTube OAuth token.")
             flash("YouTube OAuth sonucu alınamadı.", "danger")
-            return redirect(url_for("video_shorts_bp.channels_page"))
+            return redirect(next_url)
 
         credentials = flow.credentials
         refresh_token = credentials.refresh_token
         if not refresh_token:
             flash("YouTube OAuth işleminden refresh token elde edilemedi.", "warning")
-            return redirect(url_for("video_shorts_bp.channels_page"))
+            return redirect(next_url)
 
         try:
-            store_refresh_token(refresh_token, scopes=granted_scopes_from_flow(flow), user_id=effective_user_id)
+            channel_identity = get_channel_identity_from_credentials(credentials)
+            store_refresh_token(
+                refresh_token,
+                scopes=granted_scopes_from_flow(flow),
+                user_id=oauth_state["owner_user_id"],
+                brand_id=oauth_state["brand_id"],
+                youtube_channel_id=channel_identity["youtube_channel_id"],
+                channel_title=channel_identity["channel_title"],
+            )
         except YouTubeTokenStoreError as exc:
             flash(str(exc), "danger")
-            return redirect(url_for("video_shorts_bp.social_connect"))
+            return redirect(next_url)
+        except Exception:
+            current_app.logger.warning("Could not verify the authenticated YouTube channel.")
+            flash("Could not verify the connected YouTube channel.", "danger")
+            return redirect(next_url)
+        track_event(oauth_state["owner_user_id"], "channel_connected", platform="youtube")
         flash("YouTube connection saved; you can upload videos to YouTube later.", "success")
-        return redirect(url_for("video_shorts_bp.social_connect"))
+        return redirect(next_url)
 
     if not _google_oauth_enabled():
         flash("Google sign-in is disabled.", "warning")

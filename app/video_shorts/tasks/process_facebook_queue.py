@@ -16,6 +16,11 @@ from requests.exceptions import ConnectionError as RequestsConnectionError
 from src.trends.facebook_page_tokens import get_facebook_page_data
 from app.video_shorts.services.social_queue_identity import queue_token_identity
 from app.video_shorts.services.media_access import worker_clip_path
+from app.video_shorts.services.publish_target_guard import (
+    PublishTargetMismatch,
+    require_target_match,
+    send_target_mismatch_alert,
+)
 
 
 def _utc_now_iso() -> str:
@@ -159,9 +164,33 @@ def _fetch_facebook_metrics(video_id: str, page_token: str):
 def _queue_credentials(job: dict) -> dict:
     user_id = queue_token_identity(job)
     creds = get_facebook_page_data(user_id)
-    if not creds or not creds.get("page_access_token") or not creds.get("page_id"):
-        raise RuntimeError(f"Facebook brand token or Page missing for {user_id}.")
+    require_target_match(
+        platform="facebook_token_owner",
+        schedule_id=job.get("id"),
+        brand_id=job.get("brand_id"),
+        expected=user_id,
+        actual=(creds or {}).get("user_id"),
+    )
+    require_target_match(
+        platform="facebook",
+        schedule_id=job.get("id"),
+        brand_id=job.get("brand_id"),
+        expected=job.get("page_id"),
+        actual=(creds or {}).get("page_id"),
+    )
+    if not creds.get("page_access_token"):
+        raise RuntimeError(f"Facebook brand token missing for {user_id}.")
     return creds
+
+
+def _current_facebook_page_id(creds: dict) -> str:
+    response = requests.get(
+        f"{FB_API_BASE.rstrip('/')}/me",
+        params={"fields": "id", "access_token": creds.get("page_access_token")},
+        timeout=15,
+    )
+    response.raise_for_status()
+    return str((response.json() or {}).get("id") or "").strip()
 
 
 def process_queue(max_jobs: int = 5) -> None:
@@ -174,18 +203,21 @@ def process_queue(max_jobs: int = 5) -> None:
         if not queue_id:
             continue
         update_facebook_job_status(queue_id, status="uploading")
-        try:
-            creds = _queue_credentials(job)
-        except Exception as exc:
-            update_facebook_job_status(queue_id, status="failed", status_detail=str(exc))
-            continue
-        page_id = creds.get("page_id")
         clip_filename = job.get("clip_filename") or ""
         caption = (job.get("caption_text") or "").strip()
         media_type = (job.get("media_type") or "feed").lower()
         media_path = None
         try:
             media_path = worker_clip_path(job)
+            creds = _queue_credentials(job)
+            page_id = creds.get("page_id")
+            require_target_match(
+                platform="facebook",
+                schedule_id=queue_id,
+                brand_id=job.get("brand_id"),
+                expected=job.get("page_id"),
+                actual=_current_facebook_page_id(creds),
+            )
             payload = _publish_facebook_video(page_id, creds.get("page_access_token"), str(media_path), caption, media_type)
             video_id = payload.get("id") or payload.get("video_id")
             metrics = {}
@@ -204,6 +236,14 @@ def process_queue(max_jobs: int = 5) -> None:
                 comment_count=metrics.get("comment_count"),
             )
             print(f"Facebook published queue_id={queue_id} video_id={video_id}")
+        except PublishTargetMismatch as exc:
+            update_facebook_job_status(
+                queue_id,
+                status="blocked_target_mismatch",
+                status_detail="Publishing blocked because the connected target no longer matches the schedule.",
+            )
+            send_target_mismatch_alert(exc)
+            print(f"Facebook publish target mismatch queue_id={queue_id}: {exc}")
         except RequestsConnectionError as exc:
             update_facebook_job_status(
                 queue_id,

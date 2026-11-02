@@ -83,6 +83,9 @@ def enqueue_instagram_clip(
     media_type: str = "reel",
     force_requeue: bool = False,
 ) -> str:
+    instagram_business_account_id = str(instagram_business_account_id or "").strip()
+    if not instagram_business_account_id:
+        raise ValueError("Instagram scheduling requires a target business account.")
     media_type_norm = (media_type or "reel").strip().lower()
     if media_type_norm not in {"reel", "feed"}:
         media_type_norm = "reel"

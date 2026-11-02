@@ -19,6 +19,11 @@ from app.video_shorts.services.instagram_queue import (
 from app.video_shorts.services.storage import get_media_storage
 from app.video_shorts.services.social_queue_identity import queue_token_identity
 from app.video_shorts.services.media_access import authorize_queue_clip
+from app.video_shorts.services.publish_target_guard import (
+    PublishTargetMismatch,
+    require_target_match,
+    send_target_mismatch_alert,
+)
 from src.trends.instagram_tokens import get_instagram_credentials
 from app.video_shorts.tasks.process_facebook_queue import process_queue as process_facebook_queue
 
@@ -106,19 +111,50 @@ def _proxy_video_url(job: dict) -> str:
 def _queue_credentials(job: dict) -> dict:
     user_id = queue_token_identity(job)
     creds = get_instagram_credentials(user_id)
-    if not creds or not creds.get("page_access_token") or not creds.get("instagram_business_account_id"):
-        raise RuntimeError(f"Instagram brand token or account missing for {user_id}.")
+    require_target_match(
+        platform="instagram_token_owner",
+        schedule_id=job.get("id"),
+        brand_id=job.get("brand_id"),
+        expected=user_id,
+        actual=(creds or {}).get("user_id"),
+    )
+    require_target_match(
+        platform="instagram",
+        schedule_id=job.get("id"),
+        brand_id=job.get("brand_id"),
+        expected=job.get("instagram_business_account_id"),
+        actual=(creds or {}).get("instagram_business_account_id"),
+    )
+    if not creds.get("page_access_token"):
+        raise RuntimeError(f"Instagram brand token missing for {user_id}.")
     return creds
 
 
+def _current_instagram_account_id(creds: dict) -> str:
+    response = requests.get(
+        f"{_instagram_api_base()}/me",
+        params={"fields": "id", "access_token": creds.get("page_access_token")},
+        timeout=15,
+    )
+    response.raise_for_status()
+    return str((response.json() or {}).get("id") or "").strip()
+
+
 def _upload_reel(job: dict) -> Optional[str]:
-    creds = _queue_credentials(job)
     clip_filename = job.get("clip_filename") or ""
     media = authorize_queue_clip(job)
+    creds = _queue_credentials(job)
     if not tenant_media.short_path(clip_filename).is_file() and not get_media_storage().exists(media["storage_key"]):
         raise RuntimeError(f"Clip dosyası bulunamadı: {tenant_media.short_path(clip_filename)}")
     access_token = creds.get("page_access_token")
     business_id = creds.get("instagram_business_account_id")
+    require_target_match(
+        platform="instagram",
+        schedule_id=job.get("id"),
+        brand_id=job.get("brand_id"),
+        expected=job.get("instagram_business_account_id"),
+        actual=_current_instagram_account_id(creds),
+    )
     caption = (job.get("caption_text") or "").strip()
     media_type = (job.get("media_type") or "reel").lower()
     if media_type not in {"reel", "feed"}:
@@ -207,6 +243,14 @@ def process_queue(max_jobs: int):
         try:
             media_id = _upload_reel(job)
             print(f"   ✓ Yayınlandı. media_id={media_id}")
+        except PublishTargetMismatch as exc:
+            print(f"   ✗ Target mismatch: {exc}")
+            update_instagram_job_status(
+                job["id"],
+                status="blocked_target_mismatch",
+                status_detail="Publishing blocked because the connected target no longer matches the schedule.",
+            )
+            send_target_mismatch_alert(exc)
         except InstagramMediaError as exc:
             print(f"   ✗ Hata: {exc}")
             media_type_value = (job.get("media_type") or "").lower()

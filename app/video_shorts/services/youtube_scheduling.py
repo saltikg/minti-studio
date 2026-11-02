@@ -17,6 +17,11 @@ from flask import g, has_app_context
 from httplib2 import HttpLib2Error
 
 from app.video_shorts.services.db import autopilot_billing_paused_sql, get_db, get_db_readonly
+from app.video_shorts.services.publish_target_guard import (
+    PublishTargetMismatch,
+    require_target_match,
+    send_target_mismatch_alert,
+)
 
 logger = logging.getLogger(__name__)
 TABLE = "shorts_youtube_schedules"
@@ -27,6 +32,7 @@ CREATE TABLE IF NOT EXISTS shorts_youtube_schedules (
     id VARCHAR PRIMARY KEY,
     user_id VARCHAR NOT NULL,
     brand_id VARCHAR NOT NULL,
+    expected_youtube_channel_id VARCHAR,
     asset_key VARCHAR NOT NULL,
     payload_json TEXT NOT NULL,
     status VARCHAR NOT NULL,
@@ -308,6 +314,14 @@ def schedule_youtube_upload(*, video_path, title, description, publish_at=None,
     brand_id = str(brand_id or current_brand_id() or "")
     if not user_id or not brand_id:
         raise ValueError("A YouTube upload requires an explicit owner and brand.")
+    from app.video_shorts.services.youtube_token_store import get_youtube_connection
+    connection_info = get_youtube_connection(str(user_id), brand_id)
+    expected_token_owner = f"{str(user_id)}::{brand_id}"
+    if not connection_info or connection_info.get("user_id") != expected_token_owner:
+        raise ValueError("YouTube scheduling requires a token owned by this user and brand.")
+    expected_channel_id = str(connection_info.get("youtube_channel_id") or "").strip()
+    if not expected_channel_id:
+        raise ValueError("YouTube scheduling requires a verified target channel.")
     filename = clip_filename or Path(video_path).name
     remote_id = _existing_remote_id(user_id=user_id,brand_id=brand_id,filename=filename,video_pk=video_pk,plan_index=plan_index,kind=kind)
     if remote_id:
@@ -336,16 +350,17 @@ def schedule_youtube_upload(*, video_path, title, description, publish_at=None,
             raise YouTubeScheduleLocked("This clip is being edited; schedule it when rendering finishes.")
         schedule_id = str(uuid4())
         row = conn.execute(f"""
-            INSERT INTO {TABLE} (id,user_id,brand_id,asset_key,payload_json,status,publish_at,upload_due_at)
-            VALUES (?,?,?,?,?,'pending',?,?)
+            INSERT INTO {TABLE} (id,user_id,brand_id,expected_youtube_channel_id,asset_key,payload_json,status,publish_at,upload_due_at)
+            VALUES (?,?,?,?,?,?,'pending',?,?)
             ON CONFLICT (user_id,brand_id,asset_key) DO UPDATE SET
                 payload_json=excluded.payload_json, status='pending', publish_at=excluded.publish_at,
+                expected_youtube_channel_id=excluded.expected_youtube_channel_id,
                 upload_due_at=excluded.upload_due_at, attempts=0, error=NULL,
                 notification=NULL, notified_at=NULL, updated_at=now()
             WHERE {TABLE}.status IN ('pending','cancelled','missed','failed')
               AND {TABLE}.youtube_video_id IS NULL AND {TABLE}.resumable_uri IS NULL
             RETURNING id
-        """, [schedule_id,str(user_id),brand_id,key,json.dumps(payload),publish_dt,due]).fetchone()
+        """, [schedule_id,str(user_id),brand_id,expected_channel_id,key,json.dumps(payload),publish_dt,due]).fetchone()
         if not row:
             old = conn.execute(f"SELECT youtube_video_id FROM {TABLE} WHERE user_id=? AND brand_id=? AND asset_key=?", [str(user_id),brand_id,key]).fetchone()
             raise YouTubeScheduleLocked(studio_message(old[0]) if old and old[0] else "YouTube upload is in progress; editing is locked.")
@@ -522,7 +537,12 @@ def execute_scheduled_upload(schedule_id, *, video_path=None):
     A PostgreSQL advisory lock covers the HTTP operation, not a long transaction.
     A requeued job can resume a dead worker's session, but never run concurrently.
     """
-    from app.video_shorts.services.youtube_oauth import upload_video_with_refresh_token, YouTubeTransientError
+    from app.video_shorts.services.youtube_oauth import (
+        get_connected_channel_info,
+        upload_video_with_refresh_token,
+        YouTubeTransientError,
+    )
+    from app.video_shorts.services.youtube_token_store import get_youtube_connection
     from app.video_shorts.routes import generation
     lock_conn = get_db()
     lock_id = int.from_bytes(hashlib.sha256(schedule_id.encode()).digest()[:8], "big", signed=True)
@@ -568,6 +588,25 @@ def execute_scheduled_upload(schedule_id, *, video_path=None):
                     video_path = SHORTS_DIR / payload["filename"]
             if not video_path or not Path(video_path).exists():
                 raise FileNotFoundError("Scheduled media is unavailable.")
+            connection_info = get_youtube_connection(row["user_id"], row["brand_id"])
+            require_target_match(
+                platform="youtube_token_owner",
+                schedule_id=schedule_id,
+                brand_id=row["brand_id"],
+                expected=f"{row['user_id']}::{row['brand_id']}",
+                actual=(connection_info or {}).get("user_id"),
+            )
+            channel_info, _channel_error = get_connected_channel_info(
+                row["user_id"], row["brand_id"]
+            )
+            actual_channel_id = (channel_info or {}).get("id")
+            require_target_match(
+                platform="youtube",
+                schedule_id=schedule_id,
+                brand_id=row["brand_id"],
+                expected=row.get("expected_youtube_channel_id"),
+                actual=actual_channel_id,
+            )
             response = upload_video_with_refresh_token(
                 video_path=str(video_path), title=payload["title"], description=payload["description"],
                 publish_at=None if late else iso(publish_dt),
@@ -583,6 +622,24 @@ def execute_scheduled_upload(schedule_id, *, video_path=None):
             with connection() as conn:
                 conn.execute(f"UPDATE {TABLE} SET status='uploaded',youtube_video_id=?,error=NULL,notification=?,updated_at=now() WHERE id=?", [youtube_id,"late" if late else None,schedule_id])
                 row = _row(conn, schedule_id)
+        except PublishTargetMismatch as exc:
+            with connection() as conn:
+                conn.execute(
+                    f"""UPDATE {TABLE}
+                        SET status='blocked_target_mismatch', error=?, notification='failed',
+                            resumable_uri=NULL, updated_at=now()
+                        WHERE id=?""",
+                    ["Upload blocked because the connected target no longer matches the schedule.", schedule_id],
+                )
+                row = _row(conn, schedule_id)
+            logger.error(
+                "YouTube publish target mismatch schedule_id=%s brand_id=%s expected=%s actual=%s",
+                schedule_id,
+                row["brand_id"],
+                exc.expected,
+                exc.actual,
+            )
+            send_target_mismatch_alert(exc)
         except Exception as exc:
             code = getattr(getattr(exc, "resp", None), "status", None)
             transient = code in {429,500,502,503,504} or isinstance(exc, (TimeoutError, ConnectionError, OSError, HttpLib2Error, YouTubeTransientError)) and not isinstance(exc, FileNotFoundError)

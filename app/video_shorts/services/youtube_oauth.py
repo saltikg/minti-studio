@@ -54,6 +54,8 @@ from app.video_shorts.services.youtube_token_store import (
     split_scoped_user_id,
     store_refresh_token,
     get_refresh_token_for_revocation,
+    get_youtube_connection,
+    update_youtube_connection_identity,
 )
 
 logger = logging.getLogger(__name__)
@@ -472,6 +474,7 @@ def get_connected_channel_info(
         except (TypeError, ValueError):
             subscriber_count = None
         return {
+            "id": item.get("id"),
             "title": snippet.get("title", "Unknown channel"),
             "description": snippet.get("description", "")[:180],
             "thumbnail": snippet.get("thumbnails", {}).get("default", {}).get("url"),
@@ -483,3 +486,16 @@ def get_connected_channel_info(
     except Exception as exc:  # pragma: no cover - network failures
         current_app.logger.warning("YouTube channel info fetch failed.")
         return None, "general_error"
+
+
+def get_channel_identity_from_credentials(credentials) -> Dict[str, str]:
+    """Resolve the authenticated upload destination before persisting a connection."""
+    youtube = build("youtube", "v3", credentials=credentials, cache_discovery=False)
+    response = youtube.channels().list(part="snippet", mine=True, maxResults=1).execute()
+    items = response.get("items") or []
+    if not items or not str(items[0].get("id") or "").strip():
+        raise ValueError("YouTube did not return an authenticated channel.")
+    return {
+        "youtube_channel_id": str(items[0]["id"]).strip(),
+        "channel_title": str((items[0].get("snippet") or {}).get("title") or "").strip(),
+    }

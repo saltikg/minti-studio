@@ -41,11 +41,9 @@ def test_encrypted_roundtrip_all_read_paths_and_exact_scope_storage(token_db):
         assert conn.execute("SELECT scopes FROM youtube_oauth_tokens_v2").fetchone()[0] == ""
 
 
-def test_legacy_write_read_and_reauth_revocation(token_db):
-    store.store_refresh_token("legacy-secret", ["grant"])
-    assert store.get_stored_refresh_token() == "legacy-secret"
-    with duckdb.connect(token_db) as conn:
-        assert conn.execute("SELECT refresh_token FROM youtube_oauth_tokens").fetchone()[0].startswith("enc:v1:")
+def test_token_store_requires_explicit_brand_and_reauth_revocation(token_db):
+    with pytest.raises(store.YouTubeTokenStoreError, match="explicit unscoped"):
+        store.store_refresh_token("legacy-secret", ["grant"])
     store.store_refresh_token("owner-secret", ["grant"], user_id="owner", brand_id="brand")
     store.mark_refresh_token_invalid("owner", "brand")
     assert store.get_stored_refresh_token("owner", "brand") is None
@@ -59,17 +57,17 @@ def test_missing_or_invalid_key_never_saves_plaintext(token_db, monkeypatch, key
     else:
         monkeypatch.setenv("YOUTUBE_TOKEN_ENC_KEY", key)
     with pytest.raises(store.YouTubeTokenStoreError, match="YOUTUBE_TOKEN_ENC_KEY"):
-        store.store_refresh_token("do-not-leak", user_id="owner")
+        store.store_refresh_token("do-not-leak", user_id="owner", brand_id="brand")
     with duckdb.connect(token_db) as conn:
         assert conn.execute("SELECT count(*) FROM youtube_oauth_tokens_v2").fetchone()[0] == 0
 
 
 def test_migration_both_tables_idempotent_and_plaintext_warning(token_db, caplog):
-    store.store_refresh_token("already-encrypted", ["grant"], user_id="existing")
+    store.store_refresh_token("already-encrypted", ["grant"], user_id="existing", brand_id="brand")
     with duckdb.connect(token_db) as conn:
-        conn.execute("INSERT INTO youtube_oauth_tokens_v2 VALUES ('plain', 'legacy-secret', 'old-grant', 'old-date', 1)")
+        conn.execute("INSERT INTO youtube_oauth_tokens_v2 (user_id,refresh_token,scopes,updated_at,reauth_required) VALUES ('plain', 'legacy-secret', 'old-grant', 'old-date', 1)")
         conn.execute("INSERT INTO youtube_oauth_tokens VALUES (1, 'legacy-table-secret', 'legacy-grant', 'old-date', 0)")
-        encrypted_before = conn.execute("SELECT refresh_token FROM youtube_oauth_tokens_v2 WHERE user_id='existing'").fetchone()[0]
+        encrypted_before = conn.execute("SELECT refresh_token FROM youtube_oauth_tokens_v2 WHERE user_id='existing::brand'").fetchone()[0]
     assert store.get_refresh_token_for_revocation("plain") == "legacy-secret"
     assert "plaintext" in caplog.text and "legacy-secret" not in caplog.text
     assert store.migrate_plaintext_refresh_tokens() == {store.TOKEN_TABLE: 1, store.LEGACY_TOKEN_TABLE: 1}
@@ -77,14 +75,14 @@ def test_migration_both_tables_idempotent_and_plaintext_warning(token_db, caplog
     with duckdb.connect(token_db) as conn:
         for table in (store.TOKEN_TABLE, store.LEGACY_TOKEN_TABLE):
             assert conn.execute(f"SELECT count(*) FROM {table} WHERE refresh_token NOT LIKE 'enc:v1:%'").fetchone()[0] == 0
-        assert conn.execute("SELECT refresh_token FROM youtube_oauth_tokens_v2 WHERE user_id='existing'").fetchone()[0] == encrypted_before
+        assert conn.execute("SELECT refresh_token FROM youtube_oauth_tokens_v2 WHERE user_id='existing::brand'").fetchone()[0] == encrypted_before
         assert conn.execute("SELECT scopes, updated_at, reauth_required FROM youtube_oauth_tokens_v2 WHERE user_id='plain'").fetchone() == ('old-grant', 'old-date', 1)
     assert store.get_refresh_token_for_revocation("plain") == "legacy-secret"
 
 
 def test_migration_rolls_back_both_tables_on_failure(token_db):
     with duckdb.connect(token_db) as conn:
-        conn.execute("INSERT INTO youtube_oauth_tokens_v2 VALUES ('owner', 'plain-secret', '', '', 0)")
+        conn.execute("INSERT INTO youtube_oauth_tokens_v2 (user_id,refresh_token,scopes,updated_at,reauth_required) VALUES ('owner', 'plain-secret', '', '', 0)")
         conn.execute("INSERT INTO youtube_oauth_tokens VALUES (1, 'enc:v2:unsupported', '', '', 0)")
     with pytest.raises(store.YouTubeTokenStoreError, match="rolled back"):
         store.migrate_plaintext_refresh_tokens()
@@ -100,10 +98,10 @@ def test_encrypted_errors_do_not_fall_back_to_plaintext(token_db, value):
 
 
 def test_wrong_key_fails_closed(token_db, monkeypatch):
-    store.store_refresh_token("secret", user_id="owner")
+    store.store_refresh_token("secret", user_id="owner", brand_id="brand")
     monkeypatch.setenv("YOUTUBE_TOKEN_ENC_KEY", Fernet.generate_key().decode())
     with pytest.raises(store.YouTubeTokenStoreError, match="decrypt"):
-        store.get_stored_refresh_token("owner")
+        store.get_stored_refresh_token("owner", "brand")
 
 
 @pytest.mark.parametrize("outcome", [200, 400, 503, "timeout"])
@@ -154,13 +152,30 @@ def test_both_oauth_callbacks_persist_actual_grants(monkeypatch, module):
     saved = []
     monkeypatch.setattr(module, "build_oauth_flow", lambda **kwargs: flow)
     monkeypatch.setattr(module, "store_refresh_token", lambda token, **kwargs: saved.append((token, kwargs)))
+    monkeypatch.setattr(module, "get_channel_identity_from_credentials", lambda credentials: {
+        "youtube_channel_id": "channel-id", "channel_title": "Channel Title"
+    })
     monkeypatch.setattr(module, "track_event", lambda *args, **kwargs: None)
+    state = {
+        "owner_user_id": "customer",
+        "brand_id": "customer-brand",
+        "code_verifier": "verifier",
+        "next_url": "/social_connect",
+    }
+    monkeypatch.setattr(module, "consume_oauth_state", lambda **kwargs: state)
+    if module is auth:
+        monkeypatch.setattr(module, "oauth_state_exists", lambda **kwargs: True)
     with app.test_request_context('/callback?state=state'):
-        g.vs_current_user = {"id": "owner"}
-        session['yt_oauth_state'] = {"nonce": "state", "user_id": "owner", "code_verifier": "verifier"}
+        g.vs_current_user = {"id": "admin", "role": "admin"}
         response = module.youtube_oauth_callback() if module is generation else module.google_oauth_callback()
     assert response.status_code == 302
-    assert saved == [("callback-secret", {"scopes": ["returned-only"], "user_id": "owner"})]
+    assert saved == [("callback-secret", {
+        "scopes": ["returned-only"],
+        "user_id": "customer",
+        "brand_id": "customer-brand",
+        "youtube_channel_id": "channel-id",
+        "channel_title": "Channel Title",
+    })]
 
 
 class VideoAPI:
@@ -220,7 +235,11 @@ def test_key_rotation_both_tables_new_key_only_and_idempotent(token_db, monkeypa
     import os
     old = os.environ["YOUTUBE_TOKEN_ENC_KEY"]
     store.store_refresh_token("v2-token", ["actual-grant"], user_id="owner", brand_id="brand")
-    store.store_refresh_token("legacy-token", ["legacy-grant"])
+    with duckdb.connect(token_db) as conn:
+        conn.execute(
+            "INSERT INTO youtube_oauth_tokens VALUES (1, ?, 'legacy-grant', '', 0)",
+            [store._encode_refresh_token("legacy-token")],
+        )
     new = Fernet.generate_key().decode()
     monkeypatch.setenv("YOUTUBE_TOKEN_ENC_PREVIOUS_KEY", old)
     monkeypatch.setenv("YOUTUBE_TOKEN_ENC_KEY", new)
