@@ -14891,14 +14891,14 @@ def generate_short(video_pk):
     facebook_connected = False
     if editor_owner_user_id:
         try:
-            instagram_info = get_instagram_data(editor_owner_user_id)
+            instagram_info = get_instagram_data(editor_owner_user_id, brand_id=brand_id)
         except InstagramTokenStoreError as exc:
             current_app.logger.warning("Instagram info unavailable on generate_short: %s", exc)
             instagram_info = None
         if instagram_info:
             instagram_connected = _validate_instagram_connection(instagram_info)
         try:
-            tiktok_info = get_tiktok_data(editor_owner_user_id)
+            tiktok_info = get_tiktok_data(editor_owner_user_id, brand_id=brand_id)
         except TikTokTokenStoreError as exc:
             current_app.logger.warning("TikTok info unavailable on generate_short: %s", exc)
             tiktok_info = None
@@ -14906,7 +14906,7 @@ def generate_short(video_pk):
             if not _is_token_expired(tiktok_info.get("expires_at")):
                 tiktok_connected = True
         try:
-            facebook_info = get_facebook_page_data(editor_owner_user_id)
+            facebook_info = get_facebook_page_data(editor_owner_user_id, brand_id=brand_id)
         except FacebookTokenStoreError as exc:
             current_app.logger.warning("Facebook info unavailable on generate_short: %s", exc)
             facebook_info = None
@@ -28190,6 +28190,23 @@ def youtube_oauth_callback():
     except YouTubeTokenStoreError as exc:
         flash(str(exc), "danger")
         return redirect(next_url)
+    try:
+        generated_count = _backfill_missing_descriptions_after_youtube_connect(
+            current_user["id"],
+            current_brand_id(),
+        )
+        current_app.logger.info(
+            "YouTube connect description backfill complete user_id=%s brand_id=%s generated=%s",
+            current_user["id"],
+            current_brand_id(),
+            generated_count,
+        )
+    except Exception:
+        current_app.logger.exception(
+            "YouTube connect description backfill failed user_id=%s brand_id=%s",
+            current_user["id"],
+            current_brand_id(),
+        )
     track_event(current_user["id"], "channel_connected", platform="youtube")
     flash("YouTube connection saved; you can upload videos to YouTube later.", "success")
     return redirect(next_url)
@@ -28469,8 +28486,10 @@ def upload_clip_to_youtube():
             _notify(message, "warning")
             return redirect(url_for("video_shorts_bp.generate_short", video_pk=request.form.get("video_pk")))
     video_pk = request.form.get("video_pk")
-    brand_id = _active_editor_context()["brand_id"]
-    if youtube_enabled and not has_refresh_token(_active_editor_context()["owner_user_id"], brand_id=brand_id):
+    editor_context = _active_editor_context()
+    owner_user_id = editor_context["owner_user_id"]
+    brand_id = editor_context["brand_id"]
+    if youtube_enabled and not has_refresh_token(owner_user_id, brand_id=brand_id):
         message = "YouTube bağlantısı yok; önce bağlantı kurun."
         if is_ajax:
             return _ajax_fail(message, status=403)
@@ -28574,6 +28593,23 @@ def upload_clip_to_youtube():
             target_entry.get("description") if target_entry else None,
             generated_guard_row.get("generated_description") if generated_guard_row else None,
         ) or ""
+    if not description:
+        try:
+            description = _generate_missing_schedule_description(
+                owner_user_id=owner_user_id,
+                brand_id=brand_id,
+                video_pk=video_pk,
+                source_video_id=source_video_id,
+                plan_entries=plan_entries,
+                plan_entry=target_entry,
+            )
+        except Exception:
+            current_app.logger.exception(
+                "Schedule description generation failed video_pk=%s plan_index=%s",
+                video_pk,
+                plan_index_raw,
+            )
+            return _ajax_fail("Description generation failed. Please try again.", status=500)
     if normalized_existing_yt_id:
         return _ajax_fail(youtube_scheduling.studio_message(normalized_existing_yt_id), status=409)
     if youtube_enabled:
@@ -28586,7 +28622,7 @@ def upload_clip_to_youtube():
             )
             response = schedule_callable(
                 video_path=str(out_path), title=title, description=description,
-                user_id=_active_editor_context()["owner_user_id"], brand_id=brand_id,
+                user_id=owner_user_id, brand_id=brand_id,
                 video_pk=video_pk, plan_index=plan_index_raw,
                 **({} if publish_now else {
                     "publish_at": publish_at,
@@ -28601,6 +28637,8 @@ def upload_clip_to_youtube():
                 publish_status=publish_status_key, publish_at_local=publish_at_value or None,
                 publish_at_iso=publish_at, title=title, description=description,
                 youtube_id=youtube_short_id,
+                owner_user_id=owner_user_id,
+                brand_id=brand_id,
             )
             _notify(youtube_scheduling.pending_label() if publish_status_key == "pending" else "YouTube publish submitted.", "success")
             instagram_queue_allowed = True
@@ -28622,7 +28660,7 @@ def upload_clip_to_youtube():
             _notify("Instagram kuyruğu için plan kaydı bulunamadı.", "warning")
         else:
             try:
-                instagram_creds = get_instagram_credentials(current_user["id"])
+                instagram_creds = get_instagram_credentials(owner_user_id, brand_id=brand_id)
             except InstagramTokenStoreError as exc:
                 current_app.logger.warning("Instagram creds unavailable for queue: %s", exc)
                 instagram_creds = None
@@ -28662,7 +28700,8 @@ def upload_clip_to_youtube():
                 for media_type in instagram_targets:
                     try:
                         queue_id = enqueue_instagram_clip(
-                            user_id=current_user.get("id") if current_user else None,
+                            user_id=owner_user_id,
+                            brand_id=brand_id,
                             video_id=source_video_id,
                             plan_index=plan_index_key,
                             clip_filename=clip_name,
@@ -28697,7 +28736,7 @@ def upload_clip_to_youtube():
             _notify("Facebook kuyruğu için plan kaydı bulunamadı.", "warning")
         else:
             try:
-                facebook_info = get_facebook_page_data(current_user["id"])
+                facebook_info = get_facebook_page_data(owner_user_id, brand_id=brand_id)
             except FacebookTokenStoreError as exc:
                 current_app.logger.warning("Facebook info unavailable for publish: %s", exc)
                 facebook_info = None
@@ -28725,7 +28764,8 @@ def upload_clip_to_youtube():
                 for media_type in facebook_targets:
                     try:
                         queue_id = enqueue_facebook_clip(
-                            user_id=current_user.get("id") if current_user else None,
+                            user_id=owner_user_id,
+                            brand_id=brand_id,
                             video_id=source_video_id,
                             plan_index=plan_index_key,
                             clip_filename=clip_name,
@@ -28757,7 +28797,7 @@ def upload_clip_to_youtube():
             _notify("TikTok kuyruğu için plan kaydı bulunamadı.", "warning")
         else:
             try:
-                tiktok_info = get_tiktok_data(current_user["id"])
+                tiktok_info = get_tiktok_data(owner_user_id, brand_id=brand_id)
             except TikTokTokenStoreError as exc:
                 current_app.logger.warning("TikTok info unavailable for publish: %s", exc)
                 tiktok_info = None
@@ -28783,7 +28823,8 @@ def upload_clip_to_youtube():
                 plan_index_key = str(target_entry.get("plan_index") or plan_index_raw or "")
                 try:
                     queue_id = enqueue_tiktok_clip(
-                        user_id=current_user.get("id") if current_user else None,
+                        user_id=owner_user_id,
+                        brand_id=brand_id,
                         video_id=source_video_id,
                         plan_index=plan_index_key,
                         clip_filename=target_entry.get("output_filename") or filename,
@@ -34232,6 +34273,116 @@ def _maybe_autogenerate_description_for_plan_entry(
             exc,
         )
         return False
+
+
+def _generate_missing_schedule_description(
+    *,
+    owner_user_id: str,
+    brand_id: Optional[str],
+    video_pk: Any,
+    source_video_id: str,
+    plan_entries: List[Dict[str, Any]],
+    plan_entry: Dict[str, Any],
+) -> str:
+    existing = _existing_plan_entry_description(plan_entry)
+    if existing:
+        return existing
+    conn = get_db_readonly()
+    try:
+        user_row = conn.execute(
+            "SELECT id, plan_id FROM shorts_users WHERE id = ? LIMIT 1",
+            [owner_user_id],
+        ).fetchone()
+        video_row = conn.execute(
+            """
+            SELECT title, published_at, video_date_text, duration_seconds
+            FROM youtube_videos
+            WHERE id = ? AND owner_user_id = ? AND brand_id IS NOT DISTINCT FROM ?
+            LIMIT 1
+            """,
+            [video_pk, owner_user_id, brand_id],
+        ).fetchone()
+        _, segments = _fetch_transcript(conn, source_video_id, video_pk=video_pk)
+    finally:
+        conn.close()
+    if not user_row or not video_row:
+        raise ValueError("Description owner or video was not found.")
+    description_user = {"id": user_row[0], "plan_id": user_row[1]}
+    gate_error = _description_generation_gate_error(description_user, brand_id)
+    if gate_error:
+        raise ValueError(gate_error)
+    description = _generate_description_for_plan_entry(
+        current_user=description_user,
+        brand_id=brand_id,
+        video_id=source_video_id,
+        video_title=video_row[0],
+        published_at=video_row[1],
+        video_date_text=video_row[2],
+        duration_seconds=video_row[3],
+        plan_entry=plan_entry,
+        segments=segments,
+    )
+    if not description:
+        raise ValueError("Description generation returned no text.")
+    plan_entry["yt_description"] = description
+    plan_entry["yt_status"] = "ready"
+    _write_plan_entries(
+        source_video_id,
+        plan_entries,
+        video_pk=video_pk,
+        owner_user_id=owner_user_id,
+        brand_id=brand_id,
+    )
+    return description
+
+
+def _backfill_missing_descriptions_after_youtube_connect(
+    owner_user_id: str,
+    brand_id: Optional[str],
+) -> int:
+    conn = get_db_readonly()
+    try:
+        video_rows = conn.execute(
+            """
+            SELECT id, video_id
+            FROM youtube_videos
+            WHERE owner_user_id = ? AND brand_id IS NOT DISTINCT FROM ?
+            ORDER BY id
+            """,
+            [owner_user_id, brand_id],
+        ).fetchall()
+    finally:
+        conn.close()
+    generated = 0
+    for video_pk, source_video_id in video_rows:
+        plan_entries = _load_plan_entries(
+            source_video_id,
+            video_pk=video_pk,
+            owner_user_id=owner_user_id,
+            brand_id=brand_id,
+        )
+        for entry in plan_entries:
+            if str(entry.get("status") or "").lower() != "created":
+                continue
+            if _existing_plan_entry_description(entry):
+                continue
+            try:
+                _generate_missing_schedule_description(
+                    owner_user_id=owner_user_id,
+                    brand_id=brand_id,
+                    video_pk=video_pk,
+                    source_video_id=source_video_id,
+                    plan_entries=plan_entries,
+                    plan_entry=entry,
+                )
+                generated += 1
+            except Exception:
+                current_app.logger.exception(
+                    "YouTube connect description backfill failed video_pk=%s plan_index=%s",
+                    video_pk,
+                    entry.get("plan_index"),
+                )
+    return generated
 
 
 @video_shorts_bp.route("/generate/<int:video_pk>/prepare_description", methods=["POST"])

@@ -7879,6 +7879,7 @@
                                 data-description="{{ (row.yt_description or '') | replace('\\', '\\\\') | replace('\n', '\\n') | replace('\r', '\\r') | e }}"
                                 data-video-pk="{{ video.id }}"
                                 data-publish-at="{{ row.publish_at or row.publish_at_iso or '' }}"
+                                data-publish-status="{{ row.publish_status or '' }}"
                                 data-latest-scheduled="{{ (channel_latest_scheduled_display or '') | e }}"
                                 data-latest-scheduled-iso="{{ (channel_latest_scheduled_client_iso or '') | e }}"
                                 data-yt-video-id="{{ row.yt_video_id or '' }}"
@@ -15873,6 +15874,7 @@ const refreshClipList = async (preferredPlanIndex = null, preferredViewMode = nu
     const newLatest = doc.getElementById("youtube-latest-scheduled");
     if (latestInfo && newLatest) {
       latestInfo.textContent = newLatest.textContent;
+      latestInfo.dataset.latestScheduledIso = newLatest.dataset.latestScheduledIso || "";
     }
     window.__generateV2PreserveSelectedPlanIndex = "";
     return true;
@@ -17875,6 +17877,7 @@ const markClipAsScheduled = (clip, publishAt, options = {}) => {
   if (clip.planIndex) {
     document.querySelectorAll(`.send-to-youtube-btn[data-plan-index="${CSS.escape(String(clip.planIndex))}"]`).forEach((button) => {
       button.dataset.publishAt = publishAtValue;
+      button.dataset.publishStatus = payload.publish_status || "pending";
       button.dataset.buttonLabel = "Update schedule";
       if (youtubeVideoId) {
         button.dataset.ytVideoId = youtubeVideoId;
@@ -18769,9 +18772,10 @@ const youtubeModalContext = (() => {
       youtubeStatusBadge.className = "badge text-white bg-secondary";
       return;
     }
-    const scheduled = Boolean(publishInput?.value);
-    youtubeStatusBadge.textContent = scheduled ? "Planned" : "Publish now (public)";
-    youtubeStatusBadge.className = `badge text-white ${scheduled ? "bg-primary" : "bg-success"}`;
+    const scheduleStatus = String(activeSendBtn?.dataset.publishStatus || "").toLowerCase();
+    const scheduled = ["pending", "queued", "uploading", "scheduled", "uploaded", "published"].includes(scheduleStatus);
+    youtubeStatusBadge.textContent = scheduled ? "Planned" : (publishInput?.value ? "Ready to plan" : "Publish now (public)");
+    youtubeStatusBadge.className = `badge text-white ${scheduled ? "bg-primary" : (publishInput?.value ? "bg-warning" : "bg-success")}`;
   };
   const updateYoutubeHint = () => {
     if (youtubeDisabledHint) {

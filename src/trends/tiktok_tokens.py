@@ -49,11 +49,11 @@ def _ensure_table(conn):
         conn.execute("ALTER TABLE tiktok_oauth_tokens ADD COLUMN refresh_expires_at VARCHAR")
 
 
-def _scope_owner(user_id: Optional[str]) -> str:
+def _scope_owner(user_id: Optional[str], brand_id: Optional[str] = None) -> str:
     owner = user_id or "global"
-    brand_id = current_brand_id()
-    if brand_id and "::" not in owner:
-        return f"{owner}::{brand_id}"
+    scoped_brand_id = brand_id or current_brand_id()
+    if scoped_brand_id and "::" not in owner:
+        return f"{owner}::{scoped_brand_id}"
     return owner
 
 
@@ -108,7 +108,10 @@ def store_tiktok_token(
         conn.close()
 
 
-def get_tiktok_data(user_id: Optional[str] = None) -> Optional[Dict[str, Optional[str]]]:
+def get_tiktok_data(
+    user_id: Optional[str] = None,
+    brand_id: Optional[str] = None,
+) -> Optional[Dict[str, Optional[str]]]:
     conn = _connect(read_only=False)
     try:
         _ensure_table(conn)
@@ -120,7 +123,7 @@ def get_tiktok_data(user_id: Optional[str] = None) -> Optional[Dict[str, Optiona
                 WHERE user_id = ?
                 LIMIT 1
                 """,
-                [_scope_owner(user_id)],
+                [_scope_owner(user_id, brand_id)],
             ).fetchone()
         else:
             row = conn.execute(

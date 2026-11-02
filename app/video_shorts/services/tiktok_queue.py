@@ -37,6 +37,7 @@ def _queue_timestamp_expr(column_name: str, backend_name: str) -> str:
 def enqueue_tiktok_clip(
     *,
     user_id: Optional[str],
+    brand_id: Optional[str] = None,
     video_id: Optional[str],
     plan_index: Optional[str],
     clip_filename: str,
@@ -48,7 +49,7 @@ def enqueue_tiktok_clip(
     force_requeue: bool = False,
 ) -> str:
     queue_id = str(uuid.uuid4())
-    scoped_user_id = brand_scoped_user_id(user_id)
+    scoped_user_id = brand_scoped_user_id(user_id, brand_id=brand_id)
     queue_owner, _, queue_brand = str(scoped_user_id or "").partition("::")
     queue_brand = queue_brand or None
     identity_sql, identity_params = queue_identity_filter(queue_owner, queue_brand)

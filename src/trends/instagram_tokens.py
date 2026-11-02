@@ -106,11 +106,11 @@ def _ensure_pending_table(conn):
     )
 
 
-def _scope_owner(user_id: Optional[str]) -> str:
+def _scope_owner(user_id: Optional[str], brand_id: Optional[str] = None) -> str:
     owner = user_id or "global"
-    brand_id = current_brand_id()
-    if brand_id and "::" not in owner:
-        return f"{owner}::{brand_id}"
+    scoped_brand_id = brand_id or current_brand_id()
+    if scoped_brand_id and "::" not in owner:
+        return f"{owner}::{scoped_brand_id}"
     return owner
 
 
@@ -178,7 +178,10 @@ def store_instagram_token(
         conn.close()
 
 
-def get_instagram_data(user_id: Optional[str] = None) -> Optional[Dict[str, Optional[str]]]:
+def get_instagram_data(
+    user_id: Optional[str] = None,
+    brand_id: Optional[str] = None,
+) -> Optional[Dict[str, Optional[str]]]:
     try:
         conn = _connect(read_only=True)
     except InstagramTokenStoreError:
@@ -195,7 +198,7 @@ def get_instagram_data(user_id: Optional[str] = None) -> Optional[Dict[str, Opti
                 WHERE user_id = ?
                 LIMIT 1
                 """,
-                [_scope_owner(user_id)],
+                [_scope_owner(user_id, brand_id)],
             ).fetchone()
         else:
             row = conn.execute(
@@ -228,7 +231,7 @@ def get_instagram_data(user_id: Optional[str] = None) -> Optional[Dict[str, Opti
                     WHERE user_id = ?
                     LIMIT 1
                     """,
-                    [_scope_owner(user_id)],
+                    [_scope_owner(user_id, brand_id)],
                 ).fetchone()
             else:
                 row = conn.execute(
@@ -266,11 +269,18 @@ def get_instagram_data(user_id: Optional[str] = None) -> Optional[Dict[str, Opti
     }
 
 
-def get_instagram_credentials(user_id: Optional[str] = None) -> Optional[Dict[str, Optional[str]]]:
-    data = get_instagram_data(user_id=user_id)
+def get_instagram_credentials(
+    user_id: Optional[str] = None,
+    brand_id: Optional[str] = None,
+) -> Optional[Dict[str, Optional[str]]]:
+    data = get_instagram_data(user_id=user_id, brand_id=brand_id)
     if data and data.get("page_access_token") and data.get("instagram_business_account_id"):
         try:
-            refreshed = refresh_instagram_token_if_needed(user_id=user_id, current=data)
+            refreshed = refresh_instagram_token_if_needed(
+                user_id=user_id,
+                brand_id=brand_id,
+                current=data,
+            )
             return refreshed or data
         except Exception:
             return data
@@ -451,10 +461,11 @@ def _fetch_instagram_account_profile(access_token: str, instagram_user_id: Optio
 def refresh_instagram_token_if_needed(
     *,
     user_id: Optional[str],
+    brand_id: Optional[str] = None,
     current: Optional[Dict[str, Optional[str]]] = None,
     force: bool = False,
 ) -> Optional[Dict[str, Optional[str]]]:
-    data = current or get_instagram_data(user_id=user_id)
+    data = current or get_instagram_data(user_id=user_id, brand_id=brand_id)
     if not data or not data.get("page_access_token"):
         return data
     if not (IG_APP_ID and IG_APP_SECRET):
@@ -494,7 +505,7 @@ def refresh_instagram_token_if_needed(
         instagram_user_id=data.get("instagram_user_id") or data.get("instagram_business_account_id"),
     )
     store_instagram_token(
-        user_id=user_id,
+        user_id=_scope_owner(user_id, brand_id),
         page_access_token=refreshed_token,
         instagram_business_account_id=profile.get("instagram_graph_id") or data.get("instagram_business_account_id") or "",
         instagram_username=profile.get("instagram_username") or data.get("instagram_username"),
@@ -507,4 +518,4 @@ def refresh_instagram_token_if_needed(
         expires_at=refreshed_expires_at,
         scopes=data.get("scopes") or "",
     )
-    return get_instagram_data(user_id=user_id)
+    return get_instagram_data(user_id=user_id, brand_id=brand_id)
