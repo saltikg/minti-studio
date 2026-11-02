@@ -112,7 +112,11 @@ def main() -> int:
     parser.add_argument("--apply", action="store_true", help="Store labels. Without this flag, only show the eligible count.")
     parser.add_argument("--force", action="store_true", help="Recheck leads that already have a label.")
     parser.add_argument("--limit", type=int, default=0)
+    parser.add_argument("--shard-count", type=int, default=1)
+    parser.add_argument("--shard-index", type=int, default=0)
     args = parser.parse_args()
+    if args.shard_count < 1 or args.shard_index < 0 or args.shard_index >= args.shard_count:
+        parser.error("--shard-index must be between 0 and --shard-count - 1")
 
     app = create_app()
     with app.app_context():
@@ -121,6 +125,8 @@ def main() -> int:
             where = "icp_fit IS TRUE AND first_seen_at >= CURRENT_TIMESTAMP - INTERVAL '60 days'"
             if not args.force:
                 where += " AND face_checked_at IS NULL"
+            if args.shard_count > 1:
+                where += f" AND MOD(id, {args.shard_count}) = {args.shard_index}"
             limit_sql = f" LIMIT {max(0, args.limit)}" if args.limit else ""
             rows = conn.execute(
                 f"SELECT id, youtube_channel_id, channel_title FROM discovery_leads WHERE {where} ORDER BY first_seen_at, id{limit_sql}"
