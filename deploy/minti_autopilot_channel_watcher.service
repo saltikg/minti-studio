@@ -1,0 +1,11 @@
+[Unit]
+Description=Minti Studio autopilot YouTube channel watcher
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+User=ubuntu
+WorkingDirectory=/home/ubuntu/apps/minti_studio
+EnvironmentFile=/home/ubuntu/apps/minti_studio/.env
+ExecStart=/home/ubuntu/apps/minti_studio/.venv/bin/python scripts/watch_autopilot_channels.py

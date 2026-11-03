@@ -1,0 +1,11 @@
+[Unit]
+Description=Check autopilot YouTube channels at 07:00 and 19:00 PT
+
+[Timer]
+OnCalendar=*-*-* 07,19:00:00 America/Los_Angeles
+Persistent=true
+RandomizedDelaySec=2m
+Unit=minti_autopilot_channel_watcher.service
+
+[Install]
+WantedBy=timers.target

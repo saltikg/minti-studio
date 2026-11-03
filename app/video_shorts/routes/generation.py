@@ -21705,7 +21705,6 @@ def _load_admin_autopilot_customers(
 ) -> Tuple[List[Dict[str, Any]], int]:
     ensure_storage_user_schema(conn)
     ensure_auth_user_schema(conn)
-    has_lead_records = autopilot_leads_table_ready(conn)
     normalized_email = (email_query or "").strip().lower()
     where_parts = ["lower(coalesce(u.service_mode, '')) = 'autopilot'"]
     params: List[Any] = []
@@ -21713,78 +21712,141 @@ def _load_admin_autopilot_customers(
         where_parts.append("lower(coalesce(u.email, u.username, '')) LIKE ?")
         params.append(f"%{normalized_email}%")
     where_sql = " AND ".join(where_parts)
-    total_row = conn.execute(
-        f"""
-        SELECT COUNT(*)
-        FROM shorts_users u
-        WHERE {where_sql}
-        """,
-        params,
-    ).fetchone()
-    total_count = int((total_row[0] if total_row else 0) or 0)
-    customer_scope_join = ""
-    customer_scope_fields = "NULL AS customer_brand_id, NULL AS customer_brand_name, NULL AS converted_lead_id, NULL AS creator_name"
-    if has_lead_records:
-        customer_scope_join = """
-        LEFT JOIN autopilot_leads l
-          ON l.id = (
-              SELECT l2.id
-              FROM autopilot_leads l2
-              WHERE CAST(l2.user_id AS VARCHAR) = CAST(u.id AS VARCHAR)
-                AND l2.converted_at IS NOT NULL
-              ORDER BY l2.converted_at DESC NULLS LAST, l2.id DESC
-              LIMIT 1
-          )
-        LEFT JOIN shorts_brands b
-          ON CAST(b.id AS VARCHAR) = CAST(l.brand_id AS VARCHAR)
-         AND CAST(b.owner_user_id AS VARCHAR) = CAST(u.id AS VARCHAR)
-        """
-        customer_scope_fields = """
-            CAST(b.id AS VARCHAR) AS customer_brand_id,
-            b.name AS customer_brand_name,
-            CAST(l.id AS VARCHAR) AS converted_lead_id,
-            l.creator_name
-        """
+    now_utc = datetime.now(timezone.utc)
+    month_start_pt = datetime(now_utc.astimezone(PST_ZONE).year, now_utc.astimezone(PST_ZONE).month, 1, tzinfo=PST_ZONE)
+    if month_start_pt.month == 12:
+        month_end_pt = month_start_pt.replace(year=month_start_pt.year + 1, month=1)
+    else:
+        month_end_pt = month_start_pt.replace(month=month_start_pt.month + 1)
+    month_start_utc = month_start_pt.astimezone(timezone.utc).replace(tzinfo=None)
+    month_end_utc = month_end_pt.astimezone(timezone.utc).replace(tzinfo=None)
+    now_naive = now_utc.replace(tzinfo=None)
     rows = conn.execute(
         f"""
+        WITH ranked_leads AS (
+            SELECT l.*,
+                   ROW_NUMBER() OVER (
+                       PARTITION BY CAST(l.user_id AS VARCHAR)
+                       ORDER BY l.converted_at DESC NULLS LAST, l.id DESC
+                   ) AS rn
+            FROM autopilot_leads l
+            WHERE l.converted_at IS NOT NULL
+        ),
+        customers AS (
+            SELECT
+                CAST(u.id AS VARCHAR) AS user_id,
+                COALESCE(NULLIF(u.email, ''), NULLIF(u.username, ''), '') AS email,
+                COALESCE(u.service_tier, 15) AS service_tier,
+                u.service_mode_chosen_at,
+                COALESCE(NULLIF(u.password_hash, ''), '') <> '' AS password_set,
+                COALESCE(NULLIF(u.google_sub, ''), '') <> '' AS google_linked,
+                CAST(b.id AS VARCHAR) AS brand_id,
+                b.name AS brand_name,
+                CAST(l.id AS VARCHAR) AS lead_id,
+                l.creator_name,
+                l.youtube_channel_id AS lead_channel_id,
+                COUNT(*) OVER () AS total_count
+            FROM shorts_users u
+            LEFT JOIN ranked_leads l
+              ON CAST(l.user_id AS VARCHAR) = CAST(u.id AS VARCHAR) AND l.rn = 1
+            LEFT JOIN shorts_brands b
+              ON CAST(b.id AS VARCHAR) = CAST(l.brand_id AS VARCHAR)
+             AND CAST(b.owner_user_id AS VARCHAR) = CAST(u.id AS VARCHAR)
+            WHERE {where_sql}
+            ORDER BY u.service_mode_chosen_at DESC NULLS LAST,
+                     u.updated_at DESC NULLS LAST,
+                     u.created_at DESC NULLS LAST
+            LIMIT ? OFFSET ?
+        ),
+        source_counts AS (
+            SELECT CAST(owner_user_id AS VARCHAR) AS user_id, COUNT(*) AS source_video_count
+            FROM youtube_videos
+            GROUP BY CAST(owner_user_id AS VARCHAR)
+        ),
+        monthly_delivery AS (
+            SELECT CAST(brand_id AS VARCHAR) AS brand_id,
+                   expected_youtube_channel_id AS channel_id,
+                   COUNT(*) AS delivered_count
+            FROM shorts_youtube_schedules
+            WHERE lower(COALESCE(status, '')) IN ('pending', 'queued', 'uploading', 'uploaded')
+              AND publish_at >= ?
+              AND publish_at < ?
+            GROUP BY CAST(brand_id AS VARCHAR), expected_youtube_channel_id
+        ),
+        runway AS (
+            SELECT CAST(brand_id AS VARCHAR) AS brand_id,
+                   expected_youtube_channel_id AS channel_id,
+                   COUNT(*) AS scheduled_count,
+                   MAX(publish_at) AS last_scheduled_at
+            FROM shorts_youtube_schedules
+            WHERE lower(COALESCE(status, '')) IN ('pending', 'queued', 'uploading', 'uploaded')
+              AND publish_at > ?
+            GROUP BY CAST(brand_id AS VARCHAR), expected_youtube_channel_id
+        ),
+        latest_publish AS (
+            SELECT CAST(brand_id AS VARCHAR) AS brand_id,
+                   expected_youtube_channel_id AS channel_id,
+                   status,
+                   ROW_NUMBER() OVER (
+                       PARTITION BY CAST(brand_id AS VARCHAR), expected_youtube_channel_id
+                       ORDER BY updated_at DESC NULLS LAST, id DESC
+                   ) AS rn
+            FROM shorts_youtube_schedules
+            WHERE lower(COALESCE(status, '')) IN (
+                'uploaded', 'failed', 'missed', 'uncertain', 'blocked_target_mismatch'
+            )
+        )
         SELECT
-            CAST(u.id AS VARCHAR),
-            COALESCE(NULLIF(u.email, ''), NULLIF(u.username, ''), '') AS email,
-            COALESCE(u.service_tier, 15) AS service_tier,
-            u.service_mode_chosen_at,
-            COALESCE(NULLIF(u.password_hash, ''), '') <> '' AS password_set,
-            COALESCE(NULLIF(u.google_sub, ''), '') <> '' AS google_linked,
-            (
-                SELECT COUNT(*)
-                FROM youtube_videos v
-                WHERE CAST(v.owner_user_id AS VARCHAR) = CAST(u.id AS VARCHAR)
-            ) AS source_video_count,
-            {customer_scope_fields}
-        FROM shorts_users u
-        {customer_scope_join}
-        WHERE {where_sql}
-        ORDER BY u.service_mode_chosen_at DESC NULLS LAST, u.updated_at DESC NULLS LAST, u.created_at DESC NULLS LAST
-        LIMIT ? OFFSET ?
+            c.user_id, c.email, c.service_tier, c.service_mode_chosen_at,
+            c.password_set, c.google_linked, COALESCE(sc.source_video_count, 0),
+            c.brand_id, c.brand_name, c.lead_id, c.creator_name,
+            COALESCE(NULLIF(t.youtube_channel_id, ''), NULLIF(c.lead_channel_id, ''), '') AS channel_id,
+            CASE WHEN NULLIF(t.youtube_channel_id, '') IS NOT NULL THEN 'connected' ELSE 'lead' END AS channel_source,
+            t.user_id IS NOT NULL AS youtube_connected,
+            COALESCE(t.reauth_required, 0) <> 0 AS token_error,
+            COALESCE(md.delivered_count, 0) AS delivered_count,
+            COALESCE(r.scheduled_count, 0) AS scheduled_count,
+            r.last_scheduled_at,
+            lp.status AS latest_publish_status,
+            cv.id, cv.youtube_video_id, cv.title, cv.published_at, cv.duration_s, cv.detected_at,
+            c.total_count
+        FROM customers c
+        LEFT JOIN source_counts sc ON sc.user_id = c.user_id
+        LEFT JOIN youtube_oauth_tokens_v2 t
+          ON t.user_id = c.user_id || '::' || c.brand_id
+        LEFT JOIN monthly_delivery md
+          ON md.brand_id = c.brand_id
+         AND md.channel_id = COALESCE(NULLIF(t.youtube_channel_id, ''), NULLIF(c.lead_channel_id, ''))
+        LEFT JOIN runway r
+          ON r.brand_id = c.brand_id
+         AND r.channel_id = COALESCE(NULLIF(t.youtube_channel_id, ''), NULLIF(c.lead_channel_id, ''))
+        LEFT JOIN latest_publish lp
+          ON lp.brand_id = c.brand_id
+         AND lp.channel_id = COALESCE(NULLIF(t.youtube_channel_id, ''), NULLIF(c.lead_channel_id, ''))
+         AND lp.rn = 1
+        LEFT JOIN autopilot_channel_videos cv
+          ON cv.brand_id = c.brand_id AND cv.status = 'new'
+        ORDER BY c.service_mode_chosen_at DESC NULLS LAST, c.user_id, cv.published_at DESC NULLS LAST
         """,
-        [*params, limit, offset],
+        [*params, limit, offset, month_start_utc, month_end_utc, now_naive],
     ).fetchall()
-    items: List[Dict[str, Any]] = []
+    items_by_user: Dict[str, Dict[str, Any]] = {}
+    total_count = int(rows[0][25] or 0) if rows else 0
     for row in rows:
         user_id = str(row[0] or "").strip()
-        youtube_connected = _token_table_has_any_rows("youtube_oauth_tokens_v2", user_id)
-        source_video_count = int(row[6] or 0)
-        customer_brand_id = str(row[7] or "").strip()
-        customer_brand_name = str(row[8] or "").strip()
-        converted_lead_id = str(row[9] or "").strip()
-        creator_name = str(row[10] or "").strip()
-        if not youtube_connected:
-            next_action = "Connect channel"
-        elif source_video_count <= 0:
-            next_action = "Upload first long video"
-        else:
-            next_action = "Ready for manual autopilot setup"
-        items.append(
-            {
+        item = items_by_user.get(user_id)
+        if item is None:
+            channel_id = str(row[11] or "").strip()
+            runway_last = row[17]
+            runway_low = False
+            if isinstance(runway_last, datetime):
+                runway_utc = runway_last.replace(tzinfo=timezone.utc) if runway_last.tzinfo is None else runway_last.astimezone(timezone.utc)
+                runway_low = runway_utc < now_utc + timedelta(days=3)
+            latest_publish_status = str(row[18] or "").strip().lower()
+            token_error = bool(row[14]) or latest_publish_status in {
+                "failed", "missed", "uncertain", "blocked_target_mismatch"
+            }
+            item = {
                 "user_id": user_id,
                 "email": str(row[1] or "").strip(),
                 "service_tier": int(row[2] or 15),
@@ -21795,19 +21857,49 @@ def _load_admin_autopilot_customers(
                 "password_set_label": "Yes" if bool(row[4]) else "No",
                 "google_linked": bool(row[5]),
                 "google_linked_label": "Yes" if bool(row[5]) else "No",
-                "youtube_connected": youtube_connected,
-                "youtube_connected_label": "Yes" if youtube_connected else "No",
-                "source_video_count": source_video_count,
-                "next_action": next_action,
+                "youtube_connected": bool(row[13]),
+                "youtube_connected_label": "Yes" if bool(row[13]) else "No",
+                "source_video_count": int(row[6] or 0),
                 "user_detail_url": url_for("video_shorts_bp.admin_user_detail", user_id=user_id),
-                "customer_brand_id": customer_brand_id,
-                "customer_brand_name": customer_brand_name,
-                "converted_lead_id": converted_lead_id,
-                "creator_name": creator_name,
-                "has_customer_workspace": bool(customer_brand_id and converted_lead_id),
+                "customer_brand_id": str(row[7] or "").strip(),
+                "customer_brand_name": str(row[8] or "").strip(),
+                "converted_lead_id": str(row[9] or "").strip(),
+                "creator_name": str(row[10] or "").strip(),
+                "has_customer_workspace": bool(row[7] and row[9]),
+                "channel_id": channel_id,
+                "channel_source": str(row[12] or "").strip(),
+                "no_channel": not bool(channel_id),
+                "channel_health": "Token error" if token_error else ("Healthy" if row[13] else "Not connected"),
+                "channel_health_error": token_error,
+                "monthly_delivered": int(row[15] or 0),
+                "runway_count": int(row[16] or 0),
+                "runway_last_pst": _format_datetime_pst(runway_last),
+                "runway_low": runway_low,
+                "new_videos": [],
+                "new_video_count": 0,
+                "overdue": False,
             }
-        )
-    return items, total_count
+            items_by_user[user_id] = item
+        if row[19] is not None:
+            detected_at = row[24]
+            detected_utc = None
+            if isinstance(detected_at, datetime):
+                detected_utc = detected_at.replace(tzinfo=timezone.utc) if detected_at.tzinfo is None else detected_at.astimezone(timezone.utc)
+            video = {
+                "id": int(row[19]),
+                "youtube_video_id": str(row[20] or ""),
+                "title": str(row[21] or ""),
+                "published_at_pst": _format_datetime_pst(row[22]),
+                "duration_s": int(row[23] or 0),
+                "duration_label": _format_time_label(int(row[23] or 0)),
+                "detected_at_pst": _format_datetime_pst(detected_at),
+                "youtube_url": f"https://www.youtube.com/watch?v={row[20]}",
+            }
+            item["new_videos"].append(video)
+            item["new_video_count"] += 1
+            if detected_utc and detected_utc < now_utc - timedelta(hours=48):
+                item["overdue"] = True
+    return list(items_by_user.values()), total_count
 
 
 def _directory_size_bytes(path: Path) -> int:
@@ -23131,14 +23223,6 @@ def admin_autopilot_leads():
     per_page = 200
     conn = get_db_readonly()
     try:
-        total_customers = _load_admin_autopilot_customers(
-            conn,
-            email_query=email_query,
-            limit=1,
-            offset=0,
-        )[1]
-        total_pages = max(1, (total_customers + per_page - 1) // per_page)
-        page = min(page, total_pages)
         customers, total_customers = _load_admin_autopilot_customers(
             conn,
             email_query=email_query,
@@ -23147,6 +23231,8 @@ def admin_autopilot_leads():
         )
     finally:
         conn.close()
+    total_pages = max(1, (total_customers + per_page - 1) // per_page)
+    page = min(page, total_pages)
     return render_template(
         "shorts_admin_autopilot_leads.html",
         admin_title="Autopilot",
@@ -23157,6 +23243,96 @@ def admin_autopilot_leads():
         per_page=per_page,
         total_pages=total_pages,
     )
+
+
+@video_shorts_bp.route("/admin/autopilot-channel-videos/<int:channel_video_id>/<action>", methods=["POST"])
+@require_admin
+def admin_autopilot_channel_video_action(channel_video_id: int, action: str):
+    normalized_action = str(action or "").strip().lower()
+    if normalized_action not in {"process", "skip", "seen"}:
+        abort(404)
+    conn = get_db_readonly()
+    try:
+        row = conn.execute(
+            """
+            SELECT cv.id, cv.user_id, cv.brand_id, cv.youtube_video_id, cv.title,
+                   cv.published_at, cv.duration_s, cv.status, cv.channel_id
+            FROM autopilot_channel_videos cv
+            JOIN shorts_users u
+              ON CAST(u.id AS VARCHAR) = CAST(cv.user_id AS VARCHAR)
+             AND lower(COALESCE(u.service_mode, '')) = 'autopilot'
+            JOIN shorts_brands b
+              ON CAST(b.id AS VARCHAR) = CAST(cv.brand_id AS VARCHAR)
+             AND CAST(b.owner_user_id AS VARCHAR) = CAST(cv.user_id AS VARCHAR)
+            JOIN autopilot_leads l
+              ON CAST(l.user_id AS VARCHAR) = CAST(cv.user_id AS VARCHAR)
+             AND CAST(l.brand_id AS VARCHAR) = CAST(cv.brand_id AS VARCHAR)
+             AND l.converted_at IS NOT NULL
+            WHERE cv.id = ?
+            LIMIT 1
+            """,
+            [channel_video_id],
+        ).fetchone()
+    finally:
+        conn.close()
+    if not row:
+        abort(404)
+    if str(row[7] or "").strip().lower() != "new":
+        flash("That channel video has already been handled.", "info")
+        return redirect(url_for("video_shorts_bp.admin_autopilot_leads"))
+
+    if normalized_action == "process":
+        from app.video_shorts.routes.quick_short import create_youtube_ingest_session_for_user
+
+        video_id = str(row[3] or "").strip()
+        create_youtube_ingest_session_for_user(
+            user_id=str(row[1]),
+            brand_id=str(row[2]),
+            video_url=f"https://www.youtube.com/watch?v={video_id}",
+            meta={
+                "video_id": video_id,
+                "title": str(row[4] or video_id),
+                "published_at": row[5].isoformat() if isinstance(row[5], datetime) else row[5],
+                "duration_seconds": int(row[6] or 0),
+                "channel_id": str(row[8] or ""),
+            },
+            source="autopilot_channel_watcher",
+            job_payload_extra={
+                "quota_exempt": True,
+                "autopilot_channel_video_id": int(row[0]),
+            },
+        )
+        next_status = "processed"
+    else:
+        next_status = "skipped" if normalized_action == "skip" else "seen"
+
+    conn = get_db()
+    try:
+        updated = conn.execute(
+            """
+            UPDATE autopilot_channel_videos
+            SET status = ?
+            WHERE id = ?
+              AND CAST(user_id AS VARCHAR) = CAST(? AS VARCHAR)
+              AND CAST(brand_id AS VARCHAR) = CAST(? AS VARCHAR)
+              AND status = 'new'
+            RETURNING id
+            """,
+            [next_status, int(row[0]), str(row[1]), str(row[2])],
+        ).fetchone()
+        conn.commit()
+    except Exception:
+        conn.rollback()
+        raise
+    finally:
+        conn.close()
+    if not updated:
+        flash("That channel video was handled in another request.", "info")
+    elif next_status == "processed":
+        flash("Video queued through the My Videos ingest pipeline.", "success")
+    else:
+        flash(f"Video marked {next_status}.", "success")
+    return redirect(url_for("video_shorts_bp.admin_autopilot_leads"))
 
 
 @video_shorts_bp.route("/admin/scheduled-shorts", methods=["GET"])

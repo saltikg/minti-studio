@@ -276,6 +276,7 @@ def fetch_video_metadata(video_id: str) -> Dict[str, Any]:
         "view_count": _to_int(statistics.get("viewCount")),
         "like_count": _to_int(statistics.get("likeCount")),
         "comment_count": _to_int(statistics.get("commentCount")),
+        "live_broadcast_content": str(snippet.get("liveBroadcastContent") or "none").lower(),
     }
 
 

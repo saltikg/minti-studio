@@ -105,6 +105,43 @@
       gap: 8px;
       flex-wrap: wrap;
     }
+    .admin-autopilot-video-badge {
+      display: inline-flex;
+      border-radius: 999px;
+      padding: 5px 9px;
+      border: 1px solid rgba(56, 189, 248, 0.4);
+      color: #7dd3fc;
+      background: rgba(14, 165, 233, 0.12);
+      font-weight: 700;
+    }
+    .admin-autopilot-video-badge.is-overdue {
+      border-color: rgba(248, 113, 113, 0.55);
+      color: #fca5a5;
+      background: rgba(239, 68, 68, 0.14);
+    }
+    .admin-autopilot-video-list {
+      min-width: 420px;
+      white-space: normal;
+    }
+    .admin-autopilot-video-item {
+      padding: 10px 0;
+      border-top: 1px solid rgba(255,255,255,.08);
+    }
+    .admin-autopilot-video-actions {
+      display: flex;
+      gap: 6px;
+      margin-top: 8px;
+    }
+    .admin-autopilot-health-error,
+    .admin-autopilot-runway-low { color: #fca5a5; font-weight: 700; }
+    .admin-autopilot-no-channel {
+      display: inline-flex;
+      border-radius: 999px;
+      padding: 4px 8px;
+      color: #fcd34d;
+      background: rgba(245,158,11,.12);
+      border: 1px solid rgba(245,158,11,.3);
+    }
     @media (max-width: 767.98px) {
       .admin-autopilot-toolbar {
         grid-template-columns: 1fr;
@@ -140,6 +177,10 @@
             <th class="admin-autopilot-status-col">Google<br>linked?</th>
             <th class="admin-autopilot-date-col">Created<br>date</th>
             <th class="admin-autopilot-status-col">Channel<br>connected</th>
+            <th>Uploads</th>
+            <th>Monthly quota</th>
+            <th>Runway</th>
+            <th>Channel health</th>
           </tr>
         </thead>
         <tbody>
@@ -165,11 +206,51 @@
               <td class="admin-autopilot-status-col">{{ customer.password_set_label }}</td>
               <td class="admin-autopilot-status-col">{{ customer.google_linked_label }}</td>
               <td class="admin-autopilot-date-col">{{ customer.chosen_date_pst or '—' }}</td>
-              <td class="admin-autopilot-status-col">{{ customer.youtube_connected_label }}</td>
+              <td class="admin-autopilot-status-col">
+                {% if customer.no_channel %}
+                  <span class="admin-autopilot-no-channel">No channel</span>
+                {% else %}
+                  {{ customer.youtube_connected_label }}
+                {% endif %}
+              </td>
+              <td>
+                {% if customer.new_video_count %}
+                  <details class="admin-autopilot-video-list">
+                    <summary class="admin-autopilot-video-badge{% if customer.overdue %} is-overdue{% endif %}">
+                      New video ({{ customer.new_video_count }})
+                    </summary>
+                    {% for video in customer.new_videos %}
+                      <div class="admin-autopilot-video-item">
+                        <a href="{{ video.youtube_url }}" target="_blank" rel="noopener" class="text-white">{{ video.title }}</a>
+                        <div class="small text-white-50">{{ video.duration_label }} · detected {{ video.detected_at_pst }}</div>
+                        <div class="admin-autopilot-video-actions">
+                          <form method="post" action="{{ url_for('video_shorts_bp.admin_autopilot_channel_video_action', channel_video_id=video.id, action='process') }}">
+                            <button class="btn btn-sm btn-primary" type="submit">Process</button>
+                          </form>
+                          <form method="post" action="{{ url_for('video_shorts_bp.admin_autopilot_channel_video_action', channel_video_id=video.id, action='skip') }}">
+                            <button class="btn btn-sm btn-outline-light" type="submit">Skip</button>
+                          </form>
+                          <form method="post" action="{{ url_for('video_shorts_bp.admin_autopilot_channel_video_action', channel_video_id=video.id, action='seen') }}">
+                            <button class="btn btn-sm btn-outline-light" type="submit">Mark seen</button>
+                          </form>
+                        </div>
+                      </div>
+                    {% endfor %}
+                  </details>
+                {% else %}
+                  <span class="text-muted">—</span>
+                {% endif %}
+              </td>
+              <td>{{ customer.monthly_delivered }} / 15</td>
+              <td class="{% if customer.runway_low %}admin-autopilot-runway-low{% endif %}">
+                {{ customer.runway_count }} future<br>
+                <span class="small">Last: {{ customer.runway_last_pst or '—' }}</span>
+              </td>
+              <td class="{% if customer.channel_health_error %}admin-autopilot-health-error{% endif %}">{{ customer.channel_health }}</td>
             </tr>
           {% else %}
             <tr>
-              <td colspan="7" class="text-center text-muted py-4">No autopilot customers yet.</td>
+              <td colspan="11" class="text-center text-muted py-4">No autopilot customers yet.</td>
             </tr>
           {% endfor %}
         </tbody>
