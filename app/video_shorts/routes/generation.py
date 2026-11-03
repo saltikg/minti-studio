@@ -21723,9 +21723,9 @@ def _load_admin_autopilot_customers(
     now_naive = now_utc.replace(tzinfo=None)
     resolved_channel_sql = """
         CASE
-            WHEN t.youtube_channel_id LIKE 'UC%' AND LENGTH(t.youtube_channel_id) = 24
+            WHEN t.youtube_channel_id LIKE 'UC%%' AND LENGTH(t.youtube_channel_id) = 24
                 THEN t.youtube_channel_id
-            WHEN c.lead_channel_id LIKE 'UC%' AND LENGTH(c.lead_channel_id) = 24
+            WHEN c.lead_channel_id LIKE 'UC%%' AND LENGTH(c.lead_channel_id) = 24
                 THEN c.lead_channel_id
             ELSE ''
         END
@@ -21811,8 +21811,8 @@ def _load_admin_autopilot_customers(
             c.brand_id, c.brand_name, c.lead_id, c.creator_name,
             {resolved_channel_sql} AS channel_id,
             CASE
-                WHEN t.youtube_channel_id LIKE 'UC%' AND LENGTH(t.youtube_channel_id) = 24 THEN 'connected'
-                WHEN c.lead_channel_id LIKE 'UC%' AND LENGTH(c.lead_channel_id) = 24 THEN 'lead'
+                WHEN t.youtube_channel_id LIKE 'UC%%' AND LENGTH(t.youtube_channel_id) = 24 THEN 'connected'
+                WHEN c.lead_channel_id LIKE 'UC%%' AND LENGTH(c.lead_channel_id) = 24 THEN 'lead'
                 ELSE 'none'
             END AS channel_source,
             t.user_id IS NOT NULL AS youtube_connected,
