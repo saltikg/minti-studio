@@ -58,15 +58,15 @@ def _database():
         ["u1", "customer@example.com", "customer", "autopilot", 15, now, "hash", "", now, now],
     )
     conn.execute("INSERT INTO shorts_brands VALUES ('b1', 'Brand', 'u1')")
-    conn.execute("INSERT INTO autopilot_leads VALUES ('l1', 'u1', 'b1', 'Creator', 'lead-channel', ?)", [now])
-    conn.execute("INSERT INTO youtube_oauth_tokens_v2 VALUES ('u1::b1', 'connected-channel', 1)")
+    conn.execute("INSERT INTO autopilot_leads VALUES ('l1', 'u1', 'b1', 'Creator', 'UC0000000000000000000000', ?)", [now])
+    conn.execute("INSERT INTO youtube_oauth_tokens_v2 VALUES ('u1::b1', 'UC1234567890123456789012', 1)")
     conn.execute("INSERT INTO shorts_generated_videos VALUES ('b1', 'published', ?, NULL)", [now])
     conn.execute(
-        "INSERT INTO shorts_youtube_schedules VALUES ('s1', 'b1', 'connected-channel', 'pending', ?, ?)",
+        "INSERT INTO shorts_youtube_schedules VALUES ('s1', 'b1', 'UC1234567890123456789012', 'pending', ?, ?)",
         [now + timedelta(days=2), now],
     )
     conn.execute(
-        "INSERT INTO autopilot_channel_videos VALUES (1, 'u1', 'b1', 'connected-channel', 'v1', 'New upload', ?, 600, ?, 'new')",
+        "INSERT INTO autopilot_channel_videos VALUES (1, 'u1', 'b1', 'UC1234567890123456789012', 'v1', 'New upload', ?, 600, ?, 'new')",
         [now, now - timedelta(hours=49)],
     )
     return conn
@@ -85,7 +85,7 @@ def test_customer_delivery_health_is_loaded_in_one_query(monkeypatch):
 
     assert counting.execute_count == 1
     assert total == 1
-    assert customers[0]["channel_id"] == "connected-channel"
+    assert customers[0]["channel_id"] == "UC1234567890123456789012"
     assert customers[0]["monthly_delivered"] == 1
     assert customers[0]["runway_count"] == 1
     assert customers[0]["runway_low"] is True

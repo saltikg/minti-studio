@@ -74,8 +74,18 @@ def _load_customers(conn) -> list[dict[str, str]]:
         SELECT CAST(u.id AS VARCHAR),
                COALESCE(NULLIF(u.email, ''), NULLIF(u.username, ''), ''),
                CAST(l.brand_id AS VARCHAR),
-               COALESCE(NULLIF(t.youtube_channel_id, ''), NULLIF(l.youtube_channel_id, ''), ''),
-               CASE WHEN NULLIF(t.youtube_channel_id, '') IS NOT NULL THEN 'connected' ELSE 'lead' END
+               CASE
+                   WHEN t.youtube_channel_id LIKE 'UC%' AND LENGTH(t.youtube_channel_id) = 24
+                       THEN t.youtube_channel_id
+                   WHEN l.youtube_channel_id LIKE 'UC%' AND LENGTH(l.youtube_channel_id) = 24
+                       THEN l.youtube_channel_id
+                   ELSE ''
+               END,
+               CASE
+                   WHEN t.youtube_channel_id LIKE 'UC%' AND LENGTH(t.youtube_channel_id) = 24 THEN 'connected'
+                   WHEN l.youtube_channel_id LIKE 'UC%' AND LENGTH(l.youtube_channel_id) = 24 THEN 'lead'
+                   ELSE 'none'
+               END
         FROM shorts_users u
         LEFT JOIN ranked_leads l
           ON CAST(l.user_id AS VARCHAR) = CAST(u.id AS VARCHAR) AND l.rn = 1
@@ -192,11 +202,34 @@ def run_watcher(
             )
             report["baseline"] = baseline
             minti_ids = _minti_video_ids(conn, customer["brand_id"])
-            for feed_item in feed_loader(customer["channel_id"]):
+            try:
+                feed_items = feed_loader(customer["channel_id"])
+            except Exception as exc:
+                logger.warning(
+                    "Autopilot channel RSS failed user_id=%s brand_id=%s channel_id=%s error_type=%s",
+                    customer["user_id"],
+                    customer["brand_id"],
+                    customer["channel_id"],
+                    type(exc).__name__,
+                )
+                report["result"] = f"Feed error ({type(exc).__name__})"
+                continue
+            report["metadata_errors"] = 0
+            for feed_item in feed_items:
                 video_id = str(feed_item.get("video_id") or "").strip()
                 if not video_id:
                     continue
-                metadata = metadata_loader(video_id) or {}
+                try:
+                    metadata = metadata_loader(video_id) or {}
+                except Exception as exc:
+                    report["metadata_errors"] += 1
+                    logger.warning(
+                        "Autopilot video metadata failed brand_id=%s video_id=%s error_type=%s",
+                        customer["brand_id"],
+                        video_id,
+                        type(exc).__name__,
+                    )
+                    continue
                 duration_s = int(metadata.get("duration_seconds") or 0)
                 live_state = str(metadata.get("live_broadcast_content") or "none").strip().lower()
                 skip = duration_s <= 180 or live_state in {"live", "upcoming"} or video_id in minti_ids

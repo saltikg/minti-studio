@@ -40,8 +40,8 @@ def _database():
     for statement in statements:
         conn.execute(statement)
     conn.execute("INSERT INTO shorts_users VALUES ('u1', 'customer@example.com', 'customer', 'autopilot')")
-    conn.execute("INSERT INTO autopilot_leads VALUES ('l1', 'u1', 'b1', 'lead-channel', CURRENT_TIMESTAMP)")
-    conn.execute("INSERT INTO youtube_oauth_tokens_v2 VALUES ('u1::b1', 'connected-channel')")
+    conn.execute("INSERT INTO autopilot_leads VALUES ('l1', 'u1', 'b1', 'UC0000000000000000000000', CURRENT_TIMESTAMP)")
+    conn.execute("INSERT INTO youtube_oauth_tokens_v2 VALUES ('u1::b1', 'UC1234567890123456789012')")
     return conn
 
 
@@ -65,7 +65,7 @@ def test_first_run_baselines_and_second_run_sends_one_digest(monkeypatch):
         email_sender=lambda rows: digests.append(rows),
     )
 
-    assert first["customers"][0]["channel_id"] == "connected-channel"
+    assert first["customers"][0]["channel_id"] == "UC1234567890123456789012"
     assert first["customers"][0]["baseline"] is True
     assert first["new_videos"] == 0
     assert conn.execute(

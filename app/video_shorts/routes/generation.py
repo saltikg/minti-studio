@@ -21721,6 +21721,15 @@ def _load_admin_autopilot_customers(
     month_start_utc = month_start_pt.astimezone(timezone.utc).replace(tzinfo=None)
     month_end_utc = month_end_pt.astimezone(timezone.utc).replace(tzinfo=None)
     now_naive = now_utc.replace(tzinfo=None)
+    resolved_channel_sql = """
+        CASE
+            WHEN t.youtube_channel_id LIKE 'UC%' AND LENGTH(t.youtube_channel_id) = 24
+                THEN t.youtube_channel_id
+            WHEN c.lead_channel_id LIKE 'UC%' AND LENGTH(c.lead_channel_id) = 24
+                THEN c.lead_channel_id
+            ELSE ''
+        END
+    """.strip()
     rows = conn.execute(
         f"""
         WITH ranked_leads AS (
@@ -21800,8 +21809,12 @@ def _load_admin_autopilot_customers(
             c.user_id, c.email, c.service_tier, c.service_mode_chosen_at,
             c.password_set, c.google_linked, COALESCE(sc.source_video_count, 0),
             c.brand_id, c.brand_name, c.lead_id, c.creator_name,
-            COALESCE(NULLIF(t.youtube_channel_id, ''), NULLIF(c.lead_channel_id, ''), '') AS channel_id,
-            CASE WHEN NULLIF(t.youtube_channel_id, '') IS NOT NULL THEN 'connected' ELSE 'lead' END AS channel_source,
+            {resolved_channel_sql} AS channel_id,
+            CASE
+                WHEN t.youtube_channel_id LIKE 'UC%' AND LENGTH(t.youtube_channel_id) = 24 THEN 'connected'
+                WHEN c.lead_channel_id LIKE 'UC%' AND LENGTH(c.lead_channel_id) = 24 THEN 'lead'
+                ELSE 'none'
+            END AS channel_source,
             t.user_id IS NOT NULL AS youtube_connected,
             COALESCE(t.reauth_required, 0) <> 0 AS token_error,
             COALESCE(md.delivered_count, 0) AS delivered_count,
@@ -21816,13 +21829,13 @@ def _load_admin_autopilot_customers(
           ON t.user_id = c.user_id || '::' || c.brand_id
         LEFT JOIN monthly_delivery md
           ON md.brand_id = c.brand_id
-         AND md.channel_id = COALESCE(NULLIF(t.youtube_channel_id, ''), NULLIF(c.lead_channel_id, ''))
+         AND md.channel_id = ({resolved_channel_sql})
         LEFT JOIN runway r
           ON r.brand_id = c.brand_id
-         AND r.channel_id = COALESCE(NULLIF(t.youtube_channel_id, ''), NULLIF(c.lead_channel_id, ''))
+         AND r.channel_id = ({resolved_channel_sql})
         LEFT JOIN latest_publish lp
           ON lp.brand_id = c.brand_id
-         AND lp.channel_id = COALESCE(NULLIF(t.youtube_channel_id, ''), NULLIF(c.lead_channel_id, ''))
+         AND lp.channel_id = ({resolved_channel_sql})
          AND lp.rn = 1
         LEFT JOIN autopilot_channel_videos cv
           ON cv.brand_id = c.brand_id AND cv.status = 'new'
