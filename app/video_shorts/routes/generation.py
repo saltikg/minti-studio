@@ -308,9 +308,14 @@ from app.video_shorts.services.disk_guard import (
     disk_guard_triggered,
 )
 from app.video_shorts.services.description_prompt_settings import (
+    DEFAULT_DESCRIPTION_LANGUAGES,
+    DEFAULT_DESCRIPTION_MODE,
     DEFAULT_DESCRIPTION_PROMPT,
     DESCRIPTION_CONTEXT_PADDING_SECONDS,
+    fixed_description_for_brand,
+    load_description_mode,
     load_description_settings,
+    load_fixed_description_text,
 )
 from app.video_shorts.services.system_backgrounds import (
     choose_deterministic_system_background,
@@ -25404,6 +25409,7 @@ def admin_operation_customer_workspace(brand_id: str):
     """Admin-only workspace for a revalidated converted autopilot customer."""
     scope = _require_admin_operation_scope(brand_id=brand_id, workspace_kind="customer")
     customer = _require_active_customer_workspace(scope)
+    description_prompt, description_languages = load_description_settings(scope["owner_user_id"], scope["brand_id"])
     from app.video_shorts.routes.channels import render_my_videos_page_for_user
 
     def _admin_item_urls(item):
@@ -25424,6 +25430,18 @@ def admin_operation_customer_workspace(brand_id: str):
             "admin_title": "Customer workspace",
             "my_videos_base": "vs_admin_base.html",
             "customer": {**customer, "brand_id": scope["brand_id"]},
+            "description_prompt": description_prompt,
+            "description_languages": description_languages,
+            "description_mode": load_description_mode(scope["owner_user_id"], scope["brand_id"]),
+            "fixed_description_text": load_fixed_description_text(scope["owner_user_id"], scope["brand_id"]),
+            "default_description_prompt": DEFAULT_DESCRIPTION_PROMPT,
+            "default_description_languages": DEFAULT_DESCRIPTION_LANGUAGES,
+            "default_description_mode": DEFAULT_DESCRIPTION_MODE,
+            "description_settings_endpoint": url_for(
+                "video_shorts_bp.description_prompt_settings_api",
+                admin_operation_brand=scope["brand_id"],
+                admin_operation_kind="customer",
+            ),
             "my_videos_status_url": url_for("video_shorts_bp.admin_operation_customer_processing_status", brand_id=brand_id),
             "my_videos_ingest_url": url_for("video_shorts_bp.admin_operation_ingest_customer_video", brand_id=brand_id),
             "my_videos_counts_url": url_for("video_shorts_bp.admin_operation_customer_short_counts", brand_id=brand_id),
@@ -28918,6 +28936,7 @@ def upload_clip_to_youtube():
     editor_context = _active_editor_context()
     owner_user_id = editor_context["owner_user_id"]
     brand_id = editor_context["brand_id"]
+    fixed_schedule_text = fixed_description_for_brand(owner_user_id, brand_id)
     if youtube_enabled and not has_refresh_token(owner_user_id, brand_id=brand_id):
         message = "YouTube bağlantısı yok; önce bağlantı kurun."
         if is_ajax:
@@ -28992,7 +29011,7 @@ def upload_clip_to_youtube():
         return redirect(url_for("video_shorts_bp.generate_short", video_pk=request.form.get("video_pk")))
 
     title = (request.form.get("title") or f"Short {filename}").strip()
-    description = (request.form.get("description") or "").strip()
+    description = fixed_schedule_text if fixed_schedule_text is not None else (request.form.get("description") or "").strip()
 
     youtube_short_id = None
     instagram_queue_allowed = not youtube_enabled
@@ -29039,6 +29058,16 @@ def upload_clip_to_youtube():
                 plan_index_raw,
             )
             return _ajax_fail("Description generation failed. Please try again.", status=500)
+    if fixed_schedule_text is not None:
+        target_entry["yt_description"] = fixed_schedule_text
+        target_entry["yt_status"] = "ready"
+        _write_plan_entries(
+            source_video_id,
+            plan_entries,
+            video_pk=video_pk,
+            owner_user_id=owner_user_id,
+            brand_id=brand_id,
+        )
     if normalized_existing_yt_id:
         return _ajax_fail(youtube_scheduling.studio_message(normalized_existing_yt_id), status=409)
     if youtube_enabled:
@@ -29109,7 +29138,8 @@ def upload_clip_to_youtube():
                     _notify(_instagram_account_upgrade_message(), "danger")
                     return redirect(url_for("video_shorts_bp.generate_short", video_pk=request.form.get("video_pk")))
                 caption_source = (
-                    target_entry.get("ig_caption")
+                    fixed_schedule_text
+                    or target_entry.get("ig_caption")
                     or target_entry.get("yt_description")
                     or description
                     or target_entry.get("excerpt")
@@ -29173,7 +29203,8 @@ def upload_clip_to_youtube():
                 _notify("Facebook bağlantısı bulunamadı; Social Connect sayfasından bağlayın.", "warning")
             else:
                 caption_source = (
-                    target_entry.get("fb_caption")
+                    fixed_schedule_text
+                    or target_entry.get("fb_caption")
                     or target_entry.get("yt_description")
                     or description
                     or target_entry.get("excerpt")
@@ -34467,6 +34498,8 @@ def _description_generation_gate_error(
     current_user: Dict[str, Any],
     brand_id: Optional[str],
 ) -> Optional[str]:
+    if fixed_description_for_brand((current_user or {}).get("id"), brand_id) is not None:
+        return None
     current_plan_id = str((current_user or {}).get("plan_id") or "").strip().lower()
     llm_description_enabled = current_plan_id not in {"", "free"}
     if not has_refresh_token((current_user or {}).get("id"), brand_id=brand_id):
@@ -34495,6 +34528,10 @@ def _generate_description_for_plan_entry(
     segments: List[Dict[str, Any]],
     published_at: Any = None,
 ) -> str:
+    fixed_text = fixed_description_for_brand((current_user or {}).get("id"), brand_id)
+    if fixed_text is not None:
+        return fixed_text
+
     start = plan_entry.get("start")
     end = plan_entry.get("end")
     if start is None or end is None:
@@ -34647,6 +34684,12 @@ def _maybe_autogenerate_description_for_plan_entry(
     segments: List[Dict[str, Any]],
     published_at: Any = None,
 ) -> bool:
+    fixed_text = fixed_description_for_brand((current_user or {}).get("id"), brand_id)
+    if fixed_text is not None:
+        changed = _existing_plan_entry_description(plan_entry) != fixed_text
+        plan_entry["yt_description"] = fixed_text
+        plan_entry["yt_status"] = "ready"
+        return changed
     if _existing_plan_entry_description(plan_entry):
         return False
     gate_error = _description_generation_gate_error(current_user, brand_id)
@@ -34713,6 +34756,18 @@ def _generate_missing_schedule_description(
     plan_entries: List[Dict[str, Any]],
     plan_entry: Dict[str, Any],
 ) -> str:
+    fixed_text = fixed_description_for_brand(owner_user_id, brand_id)
+    if fixed_text is not None:
+        plan_entry["yt_description"] = fixed_text
+        plan_entry["yt_status"] = "ready"
+        _write_plan_entries(
+            source_video_id,
+            plan_entries,
+            video_pk=video_pk,
+            owner_user_id=owner_user_id,
+            brand_id=brand_id,
+        )
+        return fixed_text
     existing = _existing_plan_entry_description(plan_entry)
     if existing:
         return existing
@@ -34870,7 +34925,7 @@ def prepare_description(video_pk):
     filename = (request.form.get("filename") or "").strip()
     if not filename:
         return _respond(False, "Missing clip filename.", category="warning", status=400)
-    if not _openai_client:
+    if fixed_description_for_brand(description_user.get("id"), brand_id) is None and not _openai_client:
         return _respond(
             False,
             "OPENAI_API_KEY is missing; cannot prepare description.",

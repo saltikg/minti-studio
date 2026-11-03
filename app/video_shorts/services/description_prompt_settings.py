@@ -21,6 +21,9 @@ DEFAULT_DESCRIPTION_PROMPT = (
 )
 
 DEFAULT_DESCRIPTION_LANGUAGES = "en"
+DESCRIPTION_MODE_AI = "ai"
+DESCRIPTION_MODE_FIXED = "fixed"
+DEFAULT_DESCRIPTION_MODE = DESCRIPTION_MODE_AI
 DESCRIPTION_CONTEXT_PADDING_SECONDS = 60
 
 
@@ -42,6 +45,14 @@ def description_languages_key(user_id: Optional[str], brand_id: Optional[str] = 
     return _brand_scoped_key(f"{_normalize_user_id(user_id)}:description_languages", brand_id)
 
 
+def description_mode_key(user_id: Optional[str], brand_id: Optional[str] = None) -> str:
+    return _brand_scoped_key(f"{_normalize_user_id(user_id)}:description_mode", brand_id)
+
+
+def fixed_description_text_key(user_id: Optional[str], brand_id: Optional[str] = None) -> str:
+    return _brand_scoped_key(f"{_normalize_user_id(user_id)}:fixed_description_text", brand_id)
+
+
 def load_prompt_setting(key: str) -> Optional[str]:
     if not key:
         return None
@@ -53,6 +64,21 @@ def load_prompt_setting(key: str) -> Optional[str]:
             [key],
         ).fetchone()
         return str(row[0]).strip() if row and row[0] else None
+    finally:
+        conn.close()
+
+
+def load_prompt_setting_raw(key: str) -> Optional[str]:
+    if not key:
+        return None
+    conn = get_db_readonly()
+    try:
+        ensure_prompt_settings_schema(conn)
+        row = conn.execute(
+            "SELECT value FROM shorts_prompt_settings WHERE key = ?",
+            [key],
+        ).fetchone()
+        return str(row[0]) if row and row[0] is not None else None
     finally:
         conn.close()
 
@@ -133,6 +159,37 @@ def save_description_languages(user_id: Optional[str], brand_id: Optional[str], 
 
 def delete_description_languages(user_id: Optional[str], brand_id: Optional[str]) -> None:
     delete_prompt_setting(description_languages_key(user_id, brand_id))
+
+
+def normalize_description_mode(raw: Optional[str]) -> str:
+    return DESCRIPTION_MODE_FIXED if str(raw or "").strip().lower() == DESCRIPTION_MODE_FIXED else DESCRIPTION_MODE_AI
+
+
+def load_description_mode(user_id: Optional[str], brand_id: Optional[str] = None) -> str:
+    return normalize_description_mode(load_prompt_setting(description_mode_key(user_id, brand_id)))
+
+
+def save_description_mode(user_id: Optional[str], brand_id: Optional[str], value: str, updated_by: Optional[str]) -> None:
+    save_prompt_setting(description_mode_key(user_id, brand_id), normalize_description_mode(value), updated_by)
+
+
+def load_fixed_description_text(user_id: Optional[str], brand_id: Optional[str] = None) -> str:
+    return load_prompt_setting_raw(fixed_description_text_key(user_id, brand_id)) or ""
+
+
+def save_fixed_description_text(
+    user_id: Optional[str],
+    brand_id: Optional[str],
+    value: str,
+    updated_by: Optional[str],
+) -> None:
+    save_prompt_setting(fixed_description_text_key(user_id, brand_id), value, updated_by)
+
+
+def fixed_description_for_brand(user_id: Optional[str], brand_id: Optional[str] = None) -> Optional[str]:
+    if load_description_mode(user_id, brand_id) != DESCRIPTION_MODE_FIXED:
+        return None
+    return load_fixed_description_text(user_id, brand_id)
 
 
 def load_description_settings(user_id: Optional[str], brand_id: Optional[str] = None) -> Tuple[str, str]:

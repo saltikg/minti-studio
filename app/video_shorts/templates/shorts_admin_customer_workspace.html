@@ -1,5 +1,6 @@
 {% extends "my_videos.html" %}
 {% import "partials/_my_videos_components.html" as mv_components %}
+{% from "partials/_description_prompt_component.html" import description_prompt_component %}
 
 {% block title %}Customer workspace{% endblock %}
 
@@ -28,7 +29,10 @@
           <span>Working on: {{ customer.creator_name }} - {{ customer.brand_name }}</span>
           {% if customer.creator_email %}<span class="text-muted small">{{ customer.creator_email }}</span>{% endif %}
         </div>
-        {% if customer.youtube_url %}<div class="customer-workspace-target-actions"><a class="btn btn-sm btn-outline-light" href="{{ customer.youtube_url }}" target="_blank" rel="noopener noreferrer">Open YouTube</a></div>{% endif %}
+        <div class="customer-workspace-target-actions">
+          {% if customer.youtube_url %}<a class="btn btn-sm btn-outline-light" href="{{ customer.youtube_url }}" target="_blank" rel="noopener noreferrer">Open YouTube</a>{% endif %}
+          <button class="btn btn-sm btn-outline-light" type="button" data-bs-toggle="modal" data-bs-target="#descriptionPromptModal">Description prompt</button>
+        </div>
       </div>
       <form method="post" action="{{ url_for('video_shorts_bp.admin_operation_exit_workspace', workspace_kind='customer', brand_id=customer.brand_id) }}">
         <button type="submit" class="btn btn-outline-secondary">Exit workspace</button>
@@ -53,4 +57,18 @@
 {% set delete_video_modal_id = 'deleteVideoModal' %}
 {% set delete_video_modal_label_id = 'deleteVideoModalLabel' %}
 {% include '_delete_video_modal.html' %}
+
+<div class="modal fade" id="descriptionPromptModal" tabindex="-1" aria-labelledby="descriptionPromptModalLabel" aria-hidden="true">
+  <div class="modal-dialog modal-lg modal-dialog-scrollable">
+    <div class="modal-content vs-card">
+      <div class="modal-header">
+        <h5 class="modal-title" id="descriptionPromptModalLabel">Description prompt — {{ customer.brand_name }}</h5>
+        <button type="button" class="btn-close btn-close-white" data-bs-dismiss="modal" aria-label="Close"></button>
+      </div>
+      <div class="modal-body">
+        {{ description_prompt_component(description_settings_endpoint, description_prompt, description_languages, description_mode, fixed_description_text, default_description_prompt, default_description_languages, default_description_mode, false) }}
+      </div>
+    </div>
+  </div>
+</div>
 {% endblock %}
