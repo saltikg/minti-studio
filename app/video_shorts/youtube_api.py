@@ -609,6 +609,11 @@ def fetch_video_stats(video_ids):
                 _thumb_url_from(thumbs.get("default"))
             )
             stats_map[vid] = {
+                "video_id": vid,
+                "title": snippet.get("title"),
+                "published_at": snippet.get("publishedAt"),
+                "channel_id": snippet.get("channelId"),
+                "live_broadcast_content": str(snippet.get("liveBroadcastContent") or "none").lower(),
                 "duration_seconds": duration_seconds or None,
                 "view_count": _to_int(statistics.get("viewCount")),
                 "like_count": _to_int(statistics.get("likeCount")),

@@ -1,4 +1,5 @@
 from datetime import datetime, timedelta
+from types import SimpleNamespace
 
 import duckdb
 
@@ -59,9 +60,11 @@ def test_first_run_baselines_and_second_run_sends_one_digest(monkeypatch):
     }
     digests = []
 
+    def channel_loader(_channel_id):
+        return [{**item, **metadata[item["video_id"]]} for item in feed], "rss"
+
     first = watcher.run_watcher(
-        feed_loader=lambda channel_id: list(feed),
-        metadata_loader=lambda video_id: metadata[video_id],
+        channel_loader=channel_loader,
         email_sender=lambda rows: digests.append(rows),
     )
 
@@ -74,13 +77,11 @@ def test_first_run_baselines_and_second_run_sends_one_digest(monkeypatch):
 
     feed.append({"video_id": "long-2", "title": "New long", "published_at": datetime(2026, 11, 2)})
     second = watcher.run_watcher(
-        feed_loader=lambda channel_id: list(feed),
-        metadata_loader=lambda video_id: metadata[video_id],
+        channel_loader=channel_loader,
         email_sender=lambda rows: digests.append(rows),
     )
     third = watcher.run_watcher(
-        feed_loader=lambda channel_id: list(feed),
-        metadata_loader=lambda video_id: metadata[video_id],
+        channel_loader=channel_loader,
         email_sender=lambda rows: digests.append(rows),
     )
 
@@ -104,14 +105,99 @@ def test_live_and_minti_published_videos_are_skipped(monkeypatch):
     ]
 
     watcher.run_watcher(
-        feed_loader=lambda channel_id: feed,
-        metadata_loader=lambda video_id: {
-            "video_id": video_id,
-            "title": video_id,
-            "duration_seconds": 1000,
-            "live_broadcast_content": "live" if video_id == "live-1" else "none",
-        },
+        channel_loader=lambda channel_id: (
+            [
+                {
+                    **item,
+                    "duration_seconds": 1000,
+                    "live_broadcast_content": "live" if item["video_id"] == "live-1" else "none",
+                }
+                for item in feed
+            ],
+            "rss",
+        ),
         email_sender=lambda rows: None,
     )
 
     assert conn.execute("SELECT DISTINCT status FROM autopilot_channel_videos").fetchall() == [("skipped",)]
+
+
+def test_first_successful_fetch_marks_post_deploy_upload_new(monkeypatch):
+    conn = _database()
+    monkeypatch.setattr(watcher, "get_db", lambda: _ReusableConnection(conn))
+    digests = []
+    result = watcher.run_watcher(
+        channel_loader=lambda channel_id: (
+            [
+                {
+                    "video_id": "after-deploy",
+                    "title": "After deploy",
+                    "published_at": datetime(2026, 11, 3, 7, 0),
+                    "duration_seconds": 600,
+                }
+            ],
+            "data_api",
+        ),
+        email_sender=lambda rows: digests.append(rows),
+    )
+
+    assert result["customers"][0]["baseline"] is True
+    assert result["customers"][0]["fetch_source"] == "data_api"
+    assert result["customers"][0]["videos_found"] == 1
+    assert result["new_videos"] == 1
+    assert len(digests) == 1
+    assert conn.execute("SELECT status FROM autopilot_channel_videos").fetchone()[0] == "new"
+
+
+def test_fetch_chain_falls_back_to_api_and_batches_metadata(monkeypatch):
+    calls = []
+    monkeypatch.setattr(
+        watcher,
+        "fetch_channel_feed",
+        lambda channel_id: (_ for _ in ()).throw(RuntimeError("rss down")),
+    )
+    monkeypatch.setattr(
+        watcher,
+        "fetch_channel_data_api",
+        lambda channel_id: [
+            {"video_id": "v1", "title": "One", "published_at": datetime(2026, 11, 3)}
+        ],
+    )
+    monkeypatch.setattr(
+        watcher,
+        "fetch_video_stats",
+        lambda video_ids: calls.append(list(video_ids)) or {"v1": {"duration_seconds": 500}},
+    )
+    monkeypatch.setattr(
+        watcher,
+        "fetch_channel_yt_dlp",
+        lambda channel_id: (_ for _ in ()).throw(AssertionError("yt-dlp should not run")),
+    )
+
+    rows, source = watcher.fetch_channel_videos("UC1234567890123456789012")
+
+    assert source == "data_api"
+    assert calls == [["v1"]]
+    assert rows[0]["duration_seconds"] == 500
+
+
+def test_yt_dlp_fallback_is_flat_and_never_downloads(monkeypatch):
+    captured = []
+
+    def fake_run(command, **kwargs):
+        captured.append(command)
+        return SimpleNamespace(
+            returncode=0,
+            stdout='{"entries":[{"id":"v1","title":"One","duration":700,"timestamp":1793689200}]}',
+        )
+
+    monkeypatch.setattr(watcher.subprocess, "run", fake_run)
+    monkeypatch.setattr(watcher, "YT_DLP_COOKIES", None)
+
+    rows = watcher.fetch_channel_yt_dlp("UC1234567890123456789012")
+
+    assert "--flat-playlist" in captured[0]
+    assert captured[0][captured[0].index("--playlist-end") + 1] == "15"
+    assert "--skip-download" in captured[0]
+    assert rows[0]["video_id"] == "v1"
+    assert rows[0]["duration_seconds"] == 700

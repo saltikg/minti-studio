@@ -120,3 +120,58 @@ def test_process_revalidates_customer_scope_and_uses_shared_ingest(monkeypatch):
     assert ingest_calls[0]["brand_id"] == "b1"
     assert ingest_calls[0]["source"] == "autopilot_channel_watcher"
     assert raw_conn.execute("SELECT status FROM autopilot_channel_videos WHERE id=1").fetchone()[0] == "processed"
+
+
+def test_set_channel_updates_only_empty_lead_record(monkeypatch):
+    app = Flask(__name__)
+    app.secret_key = "test"
+    app.register_blueprint(video_shorts_bp)
+    raw_conn = _database()
+    raw_conn.execute("DELETE FROM youtube_oauth_tokens_v2")
+    raw_conn.execute("UPDATE autopilot_leads SET youtube_channel_id='manual_activation:u1:b1'")
+    conn = CountingConnection(raw_conn)
+    monkeypatch.setattr(generation, "get_db_readonly", lambda: conn)
+    monkeypatch.setattr(generation, "get_db", lambda: conn)
+    monkeypatch.setattr(
+        generation,
+        "get_channel_metadata",
+        lambda value: {"youtube_channel_id": "UC9999999999999999999999"},
+    )
+
+    with app.test_request_context(
+        "/video_shorts/admin/autopilot-leads/l1/channel",
+        method="POST",
+        data={"channel": "@customer"},
+    ):
+        g.vs_current_user = {"id": "admin", "role": "admin"}
+        response = generation.admin_autopilot_set_channel("l1")
+
+    assert response.status_code == 302
+    assert raw_conn.execute("SELECT youtube_channel_id FROM autopilot_leads").fetchone()[0] == "UC9999999999999999999999"
+    assert raw_conn.execute("SELECT COUNT(*) FROM youtube_oauth_tokens_v2").fetchone()[0] == 0
+
+
+def test_set_channel_cannot_override_brand_connection(monkeypatch):
+    app = Flask(__name__)
+    app.secret_key = "test"
+    app.register_blueprint(video_shorts_bp)
+    raw_conn = _database()
+    raw_conn.execute("UPDATE autopilot_leads SET youtube_channel_id='manual_activation:u1:b1'")
+    conn = CountingConnection(raw_conn)
+    monkeypatch.setattr(generation, "get_db_readonly", lambda: conn)
+    monkeypatch.setattr(
+        generation,
+        "get_channel_metadata",
+        lambda value: (_ for _ in ()).throw(AssertionError("resolver must not run")),
+    )
+
+    with app.test_request_context(
+        "/video_shorts/admin/autopilot-leads/l1/channel",
+        method="POST",
+        data={"channel": "@other"},
+    ):
+        g.vs_current_user = {"id": "admin", "role": "admin"}
+        response = generation.admin_autopilot_set_channel("l1")
+
+    assert response.status_code == 302
+    assert raw_conn.execute("SELECT youtube_channel_id FROM autopilot_leads").fetchone()[0] == "manual_activation:u1:b1"

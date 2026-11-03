@@ -142,6 +142,22 @@
       background: rgba(245,158,11,.12);
       border: 1px solid rgba(245,158,11,.3);
     }
+    .admin-autopilot-set-channel {
+      min-width: 280px;
+      white-space: normal;
+      text-align: left;
+    }
+    .admin-autopilot-set-channel summary {
+      cursor: pointer;
+      margin-top: 7px;
+      color: #7dd3fc;
+      font-weight: 700;
+    }
+    .admin-autopilot-set-channel form {
+      display: flex;
+      gap: 6px;
+      margin-top: 8px;
+    }
     @media (max-width: 767.98px) {
       .admin-autopilot-toolbar {
         grid-template-columns: 1fr;
@@ -209,6 +225,15 @@
               <td class="admin-autopilot-status-col">
                 {% if customer.no_channel %}
                   <span class="admin-autopilot-no-channel">No channel</span>
+                  {% if customer.can_set_channel %}
+                    <details class="admin-autopilot-set-channel">
+                      <summary>Set channel</summary>
+                      <form method="post" action="{{ url_for('video_shorts_bp.admin_autopilot_set_channel', lead_id=customer.converted_lead_id) }}">
+                        <input class="form-control form-control-sm" type="text" name="channel" required placeholder="Channel URL, @handle, or UC id">
+                        <button class="btn btn-sm btn-primary" type="submit">Save</button>
+                      </form>
+                    </details>
+                  {% endif %}
                 {% else %}
                   {{ customer.youtube_connected_label }}
                 {% endif %}

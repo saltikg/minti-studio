@@ -475,7 +475,13 @@ from src.trends.facebook_page_tokens import (
     get_facebook_page_data,
     store_facebook_page_token,
 )
-from app.video_shorts.youtube_api import YoutubeApiError, extract_video_id, fetch_video_metadata, fetch_video_stats
+from app.video_shorts.youtube_api import (
+    YoutubeApiError,
+    extract_video_id,
+    fetch_video_metadata,
+    fetch_video_stats,
+    get_channel_metadata,
+)
 
 PST_ZONE = ZoneInfo(DEFAULT_TIME_ZONE)
 BRAND_SUBSCRIBE_OVERLAY_DIR = Path(__file__).resolve().parent.parent / "static" / "brand_subscribe_overlays"
@@ -21882,6 +21888,7 @@ def _load_admin_autopilot_customers(
                 "channel_id": channel_id,
                 "channel_source": str(row[12] or "").strip(),
                 "no_channel": not bool(channel_id),
+                "can_set_channel": bool(not channel_id and row[7] and row[9]),
                 "channel_health": "Token error" if token_error else ("Healthy" if row[13] else "Not connected"),
                 "channel_health_error": token_error,
                 "monthly_delivered": int(row[15] or 0),
@@ -23256,6 +23263,118 @@ def admin_autopilot_leads():
         per_page=per_page,
         total_pages=total_pages,
     )
+
+
+@video_shorts_bp.route("/admin/autopilot-leads/<lead_id>/channel", methods=["POST"])
+@require_admin
+def admin_autopilot_set_channel(lead_id: str):
+    channel_input = str(request.form.get("channel") or "").strip()
+    if not channel_input:
+        flash("Enter a YouTube channel URL, @handle, or UC channel ID.", "danger")
+        return redirect(url_for("video_shorts_bp.admin_autopilot_leads"))
+
+    conn = get_db_readonly()
+    try:
+        row = conn.execute(
+            """
+            SELECT CAST(l.id AS VARCHAR), CAST(l.user_id AS VARCHAR), CAST(l.brand_id AS VARCHAR),
+                   COALESCE(l.youtube_channel_id, ''),
+                   COALESCE((
+                       SELECT t.youtube_channel_id
+                       FROM youtube_oauth_tokens_v2 t
+                       WHERE t.user_id = CAST(l.user_id AS VARCHAR) || '::' || CAST(l.brand_id AS VARCHAR)
+                         AND t.youtube_channel_id LIKE 'UC%%'
+                         AND LENGTH(t.youtube_channel_id) = 24
+                       LIMIT 1
+                   ), '') AS connected_channel_id
+            FROM autopilot_leads l
+            JOIN shorts_users u
+              ON CAST(u.id AS VARCHAR) = CAST(l.user_id AS VARCHAR)
+             AND lower(COALESCE(u.service_mode, '')) = 'autopilot'
+            JOIN shorts_brands b
+              ON CAST(b.id AS VARCHAR) = CAST(l.brand_id AS VARCHAR)
+             AND CAST(b.owner_user_id AS VARCHAR) = CAST(l.user_id AS VARCHAR)
+            WHERE CAST(l.id AS VARCHAR) = CAST(? AS VARCHAR)
+              AND l.converted_at IS NOT NULL
+            LIMIT 1
+            """,
+            [lead_id],
+        ).fetchone()
+    finally:
+        conn.close()
+    if not row:
+        abort(404)
+
+    existing_lead_channel = str(row[3] or "").strip()
+    connected_channel = str(row[4] or "").strip()
+    if connected_channel:
+        flash("This brand already has a connected YouTube channel; it was not changed.", "warning")
+        return redirect(url_for("video_shorts_bp.admin_autopilot_leads"))
+    if existing_lead_channel.startswith("UC") and len(existing_lead_channel) == 24:
+        flash("This autopilot record already has a YouTube channel; it was not changed.", "warning")
+        return redirect(url_for("video_shorts_bp.admin_autopilot_leads"))
+
+    normalized_input = channel_input
+    if channel_input.startswith("UC") and len(channel_input) == 24:
+        normalized_input = f"https://www.youtube.com/channel/{channel_input}"
+    elif channel_input.startswith("@"):
+        normalized_input = f"https://www.youtube.com/{channel_input}"
+    try:
+        resolved = get_channel_metadata(normalized_input)
+        resolved_channel_id = str(resolved.get("youtube_channel_id") or "").strip()
+    except Exception:
+        current_app.logger.warning("Admin autopilot channel resolution failed lead_id=%s", lead_id)
+        flash("That YouTube channel could not be resolved.", "danger")
+        return redirect(url_for("video_shorts_bp.admin_autopilot_leads"))
+    if not resolved_channel_id.startswith("UC") or len(resolved_channel_id) != 24:
+        flash("That input did not resolve to a canonical YouTube channel ID.", "danger")
+        return redirect(url_for("video_shorts_bp.admin_autopilot_leads"))
+
+    conn = get_db()
+    try:
+        updated = conn.execute(
+            """
+            UPDATE autopilot_leads l
+            SET youtube_channel_id = ?
+            WHERE CAST(l.id AS VARCHAR) = CAST(? AS VARCHAR)
+              AND CAST(l.user_id AS VARCHAR) = CAST(? AS VARCHAR)
+              AND CAST(l.brand_id AS VARCHAR) = CAST(? AS VARCHAR)
+              AND NOT (
+                  COALESCE(l.youtube_channel_id, '') LIKE 'UC%%'
+                  AND LENGTH(COALESCE(l.youtube_channel_id, '')) = 24
+              )
+              AND NOT EXISTS (
+                  SELECT 1
+                  FROM youtube_oauth_tokens_v2 t
+                  WHERE t.user_id = CAST(l.user_id AS VARCHAR) || '::' || CAST(l.brand_id AS VARCHAR)
+                    AND t.youtube_channel_id LIKE 'UC%%'
+                    AND LENGTH(t.youtube_channel_id) = 24
+              )
+              AND EXISTS (
+                  SELECT 1 FROM shorts_users u
+                  WHERE CAST(u.id AS VARCHAR) = CAST(l.user_id AS VARCHAR)
+                    AND lower(COALESCE(u.service_mode, '')) = 'autopilot'
+              )
+              AND EXISTS (
+                  SELECT 1 FROM shorts_brands b
+                  WHERE CAST(b.id AS VARCHAR) = CAST(l.brand_id AS VARCHAR)
+                    AND CAST(b.owner_user_id AS VARCHAR) = CAST(l.user_id AS VARCHAR)
+              )
+            RETURNING id
+            """,
+            [resolved_channel_id, str(row[0]), str(row[1]), str(row[2])],
+        ).fetchone()
+        conn.commit()
+    except Exception:
+        conn.rollback()
+        raise
+    finally:
+        conn.close()
+    if not updated:
+        flash("The channel was not changed because a channel is already configured.", "warning")
+    else:
+        flash(f"YouTube channel set to {resolved_channel_id}.", "success")
+    return redirect(url_for("video_shorts_bp.admin_autopilot_leads"))
 
 
 @video_shorts_bp.route("/admin/autopilot-channel-videos/<int:channel_video_id>/<action>", methods=["POST"])

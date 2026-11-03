@@ -1,21 +1,29 @@
 from __future__ import annotations
 
 import html
+import json
 import logging
 import os
+import subprocess
+import sys
 from datetime import datetime, timezone
 from typing import Any, Callable
 from urllib import parse, request
 from xml.etree import ElementTree
+from zoneinfo import ZoneInfo
 
+from app.video_shorts.config import YT_DLP_COOKIES
 from app.video_shorts.services.db import get_db
 from app.video_shorts.services.email_verification import send_resend_email
-from app.video_shorts.youtube_api import fetch_video_metadata
+from app.video_shorts.youtube_api import fetch_playlist_items_batch, fetch_video_stats
 
 
 logger = logging.getLogger(__name__)
 RSS_URL = "https://www.youtube.com/feeds/videos.xml?channel_id={channel_id}"
 ADMIN_PATH = "/video_shorts/admin/autopilot-leads"
+BASELINE_CUTOFF_UTC = datetime(2026, 11, 2, 22, 50, tzinfo=ZoneInfo("America/Los_Angeles")).astimezone(
+    timezone.utc
+).replace(tzinfo=None)
 
 
 def _utc_naive(value: Any) -> datetime | None:
@@ -59,6 +67,148 @@ def fetch_channel_feed(channel_id: str) -> list[dict[str, Any]]:
     return items
 
 
+def fetch_channel_data_api(channel_id: str) -> list[dict[str, Any]]:
+    clean_channel_id = str(channel_id or "").strip()
+    if not clean_channel_id.startswith("UC") or len(clean_channel_id) != 24:
+        raise ValueError("A canonical YouTube channel id is required.")
+    uploads_playlist_id = f"UU{clean_channel_id[2:]}"
+    result = fetch_playlist_items_batch(
+        uploads_playlist_id,
+        max_results=15,
+        quota_feature="autopilot_channel_watcher",
+    )
+    return list(result.get("videos") or [])
+
+
+def _yt_dlp_published_at(entry: dict[str, Any]) -> datetime | None:
+    timestamp = entry.get("timestamp") or entry.get("release_timestamp")
+    if timestamp is not None:
+        try:
+            return datetime.fromtimestamp(float(timestamp), tz=timezone.utc).replace(tzinfo=None)
+        except (TypeError, ValueError, OSError):
+            pass
+    upload_date = str(entry.get("upload_date") or "").strip()
+    if len(upload_date) == 8 and upload_date.isdigit():
+        try:
+            return datetime.strptime(upload_date, "%Y%m%d")
+        except ValueError:
+            pass
+    return None
+
+
+def fetch_channel_yt_dlp(channel_id: str) -> list[dict[str, Any]]:
+    channel_url = f"https://www.youtube.com/channel/{channel_id}/videos"
+    command = [
+        sys.executable,
+        "-m",
+        "yt_dlp",
+        "--flat-playlist",
+        "--playlist-end",
+        "15",
+        "--skip-download",
+        "--dump-single-json",
+        "--no-warnings",
+    ]
+    if YT_DLP_COOKIES and YT_DLP_COOKIES.exists():
+        command.extend(["--cookies", str(YT_DLP_COOKIES)])
+    command.append(channel_url)
+    completed = subprocess.run(
+        command,
+        capture_output=True,
+        text=True,
+        timeout=90,
+        check=False,
+    )
+    if completed.returncode != 0:
+        raise RuntimeError(f"yt-dlp exited with status {completed.returncode}")
+    payload = json.loads(completed.stdout or "{}")
+    items: list[dict[str, Any]] = []
+    for entry in list(payload.get("entries") or [])[:15]:
+        video_id = str(entry.get("id") or "").strip()
+        if not video_id:
+            continue
+        items.append(
+            {
+                "video_id": video_id,
+                "title": str(entry.get("title") or video_id),
+                "published_at": _yt_dlp_published_at(entry),
+                "duration_seconds": entry.get("duration"),
+                "live_broadcast_content": str(entry.get("live_status") or "none").lower(),
+            }
+        )
+    return items
+
+
+def _merge_batched_metadata(
+    items: list[dict[str, Any]],
+    *,
+    allow_flat_metadata: bool,
+) -> list[dict[str, Any]]:
+    video_ids = [str(item.get("video_id") or "").strip() for item in items]
+    video_ids = [video_id for video_id in video_ids if video_id]
+    if not video_ids:
+        return []
+    try:
+        metadata_by_id = fetch_video_stats(video_ids)
+    except Exception:
+        if not allow_flat_metadata:
+            raise
+        logger.warning("Autopilot watcher videos.list failed; using yt-dlp flat metadata")
+        metadata_by_id = {}
+    if not metadata_by_id and not allow_flat_metadata:
+        raise RuntimeError("videos.list returned no metadata")
+    merged: list[dict[str, Any]] = []
+    for item in items:
+        video_id = str(item.get("video_id") or "").strip()
+        metadata = metadata_by_id.get(video_id) or {}
+        merged.append(
+            {
+                **item,
+                **metadata,
+                "video_id": video_id,
+                "title": str(metadata.get("title") or item.get("title") or video_id),
+                "published_at": _utc_naive(metadata.get("published_at"))
+                or _utc_naive(item.get("published_at")),
+                "duration_seconds": metadata.get("duration_seconds") or item.get("duration_seconds"),
+                "live_broadcast_content": str(
+                    metadata.get("live_broadcast_content")
+                    or item.get("live_broadcast_content")
+                    or "none"
+                ).lower(),
+            }
+        )
+    return merged
+
+
+def fetch_channel_videos(channel_id: str) -> tuple[list[dict[str, Any]], str]:
+    attempts = (
+        ("rss", fetch_channel_feed, False),
+        ("data_api", fetch_channel_data_api, False),
+        ("yt_dlp", fetch_channel_yt_dlp, True),
+    )
+    errors: list[str] = []
+    for source_name, loader, allow_flat_metadata in attempts:
+        try:
+            items = loader(channel_id)
+            enriched = _merge_batched_metadata(items, allow_flat_metadata=allow_flat_metadata)
+            logger.info(
+                "Autopilot channel source channel_id=%s source=%s videos=%s",
+                channel_id,
+                source_name,
+                len(enriched),
+            )
+            return enriched, source_name
+        except Exception as exc:
+            errors.append(f"{source_name}:{type(exc).__name__}")
+            logger.warning(
+                "Autopilot channel source failed channel_id=%s source=%s error_type=%s",
+                channel_id,
+                source_name,
+                type(exc).__name__,
+            )
+    raise RuntimeError(f"All channel sources failed ({', '.join(errors)})")
+
+
 def _load_customers(conn) -> list[dict[str, str]]:
     rows = conn.execute(
         """
@@ -82,8 +232,10 @@ def _load_customers(conn) -> list[dict[str, str]]:
                    ELSE ''
                END,
                CASE
-                   WHEN t.youtube_channel_id LIKE 'UC%' AND LENGTH(t.youtube_channel_id) = 24 THEN 'connected'
-                   WHEN l.youtube_channel_id LIKE 'UC%' AND LENGTH(l.youtube_channel_id) = 24 THEN 'lead'
+                   WHEN t.youtube_channel_id LIKE 'UC%' AND LENGTH(t.youtube_channel_id) = 24
+                       THEN 'a:brand_connection'
+                   WHEN l.youtube_channel_id LIKE 'UC%' AND LENGTH(l.youtube_channel_id) = 24
+                       THEN 'b:lead_record'
                    ELSE 'none'
                END
         FROM shorts_users u
@@ -168,8 +320,7 @@ def _send_digest(items: list[dict[str, Any]]) -> None:
 
 def run_watcher(
     *,
-    feed_loader: Callable[[str], list[dict[str, Any]]] = fetch_channel_feed,
-    metadata_loader: Callable[[str], dict[str, Any]] = fetch_video_metadata,
+    channel_loader: Callable[[str], tuple[list[dict[str, Any]], str]] = fetch_channel_videos,
     email_sender: Callable[[list[dict[str, Any]]], None] = _send_digest,
 ) -> dict[str, Any]:
     conn = get_db()
@@ -183,7 +334,9 @@ def run_watcher(
                 "brand_id": customer["brand_id"],
                 "email": customer["email"],
                 "channel_id": customer["channel_id"],
-                "channel_source": customer["channel_source"],
+                "channel_resolution_source": customer["channel_source"],
+                "fetch_source": "none",
+                "videos_found": 0,
                 "baseline": False,
                 "inserted": 0,
                 "new": 0,
@@ -203,37 +356,35 @@ def run_watcher(
             report["baseline"] = baseline
             minti_ids = _minti_video_ids(conn, customer["brand_id"])
             try:
-                feed_items = feed_loader(customer["channel_id"])
+                feed_items, fetch_source = channel_loader(customer["channel_id"])
             except Exception as exc:
                 logger.warning(
-                    "Autopilot channel RSS failed user_id=%s brand_id=%s channel_id=%s error_type=%s",
+                    "Autopilot channel fetch failed user_id=%s brand_id=%s channel_id=%s error_type=%s",
                     customer["user_id"],
                     customer["brand_id"],
                     customer["channel_id"],
                     type(exc).__name__,
                 )
-                report["result"] = f"Feed error ({type(exc).__name__})"
+                report["result"] = f"Fetch error ({type(exc).__name__})"
                 continue
-            report["metadata_errors"] = 0
+            report["fetch_source"] = fetch_source
+            report["videos_found"] = len(feed_items)
             for feed_item in feed_items:
                 video_id = str(feed_item.get("video_id") or "").strip()
                 if not video_id:
                     continue
-                try:
-                    metadata = metadata_loader(video_id) or {}
-                except Exception as exc:
-                    report["metadata_errors"] += 1
-                    logger.warning(
-                        "Autopilot video metadata failed brand_id=%s video_id=%s error_type=%s",
-                        customer["brand_id"],
-                        video_id,
-                        type(exc).__name__,
-                    )
-                    continue
+                metadata = feed_item
                 duration_s = int(metadata.get("duration_seconds") or 0)
                 live_state = str(metadata.get("live_broadcast_content") or "none").strip().lower()
                 skip = duration_s <= 180 or live_state in {"live", "upcoming"} or video_id in minti_ids
-                status = "skipped" if skip else ("seen" if baseline else "new")
+                published_at = _utc_naive(metadata.get("published_at"))
+                status = "skipped"
+                if not skip:
+                    status = (
+                        "seen"
+                        if baseline and published_at is not None and published_at < BASELINE_CUTOFF_UTC
+                        else "new"
+                    )
                 row = conn.execute(
                     """
                     INSERT INTO autopilot_channel_videos (
@@ -250,7 +401,7 @@ def run_watcher(
                         customer["channel_id"],
                         video_id,
                         str(metadata.get("title") or feed_item.get("title") or video_id),
-                        _utc_naive(metadata.get("published_at")) or feed_item.get("published_at"),
+                        published_at,
                         duration_s or None,
                         status,
                     ],
