@@ -26,6 +26,12 @@ def test_clinician_matcher_accepts_case_sensitive_credentials_and_dr_title():
     assert _has_clinical_credential("part two pt") is False
 
 
+def test_clinician_matcher_accepts_full_role_words_without_substring_false_positives():
+    assert _has_clinical_credential("Nurse Jen") is True
+    assert _has_clinical_credential("Nourish with Melanie", "Registered Dietitian helping families") is True
+    assert _has_clinical_credential("nursery decor") is False
+
+
 def test_medical_hard_filter_rejects_off_focus_blocked_and_long_queries():
     app = Flask(__name__)
     with app.app_context():

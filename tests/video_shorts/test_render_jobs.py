@@ -1063,6 +1063,48 @@ def test_discovery_startup_recovery_requeues_first_processing_attempt(monkeypatc
     assert "Discovery worker restarted" in recovered["error"]
 
 
+def test_discovery_email_requeue_restores_claimed_leads(monkeypatch, tmp_path):
+    _configure_duckdb(monkeypatch, tmp_path, "discovery_email_restore.duckdb")
+    user_id = str(uuid4())
+    _insert_user(user_id, "plan_free")
+    queued = render_jobs.enqueue_worker_job(
+        user_id=user_id,
+        job_type=render_jobs.JOB_TYPE_ENRICH_DISCOVERY_EMAILS,
+        payload={"batch_size": 5},
+        input_hash="discovery-email-restore",
+        max_attempts=3,
+    )
+    job_id = queued["job"]["id"]
+    conn = db_service.get_db()
+    try:
+        conn.execute(
+            """
+            CREATE TABLE discovery_leads (
+                id BIGINT, status VARCHAR, email_enrichment_job_id VARCHAR,
+                email_enrichment_error VARCHAR
+            )
+            """
+        )
+        conn.execute(
+            "INSERT INTO discovery_leads VALUES (1, 'email_enriching', ?, NULL)",
+            [job_id],
+        )
+        conn.commit()
+    finally:
+        conn.close()
+
+    render_jobs.requeue_job(job_id, "worker exited")
+
+    conn = db_service.get_db()
+    try:
+        row = conn.execute(
+            "SELECT status, email_enrichment_job_id FROM discovery_leads WHERE id = 1"
+        ).fetchone()
+    finally:
+        conn.close()
+    assert row == ("icp_qualified", None)
+
+
 def test_discovery_startup_recovery_fails_second_processing_attempt(monkeypatch, tmp_path):
     _configure_duckdb(monkeypatch, tmp_path, "discovery_startup_fail.duckdb")
     user_id = str(uuid4())

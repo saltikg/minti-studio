@@ -99,12 +99,18 @@ def record_youtube_data_api_call(
                 pass
 
 
-def total_units_for_date(conn, date_pt: Optional[str] = None) -> int:
+def total_units_for_date(conn, date_pt: Optional[str] = None, *, exclude_features: Optional[set[str]] = None) -> int:
     if not table_columns(conn, TABLE_NAME):
         return 0
+    excluded = sorted(str(item).strip() for item in (exclude_features or set()) if str(item).strip())
+    exclusion_sql = ""
+    params = [date_pt or today_pt()]
+    if excluded:
+        exclusion_sql = f" AND feature NOT IN ({', '.join(['?'] * len(excluded))})"
+        params.extend(excluded)
     row = conn.execute(
-        f"SELECT COALESCE(SUM(units), 0) FROM {TABLE_NAME} WHERE date_pt = ?",
-        [date_pt or today_pt()],
+        f"SELECT COALESCE(SUM(units), 0) FROM {TABLE_NAME} WHERE date_pt = ?{exclusion_sql}",
+        params,
     ).fetchone()
     try:
         return int((row or [0])[0] or 0)

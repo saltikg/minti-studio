@@ -82,7 +82,7 @@ def _auto_trakk_remaining(conn) -> tuple[bool, int, int, int]:
     return enabled, daily_cap, used, max(0, daily_cap - used)
 
 
-def _claim_leads(conn, batch_size: int, *, auto: bool = False) -> List[Dict[str, Any]]:
+def _claim_leads(conn, batch_size: int, *, auto: bool = False, job_id: str = "") -> List[Dict[str, Any]]:
     if auto:
         enabled, daily_cap, used, remaining = _auto_trakk_remaining(conn)
         if not enabled:
@@ -93,6 +93,9 @@ def _claim_leads(conn, batch_size: int, *, auto: bool = False) -> List[Dict[str,
             return []
         batch_size = min(batch_size, remaining)
     statuses_sql = "('icp_qualified')" if auto else "('icp_qualified', 'email_failed')"
+    has_job_tracking = "email_enrichment_job_id" in table_columns(conn, "discovery_leads")
+    job_assignment = ", email_enrichment_job_id = ?" if has_job_tracking else ""
+    job_params = [str(job_id or "").strip() or None] if has_job_tracking else []
     if getattr(conn, "backend_name", "") == "postgres":
         rows = conn.execute(
             f"""
@@ -115,11 +118,12 @@ def _claim_leads(conn, batch_size: int, *, auto: bool = False) -> List[Dict[str,
             SET status = 'email_enriching',
                 enrichment_attempted_at = CURRENT_TIMESTAMP,
                 email_enrichment_error = NULL
+                {job_assignment}
             FROM candidates
             WHERE d.id = candidates.id
             RETURNING d.id, d.youtube_channel_id, d.channel_url
             """,
-            [batch_size],
+            [batch_size, *job_params],
         ).fetchall()
     else:
         rows = conn.execute(
@@ -148,9 +152,10 @@ def _claim_leads(conn, batch_size: int, *, auto: bool = False) -> List[Dict[str,
                 SET status = 'email_enriching',
                     enrichment_attempted_at = CURRENT_TIMESTAMP,
                     email_enrichment_error = NULL
+                    {job_assignment}
                 WHERE id IN ({placeholders})
                 """,
-                ids,
+                [*job_params, *ids],
             )
 
     return [
@@ -173,11 +178,13 @@ def _short_error(value: Any) -> str:
 
 
 def _mark_failed(conn, lead_id: Any, error: str) -> None:
+    clear_job = ", email_enrichment_job_id = NULL" if "email_enrichment_job_id" in table_columns(conn, "discovery_leads") else ""
     conn.execute(
-        """
+        f"""
         UPDATE discovery_leads
         SET status = 'email_failed',
             email_enrichment_error = ?
+            {clear_job}
         WHERE id = ?
         """,
         [_short_error(error), lead_id],
@@ -185,8 +192,9 @@ def _mark_failed(conn, lead_id: Any, error: str) -> None:
 
 
 def _mark_enriched(conn, lead_id: Any, result: Dict[str, Any]) -> None:
+    clear_job = ", email_enrichment_job_id = NULL" if "email_enrichment_job_id" in table_columns(conn, "discovery_leads") else ""
     conn.execute(
-        """
+        f"""
         UPDATE discovery_leads
         SET creator_email = CASE
                 WHEN COALESCE(creator_email, '') = '' THEN NULLIF(?, '')
@@ -207,6 +215,7 @@ def _mark_enriched(conn, lead_id: Any, result: Dict[str, Any]) -> None:
             email_enriched_at = CURRENT_TIMESTAMP,
             email_enrichment_error = NULL,
             status = 'email_enriched'
+            {clear_job}
         WHERE id = ?
         """,
         [
@@ -234,7 +243,7 @@ def enrich_discovery_email_batch(payload: Dict[str, Any] | None = None) -> Dict[
 
     conn = get_db()
     try:
-        claimed = _claim_leads(conn, batch_size, auto=auto)
+        claimed = _claim_leads(conn, batch_size, auto=auto, job_id=str(payload.get("job_id") or ""))
         conn.commit()
     except Exception:
         conn.rollback()
@@ -295,3 +304,31 @@ def enrich_discovery_email_batch(payload: Dict[str, Any] | None = None) -> Dict[
         "cost_estimate": round(len(claimed) * 0.005, 3),
         "auto": auto,
     }
+
+
+def restore_claimed_discovery_leads(job_id: str) -> int:
+    clean_job_id = str(job_id or "").strip()
+    if not clean_job_id:
+        return 0
+    conn = get_db()
+    try:
+        if "email_enrichment_job_id" not in table_columns(conn, "discovery_leads"):
+            return 0
+        result = conn.execute(
+            """
+            UPDATE discovery_leads
+            SET status = 'icp_qualified',
+                email_enrichment_job_id = NULL,
+                email_enrichment_error = NULL
+            WHERE status = 'email_enriching'
+              AND email_enrichment_job_id = ?
+            """,
+            [clean_job_id],
+        )
+        conn.commit()
+        return int(getattr(result, "rowcount", 0) or 0)
+    except Exception:
+        conn.rollback()
+        raise
+    finally:
+        conn.close()

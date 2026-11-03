@@ -138,6 +138,10 @@ CLINICAL_COMMA_CREDENTIAL_RE = re.compile(
 CLINICAL_NAME_CREDENTIAL_RE = re.compile(
     rf"\b[A-Z][A-Za-z'’.-]+(?:\s+[A-Z][A-Za-z'’.-]+){{1,3}}\s+(?P<token>{CLINICAL_CREDENTIAL_TOKEN})(?![A-Za-z0-9])"
 )
+CLINICAL_ROLE_RE = re.compile(
+    r"(?<![A-Za-z0-9])(?P<token>Nurse|Dietitian|Nutritionist|Physician|Surgeon|Pediatrician|Pharmacist|Physiotherapist|Chiropractor|Midwife)(?![A-Za-z0-9])",
+    re.IGNORECASE,
+)
 
 
 def _duration_minutes(duration_seconds) -> float:
@@ -192,6 +196,7 @@ def _collect_recent_uploads(
     *,
     limit: int = UPLOAD_SAMPLE_SIZE,
     quota_counter: Optional[Dict[str, int]] = None,
+    quota_feature: str = "discovery_enrichment",
 ):
     videos = []
     page_token = None
@@ -203,7 +208,7 @@ def _collect_recent_uploads(
             playlist_id=uploads_playlist_id,
             page_token=page_token,
             max_results=min(50, limit),
-            quota_feature="discovery_enrichment",
+            quota_feature=quota_feature,
         )
         batch_videos = batch.get("videos") or []
         if not batch_videos:
@@ -262,7 +267,7 @@ def _hard_numeric_disqualification_reason(row: Dict[str, Any]) -> Optional[str]:
 def _clinical_credential_match(*values: Any) -> Optional[Dict[str, str]]:
     for value in values:
         text = str(value or "")
-        for pattern in (CLINICAL_DR_TITLE_RE, CLINICAL_COMMA_CREDENTIAL_RE, CLINICAL_NAME_CREDENTIAL_RE):
+        for pattern in (CLINICAL_DR_TITLE_RE, CLINICAL_COMMA_CREDENTIAL_RE, CLINICAL_NAME_CREDENTIAL_RE, CLINICAL_ROLE_RE):
             match = pattern.search(text)
             if match:
                 start = max(0, match.start() - 50)
@@ -580,6 +585,7 @@ def diagnose_channel(
     email_video_description_limit: int = LEAD_DISCOVERY_EMAIL_VIDEO_DESCRIPTION_LIMIT,
     count_unknown_as_short: bool = False,
     resolve_email: bool = True,
+    quota_feature: str = "discovery_enrichment",
 ) -> Dict[str, Any]:
     resolved_channel_id = str(channel_id or "").strip()
     if not resolved_channel_id:
@@ -589,21 +595,22 @@ def diagnose_channel(
     if channel_meta is None:
         _increment_enrichment_counter(quota_counter)
         _increment_enrichment_method_counter(quota_counter, "channels.list")
-        channel_meta = get_channel_metadata(channel_lookup_url)
+        channel_meta = get_channel_metadata(channel_lookup_url, quota_feature=quota_feature)
     if subscriber_info is None:
         _increment_enrichment_counter(quota_counter)
         _increment_enrichment_method_counter(quota_counter, "channels.list")
-        subscriber_map = fetch_channel_subscriber_counts([resolved_channel_id], quota_feature="discovery_enrichment")
+        subscriber_map = fetch_channel_subscriber_counts([resolved_channel_id], quota_feature=quota_feature)
         subscriber_info = subscriber_map.get(resolved_channel_id) or {}
     if recent_uploads is None:
         recent_uploads = _collect_recent_uploads(
             channel_meta["uploads_playlist_id"],
             limit=UPLOAD_SAMPLE_SIZE,
             quota_counter=quota_counter,
+            quota_feature=quota_feature,
         )
     video_ids = [item.get("video_id") for item in recent_uploads if item.get("video_id")]
     if stats_map is None:
-        stats_map = _fetch_video_details(video_ids, quota_counter=quota_counter)
+        stats_map = _fetch_video_details(video_ids, quota_counter=quota_counter, quota_feature=quota_feature)
     sweetspot = _select_sweetspot_from_uploads(recent_uploads, stats_map)
 
     now_utc = datetime.now(timezone.utc)
@@ -612,7 +619,7 @@ def diagnose_channel(
     latest_short_dt = None
     min_longform_seconds = max(0, int(min_longform_seconds or 0))
     short_max_seconds = max(0, int(short_max_seconds or 0))
-    face_check_thumbnail_urls: List[str] = []
+    face_check_video_samples: List[Dict[str, str]] = []
     for item in recent_uploads:
         video_id = str(item.get("video_id") or "").strip()
         published_at = _parse_yt_timestamp(item.get("published_at"))
@@ -622,8 +629,8 @@ def diagnose_channel(
         except (TypeError, ValueError):
             duration_value = 0
         thumbnail_url = str((stats_map.get(video_id) or {}).get("thumbnail_url") or "").strip()
-        if duration_value >= 300 and thumbnail_url and len(face_check_thumbnail_urls) < 6:
-            face_check_thumbnail_urls.append(thumbnail_url)
+        if duration_value >= 300 and len(face_check_video_samples) < 6:
+            face_check_video_samples.append({"video_id": video_id, "thumbnail_url": thumbnail_url})
         if duration_value <= short_max_seconds and (duration_value > 0 or count_unknown_as_short):
             if published_at and (latest_short_dt is None or published_at > latest_short_dt):
                 latest_short_dt = published_at
@@ -692,7 +699,7 @@ def diagnose_channel(
         "best_source_video_title": sweetspot.get("title") if sweetspot else None,
         "best_source_video_minutes": sweetspot.get("minutes") if sweetspot else None,
         "_email_candidate_descriptions": recent_video_descriptions,
-        "_face_check_thumbnail_urls": face_check_thumbnail_urls,
+        "face_check_video_samples": face_check_video_samples,
     }
 
 
@@ -2485,7 +2492,7 @@ def _enqueue_auto_trakk_if_needed(results: List[Dict[str, Any]]) -> Dict[str, An
         job_type=JOB_TYPE_ENRICH_DISCOVERY_EMAILS,
         payload={"batch_size": batch_size, "auto": True, "daily_cap": payload["daily_cap"]},
         input_hash=f"discovery-auto-email-enrich:{uuid4()}",
-        max_attempts=1,
+        max_attempts=3,
         priority=25,
     )
     job = enqueue_result.get("job") or {}
@@ -4031,7 +4038,7 @@ def run_lead_discovery_payload(payload: Dict[str, Any]) -> tuple[Dict[str, Any],
                     )
                 )
                 if row.get("icp_fit") is True:
-                    face_result = check_face_on_camera(row.get("_face_check_thumbnail_urls") or [])
+                    face_result = check_face_on_camera(row.get("face_check_video_samples") or [])
                     face_response = face_result.pop("_face_check_response", None)
                     face_model = face_result.pop("_face_check_model", None)
                     row.update(face_result)
@@ -4049,7 +4056,6 @@ def run_lead_discovery_payload(payload: Dict[str, Any]) -> tuple[Dict[str, Any],
                 row["icp_fit"] = None
                 row["icp_reason"] = ""
             row.pop("_email_candidate_descriptions", None)
-            row.pop("_face_check_thumbnail_urls", None)
             persistence_result = _persist_discovery_lead(row)
             if persistence_result in persistence_counts:
                 persistence_counts[persistence_result] += 1
@@ -4702,7 +4708,7 @@ def admin_discovery_enrich_emails():
         job_type=JOB_TYPE_ENRICH_DISCOVERY_EMAILS,
         payload={"batch_size": batch_size},
         input_hash=f"discovery-email-enrich:{uuid4()}",
-        max_attempts=1,
+        max_attempts=3,
         priority=20,
     )
     job = enqueue_result.get("job") or {}

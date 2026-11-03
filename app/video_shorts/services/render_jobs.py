@@ -1340,10 +1340,26 @@ def mark_job_done(job_id: str, result: Dict[str, Any], *, timing_json: Optional[
         conn.close()
 
 
+def _restore_discovery_email_claims(job_id: str, job_type: str) -> None:
+    if str(job_type or "") != JOB_TYPE_ENRICH_DISCOVERY_EMAILS:
+        return
+    try:
+        from app.video_shorts.services.discovery_email_enrichment import restore_claimed_discovery_leads
+
+        restored = restore_claimed_discovery_leads(job_id)
+        if restored:
+            logger.warning("Restored %s discovery email lead(s) for job_id=%s", restored, job_id)
+    except Exception:
+        logger.exception("Could not restore discovery email leads for job_id=%s", job_id)
+
+
 def requeue_job(job_id: str, error: str, *, timing_accumulator: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
     conn = get_db()
+    job_type = ""
     try:
         ensure_render_jobs_schema(conn)
+        type_row = conn.execute(f"SELECT type FROM {JOBS_TABLE} WHERE id = ?", [job_id]).fetchone()
+        job_type = str(type_row[0] or "") if type_row else ""
         conn.execute(
             f"""
             UPDATE {JOBS_TABLE}
@@ -1364,9 +1380,10 @@ def requeue_job(job_id: str, error: str, *, timing_accumulator: Optional[Dict[st
             ],
         )
         conn.commit()
-        return get_job(job_id) or {}
     finally:
         conn.close()
+    _restore_discovery_email_claims(job_id, job_type)
+    return get_job(job_id) or {}
 
 
 def mark_job_failed(
@@ -1380,11 +1397,12 @@ def mark_job_failed(
     try:
         ensure_render_jobs_schema(conn)
         row = conn.execute(
-            f"SELECT user_id, payload_json FROM {JOBS_TABLE} WHERE id = ?",
+            f"SELECT user_id, payload_json, type FROM {JOBS_TABLE} WHERE id = ?",
             [job_id],
         ).fetchone()
         user_id = str(row[0]) if row and row[0] else None
         payload = _parse_json(row[1]) if row and len(row) > 1 else {}
+        job_type = str(row[2] or "") if row and len(row) > 2 else ""
         quota_exempt = bool(
             (payload or {}).get("auto_render_quota_exempt")
             or (payload or {}).get("quota_exempt")
@@ -1405,6 +1423,7 @@ def mark_job_failed(
         conn.commit()
     finally:
         conn.close()
+    _restore_discovery_email_claims(job_id, job_type)
     if release_reservation and user_id and not quota_exempt:
         release_export(user_id)
     return get_job(job_id) or {}

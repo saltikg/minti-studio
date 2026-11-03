@@ -417,7 +417,7 @@ def fetch_videos(channel_id: str, max_results: int = 20):
     return videos
 
 
-def get_channel_metadata(channel_url: str):
+def get_channel_metadata(channel_url: str, *, quota_feature: str = "other"):
     """
     Kanal için metadata getirir:
     - youtube_channel_id (UC ile başlayan id)
@@ -458,7 +458,7 @@ def get_channel_metadata(channel_url: str):
                     username = url.split("/user/")[-1].split("/")[0]
                     params["forUsername"] = username
 
-    data = _youtube_get_json("channels", params, quota_feature="other", quota_method="channels.list")
+    data = _youtube_get_json("channels", params, quota_feature=quota_feature, quota_method="channels.list")
 
     items = data.get("items", [])
     if not items:

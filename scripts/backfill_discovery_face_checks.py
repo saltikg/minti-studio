@@ -22,6 +22,10 @@ from app.video_shorts.routes.api import (
     diagnose_channel,
 )
 from app.video_shorts.services.db import get_db
+from app.video_shorts.services.discovery_backfill_guard import (
+    DISCOVERY_BACKFILL_QUOTA_FEATURE,
+    require_discovery_backfill_window,
+)
 from app.video_shorts.services.discovery_face_check import check_face_on_camera
 
 
@@ -117,6 +121,7 @@ def main() -> int:
     args = parser.parse_args()
     if args.shard_count < 1 or args.shard_index < 0 or args.shard_index >= args.shard_count:
         parser.error("--shard-index must be between 0 and --shard-count - 1")
+    require_discovery_backfill_window()
 
     app = create_app()
     with app.app_context():
@@ -129,18 +134,31 @@ def main() -> int:
                 where += f" AND MOD(id, {args.shard_count}) = {args.shard_index}"
             limit_sql = f" LIMIT {max(0, args.limit)}" if args.limit else ""
             rows = conn.execute(
-                f"SELECT id, youtube_channel_id, channel_title FROM discovery_leads WHERE {where} ORDER BY first_seen_at, id{limit_sql}"
+                f"SELECT id, youtube_channel_id, channel_title, raw_json, face_check_verdict FROM discovery_leads WHERE {where} ORDER BY first_seen_at, id{limit_sql}"
             ).fetchall()
             if not args.apply:
                 print(json.dumps({"dry_run": True, "eligible": len(rows)}, indent=2))
                 return 0
 
             usage_rows: list[dict] = []
+            transitions = Counter()
+            frame_totals = Counter()
+            youtube_api_fallbacks = 0
             for index, row in enumerate(rows, start=1):
-                lead_id, channel_id, channel_title = row
+                lead_id, channel_id, channel_title, raw_json, old_verdict = row
                 try:
-                    diagnosed = diagnose_channel(str(channel_id), resolve_email=False)
-                    result = check_face_on_camera(diagnosed.get("_face_check_thumbnail_urls") or [])
+                    raw_payload = raw_json if isinstance(raw_json, dict) else json.loads(str(raw_json or "{}"))
+                    samples = list(raw_payload.get("face_check_video_samples") or [])
+                    if len(samples) < 3:
+                        diagnosed = diagnose_channel(
+                            str(channel_id),
+                            resolve_email=False,
+                            quota_feature=DISCOVERY_BACKFILL_QUOTA_FEATURE,
+                        )
+                        samples = list(diagnosed.get("face_check_video_samples") or [])
+                        youtube_api_fallbacks += 1
+                    raw_payload["face_check_video_samples"] = samples
+                    result = check_face_on_camera(samples)
                 except Exception as exc:
                     result = {
                         "face_check_verdict": "face_unsure",
@@ -150,6 +168,9 @@ def main() -> int:
                     }
                 response = result.pop("_face_check_response", None)
                 model = str(result.pop("_face_check_model", "") or "")
+                frame_totals.update(result.pop("_face_check_frame_stats", {}) or {})
+                result.pop("face_check_usable_video_count", None)
+                transitions[(str(old_verdict or "unlabeled"), result["face_check_verdict"])] += 1
                 if response is not None:
                     input_tokens, output_tokens = _usage(response)
                     usage_rows.append(
@@ -167,13 +188,15 @@ def main() -> int:
                         model=model,
                         conn=conn,
                     )
+                raw_json_sql = "CAST(? AS JSONB)" if getattr(conn, "backend_name", "") == "postgres" else "?"
                 conn.execute(
-                    """
+                    f"""
                     UPDATE discovery_leads
                     SET face_check_verdict = ?,
                         face_check_presenter_type = ?,
                         face_check_same_person_count = ?,
                         face_check_reason = ?,
+                        raw_json = {raw_json_sql},
                         face_checked_at = CURRENT_TIMESTAMP
                     WHERE id = ?
                     """,
@@ -182,6 +205,7 @@ def main() -> int:
                         result["face_check_presenter_type"],
                         result["face_check_same_person_count"],
                         result["face_check_reason"],
+                        json.dumps(raw_payload, ensure_ascii=False, default=str),
                         lead_id,
                     ],
                 )
@@ -191,7 +215,13 @@ def main() -> int:
                     f"({result['face_check_presenter_type']})",
                     flush=True,
                 )
-            print(json.dumps(_report(conn, processed=len(rows), usage_rows=usage_rows), indent=2, ensure_ascii=False))
+            report = _report(conn, processed=len(rows), usage_rows=usage_rows)
+            report["verdict_transitions"] = {
+                f"{old}->{new}": count for (old, new), count in sorted(transitions.items())
+            }
+            report["frame_availability"] = dict(frame_totals)
+            report["youtube_api_fallback_channels"] = youtube_api_fallbacks
+            print(json.dumps(report, indent=2, ensure_ascii=False))
         finally:
             conn.close()
     return 0

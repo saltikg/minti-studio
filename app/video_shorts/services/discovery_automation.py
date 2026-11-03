@@ -207,7 +207,7 @@ def _discovery_quota_budget_status(conn, control: Dict[str, Any]) -> Dict[str, A
         minimum=0,
         maximum=10000,
     )
-    used = total_units_for_date(conn, today_pt())
+    used = total_units_for_date(conn, today_pt(), exclude_features={"backfill"})
     estimate = _estimate_discovery_run_youtube_units(control)
     return {
         "budget": budget,

@@ -2042,7 +2042,7 @@ def process_next_job(
         elif job.get("type") == JOB_TYPE_INSTAGRAM_COMMENT_WEBHOOK:
             result = _execute_instagram_comment_webhook_job(app, job)
         elif job.get("type") == JOB_TYPE_ENRICH_DISCOVERY_EMAILS:
-            result = enrich_discovery_email_batch(job.get("payload") or {})
+            result = enrich_discovery_email_batch({**(job.get("payload") or {}), "job_id": job.get("id")})
         elif job.get("type") == JOB_TYPE_ENRICH_AUTOPILOT_DISCOVERY_EMAILS:
             result = enrich_autopilot_discovery_email_batch(job.get("payload") or {})
         elif job.get("type") == JOB_TYPE_PURGE_VIDEO:

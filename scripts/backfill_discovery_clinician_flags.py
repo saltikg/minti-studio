@@ -19,6 +19,7 @@ load_dotenv(REPO_ROOT / ".env")
 from app import create_app
 from app.video_shorts.routes.api import _clinical_credential_match
 from app.video_shorts.services.db import get_db
+from app.video_shorts.services.discovery_backfill_guard import require_discovery_backfill_window
 
 
 def main() -> int:
@@ -26,6 +27,7 @@ def main() -> int:
     parser.add_argument("--apply", action="store_true", help="Persist recomputed labels.")
     parser.add_argument("--sample-size", type=int, default=20)
     args = parser.parse_args()
+    require_discovery_backfill_window()
 
     app = create_app()
     with app.app_context():
