@@ -5,6 +5,7 @@ from flask import Flask
 from markupsafe import escape
 
 from app.video_shorts.routes import generation
+from app.video_shorts.routes import settings
 
 
 FIXED_TEXT = "Watch the full video on my YouTube channel — if you need the link, it's in my Linktree/profile!"
@@ -79,3 +80,31 @@ def test_shared_component_renders_both_modes():
     assert "AI-generated (prompt template)" in html
     assert "Fixed text (no AI)" in html
     assert str(escape(FIXED_TEXT)) in html
+
+
+def test_admin_description_save_uses_workspace_owner_and_brand(monkeypatch):
+    class Connection:
+        def close(self):
+            pass
+
+    saved = []
+    app = Flask(__name__)
+    monkeypatch.setattr(settings, "get_db", Connection)
+    monkeypatch.setattr(settings, "ensure_brand_schema", lambda conn: None)
+    monkeypatch.setattr(settings, "_static_asset_scope", lambda conn, current_user: ("shelley-owner", "shelley-brand", {"admin_operation_brand": "shelley-brand"}))
+    monkeypatch.setattr(settings, "save_description_mode", lambda user_id, brand_id, value, updated_by: saved.append(("mode", user_id, brand_id, value, updated_by)))
+    monkeypatch.setattr(settings, "save_fixed_description_text", lambda user_id, brand_id, value, updated_by: saved.append(("text", user_id, brand_id, value, updated_by)))
+    monkeypatch.setattr(settings, "save_description_languages", lambda user_id, brand_id, value, updated_by: saved.append(("languages", user_id, brand_id, value, updated_by)))
+    monkeypatch.setattr(settings, "load_description_settings", lambda user_id, brand_id: ("prompt", "en"))
+    monkeypatch.setattr(settings, "load_description_mode", lambda user_id, brand_id: "fixed")
+    monkeypatch.setattr(settings, "load_fixed_description_text", lambda user_id, brand_id: FIXED_TEXT)
+
+    with app.test_request_context("/settings/prompts/description?admin_operation_brand=shelley-brand&admin_operation_kind=customer", method="POST", json={"description_mode": "fixed", "fixed_description_text": FIXED_TEXT, "description_languages": "en"}):
+        from flask import g
+        g.vs_current_user = {"id": "admin-owner", "brand_id": "admin-brand"}
+        response = settings.description_prompt_settings_api()
+
+    assert response.get_json()["brand_id"] == "shelley-brand"
+    assert {item[1] for item in saved} == {"shelley-owner"}
+    assert {item[2] for item in saved} == {"shelley-brand"}
+    assert {item[4] for item in saved} == {"admin-owner"}

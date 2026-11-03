@@ -45,6 +45,7 @@ def _pacific_date(value, payload=None):
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("--apply", action="store_true")
+    parser.add_argument("--verify", action="store_true")
     args = parser.parse_args()
     _load_env_file()
 
@@ -132,6 +133,43 @@ def main():
             "published_nov2_untouched": nov2_ids,
         }
         print(json.dumps(report, default=str, ensure_ascii=False, indent=2), flush=True)
+        if args.verify:
+            expected_settings = {
+                f"{owner_id}:description_mode:brand:{brand_id}": "fixed",
+                f"{owner_id}:fixed_description_text:brand:{brand_id}": FIXED_TEXT,
+                f"{owner_id}:description_languages:brand:{brand_id}": "en",
+            }
+            setting_rows = _rows(
+                cur,
+                "SELECT key, value FROM shorts_prompt_settings WHERE key = ANY(%s)",
+                [list(expected_settings)],
+            )
+            assert {row["key"]: row["value"] for row in setting_rows} == expected_settings
+            assert all(row["payload"].get("description") == FIXED_TEXT for row in youtube)
+            assert all(row["caption_text"] == FIXED_TEXT for row in instagram)
+            cur.execute(
+                """
+                SELECT clip_filename, generated_description
+                FROM shorts_generated_videos
+                WHERE user_id=%s AND brand_id=%s AND clip_filename = ANY(%s)
+                """,
+                [owner_id, brand_id, [item[2] for item in targets]],
+            )
+            lifecycle = {str(row[0]): row[1] for row in cur.fetchall()}
+            assert all(lifecycle.get(item[2]) == FIXED_TEXT for item in targets), lifecycle
+            from app.video_shorts.services import tenant_media
+            for video_pk, plan_index, clip_filename in targets:
+                cur.execute(
+                    "SELECT video_id FROM youtube_videos WHERE id=%s AND owner_user_id=%s AND brand_id=%s",
+                    [video_pk, owner_id, brand_id],
+                )
+                video_id = str(cur.fetchone()[0])
+                state = tenant_media.load_state(video_id, "plan", video_pk=video_pk)
+                entries = state.get("plan") or state.get("clips") or []
+                matches = [entry for entry in entries if str(entry.get("plan_index")) == plan_index and clip_filename in {entry.get("clip_filename"), entry.get("output_filename")}]
+                assert len(matches) == 1 and matches[0].get("yt_description") == FIXED_TEXT
+            published_descriptions = [_payload(row["payload_json"]).get("description") for row in published_nov2 if str(row["id"]) in nov2_ids]
+            print(json.dumps({"result": "VERIFIED", "youtube_exact": 3, "instagram_exact": 3, "clip_plans_exact": 3, "lifecycle_exact": 3, "published_nov2_ids_untouched": nov2_ids, "published_nov2_descriptions": published_descriptions}, ensure_ascii=False), flush=True)
         if not args.apply:
             conn.rollback()
             return
