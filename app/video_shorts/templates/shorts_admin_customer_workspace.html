@@ -6,6 +6,7 @@
 
 {% block extra_styles %}
 {{ super() }}
+{% include "partials/_vs_shared_assets.html" %}
 <style>
   .customer-workspace-header { display:flex; justify-content:space-between; align-items:center; gap:16px; margin-bottom:20px; padding:16px; border:1px solid rgba(45,212,191,.22); border-radius:12px; background:rgba(45,212,191,.05); }
   .customer-workspace-target-line { color:#fff; display:flex; flex-wrap:wrap; gap:6px; align-items:center; }
@@ -59,14 +60,14 @@
 {% include '_delete_video_modal.html' %}
 
 <div class="modal fade" id="descriptionPromptModal" tabindex="-1" aria-labelledby="descriptionPromptModalLabel" aria-hidden="true">
-  <div class="modal-dialog modal-lg modal-dialog-scrollable">
+  <div class="modal-dialog modal-lg modal-dialog-scrollable vs-app">
     <div class="modal-content vs-card">
       <div class="modal-header">
         <h5 class="modal-title" id="descriptionPromptModalLabel">Description prompt — {{ customer.brand_name }}</h5>
         <button type="button" class="btn-close btn-close-white" data-bs-dismiss="modal" aria-label="Close"></button>
       </div>
       <div class="modal-body">
-        {{ description_prompt_component(description_settings_endpoint, description_prompt, description_languages, description_mode, fixed_description_text, default_description_prompt, default_description_languages, default_description_mode, false) }}
+        {{ description_prompt_component(description_settings_endpoint, description_prompt, description_languages, description_mode, fixed_description_text, default_description_prompt, default_description_languages, default_description_mode, false, true) }}
       </div>
     </div>
   </div>

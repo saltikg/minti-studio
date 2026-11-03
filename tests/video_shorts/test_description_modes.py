@@ -82,6 +82,35 @@ def test_shared_component_renders_both_modes():
     assert str(escape(FIXED_TEXT)) in html
 
 
+def test_admin_component_loads_scoped_settings_and_shared_theme_assets():
+    template_dir = Path(__file__).resolve().parents[2] / "app" / "video_shorts" / "templates"
+    app = Flask(__name__, template_folder=str(template_dir), static_folder=str(Path(__file__).resolve().parents[2] / "app" / "static"))
+    with app.test_request_context("/"):
+        component = app.jinja_env.get_template("partials/_description_prompt_component.html")
+        html = component.module.description_prompt_component(
+            "/settings/prompts/description?admin_operation_brand=shelley-brand&admin_operation_kind=customer",
+            "prompt",
+            "en",
+            "fixed",
+            FIXED_TEXT,
+            "default prompt",
+            "en",
+            "ai",
+            False,
+            True,
+        )
+        assets = app.jinja_env.get_template("partials/_vs_shared_assets.html").render()
+
+    assert 'value="fixed" checked' in html
+    assert 'value="en" checked' in html
+    assert 'value="tr" checked' not in html
+    assert 'const loadOnOpen = true' in html
+    assert "admin_operation_brand=shelley-brand" in html
+    assert "Material+Symbols+Outlined" in assets
+    assert "bootstrap-icons" in assets
+    assert "css/vs_theme.css" in assets
+
+
 def test_admin_description_save_uses_workspace_owner_and_brand(monkeypatch):
     class Connection:
         def close(self):
