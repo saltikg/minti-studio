@@ -9,11 +9,21 @@ from app.video_shorts.services.db import table_columns
 from app.video_shorts.services.storage import is_storage_reference, storage_reference_key
 
 
-def _plan_entries_for_video_id(video_id: str, video_pk: int) -> list[dict[str, Any]]:
+def _plan_entries_for_video_id(
+    video_id: str,
+    video_pk: int,
+    owner_user_id: str,
+    brand_id: Any,
+) -> list[dict[str, Any]]:
     try:
         from app.video_shorts.routes import generation
 
-        return generation._load_plan_entries(video_id, video_pk=video_pk) or []
+        return generation._load_plan_entries(
+            video_id,
+            video_pk=video_pk,
+            owner_user_id=owner_user_id,
+            brand_id=brand_id,
+        ) or []
     except Exception:
         return []
 
@@ -60,18 +70,23 @@ def guest_storage_keys_for_user(conn, user_id: str) -> set[str]:
     if video_cols:
         rows = conn.execute(
             """
-            SELECT video_id, video_url, id
+            SELECT video_id, video_url, id, owner_user_id, brand_id
             FROM youtube_videos
             WHERE CAST(owner_user_id AS VARCHAR) = ?
             """,
             [clean_user_id],
         ).fetchall()
-        for video_id, video_url, video_pk in rows:
+        for video_id, video_url, video_pk, owner_user_id, brand_id in rows:
             clean_video_id = str(video_id or "").strip()
             _add_key(keys, video_url)
             for location in tenant_media.source_locations(clean_video_id, video_pk=video_pk, conn=conn):
                 keys.add(location["storage_key"])
-            for entry in _plan_entries_for_video_id(clean_video_id, video_pk):
+            for entry in _plan_entries_for_video_id(
+                clean_video_id,
+                video_pk,
+                str(owner_user_id or "").strip(),
+                brand_id,
+            ):
                 clip_filename = str(entry.get("clip_filename") or entry.get("output_filename") or "").strip()
                 poster_filename = str(entry.get("poster_filename") or "").strip()
                 _add_key(keys, _short_key(clip_filename))

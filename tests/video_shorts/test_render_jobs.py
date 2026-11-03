@@ -141,7 +141,8 @@ def _insert_user(user_id: str, plan_id: str) -> None:
                 fetch_transcript BOOLEAN,
                 published_at TIMESTAMP,
                 downloaded_at TIMESTAMP,
-                last_checked_at TIMESTAMP
+                last_checked_at TIMESTAMP,
+                deleted_at TIMESTAMP
             )
             """
         )
@@ -279,22 +280,26 @@ def _input_hash(source_video_id: str, plan_index: int = 1) -> str:
 
 def test_plan_entry_merge_preserves_newer_entries(monkeypatch, tmp_path):
     _configure_duckdb(monkeypatch, tmp_path, "merge.duckdb")
+    monkeypatch.setattr(generation.youtube_scheduling, "sync_plan_metadata", lambda *args, **kwargs: None)
+    monkeypatch.setattr(generation.youtube_scheduling, "overlay_plan", lambda entries, **kwargs: entries)
     user_a, user_b = str(uuid4()), str(uuid4())
     video_id = "merge-plan-video"
     for pk, user, brand in [(41, user_a, "brand-a"), (42, user_b, "brand-b")]:
         _insert_user(user, "plan_10gb")
         _insert_video(pk, video_id, user, brand_id=brand)
     original_snapshot = [{"plan_index": 1, "title": "First", "status": "queued"}]
-    generation._write_plan_entries(video_id, original_snapshot, video_pk=41)
+    generation._write_plan_entries(
+        video_id, original_snapshot, video_pk=41, owner_user_id=user_a, brand_id="brand-a"
+    )
     generation._write_plan_entries(video_id, [
         {"plan_index": 1, "title": "Other tenant", "status": "queued"},
-    ], video_pk=42)
-    other_path = tmp_path / "shorts" / "42_plan.json"
+    ], video_pk=42, owner_user_id=user_b, brand_id="brand-b")
+    other_path = tenant_media.state_path(video_id, "plan", video_pk=42)
     other_before = other_path.read_bytes()
     generation._write_plan_entries(video_id, [
         {"plan_index": 2, "title": "Second", "status": "queued"},
         {"plan_index": 1, "title": "First", "status": "queued"},
-    ], video_pk=41)
+    ], video_pk=41, owner_user_id=user_a, brand_id="brand-a")
 
     merged = generation._write_merged_plan_entry(
         video_id,
@@ -302,8 +307,12 @@ def test_plan_entry_merge_preserves_newer_entries(monkeypatch, tmp_path):
          "output_filename": "1_merge-plan-video_v41.mp4"},
         original_snapshot,
         video_pk=41,
+        owner_user_id=user_a,
+        brand_id="brand-a",
     )
-    entries = generation._load_plan_entries(video_id, video_pk=41)
+    entries = generation._load_plan_entries(
+        video_id, video_pk=41, owner_user_id=user_a, brand_id="brand-a"
+    )
 
     assert merged is True
     assert [entry["plan_index"] for entry in entries] == [2, 1]
@@ -312,7 +321,13 @@ def test_plan_entry_merge_preserves_newer_entries(monkeypatch, tmp_path):
     assert entries[1]["output_filename"] == "1_merge-plan-video_v41.mp4"
     assert [e["clip_filename"] for e in entries] == ["2_merge-plan-video_v41.mp4", "1_merge-plan-video_v41.mp4"]
     assert other_path.read_bytes() == other_before
-    assert generation._load_plan_entries(video_id, video_pk=42)[0]["clip_filename"] == "1_merge-plan-video_v42.mp4"
+    assert generation._load_plan_entries(
+        video_id, video_pk=42, owner_user_id=user_b, brand_id="brand-b"
+    )[0]["clip_filename"] == "1_merge-plan-video_v42.mp4"
+    with pytest.raises(tenant_media.TenantMediaConflict, match="owner, brand, or video"):
+        generation._load_plan_entries(
+            video_id, video_pk=41, owner_user_id=user_a, brand_id="brand-b"
+        )
     assert not (tmp_path / "shorts" / f"{video_id}_plan.json").exists()
     with pytest.raises(tenant_media.TenantMediaConflict, match="video_pk"):
         generation._load_plan_entries(video_id)
@@ -1793,7 +1808,9 @@ def test_worker_marks_render_job_failed_when_media_timeout_raises(monkeypatch, t
 
     failed_job = render_jobs.get_job(job_id, user_id=user_id)
     after_snapshot = usage_metering.get_usage_snapshot(user_id)
-    plan_entries = generation._load_plan_entries(source_video_id, video_pk=video_pk)
+    plan_entries = generation._load_plan_entries(
+        source_video_id, video_pk=video_pk, owner_user_id=user_id, brand_id=None
+    )
     expected_error = (
         "This video took too long to process. Please try again. "
         "If it keeps happening, contact support."
@@ -1873,7 +1890,9 @@ def test_worker_marks_render_job_failed_without_retry_when_disk_is_full(monkeypa
 
     failed_job = render_jobs.get_job(job_id, user_id=user_id)
     after_snapshot = usage_metering.get_usage_snapshot(user_id)
-    plan_entries = generation._load_plan_entries(source_video_id, video_pk=video_pk)
+    plan_entries = generation._load_plan_entries(
+        source_video_id, video_pk=video_pk, owner_user_id=user_id, brand_id=None
+    )
     expected_error = "The system is busy right now. Please try again in a few minutes."
 
     assert failed_job["status"] == "failed"

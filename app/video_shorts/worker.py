@@ -534,7 +534,12 @@ def _mark_plan_failure(job: Dict[str, Any], error_message: str) -> None:
     if not source_video_id or plan_index is None:
         return
     try:
-        entries = generation._load_plan_entries(source_video_id, video_pk=payload.get("video_pk"))
+        entries = generation._load_plan_entries(
+            source_video_id,
+            video_pk=payload.get("video_pk"),
+            owner_user_id=job.get("user_id"),
+            brand_id=payload.get("brand_id"),
+        )
         generation._update_plan_entry_job_state(
             source_video_id,
             entries,
@@ -561,7 +566,12 @@ def _update_plan_status(job: Dict[str, Any], status: str) -> None:
     if not source_video_id or plan_index is None:
         return
     try:
-        entries = generation._load_plan_entries(source_video_id, video_pk=payload.get("video_pk"))
+        entries = generation._load_plan_entries(
+            source_video_id,
+            video_pk=payload.get("video_pk"),
+            owner_user_id=job.get("user_id"),
+            brand_id=payload.get("brand_id"),
+        )
         generation._update_plan_entry_job_state(
             source_video_id,
             entries,
@@ -1949,7 +1959,12 @@ def _execute_publish_job(app, job: Dict[str, Any]) -> Dict[str, Any]:
         if not instagram_creds or not generation._validate_instagram_connection(instagram_creds):
             raise PermanentRenderJobError("Connect Instagram first.")
         _set_job_progress(job["id"], stage="queueing", message="Queueing Instagram publish.", status="processing")
-        plan_entries = generation._load_plan_entries(video_id, video_pk=payload.get("video_pk")) or []
+        plan_entries = generation._load_plan_entries(
+            video_id,
+            video_pk=payload.get("video_pk"),
+            owner_user_id=job.get("user_id"),
+            brand_id=payload.get("brand_id"),
+        ) or []
         target_entry = plan_entries[0] if plan_entries else {}
         queue_id = enqueue_instagram_clip(
             user_id=user.get("id"),
@@ -2187,7 +2202,12 @@ def _render_job_completion_from_assets(job: Dict[str, Any]) -> Optional[Dict[str
     if not recovered_entry:
         return None
 
-    entries = generation._load_plan_entries(source_video_id, video_pk=payload.get("video_pk")) or []
+    entries = generation._load_plan_entries(
+        source_video_id,
+        video_pk=payload.get("video_pk"),
+        owner_user_id=job.get("user_id"),
+        brand_id=payload.get("brand_id"),
+    ) or []
     target = next(
         (
             entry
@@ -2203,7 +2223,11 @@ def _render_job_completion_from_assets(job: Dict[str, Any]) -> Optional[Dict[str
     target["render_job_id"] = str(job.get("id") or "")
     target.pop("render_error", None)
     generation._write_plan_entries(
-        source_video_id, entries, video_pk=payload.get("video_pk")
+        source_video_id,
+        entries,
+        video_pk=payload.get("video_pk"),
+        owner_user_id=job.get("user_id"),
+        brand_id=payload.get("brand_id"),
     )
     logger.warning(
         "Recovered completed render from lifecycle asset job_id=%s clip=%s",
@@ -2245,7 +2269,12 @@ def _render_job_completion_from_plan(job: Dict[str, Any]) -> Optional[Dict[str, 
     try:
         from app.video_shorts.services.render_jobs import validate_render_job_scope
         validate_render_job_scope(job)
-        entries = generation._load_plan_entries(source_video_id, video_pk=payload.get("video_pk")) or []
+        entries = generation._load_plan_entries(
+            source_video_id,
+            video_pk=payload.get("video_pk"),
+            owner_user_id=job.get("user_id"),
+            brand_id=payload.get("brand_id"),
+        ) or []
     except Exception:
         logger.exception("Could not load plan entries for stuck render recovery job_id=%s", job.get("id"))
         return None

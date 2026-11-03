@@ -28,7 +28,7 @@ from uuid import uuid4
 
 from google.auth.exceptions import RefreshError
 
-from flask import abort, current_app, flash, g, jsonify, redirect, render_template, request, send_file, session, url_for
+from flask import abort, current_app, flash, g, has_request_context, jsonify, redirect, render_template, request, send_file, session, url_for
 from markupsafe import Markup, escape
 import requests
 from werkzeug.exceptions import HTTPException
@@ -6187,6 +6187,63 @@ def _plan_path(video_id: str, *, video_pk=None, read=False) -> Path:
     return tenant_media.state_path(video_id, "plan", video_pk=video_pk, read=read)
 
 
+def _resolve_and_validate_plan_tenant(
+    video_id: str,
+    *,
+    video_pk: Any,
+    owner_user_id: Any = None,
+    brand_id: Any = None,
+) -> Tuple[str, Optional[str], int]:
+    clean_owner_user_id = str(owner_user_id or "").strip()
+    clean_brand_id = str(brand_id or "").strip() or None
+    if not clean_owner_user_id:
+        if not has_request_context():
+            raise tenant_media.TenantMediaConflict(
+                "Plan access outside a request requires explicit owner_user_id, brand_id, and video_pk"
+            )
+        context = _active_editor_context()
+        clean_owner_user_id = str(context.get("owner_user_id") or "").strip()
+        clean_brand_id = str(context.get("brand_id") or "").strip() or None
+    if not clean_owner_user_id or not video_pk:
+        raise tenant_media.TenantMediaConflict(
+            "Plan access requires a complete tenant video identity"
+        )
+    try:
+        clean_video_pk = int(video_pk)
+    except (TypeError, ValueError) as exc:
+        raise tenant_media.TenantMediaConflict("Plan access has an invalid video_pk") from exc
+    conn = get_db_readonly()
+    try:
+        active_video_clause = " AND deleted_at IS NULL" if "deleted_at" in table_columns(conn, "youtube_videos") else ""
+        video_tenant = conn.execute(
+            f"""
+            SELECT CAST(video_id AS VARCHAR),
+                   CAST(owner_user_id AS VARCHAR),
+                   CAST(brand_id AS VARCHAR)
+            FROM youtube_videos
+            WHERE id = ?{active_video_clause}
+            LIMIT 1
+            """,
+            [clean_video_pk],
+        ).fetchone()
+    finally:
+        conn.close()
+    if not video_tenant:
+        raise tenant_media.TenantMediaConflict("Plan video no longer exists")
+    stored_video_id = str(video_tenant[0] or "").strip()
+    stored_owner_user_id = str(video_tenant[1] or "").strip()
+    stored_brand_id = str(video_tenant[2] or "").strip() or None
+    if (
+        stored_video_id != str(video_id or "").strip()
+        or stored_owner_user_id != clean_owner_user_id
+        or stored_brand_id != clean_brand_id
+    ):
+        raise tenant_media.TenantMediaConflict(
+            "Plan owner, brand, or video no longer matches the persisted video"
+        )
+    return clean_owner_user_id, clean_brand_id, clean_video_pk
+
+
 def _load_plan_entries(
     video_id: str,
     *,
@@ -6194,17 +6251,19 @@ def _load_plan_entries(
     owner_user_id: Optional[str] = None,
     brand_id: Optional[str] = None,
 ) -> List[Dict[str, Any]]:
+    clean_owner_user_id, clean_brand_id, clean_video_pk = _resolve_and_validate_plan_tenant(
+        video_id,
+        video_pk=video_pk,
+        owner_user_id=owner_user_id,
+        brand_id=brand_id,
+    )
     data = tenant_media.load_state(video_id, "plan", video_pk=video_pk)
     entries = data.get("plan") or data.get("clips") or []
     entries = [dict(entry) for entry in entries if isinstance(entry, dict)] if isinstance(entries, list) else []
-    if owner_user_id is None:
-        context = _active_editor_context()
-        owner_user_id = context["owner_user_id"]
-        brand_id = context["brand_id"]
     return youtube_scheduling.overlay_plan(
         entries,
-        user_id=owner_user_id,
-        brand_id=brand_id,
+        user_id=clean_owner_user_id,
+        brand_id=clean_brand_id,
         video_pk=video_pk,
     )
 
@@ -6247,14 +6306,16 @@ def _write_plan_entries(
     owner_user_id: Optional[str] = None,
     brand_id: Optional[str] = None,
 ) -> None:
-    if owner_user_id is None:
-        context = _active_editor_context()
-        owner_user_id = context["owner_user_id"]
-        brand_id = context["brand_id"]
+    clean_owner_user_id, clean_brand_id, _clean_video_pk = _resolve_and_validate_plan_tenant(
+        video_id,
+        video_pk=video_pk,
+        owner_user_id=owner_user_id,
+        brand_id=brand_id,
+    )
     youtube_scheduling.sync_plan_metadata(
         entries,
-        user_id=owner_user_id,
-        brand_id=brand_id,
+        user_id=clean_owner_user_id,
+        brand_id=clean_brand_id,
         video_pk=video_pk,
     )
     tenant_media.write_state(video_id, {"plan": entries}, video_pk=video_pk)
@@ -6768,14 +6829,31 @@ def _mark_plan_entry_user_title_edit(plan_entry: Dict[str, Any], new_title: str)
     plan_entry["title_user_edited_at"] = _utc_now_iso()
 
 
-def _write_merged_plan_entry(video_id: str, updated_entry: Dict[str, Any], fallback_entries: List[Dict[str, Any]], *, video_pk=None) -> bool:
+def _write_merged_plan_entry(
+    video_id: str,
+    updated_entry: Dict[str, Any],
+    fallback_entries: List[Dict[str, Any]],
+    *,
+    video_pk: Any,
+    owner_user_id: Any,
+    brand_id: Any,
+) -> bool:
     target_index = _coerce_positive_plan_index(updated_entry.get("plan_index"))
     if target_index is None:
-        _write_plan_entries(video_id, fallback_entries, video_pk=video_pk)
+        _write_plan_entries(
+            video_id, fallback_entries, video_pk=video_pk,
+            owner_user_id=owner_user_id, brand_id=brand_id,
+        )
         return True
-    latest_entries = _load_plan_entries(video_id, video_pk=video_pk)
+    latest_entries = _load_plan_entries(
+        video_id, video_pk=video_pk,
+        owner_user_id=owner_user_id, brand_id=brand_id,
+    )
     if not latest_entries:
-        _write_plan_entries(video_id, fallback_entries, video_pk=video_pk)
+        _write_plan_entries(
+            video_id, fallback_entries, video_pk=video_pk,
+            owner_user_id=owner_user_id, brand_id=brand_id,
+        )
         return True
 
     merged_entries: List[Dict[str, Any]] = []
@@ -6789,7 +6867,10 @@ def _write_merged_plan_entry(video_id: str, updated_entry: Dict[str, Any], fallb
             merged_entries.append(entry)
     if not replaced:
         return False
-    _write_plan_entries(video_id, merged_entries, video_pk=video_pk)
+    _write_plan_entries(
+        video_id, merged_entries, video_pk=video_pk,
+        owner_user_id=owner_user_id, brand_id=brand_id,
+    )
     return True
 
 
@@ -7686,7 +7767,12 @@ def _evaluate_lead_generation_approval_gate(
         if not lead:
             conn.commit()
             return None
-        entries = _load_plan_entries(video_id, video_pk=video_pk) or []
+        entries = _load_plan_entries(
+            video_id,
+            video_pk=video_pk,
+            owner_user_id=owner_user_id,
+            brand_id=brand_id,
+        ) or []
         selected = [entry for entry in entries if isinstance(entry, dict) and entry.get("selected_for_generation")]
         if not selected:
             conn.commit()
@@ -7703,7 +7789,13 @@ def _evaluate_lead_generation_approval_gate(
                     entry["render_error"] = str(failure_message)
                 changed = True
         if changed:
-            _write_plan_entries(video_id, entries, video_pk=video_pk)
+            _write_plan_entries(
+                video_id,
+                entries,
+                video_pk=video_pk,
+                owner_user_id=owner_user_id,
+                brand_id=brand_id,
+            )
 
         failed_entries = [
             entry
@@ -7966,7 +8058,12 @@ def render_job_media_payload(job: Dict[str, Any]) -> Dict[str, Any]:
     if not source_video_id:
         return {}
     target_entry = None
-    for entry in _load_plan_entries(source_video_id, video_pk=payload.get("video_pk")) or []:
+    for entry in _load_plan_entries(
+        source_video_id,
+        video_pk=payload.get("video_pk"),
+        owner_user_id=job.get("user_id"),
+        brand_id=brand_id,
+    ) or []:
         if not isinstance(entry, dict):
             continue
         try:
@@ -8209,8 +8306,19 @@ def _invalid_autopilot_entry_email_reason(email: str) -> Optional[str]:
     return None
 
 
-def _plan_entries_with_selection(video_id: str, *, video_pk=None) -> Tuple[List[Dict[str, Any]], List[Dict[str, Any]]]:
-    entries = _load_plan_entries(video_id, video_pk=video_pk) or []
+def _plan_entries_with_selection(
+    video_id: str,
+    *,
+    video_pk=None,
+    owner_user_id: Any,
+    brand_id: Any,
+) -> Tuple[List[Dict[str, Any]], List[Dict[str, Any]]]:
+    entries = _load_plan_entries(
+        video_id,
+        video_pk=video_pk,
+        owner_user_id=owner_user_id,
+        brand_id=brand_id,
+    ) or []
     if entries:
         selected = _select_lead_generation_entries(
             entries,
@@ -8218,7 +8326,13 @@ def _plan_entries_with_selection(video_id: str, *, video_pk=None) -> Tuple[List[
             limit=5,
             fallback_limit=3,
         )
-        _write_plan_entries(video_id, entries, video_pk=video_pk)
+        _write_plan_entries(
+            video_id,
+            entries,
+            video_pk=video_pk,
+            owner_user_id=owner_user_id,
+            brand_id=brand_id,
+        )
         return entries, selected
     return entries, []
 
@@ -8762,7 +8876,12 @@ def process_downloaded_lead_autoplan(*, limit: int = 1, timeout_seconds: int = A
                     conn_timeout.close()
             continue
 
-        entries, selected = _plan_entries_with_selection(video_id, video_pk=video_pk)
+        entries, selected = _plan_entries_with_selection(
+            video_id,
+            video_pk=video_pk,
+            owner_user_id=owner_user_id,
+            brand_id=brand_id,
+        )
         if entries:
             conn_existing = get_db()
             try:
@@ -9271,8 +9390,20 @@ def _default_auto_render_account_block_reason(owner_user_id: str) -> str:
     return ""
 
 
-def _mark_plan_entry_auto_created(video_id: str, video_pk: int, plan_index: int) -> None:
-    entries = _load_plan_entries(video_id, video_pk=video_pk) or []
+def _mark_plan_entry_auto_created(
+    video_id: str,
+    video_pk: int,
+    plan_index: int,
+    *,
+    owner_user_id: Any,
+    brand_id: Any,
+) -> None:
+    entries = _load_plan_entries(
+        video_id,
+        video_pk=video_pk,
+        owner_user_id=owner_user_id,
+        brand_id=brand_id,
+    ) or []
     changed = False
     for entry in entries:
         try:
@@ -9284,7 +9415,13 @@ def _mark_plan_entry_auto_created(video_id: str, video_pk: int, plan_index: int)
             changed = True
             break
     if changed:
-        _write_plan_entries(video_id, entries, video_pk=video_pk)
+        _write_plan_entries(
+            video_id,
+            entries,
+            video_pk=video_pk,
+            owner_user_id=owner_user_id,
+            brand_id=brand_id,
+        )
 
 
 def execute_auto_suggest_render_job(payload: Dict[str, Any]) -> Dict[str, Any]:
@@ -9368,7 +9505,12 @@ def execute_auto_suggest_render_job(payload: Dict[str, Any]) -> Dict[str, Any]:
     if str(video_row[4] or "").strip().lower() != "done":
         return finish("transcript_not_ready")
     meta = _load_auto_suggest_render_meta(video_id, video_pk=video_pk)
-    entries = _load_plan_entries(video_id, video_pk=video_pk) or []
+    entries = _load_plan_entries(
+        video_id,
+        video_pk=video_pk,
+        owner_user_id=owner_user_id,
+        brand_id=brand_id,
+    ) or []
     if meta.get("auto_run_at"):
         return finish("already_ran")
     if any(isinstance(entry, dict) and str(entry.get("origin") or "").strip().lower() == "ai" for entry in entries):
@@ -9391,8 +9533,19 @@ def execute_auto_suggest_render_job(payload: Dict[str, Any]) -> Dict[str, Any]:
         cached_entries = list((text_cache or {}).get("plan_entries") or [])
         if cached_entries:
             prepared_entries = _reindex_v1_plan_entries(video_id, cached_entries, video_pk=video_pk)
-            _write_plan_entries(video_id, prepared_entries, video_pk=video_pk)
-            entries = _load_plan_entries(video_id, video_pk=video_pk) or []
+            _write_plan_entries(
+                video_id,
+                prepared_entries,
+                video_pk=video_pk,
+                owner_user_id=owner_user_id,
+                brand_id=brand_id,
+            )
+            entries = _load_plan_entries(
+                video_id,
+                video_pk=video_pk,
+                owner_user_id=owner_user_id,
+                brand_id=brand_id,
+            ) or []
             generated_entries = [
                 entry for entry in entries
                 if isinstance(entry, dict) and str(entry.get("origin") or "").strip().lower() == "ai"
@@ -9417,7 +9570,12 @@ def execute_auto_suggest_render_job(payload: Dict[str, Any]) -> Dict[str, Any]:
             brand_id=brand_id,
             suggestion_limit=None if legacy_mode else AUTO_SUGGEST_CUSTOMER_CLIP_COUNT,
         )
-        entries = _load_plan_entries(video_id, video_pk=video_pk) or []
+        entries = _load_plan_entries(
+            video_id,
+            video_pk=video_pk,
+            owner_user_id=owner_user_id,
+            brand_id=brand_id,
+        ) or []
         generated_entries = [
             entry for entry in entries
             if isinstance(entry, dict) and str(entry.get("origin") or "").strip().lower() == "ai"
@@ -9470,7 +9628,13 @@ def execute_auto_suggest_render_job(payload: Dict[str, Any]) -> Dict[str, Any]:
             admin_job_metadata=admin_job_metadata if admin_quota_exempt else None,
         )
         if not legacy_mode and enqueue_result.get("ok"):
-            _mark_plan_entry_auto_created(video_id, video_pk, plan_index)
+            _mark_plan_entry_auto_created(
+                video_id,
+                video_pk,
+                plan_index,
+                owner_user_id=owner_user_id,
+                brand_id=brand_id,
+            )
         enqueued.append({"plan_index": plan_index, **enqueue_result})
     result["selected"] = selected_summary
     result["enqueued"] = enqueued
@@ -9641,7 +9805,12 @@ def process_planned_lead_autogenerate(
         video_pk = int(row[3])
         pipeline_state = str(row[4] or "new").strip().lower()
         video_id = str(row[5] or "").strip()
-        entries = _load_plan_entries(video_id, video_pk=video_pk) or []
+        entries = _load_plan_entries(
+            video_id,
+            video_pk=video_pk,
+            owner_user_id=owner_user_id,
+            brand_id=brand_id,
+        ) or []
         selected = [entry for entry in entries if isinstance(entry, dict) and entry.get("selected_for_generation")]
         if not selected:
             if pipeline_state == "planned":
@@ -10914,7 +11083,7 @@ def _load_user_title_style_examples(
     try:
         rows = conn.execute(
             """
-            SELECT video_id, id
+            SELECT video_id, id, brand_id
             FROM youtube_videos
             WHERE owner_user_id = ?
             ORDER BY id DESC
@@ -10930,7 +11099,12 @@ def _load_user_title_style_examples(
         video_id = str(row[0] or "").strip()
         if not video_id or video_id == str(current_video_id or "").strip():
             continue
-        for entry in _load_plan_entries(video_id, video_pk=row[1]):
+        for entry in _load_plan_entries(
+            video_id,
+            video_pk=row[1],
+            owner_user_id=user_id,
+            brand_id=row[2],
+        ):
             example = _clip_title_example_from_entry(entry)
             if not example:
                 continue
@@ -30436,12 +30610,17 @@ def _generate_clip_plan_for_video(
     clip_plan: List[Dict[str, Any]] = []
     debug_info: Dict[str, Any] = {}
     plan_path = tenant_media.state_path(vid, "plan", read=True, video_pk=video_pk)
-    existing_plan_entries = _load_plan_entries(vid, video_pk=video_pk)
+    existing_plan_entries = _load_plan_entries(
+        vid,
+        video_pk=video_pk,
+        owner_user_id=owner_user_id,
+        brand_id=brand_id,
+    )
     used_fallback_plan = False
     planner_used = "v1"
     planner_fallback = False
     planner_started_at = time.monotonic()
-    current_user = getattr(g, "vs_current_user", None) or {}
+    current_user = (getattr(g, "vs_current_user", None) or {}) if has_request_context() else {}
     request_user_role = str(current_user.get("role") or form_data.get("_request_user_role") or "").strip().lower()
     use_v10 = request_user_role == "admin" or str(os.getenv("CLIP_PLANNER_V10_ALL") or "").strip() == "1"
 
@@ -30611,7 +30790,13 @@ def _generate_clip_plan_for_video(
     SHORTS_DIR.mkdir(parents=True, exist_ok=True)
     _emit("save_plan", "Saving plan to disk.", clip_count=len(combined_plan))
     try:
-        _write_plan_entries(vid, combined_plan, video_pk=video_pk)
+        _write_plan_entries(
+            vid,
+            combined_plan,
+            video_pk=video_pk,
+            owner_user_id=owner_user_id,
+            brand_id=brand_id,
+        )
         try:
             write_suggestions_cache(vid, entries=timestamped_plan, video_pk=video_pk)
         except Exception:
@@ -34248,7 +34433,14 @@ def autoclip_video(video_pk):
                     clip_filename,
                     vid,
                 )
-                merged = _write_merged_plan_entry(vid, plan_entry, plan_entries, video_pk=video_pk)
+                merged = _write_merged_plan_entry(
+                    vid,
+                    plan_entry,
+                    plan_entries,
+                    video_pk=video_pk,
+                    owner_user_id=target_owner_user_id,
+                    brand_id=brand_id,
+                )
                 if not merged:
                     current_app.logger.warning(
                         "Skipped stale plan update because plan index %s is no longer present video_id=%s",

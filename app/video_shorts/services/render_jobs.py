@@ -609,7 +609,12 @@ def is_render_job_cache_valid(job: Dict[str, Any], *, conn=None) -> bool:
         from app.video_shorts.routes import generation
 
         validate_render_job_scope(job, conn)
-        plan_entries = generation._load_plan_entries(source_video_id, video_pk=payload.get("video_pk")) or []
+        plan_entries = generation._load_plan_entries(
+            source_video_id,
+            video_pk=payload.get("video_pk"),
+            owner_user_id=job.get("user_id"),
+            brand_id=payload.get("brand_id"),
+        ) or []
         target_entry = None
         for entry in plan_entries:
             try:
