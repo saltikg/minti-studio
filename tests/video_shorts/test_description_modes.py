@@ -6,6 +6,7 @@ from markupsafe import escape
 
 from app.video_shorts.routes import generation
 from app.video_shorts.routes import settings
+from app.video_shorts import video_shorts_bp
 
 
 FIXED_TEXT = "Watch the full video on my YouTube channel — if you need the link, it's in my Linktree/profile!"
@@ -137,3 +138,35 @@ def test_admin_description_save_uses_workspace_owner_and_brand(monkeypatch):
     assert {item[1] for item in saved} == {"shelley-owner"}
     assert {item[2] for item in saved} == {"shelley-brand"}
     assert {item[4] for item in saved} == {"admin-owner"}
+
+
+def test_admin_operation_middleware_allows_brand_scoped_description_api(monkeypatch):
+    class Connection:
+        def execute(self, *_args, **_kwargs):
+            raise AssertionError("Brand-scoped settings must not require a video lookup")
+
+        def close(self):
+            pass
+
+    app = Flask(__name__)
+    app.secret_key = "test"
+    app.register_blueprint(video_shorts_bp)
+    monkeypatch.setattr(generation, "get_db_readonly", Connection)
+    monkeypatch.setattr(
+        generation,
+        "resolve_admin_operation_request_scope",
+        lambda conn, current_user, brand_id, workspace_kind: {
+            "acting_admin_id": "admin-owner",
+            "owner_user_id": "shelley-owner",
+            "brand_id": "shelley-brand",
+            "workspace_kind": "customer",
+        },
+    )
+
+    with app.test_request_context(
+        "/video_shorts/settings/prompts/description?admin_operation_brand=shelley-brand&admin_operation_kind=customer"
+    ):
+        from flask import g
+        g.vs_current_user = {"id": "admin-owner", "role": "admin"}
+        generation._activate_admin_operation_editor_context()
+        assert generation.request_admin_operation_scope()["brand_id"] == "shelley-brand"

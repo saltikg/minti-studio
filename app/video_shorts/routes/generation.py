@@ -11738,15 +11738,30 @@ def _activate_admin_operation_editor_context() -> None:
         "video_shorts_bp.update_selected_background",
         "video_shorts_bp.delete_static_image",
     }
+    scoped_brand_endpoint = request.endpoint in {
+        "video_shorts_bp.description_prompt_settings_api",
+    }
     if request.endpoint == "video_shorts_bp.legacy_save_short_editor_defaults":
         abort(403)
-    if not scoped_media_endpoint and not route_rule.startswith(ADMIN_OPERATION_EDITOR_ROUTE_PREFIX) and request.endpoint != "video_shorts_bp.upload_clip_to_youtube":
+    if (
+        not scoped_media_endpoint
+        and not scoped_brand_endpoint
+        and not route_rule.startswith(ADMIN_OPERATION_EDITOR_ROUTE_PREFIX)
+        and request.endpoint != "video_shorts_bp.upload_clip_to_youtube"
+    ):
         _deny("route_not_allowed")
-    video_pk = request.args.get("video_pk") if scoped_media_endpoint else (request.view_args or {}).get("video_pk") or request.form.get("video_pk")
-    try:
-        video_pk = int(video_pk)
-    except (TypeError, ValueError):
-        _deny("invalid_video_pk", video_pk=video_pk)
+    video_pk = None
+    if not scoped_brand_endpoint:
+        video_pk = (
+            request.args.get("video_pk")
+            if scoped_media_endpoint
+            else (request.view_args or {}).get("video_pk") or request.form.get("video_pk")
+        )
+    if video_pk is not None:
+        try:
+            video_pk = int(video_pk)
+        except (TypeError, ValueError):
+            _deny("invalid_video_pk", video_pk=video_pk)
 
     current_user = getattr(g, "vs_current_user", None) or {}
     if str(current_user.get("role") or "").strip().lower() != "admin":
@@ -11762,15 +11777,17 @@ def _activate_admin_operation_editor_context() -> None:
         )
         if not scope:
             _deny("request_scope_revalidation_failed", video_pk=video_pk)
-        target_row = conn.execute(
-            """
-            SELECT 1
-            FROM youtube_videos
-            WHERE id = ? AND owner_user_id = ? AND brand_id = ?
-            LIMIT 1
-            """,
-            [video_pk, scope["owner_user_id"], scope["brand_id"]],
-        ).fetchone()
+        target_row = True
+        if video_pk is not None:
+            target_row = conn.execute(
+                """
+                SELECT 1
+                FROM youtube_videos
+                WHERE id = ? AND owner_user_id = ? AND brand_id = ?
+                LIMIT 1
+                """,
+                [video_pk, scope["owner_user_id"], scope["brand_id"]],
+            ).fetchone()
     finally:
         conn.close()
     if not target_row:
