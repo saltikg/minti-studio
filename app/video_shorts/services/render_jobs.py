@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import hashlib
+import html
 import json
 import logging
 import os
@@ -21,6 +22,7 @@ from app.video_shorts.services.usage_metering import (
     finalize_export,
     release_export,
 )
+from app.video_shorts.services.email_verification import send_resend_email
 
 
 JOBS_TABLE = "shorts_render_jobs"
@@ -1392,17 +1394,19 @@ def mark_job_failed(
     *,
     release_reservation: bool = True,
     timing_json: Optional[Dict[str, Any]] = None,
+    notify_admin: bool = False,
 ) -> Dict[str, Any]:
     conn = get_db()
     try:
         ensure_render_jobs_schema(conn)
         row = conn.execute(
-            f"SELECT user_id, payload_json, type FROM {JOBS_TABLE} WHERE id = ?",
+            f"SELECT user_id, payload_json, type, status FROM {JOBS_TABLE} WHERE id = ?",
             [job_id],
         ).fetchone()
         user_id = str(row[0]) if row and row[0] else None
         payload = _parse_json(row[1]) if row and len(row) > 1 else {}
         job_type = str(row[2] or "") if row and len(row) > 2 else ""
+        previous_status = str(row[3] or "") if row and len(row) > 3 else ""
         quota_exempt = bool(
             (payload or {}).get("auto_render_quota_exempt")
             or (payload or {}).get("quota_exempt")
@@ -1426,7 +1430,66 @@ def mark_job_failed(
     _restore_discovery_email_claims(job_id, job_type)
     if release_reservation and user_id and not quota_exempt:
         release_export(user_id)
-    return get_job(job_id) or {}
+    failed_job = get_job(job_id) or {}
+    if notify_admin and previous_status != JOB_STATUS_FAILED:
+        _send_admin_job_failure_alert(failed_job, str(error or "").strip())
+    return failed_job
+
+
+def _send_admin_job_failure_alert(job: Dict[str, Any], error: str) -> None:
+    payload = job.get("payload") or {}
+    origin = str(payload.get("job_origin") or "").strip().lower()
+    user_id = str(job.get("user_id") or "").strip()
+    brand_id = str(payload.get("brand_id") or "").strip()
+    is_customer = origin in {ADMIN_JOB_ORIGIN, CUSTOMER_JOB_ORIGIN, AUTO_RENDER_JOB_ORIGIN}
+    brand_name = brand_id
+    if user_id:
+        conn = get_db_readonly()
+        try:
+            user_columns = table_columns(conn, "shorts_users")
+            if "service_mode" in user_columns:
+                user_row = conn.execute(
+                    "SELECT lower(COALESCE(service_mode, '')) FROM shorts_users WHERE CAST(id AS VARCHAR) = ? LIMIT 1",
+                    [user_id],
+                ).fetchone()
+                is_customer = is_customer or bool(user_row and str(user_row[0] or "") == "autopilot")
+            if brand_id and "name" in table_columns(conn, "shorts_brands"):
+                brand_row = conn.execute(
+                    "SELECT COALESCE(name, '') FROM shorts_brands WHERE CAST(id AS VARCHAR) = ? LIMIT 1",
+                    [brand_id],
+                ).fetchone()
+                if brand_row and brand_row[0]:
+                    brand_name = str(brand_row[0])
+        finally:
+            conn.close()
+    if not is_customer:
+        return
+    session_id = str(payload.get("video_pk") or payload.get("quick_session_id") or "unknown").strip()
+    job_type = str(job.get("type") or "unknown").strip()
+    clean_error = str(error or "Unknown failure").strip()
+    text = (
+        "A customer/admin job failed.\n\n"
+        f"Session: {session_id}\nBrand: {brand_name or brand_id or 'unknown'}\n"
+        f"Job type: {job_type}\nJob id: {job.get('id')}\nLast error: {clean_error}"
+    )
+    html_body = (
+        "<p>A customer/admin job failed.</p><ul>"
+        f"<li><strong>Session:</strong> {html.escape(session_id)}</li>"
+        f"<li><strong>Brand:</strong> {html.escape(brand_name or brand_id or 'unknown')}</li>"
+        f"<li><strong>Job type:</strong> {html.escape(job_type)}</li>"
+        f"<li><strong>Job id:</strong> {html.escape(str(job.get('id') or ''))}</li>"
+        f"<li><strong>Last error:</strong> {html.escape(clean_error)}</li></ul>"
+    )
+    try:
+        send_resend_email(
+            to_email=(os.getenv("ADMIN_NOTIFICATION_EMAIL") or "info@mintistudio.com").strip(),
+            subject=f"Minti job failed: {job_type} · session {session_id}",
+            html=html_body,
+            text=text,
+            error_message="Job failure alert could not be sent.",
+        )
+    except Exception:
+        logger.exception("Admin job failure alert failed job_id=%s", job.get("id"))
 
 
 def cancel_job(job_id: str, error: Optional[str] = None) -> Dict[str, Any]:
@@ -1478,7 +1541,7 @@ def requeue_timed_out_jobs(*, timeout_seconds: int) -> Dict[str, int]:
         if not latest or not job_heartbeat_is_stale(latest, cutoff):
             continue
         if job["attempts"] >= job["max_attempts"]:
-            mark_job_failed(job["id"], "Job timed out and exhausted retries.")
+            mark_job_failed(job["id"], "Job timed out and exhausted retries.", notify_admin=True)
             failed += 1
         else:
             requeue_job(job["id"], "Job timed out; requeued automatically.")
@@ -1591,7 +1654,7 @@ def requeue_dead_local_worker_jobs() -> Dict[str, int]:
         if not job:
             continue
         if job["attempts"] >= job["max_attempts"]:
-            mark_job_failed(job["id"], "Job worker exited and exhausted retries.")
+            mark_job_failed(job["id"], "Job worker exited and exhausted retries.", notify_admin=True)
             failed += 1
         else:
             requeue_job(job["id"], "Job worker exited; requeued automatically.")

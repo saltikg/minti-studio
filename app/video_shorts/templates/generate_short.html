@@ -3297,6 +3297,20 @@
     border-color: #5eead4;
     box-shadow: 0 0 0 2px rgba(45, 212, 191, 0.16);
   }
+  .generate-v2-text-word[data-save-status]::after,
+  .clip-text-trim-word[data-save-status]::after {
+    content: attr(data-save-status);
+    display: inline-block;
+    margin-left: 5px;
+    color: #5eead4;
+    font-size: .68rem;
+    font-weight: 700;
+    vertical-align: middle;
+  }
+  .generate-v2-text-word.is-save-error[data-save-status]::after,
+  .clip-text-trim-word.is-save-error[data-save-status]::after {
+    color: #fca5a5;
+  }
   .generate-v2-text-toast {
     position: fixed;
     left: 50%;
@@ -14390,7 +14404,18 @@ const resetGenerateV2EditableWordSpan = (span, word) => {
   span.textContent = `${word?.text || ""} `;
 };
 
-const startGenerateV2TranscriptWordEdit = ({
+const showGenerateV2WordEditStatus = (span, message, isError = false) => {
+  if (!span || !message) return;
+  window.clearTimeout(span.__mintiSaveStatusTimer);
+  span.dataset.saveStatus = message;
+  span.classList.toggle("is-save-error", !!isError);
+  span.__mintiSaveStatusTimer = window.setTimeout(() => {
+    delete span.dataset.saveStatus;
+    span.classList.remove("is-save-error");
+  }, 1800);
+};
+
+const startGenerateV2TranscriptWordEdit = async ({
   span,
   word,
   words = getGenerateV2TranscriptWords(),
@@ -14403,11 +14428,9 @@ const startGenerateV2TranscriptWordEdit = ({
   if (!editUrl || !span || !word || !editor) return;
   const wordIndex = Number(word.index ?? span.dataset.wordIndex);
   if (!Number.isFinite(wordIndex)) return;
-  editor.querySelectorAll("[data-word-index].is-editing").forEach((editingSpan) => {
-    const editingIndex = Number(editingSpan.dataset.wordIndex);
-    const editingWord = words.find((candidate) => Number(candidate.index) === editingIndex);
-    resetGenerateV2EditableWordSpan(editingSpan, editingWord || { text: editingSpan.dataset.originalText || "" });
-  });
+  const activeEdit = editor.__mintiTranscriptWordEdit;
+  if (activeEdit?.span === span) return;
+  if (activeEdit?.save) await activeEdit.save();
   const originalText = String(word.text || "");
   const previousScrollTop = editor.scrollTop;
   span.dataset.originalText = originalText;
@@ -14422,49 +14445,66 @@ const startGenerateV2TranscriptWordEdit = ({
   window.getSelection?.()?.removeAllRanges?.();
   input.focus();
   input.select();
+  let settled = false;
+  let savePromise = null;
   const finish = (callback = null) => {
+    if (editor.__mintiTranscriptWordEdit?.span === span) {
+      editor.__mintiTranscriptWordEdit = null;
+    }
     editor.scrollTop = previousScrollTop;
     callback?.();
   };
   const cancel = () => {
+    if (settled) return;
+    settled = true;
     resetGenerateV2EditableWordSpan(span, word);
     finish(onAfterCancel);
   };
-  const save = async () => {
+  const save = () => {
+    if (savePromise) return savePromise;
+    if (settled) return Promise.resolve(true);
     const nextText = input.value.trim();
     if (!nextText || nextText === originalText) {
       cancel();
-      return;
+      return Promise.resolve(true);
     }
     input.disabled = true;
-    try {
-      const response = await fetch(editUrl, {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-          "X-Requested-With": "XMLHttpRequest",
-        },
-        body: JSON.stringify({ word_index: wordIndex, text: nextText }),
-      });
-      const payload = await response.json().catch(() => ({}));
-      if (!response.ok || payload.success === false) {
-        throw new Error(payload.message || "Could not save word.");
+    savePromise = (async () => {
+      try {
+        const response = await fetch(editUrl, {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+            "X-Requested-With": "XMLHttpRequest",
+          },
+          body: JSON.stringify({ word_index: wordIndex, text: nextText }),
+        });
+        const payload = await response.json().catch(() => ({}));
+        if (!response.ok || payload.success === false) {
+          throw new Error(payload.message || "Could not save word.");
+        }
+        word.text = String(payload.word_text || nextText);
+        if (Object.prototype.hasOwnProperty.call(word, "word")) {
+          word.word = word.text;
+        }
+        settled = true;
+        resetGenerateV2EditableWordSpan(span, word);
+        updateGenerateV2WordCacheScript(getGenerateV2WordTimestamps());
+        finish(onAfterSave);
+        showGenerateV2WordEditStatus(span, "Saved");
+        return true;
+      } catch (error) {
+        settled = true;
+        word.text = originalText;
+        resetGenerateV2EditableWordSpan(span, word);
+        finish(onAfterCancel);
+        showGenerateV2WordEditStatus(span, "Couldn't save", true);
+        return false;
       }
-      word.text = String(payload.word_text || nextText);
-      if (Object.prototype.hasOwnProperty.call(word, "word")) {
-        word.word = word.text;
-      }
-      resetGenerateV2EditableWordSpan(span, word);
-      updateGenerateV2WordCacheScript(getGenerateV2WordTimestamps());
-      finish(onAfterSave);
-      toast("Saved");
-    } catch (error) {
-      word.text = originalText;
-      resetGenerateV2EditableWordSpan(span, word);
-      finish(onAfterCancel);
-      toast(error?.message || "Could not save word.", true);
-    }
+    })();
+    return savePromise;
   };
+  editor.__mintiTranscriptWordEdit = { span, save, cancel };
   input.addEventListener("keydown", (event) => {
     if (event.key === "Enter") {
       event.preventDefault();
@@ -14474,6 +14514,7 @@ const startGenerateV2TranscriptWordEdit = ({
       cancel();
     }
   });
+  input.addEventListener("blur", () => { void save(); });
   input.addEventListener("click", (event) => event.stopPropagation());
   input.addEventListener("mousedown", (event) => event.stopPropagation());
   input.addEventListener("touchstart", (event) => event.stopPropagation(), { passive: true });

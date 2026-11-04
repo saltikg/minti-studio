@@ -9175,7 +9175,9 @@ AUTO_RENDER_DESIGN_FIELD_MAP: Dict[str, str] = {
 }
 
 
-def apply_short_editor_defaults_to_video_if_null(*, owner_user_id: str, brand_id: str, video_pk: int) -> Dict[str, Any]:
+def apply_short_editor_defaults_to_video_if_null(
+    *, owner_user_id: str, brand_id: str, video_pk: int, force: bool = False
+) -> Dict[str, Any]:
     conn = get_db()
     try:
         _ensure_video_crop_schema(conn)
@@ -9237,7 +9239,7 @@ def apply_short_editor_defaults_to_video_if_null(*, owner_user_id: str, brand_id
         for default_name, column_name in AUTO_RENDER_DESIGN_FIELD_MAP.items():
             if column_name not in current_by_column:
                 continue
-            if current_by_column.get(column_name) is not None and default_name not in explicit_saved_fields:
+            if not force and current_by_column.get(column_name) is not None and default_name not in explicit_saved_fields:
                 continue
             if default_name not in resolved:
                 continue
@@ -9440,7 +9442,7 @@ def execute_auto_suggest_render_job(payload: Dict[str, Any]) -> Dict[str, Any]:
         "enqueued": [],
         "skip_reason": "",
     }
-    def finish(skip_reason: str = "") -> Dict[str, Any]:
+    def finish(skip_reason: str = "", *, persist_marker: bool = False) -> Dict[str, Any]:
         if skip_reason:
             result["skip_reason"] = skip_reason
         result["duration_ms"] = int(round((time.monotonic() - started_at) * 1000))
@@ -9454,7 +9456,7 @@ def execute_auto_suggest_render_job(payload: Dict[str, Any]) -> Dict[str, Any]:
             "planner": result.get("planner"),
             "duration_ms": result.get("duration_ms"),
         }
-        if video_id:
+        if video_id and persist_marker:
             _write_auto_suggest_render_meta(video_id, meta, video_pk=video_pk)
         current_app.logger.info(
             "auto_suggest_render video_id=%s planner=%s entries_generated=%s selected=%s enqueued_job_ids=%s duration_ms=%s skip_reason=%s",
@@ -9514,17 +9516,7 @@ def execute_auto_suggest_render_job(payload: Dict[str, Any]) -> Dict[str, Any]:
     if meta.get("auto_run_at"):
         return finish("already_ran")
     if any(isinstance(entry, dict) and str(entry.get("origin") or "").strip().lower() == "ai" for entry in entries):
-        _write_auto_suggest_render_meta(
-            video_id,
-            {
-                "auto_run_at": _utc_now_iso(),
-                "status": "skipped",
-                "skip_reason": "ai_entries_exist",
-                "selected": [],
-                "enqueued": [],
-            },
-         video_pk=video_pk)
-        return finish("ai_entries_exist")
+        return finish("ai_entries_exist", persist_marker=True)
 
     cached_plan_used = False
     generated_entries: List[Dict[str, Any]] = []
@@ -9592,15 +9584,15 @@ def execute_auto_suggest_render_job(payload: Dict[str, Any]) -> Dict[str, Any]:
         result["defaults"] = defaults_result
 
     if auto_suggest_mode == "suggestions_only":
-        return finish("suggestions_only_import")
+        return finish("suggestions_only_import", persist_marker=True)
 
     owner_autopilot_quota_exempt = is_autopilot_quota_exempt(owner_user_id)
     if not legacy_mode and not admin_quota_exempt and not owner_autopilot_quota_exempt:
         block_reason = _default_auto_render_account_block_reason(owner_user_id)
         if block_reason:
-            return finish(block_reason)
+            return finish(block_reason, persist_marker=True)
         if AUTO_RENDER_DAILY_ACCOUNT_CAP and _default_auto_render_count_last_24h(owner_user_id) >= AUTO_RENDER_DAILY_ACCOUNT_CAP:
-            return finish("daily_auto_render_cap")
+            return finish("daily_auto_render_cap", persist_marker=True)
 
     selected_entries = _select_auto_render_entries(
         entries,
@@ -9609,7 +9601,7 @@ def execute_auto_suggest_render_job(payload: Dict[str, Any]) -> Dict[str, Any]:
     )
     if not selected_entries:
         result["selected"] = []
-        return finish(f"no_clips_above_{AUTO_RENDER_MIN_SCORE:g}")
+        return finish(f"no_clips_above_{AUTO_RENDER_MIN_SCORE:g}", persist_marker=True)
     enqueued: List[Dict[str, Any]] = []
     selected_summary: List[Dict[str, Any]] = []
     for entry in selected_entries:
@@ -9638,7 +9630,7 @@ def execute_auto_suggest_render_job(payload: Dict[str, Any]) -> Dict[str, Any]:
         enqueued.append({"plan_index": plan_index, **enqueue_result})
     result["selected"] = selected_summary
     result["enqueued"] = enqueued
-    return finish()
+    return finish(persist_marker=True)
 
 
 def _is_discovery_demo_scope(owner_user_id: str, brand_id: str, video_pk: Optional[int] = None) -> bool:
@@ -12106,6 +12098,10 @@ def _preserve_admin_operation_on_editor_redirect(response):
 
 def _active_editor_context() -> Dict[str, Any]:
     """Return the only owner/brand pair editor code may use for this request."""
+    if not has_request_context():
+        raise tenant_media.TenantMediaConflict(
+            "Editor context is request-only; background work must pass owner_user_id, brand_id, and video_pk"
+        )
     operation_scope = request_admin_operation_scope()
     if operation_scope:
         context = {
@@ -22002,7 +21998,13 @@ def _load_admin_autopilot_customers(
             r.last_scheduled_at,
             lp.status AS latest_publish_status,
             cv.id, cv.youtube_video_id, cv.title, cv.published_at, cv.duration_s, cv.detected_at,
-            c.total_count
+            c.total_count,
+            EXISTS (
+                SELECT 1
+                FROM shorts_user_preferences design_pref
+                WHERE CAST(design_pref.user_id AS VARCHAR) = c.user_id
+                  AND design_pref.preference_key = 'short_editor_defaults:' || c.brand_id
+            ) AS design_defaults_present
         FROM customers c
         LEFT JOIN source_counts sc ON sc.user_id = c.user_id
         LEFT JOIN youtube_oauth_tokens_v2 t
@@ -22072,6 +22074,7 @@ def _load_admin_autopilot_customers(
                 "new_videos": [],
                 "new_video_count": 0,
                 "overdue": False,
+                "design_defaults_missing": bool(row[7]) and not bool(row[26]),
             }
             items_by_user[user_id] = item
         if row[19] is not None:

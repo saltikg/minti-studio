@@ -2132,3 +2132,38 @@ def test_failed_admin_render_does_not_release_customer_export(monkeypatch, tmp_p
     render_jobs.mark_job_failed(queued["job"]["id"], "failed")
 
     assert released == []
+
+
+def test_failed_admin_render_sends_one_terminal_alert(monkeypatch, tmp_path):
+    _configure_duckdb(monkeypatch, tmp_path, "admin_failure_alert.duckdb")
+    user_id = str(uuid4())
+    video_pk = 304
+    source_video_id = "admin-alert-video"
+    _insert_user(user_id, "plan_free")
+    _insert_video(video_pk, source_video_id, user_id)
+    payload = _payload(video_pk, source_video_id, 1)
+    payload.update({"job_origin": render_jobs.ADMIN_JOB_ORIGIN, "brand_id": payload["brand_id"]})
+    queued = render_jobs.enqueue_worker_job(
+        user_id=user_id,
+        job_type=render_jobs.JOB_TYPE_RENDER_SHORT,
+        payload=payload,
+        input_hash=_input_hash(source_video_id, 1),
+    )
+    sent = []
+    monkeypatch.setattr(render_jobs, "send_resend_email", lambda **kwargs: sent.append(kwargs) or {"ok": True})
+
+    render_jobs.mark_job_failed(queued["job"]["id"], "worker exited", notify_admin=True)
+    render_jobs.mark_job_failed(queued["job"]["id"], "worker exited", notify_admin=True)
+
+    assert len(sent) == 1
+    assert f"Session: {video_pk}" in sent[0]["text"]
+    assert "worker exited" in sent[0]["text"]
+
+
+def test_oom_killed_ffmpeg_is_detected_through_wrapped_exception():
+    killed = __import__("subprocess").CalledProcessError(-9, ["ffmpeg"])
+    wrapped = RuntimeError("compose failed")
+    wrapped.__cause__ = killed
+
+    assert worker_module._is_oom_killed_media_process(wrapped) is True
+    assert worker_module._is_oom_killed_media_process(RuntimeError("ordinary failure")) is False

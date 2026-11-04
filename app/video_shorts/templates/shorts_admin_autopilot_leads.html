@@ -142,6 +142,18 @@
       background: rgba(245,158,11,.12);
       border: 1px solid rgba(245,158,11,.3);
     }
+    .admin-autopilot-design-missing {
+      display: inline-flex;
+      margin-top: 6px;
+      border-radius: 999px;
+      padding: 3px 7px;
+      color: #fecaca;
+      background: rgba(239,68,68,.12);
+      border: 1px solid rgba(239,68,68,.3);
+      font-size: .72rem;
+      font-weight: 700;
+      white-space: nowrap;
+    }
     .admin-autopilot-set-channel {
       min-width: 280px;
       white-space: normal;
@@ -214,6 +226,9 @@
                   <a href="{{ customer.user_detail_url }}" class="text-decoration-none text-white">{{ customer.email }}</a>
                 {% else %}
                   {{ customer.email }}
+                {% endif %}
+                {% if customer.design_defaults_missing %}
+                  <div><span class="admin-autopilot-design-missing">Design defaults missing</span></div>
                 {% endif %}
               </td>
               <td>

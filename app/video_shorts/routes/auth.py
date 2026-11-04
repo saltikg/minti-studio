@@ -101,6 +101,7 @@ from app.video_shorts.services.free_tool_analytics import (
 from app.video_shorts.services.feature_flags import tiktok_enabled
 from app.video_shorts.services.autopilot_leads import (
     autopilot_leads_table_ready,
+    ensure_autopilot_design_defaults_for_user,
     ensure_converted_autopilot_lead_for_activation,
 )
 from app.video_shorts.services.youtube_oauth import (
@@ -468,6 +469,7 @@ def apply_service_mode(
                     user_name=user_name,
                     source=clean_activation_source or ("admin_service_mode" if initiated_by_admin else "first_login_modal"),
                 )
+            ensure_autopilot_design_defaults_for_user(conn, clean_user_id)
             if is_passwordless_user:
                 reset_token, _expires_at = _create_password_reset_token_for_user(conn, user_id=clean_user_id)
                 confirmation_set_password_url = build_password_reset_url(reset_token)

@@ -55,6 +55,7 @@ def main() -> int:
             "AUTO_RENDER_TOP_N",
             "AUTO_RENDER_MIN_SCORE",
             "_is_discovery_demo_scope",
+            "_owner_is_guest_user",
             "enqueue_worker_job",
             "_fetch_scoped_video_row_with_scope",
             "get_db_readonly",
@@ -63,6 +64,7 @@ def main() -> int:
             "_load_plan_entries",
             "_generate_clip_plan_for_video",
             "apply_short_editor_defaults_to_video_if_null",
+            "is_autopilot_quota_exempt",
             "_enqueue_auto_render_for_plan_entry",
         )
     }
@@ -82,16 +84,18 @@ def main() -> int:
                 "AUTO_SUGGEST_RENDER_ENABLED": False,
                 "AUTO_SUGGEST_RENDER_USER_IDS": {owner},
                 "_is_discovery_demo_scope": lambda *args, **kwargs: False,
+                "_owner_is_guest_user": lambda *args, **kwargs: False,
                 "enqueue_worker_job": fake_enqueue_worker_job,
             }
         )
-        assert generation.enqueue_auto_suggest_render_job_after_transcript(
+        result = generation.enqueue_auto_suggest_render_job_after_transcript(
             owner_user_id=owner,
             brand_id=brand,
             video_pk=video_pk,
             video_id=video_id,
-        ) is None
-        assert not enqueued_jobs
+        )
+        assert result and result["kind"] == "queued"
+        assert enqueued_jobs[-1]["payload"]["auto_suggest_mode"] == "suggestions_only"
 
         generation.AUTO_SUGGEST_RENDER_ENABLED = True
         result = generation.enqueue_auto_suggest_render_job_after_transcript(
@@ -102,6 +106,7 @@ def main() -> int:
         )
         assert result and result["kind"] == "queued"
         assert enqueued_jobs[-1]["job_type"] == render_jobs.JOB_TYPE_AUTO_SUGGEST_RENDER
+        assert enqueued_jobs[-1]["payload"]["auto_suggest_mode"] == "legacy"
 
         generation._is_discovery_demo_scope = lambda *args, **kwargs: True
         assert generation.enqueue_auto_suggest_render_job_after_transcript(
@@ -153,11 +158,12 @@ def main() -> int:
                     "downloaded",
                 ],
                 "get_db_readonly": lambda: _FakeConn(),
-                "_load_auto_suggest_render_meta": lambda _video_id: {},
-                "_write_auto_suggest_render_meta": lambda _video_id, payload: meta_payloads.append(payload),
-                "_load_plan_entries": lambda _video_id: list(plan_entries),
+                "_load_auto_suggest_render_meta": lambda _video_id, **_kwargs: {},
+                "_write_auto_suggest_render_meta": lambda _video_id, payload, **_kwargs: meta_payloads.append(payload),
+                "_load_plan_entries": lambda _video_id, **_kwargs: list(plan_entries),
                 "_generate_clip_plan_for_video": fake_planner,
                 "apply_short_editor_defaults_to_video_if_null": lambda **kwargs: defaults_calls.__setitem__("count", defaults_calls["count"] + 1) or {"updated": True},
+                "is_autopilot_quota_exempt": lambda *args, **kwargs: True,
                 "_enqueue_auto_render_for_plan_entry": lambda **kwargs: render_calls.append(int(kwargs["plan_index"])) or {"ok": True, "job_id": f"job-{kwargs['plan_index']}"},
             }
         )
@@ -171,11 +177,25 @@ def main() -> int:
         assert [item["plan_index"] for item in run_result["selected"]] == [2, 1, 3]
         assert meta_payloads[-1]["status"] == "completed"
 
-        generation._load_auto_suggest_render_meta = lambda _video_id: {"auto_run_at": "2026-01-01T00:00:00Z"}
+        marker_count = len(meta_payloads)
+        generation._load_auto_suggest_render_meta = lambda _video_id, **_kwargs: {"auto_run_at": "2026-01-01T00:00:00Z"}
         with app.app_context():
             second = generation.execute_auto_suggest_render_job(payload)
         assert second["skip_reason"] == "already_ran"
         assert planner_calls["count"] == 1
+        assert len(meta_payloads) == marker_count
+
+        generation._load_auto_suggest_render_meta = lambda _video_id, **_kwargs: {}
+        generation._load_plan_entries = lambda _video_id, **_kwargs: []
+        generation._generate_clip_plan_for_video = lambda *args, **kwargs: (_ for _ in ()).throw(RuntimeError("planner crashed"))
+        try:
+            with app.app_context():
+                generation.execute_auto_suggest_render_job(payload)
+        except RuntimeError as exc:
+            assert str(exc) == "planner crashed"
+        else:
+            raise AssertionError("planner crash should propagate to the worker")
+        assert len(meta_payloads) == marker_count
 
         assert 0 > render_jobs.AUTO_RENDER_JOB_PRIORITY > render_jobs.DISCOVERY_JOB_PRIORITY
 
@@ -184,6 +204,7 @@ def main() -> int:
         print("PASS discovery_video_no_job")
         print("PASS selection_top3_min70_skip_created")
         print("PASS second_run_noop")
+        print("PASS crashed_run_does_not_write_marker")
         print("PASS null_design_defaults_applied")
         print(
             "PASS claim_order manual_priority=0 auto_priority=%s discovery_priority=%s"

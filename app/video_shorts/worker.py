@@ -12,6 +12,7 @@ import time
 import tempfile
 import shutil
 import secrets
+import subprocess
 from collections import deque
 from datetime import datetime, timedelta, timezone
 from typing import Any, Dict, Optional, Tuple
@@ -91,7 +92,6 @@ from app.video_shorts.services.render_jobs import (
     get_job,
     mark_job_done,
     mark_job_failed,
-    queued_customer_render_exists,
     recover_processing_discovery_jobs_on_startup,
     requeue_dead_local_worker_jobs,
     requeue_job,
@@ -657,7 +657,7 @@ def _update_upload_session_progress(
         pass
 
 
-def _mark_job_terminal_failure(job: Dict[str, Any], message: str) -> None:
+def _mark_job_terminal_failure(job: Dict[str, Any], message: str, *, notify_admin: bool = True) -> None:
     is_render = job.get("type") == JOB_TYPE_RENDER_SHORT
     if is_render:
         _mark_plan_failure(job, message)
@@ -668,6 +668,7 @@ def _mark_job_terminal_failure(job: Dict[str, Any], message: str) -> None:
             message,
             release_reservation=is_render and not (job.get("payload") or {}).get("regenerate"),
             timing_json=timing_json,
+            notify_admin=notify_admin,
         )
     finally:
         if is_render:
@@ -685,6 +686,18 @@ def _mark_job_terminal_failure(job: Dict[str, Any], message: str) -> None:
                 else {"message": message}
             ),
         )
+
+
+def _is_oom_killed_media_process(exc: BaseException) -> bool:
+    current: Optional[BaseException] = exc
+    seen: set[int] = set()
+    while current is not None and id(current) not in seen:
+        seen.add(id(current))
+        returncode = getattr(current, "returncode", None)
+        if isinstance(current, subprocess.CalledProcessError) and returncode in {-9, 137}:
+            return True
+        current = current.__cause__ or current.__context__
+    return False
 
 
 def _user_facing_timeout_message(job: Dict[str, Any]) -> str:
@@ -2110,6 +2123,17 @@ def process_next_job(
         _mark_job_terminal_failure(job, _user_facing_timeout_message(job))
         return True
     except Exception as exc:
+        if job.get("type") == JOB_TYPE_RENDER_SHORT and _is_oom_killed_media_process(exc):
+            app.logger.exception(
+                "Render job killed by the OS; failing without retry job_id=%s",
+                job.get("id"),
+            )
+            _mark_job_terminal_failure(
+                job,
+                "Render process was killed by the OS (out of memory).",
+                notify_admin=True,
+            )
+            return True
         if isinstance(exc, FileNotFoundError) or (isinstance(exc, OSError) and getattr(exc, "errno", None) == errno.ENOSPC):
             app.logger.exception(
                 "Job failed without retry job_id=%s type=%s error=%s",
@@ -2127,7 +2151,11 @@ def process_next_job(
                 latest.get("type"),
                 exc,
             )
-            _mark_job_terminal_failure(latest, _user_facing_terminal_media_message(latest, exc))
+            _mark_job_terminal_failure(
+                latest,
+                _user_facing_terminal_media_message(latest, exc),
+                notify_admin=True,
+            )
         else:
             if latest.get("type") == JOB_TYPE_RENDER_SHORT:
                 _update_plan_status(latest, "queued")
@@ -2394,7 +2422,11 @@ def recover_stuck_render_jobs(app, *, stale_seconds: int = 15 * 60) -> Dict[str,
                 app.logger.exception("Failed to recover stuck completed render job_id=%s", job_id)
             continue
         if int(job.get("attempts") or 0) >= int(job.get("max_attempts") or 1):
-            mark_job_failed(job_id, "Stuck render job recovered without completed output; retries exhausted.")
+            mark_job_failed(
+                job_id,
+                "Stuck render job recovered without completed output; retries exhausted.",
+                notify_admin=True,
+            )
             failed += 1
             app.logger.warning("Failed stuck render job without output job_id=%s", job_id)
         else:
@@ -2440,17 +2472,6 @@ def run_worker_loop() -> None:
                 app.logger.exception("Stuck render job recovery failed")
             requeue_timed_out_jobs(timeout_seconds=STALE_JOB_TIMEOUT_SECONDS)
             processed_any = False
-            if mode == "discovery" and queued_customer_render_exists():
-                if process_next_job(
-                    app,
-                    worker_id,
-                    job_type=JOB_TYPE_RENDER_SHORT,
-                    customer_only=True,
-                ):
-                    processed_any = True
-                if not processed_any:
-                    time.sleep(JOB_POLL_INTERVAL_SECONDS)
-                continue
             if mode in {"all", "customer"}:
                 try:
                     if process_autopilot_billing_deadlines():

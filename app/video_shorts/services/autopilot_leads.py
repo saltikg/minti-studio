@@ -236,16 +236,22 @@ def _enable_outreach_face_aware_layout(conn, owner_user_id: str) -> None:
     )
 
 
-def _save_bold_pop_short_editor_defaults(conn, owner_user_id: str) -> None:
+def _short_editor_defaults_preference_key(brand_id: str) -> str:
+    return f"{SHORT_EDITOR_DEFAULTS_PREFERENCE_KEY}:{str(brand_id or '').strip()}"
+
+
+def _save_bold_pop_short_editor_defaults(conn, owner_user_id: str, brand_id: str) -> None:
     clean_owner = str(owner_user_id or "").strip()
-    if not clean_owner:
+    clean_brand = str(brand_id or "").strip()
+    if not clean_owner or not clean_brand:
         return
+    preference_key = _short_editor_defaults_preference_key(clean_brand)
     conn.execute(
         """
         DELETE FROM shorts_user_preferences
         WHERE user_id = ? AND preference_key = ?
         """,
-        [clean_owner, SHORT_EDITOR_DEFAULTS_PREFERENCE_KEY],
+        [clean_owner, preference_key],
     )
     conn.execute(
         """
@@ -255,11 +261,53 @@ def _save_bold_pop_short_editor_defaults(conn, owner_user_id: str) -> None:
         [
             str(uuid4()),
             clean_owner,
-            SHORT_EDITOR_DEFAULTS_PREFERENCE_KEY,
+            preference_key,
             json.dumps(_bold_pop_short_editor_defaults(), ensure_ascii=False, sort_keys=True),
         ],
     )
     _enable_outreach_face_aware_layout(conn, clean_owner)
+
+
+def ensure_autopilot_design_defaults_for_user(conn, owner_user_id: str) -> list[Dict[str, str]]:
+    clean_owner = str(owner_user_id or "").strip()
+    if not clean_owner:
+        return []
+    rows = conn.execute(
+        """
+        SELECT CAST(b.id AS VARCHAR), COALESCE(b.name, '')
+        FROM shorts_brands b
+        LEFT JOIN shorts_user_preferences p
+          ON CAST(p.user_id AS VARCHAR) = CAST(b.owner_user_id AS VARCHAR)
+         AND p.preference_key = 'short_editor_defaults:' || CAST(b.id AS VARCHAR)
+        WHERE CAST(b.owner_user_id AS VARCHAR) = ?
+          AND p.id IS NULL
+        ORDER BY b.created_at, b.id
+        """,
+        [clean_owner],
+    ).fetchall()
+    created: list[Dict[str, str]] = []
+    for row in rows:
+        brand_id = str(row[0] or "").strip()
+        if not brand_id:
+            continue
+        _save_bold_pop_short_editor_defaults(conn, clean_owner, brand_id)
+        created.append({"user_id": clean_owner, "brand_id": brand_id, "brand_name": str(row[1] or "").strip()})
+    return created
+
+
+def backfill_missing_autopilot_design_defaults(conn) -> list[Dict[str, str]]:
+    rows = conn.execute(
+        """
+        SELECT CAST(u.id AS VARCHAR)
+        FROM shorts_users u
+        WHERE lower(COALESCE(u.service_mode, '')) = 'autopilot'
+        ORDER BY COALESCE(NULLIF(u.email, ''), NULLIF(u.username, ''), ''), u.id
+        """
+    ).fetchall()
+    created: list[Dict[str, str]] = []
+    for row in rows:
+        created.extend(ensure_autopilot_design_defaults_for_user(conn, str(row[0] or "")))
+    return created
 
 
 def autopilot_leads_table_ready(conn) -> bool:
@@ -700,7 +748,7 @@ def provision_discovery_lead_email(
     owner = _provision_or_reuse_lead_owner(conn, email=email, channel_name=channel_name)
     owner_user_id = owner["user_id"]
     brand_id = owner["brand_id"]
-    _save_bold_pop_short_editor_defaults(conn, owner_user_id)
+    _save_bold_pop_short_editor_defaults(conn, owner_user_id, brand_id)
     local_bucket_channel_id = _get_or_create_local_uploads_channel(
         conn,
         owner_user_id=owner_user_id,
@@ -813,7 +861,7 @@ def create_autopilot_lead_from_video(
             owner = _provision_or_reuse_lead_owner(conn, email=email, channel_name=channel_name)
             owner_user_id = owner["user_id"]
             brand_id = owner["brand_id"]
-        _save_bold_pop_short_editor_defaults(conn, owner_user_id)
+        _save_bold_pop_short_editor_defaults(conn, owner_user_id, brand_id)
 
     if not owner_user_id or not brand_id:
         raise ValueError("No discovery brand is available for this lead.")
