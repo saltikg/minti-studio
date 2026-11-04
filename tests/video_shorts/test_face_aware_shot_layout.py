@@ -1,3 +1,4 @@
+from app.video_shorts.routes import generation
 from app.video_shorts.routes.generation import _build_shot_based_layout_segments
 
 
@@ -66,3 +67,23 @@ def test_missed_scene_cut_preserves_a_long_split_inside_the_shot():
 
     assert decisions[0]["mode"] == "fill"
     assert {"start": 8.25, "end": 11.75, "mode": "split"} in segments
+
+
+def test_in_shot_switch_near_a_scene_cut_snaps_to_the_cut(monkeypatch, tmp_path):
+    monkeypatch.setattr(generation, "_probe_video_fps", lambda _source_path: 30.0)
+    segments = [
+        {"start": 0.0, "end": 5.0, "mode": "fill"},
+        {"start": 5.0, "end": 11.75, "mode": "split"},
+        {"start": 11.75, "end": 15.0, "mode": "fill"},
+    ]
+
+    result, snapped = generation._snap_face_aware_segments(
+        segments,
+        source_path=tmp_path / "source.mp4",
+        absolute_start=767.005,
+        known_scene_candidates=[(0.25, 767.005 + 12.173)],
+    )
+
+    assert result[0]["end"] == 5.0
+    assert abs(result[1]["end"] - 12.173) < 0.02
+    assert snapped[1]["from"] == 11.75

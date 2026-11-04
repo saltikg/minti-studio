@@ -5354,7 +5354,7 @@ def _compute_face_aware_layout_segments(
         samples, duration_seconds=duration, scene_cuts=scene_cuts,
     )
     snapped_boundaries: List[Dict[str, Any]] = []
-    if len(segments) > 1 and len(keep_ranges) <= 1 and not scene_cuts:
+    if len(segments) > 1 and len(keep_ranges) <= 1:
         segments, snapped_boundaries = _snap_face_aware_segments(
             segments,
             source_path=source_path,
