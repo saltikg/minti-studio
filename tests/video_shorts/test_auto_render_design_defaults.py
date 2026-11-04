@@ -1,11 +1,12 @@
 from __future__ import annotations
 
+import json
 import re
 
 import pytest
 
 from app.video_shorts.routes import generation
-from app.video_shorts.services import autopilot_leads, tenant_media
+from app.video_shorts.services import tenant_media
 
 
 class _Result:
@@ -182,21 +183,49 @@ def test_auto_render_applies_explicit_saved_design_over_database_defaults(monkey
     assert "brand-shape" in conn.updated["overlay_shapes"]
 
 
-class _PreferenceConnection:
-    def __init__(self):
-        self.statements = []
+class _AutopilotLookupConnection:
+    def __init__(self, row):
+        self.row = row
 
-    def execute(self, sql, params=None):
-        self.statements.append((" ".join(str(sql).split()), list(params or [])))
-        return _Result()
+    def execute(self, _sql, _params=None):
+        return _Result(self.row)
+
+    def close(self):
+        pass
 
 
-def test_bold_pop_defaults_are_saved_for_the_specific_brand(monkeypatch):
-    conn = _PreferenceConnection()
-    monkeypatch.setattr(autopilot_leads, "_enable_outreach_face_aware_layout", lambda *_args: None)
+def test_autopilot_design_uses_saved_brand_default(monkeypatch):
+    saved = {"font": "montserrat_black_italic", "subtitle_preset": "podcast", "enable_subscribe_overlay": False}
+    captured = {}
+    monkeypatch.setattr(generation, "get_db_readonly", lambda: _AutopilotLookupConnection([json.dumps(saved)]))
+    monkeypatch.setattr(
+        generation,
+        "apply_short_editor_defaults_to_video_if_null",
+        lambda **kwargs: captured.update(kwargs) or {"updated": True, "fields": ["title_font_key"]},
+    )
 
-    autopilot_leads._save_bold_pop_short_editor_defaults(conn, "owner-1", "brand-1")
+    result = generation.apply_autopilot_design_to_video(
+        owner_user_id="owner-1", brand_id="brand-1", video_pk=7928
+    )
 
-    preference_writes = [params for sql, params in conn.statements if "INSERT INTO shorts_user_preferences" in sql]
-    assert preference_writes
-    assert preference_writes[-1][2] == "short_editor_defaults:brand-1"
+    assert result["source"] == "saved_default"
+    assert captured["defaults_override"] == saved
+    assert captured["force"] is True
+
+
+def test_autopilot_design_without_saved_default_uses_podcast_fallback(monkeypatch):
+    captured = {}
+    monkeypatch.setattr(generation, "get_db_readonly", lambda: _AutopilotLookupConnection([None]))
+    monkeypatch.setattr(
+        generation,
+        "apply_short_editor_defaults_to_video_if_null",
+        lambda **kwargs: captured.update(kwargs) or {"updated": True, "fields": ["subtitle_preset"]},
+    )
+
+    result = generation.apply_autopilot_design_to_video(
+        owner_user_id="owner-1", brand_id="brand-1", video_pk=101
+    )
+
+    assert result["source"] == "podcast_fallback"
+    assert captured["defaults_override"]["subtitle_preset"] == "podcast"
+    assert captured["defaults_override"]["enable_subscribe_overlay"] is False

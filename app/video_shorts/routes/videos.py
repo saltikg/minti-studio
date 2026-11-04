@@ -3347,6 +3347,7 @@ def videos_page(channel_id):
             imported = 0
             already_in_channel = 0
             imported_lengths = []
+            imported_video_pks: List[int] = []
 
             for v in to_process:
                 video_id = v["video_id"]
@@ -3385,6 +3386,16 @@ def videos_page(channel_id):
                             "karaoke",
                         ],
                     )
+                    inserted_row = conn.execute(
+                        """
+                        SELECT id FROM youtube_videos
+                        WHERE video_id = ? AND owner_user_id = ? AND brand_id IS NOT DISTINCT FROM ?
+                        ORDER BY id DESC LIMIT 1
+                        """,
+                        [video_id, channel.get("owner_user_id"), channel.get("brand_id")],
+                    ).fetchone()
+                    if inserted_row:
+                        imported_video_pks.append(int(inserted_row[0]))
                     imported += 1
                     duration_readable = _pretty_duration(stats.get("duration_seconds"))
                     if duration_readable:
@@ -3483,6 +3494,16 @@ def videos_page(channel_id):
                     flash(f"Imported {imported} videos from playlist batch{duration_note}.", "success")
 
             conn.commit()
+            if imported_video_pks:
+                from app.video_shorts.routes import generation
+
+                for imported_video_pk in imported_video_pks:
+                    generation.apply_autopilot_design_to_video(
+                        owner_user_id=str(channel.get("owner_user_id") or ""),
+                        brand_id=str(channel.get("brand_id") or ""),
+                        video_pk=imported_video_pk,
+                        force=True,
+                    )
 
         except YoutubeApiError as e:
             flash(f"YouTube API error: {e}", "danger")
@@ -4113,7 +4134,24 @@ def add_video_by_url(channel_id):
                 "karaoke",
             ],
         )
+        inserted = conn.execute(
+            """
+            SELECT id FROM youtube_videos
+            WHERE video_id = ? AND owner_user_id = ? AND brand_id IS NOT DISTINCT FROM ?
+            ORDER BY id DESC LIMIT 1
+            """,
+            [video_id, channel.get("owner_user_id"), channel.get("brand_id")],
+        ).fetchone()
         conn.commit()
+        if inserted:
+            from app.video_shorts.routes import generation
+
+            generation.apply_autopilot_design_to_video(
+                owner_user_id=str(channel.get("owner_user_id") or ""),
+                brand_id=str(channel.get("brand_id") or ""),
+                video_pk=int(inserted[0]),
+                force=True,
+            )
         flash("Video added and visible in Local uploads.", "success")
         return redirect(url_for("video_shorts_bp.videos_page", channel_id=channel_id))
     finally:

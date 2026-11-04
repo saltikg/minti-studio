@@ -9176,7 +9176,12 @@ AUTO_RENDER_DESIGN_FIELD_MAP: Dict[str, str] = {
 
 
 def apply_short_editor_defaults_to_video_if_null(
-    *, owner_user_id: str, brand_id: str, video_pk: int, force: bool = False
+    *,
+    owner_user_id: str,
+    brand_id: str,
+    video_pk: int,
+    force: bool = False,
+    defaults_override: Optional[Dict[str, Any]] = None,
 ) -> Dict[str, Any]:
     conn = get_db()
     try:
@@ -9201,7 +9206,11 @@ def apply_short_editor_defaults_to_video_if_null(
             conn.commit()
             return {"updated": False, "fields": [], "reason": "video_not_found"}
         current_by_column = dict(zip(select_columns, row))
-        saved_defaults = _load_short_editor_defaults(owner_user_id, brand_id)
+        saved_defaults = (
+            dict(defaults_override)
+            if defaults_override is not None
+            else _load_short_editor_defaults(owner_user_id, brand_id)
+        )
         explicit_saved_fields = {
             name
             for name in AUTO_RENDER_DESIGN_FIELD_MAP
@@ -9279,6 +9288,53 @@ def apply_short_editor_defaults_to_video_if_null(
         raise
     finally:
         conn.close()
+
+
+def apply_autopilot_design_to_video(
+    *, owner_user_id: str, brand_id: str, video_pk: int, force: bool = True
+) -> Dict[str, Any]:
+    clean_owner = str(owner_user_id or "").strip()
+    clean_brand = str(brand_id or "").strip()
+    if not clean_owner or not clean_brand or not video_pk:
+        return {"updated": False, "fields": [], "reason": "missing_scope"}
+    conn = get_db_readonly()
+    try:
+        row = conn.execute(
+            """
+            SELECT p.preference_value
+            FROM shorts_users u
+            JOIN shorts_brands b
+              ON CAST(b.owner_user_id AS VARCHAR) = CAST(u.id AS VARCHAR)
+             AND CAST(b.id AS VARCHAR) = ?
+            LEFT JOIN shorts_user_preferences p
+              ON CAST(p.user_id AS VARCHAR) = CAST(u.id AS VARCHAR)
+             AND p.preference_key = ?
+            WHERE CAST(u.id AS VARCHAR) = ?
+              AND lower(COALESCE(u.service_mode, '')) = 'autopilot'
+            LIMIT 1
+            """,
+            [clean_brand, _short_editor_defaults_preference_key(clean_brand), clean_owner],
+        ).fetchone()
+    finally:
+        conn.close()
+    if not row:
+        return {"updated": False, "fields": [], "reason": "not_autopilot"}
+    saved_defaults = _decode_short_editor_defaults(row[0], clean_owner) if row[0] is not None else {}
+    source = "saved_default"
+    if not saved_defaults:
+        saved_defaults = _clean_short_editor_default_payload(
+            {"subtitle_preset": "podcast", "enable_subscribe_overlay": False}
+        )
+        source = "podcast_fallback"
+    result = apply_short_editor_defaults_to_video_if_null(
+        owner_user_id=clean_owner,
+        brand_id=clean_brand,
+        video_pk=int(video_pk),
+        force=force,
+        defaults_override=saved_defaults,
+    )
+    result["source"] = source
+    return result
 
 
 def _enqueue_auto_render_for_plan_entry(
@@ -9506,6 +9562,21 @@ def execute_auto_suggest_render_job(payload: Dict[str, Any]) -> Dict[str, Any]:
         return finish("video_not_found")
     if str(video_row[4] or "").strip().lower() != "done":
         return finish("transcript_not_ready")
+    defaults_result = apply_autopilot_design_to_video(
+        owner_user_id=owner_user_id,
+        brand_id=brand_id,
+        video_pk=video_pk,
+        force=True,
+    )
+    if defaults_result.get("reason") == "not_autopilot" and (
+        legacy_mode or auto_suggest_mode == "user_added"
+    ):
+        defaults_result = apply_short_editor_defaults_to_video_if_null(
+            owner_user_id=owner_user_id,
+            brand_id=brand_id,
+            video_pk=video_pk,
+        )
+    result["defaults"] = defaults_result
     meta = _load_auto_suggest_render_meta(video_id, video_pk=video_pk)
     entries = _load_plan_entries(
         video_id,
@@ -9574,14 +9645,6 @@ def execute_auto_suggest_render_job(payload: Dict[str, Any]) -> Dict[str, Any]:
         ]
         result["entries_generated"] = int(plan_result.get("clip_count") or len(generated_entries))
         result["planner"] = next((str(entry.get("planner") or "") for entry in generated_entries if entry.get("planner")), "")
-
-    if legacy_mode or auto_suggest_mode == "user_added":
-        defaults_result = apply_short_editor_defaults_to_video_if_null(
-            owner_user_id=owner_user_id,
-            brand_id=brand_id,
-            video_pk=video_pk,
-        )
-        result["defaults"] = defaults_result
 
     if auto_suggest_mode == "suggestions_only":
         return finish("suggestions_only_import", persist_marker=True)

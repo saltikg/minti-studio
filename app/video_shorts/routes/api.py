@@ -5383,6 +5383,15 @@ def admin_add_youtube_video():
             discovery_brand_id=brand_id,
         )
         conn.commit()
+        if not lead["already_exists"]:
+            from app.video_shorts.routes import generation as generation_routes
+
+            generation_routes.apply_autopilot_design_to_video(
+                owner_user_id=str(lead["owner_user_id"]),
+                brand_id=str(lead["brand_id"]),
+                video_pk=int(lead["video_pk"]),
+                force=True,
+            )
         response = {
             "ok": True,
             "lead_id": lead["lead_id"],

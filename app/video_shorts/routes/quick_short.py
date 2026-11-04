@@ -641,6 +641,13 @@ def _create_uploaded_video_record(
         [video_id, current_user.get("id"), brand_id],
     ).fetchone()
     conn.commit()
+    if row:
+        generation.apply_autopilot_design_to_video(
+            owner_user_id=str(current_user.get("id") or ""),
+            brand_id=str(brand_id or ""),
+            video_pk=int(row[0]),
+            force=True,
+        )
     track_event(
         current_user["id"],
         "video_uploaded",
@@ -853,7 +860,7 @@ def _upsert_video(conn, meta, channel_id, owner_id, brand_id):
                 """,
                 [channel_id, owner_id, brand_id, video_pk],
             )
-        return video_pk
+        return video_pk, False
 
     conn.execute(
         """
@@ -884,7 +891,7 @@ def _upsert_video(conn, meta, channel_id, owner_id, brand_id):
         "SELECT id FROM youtube_videos WHERE video_id = ? AND owner_user_id = ? AND brand_id = ?",
         [video_id, owner_id, brand_id],
     ).fetchone()
-    return row[0] if row else None
+    return (row[0], True) if row else (None, False)
 
 
 def _require_quick_user():
@@ -1127,13 +1134,22 @@ def create_youtube_ingest_session_for_user(
             video_pk = int(existing_video_pk)
             existing_video_id = str(existing_row[0] or existing_video_id or "").strip()
         else:
-            video_pk = _upsert_video(conn, meta, None, user_id, brand_id)
+            video_pk, video_created = _upsert_video(conn, meta, None, user_id, brand_id)
+        if existing_video_pk:
+            video_created = False
         conn.commit()
         track_event(user_id, "video_uploaded", video_id=video_id)
     finally:
         conn.close()
     if not video_pk:
         raise RuntimeError("Video record could not be created.")
+    if video_created:
+        generation.apply_autopilot_design_to_video(
+            owner_user_id=str(user_id),
+            brand_id=str(brand_id or ""),
+            video_pk=int(video_pk),
+            force=True,
+        )
     if existing_video_id:
         video_id = str(existing_video_id).strip()
     payload = {"meta": meta}

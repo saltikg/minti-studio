@@ -63,7 +63,7 @@ def main() -> int:
             "_write_auto_suggest_render_meta",
             "_load_plan_entries",
             "_generate_clip_plan_for_video",
-            "apply_short_editor_defaults_to_video_if_null",
+            "apply_autopilot_design_to_video",
             "is_autopilot_quota_exempt",
             "_enqueue_auto_render_for_plan_entry",
         )
@@ -162,7 +162,7 @@ def main() -> int:
                 "_write_auto_suggest_render_meta": lambda _video_id, payload, **_kwargs: meta_payloads.append(payload),
                 "_load_plan_entries": lambda _video_id, **_kwargs: list(plan_entries),
                 "_generate_clip_plan_for_video": fake_planner,
-                "apply_short_editor_defaults_to_video_if_null": lambda **kwargs: defaults_calls.__setitem__("count", defaults_calls["count"] + 1) or {"updated": True},
+                "apply_autopilot_design_to_video": lambda **kwargs: defaults_calls.__setitem__("count", defaults_calls["count"] + 1) or {"updated": True},
                 "is_autopilot_quota_exempt": lambda *args, **kwargs: True,
                 "_enqueue_auto_render_for_plan_entry": lambda **kwargs: render_calls.append(int(kwargs["plan_index"])) or {"ok": True, "job_id": f"job-{kwargs['plan_index']}"},
             }
