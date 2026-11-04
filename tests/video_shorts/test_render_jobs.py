@@ -102,9 +102,10 @@ from app import create_app
 from app.video_shorts.routes import channels, generation, quick_short
 from app.video_shorts.services import db as db_service
 from app.video_shorts.services import compositor
+from app.video_shorts.services import media_utils
 from app.video_shorts.services.admin_operation_scope import admin_operation_job_metadata
 from app.video_shorts.services import render_jobs, usage_metering, tenant_media
-from app.video_shorts.services.media_utils import MediaSubprocessTimeoutError
+from app.video_shorts.services.media_utils import MediaSubprocessStartError, MediaSubprocessTimeoutError
 from app.video_shorts import worker as worker_module
 from app.video_shorts.worker import process_next_job
 
@@ -1873,6 +1874,96 @@ def test_worker_marks_render_job_failed_when_media_timeout_raises(monkeypatch, t
         and "binary=ffmpeg" in record.getMessage()
         for record in caplog.records
     )
+
+
+def test_media_runner_uses_filter_scripts_and_cleans_them_up(monkeypatch):
+    observed_paths = []
+
+    def fake_run(cmd, **kwargs):
+        assert "-vf" not in cmd
+        assert "-filter_complex" not in cmd
+        video_script = Path(cmd[cmd.index("-filter_script:v") + 1])
+        complex_script = Path(cmd[cmd.index("-filter_complex_script") + 1])
+        observed_paths.extend([video_script, complex_script])
+        assert video_script.read_text(encoding="utf-8") == "scale=1080:1920"
+        assert complex_script.read_text(encoding="utf-8") == "[0:v]null[v]"
+        return __import__("subprocess").CompletedProcess(cmd, 0)
+
+    monkeypatch.setattr(media_utils.subprocess, "run", fake_run)
+
+    media_utils.run_media_subprocess(
+        [
+            "/usr/bin/ffmpeg",
+            "-vf",
+            "scale=1080:1920",
+            "-filter_complex",
+            "[0:v]null[v]",
+            "output.mp4",
+        ],
+        timeout=30,
+        operation="compose_trimmed_with_background",
+    )
+
+    assert observed_paths
+    assert all(not path.exists() for path in observed_paths)
+
+
+def test_media_runner_wraps_e2big_as_terminal_start_error(monkeypatch):
+    def fake_run(cmd, **kwargs):
+        raise OSError(errno.E2BIG, "Argument list too long")
+
+    monkeypatch.setattr(media_utils.subprocess, "run", fake_run)
+
+    with pytest.raises(MediaSubprocessStartError) as exc_info:
+        media_utils.run_media_subprocess(
+            ["/usr/bin/ffmpeg", "-version"],
+            timeout=30,
+            operation="compose_trimmed_with_background",
+        )
+
+    assert exc_info.value.errno == errno.E2BIG
+
+
+def test_worker_fails_media_start_error_without_retry(monkeypatch, tmp_path, caplog):
+    _configure_duckdb(monkeypatch, tmp_path, "worker_start_error.duckdb")
+    user_id = str(uuid4())
+    video_pk = 151
+    source_video_id = "start-error-video"
+    plan_index = 1
+    shorts_dir = tmp_path / "shorts"
+
+    _insert_user(user_id, "plan_free")
+    _insert_video(video_pk, source_video_id, user_id)
+    _write_plan(shorts_dir, source_video_id, video_pk=video_pk, plan_index=plan_index)
+    monkeypatch.setattr(generation, "SHORTS_DIR", shorts_dir)
+    monkeypatch.setattr(worker_module, "disk_guard_triggered", lambda **kwargs: False)
+
+    def raise_start_error(*args, **kwargs):
+        raise MediaSubprocessStartError(
+            binary="ffmpeg",
+            errno_value=errno.E2BIG,
+            operation="compose_trimmed_with_background",
+        )
+
+    monkeypatch.setattr(worker_module, "_execute_render_job", raise_start_error)
+    payload = _payload(video_pk, source_video_id, plan_index)
+    payload["brand_id"] = None
+    payload["options"]["brand_id"] = None
+    queued = render_jobs.enqueue_render_job(
+        user_id=user_id,
+        payload=payload,
+        input_hash=_input_hash(source_video_id, plan_index),
+    )
+
+    app = create_app()
+    app.secret_key = "test-secret"
+    with caplog.at_level(logging.ERROR):
+        assert process_next_job(app, "worker-start-error-test") is True
+
+    failed_job = render_jobs.get_job(queued["job"]["id"], user_id=user_id)
+    assert failed_job["status"] == "failed"
+    assert failed_job["attempts"] == 1
+    assert any("failing without retry" in record.getMessage() for record in caplog.records)
 
 
 def test_worker_marks_render_job_failed_without_retry_when_disk_is_full(monkeypatch, tmp_path, caplog):

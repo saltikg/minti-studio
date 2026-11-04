@@ -1,4 +1,5 @@
 import json
+import errno
 import logging
 import os
 import shutil
@@ -53,6 +54,110 @@ class MediaSubprocessTimeoutError(RuntimeError):
         if self.context:
             details.append(f"context={self.context}")
         super().__init__("; ".join(details))
+
+
+class MediaSubprocessStartError(RuntimeError):
+    def __init__(
+        self,
+        *,
+        binary: str,
+        errno_value: int,
+        operation: str = "",
+        context: str = "",
+    ) -> None:
+        self.binary = binary
+        self.errno = int(errno_value)
+        self.operation = str(operation or "").strip()
+        self.context = str(context or "").strip()
+        details = [f"{binary} could not be started: {os.strerror(self.errno)}"]
+        if self.operation:
+            details.append(f"operation={self.operation}")
+        if self.context:
+            details.append(f"context={self.context}")
+        super().__init__("; ".join(details))
+
+
+_NON_TRANSIENT_PROCESS_START_ERRNOS = {
+    errno.E2BIG,
+    errno.EACCES,
+    errno.ENOEXEC,
+    errno.ENAMETOOLONG,
+    errno.ENOTDIR,
+}
+
+
+def _prepare_ffmpeg_filter_scripts(cmd, *, operation: str, log: logging.Logger):
+    prepared_cmd = list(cmd)
+    if not prepared_cmd or Path(str(prepared_cmd[0])).name != "ffmpeg":
+        return prepared_cmd, []
+    script_paths: list[Path] = []
+    rewritten_cmd: list[str] = []
+    index = 0
+    option_replacements = {
+        "-filter_complex": "-filter_complex_script",
+        "-vf": "-filter_script:v",
+        "-filter:v": "-filter_script:v",
+    }
+    try:
+        while index < len(prepared_cmd):
+            argument = str(prepared_cmd[index])
+            replacement = option_replacements.get(argument)
+            if replacement and index + 1 < len(prepared_cmd):
+                filter_graph = str(prepared_cmd[index + 1])
+                handle = tempfile.NamedTemporaryFile(
+                    mode="w",
+                    encoding="utf-8",
+                    delete=False,
+                    suffix=".fffilter",
+                    prefix="minti_ffmpeg_",
+                )
+                try:
+                    handle.write(filter_graph)
+                finally:
+                    handle.close()
+                script_path = Path(handle.name)
+                script_paths.append(script_path)
+                rewritten_cmd.extend([replacement, str(script_path)])
+                log.info(
+                    "ffmpeg_filter_script operation=%s option=%s chars=%s",
+                    operation,
+                    argument,
+                    len(filter_graph),
+                )
+                index += 2
+                continue
+            rewritten_cmd.append(argument)
+            index += 1
+    except Exception:
+        for script_path in script_paths:
+            script_path.unlink(missing_ok=True)
+        raise
+    return rewritten_cmd, script_paths
+
+
+def _cleanup_ffmpeg_filter_scripts(script_paths: Iterable[Path]) -> None:
+    for script_path in script_paths:
+        try:
+            script_path.unlink(missing_ok=True)
+        except OSError:
+            logger.warning("Failed to remove ffmpeg filter script path=%s", script_path)
+
+
+def _raise_non_transient_process_start_error(
+    exc: OSError,
+    *,
+    binary: str,
+    operation: str,
+    context: str,
+) -> None:
+    if getattr(exc, "errno", None) not in _NON_TRANSIENT_PROCESS_START_ERRNOS:
+        return
+    raise MediaSubprocessStartError(
+        binary=binary,
+        errno_value=exc.errno,
+        operation=operation,
+        context=context,
+    ) from exc
 
 
 def scale_media_timeout(
@@ -110,8 +215,13 @@ def run_media_subprocess(
     encode_started = time.monotonic() if operation in encode_operations else None
     if encode_started is not None:
         render_timing.record_encode_command(cmd)
+    prepared_cmd, filter_script_paths = _prepare_ffmpeg_filter_scripts(
+        cmd,
+        operation=operation,
+        log=active_logger,
+    )
     try:
-        return subprocess.run(cmd, timeout=timeout, **kwargs)
+        return subprocess.run(prepared_cmd, timeout=timeout, **kwargs)
     except subprocess.TimeoutExpired as exc:
         _cleanup_partial_outputs(output_paths)
         active_logger.error(
@@ -127,7 +237,17 @@ def run_media_subprocess(
             operation=operation,
             context=context,
         ) from exc
+    except OSError as exc:
+        _cleanup_partial_outputs(output_paths)
+        _raise_non_transient_process_start_error(
+            exc,
+            binary=binary,
+            operation=operation,
+            context=context,
+        )
+        raise
     finally:
+        _cleanup_ffmpeg_filter_scripts(filter_script_paths)
         if encode_started is not None:
             render_timing.record_elapsed("encode", encode_started)
 
@@ -148,9 +268,14 @@ def run_ffmpeg_subprocess_with_progress(
     process = None
     start_time = time.time()
     last_progress = -1
+    prepared_cmd, filter_script_paths = _prepare_ffmpeg_filter_scripts(
+        cmd,
+        operation=operation,
+        log=active_logger,
+    )
     try:
         process = subprocess.Popen(
-            cmd,
+            prepared_cmd,
             stdout=subprocess.PIPE,
             stderr=subprocess.PIPE,
             text=True,
@@ -196,14 +321,14 @@ def run_ffmpeg_subprocess_with_progress(
         if process.returncode:
             raise subprocess.CalledProcessError(
                 process.returncode,
-                cmd,
+                prepared_cmd,
                 output="".join(stdout_lines),
                 stderr="".join(stderr_lines),
             )
         if progress_callback and last_progress < 100:
             progress_callback(100)
         return subprocess.CompletedProcess(
-            cmd,
+            prepared_cmd,
             process.returncode,
             stdout="".join(stdout_lines),
             stderr="".join(stderr_lines),
@@ -232,6 +357,17 @@ def run_ffmpeg_subprocess_with_progress(
             operation=operation,
             context=context,
         ) from exc
+    except OSError as exc:
+        _cleanup_partial_outputs(output_paths)
+        _raise_non_transient_process_start_error(
+            exc,
+            binary=binary,
+            operation=operation,
+            context=context,
+        )
+        raise
+    finally:
+        _cleanup_ffmpeg_filter_scripts(filter_script_paths)
 
 
 def _format_time_label(seconds: float):

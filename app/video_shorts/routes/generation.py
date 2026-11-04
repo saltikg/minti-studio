@@ -299,6 +299,7 @@ from app.video_shorts.services.media_utils import (
     _resolve_ffmpeg,
     _probe_video_stream_info,
     _resolve_source_video,
+    MediaSubprocessStartError,
     MediaSubprocessTimeoutError,
     normalize_source_video_for_streaming,
     run_media_subprocess,
@@ -34588,7 +34589,7 @@ def autoclip_video(video_pk):
                     exc,
                 )
             made += 1
-    except MediaSubprocessTimeoutError as e:
+    except (MediaSubprocessStartError, MediaSubprocessTimeoutError) as e:
         current_app.logger.exception("Short generation failed plan_index=%s clip_filename=%s", plan_index, clip_filename)
         try:
             _sync_generated_video_from_plan_entry(

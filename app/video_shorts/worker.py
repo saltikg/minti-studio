@@ -58,7 +58,7 @@ from app.video_shorts.services.media_utils import (
     resolve_s3_source_video_cached,
 )
 from app.video_shorts.services.export_resolution import resolve_export_resolution
-from app.video_shorts.services.media_utils import MediaSubprocessTimeoutError
+from app.video_shorts.services.media_utils import MediaSubprocessStartError, MediaSubprocessTimeoutError
 from app.video_shorts.services.media_duration import (
     get_or_backfill_media_duration_seconds,
     probe_exact_media_duration_seconds,
@@ -2147,6 +2147,15 @@ def process_next_job(
         return True
     except MediaSubprocessTimeoutError as exc:
         _mark_job_terminal_failure(job, _user_facing_timeout_message(job))
+        return True
+    except MediaSubprocessStartError as exc:
+        app.logger.exception(
+            "Media process could not start; failing without retry job_id=%s type=%s errno=%s",
+            job.get("id"),
+            job.get("type"),
+            exc.errno,
+        )
+        _mark_job_terminal_failure(job, _user_facing_terminal_media_message(job, exc))
         return True
     except Exception as exc:
         if job.get("type") == JOB_TYPE_RENDER_SHORT and _is_oom_killed_media_process(exc):
