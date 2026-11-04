@@ -1,5 +1,5 @@
 from app.video_shorts import config
-from app.video_shorts.services.export_resolution import resolve_export_resolution
+from app.video_shorts.services.export_resolution import export_quality_label, resolve_export_resolution
 
 
 class _Result:
@@ -95,3 +95,13 @@ def test_export_resolution_account_rules(monkeypatch):
     assert guest.resolution == "720"
     assert guest.override is None
     assert guest.is_guest is True
+
+
+def test_export_quality_labels():
+    assert export_quality_label("auto", audience="admin") == "Auto (by plan)"
+    assert export_quality_label("720", audience="admin") == "Standard · 720p"
+    assert export_quality_label("1080", audience="admin") == "Full HD · 1080p"
+    assert export_quality_label("1080_hq", audience="admin") == "Full HD Premium · 1080p (1440p source)"
+    assert export_quality_label("auto", audience="user", resolved_value="1080") == "Full HD (1080p)"
+    assert export_quality_label("1080_hq", audience="user") == "Full HD Premium (1080p)"
+    assert export_quality_label("720", audience="user", language="tr") == "Standart (720p)"

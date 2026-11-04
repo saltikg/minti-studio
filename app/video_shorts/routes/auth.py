@@ -93,7 +93,7 @@ from app.video_shorts.services.onboarding_magic_links import (
     normalize_outreach_language,
 )
 from app.video_shorts.services.user_events import track_event
-from app.video_shorts.services.export_resolution import resolve_export_resolution
+from app.video_shorts.services.export_resolution import export_quality_label, resolve_export_resolution
 from app.video_shorts.services.free_tool_analytics import (
     attribution_metadata as free_tool_attribution_metadata,
     track_free_tool_event,
@@ -2719,6 +2719,11 @@ def profile():
         has_explicit_timezone=bool(stored_time_zone),
         export_resolution_effective=export_resolution.resolution,
         export_resolution_eligible=export_resolution.eligible,
+        export_quality_label=export_quality_label(
+            export_resolution.override or export_resolution.resolution,
+            audience="user",
+            resolved_value=export_resolution.resolution,
+        ),
     )
 
 

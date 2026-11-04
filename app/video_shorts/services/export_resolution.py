@@ -11,6 +11,39 @@ EXPORT_RESOLUTION_OVERRIDE_KEY = "export_resolution_override"
 logger = logging.getLogger(__name__)
 
 
+def export_quality_label(
+    value: Optional[str],
+    *,
+    audience: str = "user",
+    resolved_value: Optional[str] = None,
+    language: str = "en",
+) -> str:
+    normalized = str(value or "auto").strip().lower()
+    normalized_audience = "admin" if str(audience or "").strip().lower() == "admin" else "user"
+    if normalized == "auto":
+        resolved = str(resolved_value or "").strip().lower()
+        if resolved:
+            normalized = resolved
+        elif normalized_audience == "admin":
+            return "Auto (by plan)"
+        else:
+            normalized = "720"
+
+    if normalized_audience == "admin":
+        labels = {
+            "720": "Standard · 720p",
+            "1080": "Full HD · 1080p",
+            "1080_hq": "Full HD Premium · 1080p (1440p source)",
+        }
+    else:
+        labels = {
+            "720": "Standart (720p)" if str(language or "").strip().lower() == "tr" else "Standard (720p)",
+            "1080": "Full HD (1080p)",
+            "1080_hq": "Full HD Premium (1080p)",
+        }
+    return labels.get(normalized, labels["720"])
+
+
 @dataclass(frozen=True)
 class ExportResolutionDecision:
     resolution: str

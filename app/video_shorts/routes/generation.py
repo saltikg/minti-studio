@@ -225,6 +225,7 @@ from app.video_shorts.services.user_preferences import (
 )
 from app.video_shorts.services.export_resolution import (
     EXPORT_RESOLUTION_OVERRIDE_KEY,
+    export_quality_label,
     resolve_export_resolution,
 )
 from app.video_shorts.services.autopilot_leads import (
@@ -22545,6 +22546,18 @@ def _load_admin_user_detail(conn, user_id: str) -> Optional[Dict[str, Any]]:
         "service_tier": int(row[12]) if row[12] is not None else None,
         "export_resolution_override": export_resolution.override or "auto",
         "export_resolution_effective": export_resolution.resolution,
+        "export_resolution_options": [
+            {
+                "value": value,
+                "label": export_quality_label(value, audience="admin"),
+            }
+            for value in ("auto", "720", "1080", "1080_hq")
+        ],
+        "export_resolution_effective_label": export_quality_label(
+            export_resolution.override or "auto",
+            audience="admin",
+            resolved_value=export_resolution.resolution,
+        ),
         "trial_days": latest_trial_days,
         "trial_days_label": latest_trial_days_label,
         "trial_used_at": latest_trial_anchor_at,
@@ -23243,12 +23256,7 @@ def admin_update_user_export_resolution(user_id: str):
         current_app.logger.exception("Admin export-resolution update failed for user=%s: %s", target_user_id, exc)
         flash("Could not update export quality.", "danger")
     else:
-        label = {
-            "auto": "Auto (by plan)",
-            "720": "Standard 720p",
-            "1080": "HD 1080p",
-            "1080_hq": "1080 HQ",
-        }[requested_value]
+        label = export_quality_label(requested_value, audience="admin")
         flash(f"Export quality set to {label}.", "success")
     return redirect(url_for("video_shorts_bp.admin_user_detail", user_id=target_user_id))
 
