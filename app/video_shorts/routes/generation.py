@@ -4364,7 +4364,23 @@ def _build_shot_based_layout_segments(
         else:
             chosen_count = 1
         mode = _face_aware_mode_for_count(chosen_count)
-        segments.append({"start": shot_start, "end": shot_end, "mode": mode})
+        local_samples = [
+            {**sample, "t": float(sample.get("t") or 0.0) - shot_start}
+            for sample in shot_samples
+        ]
+        local_segments = _build_face_aware_layout_segments_from_samples(
+            local_samples, duration_seconds=shot_end - shot_start,
+        )
+        first_majority_run = next(
+            (index for index, segment in enumerate(local_segments) if segment["mode"] == mode),
+            len(local_segments),
+        )
+        for segment in local_segments[:first_majority_run]:
+            segment["mode"] = mode
+        segments.extend(
+            {"start": shot_start + segment["start"], "end": shot_start + segment["end"], "mode": segment["mode"]}
+            for segment in _merge_face_aware_runs(local_segments)
+        )
         decisions.append({
             "start": round(shot_start, 6), "end": round(shot_end, 6),
             "face_count": chosen_count, "mode": mode, "counts": counts,
