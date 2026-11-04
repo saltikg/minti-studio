@@ -48,6 +48,14 @@ def test_export_resolution_account_rules(monkeypatch):
     assert overridden.resolution == "1080"
     assert overridden.override == "1080"
 
+    hq = resolve_export_resolution(
+        "free-user",
+        conn=_ExportResolutionConn(override="1080_hq"),
+    )
+    assert hq.resolution == "1080"
+    assert hq.override == "1080_hq"
+    assert hq.is_hq is True
+
     paid_conn = _ExportResolutionConn(plan_id="plan_10gb")
     paid_flag_off = resolve_export_resolution("paid-user", conn=paid_conn)
     assert paid_flag_off.resolution == "720"

@@ -23218,7 +23218,7 @@ def admin_update_user_export_resolution(user_id: str):
     if not target_user_id:
         abort(404)
     requested_value = str(request.form.get("export_resolution_override") or "auto").strip().lower()
-    if requested_value not in {"auto", "720", "1080"}:
+    if requested_value not in {"auto", "720", "1080", "1080_hq"}:
         flash("Choose a valid export quality.", "danger")
         return redirect(url_for("video_shorts_bp.admin_user_detail", user_id=target_user_id))
 
@@ -23237,13 +23237,18 @@ def admin_update_user_export_resolution(user_id: str):
         save_user_preference(
             target_user_id,
             EXPORT_RESOLUTION_OVERRIDE_KEY,
-            requested_value if requested_value in {"720", "1080"} else None,
+            requested_value if requested_value in {"720", "1080", "1080_hq"} else None,
         )
     except Exception as exc:
         current_app.logger.exception("Admin export-resolution update failed for user=%s: %s", target_user_id, exc)
         flash("Could not update export quality.", "danger")
     else:
-        label = {"auto": "Auto (by plan)", "720": "Standard 720p", "1080": "HD 1080p"}[requested_value]
+        label = {
+            "auto": "Auto (by plan)",
+            "720": "Standard 720p",
+            "1080": "HD 1080p",
+            "1080_hq": "1080 HQ",
+        }[requested_value]
         flash(f"Export quality set to {label}.", "success")
     return redirect(url_for("video_shorts_bp.admin_user_detail", user_id=target_user_id))
 
@@ -33120,6 +33125,8 @@ def autoclip_video(video_pk):
     effective_export_resolution = resolve_export_resolution(
         video_owner_user_id or target_owner_user_id
     ).resolution
+    if outreach_render:
+        effective_export_resolution = "720"
     if not queued_job:
         try:
             edit_keep_ranges_for_job = _normalize_edit_keep_ranges(plan_entry.get("edit_keep_ranges"))
@@ -34299,6 +34306,7 @@ def autoclip_video(video_pk):
                 low_memory_demo=discovery_demo_job,
                 render_target_width=render_target_width,
                 render_target_height=render_target_height,
+                high_quality_encode=effective_export_resolution == "1080",
                 )
             if face_aware_layout_result and face_aware_layout_result.get("enabled"):
                 resolved_layout_segments = compose_crop_settings.get("resolved_layout_segments")

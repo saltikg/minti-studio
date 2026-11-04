@@ -3133,6 +3133,7 @@ def _compose_trimmed_with_background(
     low_memory_demo: bool = False,
     render_target_width: Optional[int] = None,
     render_target_height: Optional[int] = None,
+    high_quality_encode: bool = False,
 ):
     """Single-pass trim + compose to reduce processing time."""
     if not bg_path.exists():
@@ -3851,6 +3852,8 @@ def _compose_trimmed_with_background(
                 clip_video_source = merged_audio_override
 
     layout_video_source = direct_visual_override or clip_video_source
+    source_fps = _probe_video_frame_rate(layout_video_source) or 30.0
+    output_fps = max(1.0, min(float(source_fps), 60.0))
     _log_video_dimensions("clip_scaled source", layout_video_source)
     overlay_aspect = (crop_aspect or "landscape").lower()
     original_layout_mode = overlay_aspect == "original" and not podcast_mode
@@ -4164,12 +4167,12 @@ def _compose_trimmed_with_background(
                     )
                     direct_timeline_audio_label = "[clip_base_a]"
         clip_input_label = "[clip_direct_v]"
-    clip_source_fps = _probe_video_frame_rate(layout_video_source) if layout_video_source else None
-    if clip_source_fps is not None and clip_source_fps > 30.01:
-        filter_parts.append(f"{clip_input_label}fps=30[clip_fps_limited]")
+    clip_source_fps = source_fps
+    if clip_source_fps > 60.01:
+        filter_parts.append(f"{clip_input_label}fps=60[clip_fps_limited]")
         clip_input_label = "[clip_fps_limited]"
         current_app.logger.info(
-            "Clip frame rate limited source=%s source_fps=%.3f output_fps=30",
+            "Clip frame rate limited source=%s source_fps=%.3f output_fps=60",
             layout_video_source.name,
             clip_source_fps,
         )
@@ -5104,6 +5107,8 @@ def _compose_trimmed_with_background(
         "-y",
         "-stats_period",
         "1",
+        "-framerate",
+        f"{output_fps:.6f}",
         "-loop",
         "1",
         "-i",
@@ -5142,9 +5147,9 @@ def _compose_trimmed_with_background(
         )
         audio_map = edge_audio_map or "2:a"
     if shape_overlay_path:
-        cmd.extend(["-loop", "1", "-i", str(shape_overlay_path)])
+        cmd.extend(["-framerate", f"{output_fps:.6f}", "-loop", "1", "-i", str(shape_overlay_path)])
     for overlay_path in title_overlay_paths:
-        cmd.extend(["-loop", "1", "-i", str(overlay_path)])
+        cmd.extend(["-framerate", f"{output_fps:.6f}", "-loop", "1", "-i", str(overlay_path)])
     if effective_subtitle_overlay_specs:
         for spec in effective_subtitle_overlay_specs:
             cmd.extend(["-loop", "1", "-i", str(spec["path"])])
@@ -5155,6 +5160,14 @@ def _compose_trimmed_with_background(
     if music_enabled:
         cmd.extend(["-stream_loop", "-1", "-i", str(music_path)])
         audio_map = edge_audio_map or music_audio_map or audio_map
+    video_encode_args = ["-preset", "ultrafast", "-crf", "23", "-c:v", "libx264"]
+    if high_quality_encode:
+        maxrate = "14M" if output_fps > 30.01 else "10M"
+        bufsize = "28M" if output_fps > 30.01 else "20M"
+        video_encode_args = [
+            "-preset", "ultrafast", "-crf", "19", "-maxrate", maxrate,
+            "-bufsize", bufsize, "-c:v", "libx264",
+        ]
     cmd.extend(
         [
             "-filter_complex",
@@ -5166,12 +5179,11 @@ def _compose_trimmed_with_background(
             "-c:a",
             "aac",
             "-shortest",
-            "-preset",
-            "ultrafast",
-            "-crf",
-            "23",
-            "-c:v",
-            "libx264",
+            "-r",
+            f"{output_fps:.6f}",
+            "-vsync",
+            "cfr",
+            *video_encode_args,
             "-movflags",
             "+faststart",
             str(temp_out_path),
@@ -5183,6 +5195,8 @@ def _compose_trimmed_with_background(
             "-y",
             "-stats_period",
             "1",
+            "-framerate",
+            f"{output_fps:.6f}",
             "-loop",
             "1",
             "-i",
@@ -5219,7 +5233,7 @@ def _compose_trimmed_with_background(
             )
             audio_map_music_only = edge_audio_map or "2:a"
         for overlay_path in title_overlay_paths:
-            cmd.extend(["-loop", "1", "-i", str(overlay_path)])
+            cmd.extend(["-framerate", f"{output_fps:.6f}", "-loop", "1", "-i", str(overlay_path)])
         if effective_subtitle_overlay_specs:
             for spec in effective_subtitle_overlay_specs:
                 cmd.extend(["-loop", "1", "-i", str(spec["path"])])
@@ -5238,12 +5252,11 @@ def _compose_trimmed_with_background(
                 "-c:a",
                 "aac",
                 "-shortest",
-                "-preset",
-                "ultrafast",
-                "-crf",
-                "23",
-                "-c:v",
-                "libx264",
+                "-r",
+                f"{output_fps:.6f}",
+                "-vsync",
+                "cfr",
+                *video_encode_args,
                 "-movflags",
                 "+faststart",
                 str(temp_out_path),

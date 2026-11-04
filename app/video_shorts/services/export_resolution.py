@@ -19,6 +19,10 @@ class ExportResolutionDecision:
     flag_enabled: bool
     is_guest: bool
 
+    @property
+    def is_hq(self) -> bool:
+        return self.override == "1080_hq"
+
 
 def resolve_export_resolution(user_id: Optional[str], *, conn=None) -> ExportResolutionDecision:
     """Resolve the account-level portrait export resolution, defaulting safely to 720p."""
@@ -66,7 +70,7 @@ def resolve_export_resolution(user_id: Optional[str], *, conn=None) -> ExportRes
             [normalized_user_id, EXPORT_RESOLUTION_OVERRIDE_KEY],
         ).fetchone()
         override = str((override_row[0] if override_row else "") or "").strip()
-        if override not in {"720", "1080"}:
+        if override not in {"720", "1080", "1080_hq"}:
             override = None
 
         unactivated_lead = False
@@ -86,7 +90,7 @@ def resolve_export_resolution(user_id: Optional[str], *, conn=None) -> ExportRes
         eligible = bool(eligible and not unactivated_lead)
 
         if override:
-            resolution = override
+            resolution = "1080" if override == "1080_hq" else override
         elif unactivated_lead:
             resolution = "720"
         elif eligible and flag_enabled:

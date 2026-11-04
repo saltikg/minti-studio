@@ -51,11 +51,13 @@ from app.video_shorts.routes import quick_short as quick_short_routes
 from app.video_shorts.services.db import get_db_readonly
 from app.video_shorts.services.media_utils import (
     _cleanup_resolved_source_video,
+    _probe_video_stream_info,
     _resolve_source_video,
     normalize_s3_source_video_for_upload,
     purge_source_cache_for_video,
     resolve_s3_source_video_cached,
 )
+from app.video_shorts.services.export_resolution import resolve_export_resolution
 from app.video_shorts.services.media_utils import MediaSubprocessTimeoutError
 from app.video_shorts.services.media_duration import (
     get_or_backfill_media_duration_seconds,
@@ -868,6 +870,7 @@ def _download_youtube_video(
     video_id: str,
     *,
     progress_cb=None,
+    prefer_1440p: bool = False,
 ) -> Path:
     if yt_dlp is None:
         raise PermanentRenderJobError("yt_dlp is not installed on the worker.")
@@ -926,6 +929,18 @@ def _download_youtube_video(
             }
         )
 
+    current_format = (
+        "bestvideo[vcodec^=avc1][width<=1920][height<=1920][fps<=60]+bestaudio[ext=m4a]/"
+        "bestvideo[vcodec^=avc1][width<=1920][height<=1920][fps<=60]+bestaudio/"
+        "bestvideo[width<=1920][height<=1920][fps<=60]+bestaudio[ext=m4a]/"
+        "bestvideo[width<=1920][height<=1920][fps<=60]+bestaudio/"
+        "best[width<=1920][height<=1920]"
+    )
+    hq_format = (
+        "271[protocol!*=m3u8]+bestaudio[protocol!*=m3u8]/"
+        "400[protocol!*=m3u8]+bestaudio[protocol!*=m3u8]/"
+        + current_format
+    )
     opts = {
         "outtmpl": str(work_dir / f"{video_id}.%(ext)s"),
         "merge_output_format": "mp4",
@@ -933,14 +948,8 @@ def _download_youtube_video(
         # alternatives would accept a low-resolution 30 fps format before yt-dlp
         # ever considers a 60 fps HD format. Bounding both dimensions at 1920
         # admits 1920x1080 and its 1080x1920 vertical equivalent, but not 1440p/4K.
-        "format": (
-            "bestvideo[vcodec^=avc1][width<=1920][height<=1920][fps<=60]+bestaudio[ext=m4a]/"
-            "bestvideo[vcodec^=avc1][width<=1920][height<=1920][fps<=60]+bestaudio/"
-            "bestvideo[width<=1920][height<=1920][fps<=60]+bestaudio[ext=m4a]/"
-            "bestvideo[width<=1920][height<=1920][fps<=60]+bestaudio/"
-            "best[width<=1920][height<=1920]"
-        ),
-        "format_sort": ["res:1080", "fps:30"],
+        "format": hq_format if prefer_1440p else current_format,
+        "format_sort": ["res:1440", "fps:30"] if prefer_1440p else ["res:1080", "fps:30"],
         "quiet": True,
         "noprogress": True,
         "legacy_server_connect": True,
@@ -1263,6 +1272,7 @@ def _execute_ingest_youtube_job(app, job: Dict[str, Any]) -> Dict[str, Any]:
         video_pk=video_pk,
         job_origin=job_origin,
     )
+    prefer_1440p = resolve_export_resolution(owner_user_id).is_hq
     if not video_pk or not video_id or not video_url or not owner_user_id or not brand_id:
         raise PermanentRenderJobError("YouTube ingest job is missing its scoped source.")
     if bill_usage:
@@ -1273,13 +1283,24 @@ def _execute_ingest_youtube_job(app, job: Dict[str, Any]) -> Dict[str, Any]:
     storage = get_media_storage()
     source_key = next((f"videos/{video_id}{suffix}" for suffix in tenant_media.SOURCE_VIDEO_SUFFIXES
                        if storage.exists(f"videos/{video_id}{suffix}")), None)
+    replace_existing_source = False
     if source_key:
         local_path = storage.download_to_temp(source_key)
         if getattr(storage, "backend_name", "local") == "local":
             copied = Path(tempfile.mkdtemp(prefix="ingest-existing-")) / Path(source_key).name
             shutil.copyfile(local_path, copied)
             local_path = copied
-    else:
+        if prefer_1440p:
+            source_info = _probe_video_stream_info(local_path, log=app.logger)
+            if max(int(source_info.get("width") or 0), int(source_info.get("height") or 0)) < 2560:
+                try:
+                    local_path.unlink(missing_ok=True)
+                    local_path.parent.rmdir()
+                except Exception:
+                    pass
+                replace_existing_source = True
+                source_key = None
+    if not source_key:
         def _record_download_progress(progress: Dict[str, Any]) -> None:
             _set_job_progress(
                 job["id"],
@@ -1293,6 +1314,7 @@ def _execute_ingest_youtube_job(app, job: Dict[str, Any]) -> Dict[str, Any]:
             video_url,
             video_id,
             progress_cb=_record_download_progress,
+            prefer_1440p=prefer_1440p,
         )
     try:
         try:
@@ -1308,7 +1330,11 @@ def _execute_ingest_youtube_job(app, job: Dict[str, Any]) -> Dict[str, Any]:
             _enforce_source_video_quota(owner_user_id, effective_duration_seconds)
         if not source_key:
             source_key = f"videos/{video_id}{local_path.suffix or '.mp4'}"
-            put_file_for_owner(local_path, source_key, owner_user_id=owner_user_id)
+            if replace_existing_source:
+                storage.put_file(local_path, source_key)
+                purge_source_cache_for_video(video_id)
+            else:
+                put_file_for_owner(local_path, source_key, owner_user_id=owner_user_id)
         conn = get_db()
         try:
             updated = conn.execute(
