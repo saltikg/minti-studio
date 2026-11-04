@@ -112,6 +112,18 @@ STATIC_VISUAL_MAP = {entry["key"]: entry for entry in STATIC_VISUAL_PRESETS}
 PILLOW_RAQM_AVAILABLE = bool(features.check("raqm"))
 
 
+def _overlay_crop_bounds(image: Image.Image) -> Optional[tuple[int, int, int, int]]:
+    bounds = image.getchannel("A").getbbox()
+    if not bounds:
+        return None
+    return (
+        max(0, ((bounds[0] - 2) // 2) * 2),
+        max(0, ((bounds[1] - 2) // 2) * 2),
+        min(image.width, ((bounds[2] + 3) // 2) * 2),
+        min(image.height, ((bounds[3] + 3) // 2) * 2),
+    )
+
+
 def _render_overlay_shapes(
     shapes: Optional[list[Dict[str, Any]]],
     *,
@@ -119,14 +131,12 @@ def _render_overlay_shapes(
     target_height: int,
     owner_user_id: Optional[str] = None,
     brand_id: Optional[str] = None,
-) -> Optional[Path]:
+) -> list[tuple[Path, int, int]]:
     if not shapes:
-        return None
-    canvas = Image.new("RGBA", (target_width, target_height), (0, 0, 0, 0))
-    draw = ImageDraw.Draw(canvas, "RGBA")
+        return []
     scale_x = float(target_width) / 1080.0
     scale_y = float(target_height) / 1920.0
-    drawn = 0
+    overlays: list[tuple[Path, int, int]] = []
     for shape in list(shapes)[:5]:
         if not isinstance(shape, dict):
             continue
@@ -146,6 +156,8 @@ def _render_overlay_shapes(
         top = int(round(y * scale_y))
         right = int(round((x + w) * scale_x))
         bottom = int(round((y + h) * scale_y))
+        canvas = Image.new("RGBA", (target_width, target_height), (0, 0, 0, 0))
+        draw = ImageDraw.Draw(canvas, "RGBA")
         if str(shape.get("type") or "shape").strip().lower() == "image":
             managed_path = None
             try:
@@ -173,7 +185,6 @@ def _render_overlay_shapes(
                     )
                     overlay_image.putalpha(alpha_channel)
                 canvas.alpha_composite(overlay_image, (left, top))
-                drawn += 1
             except Exception as exc:
                 current_app.logger.warning(
                     "Overlay image skipped asset_id=%s owner_user_id=%s brand_id=%s error=%s",
@@ -185,25 +196,25 @@ def _render_overlay_shapes(
             finally:
                 if managed_path is not None:
                     managed_path.cleanup()
-            continue
-        color = str(shape.get("color") or "#000000").strip().lstrip("#")
-        if not re.fullmatch(r"[0-9A-Fa-f]{6}", color):
-            color = "000000"
-        rgba = tuple(int(color[offset:offset + 2], 16) for offset in (0, 2, 4)) + (round(alpha * 255 / 100),)
-        scaled_radius = int(round(radius * min(scale_x, scale_y)))
-        draw.rounded_rectangle(
-            [left, top, max(left + 1, right), max(top + 1, bottom)],
-            radius=max(0, scaled_radius),
-            fill=rgba,
-        )
-        drawn += 1
-    if not drawn:
-        return None
-    handle = tempfile.NamedTemporaryFile(prefix="minti-shapes-", suffix=".png", delete=False)
-    handle.close()
-    output = Path(handle.name)
-    canvas.save(output, format="PNG")
-    return output
+        else:
+            color = str(shape.get("color") or "#000000").strip().lstrip("#")
+            if not re.fullmatch(r"[0-9A-Fa-f]{6}", color):
+                color = "000000"
+            rgba = tuple(int(color[offset:offset + 2], 16) for offset in (0, 2, 4)) + (round(alpha * 255 / 100),)
+            scaled_radius = int(round(radius * min(scale_x, scale_y)))
+            draw.rounded_rectangle(
+                [left, top, max(left + 1, right), max(top + 1, bottom)],
+                radius=max(0, scaled_radius),
+                fill=rgba,
+            )
+        bounds = _overlay_crop_bounds(canvas)
+        if bounds:
+            handle = tempfile.NamedTemporaryFile(prefix="minti-shapes-", suffix=".png", delete=False)
+            handle.close()
+            output = Path(handle.name)
+            canvas.crop(bounds).save(output, format="PNG")
+            overlays.append((output, bounds[0], bounds[1]))
+    return overlays
 
 
 def _even_dimension(value: float) -> int:
@@ -1696,6 +1707,7 @@ def _render_title_overlay(
     title_outline_width: int = 0,
     max_lines: int = TITLE_WRAP_MAX_LINES,
     min_font_size: int = TITLE_WRAP_MIN_FONT_SIZE,
+    crop_to_bounds: bool = False,
 ) -> tuple[Path, dict[str, Any]]:
     layout = _title_overlay_layout(
         text, font_path=font_path, font_size=font_size, target_width=target_width,
@@ -1780,7 +1792,8 @@ def _render_title_overlay(
     handle = tempfile.NamedTemporaryFile(delete=False, suffix=".png", prefix="title_overlay_")
     handle.close()
     output_path = Path(handle.name)
-    overlay.save(output_path)
+    bounds = _overlay_crop_bounds(overlay) if crop_to_bounds else None
+    (overlay.crop(bounds) if bounds else overlay).save(output_path)
     return output_path, {
         "text": display_text,
         "font_size": chosen_font_size,
@@ -1790,6 +1803,8 @@ def _render_title_overlay(
         "draw_y": draw_y,
         "block_height": block_height,
         "shadow": shadow_style,
+        "origin_x": bounds[0] if bounds else 0,
+        "origin_y": bounds[1] if bounds else 0,
     }
 
 
@@ -2039,6 +2054,7 @@ def _overlay_visible_alpha_geometry(path: Path) -> Optional[Dict[str, int]]:
             return {
                 "canvas_width": int(canvas_width),
                 "canvas_height": int(canvas_height),
+                "left": int(union_bbox[0]),
                 "top": int(union_bbox[1]),
                 "width": max(1, int(union_bbox[2] - union_bbox[0])),
                 "height": max(1, int(union_bbox[3] - union_bbox[1])),
@@ -2976,7 +2992,7 @@ def _compose_with_background(
     title_overlay_path = None
     if title_txt:
         test_font_file = _title_font_path_for_text(title_txt, font_path)
-        title_overlay_path, _ = _render_title_overlay(
+        title_overlay_path, title_overlay_meta = _render_title_overlay(
             title_txt,
             font_path=test_font_file,
             font_size=title_font_size,
@@ -2991,9 +3007,10 @@ def _compose_with_background(
             uppercase=bool(title_uppercase),
             title_language=title_language,
             video_top_limit=None,
+            crop_to_bounds=True,
         )
-        filter_parts.append("[2:v]format=rgba[title_src]")
-        filter_parts.append(f"{final_label}[title_src]overlay=0:0:shortest=1[ov_title]")
+        filter_parts.append("[2:v]format=yuva420p[title_src]")
+        filter_parts.append(f"{final_label}[title_src]overlay={title_overlay_meta['origin_x']}:{title_overlay_meta['origin_y']}:format=yuv420:shortest=1[ov_title]")
         final_label = "[ov_title]"
 
     if subtitle_path:
@@ -3079,6 +3096,7 @@ def _compose_trimmed_with_background(
     title_font_name: str = None,
     subtitle_path: Path = None,
     subtitle_overlay_video_path: Optional[Path] = None,
+    subtitle_overlay_origin: tuple[int, int] = (0, 0),
     subtitle_overlay_specs: Optional[list[Dict[str, Any]]] = None,
     subtitle_overlay_events: Optional[list[Dict[str, Any]]] = None,
     subtitle_font: str = "DejaVu Sans",
@@ -3160,7 +3178,7 @@ def _compose_trimmed_with_background(
         normalized_title_display_seconds = None
 
     def _title_source_filter(input_label: str, output_label: str) -> str:
-        filters = "format=rgba"
+        filters = "format=yuva420p"
         if normalized_title_display_seconds is not None:
             filters += (
                 f",fade=t=out:st={normalized_title_display_seconds:.3f}:"
@@ -3291,6 +3309,7 @@ def _compose_trimmed_with_background(
                     title_outline_color=title_outline_color,
                     title_outline_width=title_outline_width,
                     video_top_limit=None,
+                    crop_to_bounds=True,
                 )
                 current_app.logger.info(
                     "Pillow title overlay (podcast fast-path) text_width=%s margin=%s font_size=%s lines=%s draw_y=%s",
@@ -3301,9 +3320,9 @@ def _compose_trimmed_with_background(
                     title_overlay_meta["draw_y"],
                 )
                 title_input_index = next_video_input_index
-                filter_parts.append(f"[{title_input_index}:v]format=rgba[pod_title_src]")
+                filter_parts.append(f"[{title_input_index}:v]format=yuva420p[pod_title_src]")
                 filter_parts.append(
-                    f"{final_label}[pod_title_src]overlay=0:0:shortest=1[pod_title_out]"
+                    f"{final_label}[pod_title_src]overlay={title_overlay_meta['origin_x']}:{title_overlay_meta['origin_y']}:format=yuv420:shortest=1[pod_title_out]"
                 )
                 final_label = "[pod_title_out]"
                 next_video_input_index += 1
@@ -3333,9 +3352,9 @@ def _compose_trimmed_with_background(
                 label_prefix="pod_caption",
             )
         elif effective_subtitle_overlay_path:
-            filter_parts.append(f"[{next_video_input_index}:v]format=rgba[pod_caption_src]")
+            filter_parts.append(f"[{next_video_input_index}:v]format=yuva420p[pod_caption_src]")
             filter_parts.append(
-                f"{final_label}[pod_caption_src]overlay=0:0:shortest=1[pod_caption_out]"
+                f"{final_label}[pod_caption_src]overlay={subtitle_overlay_origin[0]}:{subtitle_overlay_origin[1]}:format=yuv420:shortest=1[pod_caption_out]"
             )
             final_label = "[pod_caption_out]"
             next_video_input_index += 1
@@ -4580,22 +4599,25 @@ def _compose_trimmed_with_background(
     base_final_label = final_label
     title_overlay_path: Optional[Path] = None
     title_overlay_paths: List[Path] = []
+    title_overlay_positions: Dict[Path, tuple[int, int]] = {}
     next_video_input_index = 3 if (direct_audio_source or direct_visual_override) else 2
-    shape_overlay_path = _render_overlay_shapes(
+    shape_overlay_specs = _render_overlay_shapes(
         overlay_shapes,
         target_width=target_width,
         target_height=target_height,
         owner_user_id=overlay_owner_user_id,
         brand_id=overlay_brand_id,
     )
-    if shape_overlay_path:
+    for shape_index, (_, shape_x, shape_y) in enumerate(shape_overlay_specs):
         shape_input_index = next_video_input_index
         next_video_input_index += 1
-        filter_parts.append(f"[{shape_input_index}:v]format=rgba[shape_overlay_src]")
+        shape_source_label = f"[shape_overlay_src_{shape_index}]"
+        shape_output_label = f"[shape_overlay_out_{shape_index}]"
+        filter_parts.append(f"[{shape_input_index}:v]format=yuva420p{shape_source_label}")
         filter_parts.append(
-            f"{final_label}[shape_overlay_src]overlay=0:0:shortest=1[shape_overlay_out]"
+            f"{final_label}{shape_source_label}overlay={shape_x}:{shape_y}:format=yuv420:shortest=1{shape_output_label}"
         )
-        final_label = "[shape_overlay_out]"
+        final_label = shape_output_label
     if show_title and title_txt:
         test_font_file = _title_font_path_for_text(title_txt, font_path)
         if normalized_title_engine == "pillow":
@@ -4629,6 +4651,10 @@ def _compose_trimmed_with_background(
                 title_outline_color=title_outline_color,
                 title_outline_width=title_outline_width,
                 video_top_limit=video_top_limit,
+                crop_to_bounds=True,
+            )
+            title_overlay_positions[title_overlay_path] = (
+                title_overlay_meta["origin_x"], title_overlay_meta["origin_y"],
             )
             current_app.logger.info(
                 "Pillow title overlay text_width=%s margin=%s font_size=%s lines=%s draw_y=%s shadow=%s",
@@ -4640,13 +4666,19 @@ def _compose_trimmed_with_background(
                 title_overlay_meta["shadow"],
             )
             if face_aware_layout_active and not title_margin_custom:
+                title_visible_until = (
+                    normalized_title_display_seconds + 0.3
+                    if normalized_title_display_seconds is not None else duration
+                )
                 fill_segment_indices = [
                     idx for idx, segment in enumerate(layout_segments)
                     if str(segment.get("mode") or "fill") != "fit"
+                    and float(segment.get("start") or 0.0) < title_visible_until
                 ]
                 fit_segment_indices = [
                     idx for idx, segment in enumerate(layout_segments)
                     if str(segment.get("mode") or "fill") == "fit"
+                    and float(segment.get("start") or 0.0) < title_visible_until
                 ]
                 fill_source_by_index: Dict[int, str] = {}
                 fit_source_by_index: Dict[int, str] = {}
@@ -4681,8 +4713,12 @@ def _compose_trimmed_with_background(
                         title_outline_color=title_outline_color,
                         title_outline_width=title_outline_width,
                         video_top_limit=int(round(face_aware_fit_metrics["title_bottom"])),
+                        crop_to_bounds=True,
                     )
                     title_overlay_paths.append(fit_title_overlay_path)
+                    title_overlay_positions[fit_title_overlay_path] = (
+                        fit_title_overlay_meta["origin_x"], fit_title_overlay_meta["origin_y"],
+                    )
                     current_app.logger.info(
                         "Pillow title overlay fit text_width=%s margin=%s font_size=%s lines=%s draw_y=%s title_bottom=%.2f shadow=%s",
                         fit_title_overlay_meta["max_text_width"],
@@ -4717,8 +4753,10 @@ def _compose_trimmed_with_background(
                         continue
                     next_title_label = f"[ov_title_debug_{idx}]"
                     enable_expr = f"between(t\\,{seg_start:.6f}\\,{seg_end:.6f})"
+                    title_path = fit_title_overlay_path if str(segment.get("mode") or "fill") == "fit" else title_overlay_path
+                    title_x, title_y = title_overlay_positions[title_path]
                     filter_parts.append(
-                        f"{current_title_label}{source_label}overlay=0:0:shortest=1:enable='{enable_expr}'{next_title_label}"
+                        f"{current_title_label}{source_label}overlay={title_x}:{title_y}:format=yuv420:shortest=0:eof_action=pass:enable='{enable_expr}'{next_title_label}"
                     )
                     current_title_label = next_title_label
                 final_label = current_title_label
@@ -4728,8 +4766,9 @@ def _compose_trimmed_with_background(
                 filter_parts.append(
                     _title_source_filter(f"[{title_input_index}:v]", "[title_src]")
                 )
+                title_x, title_y = title_overlay_positions[title_overlay_path]
                 filter_parts.append(
-                    f"{final_label}[title_src]overlay=0:0:shortest=1[ov_title_debug]"
+                    f"{final_label}[title_src]overlay={title_x}:{title_y}:format=yuv420:shortest=0:eof_action=pass[ov_title_debug]"
                 )
                 final_label = "[ov_title_debug]"
                 next_video_input_index += 1
@@ -4801,7 +4840,7 @@ def _compose_trimmed_with_background(
             label_prefix="caption",
         )
     elif effective_subtitle_overlay_path:
-        filter_parts.append(f"[{next_video_input_index}:v]format=rgba[caption_src]")
+        filter_parts.append(f"[{next_video_input_index}:v]format=yuva420p[caption_src]")
         caption_overlay_y_expr = "0"
         if face_aware_auto_caption_placement:
             caption_overlay_y_expr = "0"
@@ -4878,8 +4917,10 @@ def _compose_trimmed_with_background(
                     caption_y_intervals.append((seg_start, seg_end, segment_caption_y))
                 caption_overlay_y_expr = _piecewise_constant_overlay_y_expr(caption_y_intervals, duration=duration)
             caption_overlay_y_expr = caption_overlay_y_expr.replace(",", r"\,")
+        caption_x, caption_y = subtitle_overlay_origin
+        caption_position_y = f"{caption_y}+({caption_overlay_y_expr})" if caption_overlay_y_expr != "0" else str(caption_y)
         filter_parts.append(
-            f"{final_label}[caption_src]overlay=0:{caption_overlay_y_expr}:shortest=1[caption_out]"
+            f"{final_label}[caption_src]overlay={caption_x}:{caption_position_y}:format=yuv420:shortest=1[caption_out]"
         )
         final_label = "[caption_out]"
         next_video_input_index += 1
@@ -4982,8 +5023,24 @@ def _compose_trimmed_with_background(
                     "scale=-2:"
                     f"min(ih*{subscribe_render_scale}\\,{int(top_caption_subscribe_metrics['subscribe_max_height'])})"
                 )
+        subscribe_crop = None
+        if not top_caption_subscribe_metrics:
+            visible_geometry = _overlay_visible_alpha_geometry(Path(overlay_asset_path))
+            if visible_geometry:
+                canvas_width = visible_geometry["canvas_width"]
+                canvas_height = visible_geometry["canvas_height"]
+                crop_left = max(0, ((visible_geometry["left"] - 2) // 2) * 2)
+                crop_top = max(0, ((visible_geometry["top"] - 2) // 2) * 2)
+                crop_width = min(canvas_width - crop_left, visible_geometry["width"] + visible_geometry["left"] - crop_left + 2)
+                crop_height = min(canvas_height - crop_top, visible_geometry["height"] + visible_geometry["top"] - crop_top + 2)
+                if crop_width < canvas_width or crop_height < canvas_height:
+                    subscribe_scale_filter += (
+                        f",crop=iw*{crop_width / canvas_width:.8f}:ih*{crop_height / canvas_height:.8f}:"
+                        f"iw*{crop_left / canvas_width:.8f}:ih*{crop_top / canvas_height:.8f}"
+                    )
+                    subscribe_crop = (canvas_width, canvas_height, crop_left, crop_top, crop_width, crop_height)
         filter_parts.append(
-            f"[{subscribe_input_index}:v]{subscribe_scale_filter},format=rgba{overlay_src_label}"
+            f"[{subscribe_input_index}:v]{subscribe_scale_filter},format=yuva420p{overlay_src_label}"
         )
         subscribe_y_expr = f"H-h-{subscribe_bottom_offset}"
         if top_caption_subscribe_metrics:
@@ -5024,8 +5081,19 @@ def _compose_trimmed_with_background(
                 default_expr=subscribe_y_expr,
             )
             subscribe_y_expr = subscribe_y_expr.replace(",", r"\,")
+        subscribe_x_expr = "(W-w)/2"
+        if subscribe_crop:
+            canvas_width, canvas_height, crop_left, crop_top, crop_width, crop_height = subscribe_crop
+            subscribe_x_expr = f"(W-w*{canvas_width / crop_width:.8f})/2+w*{crop_left / crop_width:.8f}"
+            if subscribe_y_expr == f"H-h-{subscribe_bottom_offset}":
+                subscribe_y_expr = (
+                    f"H-h*{canvas_height / crop_height:.8f}-{subscribe_bottom_offset}"
+                    f"+h*{crop_top / crop_height:.8f}"
+                )
+            else:
+                subscribe_y_expr = f"({subscribe_y_expr})+h*{crop_top / crop_height:.8f}"
         filter_parts.append(
-            f"{final_label}{overlay_src_label}overlay=(W-w)/2:{subscribe_y_expr}:shortest=1{overlay_out_label}"
+            f"{final_label}{overlay_src_label}overlay={subscribe_x_expr}:{subscribe_y_expr}:format=yuv420:shortest=1{overlay_out_label}"
         )
         final_label = overlay_out_label
     if face_aware_layout_active:
@@ -5160,10 +5228,13 @@ def _compose_trimmed_with_background(
             ]
         )
         audio_map = edge_audio_map or "2:a"
-    if shape_overlay_path:
-        cmd.extend(["-framerate", f"{output_fps:.6f}", "-loop", "1", "-i", str(shape_overlay_path)])
+    for shape_path, _, _ in shape_overlay_specs:
+        cmd.extend(["-framerate", f"{output_fps:.6f}", "-loop", "1", "-i", str(shape_path)])
     for overlay_path in title_overlay_paths:
-        cmd.extend(["-framerate", f"{output_fps:.6f}", "-loop", "1", "-i", str(overlay_path)])
+        cmd.extend(["-framerate", f"{output_fps:.6f}", "-loop", "1"])
+        if normalized_title_display_seconds is not None:
+            cmd.extend(["-t", f"{min(duration, normalized_title_display_seconds + 0.3):.3f}"])
+        cmd.extend(["-i", str(overlay_path)])
     if effective_subtitle_overlay_specs:
         for spec in effective_subtitle_overlay_specs:
             cmd.extend(["-loop", "1", "-i", str(spec["path"])])
@@ -5262,8 +5333,13 @@ def _compose_trimmed_with_background(
                 ]
             )
             audio_map_music_only = edge_audio_map or "2:a"
+        for shape_path, _, _ in shape_overlay_specs:
+            cmd.extend(["-framerate", f"{output_fps:.6f}", "-loop", "1", "-i", str(shape_path)])
         for overlay_path in title_overlay_paths:
-            cmd.extend(["-framerate", f"{output_fps:.6f}", "-loop", "1", "-i", str(overlay_path)])
+            cmd.extend(["-framerate", f"{output_fps:.6f}", "-loop", "1"])
+            if normalized_title_display_seconds is not None:
+                cmd.extend(["-t", f"{min(duration, normalized_title_display_seconds + 0.3):.3f}"])
+            cmd.extend(["-i", str(overlay_path)])
         if effective_subtitle_overlay_specs:
             for spec in effective_subtitle_overlay_specs:
                 cmd.extend(["-loop", "1", "-i", str(spec["path"])])
@@ -5342,7 +5418,7 @@ def _compose_trimmed_with_background(
             f"FFmpeg compose failed (key={bg_path.name}): {err.stderr.strip() or err.stdout.strip()}"
         ) from err
     finally:
-        for temp_path in (trimmed, merged_override, merged_audio_override, temp_out_path, face_aware_subtitle_path, anchored_subtitle_path, shape_overlay_path, *title_overlay_paths):
+        for temp_path in (trimmed, merged_override, merged_audio_override, temp_out_path, face_aware_subtitle_path, anchored_subtitle_path, *(shape_path for shape_path, _, _ in shape_overlay_specs), *title_overlay_paths):
             if temp_path and temp_path.exists():
                 try:
                     temp_path.unlink()

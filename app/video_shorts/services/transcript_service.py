@@ -2108,12 +2108,37 @@ def _build_word_highlight_overlay_video(
     clip_duration: float,
     canvas_width: int = _PILLOW_CAPTION_WIDTH,
     canvas_height: int = _PILLOW_CAPTION_HEIGHT,
-) -> Path:
+) -> tuple[Path, tuple[int, int]]:
     if not overlay_specs:
         raise ValueError("overlay_specs required")
 
+    bounds = None
+    for spec in overlay_specs:
+        with Image.open(spec["path"]) as frame:
+            frame_bounds = frame.getchannel("A").getbbox()
+        if frame_bounds:
+            bounds = frame_bounds if bounds is None else (
+                min(bounds[0], frame_bounds[0]),
+                min(bounds[1], frame_bounds[1]),
+                max(bounds[2], frame_bounds[2]),
+                max(bounds[3], frame_bounds[3]),
+            )
+    if bounds:
+        left = max(0, ((bounds[0] - 2) // 2) * 2)
+        top = max(0, ((bounds[1] - 2) // 2) * 2)
+        right = min(int(canvas_width), ((bounds[2] + 3) // 2) * 2)
+        bottom = min(int(canvas_height), ((bounds[3] + 3) // 2) * 2)
+    else:
+        left, top, right, bottom = 0, 0, 2, 2
+    band = (left, top, right, bottom)
+    for spec in overlay_specs:
+        frame_path = Path(spec["path"])
+        with Image.open(frame_path) as frame:
+            cropped = frame.crop(band)
+        cropped.save(frame_path)
+
     blank_frame = temp_dir / "caption_blank.png"
-    Image.new("RGBA", (int(canvas_width), int(canvas_height)), (0, 0, 0, 0)).save(blank_frame)
+    Image.new("RGBA", (right - left, bottom - top), (0, 0, 0, 0)).save(blank_frame)
 
     timeline: List[Tuple[Path, float]] = []
     cursor = 0.0
@@ -2170,7 +2195,7 @@ def _build_word_highlight_overlay_video(
     )
     if not overlay_path.exists() or overlay_path.stat().st_size <= 0:
         raise RuntimeError("word_highlight overlay video missing or empty")
-    return overlay_path
+    return overlay_path, (left, top)
 
 
 def _build_word_highlight_caption_overlay(
@@ -2543,7 +2568,7 @@ def _build_word_highlight_caption_overlay(
         shutil.rmtree(temp_dir, ignore_errors=True)
         return None, [], {"reason": "no_specs"}
 
-    overlay_path = _build_word_highlight_overlay_video(
+    overlay_path, overlay_origin = _build_word_highlight_overlay_video(
         temp_dir=temp_dir,
         overlay_specs=overlay_specs,
         clip_duration=clip_duration,
@@ -2570,6 +2595,7 @@ def _build_word_highlight_caption_overlay(
         ],
         "temp_dir": str(temp_dir),
         "overlay_path": str(overlay_path),
+        "origin": overlay_origin,
     }
 
 

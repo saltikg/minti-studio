@@ -33689,6 +33689,7 @@ def autoclip_video(video_pk):
     subscribe_overlay_path = None
     subscribe_overlay_path_is_temp = False
     subtitle_overlay_video_path = None
+    subtitle_overlay_meta: Dict[str, Any] = {}
     subtitle_overlay_specs: List[Dict[str, Any]] = []
     subtitle_overlay_events: List[Dict[str, Any]] = []
     subtitle_overlay_cleanup_paths: List[Path] = []
@@ -33812,6 +33813,7 @@ def autoclip_video(video_pk):
                             target_width=render_target_width,
                             target_height=render_target_height,
                         )
+                        subtitle_overlay_meta = overlay_meta or {}
                         subtitle_overlay_specs = list((overlay_meta or {}).get("specs") or [])
                         subtitle_overlay_events = list((overlay_meta or {}).get("timing_events") or [])
                         overlay_frame_count = int((overlay_meta or {}).get("frame_count") or len(subtitle_overlay_specs))
@@ -33912,6 +33914,7 @@ def autoclip_video(video_pk):
                         target_width=render_target_width,
                         target_height=render_target_height,
                     )
+                    subtitle_overlay_meta = overlay_meta or {}
                     subtitle_overlay_specs = list((overlay_meta or {}).get("specs") or [])
                     subtitle_overlay_events = list((overlay_meta or {}).get("timing_events") or [])
                     overlay_frame_count = int((overlay_meta or {}).get("frame_count") or len(subtitle_overlay_specs))
@@ -34362,6 +34365,7 @@ def autoclip_video(video_pk):
                 title_font_name,
                 subtitle_srt,
                 subtitle_overlay_video_path=subtitle_overlay_video_path,
+                subtitle_overlay_origin=tuple(subtitle_overlay_meta.get("origin") or (0, 0)),
                 subtitle_overlay_specs=subtitle_overlay_specs,
                 subtitle_overlay_events=subtitle_overlay_events,
                 subtitle_font=sub_font_name,
