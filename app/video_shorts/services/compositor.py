@@ -5262,8 +5262,9 @@ def _compose_trimmed_with_background(
                 str(temp_out_path),
             ]
         )
-    if low_memory_demo:
+    if low_memory_demo or face_aware_layout_active:
         cmd[1:1] = ["-filter_threads", "1", "-filter_complex_threads", "1"]
+    if low_memory_demo:
         output_index = len(cmd) - 1
         cmd[output_index:output_index] = ["-threads", "1"]
         current_app.logger.info(

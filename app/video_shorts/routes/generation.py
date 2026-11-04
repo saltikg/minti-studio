@@ -4340,6 +4340,38 @@ def _build_face_aware_layout_segments_from_samples(
     return _smooth_face_aware_runs(runs)
 
 
+def _build_shot_based_layout_segments(
+    samples: List[Dict[str, Any]], *, duration_seconds: float, scene_cuts: List[float],
+) -> Tuple[List[Dict[str, Any]], List[Dict[str, Any]]]:
+    boundaries = [0.0, *sorted({cut for cut in scene_cuts if 0.0 < cut < duration_seconds}), duration_seconds]
+    if len(boundaries) == 2:
+        return _build_face_aware_layout_segments_from_samples(samples, duration_seconds=duration_seconds), []
+    segments: List[Dict[str, Any]] = []
+    decisions: List[Dict[str, Any]] = []
+    for shot_start, shot_end in zip(boundaries, boundaries[1:]):
+        shot_samples = [
+            sample for sample in samples
+            if shot_start <= float(sample.get("t") or 0.0) < shot_end
+        ]
+        counts: Dict[int, int] = {}
+        for sample in shot_samples:
+            face_count = max(0, int(sample.get("face_count") or 0))
+            counts[face_count] = counts.get(face_count, 0) + 1
+        if counts:
+            chosen_count = max(counts, key=lambda count: (counts[count], count))
+        elif segments:
+            chosen_count = int(decisions[-1]["face_count"])
+        else:
+            chosen_count = 1
+        mode = _face_aware_mode_for_count(chosen_count)
+        segments.append({"start": shot_start, "end": shot_end, "mode": mode})
+        decisions.append({
+            "start": round(shot_start, 6), "end": round(shot_end, 6),
+            "face_count": chosen_count, "mode": mode, "counts": counts,
+        })
+    return _merge_face_aware_runs(segments), decisions
+
+
 def _probe_video_fps(source_path: Path) -> Optional[float]:
     ffmpeg_bin = Path(_resolve_ffmpeg())
     ffprobe_bin = ffmpeg_bin.with_name("ffprobe")
@@ -4406,6 +4438,7 @@ def _face_aware_scene_candidates(
         return []
     ffmpeg_bin = _resolve_ffmpeg()
     filter_expr = (
+        f"scale={int(FACE_AWARE_DETECT_WIDTH)}:-2,"
         f"select='gt(scene,{float(FACE_AWARE_SCENE_THRESHOLD):.6f})',"
         "metadata=print"
     )
@@ -4465,13 +4498,18 @@ def _snap_face_aware_boundary(
     *,
     absolute_boundary: float,
     fps: Optional[float],
+    known_scene_candidates: Optional[List[Tuple[float, float]]] = None,
 ) -> Optional[float]:
     window = float(FACE_AWARE_SNAP_WINDOW_SEC or 0.0)
     if window <= 0:
         return _round_to_frame_time(absolute_boundary, fps)
     start = max(0.0, float(absolute_boundary) - window)
     duration = max(0.05, (float(absolute_boundary) + window) - start)
-    candidates = _face_aware_scene_candidates(source_path, start=start, duration=duration)
+    candidates = (
+        [(score, scene_time) for score, scene_time in known_scene_candidates if start <= scene_time <= start + duration]
+        if known_scene_candidates is not None
+        else _face_aware_scene_candidates(source_path, start=start, duration=duration)
+    )
     if not candidates:
         return _round_to_frame_time(absolute_boundary, fps)
     _, snapped = max(candidates, key=lambda item: (item[0], -abs(item[1] - float(absolute_boundary))))
@@ -4487,6 +4525,7 @@ def _face_track_shot_boundaries(
     duration: float,
     detect_scenes: bool = True,
     source_keep_ranges: Optional[List[Dict[str, float]]] = None,
+    known_scene_candidates: Optional[List[Tuple[float, float]]] = None,
 ) -> tuple[list[float], list[tuple[float, float]], list[dict[str, Any]]]:
     if not FACE_CUT_ON_SHOT_CHANGE or duration <= 0:
         return [], [], []
@@ -4522,6 +4561,8 @@ def _face_track_shot_boundaries(
             timeline_offset += source_duration
             if index < len(keep_ranges) - 1:
                 range_join_times.append(float(absolute_start) + timeline_offset)
+    elif known_scene_candidates is not None:
+        scene_candidates = known_scene_candidates
     else:
         scene_candidates = (
             _face_aware_scene_candidates(
@@ -4605,6 +4646,7 @@ def _snap_face_aware_segments(
     *,
     source_path: Path,
     absolute_start: float,
+    known_scene_candidates: Optional[List[Tuple[float, float]]] = None,
 ) -> Tuple[List[Dict[str, Any]], List[Dict[str, Any]]]:
     if len(segments or []) <= 1:
         return segments, []
@@ -4617,6 +4659,7 @@ def _snap_face_aware_segments(
             source_path,
             absolute_boundary=float(absolute_start) + boundary,
             fps=fps,
+            known_scene_candidates=known_scene_candidates,
         )
         snapped_rel = max(0.0, min(duration, float(snapped_abs or (absolute_start + boundary)) - float(absolute_start)))
         snapped_rel = _round_to_frame_time(snapped_rel, fps)
@@ -4927,6 +4970,70 @@ def _missing_face_detection_ranges(
     return [(start_value, end_value) for start_value, end_value in missing if end_value > start_value]
 
 
+def _face_sample_from_image(image: Any, *, source_t: float, detector: Any = None) -> Tuple[Dict[str, Any], Any]:
+    import cv2
+
+    filtered_faces: List[Dict[str, float]] = []
+    frame_height = 0
+    frame_width = 0
+    if image is not None:
+        frame_height, frame_width = image.shape[:2]
+        if detector is None:
+            detector = cv2.FaceDetectorYN_create(
+                str(_YUNET_FACE_MODEL_PATH),
+                "",
+                (int(frame_width), int(frame_height)),
+                float(_YUNET_FACE_SCORE_THRESHOLD),
+                0.3,
+                5000,
+            )
+        faces = _yunet_face_detection_ratios(
+            cv2, image, frame_width, frame_height, detector=detector,
+        )
+        filtered_faces = [
+            {
+                "cx_ratio": float(face.get("cx_ratio") or 0.0),
+                "cy_ratio": float(face.get("cy_ratio") or 0.0),
+                "w_ratio": float(face.get("w_ratio") or 0.0),
+                "h_ratio": float(face.get("h_ratio") or 0.0),
+            }
+            for face in _filter_preview_faces_by_size(faces)
+        ]
+    return {
+        "source_t": round(source_t, 6),
+        "face_present": bool(filtered_faces),
+        "face_count": len(filtered_faces),
+        "faces": filtered_faces,
+        "frame_width": frame_width,
+        "frame_height": frame_height,
+    }, detector
+
+
+def _detect_face_samples_at_times(source_path: Path, source_times: List[float]) -> List[Dict[str, Any]]:
+    if not source_times:
+        return []
+    import cv2
+    import numpy as np
+
+    ffmpeg_bin = _resolve_ffmpeg()
+    samples: List[Dict[str, Any]] = []
+    detector = None
+    for source_t in sorted(set(round(value, 6) for value in source_times)):
+        cmd = [
+            ffmpeg_bin, "-hide_banner", "-loglevel", "error", "-ss", f"{source_t:.6f}",
+            "-i", str(source_path), "-frames:v", "1", "-vf",
+            f"scale={int(FACE_AWARE_DETECT_WIDTH)}:-2", "-f", "image2pipe", "-vcodec", "mjpeg", "-",
+        ]
+        result = run_media_subprocess(
+            cmd, operation="face_aware_cut_sample", context=f"source={source_path.name} t={source_t:.3f}",
+            check=True, capture_output=True, timeout=FFMPEG_SHORT_TIMEOUT,
+        )
+        image = cv2.imdecode(np.frombuffer(result.stdout, dtype=np.uint8), cv2.IMREAD_COLOR) if result.stdout else None
+        sample, detector = _face_sample_from_image(image, source_t=source_t, detector=detector)
+        samples.append(sample)
+    return samples
+
+
 def _detect_face_samples_for_span(
     *,
     video_id: str,
@@ -4974,50 +5081,15 @@ def _detect_face_samples_for_span(
             text=True,
         )
         import cv2
-
         detector = None
         for idx, frame_path in enumerate(sorted(temp_dir_path.glob("frame_*.jpg"))):
             image = cv2.imread(str(frame_path))
-            filtered_faces: List[Dict[str, Any]] = []
-            frame_height = 0
-            frame_width = 0
-            if image is not None:
-                frame_height, frame_width = image.shape[:2]
-                if detector is None:
-                    detector = cv2.FaceDetectorYN_create(
-                        str(_YUNET_FACE_MODEL_PATH),
-                        "",
-                        (int(frame_width), int(frame_height)),
-                        float(_YUNET_FACE_SCORE_THRESHOLD),
-                        0.3,
-                        5000,
-                    )
-                faces = _yunet_face_detection_ratios(
-                    cv2,
-                    image,
-                    frame_width,
-                    frame_height,
-                    detector=detector,
-                )
-                filtered_faces = [
-                    {
-                        "cx_ratio": float(face.get("cx_ratio") or 0.0),
-                        "cy_ratio": float(face.get("cy_ratio") or 0.0),
-                        "w_ratio": float(face.get("w_ratio") or 0.0),
-                        "h_ratio": float(face.get("h_ratio") or 0.0),
-                    }
-                    for face in _filter_preview_faces_by_size(faces)
-                ]
-            samples.append(
-                {
-                    "source_t": round(min(float(end_seconds), float(start_seconds) + (idx * sample_sec)), 6),
-                    "face_present": len(filtered_faces) >= 1,
-                    "face_count": len(filtered_faces),
-                    "faces": filtered_faces,
-                    "frame_width": frame_width,
-                    "frame_height": frame_height,
-                }
+            sample, detector = _face_sample_from_image(
+                image,
+                source_t=min(float(end_seconds), float(start_seconds) + (idx * sample_sec)),
+                detector=detector,
             )
+            samples.append(sample)
     return samples
 
 
@@ -5225,6 +5297,23 @@ def _compute_face_aware_layout_segments(
             "face_detect_cache_hit": "skipped",
         }
     started = time.perf_counter()
+    keep_ranges = _normalize_edit_keep_ranges(source_keep_ranges)
+    duration = (
+        sum(max(0.0, float(item["end"]) - float(item["start"])) for item in keep_ranges)
+        if len(keep_ranges) > 1
+        else max(0.0, float(end_seconds) - float(start_seconds))
+    )
+    scene_candidates: Optional[List[Tuple[float, float]]] = None
+    scene_cuts: List[float] = []
+    if len(keep_ranges) <= 1:
+        scene_candidates = _face_aware_scene_candidates(
+            source_path, start=float(start_seconds), duration=float(duration),
+        )
+        scene_cuts = [
+            round(float(scene_time) - float(start_seconds), 6)
+            for _, scene_time in scene_candidates
+            if float(start_seconds) < float(scene_time) < float(end_seconds)
+        ]
     cache_info: Dict[str, Any] = {"hit": True, "analyzed_spans": []}
     samples = _sample_face_presence_for_layout(
         video_id=video_id,
@@ -5234,6 +5323,25 @@ def _compute_face_aware_layout_segments(
         source_keep_ranges=source_keep_ranges,
         cache_info=cache_info,
     )
+    if scene_cuts:
+        extra_source_times = [
+            float(start_seconds) + cut + offset
+            for cut in scene_cuts
+            for offset in (0.15, 0.4)
+            if cut + offset < duration
+        ]
+        try:
+            extra_samples = _detect_face_samples_at_times(source_path, extra_source_times)
+            samples.extend({
+                **{key: value for key, value in sample.items() if key != "source_t"},
+                "t": round(float(sample["source_t"]) - float(start_seconds), 6),
+            } for sample in extra_samples)
+            samples.sort(key=lambda sample: float(sample.get("t") or 0.0))
+        except Exception:
+            current_app.logger.warning(
+                "Could not sample scene cuts video_id=%s plan_index=%s", video_id, plan_index,
+                exc_info=True,
+            )
     track_rows: list[dict[str, Any]] = []
     if samples:
         for sample in samples:
@@ -5249,19 +5357,16 @@ def _compute_face_aware_layout_segments(
                     "found": bool(face),
                 }
             )
-    keep_ranges = _normalize_edit_keep_ranges(source_keep_ranges)
-    duration = (
-        sum(max(0.0, float(item["end"]) - float(item["start"])) for item in keep_ranges)
-        if len(keep_ranges) > 1
-        else max(0.0, float(end_seconds) - float(start_seconds))
+    segments, shot_decisions = _build_shot_based_layout_segments(
+        samples, duration_seconds=duration, scene_cuts=scene_cuts,
     )
-    segments = _build_face_aware_layout_segments_from_samples(samples, duration_seconds=duration)
     snapped_boundaries: List[Dict[str, Any]] = []
-    if len(segments) > 1 and len(keep_ranges) <= 1:
+    if len(segments) > 1 and len(keep_ranges) <= 1 and not scene_cuts:
         segments, snapped_boundaries = _snap_face_aware_segments(
             segments,
             source_path=source_path,
             absolute_start=start_seconds,
+            known_scene_candidates=scene_candidates,
         )
     elif len(segments) > 1:
         fps = _probe_video_fps(source_path)
@@ -5283,6 +5388,7 @@ def _compute_face_aware_layout_segments(
                 absolute_start=float(start_seconds),
                 duration=float(duration),
                 source_keep_ranges=keep_ranges,
+                known_scene_candidates=scene_candidates,
             )
             face_track_smooth_path = _write_preview_face_track_smooth(
                 video_id,
@@ -5312,7 +5418,7 @@ def _compute_face_aware_layout_segments(
     elapsed_ms = int(round((time.perf_counter() - started) * 1000.0))
     current_app.logger.info(
         "face_aware_layout video_id=%s plan_index=%s samples=%s face_counts=%s segments=%s split_crops=%s "
-        "snapped_boundaries=%s face_shot_cuts=%s face_shot_holds=%s face_shot_details=%s elapsed_ms=%s",
+        "snapped_boundaries=%s shot_decisions=%s face_shot_cuts=%s face_shot_holds=%s face_shot_details=%s elapsed_ms=%s",
         video_id,
         plan_index,
         len(samples),
@@ -5334,6 +5440,7 @@ def _compute_face_aware_layout_segments(
             if seg.get("mode") == "split"
         ],
         snapped_boundaries,
+        shot_decisions,
         [round(value, 6) for value in face_shot_cuts],
         [[round(start, 6), round(end, 6)] for start, end in face_shot_holds],
         face_shot_details,
@@ -5345,6 +5452,7 @@ def _compute_face_aware_layout_segments(
         "samples": samples,
         "segments": segments,
         "snapped_boundaries": snapped_boundaries,
+        "shot_decisions": shot_decisions,
         "face_shot_cuts": face_shot_cuts,
         "face_shot_holds": face_shot_holds,
         "elapsed_ms": elapsed_ms,
