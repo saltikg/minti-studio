@@ -1764,6 +1764,7 @@
   }
   .generate-v2-tabs-row {
     display: flex;
+    position: relative;
     align-items: center;
     justify-content: flex-start;
     gap: 12px;
@@ -3297,19 +3298,49 @@
     border-color: #5eead4;
     box-shadow: 0 0 0 2px rgba(45, 212, 191, 0.16);
   }
-  .generate-v2-text-word[data-save-status]::after,
-  .clip-text-trim-word[data-save-status]::after {
-    content: attr(data-save-status);
-    display: inline-block;
-    margin-left: 5px;
-    color: #5eead4;
-    font-size: .68rem;
-    font-weight: 700;
-    vertical-align: middle;
+  .generate-v2-text-word.is-save-success,
+  .clip-text-trim-word.is-save-success {
+    animation: generate-v2-word-save-success 1s ease-out forwards;
   }
-  .generate-v2-text-word.is-save-error[data-save-status]::after,
-  .clip-text-trim-word.is-save-error[data-save-status]::after {
+  .generate-v2-text-word.is-save-error,
+  .clip-text-trim-word.is-save-error {
+    text-decoration: underline;
+    text-decoration-color: #f87171;
+    text-decoration-thickness: 2px;
+    text-underline-offset: 3px;
+  }
+  @keyframes generate-v2-word-save-success {
+    0% { background: rgba(74, 222, 128, 0.34); }
+    100% { background: transparent; }
+  }
+  .generate-v2-word-save-status {
+    position: absolute;
+    top: 50%;
+    right: 0;
+    z-index: 3;
+    min-height: 28px;
+    border: 0;
+    border-radius: 999px;
+    padding: 4px 9px;
+    transform: translateY(-50%);
+    background: rgba(8, 15, 26, 0.92);
+    color: #86efac;
+    font-size: 0.76rem;
+    font-weight: 800;
+    line-height: 1.2;
+    opacity: 0;
+    pointer-events: none;
+    transition: opacity 180ms ease;
+  }
+  .generate-v2-word-save-status.is-visible {
+    opacity: 1;
+  }
+  .generate-v2-word-save-status.is-error {
     color: #fca5a5;
+    cursor: pointer;
+    pointer-events: auto;
+    text-decoration: underline;
+    text-underline-offset: 2px;
   }
   .generate-v2-text-toast {
     position: fixed;
@@ -6952,6 +6983,10 @@
                   <span>Save design</span>
                 </button>
               </div>
+              <button type="button"
+                      class="generate-v2-word-save-status"
+                      data-generate-v2-word-save-status
+                      aria-live="polite"></button>
             </div>
             <div class="generate-v2-editor-shell" id="generate-v2-editor" aria-hidden="true">
               <div class="generate-v2-editor-body">
@@ -14404,15 +14439,37 @@ const resetGenerateV2EditableWordSpan = (span, word) => {
   span.textContent = `${word?.text || ""} `;
 };
 
-const showGenerateV2WordEditStatus = (span, message, isError = false) => {
-  if (!span || !message) return;
+const generateV2WordSaveLabels = String(document.documentElement.lang || "").toLowerCase().startsWith("tr")
+  ? { saved: "✓ Kaydedildi", failed: "Kaydedilemedi — tekrar dene" }
+  : { saved: "✓ Saved", failed: "Couldn't save — retry" };
+
+const showGenerateV2WordEditStatus = (span, { success = false, retry = null } = {}) => {
+  if (!span) return;
+  const status = document.querySelector("[data-generate-v2-word-save-status]");
   window.clearTimeout(span.__mintiSaveStatusTimer);
-  span.dataset.saveStatus = message;
-  span.classList.toggle("is-save-error", !!isError);
-  span.__mintiSaveStatusTimer = window.setTimeout(() => {
-    delete span.dataset.saveStatus;
+  window.clearTimeout(status?.__mintiSaveStatusTimer);
+  if (success) {
     span.classList.remove("is-save-error");
-  }, 1800);
+    span.classList.add("is-save-success");
+    span.__mintiSaveStatusTimer = window.setTimeout(() => {
+      span.classList.remove("is-save-success");
+    }, 1050);
+  } else {
+    span.classList.remove("is-save-success");
+    span.classList.add("is-save-error");
+  }
+  if (!status) return;
+  status.textContent = success ? generateV2WordSaveLabels.saved : generateV2WordSaveLabels.failed;
+  status.classList.toggle("is-error", !success);
+  status.classList.add("is-visible");
+  status.onclick = !success && typeof retry === "function" ? () => { void retry(); } : null;
+  if (success) {
+    status.__mintiSaveStatusTimer = window.setTimeout(() => {
+      status.classList.remove("is-visible");
+      status.textContent = "";
+      status.onclick = null;
+    }, 2000);
+  }
 };
 
 const startGenerateV2TranscriptWordEdit = async ({
@@ -14469,36 +14526,59 @@ const startGenerateV2TranscriptWordEdit = async ({
       return Promise.resolve(true);
     }
     input.disabled = true;
+    let retryInFlight = false;
+    const sendSaveRequest = async () => {
+      const response = await fetch(editUrl, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          "X-Requested-With": "XMLHttpRequest",
+        },
+        body: JSON.stringify({ word_index: wordIndex, text: nextText }),
+      });
+      const payload = await response.json().catch(() => ({}));
+      if (!response.ok || payload.success === false) {
+        throw new Error(payload.message || "Could not save word.");
+      }
+      return payload;
+    };
+    const applySuccessfulSave = (payload, callback = null) => {
+      word.text = String(payload.word_text || nextText);
+      if (Object.prototype.hasOwnProperty.call(word, "word")) {
+        word.word = word.text;
+      }
+      resetGenerateV2EditableWordSpan(span, word);
+      updateGenerateV2WordCacheScript(getGenerateV2WordTimestamps());
+      callback?.();
+      showGenerateV2WordEditStatus(span, { success: true });
+    };
+    const retrySave = async () => {
+      if (retryInFlight) return false;
+      retryInFlight = true;
+      try {
+        const payload = await sendSaveRequest();
+        applySuccessfulSave(payload, onAfterSave);
+        return true;
+      } catch (error) {
+        showGenerateV2WordEditStatus(span, { retry: retrySave });
+        return false;
+      } finally {
+        retryInFlight = false;
+      }
+    };
     savePromise = (async () => {
       try {
-        const response = await fetch(editUrl, {
-          method: "POST",
-          headers: {
-            "Content-Type": "application/json",
-            "X-Requested-With": "XMLHttpRequest",
-          },
-          body: JSON.stringify({ word_index: wordIndex, text: nextText }),
-        });
-        const payload = await response.json().catch(() => ({}));
-        if (!response.ok || payload.success === false) {
-          throw new Error(payload.message || "Could not save word.");
-        }
-        word.text = String(payload.word_text || nextText);
-        if (Object.prototype.hasOwnProperty.call(word, "word")) {
-          word.word = word.text;
-        }
+        const payload = await sendSaveRequest();
         settled = true;
-        resetGenerateV2EditableWordSpan(span, word);
-        updateGenerateV2WordCacheScript(getGenerateV2WordTimestamps());
+        applySuccessfulSave(payload);
         finish(onAfterSave);
-        showGenerateV2WordEditStatus(span, "Saved");
         return true;
       } catch (error) {
         settled = true;
-        word.text = originalText;
+        word.text = nextText;
         resetGenerateV2EditableWordSpan(span, word);
         finish(onAfterCancel);
-        showGenerateV2WordEditStatus(span, "Couldn't save", true);
+        showGenerateV2WordEditStatus(span, { retry: retrySave });
         return false;
       }
     })();
