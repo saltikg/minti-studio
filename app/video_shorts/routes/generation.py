@@ -4449,64 +4449,79 @@ def _face_aware_scene_candidates(
     *,
     start: float,
     duration: float,
+    cut_samples: Optional[List[Dict[str, Any]]] = None,
 ) -> List[Tuple[float, float]]:
     if duration <= 0:
         return []
     ffmpeg_bin = _resolve_ffmpeg()
-    filter_expr = (
-        f"scale={int(FACE_AWARE_DETECT_WIDTH)}:-2,"
-        f"select='gt(scene,{float(FACE_AWARE_SCENE_THRESHOLD):.6f})',"
-        "metadata=print"
-    )
-    cmd = [
-        ffmpeg_bin,
-        "-hide_banner",
-        "-ss",
-        f"{start:.6f}",
-        "-t",
-        f"{duration:.6f}",
-        "-i",
-        str(source_path),
-        "-vf",
-        filter_expr,
-        "-an",
-        "-f",
-        "null",
-        "-",
-    ]
-    try:
-        result = run_media_subprocess(
-            cmd,
-            operation="face_aware_scene_scan",
-            context=f"source={source_path.name} start={start:.3f} duration={duration:.3f}",
-            check=False,
-            capture_output=True,
-            text=True,
-            timeout=scale_media_timeout(
-                FFMPEG_SHORT_TIMEOUT,
-                duration_seconds=duration,
-                multiplier=0.5,
-                extra_seconds=10,
-            ),
-        )
-    except Exception:
-        current_app.logger.warning(
-            "Face-aware scene scan failed source=%s start=%.3f duration=%.3f",
-            source_path.name,
-            start,
-            duration,
-            exc_info=True,
-        )
-        return []
-    output = "\n".join([result.stdout or "", result.stderr or ""])
-    candidates = re.findall(
-        r"frame:\d+[^\n]*pts_time:([0-9.]+)[^\n]*\n[^\n]*lavfi\.scene_score=([0-9.]+)",
-        output,
-    )
-    return [
-        (float(score), float(start) + float(pts_time))
-        for pts_time, score in candidates
-    ]
+    scale_filter = f"scale={int(FACE_AWARE_DETECT_WIDTH)}:-2:flags=fast_bilinear"
+    scene_filter = f"select='gt(scene,{float(FACE_AWARE_SCENE_THRESHOLD):.6f})',metadata=print"
+    with tempfile.TemporaryDirectory(prefix="face_scene_") as temp_dir:
+        cmd = [
+            ffmpeg_bin, "-hide_banner", "-ss", f"{start:.6f}", "-t", f"{duration:.6f}",
+            "-i", str(source_path),
+        ]
+        if cut_samples is None:
+            cmd.extend(["-vf", f"{scale_filter},{scene_filter}", "-an", "-f", "null", "-"])
+        else:
+            frame_pattern = Path(temp_dir) / "frame_%06d.jpg"
+            filter_graph = (
+                f"[0:v]{scale_filter},split=2[scene_src][frame_src];"
+                f"[scene_src]{scene_filter}[scene_out];[frame_src]fps=20[frame_out]"
+            )
+            cmd.extend([
+                "-filter_complex", filter_graph,
+                "-map", "[scene_out]", "-an", "-f", "null", "-",
+                "-map", "[frame_out]", "-q:v", "3", str(frame_pattern),
+            ])
+        try:
+            result = run_media_subprocess(
+                cmd,
+                operation="face_aware_scene_scan",
+                context=f"source={source_path.name} start={start:.3f} duration={duration:.3f}",
+                check=False,
+                capture_output=True,
+                text=True,
+                timeout=scale_media_timeout(
+                    FFMPEG_SHORT_TIMEOUT,
+                    duration_seconds=duration,
+                    multiplier=0.5,
+                    extra_seconds=10,
+                ),
+            )
+        except Exception:
+            current_app.logger.warning(
+                "Face-aware scene scan failed source=%s start=%.3f duration=%.3f",
+                source_path.name, start, duration, exc_info=True,
+            )
+            return []
+        output = "\n".join([result.stdout or "", result.stderr or ""])
+        candidates = [
+            (float(score), float(start) + float(pts_time))
+            for pts_time, score in re.findall(
+                r"frame:\d+[^\n]*pts_time:([0-9.]+)[^\n]*\n[^\n]*lavfi\.scene_score=([0-9.]+)",
+                output,
+            )
+        ]
+        if cut_samples is not None and result.returncode == 0:
+            import cv2
+
+            detector = None
+            for _, scene_time in candidates:
+                for offset in (0.15, 0.4):
+                    target_time = scene_time + offset
+                    relative_time = target_time - float(start)
+                    if relative_time >= duration:
+                        continue
+                    frame_index = round(relative_time * 20) + 1
+                    image = cv2.imread(str(Path(temp_dir) / f"frame_{frame_index:06d}.jpg"))
+                    if image is None:
+                        continue
+                    sample, detector = _face_sample_from_image(
+                        image, source_t=target_time, detector=detector,
+                    )
+                    cut_samples.append(sample)
+        return candidates
 
 
 def _snap_face_aware_boundary(
@@ -5025,31 +5040,6 @@ def _face_sample_from_image(image: Any, *, source_t: float, detector: Any = None
     }, detector
 
 
-def _detect_face_samples_at_times(source_path: Path, source_times: List[float]) -> List[Dict[str, Any]]:
-    if not source_times:
-        return []
-    import cv2
-    import numpy as np
-
-    ffmpeg_bin = _resolve_ffmpeg()
-    samples: List[Dict[str, Any]] = []
-    detector = None
-    for source_t in sorted(set(round(value, 6) for value in source_times)):
-        cmd = [
-            ffmpeg_bin, "-hide_banner", "-loglevel", "error", "-ss", f"{source_t:.6f}",
-            "-i", str(source_path), "-frames:v", "1", "-vf",
-            f"scale={int(FACE_AWARE_DETECT_WIDTH)}:-2", "-f", "image2pipe", "-vcodec", "mjpeg", "-",
-        ]
-        result = run_media_subprocess(
-            cmd, operation="face_aware_cut_sample", context=f"source={source_path.name} t={source_t:.3f}",
-            check=True, capture_output=True, timeout=FFMPEG_SHORT_TIMEOUT,
-        )
-        image = cv2.imdecode(np.frombuffer(result.stdout, dtype=np.uint8), cv2.IMREAD_COLOR) if result.stdout else None
-        sample, detector = _face_sample_from_image(image, source_t=source_t, detector=detector)
-        samples.append(sample)
-    return samples
-
-
 def _detect_face_samples_for_span(
     *,
     video_id: str,
@@ -5321,9 +5311,10 @@ def _compute_face_aware_layout_segments(
     )
     scene_candidates: Optional[List[Tuple[float, float]]] = None
     scene_cuts: List[float] = []
+    extra_samples: List[Dict[str, Any]] = []
     if len(keep_ranges) <= 1:
         scene_candidates = _face_aware_scene_candidates(
-            source_path, start=float(start_seconds), duration=float(duration),
+            source_path, start=float(start_seconds), duration=float(duration), cut_samples=extra_samples,
         )
         scene_cuts = [
             round(float(scene_time) - float(start_seconds), 6)
@@ -5339,25 +5330,11 @@ def _compute_face_aware_layout_segments(
         source_keep_ranges=source_keep_ranges,
         cache_info=cache_info,
     )
-    if scene_cuts:
-        extra_source_times = [
-            float(start_seconds) + cut + offset
-            for cut in scene_cuts
-            for offset in (0.15, 0.4)
-            if cut + offset < duration
-        ]
-        try:
-            extra_samples = _detect_face_samples_at_times(source_path, extra_source_times)
-            samples.extend({
-                **{key: value for key, value in sample.items() if key != "source_t"},
-                "t": round(float(sample["source_t"]) - float(start_seconds), 6),
-            } for sample in extra_samples)
-            samples.sort(key=lambda sample: float(sample.get("t") or 0.0))
-        except Exception:
-            current_app.logger.warning(
-                "Could not sample scene cuts video_id=%s plan_index=%s", video_id, plan_index,
-                exc_info=True,
-            )
+    samples.extend({
+        **{key: value for key, value in sample.items() if key != "source_t"},
+        "t": round(float(sample["source_t"]) - float(start_seconds), 6),
+    } for sample in extra_samples)
+    samples.sort(key=lambda sample: float(sample.get("t") or 0.0))
     track_rows: list[dict[str, Any]] = []
     if samples:
         for sample in samples:

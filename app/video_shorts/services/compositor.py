@@ -4040,6 +4040,16 @@ def _compose_trimmed_with_background(
             {"start": 0.0, "end": float(duration), "mode": "fill", "zoom": 1.0}
         ]
     face_aware_layout_active = len(layout_segments) >= 1
+    isolated_face_segments = bool(
+        face_aware_layout_active
+        and len(layout_segments) > 1
+        and len(direct_source_ranges) == 1
+        and not direct_visual_override
+        and not direct_audio_source
+        and not music_only
+        and not outreach_layout
+        and source_fps <= 60.01
+    )
     face_aware_auto_caption_placement = bool(
         face_aware_layout_active
         and _is_face_aware_default_subtitle_margin(
@@ -4090,7 +4100,7 @@ def _compose_trimmed_with_background(
         ]
         if len(relative_ranges) == 1:
             item = relative_ranges[0]
-            if not direct_visual_override:
+            if not direct_visual_override and not isolated_face_segments:
                 filter_parts.append(
                     f"[1:v]trim=start={item['start']:.6f}:end={item['end']:.6f},"
                     "setpts=PTS-STARTPTS,settb=AVTB[clip_direct_v]"
@@ -4338,7 +4348,7 @@ def _compose_trimmed_with_background(
                     podcast_mode,
                 )
         if (not original_layout_mode) and face_aware_layout_active:
-            if len(layout_segments) > 1:
+            if len(layout_segments) > 1 and not isolated_face_segments:
                 source_labels = "".join(f"[layout_src_{idx}]" for idx in range(len(layout_segments)))
                 filter_parts.append(f"{clip_input_label}split={len(layout_segments)}{source_labels}")
             fit_indices = [idx for idx, segment in enumerate(layout_segments) if segment["mode"] == "fit"]
@@ -4362,9 +4372,13 @@ def _compose_trimmed_with_background(
                 seg_duration = max(0.001, seg_end - seg_start)
                 seg_trim = f"[layout_trim_{idx}]"
                 seg_out = f"[layout_out_{idx}]"
-                layout_src = f"[layout_src_{idx}]" if len(layout_segments) > 1 else clip_input_label
+                layout_src = (
+                    f"[face_segment_input_{idx}]" if isolated_face_segments
+                    else f"[layout_src_{idx}]" if len(layout_segments) > 1 else clip_input_label
+                )
                 filter_parts.append(
-                    f"{layout_src}trim=start={seg_start:.6f}:end={seg_end:.6f},"
+                    f"{layout_src}trim=start={0.0 if isolated_face_segments else seg_start:.6f}:"
+                    f"end={seg_duration if isolated_face_segments else seg_end:.6f},"
                     f"setpts=PTS-STARTPTS,settb=AVTB{seg_trim}"
                 )
                 if segment["mode"] == "fit":
@@ -5160,6 +5174,22 @@ def _compose_trimmed_with_background(
     if music_enabled:
         cmd.extend(["-stream_loop", "-1", "-i", str(music_path)])
         audio_map = edge_audio_map or music_audio_map or audio_map
+    if isolated_face_segments:
+        next_input_index = sum(argument == "-i" for argument in cmd)
+        for idx, segment in enumerate(layout_segments):
+            segment_start = float(segment["start"])
+            segment_duration = float(segment["end"]) - segment_start
+            source_seek = (direct_source_seek if direct_source_timeline else 0.0) + segment_start
+            cmd.extend([
+                "-threads", "1", "-ss", f"{source_seek:.6f}",
+                "-t", f"{segment_duration + 0.100:.6f}", "-i", str(clip_video_source),
+            ])
+            filter_complex = filter_complex.replace(
+                f"[face_segment_input_{idx}]", f"[{next_input_index + idx}:v]",
+            )
+        current_app.logger.info(
+            "Face-aware segments use isolated source inputs count=%s", len(layout_segments),
+        )
     video_encode_args = ["-preset", "ultrafast", "-crf", "23", "-c:v", "libx264"]
     if high_quality_encode:
         maxrate = "14M" if output_fps > 30.01 else "10M"
