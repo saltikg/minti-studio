@@ -12186,16 +12186,13 @@ const snapshotGenerateV2ClipEditForm = (form) => {
 
 const rememberGenerateV2ClipEditSnapshot = (form = generateV2ClipEditState.form) => {
   if (!form) return;
-  form.dataset.transcriptDirty = "0";
+  form.dataset.transcriptSaveFailed = "0";
   generateV2ClipEditState.snapshot = snapshotGenerateV2ClipEditForm(form);
 };
 
 const getGenerateV2ClipEditDifferences = () => {
   const form = generateV2ClipEditState.form;
   const differences = [];
-  if (form?.dataset.transcriptDirty === "1") {
-    differences.push({ field: "transcript", before: "saved", after: "edited" });
-  }
   (generateV2ClipEditState.snapshot || []).forEach(({ field, value, checked, selectedIndex }) => {
     if (!field) return;
     const label = field.name || field.id || field.dataset?.editField || field.tagName.toLowerCase();
@@ -12370,15 +12367,17 @@ window.setGenerateV2EditorBusy = setGenerateV2EditorBusy;
 window.setGenerateV2EditorStatus = setGenerateV2EditorStatus;
 
 let closeActiveGenerateV2DiscardDialog = null;
-const requestGenerateV2DiscardConfirm = () => new Promise((resolve) => {
+const requestGenerateV2DiscardConfirm = ({ message = "Your edits have not been saved." } = {}) => new Promise((resolve) => {
   const dialog = document.getElementById("generate-v2-discard-dialog");
   const keep = document.getElementById("generate-v2-discard-keep");
   const discard = document.getElementById("generate-v2-discard-confirm");
   const close = document.getElementById("generate-v2-discard-close");
+  const copy = dialog?.querySelector(".generate-v2-discard-dialog-copy");
   if (!dialog || !keep || !discard || !close) {
-    resolve(window.confirm("Discard changes?"));
+    resolve(window.confirm(message));
     return;
   }
+  if (copy) copy.textContent = message;
   closeActiveGenerateV2DiscardDialog?.(false);
   let settled = false;
   const cleanup = (result) => {
@@ -12424,7 +12423,7 @@ const confirmGenerateV2LeaveEditor = async (anchor = null) => {
   if (!generateV2EditState.active || !isGenerateV2EditorDirty()) {
     return true;
   }
-  return requestGenerateV2DiscardConfirm(anchor);
+  return requestGenerateV2DiscardConfirm();
 };
 
 const setGenerateV2EditorTitleLabels = (active) => {
@@ -13450,11 +13449,25 @@ const mountGenerateV2ClipEditor = (planIndex = "") => {
   }
 };
 
-const confirmGenerateV2ClipSwitch = async (anchor = null) => {
-  if (!generateV2ClipEditState.form || !isGenerateV2ClipEditDirty()) {
+const confirmGenerateV2ClipSwitch = async () => {
+  const form = generateV2ClipEditState.form;
+  if (!form) {
     return true;
   }
-  return requestGenerateV2DiscardConfirm(anchor);
+  const wordEditors = Array.from(form.querySelectorAll("[data-clip-text-trim-editor]"));
+  for (const editor of wordEditors) {
+    const activeEdit = editor.__mintiTranscriptWordEdit;
+    if (activeEdit?.save) {
+      await activeEdit.save();
+    }
+  }
+  if (form.dataset.transcriptSaveFailed === "1") {
+    return requestGenerateV2DiscardConfirm({ message: "A word edit couldn't be saved." });
+  }
+  if (!isGenerateV2ClipEditDirty()) {
+    return true;
+  }
+  return requestGenerateV2DiscardConfirm();
 };
 
 const getGenerateV2DownloadFrame = () => {
@@ -14480,6 +14493,7 @@ const startGenerateV2TranscriptWordEdit = async ({
   editUrl = "",
   onAfterSave = null,
   onAfterCancel = null,
+  onAfterFailure = null,
   toast = showGenerateV2TextToast,
 } = {}) => {
   if (!editUrl || !span || !word || !editor) return;
@@ -14578,6 +14592,7 @@ const startGenerateV2TranscriptWordEdit = async ({
         word.text = nextText;
         resetGenerateV2EditableWordSpan(span, word);
         finish(onAfterCancel);
+        onAfterFailure?.();
         showGenerateV2WordEditStatus(span, { retry: retrySave });
         return false;
       }
@@ -15319,9 +15334,10 @@ const hideClipTextTrimToolbar = () => {
   }
 };
 
-const markGenerateV2ClipEditorTranscriptDirty = (form) => {
+const updateGenerateV2ClipEditorTranscriptState = (form, { saveFailed = false } = {}) => {
   if (!form) return;
-  form.dataset.transcriptDirty = "1";
+  form.dataset.transcriptSaveFailed = saveFailed ? "1" : "0";
+  if (saveFailed) return;
   const planIndex = String(form.dataset.planIndex || "").trim();
   const escaped = cssEscapeValue(planIndex);
   const row = planIndex ? document.querySelector(`.clip-rail-row[data-plan-index='${escaped}']`) : form.closest(".clip-rail-row");
@@ -15416,10 +15432,11 @@ const renderClipTextTrimEditor = (form, options = {}) => {
         editor,
         editUrl,
         onAfterSave: () => {
-          markGenerateV2ClipEditorTranscriptDirty(form);
+          updateGenerateV2ClipEditorTranscriptState(form);
           updateGenerateV2UnrenderedPreviewActions();
         },
         onAfterCancel: () => updateGenerateV2UnrenderedPreviewActions(),
+        onAfterFailure: () => updateGenerateV2ClipEditorTranscriptState(form, { saveFailed: true }),
       });
     });
     fragment.appendChild(span);
@@ -15679,7 +15696,6 @@ const initGenerateV2ClipTitleTimeEditors = () => {
           rememberGenerateV2ClipEditSnapshot(form);
         }
         if (payload.job_id) {
-          form.dataset.transcriptDirty = "0";
           const card = getClipCardByPlanIndex(planIndex);
           const renderMode = payload.render_mode || (payload.regenerated ? "regenerate" : "render");
           if (card) {
