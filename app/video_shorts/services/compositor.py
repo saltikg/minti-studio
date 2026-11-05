@@ -4097,6 +4097,13 @@ def _compose_trimmed_with_background(
         )
     else:
         scale_stage = f"scale={overlay_width}:{overlay_height},"
+    face_aware_fill_scale_stage = (
+        f"scale={target_width}:{target_height}:force_original_aspect_ratio=increase,"
+        f"crop={target_width}:{target_height},"
+    )
+    face_aware_segment_output_stage = (
+        f"fps={output_fps:.6f},setsar=1,format=yuv420p,settb=AVTB"
+    )
 
     face_aware_has_fit_segment = any(
         str(segment.get("mode") or "").strip().lower() == "fit"
@@ -4417,7 +4424,7 @@ def _compose_trimmed_with_background(
                     )
                     filter_parts.append(
                         f"{fit_bg}{fit_scaled}overlay=(W-w)/2:{fit_overlay_y}:shortest=1,"
-                        f"format=yuv420p,settb=AVTB{seg_out}"
+                        f"{face_aware_segment_output_stage}{seg_out}"
                     )
                 elif segment["mode"] == "split":
                     split_crops = segment.get("split_crops") if isinstance(segment.get("split_crops"), dict) else {}
@@ -4463,7 +4470,7 @@ def _compose_trimmed_with_background(
                     filter_parts.append(
                         f"{split_div_top}drawbox=x=0:y={split_seam_y}+{split_divider_thickness}/2:"
                         f"w={target_width}:h={split_divider_outline_thickness}:color=black@1.0:t=fill,"
-                        f"format=yuv420p,settb=AVTB{seg_out}"
+                        f"{face_aware_segment_output_stage}{seg_out}"
                     )
                 else:
                     try:
@@ -4517,7 +4524,7 @@ def _compose_trimmed_with_background(
                         seg_crop_h_for_filter = crop_h
                     filter_parts.append(
                         f"{seg_trim}crop=iw*{_fmt(seg_crop_w_for_filter)}:ih*{_fmt(seg_crop_h_for_filter)}:{seg_crop_x_expr}:{seg_crop_y_expr},"
-                        f"{scale_stage}setsar=1,format=yuv420p,settb=AVTB{seg_out}"
+                        f"{face_aware_fill_scale_stage}{face_aware_segment_output_stage}{seg_out}"
                     )
                 segment_outputs.append(seg_out)
             if len(segment_outputs) == 1:
