@@ -52,6 +52,7 @@ def test_auto_render_drops_stale_admin_scope_from_worker_context(monkeypatch):
             video_pk=7937,
             plan_index=1,
         )
+        restored_scope = dict(g.vs_admin_operation_scope)
 
     assert result["ok"] is True
     assert captured == {
@@ -59,6 +60,35 @@ def test_auto_render_drops_stale_admin_scope_from_worker_context(monkeypatch):
         "owner_user_id": "owner-1",
         "brand_id": "brand-1",
     }
+    assert restored_scope["owner_user_id"] == "stale-owner"
+
+
+def test_lead_render_restores_previous_admin_scope(monkeypatch):
+    app = Flask(__name__)
+    captured = {}
+    monkeypatch.setattr(generation, "get_db_readonly", lambda: _UserConnection())
+
+    def _autoclip(_video_pk):
+        captured["scope"] = dict(g.vs_admin_operation_scope)
+        return jsonify(success=True, job_id="lead-render-job")
+
+    monkeypatch.setattr(generation, "autoclip_video", _autoclip)
+
+    with app.app_context():
+        g.vs_admin_operation_scope = {"owner_user_id": "previous-owner"}
+        result = generation._enqueue_selected_lead_render(
+            lead_id="lead-1",
+            owner_user_id="owner-1",
+            brand_id="brand-1",
+            video_pk=7937,
+            plan_index=1,
+        )
+        restored_scope = dict(g.vs_admin_operation_scope)
+
+    assert result["ok"] is True
+    assert captured["scope"]["owner_user_id"] == "owner-1"
+    assert captured["scope"]["workspace_kind"] == "lead"
+    assert restored_scope == {"owner_user_id": "previous-owner"}
 
 
 def test_editor_context_fails_closed_outside_request():

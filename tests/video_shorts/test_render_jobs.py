@@ -11,6 +11,7 @@ from types import ModuleType, SimpleNamespace
 from uuid import uuid4
 
 import pytest
+from flask import g
 from werkzeug.exceptions import NotFound
 
 def _ensure_module(name: str) -> ModuleType:
@@ -121,6 +122,70 @@ def _configure_duckdb(monkeypatch, tmp_path, filename: str) -> None:
     db_path = tmp_path / filename
     monkeypatch.setattr(db_service, "VIDEO_SHORTS_DB_BACKEND", "duckdb")
     monkeypatch.setattr(db_service, "VIDEO_SHORTS_DB", str(db_path))
+
+
+@pytest.mark.parametrize("second_job_type", [
+    render_jobs.JOB_TYPE_AUTO_SUGGEST_RENDER,
+    render_jobs.JOB_TYPE_PUBLISH_SHORT,
+])
+def test_worker_jobs_isolate_admin_scope_for_auto_suggest_and_deferred_publish(
+    monkeypatch,
+    second_job_type,
+):
+    app = create_app()
+    jobs = iter([
+        {
+            "id": "admin-scope-job",
+            "type": render_jobs.JOB_TYPE_ENRICH_DISCOVERY_EMAILS,
+            "user_id": "admin-1",
+            "payload": {},
+        },
+        {
+            "id": "customer-job",
+            "type": second_job_type,
+            "user_id": "owner-1",
+            "payload": (
+                {"youtube_schedule_id": "schedule-1", "brand_id": "brand-1"}
+                if second_job_type == render_jobs.JOB_TYPE_PUBLISH_SHORT
+                else {"brand_id": "brand-1"}
+            ),
+        },
+    ])
+    observed_scopes = []
+
+    monkeypatch.setattr(worker_module, "_worker_should_wait_before_claim", lambda _app: False)
+    monkeypatch.setattr(worker_module, "claim_next_job", lambda *_args, **_kwargs: next(jobs, None))
+    monkeypatch.setattr(worker_module, "mark_job_done", lambda *_args, **_kwargs: None)
+    monkeypatch.setattr(worker_module, "_set_job_progress", lambda *_args, **_kwargs: None)
+
+    def set_admin_scope(_payload):
+        g.vs_admin_operation_scope = {
+            "owner_user_id": "lead-owner",
+            "brand_id": "lead-brand",
+            "workspace_kind": "lead",
+        }
+        return {"success": True}
+
+    def observe_scope(_payload):
+        observed_scopes.append(g.get("vs_admin_operation_scope"))
+        return {"success": True}
+
+    monkeypatch.setattr(worker_module, "enrich_discovery_email_batch", set_admin_scope)
+    monkeypatch.setattr(generation, "execute_auto_suggest_render_job", observe_scope)
+    monkeypatch.setattr(
+        worker_module,
+        "_load_user_context",
+        lambda *_args, **_kwargs: ({"id": "owner-1"}, {"id": "brand-1"}),
+    )
+    monkeypatch.setattr(
+        worker_module.youtube_scheduling,
+        "execute_scheduled_upload",
+        lambda _schedule_id: observe_scope({}),
+    )
+
+    assert process_next_job(app, "same-worker") is True
+    assert process_next_job(app, "same-worker") is True
+    assert observed_scopes == [None]
 
 
 def _insert_user(user_id: str, plan_id: str) -> None:

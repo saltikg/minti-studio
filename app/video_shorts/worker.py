@@ -129,6 +129,7 @@ from app.video_shorts.services.user_events import prepare_transcript_completed_t
 from app.video_shorts.services.youtube_oauth import has_refresh_token
 from app.video_shorts.services import youtube_scheduling
 from app.video_shorts.services.instagram_queue import enqueue_instagram_clip
+from app.video_shorts.services.job_context import clean_job_context
 from app.video_shorts.services.db import (
     _ensure_transcript_schema,
     _ensure_video_crop_schema,
@@ -1878,35 +1879,36 @@ def _execute_render_job(app, job: Dict[str, Any]) -> Dict[str, Any]:
     plan_index = int(payload.get("plan_index"))
     title = str(payload.get("title") or "").strip()
     user, brand = _load_user_context(job["user_id"], payload.get("brand_id"))
-    with app.app_context():
-        with app.test_request_context(
-            f"/video_shorts/generate/{video_pk}/autoclip",
-            method="POST",
-            data={
-                "plan_index": str(plan_index),
-                "title": title,
-                "_queued_job": "1",
-                "_regenerate_job": "1" if payload.get("regenerate") else "",
-                "_render_settings_hash": str(payload.get("render_settings_hash") or ""),
-                "_render_settings_options": json.dumps(payload.get("options") or {}, separators=(",", ":")),
-                "_discovery_demo_job": "1" if str(payload.get("job_origin") or "").strip() == "discovery_demo" else "",
-            },
-            headers={"X-Requested-With": "XMLHttpRequest"},
-        ):
-            g.vs_current_user = user
-            if brand:
-                g.vs_current_brand = brand
-            try:
-                completed = _render_job_completion_from_assets(job)
-                if completed:
-                    return completed
-                guarded = generation._guard_youtube_clip_mutation(
-                    video_pk, plan_index, state="rendering"
-                )
-                result = guarded if guarded is not None else generation.autoclip_video(video_pk)
-            finally:
-                generation._release_youtube_clip_mutation_lease()
-            status_code, response_payload = _normalize_response(result)
+    with clean_job_context(
+        app,
+        request_path=f"/video_shorts/generate/{video_pk}/autoclip",
+        request_method="POST",
+        request_data={
+            "plan_index": str(plan_index),
+            "title": title,
+            "_queued_job": "1",
+            "_regenerate_job": "1" if payload.get("regenerate") else "",
+            "_render_settings_hash": str(payload.get("render_settings_hash") or ""),
+            "_render_settings_options": json.dumps(payload.get("options") or {}, separators=(",", ":")),
+            "_discovery_demo_job": "1" if str(payload.get("job_origin") or "").strip() == "discovery_demo" else "",
+        },
+        request_headers={"X-Requested-With": "XMLHttpRequest"},
+        g_values={
+            "vs_current_user": user,
+            "vs_current_brand": brand,
+        },
+    ):
+        try:
+            completed = _render_job_completion_from_assets(job)
+            if completed:
+                return completed
+            guarded = generation._guard_youtube_clip_mutation(
+                video_pk, plan_index, state="rendering"
+            )
+            result = guarded if guarded is not None else generation.autoclip_video(video_pk)
+        finally:
+            generation._release_youtube_clip_mutation_lease()
+        status_code, response_payload = _normalize_response(result)
     if status_code >= 500:
         raise RuntimeError(response_payload.get("message") or "Render job failed.")
     if status_code >= 400:
@@ -1920,9 +1922,12 @@ def _execute_publish_job(app, job: Dict[str, Any]) -> Dict[str, Any]:
     payload = job.get("payload") or {}
     if payload.get("youtube_schedule_id"):
         user, brand = _load_user_context(job["user_id"], payload.get("brand_id"))
-        with app.test_request_context("/video_shorts/youtube/deferred", method="POST"):
-            g.vs_current_user = user
-            g.vs_current_brand = brand
+        with clean_job_context(
+            app,
+            request_path="/video_shorts/youtube/deferred",
+            request_method="POST",
+            g_values={"vs_current_user": user, "vs_current_brand": brand},
+        ):
             return youtube_scheduling.execute_scheduled_upload(payload["youtube_schedule_id"])
     session_id = str(payload.get("quick_session_id") or "").strip()
     video_pk = int(payload.get("video_pk"))
@@ -1966,22 +1971,23 @@ def _execute_publish_job(app, job: Dict[str, Any]) -> Dict[str, Any]:
             raise
         youtube_id = response.get("id")
         publish_status = response["status"]
-        with app.app_context():
-            with app.test_request_context("/video_shorts/shorts/quick", method="POST"):
-                g.vs_current_user = user
-                if brand:
-                    g.vs_current_brand = brand
-                generation._update_plan_entry_publish_state(
-                    video_pk=video_pk,
-                    plan_index="1",
-                    filename=clip_filename,
-                    publish_status=publish_status,
-                    publish_at_local=publish_at_local,
-                    publish_at_iso=publish_at_iso,
-                    title=title,
-                    description=description,
-                    youtube_id=youtube_id,
-                )
+        with clean_job_context(
+            app,
+            request_path="/video_shorts/shorts/quick",
+            request_method="POST",
+            g_values={"vs_current_user": user, "vs_current_brand": brand},
+        ):
+            generation._update_plan_entry_publish_state(
+                video_pk=video_pk,
+                plan_index="1",
+                filename=clip_filename,
+                publish_status=publish_status,
+                publish_at_local=publish_at_local,
+                publish_at_iso=publish_at_iso,
+                title=title,
+                description=description,
+                youtube_id=youtube_id,
+            )
         return {
             "target": "youtube",
             "status": publish_status,
@@ -2036,7 +2042,7 @@ def _execute_instagram_comment_webhook_job(app, job: Dict[str, Any]) -> Dict[str
     return process_instagram_comment_webhook_job(job.get("payload") or {})
 
 
-def process_next_job(
+def _process_next_job(
     app,
     worker_id: str,
     *,
@@ -2199,6 +2205,24 @@ def process_next_job(
             if latest.get("type") == JOB_TYPE_RENDER_SHORT:
                 render_timing.clear()
         return True
+
+
+def process_next_job(
+    app,
+    worker_id: str,
+    *,
+    job_type: Optional[str] = None,
+    customer_only: bool = False,
+    discovery_only: bool = False,
+) -> bool:
+    with clean_job_context(app):
+        return _process_next_job(
+            app,
+            worker_id,
+            job_type=job_type,
+            customer_only=customer_only,
+            discovery_only=discovery_only,
+        )
 
 
 def _render_job_completion_from_assets(job: Dict[str, Any]) -> Optional[Dict[str, Any]]:
@@ -2475,7 +2499,10 @@ def run_worker_loop() -> None:
     worker_id = _worker_id()
     mode = _worker_mode()
     app = create_app()
-    with app.app_context():
+    worker_context = clean_job_context(app)
+    worker_context.__enter__()
+    context_active = True
+    try:
         app.logger.info("Minti worker starting worker_id=%s mode=%s", worker_id, mode)
         if mode in {"all", "discovery"}:
             try:
@@ -2489,6 +2516,11 @@ def run_worker_loop() -> None:
             except Exception:
                 app.logger.exception("Discovery temp janitor failed at startup")
         while True:
+            worker_context.__exit__(None, None, None)
+            context_active = False
+            worker_context = clean_job_context(app)
+            worker_context.__enter__()
+            context_active = True
             if mode in {"all", "discovery"}:
                 try:
                     run_discovery_temp_janitor()
@@ -2589,6 +2621,9 @@ def run_worker_loop() -> None:
                     break
             if not processed_any:
                 time.sleep(JOB_POLL_INTERVAL_SECONDS)
+    finally:
+        if context_active:
+            worker_context.__exit__(None, None, None)
 
 
 def main() -> None:

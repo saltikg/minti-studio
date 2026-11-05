@@ -9176,25 +9176,31 @@ def _enqueue_selected_lead_render(
         conn.close()
     if not user_row:
         return {"ok": False, "status_code": 404, "message": "Owner user not found."}
-    with current_app.test_request_context(
-        f"/video_shorts/generate/{int(video_pk)}/autoclip?admin_operation_brand={brand_id}&admin_operation_kind=lead",
-        method="POST",
-        data={"plan_index": str(plan_index), "_discovery_pipeline_job": "1"},
-        headers={"X-Requested-With": "XMLHttpRequest"},
+    from app.video_shorts.services.job_context import clean_job_context
+
+    app = current_app._get_current_object()
+    with clean_job_context(
+        app,
+        request_path=f"/video_shorts/generate/{int(video_pk)}/autoclip?admin_operation_brand={brand_id}&admin_operation_kind=lead",
+        request_method="POST",
+        request_data={"plan_index": str(plan_index), "_discovery_pipeline_job": "1"},
+        request_headers={"X-Requested-With": "XMLHttpRequest"},
+        g_values={
+            "vs_current_user": {
+                "id": str(user_row[0]),
+                "email": str(user_row[1] or ""),
+                "role": str(user_row[2] or ""),
+                "plan_id": user_row[3],
+            },
+            "vs_current_brand": {"id": brand_id},
+            "vs_admin_operation_scope": {
+                "owner_user_id": owner_user_id,
+                "brand_id": brand_id,
+                "workspace_kind": "lead",
+                "acting_admin_id": "autopilot_cron",
+            },
+        },
     ):
-        g.vs_current_user = {
-            "id": str(user_row[0]),
-            "email": str(user_row[1] or ""),
-            "role": str(user_row[2] or ""),
-            "plan_id": user_row[3],
-        }
-        g.vs_current_brand = {"id": brand_id}
-        g.vs_admin_operation_scope = {
-            "owner_user_id": owner_user_id,
-            "brand_id": brand_id,
-            "workspace_kind": "lead",
-            "acting_admin_id": "autopilot_cron",
-        }
         response = autoclip_video(int(video_pk))
         status_code = getattr(response, "status_code", None)
         response_obj = response
@@ -9459,34 +9465,33 @@ def _enqueue_auto_render_for_plan_entry(
         conn.close()
     if not user_row:
         return {"ok": False, "status_code": 404, "message": "Owner user not found."}
-    with current_app.test_request_context(
-        f"/video_shorts/generate/{int(video_pk)}/autoclip",
-        method="POST",
-        data={
+    from app.video_shorts.services.job_context import clean_job_context
+
+    app = current_app._get_current_object()
+    with clean_job_context(
+        app,
+        request_path=f"/video_shorts/generate/{int(video_pk)}/autoclip",
+        request_method="POST",
+        request_data={
             "plan_index": str(plan_index),
             "_auto_render_job": "1",
         },
-        headers={"X-Requested-With": "XMLHttpRequest"},
+        request_headers={"X-Requested-With": "XMLHttpRequest"},
+        g_values={
+            "vs_current_user": {
+                "id": str(user_row[0]),
+                "email": str(user_row[1] or ""),
+                "role": str(user_row[2] or ""),
+                "plan_id": user_row[3],
+            },
+            "vs_current_brand": {"id": brand_id},
+            "vs_auto_suggest_render_context": {
+                "quota_exempt": True,
+                "default_customer": bool(default_customer),
+                "admin_job_metadata": dict(admin_job_metadata or {}),
+            },
+        },
     ):
-        # Workers keep one application context alive across jobs. A request
-        # context nested inside it shares ``g``, so an admin operation handled
-        # by an earlier job can otherwise leak its target into this customer's
-        # auto-render and make the tenant guard reject the correct video.
-        g.pop("vs_admin_operation_scope", None)
-        g.pop("vs_admin_operation_workspace_kind", None)
-        g.pop("vs_editor_scope_validation_key", None)
-        g.vs_current_user = {
-            "id": str(user_row[0]),
-            "email": str(user_row[1] or ""),
-            "role": str(user_row[2] or ""),
-            "plan_id": user_row[3],
-        }
-        g.vs_current_brand = {"id": brand_id}
-        g.vs_auto_suggest_render_context = {
-            "quota_exempt": True,
-            "default_customer": bool(default_customer),
-            "admin_job_metadata": dict(admin_job_metadata or {}),
-        }
         response = autoclip_video(int(video_pk))
         status_code = getattr(response, "status_code", None)
         response_obj = response
