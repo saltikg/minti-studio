@@ -4,7 +4,7 @@ import logging
 import requests
 from typing import Dict, List, Optional
 
-from app.video_shorts.config import COMMENT_FETCH_MAX_PAGES, IG_GRAPH_API_BASE
+from app.video_shorts.config import COMMENT_FETCH_MAX_PAGES, IG_GRAPH_API_BASE, IG_GRAPH_API_VERSION
 from app.video_shorts.services.comment_moderation import moderate_text_entries
 from app.video_shorts.services.comment_store import upsert_comment_records
 from app.video_shorts.services.instagram_queue import (
@@ -13,6 +13,7 @@ from app.video_shorts.services.instagram_queue import (
     update_instagram_metrics,
     upsert_instagram_comment_cache,
 )
+from app.video_shorts.services.social_queue_identity import queue_token_identity
 from src.trends.instagram_tokens import get_instagram_credentials
 
 logger = logging.getLogger(__name__)
@@ -211,20 +212,37 @@ def _get_entry_and_token(queue_id: str):
     entry = get_instagram_queue_entry(queue_id)
     if not entry:
         raise InstagramActionError("Instagram kuyruğu kaydı bulunamadı.")
-    user_id = entry.get("user_id")
-    if not user_id:
-        raise InstagramActionError("Instagram kullanıcısı bulunamadı.")
-    creds = get_instagram_credentials(user_id)
+    try:
+        token_owner = queue_token_identity(entry)
+    except ValueError as exc:
+        raise InstagramActionError(str(exc)) from exc
+    creds = get_instagram_credentials(token_owner)
     if not creds:
-        raise InstagramActionError("Instagram erişim bilgisi bulunamadı.")
+        raise InstagramActionError(
+            f"Instagram credentials missing for scoped owner={token_owner}."
+        )
+    if str(creds.get("user_id") or "").strip() != token_owner:
+        raise InstagramActionError("Instagram credential owner mismatch.")
+    expected_account = str(entry.get("instagram_business_account_id") or "").strip()
+    actual_account = str(creds.get("instagram_business_account_id") or "").strip()
+    if not expected_account or expected_account != actual_account:
+        raise InstagramActionError("Instagram credential account mismatch.")
     token = creds.get("page_access_token")
     if not token:
         raise InstagramActionError("Instagram page token eksik.")
     return entry, token
 
 
+def _versioned_graph_base() -> str:
+    base = IG_GRAPH_API_BASE.rstrip("/")
+    last_segment = base.rsplit("/", 1)[-1].lower()
+    if last_segment.startswith("v") and last_segment[1:].replace(".", "").isdigit():
+        return base
+    return f"{base}/{IG_GRAPH_API_VERSION.strip('/')}"
+
+
 def _graph_request(method: str, path: str, token: str, *, params=None, data=None):
-    url = f"{IG_GRAPH_API_BASE.rstrip('/')}/{path.lstrip('/')}"
+    url = f"{_versioned_graph_base()}/{path.lstrip('/')}"
     params = params or {}
     params["access_token"] = token
     resp = requests.request(method, url, params=params, data=data, timeout=20)
@@ -328,7 +346,7 @@ def set_instagram_comment_like(queue_id: str, comment_id: str, like: bool = True
     _graph_request(method, path, token)
 
 
-def refresh_instagram_media(queue_id: str, comments_limit: int = 25) -> None:
+def refresh_instagram_media(queue_id: str, comments_limit: int = 25) -> Dict[str, Optional[int]]:
     entry, token = _get_entry_and_token(queue_id)
     media_id = entry.get("instagram_media_id")
     if not media_id:
@@ -341,30 +359,42 @@ def refresh_instagram_media(queue_id: str, comments_limit: int = 25) -> None:
             "fields": "id,media_type,permalink,like_count,comments_count,timestamp",
         },
     )
-    views = None
-    reach = None
-    saved = None
-    shares = None
+    metrics = "views,reach,likes,comments,saved,shares,total_interactions"
     try:
         insights = _graph_request(
             "GET",
             f"{media_id}/insights",
             token,
-            params={"metric": "views,reach,likes,comments,saved,shares,total_interactions"},
+            params={"metric": metrics},
         )
         views = _extract_insight_value(insights, "views")
         reach = _extract_insight_value(insights, "reach")
+        insight_likes = _extract_insight_value(insights, "likes")
+        insight_comments = _extract_insight_value(insights, "comments")
         saved = _extract_insight_value(insights, "saved")
         shares = _extract_insight_value(insights, "shares")
     except InstagramActionError as exc:
         media_type = (details.get("media_type") or "").lower()
-        print(f"Instagram insights failed media_id={media_id} media_type={media_type}: {exc}")
+        logger.error(
+            "Instagram insights failed media_id=%s media_type=%s metrics=%s api_base=%s error=%s",
+            media_id, media_type, metrics, _versioned_graph_base(), exc,
+        )
+        raise
+    if views is None:
+        error = InstagramActionError("Instagram insights response did not include views.")
+        logger.error(
+            "Instagram insights missing views media_id=%s metrics=%s api_base=%s response=%s",
+            media_id, metrics, _versioned_graph_base(), insights,
+        )
+        raise error
+    like_count = insight_likes if insight_likes is not None else details.get("like_count")
+    comment_count = insight_comments if insight_comments is not None else details.get("comments_count")
     update_instagram_metrics(
         queue_id,
-        like_count=details.get("like_count"),
-        comment_count=details.get("comments_count"),
+        like_count=like_count,
+        comment_count=comment_count,
         permalink=details.get("permalink"),
-        impressions=views,
+        views=views,
         reach=reach,
         saved=saved,
         shares=shares,
@@ -388,10 +418,18 @@ def refresh_instagram_media(queue_id: str, comments_limit: int = 25) -> None:
         upsert_comment_records(records)
     upsert_instagram_comment_cache(
         media_id,
-        details.get("like_count"),
-        details.get("comments_count"),
+        like_count,
+        comment_count,
         comments,
     )
+    return {
+        "views": views,
+        "reach": reach,
+        "likes": like_count,
+        "comments": comment_count,
+        "saved": saved,
+        "shares": shares,
+    }
 
 
 def fetch_instagram_comment_details(queue_id: str, comment_id: str) -> Dict[str, object]:

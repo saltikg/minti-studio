@@ -1662,6 +1662,7 @@ def ensure_instagram_queue_schema(conn):
                 permalink VARCHAR,
                 like_count INTEGER,
                 comment_count INTEGER,
+                views INTEGER,
                 impressions INTEGER,
                 reach INTEGER,
                 saved INTEGER,
@@ -1683,6 +1684,11 @@ def ensure_instagram_queue_schema(conn):
             conn.execute(
                 "ALTER TABLE shorts_instagram_queue ADD COLUMN last_seen_comment_count INTEGER DEFAULT 0"
             )
+        except Exception:
+            pass
+    if "views" not in cols:
+        try:
+            conn.execute("ALTER TABLE shorts_instagram_queue ADD COLUMN views INTEGER")
         except Exception:
             pass
 

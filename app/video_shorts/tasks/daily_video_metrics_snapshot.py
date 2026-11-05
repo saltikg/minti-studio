@@ -386,7 +386,7 @@ def _build_instagram_rows(
                     "scoped_user_id": record.get("user_id"),
                     "video_title": entry.get("plan_title"),
                     "impressions": _int_or_none(record.get("impressions")),
-                    "views": None,
+                    "views": _int_or_none(record.get("views")),
                     "comments": _int_or_none(record.get("comment_count")),
                     "likes": _int_or_none(record.get("like_count")),
                     "shares": _int_or_none(record.get("shares")),

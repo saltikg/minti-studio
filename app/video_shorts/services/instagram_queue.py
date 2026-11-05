@@ -743,7 +743,11 @@ def load_instagram_comment_cache_map(media_ids: List[str]) -> Dict[str, Dict[str
         conn.close()
 
 
-def fetch_instagram_media_jobs(limit: Optional[int] = None) -> List[Dict[str, Optional[str]]]:
+def fetch_instagram_media_jobs(
+    limit: Optional[int] = None,
+    *,
+    published_since: Optional[str] = None,
+) -> List[Dict[str, Optional[str]]]:
     conn = None
     for attempt in range(3):
         try:
@@ -757,17 +761,24 @@ def fetch_instagram_media_jobs(limit: Optional[int] = None) -> List[Dict[str, Op
         return []
     try:
         ensure_instagram_queue_schema(conn)
-        query = """
-            SELECT id, user_id, instagram_media_id, plan_title, media_type
+        published_clause = ""
+        params: List[object] = []
+        if published_since:
+            published_clause = " AND published_at >= ?"
+            params.append(published_since)
+        query = f"""
+            SELECT id, user_id, brand_id, instagram_media_id, plan_title, media_type, published_at
             FROM shorts_instagram_queue
             WHERE instagram_media_id IS NOT NULL
+              AND status = 'published'
+              {published_clause}
             ORDER BY updated_at DESC
         """
         try:
             if limit:
-                rows = conn.execute(query + " LIMIT ?", [limit]).fetchall()
+                rows = conn.execute(query + " LIMIT ?", [*params, limit]).fetchall()
             else:
-                rows = conn.execute(query).fetchall()
+                rows = conn.execute(query, params).fetchall()
         except Exception as exc:
             if "shorts_instagram_queue" in str(exc).lower():
                 return []
@@ -801,6 +812,7 @@ def get_instagram_queue_entry(queue_id: str) -> Optional[Dict[str, Optional[str]
                 like_count,
                 comment_count,
                 {last_seen_expr} AS last_seen_comment_count,
+                views,
                 impressions,
                 reach,
                 saved,
@@ -835,6 +847,7 @@ def get_instagram_queue_entry_by_media_id(media_id: str) -> Optional[Dict[str, O
             SELECT
                 id,
                 user_id,
+                brand_id,
                 video_id,
                 clip_filename,
                 instagram_media_id,
@@ -846,6 +859,7 @@ def get_instagram_queue_entry_by_media_id(media_id: str) -> Optional[Dict[str, O
                 like_count,
                 comment_count,
                 {last_seen_expr} AS last_seen_comment_count,
+                views,
                 impressions,
                 reach,
                 saved,
@@ -874,6 +888,7 @@ def update_instagram_metrics(
     *,
     like_count: Optional[int] = None,
     comment_count: Optional[int] = None,
+    views: Optional[int] = None,
     impressions: Optional[int] = None,
     reach: Optional[int] = None,
     saved: Optional[int] = None,
@@ -888,6 +903,9 @@ def update_instagram_metrics(
     if comment_count is not None:
         updates.append("comment_count = ?")
         params.append(comment_count)
+    if views is not None:
+        updates.append("views = ?")
+        params.append(views)
     if impressions is not None:
         updates.append("impressions = ?")
         params.append(impressions)
@@ -999,7 +1017,11 @@ def upsert_instagram_comment_cache(
         conn.close()
 
 
-def fetch_instagram_media_jobs(limit: Optional[int] = None) -> List[Dict[str, Optional[str]]]:
+def fetch_instagram_media_jobs(
+    limit: Optional[int] = None,
+    *,
+    published_since: Optional[str] = None,
+) -> List[Dict[str, Optional[str]]]:
     conn = None
     for attempt in range(3):
         try:
@@ -1013,16 +1035,23 @@ def fetch_instagram_media_jobs(limit: Optional[int] = None) -> List[Dict[str, Op
         return []
     try:
         ensure_instagram_queue_schema(conn)
-        query = """
-            SELECT id, user_id, instagram_media_id, plan_title, media_type
+        published_clause = ""
+        params: List[object] = []
+        if published_since:
+            published_clause = " AND published_at >= ?"
+            params.append(published_since)
+        query = f"""
+            SELECT id, user_id, brand_id, instagram_media_id, plan_title, media_type, published_at
             FROM shorts_instagram_queue
             WHERE instagram_media_id IS NOT NULL
+              AND status = 'published'
+              {published_clause}
             ORDER BY updated_at DESC
         """
         if limit:
-            rows = conn.execute(query + " LIMIT ?", [limit]).fetchall()
+            rows = conn.execute(query + " LIMIT ?", [*params, limit]).fetchall()
         else:
-            rows = conn.execute(query).fetchall()
+            rows = conn.execute(query, params).fetchall()
         cols = [d[0] for d in conn.description]
         return [dict(zip(cols, row)) for row in rows]
     finally:
@@ -1064,6 +1093,7 @@ def load_instagram_queue_map(video_ids: List[str], *, owner_user_id=None, brand_
                     like_count,
                     comment_count,
                     {last_seen_expr} AS last_seen_comment_count,
+                    views,
                     impressions,
                     reach,
                     saved,

@@ -6,8 +6,12 @@ for published queue entries.
 from __future__ import annotations
 
 import argparse
+from datetime import datetime, timedelta, timezone
+import html
+import logging
+import os
 import sys
-from typing import Optional
+from typing import Dict, Optional
 
 from app.video_shorts.services.instagram_api import (
     InstagramActionError,
@@ -15,6 +19,7 @@ from app.video_shorts.services.instagram_api import (
 )
 from app.video_shorts.config import FB_API_BASE
 from app.video_shorts.services.instagram_queue import fetch_instagram_media_jobs
+from app.video_shorts.services.email_verification import send_resend_email
 from app.video_shorts.services.facebook_queue import (
     fetch_facebook_media_jobs,
     update_facebook_queue_metrics,
@@ -23,19 +28,94 @@ from src.trends.facebook_page_tokens import get_facebook_page_data
 
 import requests
 
+logger = logging.getLogger(__name__)
 
-def sync_instagram_metrics(max_items: Optional[int], comments_limit: int) -> None:
-    jobs = fetch_instagram_media_jobs(max_items)
+
+def _send_failure_alert(summary: Dict[str, object]) -> None:
+    failures = summary.get("failures") or []
+    lines = [
+        "Instagram media insight sync exceeded the failure threshold.",
+        f"Checked: {summary['total']}",
+        f"Failed: {summary['failed']}",
+        "",
+    ]
+    lines.extend(
+        f"media_id={item.get('media_id')} brand_id={item.get('brand_id')} error={item.get('error')}"
+        for item in failures[:20]
+    )
+    text = "\n".join(lines)
+    send_resend_email(
+        to_email=(os.getenv("ADMIN_NOTIFICATION_EMAIL") or "info@mintistudio.com").strip(),
+        subject=f"Minti Instagram metrics alert: {summary['failed']}/{summary['total']} failed",
+        html="<p>" + html.escape(text).replace("\n", "<br>") + "</p>",
+        text=text,
+        error_message="Instagram metrics alert could not be sent.",
+    )
+
+
+def sync_instagram_metrics(
+    max_items: Optional[int],
+    comments_limit: int,
+    *,
+    published_since: Optional[str] = None,
+) -> Dict[str, object]:
+    jobs = fetch_instagram_media_jobs(max_items, published_since=published_since)
+    summary: Dict[str, object] = {
+        "total": len(jobs),
+        "succeeded": 0,
+        "failed": 0,
+        "failures": [],
+        "by_brand": {},
+    }
     if not jobs:
         print("Instagram: no media with instagram_media_id stored.")
-        return
+        print("Instagram summary: checked=0 succeeded=0 failed=0")
+        return summary
     print(f"Instagram: checking {len(jobs)} media entries.")
     for job in jobs:
+        brand_id = str(job.get("brand_id") or "unknown")
+        brand_counts = summary["by_brand"].setdefault(
+            brand_id, {"checked": 0, "succeeded": 0, "failed": 0}
+        )
+        brand_counts["checked"] += 1
         try:
-            refresh_instagram_media(job["id"], comments_limit=comments_limit)
-            print(f" - refreshed media_id={job.get('instagram_media_id')}")
+            metrics = refresh_instagram_media(job["id"], comments_limit=comments_limit)
+            summary["succeeded"] += 1
+            brand_counts["succeeded"] += 1
+            print(
+                f" - refreshed media_id={job.get('instagram_media_id')} "
+                f"views={metrics.get('views')} reach={metrics.get('reach')}"
+            )
         except InstagramActionError as exc:
+            summary["failed"] += 1
+            brand_counts["failed"] += 1
+            summary["failures"].append(
+                {
+                    "media_id": job.get("instagram_media_id"),
+                    "brand_id": brand_id,
+                    "error": str(exc),
+                }
+            )
+            logger.error(
+                "Instagram media insight sync failed media_id=%s brand_id=%s error=%s",
+                job.get("instagram_media_id"), brand_id, exc,
+            )
             print(f" - failed media_id={job.get('instagram_media_id')}: {exc}")
+    print(
+        f"Instagram summary: checked={summary['total']} "
+        f"succeeded={summary['succeeded']} failed={summary['failed']}"
+    )
+    for brand_id, counts in sorted(summary["by_brand"].items()):
+        print(
+            f" - brand={brand_id} checked={counts['checked']} "
+            f"succeeded={counts['succeeded']} failed={counts['failed']}"
+        )
+    if summary["total"] and (summary["failed"] / summary["total"]) > 0.20:
+        try:
+            _send_failure_alert(summary)
+        except Exception:
+            logger.exception("Instagram media insight failure alert could not be sent")
+    return summary
 
 
 def _fetch_facebook_metrics(video_id: str, page_token: str):
@@ -132,8 +212,23 @@ def main() -> int:
         default=25,
         help="Max comments per media to store (0 to disable comment fetch)",
     )
+    parser.add_argument(
+        "--published-since-days",
+        type=int,
+        default=None,
+        help="Only refresh media published within this many days.",
+    )
     args = parser.parse_args()
-    sync_instagram_metrics(args.max, max(0, args.comments_limit))
+    published_since = None
+    if args.published_since_days is not None:
+        published_since = (
+            datetime.now(timezone.utc) - timedelta(days=max(0, args.published_since_days))
+        ).replace(microsecond=0).isoformat().replace("+00:00", "Z")
+    sync_instagram_metrics(
+        args.max,
+        max(0, args.comments_limit),
+        published_since=published_since,
+    )
     sync_facebook_metrics(args.max)
     return 0
 
