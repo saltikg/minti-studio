@@ -1776,6 +1776,7 @@ def _guard_video_shorts():
         "video_shorts_bp.public_short_watch_page",
         "video_shorts_bp.public_short_watch_event",
         "video_shorts_bp.redeem_onboarding_magic_link",
+        "video_shorts_bp.customer_notification_click",
         "video_shorts_bp.serve_media",
         "video_shorts_bp.serve_instagram_media_proxy",
         "video_shorts_bp.serve_short_media",

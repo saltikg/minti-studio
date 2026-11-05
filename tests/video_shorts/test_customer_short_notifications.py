@@ -250,9 +250,9 @@ def test_notification_click_records_first_click_and_count_then_redirects(app, mo
 
     conn = ClickConnection()
     monkeypatch.setattr(generation, "get_db", lambda: conn)
+    client = app.test_client()
     for token in ("known-token", "known-token", "unknown-token"):
-        with app.test_request_context(f"/video_shorts/n/{token}"):
-            response = generation.customer_notification_click(token)
+        response = client.get(f"/video_shorts/n/{token}")
         assert response.status_code == 302
         assert response.headers["Location"].endswith("/video_shorts/my-videos")
     assert conn.first_clicked_at == "2026-11-05T12:00:00Z"
