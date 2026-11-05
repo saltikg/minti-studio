@@ -228,8 +228,22 @@ def test_email_content_and_note_limit():
     assert "First" not in email["html"]
     assert "Second" not in email["html"]
     assert "reviewed by our team" not in email["text"]
+    assert "Your video is now 2 Shorts:" in email["html"]
+    assert "<strong>A very useful video</strong>" in email["html"]
+    assert "'A very useful video'" not in email["html"]
     with pytest.raises(ValueError):
         notifications.normalize_personal_note("x" * 301)
+
+
+def test_email_video_title_removes_pipe_suffix_and_truncates_at_word_boundary():
+    assert notifications.shorten_video_title_for_email(
+        "5 Haftada 14 Kilo Verdi! Gerçek Bir Değişim Hikayesi | Prof. Dr. Osman Karakaya"
+    ) == "5 Haftada 14 Kilo Verdi! Gerçek Bir Değişim Hikayesi"
+    shortened = notifications.shorten_video_title_for_email(
+        "This is a deliberately long customer video title that should stop cleanly at the final complete word"
+    )
+    assert shortened == "This is a deliberately long customer video title that should stop…"
+    assert len(shortened) <= 70
 
 
 def test_notification_click_records_first_click_and_count_then_redirects(app, monkeypatch):

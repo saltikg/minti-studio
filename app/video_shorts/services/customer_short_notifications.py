@@ -245,6 +245,17 @@ def truncate_subject_title(title: str, limit: int = 58) -> str:
     return clean_title[: max(1, limit - 1)].rstrip() + "…"
 
 
+def shorten_video_title_for_email(title: str, limit: int = 70) -> str:
+    clean_title = " ".join(_clean(title).split()) or "Untitled video"
+    clean_title = clean_title.split(" | ", 1)[0].rstrip()
+    if len(clean_title) <= limit:
+        return clean_title
+    candidate = clean_title[: max(1, limit - 1)].rstrip()
+    if " " in candidate:
+        candidate = candidate.rsplit(" ", 1)[0].rstrip()
+    return f"{candidate or clean_title[: max(1, limit - 1)].rstrip()}…"
+
+
 def normalize_personal_note(value: Any) -> str:
     note = _clean(value)
     if len(note) > MAX_PERSONAL_NOTE_LENGTH:
@@ -319,7 +330,7 @@ def build_customer_shorts_email(
     count = len(items)
     note = normalize_personal_note(personal_note)
     greeting_name = _clean(first_name) or "there"
-    clean_video_title = _clean(video_title) or "Untitled video"
+    clean_video_title = shorten_video_title_for_email(video_title)
     subject = f"{count} new Shorts are ready"
     connection_copy = (
         connected_delivery_sentence(items)
@@ -336,7 +347,8 @@ def build_customer_shorts_email(
 <table role="presentation" width="100%" cellspacing="0" cellpadding="0" style="background:#f5f7f8"><tr><td style="padding:24px 12px">
 <table role="presentation" width="100%" cellspacing="0" cellpadding="0" style="max-width:600px;margin:0 auto;background:#ffffff;border-radius:12px"><tr><td style="padding:28px 24px;font-size:16px;line-height:1.55">
 <p style="margin:0 0 18px">Hi {html.escape(greeting_name)},</p>
-<p style="margin:0 0 16px">We turned your video '{html.escape(clean_video_title)}' into {count} Shorts.</p>
+<p style="margin:0 0 10px">Your video is now {count} Shorts:</p>
+<div style="margin:0 0 20px;padding:8px 0 8px 14px;border-left:3px solid #cbd5e1;color:#334155"><strong>{html.escape(clean_video_title)}</strong></div>
 <p style="margin:0 0 24px">{html.escape(connection_copy)}</p>
 <p style="margin:0 0 24px"><a href="{html.escape(tracking_url, quote=True)}" style="display:inline-block;background:#14b8a6;color:#ffffff;text-decoration:none;font-weight:700;padding:12px 18px;border-radius:8px">Watch your Shorts</a></p>
 {note_html}
@@ -346,7 +358,8 @@ def build_customer_shorts_email(
     note_text = f"\n\n{note}" if note else ""
     text = (
         f"Hi {greeting_name},\n\n"
-        f"We turned your video '{clean_video_title}' into {count} Shorts.\n\n"
+        f"Your video is now {count} Shorts:\n\n"
+        f"{clean_video_title}\n\n"
         f"{connection_copy}\n\nWatch your Shorts: {tracking_url}"
         f"{note_text}\n\n— The Minti Studio team"
     )
