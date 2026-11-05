@@ -107,16 +107,24 @@ def test_mocked_smtp_through_real_handler_renders_both_variants(app, monkeypatch
     assert message["Reply-To"].addresses[0].addr_spec == "info@mintistudio.com"
     assert message["To"].addresses[0].addr_spec == "customer@example.com"
     assert str(message["Message-ID"]).endswith("@mintistudio.com>")
-    assert "See your Shorts" in html_body
+    assert str(message["Subject"]) == "2 new Shorts are ready"
+    assert "Watch your Shorts" in html_body
+    assert "See your Shorts" not in html_body
     assert "admin" not in html_body.lower()
     expected = "1 are already live" if connected else "Watch them and download"
     assert expected in html_body
-    assert "A clean opening · Live" in html_body
-    assert "The key takeaway · Nov 9" in html_body
+    assert "reviewed by our team" not in html_body
+    assert "A clean opening" not in html_body
+    assert "The key takeaway" not in html_body
+    assert "— The Minti Studio team" in html_body
     assert audit.inserts
     audit_params = audit.inserts[-1][1]
-    assert audit_params[-2] == str(message["Message-ID"])
-    assert audit_params[-1] is None
+    assert audit_params[-3] == str(message["Message-ID"])
+    assert audit_params[-2] is None
+    click_token = audit_params[-1]
+    assert len(click_token) >= 40
+    assert "customer" not in click_token
+    assert f"/video_shorts/n/{click_token}" in html_body
     print(f"\n--- {'CONNECTED' if connected else 'NOT CONNECTED'} HTML ({video_pk}) ---\n{html_body}")
     assert expected in capsys.readouterr().out
 
@@ -159,8 +167,9 @@ def test_smtp_failure_is_logged_and_returned_without_success_state(app, monkeypa
         response, status = generation.admin_operation_notify_customer("brand-1", 7943)
     assert status == 502
     assert "Zoho SMTP failed: authentication failed" in response.get_json()["message"]
-    assert audit.inserts[-1][1][-2] is None
-    assert audit.inserts[-1][1][-1] == "Zoho SMTP failed: authentication failed"
+    assert audit.inserts[-1][1][-3] is None
+    assert audit.inserts[-1][1][-2] == "Zoho SMTP failed: authentication failed"
+    assert len(audit.inserts[-1][1][-1]) >= 40
 
 
 def test_notification_brand_mismatch_fails_closed_with_403(app, monkeypatch):
@@ -200,14 +209,63 @@ def test_email_content_and_note_limit():
         video_title="A very useful video",
         short_titles=["First", "Second"],
         youtube_connected=False,
-        my_videos_url="https://mintistudio.com/video_shorts/my-videos",
+        tracking_url="https://mintistudio.com/video_shorts/n/test-token",
         personal_note="Nice work.",
     )
-    assert email["subject"] == "2 new Shorts are ready from 'A very useful video'"
+    assert email["subject"] == "2 new Shorts are ready"
     assert "Nice work." in email["html"]
-    assert "Gokhan — Minti Studio" in email["text"]
+    assert "— The Minti Studio team" in email["text"]
+    assert "Watch your Shorts" in email["html"]
+    assert "/video_shorts/n/test-token" in email["html"]
+    assert "First" not in email["html"]
+    assert "Second" not in email["html"]
+    assert "reviewed by our team" not in email["text"]
     with pytest.raises(ValueError):
         notifications.normalize_personal_note("x" * 301)
+
+
+def test_notification_click_records_first_click_and_count_then_redirects(app, monkeypatch):
+    class ClickConnection:
+        def __init__(self):
+            self.first_clicked_at = None
+            self.click_count = 0
+            self.commits = 0
+
+        def execute(self, sql, params=None):
+            assert "first_clicked_at = COALESCE" in sql
+            assert "click_count = COALESCE" in sql
+            if params == ["known-token"]:
+                self.first_clicked_at = self.first_clicked_at or "2026-11-05T12:00:00Z"
+                self.click_count += 1
+            return self
+
+        def commit(self):
+            self.commits += 1
+
+        def rollback(self):
+            raise AssertionError("click tracking should not roll back")
+
+        def close(self):
+            return None
+
+    conn = ClickConnection()
+    monkeypatch.setattr(generation, "get_db", lambda: conn)
+    for token in ("known-token", "known-token", "unknown-token"):
+        with app.test_request_context(f"/video_shorts/n/{token}"):
+            response = generation.customer_notification_click(token)
+        assert response.status_code == 302
+        assert response.headers["Location"].endswith("/video_shorts/my-videos")
+    assert conn.first_clicked_at == "2026-11-05T12:00:00Z"
+    assert conn.click_count == 2
+    assert conn.commits == 3
+
+
+def test_click_tokens_are_random_and_contain_no_recipient_data():
+    first = notifications.generate_click_token()
+    second = notifications.generate_click_token()
+    assert first != second
+    assert len(first) >= 40
+    assert "@" not in first
 
 
 @pytest.mark.parametrize(

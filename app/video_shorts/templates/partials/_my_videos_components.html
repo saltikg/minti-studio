@@ -94,7 +94,7 @@
             {% else %}<a href="{{ item.open_url }}" class="btn btn-primary btn-sm" {% if loop.first %}data-first-video-action="true"{% endif %}>Create clip</a>{% endif %}
             {% if show_customer_notify %}
               <button type="button" class="btn btn-outline-info btn-sm" data-notify-customer data-notify-url="{{ item.notify_url }}" data-notified-label="{{ item.notified_at_label or '' }}" disabled>Notify customer</button>
-              <span class="mv-table-sub text-nowrap" data-notified-status>{% if item.notified_at_label %}Notified · {{ item.notified_at_label }}{% endif %}</span>
+              <span class="mv-table-sub text-nowrap" data-notified-status>{% if item.notified_at_label %}Notified · {{ item.notified_at_label }}{% if item.notification_opened %} · Opened ✓{% endif %}{% endif %}</span>
             {% endif %}
             {% if allow_management %}
               <div class="dropdown">

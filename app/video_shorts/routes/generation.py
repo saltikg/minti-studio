@@ -26109,10 +26109,10 @@ def admin_operation_customer_workspace(brand_id: str):
     from app.video_shorts.routes.channels import render_my_videos_page_for_user
     from app.video_shorts.services.customer_short_notifications import format_pt_date, latest_successful_notifications
 
-    notification_dates = {}
+    notification_history = {}
     notification_conn = get_db_readonly()
     try:
-        notification_dates = latest_successful_notifications(
+        notification_history = latest_successful_notifications(
             notification_conn,
             owner_user_id=scope["owner_user_id"],
             brand_id=scope["brand_id"],
@@ -26124,13 +26124,15 @@ def admin_operation_customer_workspace(brand_id: str):
 
     def _admin_item_urls(item):
         video_pk = int(item["id"])
+        notification = notification_history.get(video_pk) or {}
         return {
             "open_url": url_for("video_shorts_bp.admin_operation_generate_customer_short", brand_id=brand_id, video_pk=video_pk),
             "retry_url": url_for("video_shorts_bp.admin_operation_retry_customer_video", brand_id=brand_id, video_pk=video_pk),
             "delete_summary_url": url_for("video_shorts_bp.admin_operation_customer_video_delete_summary", brand_id=brand_id, video_pk=video_pk),
             "delete_url": url_for("video_shorts_bp.admin_operation_delete_customer_video", brand_id=brand_id, video_pk=video_pk),
             "notify_url": url_for("video_shorts_bp.admin_operation_notify_customer", brand_id=brand_id, video_pk=video_pk),
-            "notified_at_label": format_pt_date(notification_dates.get(video_pk)),
+            "notified_at_label": format_pt_date(notification.get("sent_at")),
+            "notification_opened": bool(notification.get("first_clicked_at") or notification.get("click_count")),
         }
 
     return render_my_videos_page_for_user(
@@ -26254,7 +26256,8 @@ def admin_operation_notify_customer(brand_id: str, video_pk: int):
     scope = _require_customer_notification_scope(brand_id, video_pk)
     from app.video_shorts.services.customer_short_notifications import (
         build_customer_shorts_email, format_pt_date, normalize_personal_note,
-        record_notification_attempt, send_customer_notification_email, short_delivery_label,
+        generate_click_token, record_notification_attempt, send_customer_notification_email,
+        short_delivery_label,
     )
     from app.video_shorts.services.email_verification import build_dashboard_url
 
@@ -26267,10 +26270,13 @@ def admin_operation_notify_customer(brand_id: str, video_pk: int):
         personal_note = normalize_personal_note(data.get("personal_note") if request.method == "POST" else "")
     except ValueError as exc:
         return jsonify(ok=False, message=str(exc)), 400
+    click_token = generate_click_token() if request.method == "POST" else "preview"
+    my_videos_url = build_dashboard_url()
+    tracking_url = f"{my_videos_url.rsplit('/', 1)[0]}/n/{click_token}"
     email = build_customer_shorts_email(
         first_name=payload["first_name"], video_title=payload["video_title"],
         short_titles=payload["short_titles"], youtube_connected=payload["youtube_connected"],
-        my_videos_url=build_dashboard_url(), personal_note=personal_note,
+        tracking_url=tracking_url, personal_note=personal_note,
     )
     last_notified_label = format_pt_date(payload.get("last_notified_at"))
     if request.method == "GET":
@@ -26301,7 +26307,7 @@ def admin_operation_notify_customer(brand_id: str, video_pk: int):
         record_notification_attempt(
             audit_conn, video_pk=video_pk, owner_user_id=scope["owner_user_id"], brand_id=scope["brand_id"],
             recipient=payload["recipient"], personal_note=personal_note, short_count=len(payload["short_titles"]),
-            provider_message_id=provider_message_id, error=send_error,
+            provider_message_id=provider_message_id, error=send_error, click_token=click_token,
         )
         audit_conn.commit()
     except Exception:
@@ -26314,6 +26320,33 @@ def admin_operation_notify_customer(brand_id: str, video_pk: int):
         current_app.logger.error("Customer notification failed video_pk=%s error=%s", video_pk, send_error)
         return jsonify(ok=False, message=send_error), 502
     return jsonify(ok=True, notified_label=format_pt_date(datetime.now(timezone.utc)))
+
+
+@video_shorts_bp.route("/n/<token>", methods=["GET"])
+def customer_notification_click(token: str):
+    target = url_for("video_shorts_bp.my_videos_page")
+    clean_token = str(token or "").strip()
+    if not clean_token:
+        return redirect(target)
+    conn = get_db()
+    try:
+        conn.execute(
+            """
+            UPDATE autopilot_customer_video_notifications
+            SET first_clicked_at = COALESCE(first_clicked_at, CURRENT_TIMESTAMP),
+                click_count = COALESCE(click_count, 0) + 1
+            WHERE click_token = ?
+              AND NULLIF(trim(coalesce(error, '')), '') IS NULL
+            """,
+            [clean_token],
+        )
+        conn.commit()
+    except Exception:
+        conn.rollback()
+        current_app.logger.exception("Customer notification click tracking failed")
+    finally:
+        conn.close()
+    return redirect(target)
 
 
 @video_shorts_bp.route("/admin/operation/customer/<brand_id>/ingest", methods=["POST"])

@@ -3,6 +3,7 @@ from __future__ import annotations
 import html
 import json
 import os
+import secrets
 from datetime import datetime, timezone
 from typing import Any, Dict, Iterable, Optional
 from uuid import uuid4
@@ -251,6 +252,10 @@ def normalize_personal_note(value: Any) -> str:
     return note
 
 
+def generate_click_token() -> str:
+    return secrets.token_urlsafe(32)
+
+
 def customer_notify_mailer() -> str:
     mailer = str(os.getenv("CUSTOMER_NOTIFY_MAILER") or "zoho").strip().lower() or "zoho"
     if mailer not in {"zoho", "resend"}:
@@ -299,25 +304,23 @@ def build_customer_shorts_email(
     video_title: str,
     short_titles: Iterable[Any],
     youtube_connected: bool,
-    my_videos_url: str,
+    tracking_url: str,
     personal_note: str = "",
 ) -> Dict[str, str]:
     items = [
         item if isinstance(item, dict) else {"title": _clean(item) or "Untitled Short", "state": "unscheduled"}
         for item in short_titles
     ]
-    titles = [short_delivery_label(item) for item in items]
     count = len(items)
     note = normalize_personal_note(personal_note)
     greeting_name = _clean(first_name) or "there"
     clean_video_title = _clean(video_title) or "Untitled video"
-    subject = f"{count} new Shorts are ready from '{truncate_subject_title(clean_video_title)}'"
+    subject = f"{count} new Shorts are ready"
     connection_copy = (
         connected_delivery_sentence(items)
         if youtube_connected
         else "Watch them and download the ones you like. Connect your channel and we'll publish them for you."
     )
-    safe_titles = "".join(f"<li style=\"margin:0 0 8px\">{html.escape(title)}</li>" for title in titles)
     note_html = (
         f'<p data-customer-note style="margin:22px 0 0;white-space:pre-wrap">{html.escape(note)}</p>'
         if note
@@ -328,21 +331,19 @@ def build_customer_shorts_email(
 <table role="presentation" width="100%" cellspacing="0" cellpadding="0" style="background:#f5f7f8"><tr><td style="padding:24px 12px">
 <table role="presentation" width="100%" cellspacing="0" cellpadding="0" style="max-width:600px;margin:0 auto;background:#ffffff;border-radius:12px"><tr><td style="padding:28px 24px;font-size:16px;line-height:1.55">
 <p style="margin:0 0 18px">Hi {html.escape(greeting_name)},</p>
-<p style="margin:0 0 16px">We turned your video '{html.escape(clean_video_title)}' into {count} Shorts. Each one was reviewed by our team for clean starts and endings:</p>
-<ul style="margin:0 0 18px;padding-left:22px">{safe_titles}</ul>
+<p style="margin:0 0 16px">We turned your video '{html.escape(clean_video_title)}' into {count} Shorts.</p>
 <p style="margin:0 0 24px">{html.escape(connection_copy)}</p>
-<p style="margin:0 0 24px"><a href="{html.escape(my_videos_url, quote=True)}" style="display:inline-block;background:#14b8a6;color:#ffffff;text-decoration:none;font-weight:700;padding:12px 18px;border-radius:8px">See your Shorts</a></p>
+<p style="margin:0 0 24px"><a href="{html.escape(tracking_url, quote=True)}" style="display:inline-block;background:#14b8a6;color:#ffffff;text-decoration:none;font-weight:700;padding:12px 18px;border-radius:8px">Watch your Shorts</a></p>
 {note_html}
-<p style="margin:22px 0 0">Gokhan — Minti Studio</p>
+<p style="margin:22px 0 0">— The Minti Studio team</p>
 </td></tr></table></td></tr></table>
 </body></html>"""
-    bullets = "\n".join(f"- {title}" for title in titles)
     note_text = f"\n\n{note}" if note else ""
     text = (
         f"Hi {greeting_name},\n\n"
-        f"We turned your video '{clean_video_title}' into {count} Shorts. Each one was reviewed by our team for clean starts and endings:\n\n"
-        f"{bullets}\n\n{connection_copy}\n\nSee your Shorts: {my_videos_url}"
-        f"{note_text}\n\nGokhan — Minti Studio"
+        f"We turned your video '{clean_video_title}' into {count} Shorts.\n\n"
+        f"{connection_copy}\n\nWatch your Shorts: {tracking_url}"
+        f"{note_text}\n\n— The Minti Studio team"
     )
     return {"subject": subject, "html": email_html, "text": text}
 
@@ -350,16 +351,23 @@ def build_customer_shorts_email(
 def latest_successful_notifications(conn, *, owner_user_id: str, brand_id: str) -> Dict[int, Any]:
     rows = conn.execute(
         """
-        SELECT video_pk, MAX(sent_at)
-        FROM autopilot_customer_video_notifications
-        WHERE CAST(owner_user_id AS VARCHAR) = CAST(? AS VARCHAR)
-          AND CAST(brand_id AS VARCHAR) = CAST(? AS VARCHAR)
-          AND NULLIF(trim(coalesce(error, '')), '') IS NULL
-        GROUP BY video_pk
+        SELECT video_pk, sent_at, first_clicked_at, click_count
+        FROM (
+            SELECT video_pk, sent_at, first_clicked_at, click_count,
+                   ROW_NUMBER() OVER (PARTITION BY video_pk ORDER BY sent_at DESC) AS row_number
+            FROM autopilot_customer_video_notifications
+            WHERE CAST(owner_user_id AS VARCHAR) = CAST(? AS VARCHAR)
+              AND CAST(brand_id AS VARCHAR) = CAST(? AS VARCHAR)
+              AND NULLIF(trim(coalesce(error, '')), '') IS NULL
+        ) ranked
+        WHERE row_number = 1
         """,
         [owner_user_id, brand_id],
     ).fetchall()
-    return {int(row[0]): row[1] for row in rows}
+    return {
+        int(row[0]): {"sent_at": row[1], "first_clicked_at": row[2], "click_count": int(row[3] or 0)}
+        for row in rows
+    }
 
 
 def latest_successful_notification(conn, *, video_pk: int, owner_user_id: str, brand_id: str) -> Optional[Any]:
@@ -390,14 +398,15 @@ def record_notification_attempt(
     short_count: int,
     provider_message_id: str = "",
     error: str = "",
+    click_token: str = "",
 ) -> str:
     row_id = str(uuid4())
     conn.execute(
         """
         INSERT INTO autopilot_customer_video_notifications (
             id, video_pk, owner_user_id, brand_id, recipient, personal_note,
-            short_count, sent_at, provider_message_id, error
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP, ?, ?)
+            short_count, sent_at, provider_message_id, error, click_token
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP, ?, ?, ?)
         """,
         [
             row_id,
@@ -409,6 +418,7 @@ def record_notification_attempt(
             int(short_count),
             provider_message_id or None,
             error or None,
+            click_token or None,
         ],
     )
     return row_id
