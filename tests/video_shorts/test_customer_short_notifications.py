@@ -104,6 +104,7 @@ def test_mocked_smtp_through_real_handler_renders_both_variants(app, monkeypatch
     assert smtp_calls["from_addr"] == "info@mintistudio.com"
     assert smtp_calls["to_addrs"] == ["customer@example.com"]
     assert message["From"].addresses[0].addr_spec == "info@mintistudio.com"
+    assert message["From"].addresses[0].display_name == "Minti Studio"
     assert message["Reply-To"].addresses[0].addr_spec == "info@mintistudio.com"
     assert message["To"].addresses[0].addr_spec == "customer@example.com"
     assert str(message["Message-ID"]).endswith("@mintistudio.com>")
@@ -148,6 +149,13 @@ def test_customer_notify_resend_is_explicit_rollback(monkeypatch):
 def test_customer_notify_mailer_defaults_to_zoho(monkeypatch):
     monkeypatch.delenv("CUSTOMER_NOTIFY_MAILER", raising=False)
     assert notifications.customer_notify_mailer() == "zoho"
+
+
+def test_customer_notify_from_name_is_configurable(monkeypatch):
+    monkeypatch.delenv("CUSTOMER_NOTIFY_FROM_NAME", raising=False)
+    assert notifications.customer_notify_from_name() == "Minti Studio"
+    monkeypatch.setenv("CUSTOMER_NOTIFY_FROM_NAME", "  Customer   Success  ")
+    assert notifications.customer_notify_from_name() == "Customer Success"
 
 
 def test_smtp_failure_is_logged_and_returned_without_success_state(app, monkeypatch):

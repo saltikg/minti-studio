@@ -349,13 +349,14 @@ def _build_zoho_message(
     text: str,
     html: str | None = None,
     extra_headers: dict[str, str] | None = None,
+    from_name: str | None = None,
 ) -> tuple[EmailMessage, str, str]:
     recipient = str(to_email or "").strip()
     if not recipient or "@" not in recipient:
         raise RuntimeError("Email recipient is missing")
     message_id = make_msgid(domain="mintistudio.com")
     message = EmailMessage(policy=policy.SMTP.clone(mangle_from_=False))
-    message["From"] = formataddr((OUTREACH_ZOHO_FROM_NAME, OUTREACH_ZOHO_FROM_EMAIL))
+    message["From"] = formataddr((from_name or OUTREACH_ZOHO_FROM_NAME, OUTREACH_ZOHO_FROM_EMAIL))
     message["To"] = recipient
     message["Reply-To"] = OUTREACH_ZOHO_FROM_EMAIL
     message["Subject"] = str(subject or "").strip()
@@ -393,6 +394,7 @@ def send_zoho_email(
     text: str,
     html: str | None = None,
     extra_headers: dict[str, str] | None = None,
+    from_name: str | None = None,
 ) -> dict[str, object]:
     settings = _zoho_smtp_settings()
     message, recipient, message_id = _build_zoho_message(
@@ -401,6 +403,7 @@ def send_zoho_email(
         text=text,
         html=html,
         extra_headers=extra_headers,
+        from_name=from_name,
     )
     raw_message = _serialize_zoho_message(message)
 

@@ -108,4 +108,5 @@ def test_shared_zoho_sender_plain_text_and_outreach_html(monkeypatch):
     assert b"\r\n>From time to time\r\n" not in sent_messages[0]
     assert b"\r\nFrom time to time\r\n" in sent_messages[0]
     assert outreach_message.is_multipart() is True
+    assert outreach_message["From"].addresses[0].display_name == outreach_email_send.OUTREACH_ZOHO_FROM_NAME
     assert outreach_message.get_body(preferencelist=("html",)).get_content().strip() == "<p>HTML body</p>"

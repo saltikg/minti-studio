@@ -49,7 +49,7 @@
   <section class="mv-list">
     <div class="mv-list-head">
       <div>Video</div><div class="text-center">Length</div><div>Added</div>
-      <div class="text-center">Shorts</div><div class="text-center">Published</div><div>Status</div><div></div>
+      <div class="text-center">Shorts</div><div class="text-center">Published</div><div>Status</div><div>{% if show_customer_notify %}Actions{% endif %}</div>
     </div>
     {% if videos %}
       {% for item in videos %}
@@ -62,8 +62,8 @@
             </div>
             <div class="mv-title-cell">
               <div class="mv-title-edit" {% if allow_title_edit %}data-title-edit data-video-id="{{ item.id }}" data-update-url="{{ item.update_title_url }}"{% endif %}>
-                {% if item.source_href %}<a class="mv-video-title mv-video-title-link" data-title-text href="{{ item.source_href }}" target="_blank" rel="noopener noreferrer">{{ item.title }}</a>
-                {% else %}<div class="mv-video-title" data-title-text>{{ item.title }}</div>{% endif %}
+                {% if item.source_href %}<a class="mv-video-title mv-video-title-link" data-title-text href="{{ item.source_href }}" target="_blank" rel="noopener noreferrer" title="{{ item.title|e }}">{{ item.title }}</a>
+                {% else %}<div class="mv-video-title" data-title-text title="{{ item.title|e }}">{{ item.title }}</div>{% endif %}
                 {% if allow_title_edit %}<button type="button" class="mv-title-edit-btn" data-title-edit-start aria-label="Edit title"><i class="bi bi-pencil-square" aria-hidden="true"></i></button>{% endif %}
               </div>
               {% if allow_title_edit %}<div class="mv-title-edit-status d-none" data-title-status aria-live="polite"></div>{% endif %}
@@ -86,15 +86,19 @@
             {% endif %}
           </div>
           <div class="mv-row-actions mv-coachmark-anchor mv-coachmark-anchor--button" {% if loop.first %}id="mv-first-video-action"{% endif %}>
+            <div class="mv-primary-action">
             {% if item.has_stale_import_job %}<button type="button" class="btn btn-outline-danger btn-sm" data-processing-retry data-retry-url="{{ item.retry_url }}">Retry</button>
             {% elif item.is_ready_for_editing %}<a href="{{ item.open_url }}" class="btn btn-primary btn-sm" {% if loop.first %}data-first-video-action="true"{% endif %}>Create clip</a>
             {% elif item.is_processing %}<span class="btn btn-secondary btn-sm mv-action-processing" aria-disabled="true">Processing…</span>
             {% elif item.is_failed and retry_failed %}<button type="button" class="btn btn-outline-danger btn-sm" data-processing-retry data-retry-url="{{ item.retry_url }}">Retry</button>
             {% elif item.is_failed %}<span class="btn btn-outline-secondary btn-sm mv-action-processing" aria-disabled="true">Unavailable</span>
             {% else %}<a href="{{ item.open_url }}" class="btn btn-primary btn-sm" {% if loop.first %}data-first-video-action="true"{% endif %}>Create clip</a>{% endif %}
+            </div>
             {% if show_customer_notify %}
-              <button type="button" class="btn btn-outline-info btn-sm" data-notify-customer data-notify-url="{{ item.notify_url }}" data-notified-label="{{ item.notified_at_label or '' }}" disabled>Notify customer</button>
-              <span class="mv-table-sub text-nowrap" data-notified-status>{% if item.notified_at_label %}Notified · {{ item.notified_at_label }}{% if item.notification_opened %} · Opened ✓{% endif %}{% endif %}</span>
+              <div class="mv-notify-action">
+                <button type="button" class="btn btn-outline-info btn-sm" data-notify-customer data-notify-url="{{ item.notify_url }}" data-notified-label="{{ item.notified_at_label or '' }}" disabled>Notify customer</button>
+                <span class="mv-notify-state" data-notified-status>{% if item.notified_at_label %}<span>Notified · {{ item.notified_at_label }}</span>{% if item.notification_opened %}<span>· Opened ✓</span>{% endif %}{% endif %}</span>
+              </div>
             {% endif %}
             {% if allow_management %}
               <div class="dropdown">

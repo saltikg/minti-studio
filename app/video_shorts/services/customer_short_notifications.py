@@ -263,6 +263,10 @@ def customer_notify_mailer() -> str:
     return mailer
 
 
+def customer_notify_from_name() -> str:
+    return " ".join(str(os.getenv("CUSTOMER_NOTIFY_FROM_NAME") or "Minti Studio").split()) or "Minti Studio"
+
+
 def send_customer_notification_email(
     *,
     to_email: str,
@@ -292,6 +296,7 @@ def send_customer_notification_email(
                 subject=subject,
                 html=html_body,
                 text=text_body,
+                from_name=customer_notify_from_name(),
             )
         except Exception as exc:
             raise RuntimeError(f"Zoho SMTP failed: {exc}") from exc
