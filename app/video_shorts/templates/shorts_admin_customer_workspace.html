@@ -11,6 +11,8 @@
   .customer-workspace-header { display:flex; justify-content:space-between; align-items:center; gap:16px; margin-bottom:20px; padding:16px; border:1px solid rgba(45,212,191,.22); border-radius:12px; background:rgba(45,212,191,.05); }
   .customer-workspace-target-line { color:#fff; display:flex; flex-wrap:wrap; gap:6px; align-items:center; }
   .customer-workspace-target-actions { display:flex; flex-wrap:wrap; gap:8px; margin-top:8px; }
+  .customer-notify-preview { width:100%; min-height:390px; border:1px solid rgba(148,163,184,.25); border-radius:10px; background:#fff; }
+  .customer-notify-error { color:#fca5a5; min-height:1.4em; }
   @media (max-width:767.98px) { .customer-workspace-header { align-items:flex-start; flex-direction:column; } }
 </style>
 {% endblock %}
@@ -52,7 +54,7 @@
   </section>
 
   <h2 class="mv-source-heading">Customer videos</h2>
-  {{ mv_components.video_list(videos, allow_video_management, false, allow_video_title_edit) }}
+  {{ mv_components.video_list(videos, allow_video_management, false, allow_video_title_edit, show_customer_notify) }}
 </div>
 
 {% set delete_video_modal_id = 'deleteVideoModal' %}
@@ -72,4 +74,118 @@
     </div>
   </div>
 </div>
+
+<div class="modal fade" id="customerNotifyModal" tabindex="-1" aria-labelledby="customerNotifyModalLabel" aria-hidden="true">
+  <div class="modal-dialog modal-xl modal-dialog-scrollable vs-app">
+    <div class="modal-content vs-card">
+      <div class="modal-header">
+        <h5 class="modal-title" id="customerNotifyModalLabel">Notify customer</h5>
+        <button type="button" class="btn-close btn-close-white" data-bs-dismiss="modal" aria-label="Close"></button>
+      </div>
+      <div class="modal-body">
+        <div class="row g-4">
+          <div class="col-lg-5">
+            <label class="form-label" for="customerNotifyRecipient">Recipient</label>
+            <input class="form-control" id="customerNotifyRecipient" type="email" readonly>
+            <label class="form-label mt-3" for="customerNotifyNote">Personal note <span class="text-muted">(optional)</span></label>
+            <textarea class="form-control" id="customerNotifyNote" maxlength="300" rows="6" placeholder="Add a short personal note..."></textarea>
+            <div class="d-flex justify-content-between mt-1"><small class="text-muted">Shown above the signature</small><small class="text-muted"><span id="customerNotifyNoteCount">0</span>/300</small></div>
+            <div class="customer-notify-error mt-3" id="customerNotifyError" role="alert"></div>
+          </div>
+          <div class="col-lg-7">
+            <div class="small text-muted mb-2">Live preview</div>
+            <iframe class="customer-notify-preview" id="customerNotifyPreview" title="Customer email preview"></iframe>
+          </div>
+        </div>
+      </div>
+      <div class="modal-footer">
+        <button type="button" class="btn btn-outline-secondary" data-bs-dismiss="modal">Cancel</button>
+        <button type="button" class="btn btn-primary" id="customerNotifySend">Send</button>
+      </div>
+    </div>
+  </div>
+</div>
+{% endblock %}
+
+{% block scripts %}
+{{ super() }}
+<script>
+(() => {
+  const modalElement = document.getElementById('customerNotifyModal');
+  const recipient = document.getElementById('customerNotifyRecipient');
+  const note = document.getElementById('customerNotifyNote');
+  const noteCount = document.getElementById('customerNotifyNoteCount');
+  const preview = document.getElementById('customerNotifyPreview');
+  const error = document.getElementById('customerNotifyError');
+  const send = document.getElementById('customerNotifySend');
+  if (!modalElement || !window.bootstrap) return;
+  const modal = bootstrap.Modal.getOrCreateInstance(modalElement);
+  let activeButton = null;
+  let activePayload = null;
+
+  const updatePreviewNote = () => {
+    noteCount.textContent = String(note.value.length);
+    const noteNode = preview.contentDocument?.querySelector('[data-customer-note]');
+    if (!noteNode) return;
+    noteNode.textContent = note.value.trim();
+    noteNode.style.display = note.value.trim() ? '' : 'none';
+  };
+  note.addEventListener('input', updatePreviewNote);
+
+  document.querySelectorAll('[data-notify-customer]').forEach((button) => {
+    button.addEventListener('click', async () => {
+      activeButton = button;
+      activePayload = null;
+      error.textContent = '';
+      note.value = '';
+      noteCount.textContent = '0';
+      recipient.value = 'Loading…';
+      preview.srcdoc = '<p style="font-family:Arial;padding:24px">Loading preview…</p>';
+      send.disabled = true;
+      modal.show();
+      try {
+        const response = await fetch(button.dataset.notifyUrl, { credentials: 'same-origin', headers: { 'X-Requested-With': 'XMLHttpRequest' } });
+        const payload = await response.json().catch(() => null);
+        if (!response.ok || !payload?.ok) throw new Error(payload?.message || 'The preview could not be loaded.');
+        activePayload = payload;
+        recipient.value = payload.recipient;
+        preview.srcdoc = payload.preview_html;
+        send.disabled = false;
+      } catch (requestError) {
+        recipient.value = '';
+        error.textContent = requestError.message;
+      }
+    });
+  });
+
+  send.addEventListener('click', async () => {
+    if (!activeButton || !activePayload) return;
+    const notifiedLabel = activePayload.last_notified_label || activeButton.dataset.notifiedLabel || '';
+    let confirmResend = false;
+    if (notifiedLabel) {
+      confirmResend = window.confirm(`Already notified on ${notifiedLabel}, send again?`);
+      if (!confirmResend) return;
+    }
+    send.disabled = true;
+    error.textContent = '';
+    try {
+      const response = await fetch(activeButton.dataset.notifyUrl, {
+        method: 'POST', credentials: 'same-origin',
+        headers: { 'Content-Type': 'application/json', 'X-Requested-With': 'XMLHttpRequest' },
+        body: JSON.stringify({ personal_note: note.value, confirm_resend: confirmResend }),
+      });
+      const payload = await response.json().catch(() => null);
+      if (!response.ok || !payload?.ok) throw new Error(payload?.message || 'The email could not be sent.');
+      activeButton.dataset.notifiedLabel = payload.notified_label;
+      const row = activeButton.closest('[data-video-row]');
+      const status = row?.querySelector('[data-notified-status]');
+      if (status) status.textContent = `Notified · ${payload.notified_label}`;
+      modal.hide();
+    } catch (requestError) {
+      error.textContent = requestError.message;
+      send.disabled = false;
+    }
+  });
+})();
+</script>
 {% endblock %}

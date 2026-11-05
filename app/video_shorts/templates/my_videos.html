@@ -1763,6 +1763,8 @@
 	          totalNode.textContent = `of ${shorts}`;
 	          totalNode.hidden = shorts === 0;
 	        }
+	        const notifyButton = row.querySelector('[data-notify-customer]');
+	        if (notifyButton) notifyButton.disabled = shorts <= 0;
 	      });
 	    } catch (_) {}
 	  };

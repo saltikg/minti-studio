@@ -25912,7 +25912,9 @@ def _require_active_customer_workspace(scope: Dict[str, str]) -> Dict[str, str]:
                 b.name,
                 l.youtube_channel_id,
                 c.channel_url,
-                c.youtube_channel_id
+                c.youtube_channel_id,
+                u.email,
+                u.name
             FROM autopilot_leads l
             JOIN shorts_users u ON CAST(u.id AS VARCHAR) = CAST(l.user_id AS VARCHAR)
             JOIN shorts_brands b ON CAST(b.id AS VARCHAR) = CAST(l.brand_id AS VARCHAR)
@@ -25937,6 +25939,8 @@ def _require_active_customer_workspace(scope: Dict[str, str]) -> Dict[str, str]:
         "creator_email": str(row[2] or "").strip(),
         "brand_name": str(row[3] or "").strip() or "Unnamed brand",
         "youtube_url": _youtube_channel_url(row[5], row[6]) or _youtube_channel_url("", row[4]),
+        "account_email": str(row[7] or "").strip(),
+        "account_name": str(row[8] or "").strip(),
     }
 
 
@@ -26103,6 +26107,20 @@ def admin_operation_customer_workspace(brand_id: str):
     customer = _require_active_customer_workspace(scope)
     description_prompt, description_languages = load_description_settings(scope["owner_user_id"], scope["brand_id"])
     from app.video_shorts.routes.channels import render_my_videos_page_for_user
+    from app.video_shorts.services.customer_short_notifications import format_pt_date, latest_successful_notifications
+
+    notification_dates = {}
+    notification_conn = get_db_readonly()
+    try:
+        notification_dates = latest_successful_notifications(
+            notification_conn,
+            owner_user_id=scope["owner_user_id"],
+            brand_id=scope["brand_id"],
+        )
+    except Exception:
+        current_app.logger.warning("Customer notification history is unavailable", exc_info=True)
+    finally:
+        notification_conn.close()
 
     def _admin_item_urls(item):
         video_pk = int(item["id"])
@@ -26111,6 +26129,8 @@ def admin_operation_customer_workspace(brand_id: str):
             "retry_url": url_for("video_shorts_bp.admin_operation_retry_customer_video", brand_id=brand_id, video_pk=video_pk),
             "delete_summary_url": url_for("video_shorts_bp.admin_operation_customer_video_delete_summary", brand_id=brand_id, video_pk=video_pk),
             "delete_url": url_for("video_shorts_bp.admin_operation_delete_customer_video", brand_id=brand_id, video_pk=video_pk),
+            "notify_url": url_for("video_shorts_bp.admin_operation_notify_customer", brand_id=brand_id, video_pk=video_pk),
+            "notified_at_label": format_pt_date(notification_dates.get(video_pk)),
         }
 
     return render_my_videos_page_for_user(
@@ -26141,9 +26161,169 @@ def admin_operation_customer_workspace(brand_id: str):
             "retry_url_template": url_for("video_shorts_bp.admin_operation_retry_customer_video", brand_id=brand_id, video_pk=0),
             "allow_video_management": True,
             "allow_video_title_edit": False,
+            "show_customer_notify": True,
             "delete_video_fallback_url": url_for("video_shorts_bp.admin_operation_customer_workspace", brand_id=brand_id),
         },
     )
+
+
+def _require_customer_notification_scope(brand_id: str, video_pk: int) -> Dict[str, str]:
+    """Require an admin and reject cross-tenant notification targets with 403."""
+    current_user = getattr(g, "vs_current_user", None) or {}
+    if str(current_user.get("role") or "").strip().lower() != "admin":
+        abort(403)
+    scope = _require_admin_operation_scope(brand_id=brand_id, workspace_kind="customer")
+    conn = get_db_readonly()
+    try:
+        target = conn.execute(
+            """
+            SELECT 1 FROM youtube_videos
+            WHERE id = ?
+              AND CAST(owner_user_id AS VARCHAR) = CAST(? AS VARCHAR)
+              AND brand_id IS NOT DISTINCT FROM ?
+              AND deleted_at IS NULL
+            LIMIT 1
+            """,
+            [video_pk, scope["owner_user_id"], scope["brand_id"]],
+        ).fetchone()
+    finally:
+        conn.close()
+    if not target:
+        abort(403)
+    return scope
+
+
+def _resolve_customer_notification_payload(scope: Dict[str, str], video_pk: int) -> Dict[str, Any]:
+    customer = _require_active_customer_workspace(scope)
+    recipient = str(customer.get("account_email") or "").strip()
+    if not recipient:
+        raise ValueError("The customer account does not have an email address.")
+    conn = get_db_readonly()
+    try:
+        video = conn.execute(
+            """
+            SELECT title FROM youtube_videos
+            WHERE id = ?
+              AND CAST(owner_user_id AS VARCHAR) = CAST(? AS VARCHAR)
+              AND brand_id IS NOT DISTINCT FROM ?
+              AND deleted_at IS NULL
+            LIMIT 1
+            """,
+            [video_pk, scope["owner_user_id"], scope["brand_id"]],
+        ).fetchone()
+        if not video:
+            abort(403)
+        short_rows = conn.execute(
+            """
+            SELECT COALESCE(NULLIF(trim(gv.generated_title), ''), NULLIF(trim(gv.clip_filename), ''), 'Untitled Short')
+            FROM shorts_generated_videos gv
+            JOIN shorts_storage_assets render_asset
+              ON render_asset.file_key = gv.storage_file_key
+             AND CAST(render_asset.user_id AS VARCHAR) = CAST(gv.user_id AS VARCHAR)
+             AND render_asset.brand_id IS NOT DISTINCT FROM gv.brand_id
+             AND lower(coalesce(render_asset.status, 'active')) = 'active'
+             AND render_asset.size_bytes > 0
+            JOIN youtube_videos source_video
+              ON source_video.video_id = gv.source_video_id
+             AND source_video.owner_user_id = gv.user_id
+             AND source_video.brand_id IS NOT DISTINCT FROM gv.brand_id
+             AND source_video.deleted_at IS NULL
+            WHERE source_video.id = ?
+              AND CAST(gv.user_id AS VARCHAR) = CAST(? AS VARCHAR)
+              AND gv.brand_id IS NOT DISTINCT FROM ?
+              AND NULLIF(trim(coalesce(gv.clip_filename, '')), '') IS NOT NULL
+              AND NULLIF(trim(coalesce(gv.storage_file_key, '')), '') IS NOT NULL
+              AND lower(coalesce(gv.generation_status, '')) NOT IN ('pending', 'queued', 'processing', 'rendering')
+            ORDER BY gv.created_at, gv.id
+            """,
+            [video_pk, scope["owner_user_id"], scope["brand_id"]],
+        ).fetchall()
+        from app.video_shorts.services.customer_short_notifications import latest_successful_notification
+        last_notified_at = latest_successful_notification(
+            conn, video_pk=video_pk, owner_user_id=scope["owner_user_id"], brand_id=scope["brand_id"]
+        )
+    finally:
+        conn.close()
+    short_titles = [str(row[0] or "Untitled Short").strip() or "Untitled Short" for row in short_rows]
+    if not short_titles:
+        raise ValueError("This video does not have any ready Shorts.")
+    account_name = str(customer.get("account_name") or "").strip()
+    first_name = account_name.split()[0] if account_name else recipient.split("@", 1)[0]
+    from app.video_shorts.services.youtube_token_store import get_youtube_connection
+    connection = get_youtube_connection(scope["owner_user_id"], scope["brand_id"])
+    return {
+        "recipient": recipient,
+        "first_name": first_name,
+        "video_title": str(video[0] or "Untitled video").strip() or "Untitled video",
+        "short_titles": short_titles,
+        "youtube_connected": bool(connection and not connection.get("reauth_required")),
+        "last_notified_at": last_notified_at,
+    }
+
+
+@video_shorts_bp.route("/admin/operation/customer/<brand_id>/video/<int:video_pk>/notify", methods=["GET", "POST"])
+def admin_operation_notify_customer(brand_id: str, video_pk: int):
+    scope = _require_customer_notification_scope(brand_id, video_pk)
+    from app.video_shorts.services.customer_short_notifications import (
+        build_customer_shorts_email, format_pt_date, normalize_personal_note, record_notification_attempt,
+    )
+    from app.video_shorts.services.email_verification import build_dashboard_url, send_resend_email
+
+    try:
+        payload = _resolve_customer_notification_payload(scope, video_pk)
+    except ValueError as exc:
+        return jsonify(ok=False, message=str(exc)), 409
+    data = request.get_json(silent=True) or {}
+    try:
+        personal_note = normalize_personal_note(data.get("personal_note") if request.method == "POST" else "")
+    except ValueError as exc:
+        return jsonify(ok=False, message=str(exc)), 400
+    email = build_customer_shorts_email(
+        first_name=payload["first_name"], video_title=payload["video_title"],
+        short_titles=payload["short_titles"], youtube_connected=payload["youtube_connected"],
+        my_videos_url=build_dashboard_url(), personal_note=personal_note,
+    )
+    last_notified_label = format_pt_date(payload.get("last_notified_at"))
+    if request.method == "GET":
+        return jsonify(
+            ok=True, recipient=payload["recipient"], video_title=payload["video_title"],
+            short_titles=payload["short_titles"], short_count=len(payload["short_titles"]),
+            youtube_connected=payload["youtube_connected"], subject=email["subject"],
+            preview_html=email["html"], last_notified_label=last_notified_label,
+        )
+    if payload.get("last_notified_at") and data.get("confirm_resend") is not True:
+        return jsonify(ok=False, requires_confirmation=True, notified_label=last_notified_label,
+                       message=f"Already notified on {last_notified_label}, send again?"), 409
+
+    provider_message_id = ""
+    send_error = ""
+    try:
+        result = send_resend_email(
+            to_email=payload["recipient"], subject=email["subject"], html=email["html"], text=email["text"],
+            reply_to_email="info@mintistudio.com", error_message="Customer notification email could not be sent.",
+        )
+        provider_message_id = str(result.get("request_id") or "").strip()
+    except Exception as exc:
+        send_error = str(exc) or exc.__class__.__name__
+
+    audit_conn = get_db()
+    try:
+        record_notification_attempt(
+            audit_conn, video_pk=video_pk, owner_user_id=scope["owner_user_id"], brand_id=scope["brand_id"],
+            recipient=payload["recipient"], personal_note=personal_note, short_count=len(payload["short_titles"]),
+            provider_message_id=provider_message_id, error=send_error,
+        )
+        audit_conn.commit()
+    except Exception:
+        audit_conn.rollback()
+        current_app.logger.exception("Failed to audit customer notification video_pk=%s", video_pk)
+        return jsonify(ok=False, message="The notification result could not be recorded."), 500
+    finally:
+        audit_conn.close()
+    if send_error:
+        current_app.logger.error("Customer notification failed video_pk=%s error=%s", video_pk, send_error)
+        return jsonify(ok=False, message="Customer notification email could not be sent."), 502
+    return jsonify(ok=True, notified_label=format_pt_date(datetime.now(timezone.utc)))
 
 
 @video_shorts_bp.route("/admin/operation/customer/<brand_id>/ingest", methods=["POST"])
