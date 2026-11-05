@@ -7337,6 +7337,9 @@
                           {% endfor %}
                         </span>
                         {% endif %}
+                        {% if generate_v2 and row.is_ai_clip and row.auto_created %}
+                          <span class="clip-rail-auto-created-badge">Auto-created</span>
+                        {% endif %}
                       </span>
                       <span class="clip-rail-status{% if generate_v2 and row.render_job_status in ['queued', 'processing', 'running'] %} is-active{% else %} d-none{% endif %} text-white-50" aria-live="polite">
                         <span class="spinner-border spinner-border-sm{% if not (generate_v2 and row.render_job_status in ['queued', 'processing', 'running']) %} d-none{% endif %}" role="status" aria-hidden="true"></span>
@@ -7403,7 +7406,6 @@
                         <span class="clip-rail-kind-badge is-ai{% if row.status == 'created' %} is-rendered{% endif %}" data-bs-toggle="tooltip" data-bs-placement="top" title="AI score — how likely this moment works as a Short">
                           <span>{{ rail_score if rail_score is not none else '—' }}</span>
                         </span>
-                        {% if row.auto_created %}<span class="clip-rail-auto-created-badge">Auto-created</span>{% endif %}
                       {% else %}
                         <span class="clip-rail-kind-badge is-manual" data-bs-toggle="tooltip" data-bs-placement="top" title="Made by you">
                           <i class="bi bi-scissors" aria-hidden="true"></i>
@@ -21421,8 +21423,8 @@ document.addEventListener("DOMContentLoaded", () => {
     }
     return Math.max(0, Number(renderedVideo?.currentTime || 0));
   };
-  const getAutoLayoutPreviewPlacement = () => {
-    if (!isAutoLayoutMode() || initialSubtitleMarginCustom || dirtyOverlayFields.has("sub_margin")) return null;
+  const getAutoLayoutPreviewSegment = () => {
+    if (!isAutoLayoutMode()) return null;
     const card = getActiveClipCard();
     let segments = [];
     try {
@@ -21438,8 +21440,14 @@ document.addEventListener("DOMContentLoaded", () => {
       return playhead >= start && (playhead < end || (index === segments.length - 1 && playhead <= end));
     }) || segments[0];
   };
+  const getAutoLayoutPreviewPlacement = () => {
+    const segment = getAutoLayoutPreviewSegment();
+    if (!segment) return null;
+    const customPosition = initialSubtitleMarginCustom || dirtyOverlayFields.has("sub_margin");
+    return customPosition && segment.mode === "fit" ? null : segment;
+  };
   const getAutoFitPreviewDims = () => {
-    if (getAutoLayoutPreviewPlacement()?.mode !== "fit") return null;
+    if (getAutoLayoutPreviewSegment()?.mode !== "fit") return null;
     const source = cropperImages.top;
     const sourceWidth = Number(source?.naturalWidth || naturalSize.width || 0);
     const sourceHeight = Number(source?.naturalHeight || naturalSize.height || 0);
@@ -21675,7 +21683,7 @@ document.addEventListener("DOMContentLoaded", () => {
     subscribeCanvas.width = width; subscribeCanvas.height = height;
     subscribeCanvas.getContext("2d").drawImage(subscribeStill, 0, 0, width, height);
     const x = (getActiveRenderFrameWidth()-width)/2;
-    const autoPlacement = getAutoLayoutPreviewPlacement();
+    const autoPlacement = getAutoLayoutPreviewSegment();
     const resolvedSubscribeTop = Number(autoPlacement?.subscribe_top);
     const y = Number.isFinite(resolvedSubscribeTop)
       ? resolvedSubscribeTop
@@ -21923,7 +21931,7 @@ document.addEventListener("DOMContentLoaded", () => {
   window.setInterval(() => {
     if (!isAutoLayoutMode() || !previewCard || previewCard.offsetParent === null) return;
     const card = getActiveClipCard();
-    const placement = getAutoLayoutPreviewPlacement();
+    const placement = getAutoLayoutPreviewSegment();
     const segmentKey = placement
       ? `${card?.dataset.planIndex || ""}:${placement.start}:${placement.end}:${placement.mode}:${placement.caption_top}:${placement.subscribe_top}`
       : "";

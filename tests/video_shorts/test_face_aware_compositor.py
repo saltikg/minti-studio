@@ -16,6 +16,126 @@ FFMPEG = shutil.which("ffmpeg")
 FFPROBE = shutil.which("ffprobe")
 
 
+@pytest.mark.parametrize(
+    ("target_width", "target_height", "custom_position", "expected_split_top", "expected_fill_top"),
+    [
+        (720, 1280, 857, 578.0, 736.0),
+        (1080, 1920, 1286, 898.0, 1104.0),
+    ],
+)
+def test_auto_caption_policy_is_mode_specific_with_custom_position(
+    target_width: int,
+    target_height: int,
+    custom_position: int,
+    expected_split_top: float,
+    expected_fill_top: float,
+) -> None:
+    block_height = 124.0
+    scale = target_height / 1280.0
+    fill_face_bottom = 700.0 * scale
+
+    split_top = compositor._face_aware_caption_top_for_block(
+        {"mode": "split"},
+        block_height=block_height,
+        target_width=target_width,
+        target_height=target_height,
+        subtitle_margin=custom_position,
+        subtitle_margin_custom=True,
+        caption_anchor="top",
+    )
+    fill_top = compositor._face_aware_caption_top_for_block(
+        {"mode": "fill", "caption_face_bottom": fill_face_bottom},
+        block_height=block_height,
+        target_width=target_width,
+        target_height=target_height,
+        subtitle_margin=custom_position,
+        subtitle_margin_custom=True,
+        caption_anchor="top",
+    )
+    fit_top = compositor._face_aware_caption_top_for_block(
+        {"mode": "fit"},
+        block_height=block_height,
+        target_width=target_width,
+        target_height=target_height,
+        subtitle_margin=custom_position,
+        subtitle_margin_custom=True,
+        caption_anchor="top",
+    )
+
+    assert split_top == expected_split_top
+    assert fill_top == expected_fill_top
+    assert fill_top > fill_face_bottom
+    assert fit_top == custom_position
+
+
+def test_manual_custom_caption_position_is_unchanged() -> None:
+    assert compositor.caption_block_top(857, "top", 124, 1280) == 857
+    assert compositor.caption_block_top(857, "bottom", 124, 1280) == 299
+
+
+@pytest.mark.parametrize(
+    ("target_height", "font_size", "expected_face_bottom", "expected_caption_top"),
+    [
+        (1280, 41, 640.0, 676.0),
+        (1920, 62, 960.0, 1014.0),
+    ],
+)
+def test_auto_fill_uses_detected_face_with_custom_position(
+    target_height: int,
+    font_size: int,
+    expected_face_bottom: float,
+    expected_caption_top: float,
+) -> None:
+    metrics = compositor._face_aware_fill_caption_metrics_for_segment(
+        {"start": 0.0, "end": 2.0, "mode": "fill", "zoom": 1.0},
+        face_track_points=[{"t": 1.0, "cy": 0.4, "h": 0.2}],
+        crop_h=1.0,
+        target_height=target_height,
+        subtitle_font_size=font_size,
+        subtitle_margin=857 if target_height == 1280 else 1286,
+        subtitle_margin_custom=True,
+    )
+
+    assert metrics["median_face_bottom"] == expected_face_bottom
+    assert metrics["caption_top"] == expected_caption_top
+    assert metrics["caption_top"] > metrics["median_face_bottom"]
+    assert metrics["subscribe_y"] > metrics["caption_top"] + metrics["caption_block_height"]
+
+
+def test_face_aware_ass_uses_canvas_split_position_and_custom_fit(tmp_path: Path) -> None:
+    subtitle_path = tmp_path / "captions.srt"
+    subtitle_path.write_text(
+        "1\n00:00:00,000 --> 00:00:01,000\nSplit words\n\n"
+        "2\n00:00:01,000 --> 00:00:02,000\nFit words\n",
+        encoding="utf-8",
+    )
+    output_path = compositor._build_face_aware_subtitle_path(
+        subtitle_path,
+        layout_segments=[
+            {"start": 0.0, "end": 1.0, "mode": "split"},
+            {"start": 1.0, "end": 2.0, "mode": "fit"},
+        ],
+        target_width=1080,
+        target_height=1920,
+        subtitle_font_size=62,
+        fit_margin=405,
+        subtitle_font="DejaVu Sans",
+        subtitle_text_color="#FFFFFF",
+        subtitle_text_alpha=100,
+        subtitle_bg_color="#000000",
+        subtitle_bg_alpha=0,
+        subtitle_style="plain",
+        subtitle_margin=1286,
+        subtitle_margin_custom=True,
+        caption_anchor="top",
+    )
+
+    assert output_path is not None
+    content = output_path.read_text(encoding="utf-8")
+    assert r"{\an5\pos(540,960)}Split words" in content
+    assert r"{\an8\pos(540,1286)}Fit words" in content
+
+
 @pytest.mark.skipif(not FFMPEG or not FFPROBE, reason="ffmpeg and ffprobe are required")
 @pytest.mark.parametrize("target_size", [(720, 1280), (1080, 1920)])
 def test_mixed_face_aware_layout_renders_every_segment_on_target_canvas(
