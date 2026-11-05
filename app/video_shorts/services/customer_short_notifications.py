@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import html
+import os
 from datetime import datetime, timezone
 from typing import Any, Dict, Iterable, Optional
 from uuid import uuid4
@@ -44,6 +45,48 @@ def normalize_personal_note(value: Any) -> str:
     if len(note) > MAX_PERSONAL_NOTE_LENGTH:
         raise ValueError(f"Personal note must be {MAX_PERSONAL_NOTE_LENGTH} characters or fewer.")
     return note
+
+
+def customer_notify_mailer() -> str:
+    mailer = str(os.getenv("CUSTOMER_NOTIFY_MAILER") or "zoho").strip().lower() or "zoho"
+    if mailer not in {"zoho", "resend"}:
+        raise RuntimeError(f"Unsupported CUSTOMER_NOTIFY_MAILER: {mailer}")
+    return mailer
+
+
+def send_customer_notification_email(
+    *,
+    to_email: str,
+    subject: str,
+    html_body: str,
+    text_body: str,
+) -> Dict[str, Any]:
+    """Send customer-ready notifications without changing other mail paths."""
+    mailer = customer_notify_mailer()
+    if mailer == "resend":
+        from app.video_shorts.services.email_verification import send_resend_email
+
+        result = send_resend_email(
+            to_email=to_email,
+            subject=subject,
+            html=html_body,
+            text=text_body,
+            reply_to_email="info@mintistudio.com",
+            error_message="Customer notification email could not be sent.",
+        )
+    else:
+        from app.video_shorts.services.outreach_email_send import send_zoho_email
+
+        try:
+            result = send_zoho_email(
+                to_email=to_email,
+                subject=subject,
+                html=html_body,
+                text=text_body,
+            )
+        except Exception as exc:
+            raise RuntimeError(f"Zoho SMTP failed: {exc}") from exc
+    return {**result, "transport": mailer}
 
 
 def build_customer_shorts_email(

@@ -1,5 +1,8 @@
 from __future__ import annotations
 
+from email import policy
+from email.parser import BytesParser
+
 import pytest
 from flask import Flask, g
 from werkzeug.exceptions import Forbidden
@@ -8,6 +11,7 @@ from app.video_shorts import video_shorts_bp
 from app.video_shorts.routes import generation
 from app.video_shorts.services import customer_short_notifications as notifications
 from app.video_shorts.services import email_verification
+from app.video_shorts.services import outreach_email_send
 
 
 class _AuditConnection:
@@ -38,7 +42,7 @@ def app():
 
 
 @pytest.mark.parametrize("connected,video_pk", [(True, 7923), (False, 7943)])
-def test_mocked_send_through_real_handler_renders_both_variants(app, monkeypatch, connected, video_pk, capsys):
+def test_mocked_smtp_through_real_handler_renders_both_variants(app, monkeypatch, connected, video_pk, capsys):
     scope = {"owner_user_id": "owner-1", "brand_id": "brand-1", "acting_admin_id": "admin-1"}
     payload = {
         "recipient": "customer@example.com",
@@ -49,30 +53,104 @@ def test_mocked_send_through_real_handler_renders_both_variants(app, monkeypatch
         "last_notified_at": None,
     }
     audit = _AuditConnection()
-    sent = {}
+    smtp_calls = {}
     monkeypatch.setattr(generation, "_require_customer_notification_scope", lambda _brand, _pk: scope)
     monkeypatch.setattr(generation, "_resolve_customer_notification_payload", lambda _scope, _pk: payload)
     monkeypatch.setattr(generation, "get_db", lambda: audit)
 
-    def _mock_send(**kwargs):
-        sent.update(kwargs)
-        return {"request_id": f"mock-{video_pk}"}
+    monkeypatch.setenv("CUSTOMER_NOTIFY_MAILER", "zoho")
+    monkeypatch.setattr(
+        outreach_email_send,
+        "_zoho_smtp_settings",
+        lambda: {"host": "smtp.zoho.com", "port": 465, "user": "info@mintistudio.com", "password": "app-password"},
+    )
 
-    monkeypatch.setattr(email_verification, "send_resend_email", _mock_send)
+    class FakeSmtp:
+        def __init__(self, host, port, **kwargs):
+            smtp_calls.update(host=host, port=port, kwargs=kwargs)
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *_args):
+            return False
+
+        def login(self, user, password):
+            smtp_calls.update(login_user=user, login_password=password)
+
+        def sendmail(self, from_addr, to_addrs, raw_message):
+            smtp_calls.update(from_addr=from_addr, to_addrs=to_addrs, raw_message=raw_message)
+            return {}
+
+    monkeypatch.setattr(outreach_email_send.smtplib, "SMTP_SSL", FakeSmtp)
     path = f"/video_shorts/admin/operation/customer/brand-1/video/{video_pk}/notify"
     with app.test_request_context(path, method="POST", json={"personal_note": "Thanks for the great source video."}):
         g.vs_current_user = {"id": "admin-1", "role": "admin"}
         response = generation.admin_operation_notify_customer("brand-1", video_pk)
     assert response.status_code == 200
-    assert sent["to_email"] == "customer@example.com"
-    assert sent["reply_to_email"] == "info@mintistudio.com"
-    assert "See your Shorts" in sent["html"]
-    assert "admin" not in sent["html"].lower()
+    message = BytesParser(policy=policy.default).parsebytes(smtp_calls["raw_message"])
+    html_body = message.get_body(preferencelist=("html",)).get_content()
+    assert smtp_calls["host"] == "smtp.zoho.com"
+    assert smtp_calls["port"] == 465
+    assert smtp_calls["login_user"] == "info@mintistudio.com"
+    assert smtp_calls["from_addr"] == "info@mintistudio.com"
+    assert smtp_calls["to_addrs"] == ["customer@example.com"]
+    assert message["From"].addresses[0].addr_spec == "info@mintistudio.com"
+    assert message["Reply-To"].addresses[0].addr_spec == "info@mintistudio.com"
+    assert message["To"].addresses[0].addr_spec == "customer@example.com"
+    assert str(message["Message-ID"]).endswith("@mintistudio.com>")
+    assert "See your Shorts" in html_body
+    assert "admin" not in html_body.lower()
     expected = "No action needed" if connected else "Watch them and download"
-    assert expected in sent["html"]
+    assert expected in html_body
     assert audit.inserts
-    print(f"\n--- {'CONNECTED' if connected else 'NOT CONNECTED'} HTML ({video_pk}) ---\n{sent['html']}")
+    audit_params = audit.inserts[-1][1]
+    assert audit_params[-2] == str(message["Message-ID"])
+    assert audit_params[-1] is None
+    print(f"\n--- {'CONNECTED' if connected else 'NOT CONNECTED'} HTML ({video_pk}) ---\n{html_body}")
     assert expected in capsys.readouterr().out
+
+
+def test_customer_notify_resend_is_explicit_rollback(monkeypatch):
+    captured = {}
+    monkeypatch.setenv("CUSTOMER_NOTIFY_MAILER", "resend")
+
+    def fake_resend(**kwargs):
+        captured.update(kwargs)
+        return {"request_id": "resend-id"}
+
+    monkeypatch.setattr(email_verification, "send_resend_email", fake_resend)
+    result = notifications.send_customer_notification_email(
+        to_email="customer@example.com", subject="Ready", html_body="<p>Ready</p>", text_body="Ready"
+    )
+    assert result["transport"] == "resend"
+    assert captured["reply_to_email"] == "info@mintistudio.com"
+
+
+def test_customer_notify_mailer_defaults_to_zoho(monkeypatch):
+    monkeypatch.delenv("CUSTOMER_NOTIFY_MAILER", raising=False)
+    assert notifications.customer_notify_mailer() == "zoho"
+
+
+def test_smtp_failure_is_logged_and_returned_without_success_state(app, monkeypatch):
+    scope = {"owner_user_id": "owner-1", "brand_id": "brand-1", "acting_admin_id": "admin-1"}
+    payload = {
+        "recipient": "customer@example.com", "first_name": "Matt", "video_title": "Source",
+        "short_titles": ["Ready Short"], "youtube_connected": False, "last_notified_at": None,
+    }
+    audit = _AuditConnection()
+    monkeypatch.setattr(generation, "_require_customer_notification_scope", lambda _brand, _pk: scope)
+    monkeypatch.setattr(generation, "_resolve_customer_notification_payload", lambda _scope, _pk: payload)
+    monkeypatch.setattr(generation, "get_db", lambda: audit)
+    monkeypatch.setenv("CUSTOMER_NOTIFY_MAILER", "zoho")
+    monkeypatch.setattr(outreach_email_send, "send_zoho_email", lambda **_kwargs: (_ for _ in ()).throw(RuntimeError("authentication failed")))
+    with app.test_request_context("/notify", method="POST", json={}):
+        g.vs_current_user = {"id": "admin-1", "role": "admin"}
+        response, status = generation.admin_operation_notify_customer("brand-1", 7943)
+    assert status == 502
+    assert "Zoho SMTP failed: authentication failed" in response.get_json()["message"]
+    assert audit.inserts[-1][1][-2] is None
+    assert audit.inserts[-1][1][-1] == "Zoho SMTP failed: authentication failed"
 
 
 def test_notification_brand_mismatch_fails_closed_with_403(app, monkeypatch):

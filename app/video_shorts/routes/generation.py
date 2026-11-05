@@ -26269,9 +26269,10 @@ def _resolve_customer_notification_payload(scope: Dict[str, str], video_pk: int)
 def admin_operation_notify_customer(brand_id: str, video_pk: int):
     scope = _require_customer_notification_scope(brand_id, video_pk)
     from app.video_shorts.services.customer_short_notifications import (
-        build_customer_shorts_email, format_pt_date, normalize_personal_note, record_notification_attempt,
+        build_customer_shorts_email, format_pt_date, normalize_personal_note,
+        record_notification_attempt, send_customer_notification_email,
     )
-    from app.video_shorts.services.email_verification import build_dashboard_url, send_resend_email
+    from app.video_shorts.services.email_verification import build_dashboard_url
 
     try:
         payload = _resolve_customer_notification_payload(scope, video_pk)
@@ -26302,11 +26303,11 @@ def admin_operation_notify_customer(brand_id: str, video_pk: int):
     provider_message_id = ""
     send_error = ""
     try:
-        result = send_resend_email(
-            to_email=payload["recipient"], subject=email["subject"], html=email["html"], text=email["text"],
-            reply_to_email="info@mintistudio.com", error_message="Customer notification email could not be sent.",
+        result = send_customer_notification_email(
+            to_email=payload["recipient"], subject=email["subject"],
+            html_body=email["html"], text_body=email["text"],
         )
-        provider_message_id = str(result.get("request_id") or "").strip()
+        provider_message_id = str(result.get("message_id") or result.get("request_id") or "").strip()
     except Exception as exc:
         send_error = str(exc) or exc.__class__.__name__
 
@@ -26326,7 +26327,7 @@ def admin_operation_notify_customer(brand_id: str, video_pk: int):
         audit_conn.close()
     if send_error:
         current_app.logger.error("Customer notification failed video_pk=%s error=%s", video_pk, send_error)
-        return jsonify(ok=False, message="Customer notification email could not be sent."), 502
+        return jsonify(ok=False, message=send_error), 502
     return jsonify(ok=True, notified_label=format_pt_date(datetime.now(timezone.utc)))
 
 
