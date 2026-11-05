@@ -12067,7 +12067,12 @@ def _activate_admin_operation_editor_context() -> None:
             requested_workspace_kind or None,
             extra or None,
         )
-        abort(404)
+        dashboard_endpoints = {
+            "video_shorts_bp.video_stats_page",
+            "video_shorts_bp.video_stats_widgets",
+            "video_shorts_bp.stats_top_videos",
+        }
+        abort(403 if request.endpoint in dashboard_endpoints else 404)
 
     if not requested_brand_id or not requested_workspace_kind:
         _deny("incomplete_request_context")
@@ -12091,6 +12096,13 @@ def _activate_admin_operation_editor_context() -> None:
     scoped_brand_endpoint = request.endpoint in {
         "video_shorts_bp.description_prompt_settings_api",
     }
+    scoped_dashboard_endpoint = request.endpoint in {
+        "video_shorts_bp.video_stats_page",
+        "video_shorts_bp.video_stats_widgets",
+        "video_shorts_bp.stats_top_videos",
+    }
+    if scoped_dashboard_endpoint:
+        scoped_brand_endpoint = True
     if request.endpoint == "video_shorts_bp.legacy_save_short_editor_defaults":
         abort(403)
     if (
@@ -12116,6 +12128,8 @@ def _activate_admin_operation_editor_context() -> None:
     current_user = getattr(g, "vs_current_user", None) or {}
     if str(current_user.get("role") or "").strip().lower() != "admin":
         _deny("role_not_admin", video_pk=video_pk)
+    if scoped_dashboard_endpoint and requested_workspace_kind != "customer":
+        _deny("dashboard_requires_customer_scope", video_pk=video_pk)
 
     conn = get_db_readonly()
     try:

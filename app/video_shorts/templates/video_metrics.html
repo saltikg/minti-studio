@@ -35,6 +35,11 @@
     .stats-page .dropdown-menu {
       z-index: 2600;
     }
+    .stats-admin-banner {
+      border: 1px solid rgba(45, 212, 191, 0.3);
+      background: rgba(45, 212, 191, 0.08);
+      color: #ccfbf1;
+    }
     .subscriber-legend {
       color: #cbd5f5;
       font-size: 0.9rem;
@@ -282,6 +287,7 @@
   <div class="stats-page" id="statsDashboardShell">
     <div class="video-metric-header mb-4" data-dashboard-widget="header">
       <div><h1 class="h3 mb-0">Daily Video Statistics</h1></div>
+      {% if stats_admin_operation %}<div class="alert stats-admin-banner mt-3 mb-0 py-2">Viewing {{ stats_admin_brand_name }}'s dashboard (admin)</div>{% endif %}
     </div>
     <div class="stats-widget-skeleton mb-4" data-dashboard-widget="filters" aria-label="Loading dashboard filters"></div>
     <div class="stats-widget-skeleton mb-4" data-dashboard-widget="summary" aria-label="Loading summary"></div>
@@ -303,6 +309,7 @@
           </span>
         </div>
       </div>
+      {% if stats_admin_operation %}<div class="alert stats-admin-banner mt-3 mb-0 py-2">Viewing {{ stats_admin_brand_name }}'s dashboard (admin)</div>{% endif %}
     </div>
     {% if stats_connect_empty %}
       <div class="card shadow-sm mb-4 vs-card" data-dashboard-widget="filters">
@@ -310,7 +317,7 @@
           <i class="bi bi-youtube fs-1 text-danger" aria-hidden="true"></i>
           <h2 class="h5 mt-3 mb-2">Connect your YouTube channel to see your stats</h2>
           <p class="text-muted mb-3">Once connected, your channel and video performance will appear here.</p>
-          <a href="{{ url_for('video_shorts_bp.social_connect') }}" class="btn btn-primary">Connect YouTube</a>
+          {% if not stats_admin_operation %}<a href="{{ url_for('video_shorts_bp.social_connect') }}" class="btn btn-primary">Connect YouTube</a>{% endif %}
         </div>
       </div>
       {% for widget_name in ['summary', 'performance', 'audience-summary', 'audience-chart', 'details-toggle', 'details'] %}
@@ -323,9 +330,9 @@
           <i class="bi bi-exclamation-triangle-fill" aria-hidden="true"></i>
           <span>YouTube subscriber data is missing. The daily subscribers chart may be incomplete.</span>
         </div>
-        <a href="{{ url_for('video_shorts_bp.social_connect') }}" class="btn btn-sm btn-outline-dark">
+        {% if not stats_admin_operation %}<a href="{{ url_for('video_shorts_bp.social_connect') }}" class="btn btn-sm btn-outline-dark">
           Reconnect via Social Connect
-        </a>
+        </a>{% endif %}
       </div>
     {% endif %}
 
@@ -334,6 +341,7 @@
   <div class="card chart-card shadow-sm mb-4 vs-card chart-area-card stats-filters-card" data-dashboard-widget="filters">
     <div class="card-body">
       <form id="chartFilters" method="get" class="chart-toolbar controls-bar flex-nowrap">
+        {% for scope_name, scope_value in stats_scope_query.items() %}<input type="hidden" name="{{ scope_name }}" value="{{ scope_value }}">{% endfor %}
         <select class="form-select form-select-sm chart-control chart-control-metric vs-select" id="metricSelector" name="metric">
           <option value="views" {% if selected_metric == 'views' %}selected{% endif %}>Views</option>
           <option value="comments" {% if selected_metric == 'comments' %}selected{% endif %}>Comments</option>
@@ -577,19 +585,19 @@
           <nav aria-label="Video list pagination">
             <ul class="pagination pagination-sm">
               <li class="page-item {% if videos_page <= 1 %}disabled{% endif %}">
-                <a class="page-link" href="{{ url_for('video_shorts_bp.video_stats_page', channel=channel_type, metric=selected_metric, start=start_date.isoformat(), end=end_date.isoformat(), videos_page=videos_page - 1) }}">Previous</a>
+                <a class="page-link" href="{{ stats_url('video_stats_page', channel=channel_type, metric=selected_metric, start=start_date.isoformat(), end=end_date.isoformat(), videos_page=videos_page - 1) }}">Previous</a>
               </li>
               {% for page_num in range(1, video_rows_total_pages + 1) %}
                 {% if page_num == 1 or page_num == video_rows_total_pages or (page_num >= videos_page - 1 and page_num <= videos_page + 1) %}
                   <li class="page-item {% if page_num == videos_page %}active{% endif %}">
-                    <a class="page-link" href="{{ url_for('video_shorts_bp.video_stats_page', channel=channel_type, metric=selected_metric, start=start_date.isoformat(), end=end_date.isoformat(), videos_page=page_num) }}">{{ page_num }}</a>
+                    <a class="page-link" href="{{ stats_url('video_stats_page', channel=channel_type, metric=selected_metric, start=start_date.isoformat(), end=end_date.isoformat(), videos_page=page_num) }}">{{ page_num }}</a>
                   </li>
                 {% elif page_num == videos_page - 2 or page_num == videos_page + 2 %}
                   <li class="page-item disabled"><span class="page-link">…</span></li>
                 {% endif %}
               {% endfor %}
               <li class="page-item {% if videos_page >= video_rows_total_pages %}disabled{% endif %}">
-                <a class="page-link" href="{{ url_for('video_shorts_bp.video_stats_page', channel=channel_type, metric=selected_metric, start=start_date.isoformat(), end=end_date.isoformat(), videos_page=videos_page + 1) }}">Next</a>
+                <a class="page-link" href="{{ stats_url('video_stats_page', channel=channel_type, metric=selected_metric, start=start_date.isoformat(), end=end_date.isoformat(), videos_page=videos_page + 1) }}">Next</a>
               </li>
             </ul>
           </nav>
@@ -739,7 +747,7 @@
     window.addEventListener("DOMContentLoaded", async () => {
       const errorBox = document.getElementById("statsDashboardError");
       try {
-        const endpoint = new URL("{{ url_for('video_shorts_bp.video_stats_widgets') }}", window.location.origin);
+        const endpoint = new URL({{ stats_url('video_stats_widgets')|tojson }}, window.location.origin);
         endpoint.search = window.location.search;
         const response = await fetch(endpoint, { headers: { Accept: "application/json" } });
         if (!response.ok) throw new Error(`Dashboard widgets returned ${response.status}`);
@@ -1287,7 +1295,7 @@
           return;
         }
         try {
-          const url = new URL("{{ url_for('video_shorts_bp.stats_top_videos') }}", window.location.origin);
+          const url = new URL({{ stats_url('stats_top_videos')|tojson }}, window.location.origin);
           url.searchParams.set("date", dateLabel);
           url.searchParams.set("channel", channelSelect.value || "all");
           const response = await fetch(url.toString());

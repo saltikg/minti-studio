@@ -55,6 +55,7 @@
         <div class="customer-workspace-target-actions">
           {% if customer.youtube_url %}<a class="btn btn-sm btn-outline-light" href="{{ customer.youtube_url }}" target="_blank" rel="noopener noreferrer">Open YouTube</a>{% endif %}
           <button class="btn btn-sm btn-outline-light" type="button" data-bs-toggle="modal" data-bs-target="#descriptionPromptModal">Description prompt</button>
+          <a class="btn btn-sm btn-outline-light" href="{{ url_for('video_shorts_bp.video_stats_page', admin_operation_brand=customer.brand_id, admin_operation_kind='customer') }}" target="_blank" rel="noopener noreferrer">Dashboard</a>
         </div>
       </div>
       <form method="post" action="{{ url_for('video_shorts_bp.admin_operation_exit_workspace', workspace_kind='customer', brand_id=customer.brand_id) }}">

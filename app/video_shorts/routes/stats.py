@@ -5,13 +5,15 @@ from datetime import date, datetime, timedelta, timezone
 from pathlib import Path
 from typing import Dict, List, Mapping, Optional, Sequence, Tuple
 
-from flask import current_app, g, jsonify, render_template, request, session
+from flask import abort, current_app, g, jsonify, render_template, request, session, url_for
 from markupsafe import Markup, escape
+from werkzeug.exceptions import HTTPException
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 from app.video_shorts import video_shorts_bp
 from app.video_shorts.config import PRIVATE_STATE_DIR, SHORTS_DIR
 from app.video_shorts.services.brands import current_brand_id
+from app.video_shorts.services.admin_operation_scope import request_admin_operation_scope
 from app.video_shorts.services.db import get_db_readonly
 from app.video_shorts.services.feature_flags import tiktok_enabled
 from app.video_shorts.services.video_metrics import (
@@ -147,6 +149,59 @@ def _resolve_owned_brand_for_stats(conn, *, user_id: Optional[str]) -> Optional[
     else:
         session.pop("vs_brand_id", None)
     return brand
+
+
+def _resolve_stats_tenant(conn) -> Dict[str, object]:
+    operation_scope = request_admin_operation_scope()
+    if operation_scope:
+        if operation_scope["workspace_kind"] != "customer":
+            abort(403)
+        owner_user_id = operation_scope["owner_user_id"]
+        brand_id = operation_scope["brand_id"]
+        brand = _load_owned_brand(conn, user_id=owner_user_id, brand_id=brand_id)
+        if not brand:
+            abort(403)
+        timezone_row = conn.execute(
+            "SELECT time_zone FROM shorts_users WHERE CAST(id AS VARCHAR) = CAST(? AS VARCHAR) LIMIT 1",
+            [owner_user_id],
+        ).fetchone()
+        return {
+            "owner_user_id": owner_user_id,
+            "brand_id": brand_id,
+            "brand_name": str(brand.get("name") or "Customer").strip() or "Customer",
+            "time_zone": str((timezone_row[0] if timezone_row else "") or DEFAULT_TIME_ZONE).strip() or DEFAULT_TIME_ZONE,
+            "is_admin_operation": True,
+        }
+
+    current_user = getattr(g, "vs_current_user", None) or {}
+    active_brand_id = str(current_brand_id() or "").strip() or None
+    current_brand = getattr(g, "vs_current_brand", None) or {}
+    return {
+        "owner_user_id": str(current_user.get("id") or "").strip(),
+        "brand_id": active_brand_id,
+        "brand_name": str(current_brand.get("name") or "").strip(),
+        "time_zone": str(current_user.get("time_zone") or DEFAULT_TIME_ZONE).strip() or DEFAULT_TIME_ZONE,
+        "is_admin_operation": False,
+    }
+
+
+def _stats_url(endpoint: str, **values: object) -> str:
+    operation_scope = request_admin_operation_scope()
+    if operation_scope:
+        values.setdefault("admin_operation_brand", operation_scope["brand_id"])
+        values.setdefault("admin_operation_kind", operation_scope["workspace_kind"])
+    endpoint_name = endpoint if "." in endpoint else f"video_shorts_bp.{endpoint}"
+    return url_for(endpoint_name, **values)
+
+
+def _stats_scope_query() -> Dict[str, str]:
+    operation_scope = request_admin_operation_scope()
+    if not operation_scope:
+        return {}
+    return {
+        "admin_operation_brand": operation_scope["brand_id"],
+        "admin_operation_kind": operation_scope["workspace_kind"],
+    }
 
 
 def _channel_filter_clause(channel_type: Optional[str]) -> Tuple[str, List[object]]:
@@ -683,10 +738,17 @@ def _fetch_daily_comment_counts(
     conn,
     start: date,
     end: date,
+    *,
+    brand_id: Optional[str],
 ) -> Dict[str, Dict[str, int]]:
+    brand_clause, brand_params = _brand_scope_clause(
+        conn,
+        "social_comment_cache",
+        brand_id=brand_id,
+    )
     try:
         cursor = conn.execute(
-            """
+            f"""
             WITH raw AS (
                 SELECT
                     LOWER(platform) AS platform,
@@ -696,6 +758,8 @@ def _fetch_daily_comment_counts(
                         ELSE CAST(published_at AS VARCHAR)
                     END AS published_norm
                 FROM social_comment_cache
+                WHERE 1 = 1
+                  {brand_clause}
             ),
             parsed AS (
                 SELECT
@@ -718,7 +782,7 @@ def _fetch_daily_comment_counts(
               AND CAST(published_ts AS DATE) BETWEEN ? AND ?
             GROUP BY comment_date, platform
             """,
-            [start.isoformat(), end.isoformat()],
+            [*brand_params, start.isoformat(), end.isoformat()],
         )
     except Exception:
         return {}
@@ -1060,14 +1124,28 @@ def _fetch_youtube_published_daily_metrics(
     return total_views, total_likes, delta_views, delta_likes, video_counts
 
 
-def _fetch_top_videos_for_date(conn, target_date: date, channel_type: str, limit: int = 5):
+def _fetch_top_videos_for_date(
+    conn,
+    target_date: date,
+    channel_type: str,
+    *,
+    brand_id: Optional[str],
+    limit: int = 5,
+):
     channel_clause, channel_params = _channel_filter_clause(channel_type)
+    brand_clause, brand_params = _brand_scope_clause(
+        conn,
+        SNAPSHOT_TABLE,
+        brand_id=brand_id,
+    )
+    scope_clause = f"{channel_clause}{brand_clause}"
+    scope_params = [*channel_params, *brand_params]
     prev_date = target_date - timedelta(days=1)
     params = [
         target_date.isoformat(),
-        *channel_params,
+        *scope_params,
         prev_date.isoformat(),
-        *channel_params,
+        *scope_params,
         limit,
     ]
     cursor = conn.execute(
@@ -1081,7 +1159,7 @@ def _fetch_top_videos_for_date(conn, target_date: date, channel_type: str, limit
                 SUM(COALESCE(views, 0)) AS views,
                 SUM(COALESCE(comments, 0)) AS comments
             FROM {SNAPSHOT_TABLE}
-            WHERE snapshot_date = ?{channel_clause}
+            WHERE snapshot_date = ?{scope_clause}
             GROUP BY video_id, channel_type, channel_name, video_title
         ),
         prev_values AS (
@@ -1091,7 +1169,7 @@ def _fetch_top_videos_for_date(conn, target_date: date, channel_type: str, limit
                 SUM(COALESCE(views, 0)) AS views,
                 SUM(COALESCE(comments, 0)) AS comments
             FROM {SNAPSHOT_TABLE}
-            WHERE snapshot_date = ?{channel_clause}
+            WHERE snapshot_date = ?{scope_clause}
             GROUP BY video_id, channel_type
         )
         SELECT
@@ -1249,7 +1327,24 @@ def _render_video_stats(*, load_widgets: bool):
     previous_period_end = start_date - timedelta(days=1)
     previous_period_start = previous_period_end - timedelta(days=period_days - 1)
 
+    conn = get_db_readonly()
+    try:
+        tenant = _resolve_stats_tenant(conn)
+    except Exception:
+        conn.close()
+        raise
+    active_brand_id = str(tenant.get("brand_id") or "").strip() or None
+    target_owner_user_id = str(tenant.get("owner_user_id") or "").strip()
+    is_admin_operation = bool(tenant.get("is_admin_operation"))
+    shared_template_context = {
+        "stats_url": _stats_url,
+        "stats_scope_query": _stats_scope_query(),
+        "stats_admin_operation": is_admin_operation,
+        "stats_admin_brand_name": str(tenant.get("brand_name") or "Customer"),
+    }
+
     if not load_widgets:
+        conn.close()
         return render_template(
             "video_metrics.html",
             dashboard_shell=True,
@@ -1258,15 +1353,13 @@ def _render_video_stats(*, load_widgets: bool):
             end_date=end_date,
             channel_type=channel_type,
             selected_metric=selected_metric,
+            **shared_template_context,
         )
 
-    user_time_zone = _get_user_timezone()
+    user_time_zone = str(tenant.get("time_zone") or DEFAULT_TIME_ZONE)
     user_time_zone_label = _timezone_label(user_time_zone)
-    current_user = getattr(g, "vs_current_user", None) or {}
     oauth_reauth_required = False
-    active_brand_id = str(current_brand_id() or "").strip() or None
-    youtube_connected = has_refresh_token(current_user.get("id"), brand_id=active_brand_id)
-    conn = get_db_readonly()
+    youtube_connected = has_refresh_token(target_owner_user_id, brand_id=active_brand_id)
     try:
         snapshot_brand_clause, snapshot_brand_params = _brand_scope_clause(
             conn,
@@ -1311,6 +1404,7 @@ def _render_video_stats(*, load_widgets: bool):
             conn,
             comment_start,
             end_date,
+            brand_id=active_brand_id,
         )
         comment_counts_all: Dict[str, int] = {}
         for platform_counts in comment_counts_by_platform.values():
@@ -1881,7 +1975,7 @@ def _render_video_stats(*, load_widgets: bool):
                     start_date.isoformat(), end_date.isoformat(), active_brand_id,
                     active_brand_id, active_brand_id,
                     active_brand_id, active_brand_id, start_date.isoformat(), active_brand_id,
-                    current_user.get("id"),
+                    target_owner_user_id,
                 ],
             )
             subscriber_rows = _rows_to_dict(subscriber_cursor)
@@ -2055,7 +2149,7 @@ def _render_video_stats(*, load_widgets: bool):
                 conn,
                 start_date=start_date,
                 end_date=end_date,
-                brand_id=current_brand_id(),
+                brand_id=active_brand_id,
                 page=videos_page,
             )
         finally:
@@ -2099,6 +2193,7 @@ def _render_video_stats(*, load_widgets: bool):
         last_api_at=last_api_at,
         stats_connect_empty=bool(not youtube_connected and not channel_rows),
         tiktok_enabled=tiktok_feature_enabled,
+        **shared_template_context,
     )
     template = current_app.jinja_env.get_template("video_metrics.html")
     fragment_context = template.new_context(
@@ -2126,8 +2221,17 @@ def stats_top_videos():
         return jsonify({"videos": [], "date": None, "channel": channel_type})
     conn = get_db_readonly()
     try:
-        videos = _fetch_top_videos_for_date(conn, parsed_date, channel_type, limit=6)
+        tenant = _resolve_stats_tenant(conn)
+        videos = _fetch_top_videos_for_date(
+            conn,
+            parsed_date,
+            channel_type,
+            brand_id=str(tenant.get("brand_id") or "").strip() or None,
+            limit=6,
+        )
         return jsonify({"videos": videos, "date": parsed_date.isoformat(), "channel": channel_type})
+    except HTTPException:
+        raise
     except Exception:
         return jsonify({"videos": [], "date": parsed_date.isoformat(), "channel": channel_type})
     finally:
