@@ -4,6 +4,7 @@ import json
 import re
 
 import pytest
+from flask import Flask, g, jsonify
 
 from app.video_shorts.routes import generation
 from app.video_shorts.services import tenant_media
@@ -15,6 +16,49 @@ class _Result:
 
     def fetchone(self):
         return self._row
+
+
+class _UserConnection:
+    def execute(self, _sql, _params=None):
+        return _Result(("owner-1", "owner@example.com", "user", "starter"))
+
+    def close(self):
+        pass
+
+
+def test_auto_render_drops_stale_admin_scope_from_worker_context(monkeypatch):
+    app = Flask(__name__)
+    captured = {}
+    monkeypatch.setattr(generation, "get_db_readonly", lambda: _UserConnection())
+
+    def _autoclip(_video_pk):
+        captured["admin_scope"] = generation.request_admin_operation_scope()
+        captured["owner_user_id"] = g.vs_current_user["id"]
+        captured["brand_id"] = g.vs_current_brand["id"]
+        return jsonify(success=True, job_id="render-job-1")
+
+    monkeypatch.setattr(generation, "autoclip_video", _autoclip)
+
+    with app.app_context():
+        g.vs_admin_operation_scope = {
+            "owner_user_id": "stale-owner",
+            "brand_id": "stale-brand",
+            "workspace_kind": "customer",
+            "acting_admin_id": "admin-1",
+        }
+        result = generation._enqueue_auto_render_for_plan_entry(
+            owner_user_id="owner-1",
+            brand_id="brand-1",
+            video_pk=7937,
+            plan_index=1,
+        )
+
+    assert result["ok"] is True
+    assert captured == {
+        "admin_scope": None,
+        "owner_user_id": "owner-1",
+        "brand_id": "brand-1",
+    }
 
 
 def test_editor_context_fails_closed_outside_request():

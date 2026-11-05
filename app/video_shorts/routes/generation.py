@@ -9468,6 +9468,13 @@ def _enqueue_auto_render_for_plan_entry(
         },
         headers={"X-Requested-With": "XMLHttpRequest"},
     ):
+        # Workers keep one application context alive across jobs. A request
+        # context nested inside it shares ``g``, so an admin operation handled
+        # by an earlier job can otherwise leak its target into this customer's
+        # auto-render and make the tenant guard reject the correct video.
+        g.pop("vs_admin_operation_scope", None)
+        g.pop("vs_admin_operation_workspace_kind", None)
+        g.pop("vs_editor_scope_validation_key", None)
         g.vs_current_user = {
             "id": str(user_row[0]),
             "email": str(user_row[1] or ""),
