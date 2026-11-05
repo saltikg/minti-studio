@@ -120,3 +120,40 @@ def test_email_content_and_note_limit():
     assert "Gokhan — Minti Studio" in email["text"]
     with pytest.raises(ValueError):
         notifications.normalize_personal_note("x" * 301)
+
+
+def test_customer_first_name_skips_honorific(app, monkeypatch):
+    scope = {"owner_user_id": "owner-1", "brand_id": "brand-1"}
+    monkeypatch.setattr(
+        generation,
+        "_require_active_customer_workspace",
+        lambda _scope: {"account_email": "shelley@example.com", "account_name": "Dr. Shelley Meyer"},
+    )
+
+    class _Rows:
+        def __init__(self):
+            self.query = ""
+
+        def execute(self, sql, _params=None):
+            self.query = sql
+            return self
+
+        def fetchone(self):
+            if "SELECT title" in self.query:
+                return ("Source video",)
+            if "SELECT sent_at" in self.query:
+                return None
+            return None
+
+        def fetchall(self):
+            return [("A ready Short",)]
+
+        def close(self):
+            return None
+
+    monkeypatch.setattr(generation, "get_db_readonly", _Rows)
+    from app.video_shorts.services import youtube_token_store
+    monkeypatch.setattr(youtube_token_store, "get_youtube_connection", lambda *_args: {"reauth_required": False})
+    with app.test_request_context("/"):
+        payload = generation._resolve_customer_notification_payload(scope, 7923)
+    assert payload["first_name"] == "Shelley"

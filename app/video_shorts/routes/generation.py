@@ -26248,7 +26248,11 @@ def _resolve_customer_notification_payload(scope: Dict[str, str], video_pk: int)
     if not short_titles:
         raise ValueError("This video does not have any ready Shorts.")
     account_name = str(customer.get("account_name") or "").strip()
-    first_name = account_name.split()[0] if account_name else recipient.split("@", 1)[0]
+    name_parts = account_name.split()
+    honorifics = {"dr", "mr", "mrs", "ms", "miss", "prof", "professor"}
+    if name_parts and name_parts[0].lower().rstrip(".") in honorifics:
+        name_parts = name_parts[1:]
+    first_name = name_parts[0] if name_parts else recipient.split("@", 1)[0]
     from app.video_shorts.services.youtube_token_store import get_youtube_connection
     connection = get_youtube_connection(scope["owner_user_id"], scope["brand_id"])
     return {
