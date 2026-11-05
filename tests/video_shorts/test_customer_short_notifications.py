@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from email import policy
 from email.parser import BytesParser
+from datetime import datetime, timezone
 
 import pytest
 from flask import Flask, g
@@ -48,7 +49,14 @@ def test_mocked_smtp_through_real_handler_renders_both_variants(app, monkeypatch
         "recipient": "customer@example.com",
         "first_name": "Shelley" if connected else "Matt",
         "video_title": "A useful long-form customer video",
-        "short_titles": ["A clean opening", "The key takeaway"],
+        "short_titles": [
+            {"title": "A clean opening", "state": "published", "scheduled_at": None},
+            {
+                "title": "The key takeaway",
+                "state": "scheduled",
+                "scheduled_at": datetime(2026, 11, 9, 8, tzinfo=timezone.utc),
+            },
+        ],
         "youtube_connected": connected,
         "last_notified_at": None,
     }
@@ -101,8 +109,10 @@ def test_mocked_smtp_through_real_handler_renders_both_variants(app, monkeypatch
     assert str(message["Message-ID"]).endswith("@mintistudio.com>")
     assert "See your Shorts" in html_body
     assert "admin" not in html_body.lower()
-    expected = "No action needed" if connected else "Watch them and download"
+    expected = "1 are already live" if connected else "Watch them and download"
     assert expected in html_body
+    assert "A clean opening · Live" in html_body
+    assert "The key takeaway · Nov 9" in html_body
     assert audit.inserts
     audit_params = audit.inserts[-1][1]
     assert audit_params[-2] == str(message["Message-ID"])
@@ -200,6 +210,63 @@ def test_email_content_and_note_limit():
         notifications.normalize_personal_note("x" * 301)
 
 
+@pytest.mark.parametrize(
+    "states,expected",
+    [
+        (["published", "published"], "They're already live on your channel."),
+        (["scheduled", "scheduled"], "No action needed. They'll go out on your channel on the scheduled dates."),
+        (["published", "scheduled", "scheduled"], "1 are already live, and the other 2 will go out on the scheduled dates."),
+        (["unscheduled", "scheduled"], "No action needed. We'll schedule them on your channel shortly."),
+        (["published", "unscheduled"], "1 are already live. No action needed. We'll schedule the unscheduled Shorts on your channel shortly."),
+    ],
+)
+def test_connected_delivery_sentence_matches_reality(states, expected):
+    items = [{"title": f"Short {index}", "state": state} for index, state in enumerate(states)]
+    assert notifications.connected_delivery_sentence(items) == expected
+
+
+def test_delivery_loader_combines_all_platform_rows_with_tenant_scope():
+    class Result:
+        def __init__(self, rows):
+            self.rows = rows
+
+        def fetchall(self):
+            return self.rows
+
+    class Connection:
+        def __init__(self):
+            self.calls = []
+
+        def execute(self, sql, params=None):
+            self.calls.append((sql, params or []))
+            if "FROM shorts_generated_videos" in sql:
+                return Result([
+                    ("Instagram live", "ig.mp4", '{"plan_index": 1}', "ready", None, None, None, None, None, None),
+                    ("Facebook scheduled", "fb.mp4", '{"plan_index": 2}', "ready", None, None, None, None, None, None),
+                    ("TikTok live", "tt.mp4", '{"plan_index": 3}', "ready", None, None, None, None, None, None),
+                    ("YouTube scheduled", "yt.mp4", '{"plan_index": 4}', "ready", None, None, None, None, None, None),
+                ])
+            if "FROM shorts_instagram_queue" in sql:
+                return Result([("ig.mp4", "1", "published", None, "2026-11-05T08:00:00Z")])
+            if "FROM shorts_facebook_queue" in sql:
+                return Result([("fb.mp4", "2", "pending", "2026-11-10T08:00:00Z", None)])
+            if "FROM shorts_tiktok_queue" in sql:
+                return Result([("tt.mp4", "3", "published", None, "2026-11-05T08:00:00Z")])
+            if "FROM shorts_youtube_schedules" in sql:
+                return Result([('{"filename":"yt.mp4","plan_index":4}', "pending", datetime(2026, 11, 12, 8), None)])
+            raise AssertionError(sql)
+
+    conn = Connection()
+    items = notifications.load_video_short_delivery_items(
+        conn, video_pk=22, source_video_id="source-22", owner_user_id="owner-1", brand_id="brand-1"
+    )
+    assert [item["state"] for item in items] == ["published", "scheduled", "published", "scheduled"]
+    assert notifications.short_delivery_label(items[1]) == "Facebook scheduled · Nov 10"
+    assert notifications.short_delivery_label(items[3]) == "YouTube scheduled · Nov 12"
+    queue_calls = [params for sql, params in conn.calls if "_queue" in sql or "youtube_schedules" in sql]
+    assert all("owner-1" in params and "brand-1" in params for params in queue_calls)
+
+
 def test_customer_first_name_skips_honorific(app, monkeypatch):
     scope = {"owner_user_id": "owner-1", "brand_id": "brand-1"}
     monkeypatch.setattr(
@@ -218,7 +285,7 @@ def test_customer_first_name_skips_honorific(app, monkeypatch):
 
         def fetchone(self):
             if "SELECT title" in self.query:
-                return ("Source video",)
+                return ("Source video", "source-id")
             if "SELECT sent_at" in self.query:
                 return None
             return None
@@ -230,6 +297,11 @@ def test_customer_first_name_skips_honorific(app, monkeypatch):
             return None
 
     monkeypatch.setattr(generation, "get_db_readonly", _Rows)
+    monkeypatch.setattr(
+        notifications,
+        "load_video_short_delivery_items",
+        lambda *_args, **_kwargs: [{"title": "A ready Short", "state": "unscheduled", "scheduled_at": None}],
+    )
     from app.video_shorts.services import youtube_token_store
     monkeypatch.setattr(youtube_token_store, "get_youtube_connection", lambda *_args: {"reauth_required": False})
     with app.test_request_context("/"):

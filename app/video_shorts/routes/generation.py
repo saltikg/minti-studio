@@ -26202,7 +26202,7 @@ def _resolve_customer_notification_payload(scope: Dict[str, str], video_pk: int)
     try:
         video = conn.execute(
             """
-            SELECT title FROM youtube_videos
+            SELECT title, video_id FROM youtube_videos
             WHERE id = ?
               AND CAST(owner_user_id AS VARCHAR) = CAST(? AS VARCHAR)
               AND brand_id IS NOT DISTINCT FROM ?
@@ -26213,39 +26213,23 @@ def _resolve_customer_notification_payload(scope: Dict[str, str], video_pk: int)
         ).fetchone()
         if not video:
             abort(403)
-        short_rows = conn.execute(
-            """
-            SELECT COALESCE(NULLIF(trim(gv.generated_title), ''), NULLIF(trim(gv.clip_filename), ''), 'Untitled Short')
-            FROM shorts_generated_videos gv
-            JOIN shorts_storage_assets render_asset
-              ON render_asset.file_key = gv.storage_file_key
-             AND CAST(render_asset.user_id AS VARCHAR) = CAST(gv.user_id AS VARCHAR)
-             AND render_asset.brand_id IS NOT DISTINCT FROM gv.brand_id
-             AND lower(coalesce(render_asset.status, 'active')) = 'active'
-             AND render_asset.size_bytes > 0
-            JOIN youtube_videos source_video
-              ON source_video.video_id = gv.source_video_id
-             AND source_video.owner_user_id = gv.user_id
-             AND source_video.brand_id IS NOT DISTINCT FROM gv.brand_id
-             AND source_video.deleted_at IS NULL
-            WHERE source_video.id = ?
-              AND CAST(gv.user_id AS VARCHAR) = CAST(? AS VARCHAR)
-              AND gv.brand_id IS NOT DISTINCT FROM ?
-              AND NULLIF(trim(coalesce(gv.clip_filename, '')), '') IS NOT NULL
-              AND NULLIF(trim(coalesce(gv.storage_file_key, '')), '') IS NOT NULL
-              AND lower(coalesce(gv.generation_status, '')) NOT IN ('pending', 'queued', 'processing', 'rendering')
-            ORDER BY gv.created_at, gv.id
-            """,
-            [video_pk, scope["owner_user_id"], scope["brand_id"]],
-        ).fetchall()
-        from app.video_shorts.services.customer_short_notifications import latest_successful_notification
+        from app.video_shorts.services.customer_short_notifications import (
+            latest_successful_notification,
+            load_video_short_delivery_items,
+        )
+        short_items = load_video_short_delivery_items(
+            conn,
+            video_pk=video_pk,
+            source_video_id=str(video[1] or "").strip(),
+            owner_user_id=scope["owner_user_id"],
+            brand_id=scope["brand_id"],
+        )
         last_notified_at = latest_successful_notification(
             conn, video_pk=video_pk, owner_user_id=scope["owner_user_id"], brand_id=scope["brand_id"]
         )
     finally:
         conn.close()
-    short_titles = [str(row[0] or "Untitled Short").strip() or "Untitled Short" for row in short_rows]
-    if not short_titles:
+    if not short_items:
         raise ValueError("This video does not have any ready Shorts.")
     account_name = str(customer.get("account_name") or "").strip()
     name_parts = account_name.split()
@@ -26259,7 +26243,7 @@ def _resolve_customer_notification_payload(scope: Dict[str, str], video_pk: int)
         "recipient": recipient,
         "first_name": first_name,
         "video_title": str(video[0] or "Untitled video").strip() or "Untitled video",
-        "short_titles": short_titles,
+        "short_titles": short_items,
         "youtube_connected": bool(connection and not connection.get("reauth_required")),
         "last_notified_at": last_notified_at,
     }
@@ -26270,7 +26254,7 @@ def admin_operation_notify_customer(brand_id: str, video_pk: int):
     scope = _require_customer_notification_scope(brand_id, video_pk)
     from app.video_shorts.services.customer_short_notifications import (
         build_customer_shorts_email, format_pt_date, normalize_personal_note,
-        record_notification_attempt, send_customer_notification_email,
+        record_notification_attempt, send_customer_notification_email, short_delivery_label,
     )
     from app.video_shorts.services.email_verification import build_dashboard_url
 
@@ -26292,7 +26276,8 @@ def admin_operation_notify_customer(brand_id: str, video_pk: int):
     if request.method == "GET":
         return jsonify(
             ok=True, recipient=payload["recipient"], video_title=payload["video_title"],
-            short_titles=payload["short_titles"], short_count=len(payload["short_titles"]),
+            short_titles=[short_delivery_label(item) for item in payload["short_titles"]],
+            short_count=len(payload["short_titles"]),
             youtube_connected=payload["youtube_connected"], subject=email["subject"],
             preview_html=email["html"], last_notified_label=last_notified_label,
         )

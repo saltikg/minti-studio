@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import html
+import json
 import os
 from datetime import datetime, timezone
 from typing import Any, Dict, Iterable, Optional
@@ -10,6 +11,7 @@ from zoneinfo import ZoneInfo
 
 PT = ZoneInfo("America/Los_Angeles")
 MAX_PERSONAL_NOTE_LENGTH = 300
+PENDING_DELIVERY_STATUSES = {"pending", "queued", "retry", "uploading", "scheduled", "uploaded"}
 
 
 def _clean(value: Any) -> str:
@@ -31,6 +33,208 @@ def format_pt_date(value: Any) -> str:
         parsed = parsed.replace(tzinfo=timezone.utc)
     local = parsed.astimezone(PT)
     return f"{local:%b} {local.day}, {local:%Y}"
+
+
+def format_pt_short_date(value: Any) -> str:
+    parsed = _as_utc_datetime(value)
+    if not parsed:
+        return ""
+    local = parsed.astimezone(PT)
+    return f"{local:%b} {local.day}"
+
+
+def _as_utc_datetime(value: Any) -> Optional[datetime]:
+    if not value:
+        return None
+    parsed = value
+    if isinstance(value, str):
+        try:
+            parsed = datetime.fromisoformat(value.strip().replace("Z", "+00:00"))
+        except ValueError:
+            return None
+    if not isinstance(parsed, datetime):
+        return None
+    if parsed.tzinfo is None:
+        parsed = parsed.replace(tzinfo=timezone.utc)
+    return parsed.astimezone(timezone.utc)
+
+
+def _json_object(value: Any) -> Dict[str, Any]:
+    if isinstance(value, dict):
+        return value
+    try:
+        parsed = json.loads(str(value or "{}"))
+    except (TypeError, ValueError, json.JSONDecodeError):
+        return {}
+    return parsed if isinstance(parsed, dict) else {}
+
+
+def _matches_short(short: Dict[str, Any], row: Dict[str, Any]) -> bool:
+    short_filename = _clean(short.get("clip_filename"))
+    row_filename = _clean(row.get("clip_filename"))
+    if short_filename and row_filename:
+        return short_filename == row_filename
+    short_plan_index = _clean(short.get("plan_index"))
+    row_plan_index = _clean(row.get("plan_index"))
+    return bool(short_plan_index and row_plan_index and short_plan_index == row_plan_index)
+
+
+def load_video_short_delivery_items(
+    conn,
+    *,
+    video_pk: int,
+    source_video_id: str,
+    owner_user_id: str,
+    brand_id: str,
+) -> list[Dict[str, Any]]:
+    """Load tenant-scoped publish state for every durable Short, across all platforms."""
+    rows = conn.execute(
+        """
+        SELECT
+            COALESCE(NULLIF(trim(gv.generated_title), ''), NULLIF(trim(gv.clip_filename), ''), 'Untitled Short'),
+            gv.clip_filename,
+            gv.raw_plan_entry_json,
+            gv.publish_status,
+            gv.planned_publish_at,
+            gv.published_at,
+            gv.youtube_published_at,
+            gv.instagram_published_at,
+            gv.facebook_published_at,
+            gv.tiktok_published_at
+        FROM shorts_generated_videos gv
+        JOIN shorts_storage_assets render_asset
+          ON render_asset.file_key = gv.storage_file_key
+         AND CAST(render_asset.user_id AS VARCHAR) = CAST(gv.user_id AS VARCHAR)
+         AND render_asset.brand_id IS NOT DISTINCT FROM gv.brand_id
+         AND lower(coalesce(render_asset.status, 'active')) = 'active'
+         AND render_asset.size_bytes > 0
+        JOIN youtube_videos source_video
+          ON source_video.video_id = gv.source_video_id
+         AND source_video.owner_user_id = gv.user_id
+         AND source_video.brand_id IS NOT DISTINCT FROM gv.brand_id
+         AND source_video.deleted_at IS NULL
+        WHERE source_video.id = ?
+          AND CAST(gv.user_id AS VARCHAR) = CAST(? AS VARCHAR)
+          AND gv.brand_id IS NOT DISTINCT FROM ?
+          AND NULLIF(trim(coalesce(gv.clip_filename, '')), '') IS NOT NULL
+          AND NULLIF(trim(coalesce(gv.storage_file_key, '')), '') IS NOT NULL
+          AND lower(coalesce(gv.generation_status, '')) NOT IN ('pending', 'queued', 'processing', 'rendering')
+        ORDER BY gv.created_at, gv.id
+        """,
+        [video_pk, owner_user_id, brand_id],
+    ).fetchall()
+    shorts = []
+    for row in rows:
+        raw_entry = _json_object(row[2])
+        shorts.append({
+            "title": _clean(row[0]) or "Untitled Short",
+            "clip_filename": _clean(row[1]),
+            "plan_index": _clean(raw_entry.get("plan_index")),
+            "publish_status": _clean(row[3]).lower(),
+            "planned_publish_at": row[4],
+            "published": any(row[index] is not None for index in range(5, 10)) or _clean(row[3]).lower() == "published",
+        })
+
+    social_rows: list[Dict[str, Any]] = []
+    for table_name in ("shorts_instagram_queue", "shorts_facebook_queue", "shorts_tiktok_queue"):
+        queue_rows = conn.execute(
+            f"""
+            SELECT clip_filename, plan_index, status, publish_at, published_at
+            FROM {table_name}
+            WHERE CAST(user_id AS VARCHAR) = CAST(? AS VARCHAR)
+              AND brand_id IS NOT DISTINCT FROM ?
+              AND video_id = ?
+              AND lower(coalesce(status, '')) NOT IN ('cancelled', 'canceled')
+            """,
+            [owner_user_id, brand_id, source_video_id],
+        ).fetchall()
+        social_rows.extend({
+            "clip_filename": row[0], "plan_index": row[1], "status": _clean(row[2]).lower(),
+            "publish_at": row[3], "published_at": row[4],
+        } for row in queue_rows)
+
+    youtube_rows = conn.execute(
+        """
+        SELECT payload_json, status, publish_at, youtube_video_id
+        FROM shorts_youtube_schedules
+        WHERE CAST(user_id AS VARCHAR) = CAST(? AS VARCHAR)
+          AND CAST(brand_id AS VARCHAR) = CAST(? AS VARCHAR)
+          AND (
+              CAST(payload_json AS JSON) ->> 'video_pk' = CAST(? AS VARCHAR)
+              OR asset_key LIKE ?
+          )
+          AND lower(coalesce(status, '')) NOT IN ('cancelled', 'canceled')
+        """,
+        [owner_user_id, brand_id, video_pk, f"clip:{video_pk}:%"],
+    ).fetchall()
+    now_utc = datetime.now(timezone.utc)
+    for row in youtube_rows:
+        payload = _json_object(row[0])
+        youtube_row = {
+            "clip_filename": payload.get("filename"), "plan_index": payload.get("plan_index"),
+            "status": _clean(row[1]).lower(), "publish_at": row[2], "youtube_video_id": row[3],
+        }
+        for short in shorts:
+            if not _matches_short(short, youtube_row):
+                continue
+            publish_at = _as_utc_datetime(youtube_row.get("publish_at"))
+            if youtube_row["status"] == "published" or (
+                youtube_row["status"] == "uploaded"
+                and bool(youtube_row.get("youtube_video_id"))
+                and (publish_at is None or publish_at <= now_utc)
+            ):
+                short["published"] = True
+            elif youtube_row["status"] in PENDING_DELIVERY_STATUSES and publish_at:
+                short.setdefault("schedule_candidates", []).append(publish_at)
+
+    for short in shorts:
+        for social_row in social_rows:
+            if not _matches_short(short, social_row):
+                continue
+            if social_row["status"] == "published" or social_row.get("published_at"):
+                short["published"] = True
+            elif social_row["status"] in PENDING_DELIVERY_STATUSES:
+                publish_at = _as_utc_datetime(social_row.get("publish_at"))
+                if publish_at:
+                    short.setdefault("schedule_candidates", []).append(publish_at)
+        planned = _as_utc_datetime(short.get("planned_publish_at"))
+        if short.get("publish_status") in PENDING_DELIVERY_STATUSES and planned:
+            short.setdefault("schedule_candidates", []).append(planned)
+        if short["published"]:
+            short.update(state="published", scheduled_at=None)
+        elif short.get("schedule_candidates"):
+            short.update(state="scheduled", scheduled_at=min(short["schedule_candidates"]))
+        else:
+            short.update(state="unscheduled", scheduled_at=None)
+        short.pop("schedule_candidates", None)
+    return shorts
+
+
+def short_delivery_label(item: Dict[str, Any]) -> str:
+    title = _clean(item.get("title")) or "Untitled Short"
+    if item.get("state") == "published":
+        return f"{title} · Live"
+    if item.get("state") == "scheduled":
+        date_label = format_pt_short_date(item.get("scheduled_at"))
+        return f"{title} · {date_label}" if date_label else title
+    return title
+
+
+def connected_delivery_sentence(items: Iterable[Dict[str, Any]]) -> str:
+    states = [_clean(item.get("state")).lower() for item in items]
+    total = len(states)
+    live_count = states.count("published")
+    scheduled_count = states.count("scheduled")
+    unscheduled_count = total - live_count - scheduled_count
+    if total and live_count == total:
+        return "They're already live on your channel."
+    if total and scheduled_count == total:
+        return "No action needed. They'll go out on your channel on the scheduled dates."
+    if not unscheduled_count and live_count and scheduled_count:
+        return f"{live_count} are already live, and the other {scheduled_count} will go out on the scheduled dates."
+    if unscheduled_count and live_count:
+        return f"{live_count} are already live. No action needed. We'll schedule the unscheduled Shorts on your channel shortly."
+    return "No action needed. We'll schedule them on your channel shortly."
 
 
 def truncate_subject_title(title: str, limit: int = 58) -> str:
@@ -93,19 +297,23 @@ def build_customer_shorts_email(
     *,
     first_name: str,
     video_title: str,
-    short_titles: Iterable[str],
+    short_titles: Iterable[Any],
     youtube_connected: bool,
     my_videos_url: str,
     personal_note: str = "",
 ) -> Dict[str, str]:
-    titles = [_clean(title) or "Untitled Short" for title in short_titles]
-    count = len(titles)
+    items = [
+        item if isinstance(item, dict) else {"title": _clean(item) or "Untitled Short", "state": "unscheduled"}
+        for item in short_titles
+    ]
+    titles = [short_delivery_label(item) for item in items]
+    count = len(items)
     note = normalize_personal_note(personal_note)
     greeting_name = _clean(first_name) or "there"
     clean_video_title = _clean(video_title) or "Untitled video"
     subject = f"{count} new Shorts are ready from '{truncate_subject_title(clean_video_title)}'"
     connection_copy = (
-        "No action needed. They'll go out on your channel on the scheduled dates."
+        connected_delivery_sentence(items)
         if youtube_connected
         else "Watch them and download the ones you like. Connect your channel and we'll publish them for you."
     )
