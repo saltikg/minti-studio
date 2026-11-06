@@ -206,7 +206,9 @@
 
 {% macro format_stat(value) %}
   {% if value is none %}
-    0
+    Pending
+  {% elif value is string %}
+    {{ value }}
   {% else %}
     {{ "{:,}".format(value) }}
   {% endif %}
@@ -262,22 +264,16 @@
         <td>
           <strong>{{ video.video_title or video.video_id }}</strong>
         </td>
-        <td class="text-end">{{ format_stat(video.views) }}</td>
+        <td class="text-end">
+          {{ format_stat(video.views) }}
+          <div class="small text-muted">{{ format_stat(video.lifetime_views) }} lifetime</div>
+        </td>
         <td class="text-end">{{ format_stat(video.comments) }}</td>
-        {% if show_facebook %}
-          <td class="text-end">
-            {% if (video.channel_type or '')|lower == 'facebook' %}
-              {{ format_stat(video.views) }}
-            {% else %}
-              —
-            {% endif %}
-          </td>
-        {% endif %}
       </tr>
     {% endfor %}
   {% else %}
     <tr>
-      <td colspan="{{ 5 if show_facebook else 4 }}" class="text-center text-muted py-4">No videos found for this range.</td>
+      <td colspan="4" class="text-center text-muted py-4">No videos found for this range.</td>
     </tr>
   {% endif %}
 {% endmacro %}
@@ -542,9 +538,11 @@
               <th></th>
               <th>Video Name</th>
               <th>Date</th>
-              <th class="text-end">Total Views</th>
+              <th class="text-end">Views in period</th>
+              <th class="text-end">Lifetime</th>
               <th class="text-end">YT Views</th>
               <th class="text-end">Ins View</th>
+              <th class="text-end">FB Views</th>
             </tr>
           </thead>
           <tbody>
@@ -565,13 +563,15 @@
                     —
                   {% endif %}
                 </td>
-                <td class="stats-video-list-stat">{{ format_stat(video.total_views or 0) }}</td>
-                <td class="stats-video-list-stat">{{ format_stat(video.youtube_views or 0) }}</td>
-                <td class="stats-video-list-stat">{{ format_stat(video.instagram_views or 0) }}</td>
+                <td class="stats-video-list-stat">{{ format_stat(video.total_views) }}</td>
+                <td class="stats-video-list-stat">{{ format_stat(video.lifetime_views) }}</td>
+                <td class="stats-video-list-stat">{{ format_stat(video.youtube_views) }}</td>
+                <td class="stats-video-list-stat">{{ format_stat(video.instagram_views) }}</td>
+                <td class="stats-video-list-stat">{{ format_stat(video.facebook_views) }}</td>
               </tr>
             {% else %}
               <tr>
-                <td colspan="6" class="text-center text-muted py-4">No videos found for this range.</td>
+                <td colspan="8" class="text-center text-muted py-4">No videos found for this range.</td>
               </tr>
             {% endfor %}
           </tbody>
@@ -626,6 +626,8 @@
             <th scope="col">Views Instagram</th>
             <th scope="col">Likes YouTube</th>
             <th scope="col">Likes Instagram</th>
+            <th scope="col">Views Facebook</th>
+            <th scope="col">Likes Facebook</th>
             <th scope="col">
               <button type="button" class="btn btn-link p-0 text-decoration-none sort-last-update" data-sort-direction="desc">
                 Last update ({{ user_time_zone_label }})
@@ -639,18 +641,20 @@
             {% for row in daily_totals %}
               <tr>
                 <td data-date="{{ row.snapshot_date }}">{{ row.snapshot_date }}</td>
-                <td>{{ format_stat(row.views if row.views is not none else 0) }}</td>
+                <td>{{ format_stat(row.views) }}</td>
                 <td>{{ format_stat(row.comments) }}</td>
-                <td>{{ format_stat(row.youtube_daily_views or 0) }}</td>
-                <td>{{ format_stat(row.instagram_daily_views or 0) }}</td>
-                <td>{{ format_stat(row.youtube_daily_likes or 0) }}</td>
-                <td>{{ format_stat(row.instagram_daily_likes or 0) }}</td>
+                <td>{{ format_stat(row.youtube_daily_views) }}</td>
+                <td>{{ format_stat(row.instagram_daily_views) }}</td>
+                <td>{{ format_stat(row.youtube_daily_likes) }}</td>
+                <td>{{ format_stat(row.instagram_daily_likes) }}</td>
+                <td>{{ format_stat(row.facebook_daily_views) }}</td>
+                <td>{{ format_stat(row.facebook_daily_likes) }}</td>
                 <td data-sort="{{ row.last_updated_epoch or 0 }}">{{ row.last_updated|fmt_dt }}</td>
               </tr>
             {% endfor %}
           {% else %}
             <tr>
-              <td colspan="8" class="text-center text-muted py-4">No data for this range.</td>
+              <td colspan="10" class="text-center text-muted py-4">No data for this range.</td>
             </tr>
           {% endif %}
         </tbody>
@@ -685,15 +689,10 @@
                   <span class="visually-hidden">Comments</span>
                   <span class="material-icons" aria-hidden="true">comment</span>
                 </th>
-                <th scope="col">
-                  <span class="visually-hidden">FB views</span>
-                  <span class="me-1">FB</span>
-                  <span class="material-icons" aria-hidden="true">visibility</span>
-                </th>
               </tr>
             </thead>
             <tbody>
-              {{ render_top_video_rows(today_top_videos, true) }}
+              {{ render_top_video_rows(today_top_videos) }}
             </tbody>
           </table>
         </div>
@@ -786,6 +785,7 @@
       const subscriberSeries = {{ subscriber_series|tojson }};
       const channelTotals = {{ channel_totals|tojson }};
       const summaryCardsByChannel = {{ summary_cards_by_channel|tojson }};
+      const platformConnections = {{ platform_connections|tojson }};
       const defaultChannel = "{{ selected_channel }}";
       const defaultMetric = "{{ selected_metric }}";
       const metricSelect = document.getElementById("metricSelector");
@@ -812,7 +812,7 @@
         const info = metricInfo[metric] || metricInfo.views;
         return {
           label: info.label,
-          data: series.map((item) => item[`${metric}_delta`] != null ? item[`${metric}_delta`] : 0),
+          data: series.map((item) => item[`${metric}_delta`] ?? null),
           backgroundColor: info.color,
           borderRadius: 4,
           maxBarThickness: 40,
@@ -820,24 +820,32 @@
       };
       const buildStackedViewDatasets = (channel) => {
         const series = getSeries(channel);
-        return [
-          {
+        const datasets = [];
+        if (platformConnections.youtube) datasets.push({
             label: "YouTube",
-            data: series.map((item) => item.youtube_daily_views != null ? item.youtube_daily_views : 0),
+            data: series.map((item) => item.youtube_daily_views ?? null),
             backgroundColor: "#0d6efd",
             borderRadius: 4,
             maxBarThickness: 40,
             stack: "views",
-          },
-          {
+          });
+        if (platformConnections.instagram) datasets.push({
             label: "Instagram",
-            data: series.map((item) => item.instagram_daily_views != null ? item.instagram_daily_views : 0),
+            data: series.map((item) => item.instagram_daily_views ?? null),
             backgroundColor: "#fd7e14",
             borderRadius: 4,
             maxBarThickness: 40,
             stack: "views",
-          },
-        ];
+          });
+        if (platformConnections.facebook) datasets.push({
+            label: "Facebook",
+            data: series.map((item) => item.facebook_daily_views ?? null),
+            backgroundColor: "#3b82f6",
+            borderRadius: 4,
+            maxBarThickness: 40,
+            stack: "views",
+          });
+        return datasets;
       };
       const buildDatasets = (channel, metric) => {
         if (metric === "views" && channel === "all") {
@@ -886,7 +894,7 @@
             },
             tooltip: {
               callbacks: {
-                label: (context) => `${context.dataset.label}: ${context.parsed.y || 0}`,
+                label: (context) => `${context.dataset.label}: ${context.parsed.y == null ? "Pending" : context.parsed.y}`,
               },
               bodyColor: axisTextColor,
               titleColor: axisTextColor,
@@ -915,7 +923,7 @@
           {% if tiktok_enabled %}if (key.includes("tiktok")) {
             return row.tiktok_total;
           }{% endif %}
-          return 0;
+          return null;
         };
         const rawSubscriberDatasets = [
           {
@@ -986,7 +994,7 @@
               tooltip: {
                 callbacks: {
                   label: (context) => {
-                    const delta = context.parsed.y == null ? 0 : context.parsed.y;
+                    const delta = context.parsed.y;
                     const total = getSubscriberTotal(context.dataset.label, context.dataIndex);
                     return `${context.dataset.label}: ${formatNumber(delta)} (${formatNumber(total)})`;
                   },
@@ -1082,7 +1090,7 @@
 
       const formatNumber = (value) => {
         if (value == null) {
-          return "0";
+          return "Pending";
         }
         const numeric = Number(value);
         if (Number.isNaN(numeric)) {
@@ -1118,6 +1126,9 @@
       };
 
       const createDeltaBadge = (value) => {
+        if (value == null) {
+          return `<span class="vs-badge">Pending</span>`;
+        }
         const numeric = Number(value);
         const badge = (label, variant) => {
           const suffix = variant ? ` vs-badge-${variant}` : "";
@@ -1157,7 +1168,7 @@
                 </td>
                 <td>
                   <strong class="insight-title">${title}</strong>
-                  <div class="insight-total-label">Total</div>
+                  <div class="insight-total-label">In period · ${formatNumber(video.lifetime_views)} lifetime</div>
                   <div class="metric-chips mt-1">
                     <span class="metric-chip">
                       <span class="material-icons" aria-hidden="true">visibility</span>
@@ -1251,15 +1262,15 @@
           const current = subscriberSeries[i];
           deltas.push({
             date: current.date,
-            youtubeTotal: current.youtube_total || 0,
+            youtubeTotal: current.youtube_total ?? null,
             youtubeGained: current.youtube_gained,
             youtubeLost: current.youtube_lost,
             youtubeNet: current.youtube_net,
-            instagramTotal: current.instagram_total || 0,
+            instagramTotal: current.instagram_total ?? null,
             instagramNet: current.instagram_net,
-            facebookTotal: current.facebook_total || 0,
+            facebookTotal: current.facebook_total ?? null,
             facebookNet: current.facebook_net,
-            {% if tiktok_enabled %}tiktokTotal: current.tiktok_total || 0,
+            {% if tiktok_enabled %}tiktokTotal: current.tiktok_total ?? null,
             tiktokNet: current.tiktok_net,{% endif %}
           });
         }

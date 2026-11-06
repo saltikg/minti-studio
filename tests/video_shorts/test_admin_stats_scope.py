@@ -63,8 +63,16 @@ def test_admin_scope_reaches_page_widgets_and_top_videos(app, monkeypatch):
     )
     top_brands = []
 
-    def top_stub(_conn, _target_date, _channel_type, *, brand_id, limit):
-        top_brands.append((brand_id, limit))
+    def top_stub(
+        _conn,
+        _target_date,
+        _channel_type,
+        *,
+        owner_user_id,
+        brand_id,
+        limit,
+    ):
+        top_brands.append((owner_user_id, brand_id, limit))
         return [{"video_id": "shelley-video"}]
 
     monkeypatch.setattr(stats, "_fetch_top_videos_for_date", top_stub)
@@ -76,7 +84,7 @@ def test_admin_scope_reaches_page_widgets_and_top_videos(app, monkeypatch):
     assert top_response.status_code == 200
     assert top_response.get_json()["videos"] == [{"video_id": "shelley-video"}]
     assert [entry[1]["brand_id"] for entry in observed] == ["shelley-brand", "shelley-brand"]
-    assert top_brands == [("shelley-brand", 6)]
+    assert top_brands == [("shelley-owner", "shelley-brand", 6)]
 
 
 def test_dashboard_scope_mismatch_and_non_admin_fail_with_403(app):
@@ -145,29 +153,26 @@ def test_admin_stats_tenant_never_falls_back_to_session_brand():
     assert tenant["brand_name"] == "Shelley"
 
 
-def test_top_videos_query_is_explicitly_brand_scoped():
-    class EmptyResult:
-        description = []
+def test_top_videos_query_is_explicitly_tenant_scoped(monkeypatch):
+    observed = {}
 
-        def fetchall(self):
-            return []
+    def loader(_conn, **kwargs):
+        observed.update(kwargs)
+        return []
 
-    class RecordingConnection:
-        def __init__(self):
-            self.calls = []
-
-        def execute(self, sql, params=None):
-            self.calls.append((sql, params or []))
-            return EmptyResult()
-
-    conn = RecordingConnection()
+    monkeypatch.setattr(stats, "load_top_videos_for_date", loader)
     assert stats._fetch_top_videos_for_date(
-        conn,
+        object(),
         date(2026, 11, 5),
         "all",
+        owner_user_id="shelley-owner",
         brand_id="shelley-brand",
         limit=6,
     ) == []
-    sql, params = conn.calls[0]
-    assert sql.count("brand_id = ?") == 2
-    assert params.count("shelley-brand") == 2
+    assert observed == {
+        "owner_user_id": "shelley-owner",
+        "brand_id": "shelley-brand",
+        "target_date": date(2026, 11, 5),
+        "selected_platform": "all",
+        "limit": 6,
+    }

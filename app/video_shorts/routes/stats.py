@@ -15,15 +15,15 @@ from app.video_shorts.config import PRIVATE_STATE_DIR, SHORTS_DIR
 from app.video_shorts.services.brands import current_brand_id
 from app.video_shorts.services.admin_operation_scope import request_admin_operation_scope
 from app.video_shorts.services.db import get_db_readonly
+from app.video_shorts.services.dashboard_metrics import (
+    load_dashboard_metrics,
+    load_top_videos_for_date,
+)
 from app.video_shorts.services.feature_flags import tiktok_enabled
 from app.video_shorts.services.video_metrics import (
     SNAPSHOT_TABLE,
 )
-from app.video_shorts.services.subscriber_metrics import (
-    SUBSCRIBER_SNAPSHOT_TABLE,
-)
 from app.video_shorts.services.timezones import DEFAULT_TIME_ZONE, TIMEZONE_OPTIONS
-from app.video_shorts.services.youtube_token_store import has_refresh_token
 
 
 CHANNEL_OPTIONS: Sequence[Mapping[str, str]] = [
@@ -45,13 +45,16 @@ def _rows_to_dict(cursor) -> List[Mapping[str, object]]:
 
 
 def _fragment_format_stat(value: object) -> str:
-    return "0" if value is None else f"{value:,}"
+    if value is None:
+        return "Pending"
+    if isinstance(value, str):
+        return value
+    return f"{value:,}"
 
 
 def _fragment_top_video_rows(videos, show_facebook: bool = False) -> Markup:
     if not videos:
-        colspan = 5 if show_facebook else 4
-        return Markup(f'<tr><td colspan="{colspan}" class="text-center text-muted py-4">No videos found for this range.</td></tr>')
+        return Markup('<tr><td colspan="4" class="text-center text-muted py-4">No videos found for this range.</td></tr>')
     parts: List[str] = []
     for video in videos:
         thumbnail_url = video.get("thumbnail_url")
@@ -62,17 +65,15 @@ def _fragment_top_video_rows(videos, show_facebook: bool = False) -> Markup:
             thumbnail = f'<img src="{escape(thumbnail_url)}" alt="Video thumbnail">'
         else:
             thumbnail = '<div class="video-thumb-placeholder"></div>'
-        facebook_cell = ""
-        if show_facebook:
-            facebook_value = _fragment_format_stat(video.get("views")) if str(video.get("channel_type") or "").lower() == "facebook" else "—"
-            facebook_cell = f'<td class="text-end">{facebook_value}</td>'
+        views = _fragment_format_stat(video.get("views"))
+        lifetime = _fragment_format_stat(video.get("lifetime_views"))
         parts.append(
             '<tr>'
             f'<td class="p-0 pe-3 video-thumb-cell">{thumbnail}</td>'
             f'<td><strong>{escape(video.get("video_title") or video.get("video_id") or "")}</strong></td>'
-            f'<td class="text-end">{_fragment_format_stat(video.get("views"))}</td>'
+            f'<td class="text-end">{views}<div class="small text-muted">{lifetime} lifetime</div></td>'
             f'<td class="text-end">{_fragment_format_stat(video.get("comments"))}</td>'
-            f'{facebook_cell}</tr>'
+            '</tr>'
         )
     return Markup("".join(parts))
 
@@ -1129,69 +1130,20 @@ def _fetch_top_videos_for_date(
     target_date: date,
     channel_type: str,
     *,
+    owner_user_id: str,
     brand_id: Optional[str],
     limit: int = 5,
 ):
-    channel_clause, channel_params = _channel_filter_clause(channel_type)
-    brand_clause, brand_params = _brand_scope_clause(
+    if not owner_user_id or not brand_id:
+        return []
+    return load_top_videos_for_date(
         conn,
-        SNAPSHOT_TABLE,
+        owner_user_id=owner_user_id,
         brand_id=brand_id,
+        target_date=target_date,
+        selected_platform=channel_type,
+        limit=limit,
     )
-    scope_clause = f"{channel_clause}{brand_clause}"
-    scope_params = [*channel_params, *brand_params]
-    prev_date = target_date - timedelta(days=1)
-    params = [
-        target_date.isoformat(),
-        *scope_params,
-        prev_date.isoformat(),
-        *scope_params,
-        limit,
-    ]
-    cursor = conn.execute(
-        f"""
-        WITH target AS (
-            SELECT
-                video_id,
-                channel_type,
-                channel_name,
-                video_title,
-                SUM(COALESCE(views, 0)) AS views,
-                SUM(COALESCE(comments, 0)) AS comments
-            FROM {SNAPSHOT_TABLE}
-            WHERE snapshot_date = ?{scope_clause}
-            GROUP BY video_id, channel_type, channel_name, video_title
-        ),
-        prev_values AS (
-            SELECT
-                video_id,
-                channel_type,
-                SUM(COALESCE(views, 0)) AS views,
-                SUM(COALESCE(comments, 0)) AS comments
-            FROM {SNAPSHOT_TABLE}
-            WHERE snapshot_date = ?{scope_clause}
-            GROUP BY video_id, channel_type
-        )
-        SELECT
-            t.video_id,
-            t.channel_type,
-            t.channel_name,
-            t.video_title,
-            t.views,
-            t.comments,
-            COALESCE(t.views, 0) - COALESCE(p.views, 0) AS views_delta,
-            COALESCE(t.comments, 0) - COALESCE(p.comments, 0) AS comments_delta
-        FROM target t
-        LEFT JOIN prev_values p
-          ON t.video_id = p.video_id AND t.channel_type = p.channel_type
-        ORDER BY views_delta DESC NULLS LAST, t.views DESC
-        LIMIT ?
-        """,
-        params,
-    )
-    rows = _rows_to_dict(cursor)
-    _populate_thumbnails(rows)
-    return rows
 
 
 def _fetch_stats_video_rows(
@@ -1305,7 +1257,7 @@ def _render_video_stats(*, load_widgets: bool):
     selected_metric = request.args.get("metric", "views")
     videos_page = _parse_page_arg("videos_page", 1)
 
-    today = date.today()
+    today = datetime.now(ZoneInfo(DEFAULT_TIME_ZONE)).date()
     try:
         parsed_end = _parse_date_param(end_param)
         end_date = parsed_end if parsed_end else today
@@ -1323,10 +1275,6 @@ def _render_video_stats(*, load_widgets: bool):
         start_date, end_date = end_date, start_date
     if (end_date - start_date).days > 60:
         start_date = end_date - timedelta(days=60)
-    period_days = (end_date - start_date).days + 1
-    previous_period_end = start_date - timedelta(days=1)
-    previous_period_start = previous_period_end - timedelta(days=period_days - 1)
-
     conn = get_db_readonly()
     try:
         tenant = _resolve_stats_tenant(conn)
@@ -1356,842 +1304,123 @@ def _render_video_stats(*, load_widgets: bool):
             **shared_template_context,
         )
 
-    user_time_zone = str(tenant.get("time_zone") or DEFAULT_TIME_ZONE)
-    user_time_zone_label = _timezone_label(user_time_zone)
-    oauth_reauth_required = False
-    youtube_connected = has_refresh_token(target_owner_user_id, brand_id=active_brand_id)
+    # The rendered dashboard has one data path: the canonical daily-gains mart.
+    # Keep the tenant values explicit here so an admin-scoped request can never
+    # fall back to a session brand inside a shared query helper.
     try:
-        snapshot_brand_clause, snapshot_brand_params = _brand_scope_clause(
+        canonical = load_dashboard_metrics(
             conn,
-            SNAPSHOT_TABLE,
-            brand_id=active_brand_id,
-        )
-        period_totals_by_channel, previous_period_totals_by_channel, dashboard_deltas = _fetch_dashboard_deltas(
-            conn,
-            previous_start=previous_period_start,
-            current_start=start_date,
-            current_end=end_date,
-            brand_id=active_brand_id,
-        )
-        analytics_daily_views = {
-            channel: {day: values["views"] for day, values in days.items()}
-            for channel, days in dashboard_deltas.items()
-        }
-        analytics_daily_likes = {
-            channel: {day: values["likes"] for day, values in days.items()}
-            for channel, days in dashboard_deltas.items()
-        }
-        published_youtube_short_schedule = _load_published_youtube_short_schedule(
-            conn,
-            brand_id=active_brand_id,
-        )
-        youtube_total_views_map, youtube_total_likes_map, youtube_daily_views_map, youtube_daily_likes_map, _youtube_video_count_map = _fetch_youtube_published_daily_metrics(
-            conn,
-            start_date,
-            end_date,
-            brand_id=active_brand_id,
-            published_schedule=published_youtube_short_schedule,
-        )
-        analytics_daily_likes_all: Dict[str, int] = {}
-        for channel_map in analytics_daily_likes.values():
-            for date_key, value in channel_map.items():
-                analytics_daily_likes_all[date_key] = analytics_daily_likes_all.get(date_key, 0) + (value or 0)
-        for date_key, value in youtube_daily_likes_map.items():
-            analytics_daily_likes_all[date_key] = analytics_daily_likes_all.get(date_key, 0) + (value or 0)
-
-        comment_start = start_date - timedelta(days=1)
-        comment_counts_by_platform = _fetch_daily_comment_counts(
-            conn,
-            comment_start,
-            end_date,
-            brand_id=active_brand_id,
-        )
-        comment_counts_all: Dict[str, int] = {}
-        for platform_counts in comment_counts_by_platform.values():
-            for date_key, count in platform_counts.items():
-                comment_counts_all[date_key] = comment_counts_all.get(date_key, 0) + (count or 0)
-
-        filter_clause, params = _build_filters(
-            conn,
-            channel_type,
-            start_date,
-            end_date,
-            brand_id=active_brand_id,
-        )
-        chart_clause = filter_clause
-        chart_params = list(params)
-        daily_cursor = conn.execute(
-            f"""
-            SELECT
-                snapshot_date,
-                channel_type,
-                SUM(COALESCE(views, 0)) AS views,
-                SUM(COALESCE(comments, 0)) AS comments,
-                SUM(COALESCE(likes, 0)) AS likes,
-                SUM(COALESCE(impressions, 0)) AS impressions,
-                SUM(COALESCE(reach, 0)) AS reach,
-                SUM(COALESCE(saved, 0)) AS saved,
-                SUM(CASE WHEN channel_type = 'youtube' THEN COALESCE(views, 0) ELSE 0 END) AS youtube_views_total,
-                SUM(CASE WHEN channel_type = 'youtube' THEN COALESCE(likes, 0) ELSE 0 END) AS youtube_likes_total,
-                SUM(CASE WHEN channel_type = 'youtube' AND views IS NOT NULL THEN 1 ELSE 0 END) AS youtube_views_rows,
-                MAX(effective_at) AS last_updated,
-                (SELECT MIN(all_rows.snapshot_date) FROM {SNAPSHOT_TABLE} all_rows WHERE all_rows.brand_id = ?) AS earliest_snapshot
-            FROM {SNAPSHOT_TABLE}
-            WHERE snapshot_date BETWEEN ? AND ?{chart_clause}
-            GROUP BY snapshot_date, channel_type
-            ORDER BY snapshot_date ASC, channel_type ASC
-            """,
-            [active_brand_id, *chart_params],
-        )
-        channel_rows = _rows_to_dict(daily_cursor)
-        earliest_snapshot = (
-            channel_rows[0].get("earliest_snapshot") if channel_rows else None
-        ) or start_date
-        daily_by_date: Dict[str, Dict[str, object]] = {}
-        for channel_row in channel_rows:
-            date_key = _normalize_date(channel_row.get("snapshot_date"))
-            aggregate = daily_by_date.setdefault(
-                date_key,
-                {
-                    "snapshot_date": channel_row.get("snapshot_date"),
-                    "views": 0,
-                    "comments": 0,
-                    "likes": 0,
-                    "impressions": 0,
-                    "reach": 0,
-                    "saved": 0,
-                    "youtube_views_total": 0,
-                    "youtube_likes_total": 0,
-                    "youtube_views_rows": 0,
-                    "last_updated": None,
-                },
-            )
-            for metric in (
-                "views", "comments", "likes", "impressions", "reach", "saved",
-                "youtube_views_total", "youtube_likes_total", "youtube_views_rows",
-            ):
-                aggregate[metric] = (aggregate.get(metric) or 0) + (channel_row.get(metric) or 0)
-            row_updated = channel_row.get("last_updated")
-            if row_updated is not None and (aggregate["last_updated"] is None or row_updated > aggregate["last_updated"]):
-                aggregate["last_updated"] = row_updated
-        daily_totals = list(daily_by_date.values())
-        last_api_at = max(
-            (row.get("last_updated") for row in daily_totals if row.get("last_updated") is not None),
-            default=None,
-        )
-        prev_views = None
-        prev_comments = None
-        prev_impressions = None
-        prev_likes = None
-        for row in daily_totals:
-            date_key = _normalize_date(row.get("snapshot_date"))
-            localized = _localize_datetime(row.get("last_updated"), user_time_zone)
-            if localized:
-                row["last_updated_local"] = localized.strftime("%Y-%m-%d %I:%M:%S %p %Z")
-                row["last_updated_epoch"] = int(localized.timestamp())
-            else:
-                row["last_updated_local"] = None
-                row["last_updated_epoch"] = 0
-            row["instagram_daily_likes"] = analytics_daily_likes.get("instagram", {}).get(date_key, 0)
-
-            youtube_total = youtube_total_views_map.get(date_key, 0)
-            instagram_total = int(row.get("reach") or 0)
-            youtube_daily = analytics_daily_views.get("youtube", {}).get(date_key, 0)
-
-            youtube_daily_likes = youtube_daily_likes_map.get(date_key, 0)
-            row["youtube_daily_likes"] = youtube_daily_likes
-
-            instagram_daily_views = max(instagram_total - prev_views, 0) if channel_type == "instagram" and prev_views is not None else analytics_daily_views.get("instagram", {}).get(date_key, 0)
-            row["youtube_daily_views"] = youtube_daily
-            row["instagram_daily_views"] = instagram_daily_views or 0
-
-            if channel_type == "all":
-                current_views = youtube_total + instagram_total
-            elif channel_type == "youtube":
-                current_views = youtube_total
-            elif channel_type == "instagram":
-                current_views = instagram_total
-            else:
-                current_views = row.get("views") or 0
-
-            row["views"] = current_views
-            if channel_type and channel_type != "all":
-                current_comments = (
-                    comment_counts_by_platform.get(channel_type, {}).get(date_key, 0)
-                )
-            else:
-                current_comments = comment_counts_all.get(date_key, 0)
-            row["comments"] = current_comments
-            current_impressions = row.get("impressions") or 0
-            current_likes = row.get("likes") or 0
-            row["views_change"] = None if prev_views is None else current_views - prev_views
-            row["comments_change"] = None if prev_comments is None else current_comments - prev_comments
-            row["impressions_change"] = None if prev_impressions is None else current_impressions - prev_impressions
-            row["likes_change"] = None if prev_likes is None else current_likes - prev_likes
-            row["views_delta"] = row["views_change"]
-            row["comments_delta"] = row["comments_change"]
-            row["likes_delta"] = row["likes_change"]
-            if current_views is not None:
-                prev_views = current_views
-            prev_comments = current_comments
-            prev_impressions = current_impressions
-            prev_likes = current_likes
-
-        # Expose newest first for the table.
-        daily_totals = list(reversed(daily_totals))
-
-        prev_date = start_date - timedelta(days=1)
-        scoped_channel_clause, scoped_channel_params = _channel_filter_clause(channel_type)
-        totals_cursor = conn.execute(
-            f"""
-            WITH latest AS (
-                SELECT channel_type, MAX(snapshot_date) AS snapshot_date
-                FROM {SNAPSHOT_TABLE}
-                WHERE snapshot_date BETWEEN ? AND ?
-                  AND brand_id = ?
-                  {scoped_channel_clause}
-                GROUP BY channel_type
-            ), selected AS (
-                SELECT 'current' AS period_name, s.*
-                FROM {SNAPSHOT_TABLE} s
-                JOIN latest l
-                  ON s.channel_type = l.channel_type
-                 AND s.snapshot_date = l.snapshot_date
-                WHERE s.brand_id = ?
-                  {scoped_channel_clause}
-                UNION ALL
-                SELECT 'previous' AS period_name, s.*
-                FROM {SNAPSHOT_TABLE} s
-                WHERE s.snapshot_date = ?
-                  AND s.brand_id = ?
-                  {scoped_channel_clause}
-            )
-            SELECT
-                period_name,
-                channel_type,
-                SUM(COALESCE(views, 0)) AS views,
-                SUM(COALESCE(comments, 0)) AS comments,
-                SUM(COALESCE(likes, 0)) AS likes,
-                SUM(COALESCE(impressions, 0)) AS impressions,
-                SUM(COALESCE(reach, 0)) AS reach,
-                SUM(COALESCE(saved, 0)) AS saved
-            FROM selected
-            GROUP BY period_name, channel_type
-            """,
-            [
-                start_date.isoformat(),
-                end_date.isoformat(),
-                active_brand_id,
-                *scoped_channel_params,
-                active_brand_id,
-                *scoped_channel_params,
-                prev_date.isoformat(),
-                active_brand_id,
-                *scoped_channel_params,
-            ],
-        )
-        totals_rows = _rows_to_dict(totals_cursor)
-        channel_totals: Dict[str, Mapping[str, int]] = {}
-        prev_totals: Dict[str, Mapping[str, int]] = {}
-        for row in totals_rows:
-            key = row.get("channel_type") or "all"
-            effective_views = (row.get("reach") or 0) if key == "instagram" else (row.get("views") or 0)
-            target_totals = channel_totals if row.get("period_name") == "current" else prev_totals
-            target_totals[key] = {
-                "views": effective_views,
-                "comments": row.get("comments") or 0,
-                "likes": row.get("likes") or 0,
-                "impressions": row.get("impressions") or 0,
-                "reach": row.get("reach") or 0,
-                "saved": row.get("saved") or 0,
-            }
-        def _empty_totals() -> Dict[str, int]:
-            return {
-                "views": 0,
-                "comments": 0,
-                "likes": 0,
-                "impressions": 0,
-                "reach": 0,
-                "saved": 0,
-            }
-        for totals in (channel_totals, prev_totals):
-            totals.setdefault(
-                "all",
-                {
-                    metric: sum(entry[metric] for entry in totals.values())
-                    for metric in ("views", "comments", "likes", "impressions", "reach", "saved")
-                },
-            )
-        for option in CHANNEL_OPTIONS:
-            channel_totals.setdefault(option["value"], _empty_totals())
-        # These legacy collections are no longer rendered by video_metrics.html.
-        top_videos: List[Mapping[str, object]] = []
-        top_comment_video: List[Mapping[str, object]] = []
-        top_table_rows: List[Mapping[str, object]] = []
-        channel_clause, channel_params = _channel_filter_clause(channel_type)
-        channel_scope_clause = f"{channel_clause}{snapshot_brand_clause}"
-        channel_scope_params = [*channel_params, *snapshot_brand_params]
-        today_prev_date = today - timedelta(days=1)
-        today_cursor = conn.execute(
-            f"""
-            WITH target AS (
-                SELECT
-                    video_id,
-                    channel_type,
-                    channel_name,
-                    video_title,
-                    SUM(COALESCE(views, 0)) AS views,
-                    SUM(COALESCE(comments, 0)) AS comments
-                FROM {SNAPSHOT_TABLE}
-                WHERE snapshot_date = ?{channel_scope_clause}
-                GROUP BY video_id, channel_type, channel_name, video_title
-            ),
-            prev_values AS (
-                SELECT
-                    video_id,
-                    channel_type,
-                    SUM(COALESCE(views, 0)) AS views,
-                    SUM(COALESCE(comments, 0)) AS comments
-                FROM {SNAPSHOT_TABLE}
-                WHERE snapshot_date = ?{channel_scope_clause}
-                GROUP BY video_id, channel_type
-            )
-            SELECT
-                t.video_id,
-                t.channel_type,
-                t.channel_name,
-                t.video_title,
-                t.views,
-                t.comments,
-                COALESCE(t.views, 0) - COALESCE(p.views, 0) AS views_delta,
-                COALESCE(t.comments, 0) - COALESCE(p.comments, 0) AS comments_delta
-            FROM target t
-            LEFT JOIN prev_values p
-              ON t.video_id = p.video_id AND t.channel_type = p.channel_type
-            ORDER BY views_delta DESC NULLS LAST, t.views DESC
-            LIMIT 5
-            """,
-            [today.isoformat(), *channel_scope_params, today_prev_date.isoformat(), *channel_scope_params],
-        )
-        today_top_videos = _rows_to_dict(today_cursor)
-        fb_today_rows = _fetch_facebook_queue_rows(conn, today, today, brand_id=active_brand_id)
-        if fb_today_rows:
-            today_top_videos.extend(fb_today_rows)
-        today_top_videos.sort(
-            key=lambda row: (row.get("views_delta") or row.get("views") or 0),
-            reverse=True,
-        )
-        _populate_thumbnails(today_top_videos)
-        week_start = today - timedelta(days=6)
-        week_end = today
-        prev_week_start = week_start - timedelta(days=7)
-        prev_week_end = week_start - timedelta(days=1)
-        week_cursor = conn.execute(
-            f"""
-            WITH target AS (
-                SELECT
-                    video_id,
-                    channel_type,
-                    channel_name,
-                    video_title,
-                    MAX(views) AS views,
-                    MAX(comments) AS comments
-                FROM {SNAPSHOT_TABLE}
-                WHERE snapshot_date BETWEEN ? AND ?{channel_scope_clause}
-                GROUP BY video_id, channel_type, channel_name, video_title
-            ),
-            prev_values AS (
-                SELECT
-                    video_id,
-                    channel_type,
-                    MAX(views) AS views,
-                    MAX(comments) AS comments
-                FROM {SNAPSHOT_TABLE}
-                WHERE snapshot_date BETWEEN ? AND ?{channel_scope_clause}
-                GROUP BY video_id, channel_type
-            )
-            SELECT
-                t.video_id,
-                t.channel_type,
-                t.channel_name,
-                t.video_title,
-                t.views,
-                t.comments,
-                COALESCE(t.views, 0) - COALESCE(p.views, 0) AS views_delta,
-                COALESCE(t.comments, 0) - COALESCE(p.comments, 0) AS comments_delta
-            FROM target t
-            LEFT JOIN prev_values p
-              ON t.video_id = p.video_id AND t.channel_type = p.channel_type
-            ORDER BY views_delta DESC NULLS LAST, t.views DESC
-            LIMIT 5
-            """,
-            [
-                week_start.isoformat(),
-                week_end.isoformat(),
-                *channel_scope_params,
-                prev_week_start.isoformat(),
-                prev_week_end.isoformat(),
-                *channel_scope_params,
-            ],
-        )
-        week_top_videos = _rows_to_dict(week_cursor)
-        fb_week_rows = _fetch_facebook_queue_rows(
-            conn,
-            week_start,
-            week_end,
-            brand_id=active_brand_id,
-        )
-        if fb_week_rows:
-            week_top_videos.extend(fb_week_rows)
-        week_top_videos.sort(
-            key=lambda row: (row.get("views_delta") or row.get("views") or 0),
-            reverse=True,
-        )
-        _populate_thumbnails(week_top_videos)
-        video_rows, video_rows_total = _fetch_stats_video_rows(
-            conn,
+            owner_user_id=target_owner_user_id,
+            brand_id=active_brand_id or "",
             start_date=start_date,
             end_date=end_date,
-            brand_id=active_brand_id,
+            selected_platform=channel_type,
             page=videos_page,
+            page_size=VIDEO_LIST_PAGE_SIZE,
+            today=today,
         )
-
-        date_sequence = []
-        current = start_date
-        while current <= end_date:
-            date_sequence.append(current.isoformat())
-            current += timedelta(days=1)
-        daily_map = {_normalize_date(row["snapshot_date"]): row for row in daily_totals}
-        channel_map: Dict[str, Dict[str, Mapping[str, object]]] = {}
-        for row in channel_rows:
-            key = row.get("channel_type") or "all"
-            date_key = _normalize_date(row["snapshot_date"])
-            channel_map.setdefault(key, {})[date_key] = row
-        instagram_total_reach_map = {
-            date_key: 0
-            for date_key, row in channel_map.get("instagram", {}).items()
-        }
-
-        chart_series: Dict[str, List[Mapping[str, object]]] = {}
-        chart_series_delta: Dict[str, List[Mapping[str, object]]] = {}
-        channel_keys = list({opt["value"] for opt in CHANNEL_OPTIONS} | {"all"})
-        comment_prev_date = _normalize_date(comment_start)
-        for key in channel_keys:
-            source_map = daily_map if key == "all" else channel_map.get(key, {})
-            prev_values = {"views": None, "comments": None, "likes": None}
-            channel_prev = prev_totals.get(key) or prev_totals.get("all", {})
-            prev_values["views"] = channel_prev.get("views")
-            if key == "all":
-                prev_values["comments"] = comment_counts_all.get(comment_prev_date)
-            else:
-                prev_values["comments"] = comment_counts_by_platform.get(key, {}).get(comment_prev_date)
-            prev_values["likes"] = channel_prev.get("likes")
-            chart_series[key] = []
-            chart_series_delta[key] = []
-            for date_key in date_sequence:
-                entry = source_map.get(date_key, {})
-                if key == "all":
-                    views = youtube_total_views_map.get(date_key, 0) + instagram_total_reach_map.get(date_key, 0)
-                elif key == "youtube":
-                    views = youtube_total_views_map.get(date_key, 0)
-                elif key == "instagram":
-                    views = instagram_total_reach_map.get(date_key, 0)
-                else:
-                    views = entry.get("views", 0)
-                if key == "all":
-                    comments = comment_counts_all.get(date_key, 0)
-                else:
-                    comments = comment_counts_by_platform.get(key, {}).get(date_key, 0)
-                likes = entry.get("likes", 0)
-                chart_series[key].append(
-                    {
-                        "date": date_key,
-                        "views": views if views is not None else 0,
-                        "comments": comments,
-                        "likes": likes,
-                    }
-                )
-                delta_entry = {
-                    "date": date_key,
-                    "views_delta": None,
-                    "comments_delta": comments,
-                    "likes_delta": None,
-                }
-                if key == "all":
-                    delta_entry["views_delta"] = (
-                        youtube_daily_views_map.get(date_key, 0)
-                        + analytics_daily_views.get("instagram", {}).get(date_key, 0)
-                    )
-                    delta_entry["likes_delta"] = analytics_daily_likes_all.get(date_key, 0)
-                    delta_entry["youtube_daily_views"] = youtube_daily_views_map.get(date_key, 0)
-                    delta_entry["instagram_daily_views"] = analytics_daily_views.get("instagram", {}).get(date_key, 0)
-                elif key == "youtube":
-                    delta_entry["views_delta"] = youtube_daily_views_map.get(date_key, 0)
-                    delta_entry["likes_delta"] = youtube_daily_likes_map.get(date_key, 0)
-                elif key == "instagram":
-                    delta_entry["views_delta"] = analytics_daily_views.get(key, {}).get(date_key, 0)
-                    delta_entry["likes_delta"] = analytics_daily_likes.get(key, {}).get(date_key, 0)
-                else:
-                    delta_entry["views_delta"] = None if prev_values["views"] is None else views - prev_values["views"]
-                    delta_entry["comments_delta"] = None if prev_values["comments"] is None else comments - prev_values["comments"]
-                    delta_entry["likes_delta"] = None if prev_values["likes"] is None else likes - prev_values["likes"]
-                chart_series_delta[key].append(delta_entry)
-                prev_values["views"] = views
-                prev_values["comments"] = comments
-                prev_values["likes"] = likes
-
-        selected_channel = channel_type if channel_type in chart_series else "all"
-        chart_points = chart_series.get(selected_channel, chart_series["all"])
-        summary_card_specs = [
-            ("Total views", "views", "visibility"),
-            ("Total comments", "comments", "comment"),
-            ("Total likes", "likes", "thumb_up"),
-        ]
-        summary_cards_by_channel: Dict[str, Dict[str, Mapping[str, object]]] = {}
-        for channel_key in ["all", *[option["value"] for option in CHANNEL_OPTIONS if option["value"] != "all"]]:
-            current_totals = period_totals_by_channel.get(channel_key) or period_totals_by_channel.get("all", {})
-            previous_totals = previous_period_totals_by_channel.get(channel_key) or previous_period_totals_by_channel.get("all", {})
-            card_map: Dict[str, Mapping[str, object]] = {}
-            for title, key, icon in summary_card_specs:
-                current_value = int(current_totals.get(key) or 0)
-                previous_value = previous_totals.get(key)
-                change_meta = _build_change_meta(current_value, int(previous_value) if previous_value is not None else None)
-                card_map[key] = {
-                    "key": key,
-                    "title": title,
-                    "icon": icon,
-                    "display_value": current_value,
-                    "change_label": change_meta["change_label"],
-                    "direction": change_meta["direction"],
-                }
-            summary_cards_by_channel[channel_key] = card_map
-        summary_cards = [
-            summary_cards_by_channel.get(selected_channel, summary_cards_by_channel["all"])[key]
-            for _title, key, _icon in summary_card_specs
-        ]
-
-        subscriber_totals: Dict[str, int] = {
-            "youtube": 0,
-            "instagram": 0,
-            "facebook": 0,
-            "tiktok": 0,
-        }
-        subscriber_series: List[Mapping[str, object]] = []
-        youtube_subscriber_data_missing = False
-        try:
-            subscriber_cursor = conn.execute(
-                f"""
-                WITH series AS (
-                    SELECT
-                    snapshot_date,
-                    channel_type,
-                    SUM(
-                        CASE
-                            WHEN channel_type = 'youtube' THEN COALESCE(subscriber_count_exact, 0)
-                            ELSE COALESCE(subscriber_count_exact, subscriber_count, 0)
-                        END
-                    ) AS subscribers_exact,
-                    SUM(CASE WHEN subscribers_gained IS NOT NULL THEN subscribers_gained ELSE 0 END) AS subscribers_gained,
-                    SUM(CASE WHEN subscribers_lost IS NOT NULL THEN subscribers_lost ELSE 0 END) AS subscribers_lost,
-                    SUM(CASE WHEN subscribers_net IS NOT NULL THEN subscribers_net ELSE 0 END) AS subscribers_net,
-                    SUM(CASE WHEN subscribers_gained IS NOT NULL THEN 1 ELSE 0 END) AS subscribers_gained_count,
-                    SUM(CASE WHEN subscribers_lost IS NOT NULL THEN 1 ELSE 0 END) AS subscribers_lost_count,
-                    SUM(CASE WHEN subscribers_net IS NOT NULL THEN 1 ELSE 0 END) AS subscribers_net_count
-                    FROM {SUBSCRIBER_SNAPSHOT_TABLE}
-                    WHERE snapshot_date BETWEEN ? AND ?
-                      AND brand_id = ?
-                    GROUP BY snapshot_date, channel_type
-                ), latest_dates AS (
-                    SELECT channel_type, MAX(snapshot_date) AS snapshot_date
-                    FROM {SUBSCRIBER_SNAPSHOT_TABLE}
-                    WHERE brand_id = ?
-                    GROUP BY channel_type
-                ), latest_totals AS (
-                    SELECT
-                        COALESCE(SUM(CASE WHEN s.channel_type = 'youtube' THEN COALESCE(s.subscriber_count_exact, 0) ELSE 0 END), 0) AS latest_youtube,
-                        COALESCE(SUM(CASE WHEN s.channel_type = 'instagram' THEN COALESCE(s.subscriber_count_exact, s.subscriber_count, 0) ELSE 0 END), 0) AS latest_instagram,
-                        COALESCE(SUM(CASE WHEN s.channel_type = 'facebook' THEN COALESCE(s.subscriber_count_exact, s.subscriber_count, 0) ELSE 0 END), 0) AS latest_facebook,
-                        COALESCE(SUM(CASE WHEN s.channel_type = 'tiktok' THEN COALESCE(s.subscriber_count_exact, s.subscriber_count, 0) ELSE 0 END), 0) AS latest_tiktok
-                    FROM {SUBSCRIBER_SNAPSHOT_TABLE} s
-                    JOIN latest_dates l
-                      ON l.channel_type = s.channel_type
-                     AND l.snapshot_date = s.snapshot_date
-                    WHERE s.brand_id = ?
-                ), baseline_candidates AS (
-                    SELECT baseline_date, baseline_subscribers_exact, 0 AS priority
-                    FROM youtube_channels
-                    WHERE baseline_date IS NOT NULL
-                      AND baseline_subscribers_exact IS NOT NULL
-                      AND brand_id = ?
-                    ORDER BY baseline_date DESC
-                    LIMIT 1
-                ), fallback_candidate AS (
-                    SELECT snapshot_date AS baseline_date, subscriber_count_exact AS baseline_subscribers_exact, 1 AS priority
-                    FROM {SUBSCRIBER_SNAPSHOT_TABLE}
-                    WHERE channel_type = 'youtube'
-                      AND subscriber_count_exact IS NOT NULL
-                      AND brand_id = ?
-                    ORDER BY snapshot_date ASC
-                    LIMIT 1
-                ), baseline AS (
-                    SELECT baseline_date, baseline_subscribers_exact
-                    FROM (
-                        SELECT * FROM baseline_candidates
-                        UNION ALL
-                        SELECT * FROM fallback_candidate
-                    ) candidates
-                    ORDER BY priority
-                    LIMIT 1
-                ), baseline_meta AS (
-                    SELECT
-                        b.baseline_date,
-                        b.baseline_subscribers_exact,
-                        COALESCE(SUM(s.subscribers_net) FILTER (
-                            WHERE s.snapshot_date > b.baseline_date AND s.snapshot_date < ?
-                        ), 0) AS seed_sum
-                    FROM baseline b
-                    LEFT JOIN {SUBSCRIBER_SNAPSHOT_TABLE} s
-                      ON s.brand_id = ?
-                     AND s.channel_type = 'youtube'
-                     AND s.subscribers_net IS NOT NULL
-                    GROUP BY b.baseline_date, b.baseline_subscribers_exact
-                )
-                SELECT
-                    series.*,
-                    latest_totals.*,
-                    baseline_meta.*,
-                    EXISTS (
-                        SELECT 1
-                        FROM youtube_oauth_tokens_v2 oauth
-                        WHERE oauth.user_id = ?
-                          AND COALESCE(oauth.reauth_required, 0) <> 0
-                    ) AS oauth_reauth_required
-                FROM latest_totals
-                LEFT JOIN baseline_meta ON TRUE
-                LEFT JOIN series ON TRUE
-                ORDER BY series.snapshot_date ASC, series.channel_type ASC
-                """,
-                [
-                    start_date.isoformat(), end_date.isoformat(), active_brand_id,
-                    active_brand_id, active_brand_id,
-                    active_brand_id, active_brand_id, start_date.isoformat(), active_brand_id,
-                    target_owner_user_id,
-                ],
-            )
-            subscriber_rows = _rows_to_dict(subscriber_cursor)
-            if subscriber_rows:
-                first_subscriber_row = subscriber_rows[0]
-                oauth_reauth_required = bool(first_subscriber_row.get("oauth_reauth_required"))
-                for platform in subscriber_totals:
-                    subscriber_totals[platform] = int(first_subscriber_row.get(f"latest_{platform}") or 0)
-                baseline_date_obj = first_subscriber_row.get("baseline_date")
-                baseline_total = (
-                    int(first_subscriber_row.get("baseline_subscribers_exact"))
-                    if first_subscriber_row.get("baseline_subscribers_exact") is not None
-                    else None
-                )
-                seed_sum = int(first_subscriber_row.get("seed_sum") or 0)
-            else:
-                baseline_date_obj = None
-                baseline_total = None
-                seed_sum = 0
-            subscriber_rows = [row for row in subscriber_rows if row.get("snapshot_date") is not None]
-            youtube_subscriber_data_missing = not any(
-                (row.get("channel_type") or "").lower() == "youtube"
-                for row in subscriber_rows
-            )
-            subscriber_map: Dict[str, Dict[str, Dict[str, object]]] = {}
-            for row in subscriber_rows:
-                date_key = _normalize_date(row["snapshot_date"])
-                channel_key = (row.get("channel_type") or "").lower()
-                if channel_key not in {"youtube", "instagram", "facebook", "tiktok"}:
-                    continue
-                gained_count = row.get("subscribers_gained_count") or 0
-                lost_count = row.get("subscribers_lost_count") or 0
-                net_count = row.get("subscribers_net_count") or 0
-                subscriber_map.setdefault(date_key, {})[channel_key] = {
-                    "total": row.get("subscribers_exact") or 0,
-                    "net": row.get("subscribers_net") if net_count else None,
-                    "gained": row.get("subscribers_gained") if gained_count else None,
-                    "lost": row.get("subscribers_lost") if lost_count else None,
-                    "has_data": True,
-                }
-            prev_youtube_total: Optional[int] = None
-            prev_youtube_has_data = False
-            prev_instagram_total: Optional[int] = None
-            prev_instagram_has_data = False
-            prev_facebook_total: Optional[int] = None
-            prev_facebook_has_data = False
-            prev_tiktok_total: Optional[int] = None
-            prev_tiktok_has_data = False
-            computed_youtube_total: Optional[int] = None
-            computed_youtube_end_total: Optional[int] = None
-            for date_key in date_sequence:
-                current_date = date.fromisoformat(date_key)
-                per_date = subscriber_map.get(date_key, {})
-                youtube = per_date.get("youtube", {})
-                instagram = per_date.get("instagram", {})
-                facebook = per_date.get("facebook", {})
-                tiktok = per_date.get("tiktok", {})
-                youtube_has_data = bool(youtube.get("has_data"))
-                youtube_total = youtube.get("total", 0) if youtube_has_data else 0
-                youtube_gained = youtube.get("gained")
-                youtube_lost = youtube.get("lost")
-                youtube_net_override = youtube.get("net")
-                youtube_net: Optional[int]
-                if youtube_net_override is not None:
-                    youtube_net = youtube_net_override
-                elif youtube_gained is not None or youtube_lost is not None:
-                    youtube_net = (youtube_gained or 0) - (youtube_lost or 0)
-                else:
-                    # YouTube subscriber totals can be rounded/jittery when analytics deltas are missing.
-                    # Avoid deriving daily net from raw total differences to prevent false +/-100 swings.
-                    youtube_net = None
-                if baseline_total is not None and baseline_date_obj is not None:
-                    if current_date == baseline_date_obj:
-                        computed_youtube_total = baseline_total
-                    elif current_date > baseline_date_obj and computed_youtube_total is None:
-                        computed_youtube_total = baseline_total + seed_sum
-                    if current_date > baseline_date_obj and computed_youtube_total is not None:
-                        if youtube_net is not None:
-                            computed_youtube_total += youtube_net
-                if youtube_has_data:
-                    prev_youtube_total = youtube_total
-                    prev_youtube_has_data = True
-                if computed_youtube_total is not None:
-                    youtube_total = computed_youtube_total
-                    if current_date == end_date:
-                        computed_youtube_end_total = computed_youtube_total
-                instagram_has_data = bool(instagram.get("has_data"))
-                instagram_total = instagram.get("total", 0) if instagram_has_data else 0
-                instagram_net_override = instagram.get("net")
-                instagram_net: Optional[int]
-                if instagram_net_override is not None:
-                    instagram_net = instagram_net_override
-                elif not instagram_has_data or not prev_instagram_has_data:
-                    instagram_net = None
-                else:
-                    instagram_net = instagram_total - (prev_instagram_total or 0)
-                if instagram_has_data:
-                    prev_instagram_total = instagram_total
-                    prev_instagram_has_data = True
-                facebook_has_data = bool(facebook.get("has_data"))
-                facebook_total = facebook.get("total", 0) if facebook_has_data else 0
-                facebook_net_override = facebook.get("net")
-                facebook_net: Optional[int]
-                if facebook_net_override is not None:
-                    facebook_net = facebook_net_override
-                elif not facebook_has_data or not prev_facebook_has_data:
-                    facebook_net = None
-                else:
-                    facebook_net = facebook_total - (prev_facebook_total or 0)
-                if facebook_has_data:
-                    prev_facebook_total = facebook_total
-                    prev_facebook_has_data = True
-                tiktok_has_data = bool(tiktok.get("has_data"))
-                tiktok_total = tiktok.get("total", 0) if tiktok_has_data else 0
-                tiktok_net_override = tiktok.get("net")
-                tiktok_net: Optional[int]
-                if tiktok_net_override is not None:
-                    tiktok_net = tiktok_net_override
-                elif not tiktok_has_data or not prev_tiktok_has_data:
-                    tiktok_net = None
-                else:
-                    tiktok_net = tiktok_total - (prev_tiktok_total or 0)
-                if tiktok_has_data:
-                    prev_tiktok_total = tiktok_total
-                    prev_tiktok_has_data = True
-                subscriber_series.append(
-                    {
-                        "date": date_key,
-                        "youtube_total": youtube_total,
-                        "youtube_gained": youtube_gained,
-                        "youtube_lost": youtube_lost,
-                        "youtube_net": youtube_net,
-                        "instagram_total": instagram_total,
-                        "instagram_net": instagram_net,
-                        "facebook_total": facebook_total,
-                        "facebook_net": facebook_net,
-                        "tiktok_total": tiktok_total,
-                        "tiktok_net": tiktok_net,
-                    }
-                )
-            if computed_youtube_end_total is not None:
-                subscriber_totals["youtube"] = computed_youtube_end_total
-        except Exception:
-            subscriber_series = [
-                {
-                    "date": date_key,
-                    "youtube_total": 0,
-                    "youtube_gained": 0,
-                    "youtube_lost": 0,
-                    "youtube_net": 0,
-                    "instagram_total": 0,
-                    "instagram_net": None,
-                    "facebook_total": 0,
-                    "facebook_net": None,
-                    "tiktok_total": 0,
-                    "tiktok_net": None,
-                }
-                for date_key in date_sequence
-            ]
-            youtube_subscriber_data_missing = True
-
     finally:
         conn.close()
 
-    video_rows_total_pages = max((video_rows_total + VIDEO_LIST_PAGE_SIZE - 1) // VIDEO_LIST_PAGE_SIZE, 1)
-    if videos_page > video_rows_total_pages:
-        videos_page = video_rows_total_pages
-        conn = get_db_readonly()
-        try:
-            video_rows, video_rows_total = _fetch_stats_video_rows(
-                conn,
-                start_date=start_date,
-                end_date=end_date,
-                brand_id=active_brand_id,
-                page=videos_page,
-            )
-        finally:
-            conn.close()
+    platform_connections = canonical["connections"]
+    period_totals_by_channel = canonical["current_totals"]
+    previous_period_totals_by_channel = canonical["previous_totals"]
+    selected_channel = (
+        channel_type
+        if channel_type in ("all", "youtube", "instagram", "facebook")
+        else "all"
+    )
+    previous_period_label = (
+        f"vs previous period ({canonical['previous_start'].isoformat()}–"
+        f"{canonical['previous_end'].isoformat()})"
+    )
+    summary_specs = (
+        ("Total views", "views", "visibility"),
+        ("Total comments", "comments", "comment"),
+        ("Total likes", "likes", "thumb_up"),
+    )
+    summary_cards_by_channel: Dict[str, Dict[str, Mapping[str, object]]] = {}
+    for channel_key in ("all", "youtube", "instagram", "facebook"):
+        current_totals = period_totals_by_channel.get(channel_key, {})
+        previous_totals = previous_period_totals_by_channel.get(channel_key, {})
+        is_connected = (
+            any(platform_connections.values())
+            if channel_key == "all"
+            else bool(platform_connections.get(channel_key))
+        )
+        card_map: Dict[str, Mapping[str, object]] = {}
+        for title, metric_key, icon in summary_specs:
+            current_value = current_totals.get(metric_key)
+            previous_value = previous_totals.get(metric_key)
+            if not is_connected:
+                display_value: object = "Not connected"
+                direction = "neutral"
+                delta_label = previous_period_label
+            elif current_value is None:
+                display_value = "Pending"
+                direction = "neutral"
+                delta_label = f"Pending · {previous_period_label}"
+            else:
+                display_value = int(current_value)
+                change = _build_change_meta(
+                    int(current_value),
+                    int(previous_value) if previous_value is not None else None,
+                )
+                direction = str(change["direction"])
+                delta_label = f"{change['change_label']} {previous_period_label}"
+            card_map[metric_key] = {
+                "key": metric_key,
+                "title": title,
+                "icon": icon,
+                "display_value": display_value,
+                "change_label": delta_label,
+                "direction": direction,
+            }
+        summary_cards_by_channel[channel_key] = card_map
 
+    video_rows = canonical["video_rows"]
+    video_rows_total = int(canonical["video_rows_total"] or 0)
+    video_rows_total_pages = max(
+        (video_rows_total + VIDEO_LIST_PAGE_SIZE - 1) // VIDEO_LIST_PAGE_SIZE,
+        1,
+    )
+    videos_page = min(videos_page, video_rows_total_pages)
+    summary_cards = [
+        summary_cards_by_channel[selected_channel][key]
+        for _title, key, _icon in summary_specs
+    ]
     template_context = dict(
         start_date=start_date,
         end_date=end_date,
         channel_type=channel_type,
         selected_metric=selected_metric,
         channel_options=[
-            option for option in CHANNEL_OPTIONS if tiktok_feature_enabled or option["value"] != "tiktok"
+            option for option in CHANNEL_OPTIONS
+            if tiktok_feature_enabled or option["value"] != "tiktok"
         ],
-        daily_totals=daily_totals,
-        range_totals=period_totals_by_channel.get(selected_channel) or period_totals_by_channel.get("all", {}),
+        daily_totals=canonical["daily_totals"],
+        range_totals=period_totals_by_channel.get(selected_channel, {}),
         summary_cards=summary_cards,
         summary_cards_by_channel=summary_cards_by_channel,
-        top_videos=top_videos,
-        top_view_video=top_videos[0] if top_videos else None,
-        top_comment_video=top_comment_video[0] if top_comment_video else None,
-        chart_series=chart_series,
-        channel_totals=channel_totals,
+        chart_series=canonical["chart_series_delta"],
+        chart_series_delta=canonical["chart_series_delta"],
+        channel_totals=period_totals_by_channel,
         selected_channel=selected_channel,
-        top_table_rows=top_table_rows,
         video_rows=video_rows,
         videos_page=videos_page,
         video_rows_total=video_rows_total,
         video_rows_total_pages=video_rows_total_pages,
-        today_top_videos=today_top_videos,
-        week_top_videos=week_top_videos,
-        user_time_zone_label=user_time_zone_label,
-        chart_series_delta=chart_series_delta,
-        earliest_snapshot=earliest_snapshot,
-        default_insights=today_top_videos,
-        today=today,
-        subscriber_totals=subscriber_totals,
-        subscriber_series=subscriber_series,
-        youtube_subscriber_data_missing=(
-            youtube_subscriber_data_missing or oauth_reauth_required
-        ),
-        last_api_at=last_api_at,
-        stats_connect_empty=bool(not youtube_connected and not channel_rows),
+        today_top_videos=canonical["today_top_videos"],
+        week_top_videos=canonical["week_top_videos"],
+        user_time_zone_label=_timezone_label(str(tenant.get("time_zone") or DEFAULT_TIME_ZONE)),
+        earliest_snapshot=start_date,
+        default_insights=canonical["today_top_videos"],
+        subscriber_totals=canonical["subscriber_totals"],
+        subscriber_series=canonical["subscriber_series"],
+        youtube_subscriber_data_missing=canonical["youtube_subscriber_data_missing"],
+        last_api_at=canonical["last_api_at"],
+        stats_connect_empty=canonical["stats_connect_empty"],
+        platform_connections=platform_connections,
         tiktok_enabled=tiktok_feature_enabled,
         **shared_template_context,
     )
@@ -2226,6 +1455,7 @@ def stats_top_videos():
             conn,
             parsed_date,
             channel_type,
+            owner_user_id=str(tenant.get("owner_user_id") or "").strip(),
             brand_id=str(tenant.get("brand_id") or "").strip() or None,
             limit=6,
         )
