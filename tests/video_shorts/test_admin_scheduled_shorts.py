@@ -43,7 +43,7 @@ def _database():
         "INSERT INTO shorts_youtube_schedules VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
         [
             'yt-upcoming', 'customer', 'customer-brand', 'yt-customer',
-            '{"video_pk": 1, "title": "YouTube short"}', 'pending',
+            '{"video_pk": 1, "plan_index": "1", "filename": "clip.mp4", "title": "YouTube short"}', 'pending',
             datetime(2026, 11, 2, 18, 0), None, datetime(2026, 11, 2, 15, 0),
         ],
     )
@@ -51,7 +51,7 @@ def _database():
         "INSERT INTO shorts_youtube_schedules VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
         [
             'yt-admin', 'admin', 'admin-brand', 'yt-admin',
-            '{"video_pk": 2, "title": "Admin short"}', 'pending',
+            '{"video_pk": 2, "plan_index": "1", "filename": "admin.mp4", "title": "Admin short"}', 'pending',
             datetime(2026, 11, 2, 19, 0), None, datetime(2026, 11, 2, 15, 0),
         ],
     )
@@ -66,7 +66,7 @@ def _database():
     conn.execute(
         "INSERT INTO shorts_facebook_queue VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
         [
-            'fb-published', 'customer', 'customer-brand', 'source-1', '1', 'clip.mp4',
+            'fb-published', 'customer', 'customer-brand', 'source-1', '2', 'clip-2.mp4',
             'Facebook short', 'fb-customer', 'Customer Facebook', 'published',
             datetime(2026, 10, 30, 17, 0), datetime(2026, 10, 30, 17, 5),
             'fb-video', 'https://facebook.example/post', datetime(2026, 10, 30, 17, 5),
@@ -81,14 +81,26 @@ def test_admin_schedule_data_is_read_only_filtered_and_sorted():
     default = filter_scheduled_shorts(items, include_all_brands=False)
     all_brands = filter_scheduled_shorts(items, include_all_brands=True)
 
-    assert [row["id"] for row in default["upcoming"]] == ["ig-mismatch", "yt-upcoming"]
-    assert [row["id"] for row in default["published"]] == ["fb-published"]
+    assert len(default["upcoming"]) == 1
+    assert len(default["published"]) == 1
+    assert {post["id"] for post in default["upcoming"][0]["platforms"]} == {"ig-mismatch", "yt-upcoming"}
+    assert [post["id"] for post in default["published"][0]["platforms"]] == ["fb-published"]
+    assert default["upcoming_count"] == 1
+    assert default["upcoming_post_count"] == 2
+    assert default["published_count"] == 1
+    assert default["published_post_count"] == 1
     assert default["problem_count"] == 1
     assert default["upcoming"][0]["is_mismatch"] is True
-    assert default["upcoming"][1]["channel_name"] == "Customer YouTube"
+    assert default["upcoming"][0]["platforms"][0]["channel_name"] == "Customer YouTube"
     assert default["upcoming"][0]["publish_time_label"] == "Mon Nov 2, 9:00 AM"
-    assert all_brands["upcoming_count"] == 3
+    assert default["upcoming"][0]["has_time_mismatch"] is True
+    assert all_brands["upcoming_count"] == 2
+    assert all_brands["upcoming_post_count"] == 3
     assert {row["brand_name"] for row in all_brands["upcoming"]} == {"Customer Brand", "Hoca"}
+
+    instagram = filter_scheduled_shorts(items, include_all_brands=False, platform="instagram")
+    assert instagram["upcoming_count"] == 1
+    assert {post["platform"] for post in instagram["upcoming"][0]["platforms"]} == {"youtube", "instagram"}
 
 
 def test_admin_schedule_template_marks_target_mismatch_red():
@@ -112,6 +124,19 @@ def test_admin_schedule_template_marks_target_mismatch_red():
     assert 'class="scheduled-row is-mismatch"' in html
     assert ">MISMATCH<" in html
     assert "Published ✓" in html
+    assert "Customer YouTube" in html
+    assert "customer.ig" in html
+    assert "· 2 posts" in html
+
+
+def test_customer_workspace_has_tenant_filtered_scheduled_link():
+    template = open(
+        "app/video_shorts/templates/shorts_admin_customer_workspace.html",
+        encoding="utf-8",
+    ).read()
+
+    assert "url_for('video_shorts_bp.admin_scheduled_shorts', brand=customer.brand_id)" in template
+    assert ">Scheduled</a>" in template
 
 
 class _ReadOnlyConnection:
@@ -139,3 +164,27 @@ def test_admin_schedule_route_is_200_for_admin_and_403_for_non_admin(monkeypatch
         with pytest.raises(Forbidden) as error:
             generation.admin_scheduled_shorts()
         assert error.value.code == 403
+
+
+def test_admin_schedule_brand_filter_revalidates_customer_scope(monkeypatch):
+    app = Flask(__name__)
+    app.secret_key = "test-secret"
+    app.register_blueprint(video_shorts_bp)
+    checked = []
+    monkeypatch.setattr(generation, "get_db_readonly", lambda: _ReadOnlyConnection())
+    monkeypatch.setattr(
+        "app.video_shorts.services.admin_scheduled_shorts.load_scheduled_shorts",
+        lambda conn: [],
+    )
+    monkeypatch.setattr(generation, "render_template", lambda *args, **kwargs: "ok")
+    monkeypatch.setattr(
+        generation,
+        "_require_admin_operation_scope",
+        lambda **kwargs: checked.append(kwargs) or {"brand_id": kwargs["brand_id"]},
+    )
+
+    with app.test_request_context("/video_shorts/admin/scheduled-shorts?brand=customer-brand"):
+        g.vs_current_user = {"id": "admin", "role": "admin"}
+        assert app.make_response(generation.admin_scheduled_shorts()).status_code == 200
+
+    assert checked == [{"brand_id": "customer-brand", "workspace_kind": "customer"}]

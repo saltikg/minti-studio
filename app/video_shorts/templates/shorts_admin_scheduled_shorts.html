@@ -28,9 +28,17 @@
       text-transform: uppercase;
     }
     .scheduled-counter-value {
+      display: flex;
+      align-items: baseline;
+      gap: 7px;
       margin-top: 4px;
       font-size: 1.65rem;
       font-weight: 700;
+    }
+    .scheduled-counter-posts {
+      color: rgba(255, 255, 255, 0.46);
+      font-size: 0.76rem;
+      font-weight: 600;
     }
     .scheduled-counter.is-problem .scheduled-counter-value { color: #fca5a5; }
     .scheduled-filters {
@@ -117,11 +125,34 @@
       text-overflow: ellipsis;
       white-space: nowrap;
     }
-    .scheduled-channel {
+    .scheduled-channels {
       display: flex;
+      min-width: 290px;
+      flex-direction: column;
+      align-items: stretch;
+      gap: 7px;
+    }
+    .scheduled-channel-chip {
+      display: grid;
+      grid-template-columns: 26px minmax(110px, 1fr) auto;
       align-items: center;
-      min-width: 180px;
       gap: 9px;
+      padding: 7px 9px;
+      border: 1px solid rgba(255, 255, 255, 0.09);
+      border-radius: 10px;
+      background: rgba(255, 255, 255, 0.035);
+    }
+    .scheduled-channel-target { min-width: 0; }
+    .scheduled-channel-name {
+      overflow: hidden;
+      font-size: 0.82rem;
+      font-weight: 600;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+    }
+    .scheduled-channel-time {
+      color: rgba(255, 255, 255, 0.48);
+      font-size: 0.69rem;
     }
     .scheduled-platform-icon {
       display: inline-grid;
@@ -180,7 +211,7 @@
 
 {% macro schedule_row(item) -%}
   <tr
-    class="scheduled-row{% if item.is_mismatch %} is-mismatch{% endif %}"
+    class="scheduled-row{% if item.is_problem %} is-mismatch{% endif %}"
     {% if item.editor_url %}data-href="{{ item.editor_url }}" tabindex="0"{% endif %}>
     <td>{{ item.publish_time_label }}</td>
     <td>
@@ -197,22 +228,29 @@
     </td>
     <td>{{ item.brand_name }}</td>
     <td>
-      <div class="scheduled-channel">
-        {{ platform_icon(item.platform) }}
-        <div>
-          <div>{{ item.channel_name }}</div>
-          <div class="small text-white-50">{{ item.platform_label }}</div>
-        </div>
+      <div class="scheduled-channels">
+        {% for post in item.platforms %}
+          <div class="scheduled-channel-chip">
+            {{ platform_icon(post.platform) }}
+            <div class="scheduled-channel-target">
+              <div class="scheduled-channel-name" title="{{ post.channel_name }}">{{ post.channel_name }}</div>
+              <div class="small text-white-50">{{ post.platform_label }}</div>
+              {% if post.show_platform_time %}<div class="scheduled-channel-time">{{ post.platform_time_label }}</div>{% endif %}
+            </div>
+            {% if post.status_key == 'published' and post.live_url %}
+              <a class="scheduled-status published scheduled-live-link" href="{{ post.live_url }}" target="_blank" rel="noopener" data-no-row-nav>{{ post.status_label }}</a>
+            {% else %}
+              <span class="scheduled-status {{ post.status_key }}">{{ post.status_label }}</span>
+            {% endif %}
+          </div>
+        {% endfor %}
       </div>
     </td>
     <td>
-      {% if item.status_key == 'published' and item.live_url %}
-        <a class="scheduled-status published scheduled-live-link" href="{{ item.live_url }}" target="_blank" rel="noopener" data-no-row-nav>{{ item.status_label }}</a>
+      {% if item.is_problem %}
+        <span class="scheduled-mismatch" title="At least one platform target mismatches, is blocked, or failed.">MISMATCH</span>
       {% else %}
-        <span class="scheduled-status {{ item.status_key }}">{{ item.status_label }}</span>
-      {% endif %}
-      {% if item.is_mismatch %}
-        <span class="scheduled-mismatch" title="Expected {{ item.expected_target_id or 'missing' }}; current {{ item.current_target_id or 'missing' }}">MISMATCH</span>
+        <span class="text-white-50">—</span>
       {% endif %}
     </td>
   </tr>
@@ -222,15 +260,15 @@
   <div class="scheduled-counters">
     <div class="scheduled-counter">
       <div class="scheduled-counter-label">Upcoming</div>
-      <div class="scheduled-counter-value">{{ upcoming_count }}</div>
+      <div class="scheduled-counter-value"><span>{{ upcoming_count }}</span><span class="scheduled-counter-posts">· {{ upcoming_post_count }} posts</span></div>
     </div>
     <div class="scheduled-counter">
       <div class="scheduled-counter-label">Published (7d)</div>
-      <div class="scheduled-counter-value">{{ published_count }}</div>
+      <div class="scheduled-counter-value"><span>{{ published_count }}</span><span class="scheduled-counter-posts">· {{ published_post_count }} posts</span></div>
     </div>
     <div class="scheduled-counter is-problem">
       <div class="scheduled-counter-label">Problems</div>
-      <div class="scheduled-counter-value">{{ problem_count }}</div>
+      <div class="scheduled-counter-value"><span>{{ problem_count }}</span><span class="scheduled-counter-posts">· {{ problem_post_count }} posts</span></div>
     </div>
   </div>
 
@@ -272,7 +310,7 @@
             <th>Short</th>
             <th>Brand</th>
             <th>Channel</th>
-            <th>Status</th>
+            <th>Health</th>
           </tr>
         </thead>
         <tbody>

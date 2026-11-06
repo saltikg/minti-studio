@@ -15,6 +15,7 @@ SCHEDULED_STATUSES = {"pending", "queued", "uploading", "retry", "scheduled"}
 FAILED_STATUSES = {"failed", "missed", "uncertain"}
 PUBLISHED_STATUSES = {"published", "uploaded"}
 BLOCKED_STATUS = "blocked_target_mismatch"
+PLATFORM_ORDER = {"youtube": 0, "instagram": 1, "facebook": 2}
 
 
 def _utc(value: Any) -> Optional[datetime]:
@@ -149,7 +150,34 @@ def _load_reference_data(conn):
         }
         videos_by_pk[video["id"]] = video
         videos_by_scope_source[(video["owner_user_id"], video["brand_id"], video["video_id"])] = video
-    return users, brands, customer_scopes, videos_by_pk, videos_by_scope_source
+    generated_by_scope_filename: dict[tuple[str, str, str], str] = {}
+    for row in _table_rows(
+        conn,
+        "shorts_generated_videos",
+        """
+        SELECT id, CAST(user_id AS VARCHAR) AS user_id,
+               CAST(brand_id AS VARCHAR) AS brand_id, clip_filename, output_filename
+        FROM shorts_generated_videos
+        """,
+    ):
+        for filename in (row.get("clip_filename"), row.get("output_filename")):
+            clean_filename = str(filename or "").strip()
+            if clean_filename:
+                generated_by_scope_filename[
+                    (
+                        str(row.get("user_id") or "").strip(),
+                        str(row.get("brand_id") or "").strip(),
+                        clean_filename,
+                    )
+                ] = str(row.get("id") or "").strip()
+    return (
+        users,
+        brands,
+        customer_scopes,
+        videos_by_pk,
+        videos_by_scope_source,
+        generated_by_scope_filename,
+    )
 
 
 def _load_connections(conn):
@@ -213,6 +241,10 @@ def _build_item(
     snapshot_target_name: str,
     current_connection: dict[str, str],
     video: Optional[dict[str, Any]],
+    generated_video_id: str,
+    source_video_id: str,
+    plan_index: Any,
+    clip_filename: str,
     title: str,
     publish_at: Any,
     published_at: Any,
@@ -226,7 +258,8 @@ def _build_item(
     mismatch = not expected_target_id or not current_target_id or expected_target_id != current_target_id
     status_key, status_label = _status(row.get("status"))
     publish_dt = _utc(publish_at)
-    event_dt = _utc(published_at) or _utc(updated_at) or publish_dt
+    published_dt = _utc(published_at)
+    event_dt = (published_dt or publish_dt) if status_key == "published" else (_utc(updated_at) or publish_dt)
     brand = brands.get(brand_id) or {}
     user = users.get(owner_user_id) or {}
     is_customer = user.get("service_mode") == "autopilot"
@@ -241,6 +274,10 @@ def _build_item(
         "is_autopilot_customer": is_customer,
         "has_customer_workspace": (owner_user_id, brand_id) in customer_scopes,
         "video_pk": (video or {}).get("id"),
+        "generated_video_id": str(generated_video_id or "").strip(),
+        "source_video_id": str(source_video_id or (video or {}).get("video_id") or "").strip(),
+        "plan_index": str(plan_index if plan_index is not None else "").strip(),
+        "clip_filename": str(clip_filename or "").strip(),
         "short_title": str(title or "").strip() or (video or {}).get("title") or "Untitled short",
         "thumbnail_url": str((video or {}).get("thumbnail_url") or "").strip(),
         "channel_name": channel_name,
@@ -253,17 +290,128 @@ def _build_item(
         "publish_at": publish_dt,
         "publish_time_label": _pt_label(publish_dt),
         "event_at": event_dt,
+        "platform_time": (published_dt or publish_dt) if status_key == "published" else publish_dt,
         "live_url": _live_url(platform, row) if status_key == "published" else "",
         "raw_status": str(row.get("status") or "").strip(),
         "token_key": token_key,
     }
 
 
+def _short_group_key(item: dict[str, Any]) -> tuple[str, ...]:
+    """Return the strongest available tenant-scoped generated-Short identity."""
+    tenant = (str(item.get("owner_user_id") or ""), str(item.get("brand_id") or ""))
+    generated_video_id = str(item.get("generated_video_id") or "").strip()
+    if generated_video_id:
+        return (*tenant, "generated", generated_video_id)
+    plan_index = str(item.get("plan_index") or "").strip()
+    video_pk = item.get("video_pk")
+    if video_pk not in (None, "") and plan_index:
+        return (*tenant, "video-plan", str(video_pk), plan_index)
+    source_video_id = str(item.get("source_video_id") or "").strip()
+    if source_video_id and plan_index:
+        return (*tenant, "source-plan", source_video_id, plan_index)
+    clip_filename = str(item.get("clip_filename") or "").strip()
+    if clip_filename:
+        return (*tenant, "clip", clip_filename)
+    return (*tenant, "platform-row", str(item.get("platform") or ""), str(item.get("id") or ""))
+
+
+def _group_platform_items(
+    items: Iterable[dict[str, Any]],
+    *,
+    now_utc: datetime,
+    published_cutoff: datetime,
+) -> list[dict[str, Any]]:
+    grouped: dict[tuple[str, ...], list[dict[str, Any]]] = {}
+    for item in items:
+        grouped.setdefault(_short_group_key(item), []).append(item)
+
+    shorts: list[dict[str, Any]] = []
+    for group_key, platform_rows in grouped.items():
+        # A generated Short has one active record per platform. If legacy duplicates
+        # exist, keep the most recently observed record instead of rendering two chips.
+        by_platform: dict[str, dict[str, Any]] = {}
+        for platform_row in platform_rows:
+            platform = str(platform_row.get("platform") or "")
+            previous = by_platform.get(platform)
+            if previous is None or (
+                platform_row.get("event_at") or datetime.min.replace(tzinfo=timezone.utc)
+            ) > (
+                previous.get("event_at") or datetime.min.replace(tzinfo=timezone.utc)
+            ):
+                by_platform[platform] = platform_row
+        platforms = sorted(
+            by_platform.values(),
+            key=lambda item: PLATFORM_ORDER.get(str(item.get("platform") or ""), 99),
+        )
+        if not platforms:
+            continue
+
+        preferred = next((item for item in platforms if item["platform"] == "youtube"), platforms[0])
+        platform_times = [item["platform_time"] for item in platforms if item.get("platform_time")]
+        earliest_time = min(platform_times) if platform_times else None
+        time_mismatch = bool(
+            len(platform_times) > 1
+            and (max(platform_times) - min(platform_times)).total_seconds() > 5 * 60
+        )
+        for platform_row in platforms:
+            platform_row["show_platform_time"] = time_mismatch
+            platform_row["platform_time_label"] = _pt_label(platform_row.get("platform_time"))
+
+        has_scheduled = any(item["status_key"] == "scheduled" for item in platforms)
+        recent_event = max(
+            (item["event_at"] for item in platforms if item.get("event_at")),
+            default=None,
+        )
+        if has_scheduled:
+            section = "upcoming"
+        elif recent_event and recent_event >= published_cutoff:
+            section = "published"
+        else:
+            continue
+
+        is_problem = any(item["is_problem"] for item in platforms)
+        shorts.append(
+            {
+                "id": "|".join(group_key),
+                "owner_user_id": preferred["owner_user_id"],
+                "brand_id": preferred["brand_id"],
+                "brand_name": preferred["brand_name"],
+                "is_autopilot_customer": preferred["is_autopilot_customer"],
+                "has_customer_workspace": preferred["has_customer_workspace"],
+                "video_pk": preferred.get("video_pk"),
+                "short_title": preferred["short_title"],
+                "thumbnail_url": preferred["thumbnail_url"],
+                "platforms": platforms,
+                "platform_names": {item["platform"] for item in platforms},
+                "post_count": len(platforms),
+                "problem_post_count": sum(1 for item in platforms if item["is_problem"]),
+                "is_problem": is_problem,
+                "is_mismatch": is_problem,
+                "publish_at": earliest_time,
+                "publish_time_label": _pt_label(earliest_time),
+                "event_at": recent_event,
+                "section": section,
+                "has_time_mismatch": time_mismatch,
+                "is_upcoming": section == "upcoming",
+                "now": now_utc,
+            }
+        )
+    return shorts
+
+
 def load_scheduled_shorts(conn, *, now: Optional[datetime] = None) -> list[dict[str, Any]]:
-    """Return upcoming schedules plus published rows from the last seven days."""
+    """Return one row per generated Short with its platform posts grouped."""
     now_utc = _utc(now) or datetime.now(timezone.utc)
     published_cutoff = now_utc - timedelta(days=7)
-    users, brands, customer_scopes, videos_by_pk, videos_by_scope_source = _load_reference_data(conn)
+    (
+        users,
+        brands,
+        customer_scopes,
+        videos_by_pk,
+        videos_by_scope_source,
+        generated_by_scope_filename,
+    ) = _load_reference_data(conn)
     youtube_connections, youtube_titles_by_id, instagram_connections, facebook_connections = _load_connections(conn)
     items: list[dict[str, Any]] = []
 
@@ -286,6 +434,7 @@ def load_scheduled_shorts(conn, *, now: Optional[datetime] = None) -> list[dict[
         except (TypeError, ValueError):
             video = None
         expected = str(row.get("expected_youtube_channel_id") or "").strip()
+        clip_filename = str(payload.get("filename") or "").strip()
         item = _build_item(
             platform="youtube",
             row=row,
@@ -296,6 +445,10 @@ def load_scheduled_shorts(conn, *, now: Optional[datetime] = None) -> list[dict[
             snapshot_target_name=youtube_titles_by_id.get(expected, ""),
             current_connection=youtube_connections.get(token_key) or {},
             video=video,
+            generated_video_id=generated_by_scope_filename.get((owner, brand, clip_filename), ""),
+            source_video_id=str((video or {}).get("video_id") or ""),
+            plan_index=payload.get("plan_index"),
+            clip_filename=clip_filename,
             title=str(payload.get("title") or ""),
             publish_at=row.get("publish_at"),
             published_at=None,
@@ -340,6 +493,7 @@ def load_scheduled_shorts(conn, *, now: Optional[datetime] = None) -> list[dict[
             owner, brand, token_key = _scope(row.get("user_id"), row.get("brand_id"))
             source_video_id = str(row.get("video_id") or "").strip()
             video = videos_by_scope_source.get((owner, brand, source_video_id))
+            clip_filename = str(row.get("clip_filename") or "").strip()
             item = _build_item(
                 platform=platform,
                 row=row,
@@ -350,6 +504,10 @@ def load_scheduled_shorts(conn, *, now: Optional[datetime] = None) -> list[dict[
                 snapshot_target_name=str(row.get(name_field) or ""),
                 current_connection=connections.get(token_key) or {},
                 video=video,
+                generated_video_id=generated_by_scope_filename.get((owner, brand, clip_filename), ""),
+                source_video_id=source_video_id,
+                plan_index=row.get("plan_index"),
+                clip_filename=clip_filename,
                 title=str(row.get("plan_title") or ""),
                 publish_at=row.get("publish_at"),
                 published_at=row.get("published_at"),
@@ -360,17 +518,7 @@ def load_scheduled_shorts(conn, *, now: Optional[datetime] = None) -> list[dict[
             )
             items.append(item)
 
-    visible: list[dict[str, Any]] = []
-    for item in items:
-        if item["status_key"] == "published":
-            if item["event_at"] and item["event_at"] >= published_cutoff:
-                item["section"] = "published"
-                visible.append(item)
-            continue
-        if item["publish_at"] and item["publish_at"] >= now_utc:
-            item["section"] = "upcoming"
-            visible.append(item)
-    return visible
+    return _group_platform_items(items, now_utc=now_utc, published_cutoff=published_cutoff)
 
 
 def filter_scheduled_shorts(
@@ -397,7 +545,7 @@ def filter_scheduled_shorts(
         item
         for item in scope_items
         if (not brand_id or item["brand_id"] == brand_id)
-        and (not platform or item["platform"] == platform)
+        and (not platform or platform in item["platform_names"])
     ]
     upcoming = sorted(
         (item for item in filtered if item["section"] == "upcoming"),
@@ -413,8 +561,11 @@ def filter_scheduled_shorts(
         "published": published,
         "brand_options": [{"id": item[0], "name": item[1]} for item in brand_options],
         "upcoming_count": len(upcoming),
+        "upcoming_post_count": sum(item["post_count"] for item in upcoming),
         "published_count": len(published),
+        "published_post_count": sum(item["post_count"] for item in published),
         "problem_count": sum(1 for item in filtered if item["is_problem"]),
+        "problem_post_count": sum(item["post_count"] for item in filtered if item["is_problem"]),
         "platform": platform,
         "brand_id": brand_id,
         "include_all_brands": include_all_brands,

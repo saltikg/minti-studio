@@ -23988,8 +23988,22 @@ def admin_scheduled_shorts():
     include_all_brands = str(request.args.get("scope") or "").strip().lower() == "all"
     selected_brand_id = str(request.args.get("brand") or "").strip()
     selected_platform = str(request.args.get("platform") or "").strip().lower()
+    if selected_brand_id and not include_all_brands:
+        # A customer-workspace link may only select the exact converted customer
+        # tenant that the existing admin-operation scope resolver revalidates.
+        _require_admin_operation_scope(
+            brand_id=selected_brand_id,
+            workspace_kind="customer",
+        )
     conn = get_db_readonly()
     try:
+        if selected_brand_id and include_all_brands:
+            brand_exists = conn.execute(
+                "SELECT 1 FROM shorts_brands WHERE CAST(id AS VARCHAR) = CAST(? AS VARCHAR) LIMIT 1",
+                [selected_brand_id],
+            ).fetchone()
+            if not brand_exists:
+                abort(404)
         schedule_items = load_scheduled_shorts(conn)
     finally:
         conn.close()
