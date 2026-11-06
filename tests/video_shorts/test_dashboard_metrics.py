@@ -2,7 +2,11 @@ from __future__ import annotations
 
 from datetime import date
 
-from app.video_shorts.services.dashboard_metrics import _audience_net_by_date, _period_totals
+from app.video_shorts.services.dashboard_metrics import (
+    _audience_net_by_date,
+    _period_totals,
+    _summarize_youtube_insight_rows,
+)
 
 
 def test_period_totals_require_complete_connected_platform_data():
@@ -121,3 +125,58 @@ def test_youtube_audience_net_keeps_reported_gain_and_pending_days():
         "2026-11-01": 2,
         "2026-11-02": None,
     }
+
+
+def test_youtube_insights_use_attributed_denominator_and_weighted_retention():
+    rows = [
+        {
+            "metric_date": date(2026, 11, 2),
+            "generated_video_id": 5078,
+            "generated_title": "Low Libido",
+            "views": 51,
+            "shorts_feed_views": 10,
+            "search_views": 30,
+            "subscriber_views": 1,
+            "notification_views": 8,
+            "channel_page_views": 1,
+            "external_views": 1,
+            "other_views": 0,
+            "source_attributed_views": 51,
+            "subscribers_gained": 0,
+            "average_view_percentage": 40.0,
+            "average_view_duration_seconds": 25.0,
+        },
+        {
+            "metric_date": date(2026, 11, 3),
+            "generated_video_id": 5078,
+            "generated_title": "Low Libido",
+            "views": 44,
+            "shorts_feed_views": 4,
+            "search_views": 22,
+            "subscriber_views": 1,
+            "notification_views": 13,
+            "channel_page_views": 1,
+            "external_views": 3,
+            "other_views": 0,
+            "source_attributed_views": 44,
+            "subscribers_gained": 0,
+            "average_view_percentage": 96.9,
+            "average_view_duration_seconds": 62.0,
+        },
+    ]
+
+    result = _summarize_youtube_insight_rows(
+        rows,
+        start_date=date(2026, 10, 7),
+        end_date=date(2026, 11, 5),
+        current_totals={"all": {"views": 334}},
+        previous_totals={"all": {"views": 0}},
+    )
+
+    assert result["analytics_views"] == 95
+    assert result["coverage_percent"] == 100.0
+    assert result["traffic_sources"][1]["percent"] == 54.7
+    assert result["average_view_percentage"] == 66.4
+    assert result["average_view_duration_seconds"] == 42.1
+    assert result["subscribers_gained"] == 0
+    assert result["latest_date"] == date(2026, 11, 3)

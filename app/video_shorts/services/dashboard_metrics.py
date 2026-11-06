@@ -7,8 +7,18 @@ from app.video_shorts.services.brands import brand_scoped_user_id
 
 
 MART = "analytics.fct_short_daily_gains"
+YOUTUBE_INSIGHTS_MART = "analytics.fct_short_youtube_insights_daily"
 SUBSCRIBER_TABLE = "main.shorts_channel_subscriber_daily"
 PLATFORMS = ("youtube", "instagram", "facebook")
+YOUTUBE_TRAFFIC_SOURCES = (
+    ("shorts_feed_views", "Shorts feed"),
+    ("search_views", "Search"),
+    ("subscriber_views", "Subscribers"),
+    ("notification_views", "Notifications"),
+    ("channel_page_views", "Channel page"),
+    ("external_views", "External"),
+    ("other_views", "Other"),
+)
 
 
 def _rows(cursor) -> List[Dict[str, object]]:
@@ -189,6 +199,262 @@ def _audience_net_by_date(
         if current_total is not None:
             previous_total = current_total
     return result
+
+
+def _youtube_insights_highlight(
+    *,
+    traffic_sources: Sequence[Mapping[str, object]],
+    analytics_views: int,
+    subscribers_gained: int,
+    top_subscriber_short: Optional[Mapping[str, object]],
+    top_view_short: Optional[Mapping[str, object]],
+    current_totals: Mapping[str, Mapping[str, Optional[int]]],
+    previous_totals: Mapping[str, Mapping[str, Optional[int]]],
+) -> Optional[str]:
+    candidates: List[tuple[float, str]] = []
+    platform_views = sorted(
+        (
+            (platform, int((current_totals.get(platform) or {}).get("views") or 0))
+            for platform in PLATFORMS
+        ),
+        key=lambda item: item[1],
+        reverse=True,
+    )
+    if len(platform_views) > 1 and platform_views[1][1] > 0:
+        ratio = platform_views[0][1] / platform_views[1][1]
+        if ratio >= 2:
+            candidates.append(
+                (
+                    ratio / 2,
+                    f"{platform_views[0][0].title()} delivered {ratio:.1f}× more views "
+                    f"than {platform_views[1][0].title()}.",
+                )
+            )
+    if top_view_short and analytics_views > 0:
+        share = int(top_view_short.get("views") or 0) * 100.0 / analytics_views
+        if share >= 30:
+            candidates.append(
+                (
+                    share / 30,
+                    f"{top_view_short.get('title') or 'The top Short'} generated "
+                    f"{share:.0f}% of YouTube views in this period.",
+                )
+            )
+    if subscribers_gained > 0 and top_subscriber_short:
+        candidates.append(
+            (
+                2 + min(subscribers_gained / 100.0, 3),
+                f"Shorts gained {subscribers_gained:,} YouTube subscriber"
+                f"{'s' if subscribers_gained != 1 else ''}; "
+                f"{top_subscriber_short.get('title') or 'the top Short'} led with "
+                f"{int(top_subscriber_short.get('subscribers') or 0):,}.",
+            )
+        )
+    current_views = int((current_totals.get("all") or {}).get("views") or 0)
+    previous_views = int((previous_totals.get("all") or {}).get("views") or 0)
+    if previous_views > 0:
+        growth = (current_views - previous_views) * 100.0 / previous_views
+        if growth >= 20:
+            candidates.append(
+                (growth / 20, f"Views grew {growth:.0f}% versus the previous period.")
+            )
+    if traffic_sources:
+        dominant = max(traffic_sources, key=lambda source: float(source.get("percent") or 0))
+        dominant_pct = float(dominant.get("percent") or 0)
+        if dominant_pct >= 50:
+            candidates.append(
+                (
+                    dominant_pct / 50,
+                    f"{dominant.get('label')} drove {dominant_pct:.0f}% of attributed "
+                    "YouTube views.",
+                )
+            )
+    return max(candidates, key=lambda candidate: candidate[0])[1] if candidates else None
+
+
+def _summarize_youtube_insight_rows(
+    rows: Sequence[Mapping[str, object]],
+    *,
+    start_date: date,
+    end_date: date,
+    current_totals: Mapping[str, Mapping[str, Optional[int]]],
+    previous_totals: Mapping[str, Mapping[str, Optional[int]]],
+) -> Dict[str, object]:
+    current_rows = [
+        row
+        for row in rows
+        if isinstance(row.get("metric_date"), date)
+        and start_date <= row["metric_date"] <= end_date
+    ]
+    if not current_rows:
+        return {
+            "status": "Pending",
+            "traffic_sources": [],
+            "analytics_views": None,
+            "source_attributed_views": None,
+            "coverage_percent": None,
+            "coverage_note": None,
+            "average_view_percentage": None,
+            "average_view_duration_seconds": None,
+            "subscribers_gained": None,
+            "top_subscriber_short": None,
+            "latest_date": None,
+            "highlight": None,
+        }
+
+    known_views = [int(row["views"]) for row in current_rows if row.get("views") is not None]
+    analytics_views = sum(known_views) if known_views else 0
+    attributed_values = [
+        int(row["source_attributed_views"])
+        for row in current_rows
+        if row.get("source_attributed_views") is not None
+    ]
+    attributed_views = sum(attributed_values) if attributed_values else None
+    traffic_sources: List[Dict[str, object]] = []
+    if attributed_views is not None and attributed_views > 0:
+        for field, label in YOUTUBE_TRAFFIC_SOURCES:
+            value = sum(int(row.get(field) or 0) for row in current_rows)
+            traffic_sources.append(
+                {
+                    "key": field,
+                    "label": label,
+                    "views": value,
+                    "percent": round(value * 100.0 / attributed_views, 1),
+                }
+            )
+
+    pct_numerator = 0.0
+    pct_denominator = 0
+    duration_numerator = 0.0
+    duration_denominator = 0
+    subscribers_known = False
+    subscribers_gained = 0
+    subscriber_by_short: Dict[object, Dict[str, object]] = {}
+    views_by_short: Dict[object, Dict[str, object]] = {}
+    for row in current_rows:
+        views = int(row["views"]) if row.get("views") is not None else None
+        short_id = row.get("generated_video_id")
+        title = str(row.get("generated_title") or "Untitled Short")
+        if views is not None:
+            item = views_by_short.setdefault(short_id, {"title": title, "views": 0})
+            item["views"] = int(item["views"]) + views
+        if views is not None and views > 5 and row.get("average_view_percentage") is not None:
+            pct_numerator += float(row["average_view_percentage"]) * views
+            pct_denominator += views
+        if views is not None and views > 5 and row.get("average_view_duration_seconds") is not None:
+            duration_numerator += float(row["average_view_duration_seconds"]) * views
+            duration_denominator += views
+        if row.get("subscribers_gained") is not None:
+            subscribers_known = True
+            gained = int(row["subscribers_gained"])
+            subscribers_gained += gained
+            item = subscriber_by_short.setdefault(
+                short_id,
+                {"title": title, "subscribers": 0},
+            )
+            item["subscribers"] = int(item["subscribers"]) + gained
+
+    top_subscriber_short = (
+        max(subscriber_by_short.values(), key=lambda item: int(item["subscribers"]))
+        if subscriber_by_short
+        else None
+    )
+    top_view_short = (
+        max(views_by_short.values(), key=lambda item: int(item["views"]))
+        if views_by_short
+        else None
+    )
+    coverage_percent = (
+        round(attributed_views * 100.0 / analytics_views, 1)
+        if attributed_views is not None and analytics_views > 0
+        else None
+    )
+    coverage_note = (
+        f"Traffic sources cover {coverage_percent:.1f}% of Analytics views."
+        if coverage_percent is not None and coverage_percent < 90
+        else None
+    )
+    result: Dict[str, object] = {
+        "status": "Ready",
+        "traffic_sources": traffic_sources,
+        "analytics_views": analytics_views,
+        "source_attributed_views": attributed_views,
+        "coverage_percent": coverage_percent,
+        "coverage_note": coverage_note,
+        "average_view_percentage": (
+            round(pct_numerator / pct_denominator, 1) if pct_denominator else None
+        ),
+        "average_view_duration_seconds": (
+            round(duration_numerator / duration_denominator, 1)
+            if duration_denominator
+            else None
+        ),
+        "subscribers_gained": subscribers_gained if subscribers_known else None,
+        "top_subscriber_short": top_subscriber_short,
+        "latest_date": max(
+            row["metric_date"]
+            for row in current_rows
+            if isinstance(row.get("metric_date"), date)
+        ),
+    }
+    result["highlight"] = _youtube_insights_highlight(
+        traffic_sources=traffic_sources,
+        analytics_views=analytics_views,
+        subscribers_gained=subscribers_gained if subscribers_known else 0,
+        top_subscriber_short=top_subscriber_short,
+        top_view_short=top_view_short,
+        current_totals=current_totals,
+        previous_totals=previous_totals,
+    )
+    return result
+
+
+def load_youtube_insights(
+    conn,
+    *,
+    owner_user_id: str,
+    brand_id: str,
+    start_date: date,
+    end_date: date,
+    previous_start: date,
+    current_totals: Mapping[str, Mapping[str, Optional[int]]],
+    previous_totals: Mapping[str, Mapping[str, Optional[int]]],
+) -> Dict[str, object]:
+    rows = _rows(
+        conn.execute(
+            f"""
+            SELECT
+                metric_date,
+                generated_video_id,
+                generated_title,
+                views,
+                shorts_feed_views,
+                search_views,
+                subscriber_views,
+                notification_views,
+                channel_page_views,
+                external_views,
+                other_views,
+                source_attributed_views,
+                subscribers_gained,
+                average_view_percentage,
+                average_view_duration_seconds
+            FROM {YOUTUBE_INSIGHTS_MART}
+            WHERE owner_user_id = ?
+              AND brand_id = ?
+              AND metric_date BETWEEN ? AND ?
+            ORDER BY metric_date, generated_video_id
+            """,
+            [owner_user_id, brand_id, previous_start.isoformat(), end_date.isoformat()],
+        )
+    )
+    return _summarize_youtube_insight_rows(
+        rows,
+        start_date=start_date,
+        end_date=end_date,
+        current_totals=current_totals,
+        previous_totals=previous_totals,
+    )
 
 
 def _video_rollup(
@@ -604,6 +870,25 @@ def load_dashboard_metrics(
         end_date=end_date,
         connections=connections,
     )
+    youtube_insights = (
+        load_youtube_insights(
+            conn,
+            owner_user_id=owner_user_id,
+            brand_id=brand_id,
+            start_date=start_date,
+            end_date=end_date,
+            previous_start=previous_start,
+            current_totals=current_totals,
+            previous_totals=previous_totals,
+        )
+        if connections.get("youtube")
+        else {
+            "status": "Not connected",
+            "traffic_sources": [],
+            "subscribers_gained": None,
+            "highlight": None,
+        }
+    )
     return {
         "connections": connections,
         "current_totals": current_totals,
@@ -620,6 +905,7 @@ def load_dashboard_metrics(
         "subscriber_totals": audience_totals,
         "subscriber_series": audience_series,
         "youtube_subscriber_data_missing": youtube_pending,
+        "youtube_insights": youtube_insights,
         "last_api_at": last_updated,
         "stats_connect_empty": not any(connections.values()),
     }

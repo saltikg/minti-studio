@@ -1418,6 +1418,7 @@ def _render_video_stats(*, load_widgets: bool):
         subscriber_totals=canonical["subscriber_totals"],
         subscriber_series=canonical["subscriber_series"],
         youtube_subscriber_data_missing=canonical["youtube_subscriber_data_missing"],
+        youtube_insights=canonical["youtube_insights"],
         last_api_at=canonical["last_api_at"],
         stats_connect_empty=canonical["stats_connect_empty"],
         platform_connections=platform_connections,

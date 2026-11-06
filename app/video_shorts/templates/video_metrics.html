@@ -199,6 +199,44 @@
       color: #f8fafc;
       margin-bottom: 0.2rem;
     }
+    .youtube-insights-grid {
+      display: grid;
+      grid-template-columns: minmax(0, 1.6fr) repeat(2, minmax(180px, 0.7fr));
+      gap: 1rem;
+    }
+    .youtube-traffic-row + .youtube-traffic-row { margin-top: 0.75rem; }
+    .youtube-traffic-meta {
+      display: flex;
+      justify-content: space-between;
+      gap: 1rem;
+      color: rgba(226, 232, 240, 0.84);
+      font-size: 0.85rem;
+    }
+    .youtube-traffic-track {
+      height: 7px;
+      margin-top: 0.35rem;
+      border-radius: 999px;
+      overflow: hidden;
+      background: rgba(148, 163, 184, 0.14);
+    }
+    .youtube-traffic-bar {
+      height: 100%;
+      border-radius: inherit;
+      background: #2dd4bf;
+    }
+    .youtube-insight-stat {
+      padding: 1rem;
+      border: 1px solid rgba(148, 163, 184, 0.14);
+      border-radius: 10px;
+      background: rgba(15, 23, 42, 0.34);
+    }
+    .youtube-highlight {
+      border-left: 3px solid #2dd4bf;
+      color: #ccfbf1;
+    }
+    @media (max-width: 991px) {
+      .youtube-insights-grid { grid-template-columns: 1fr; }
+    }
   </style>
 {% endblock %}
 
@@ -288,6 +326,7 @@
     <div class="stats-widget-skeleton mb-4" data-dashboard-widget="filters" aria-label="Loading dashboard filters"></div>
     <div class="stats-widget-skeleton mb-4" data-dashboard-widget="summary" aria-label="Loading summary"></div>
     <div class="stats-widget-skeleton is-tall mb-4" data-dashboard-widget="performance" aria-label="Loading performance chart"></div>
+    <div class="stats-widget-skeleton mb-4" data-dashboard-widget="youtube-insights" aria-label="Loading YouTube insights"></div>
     <div class="stats-widget-skeleton mb-4" data-dashboard-widget="audience-summary" aria-label="Loading audience summary"></div>
     <div class="stats-widget-skeleton is-tall mb-4" data-dashboard-widget="audience-chart" aria-label="Loading audience chart"></div>
     <div class="stats-widget-skeleton mb-4" data-dashboard-widget="details-toggle" aria-label="Loading details controls"></div>
@@ -316,7 +355,7 @@
           {% if not stats_admin_operation %}<a href="{{ url_for('video_shorts_bp.social_connect') }}" class="btn btn-primary">Connect YouTube</a>{% endif %}
         </div>
       </div>
-      {% for widget_name in ['summary', 'performance', 'audience-summary', 'audience-chart', 'details-toggle', 'details'] %}
+      {% for widget_name in ['summary', 'performance', 'youtube-insights', 'audience-summary', 'audience-chart', 'details-toggle', 'details'] %}
         <div class="d-none" data-dashboard-widget="{{ widget_name }}"></div>
       {% endfor %}
     {% else %}
@@ -427,6 +466,69 @@
           </div>
         </div>
       </div>
+    </div>
+  </div>
+
+  <div class="card shadow-sm mb-4 vs-card" data-dashboard-widget="youtube-insights">
+    <div class="card-header d-flex justify-content-between align-items-center gap-3">
+      <span>YouTube insights</span>
+      {% if youtube_insights.latest_date %}
+        <span class="small text-muted">YouTube only · data through {{ youtube_insights.latest_date.strftime('%b %-d, %Y') }}</span>
+      {% endif %}
+    </div>
+    <div class="card-body">
+      {% if youtube_insights.status == 'Not connected' %}
+        <p class="text-muted mb-0">YouTube is not connected.</p>
+      {% elif youtube_insights.status == 'Pending' %}
+        <p class="text-muted mb-0">YouTube Analytics data is pending for this period.</p>
+      {% else %}
+        <div class="youtube-insights-grid">
+          <div>
+            <p class="vs-card-title mb-3">How viewers found your Shorts</p>
+            {% for source in youtube_insights.traffic_sources %}
+              <div class="youtube-traffic-row">
+                <div class="youtube-traffic-meta">
+                  <span>{{ source.label }}</span>
+                  <strong>{{ '%.1f'|format(source.percent) }}%</strong>
+                </div>
+                <div class="youtube-traffic-track" aria-hidden="true">
+                  <div class="youtube-traffic-bar" style="width: {{ [source.percent, 100]|min }}%"></div>
+                </div>
+              </div>
+            {% else %}
+              <p class="text-muted mb-0">Traffic-source data is pending.</p>
+            {% endfor %}
+            {% if youtube_insights.coverage_note %}
+              <p class="small text-warning mt-3 mb-0">{{ youtube_insights.coverage_note }}</p>
+            {% endif %}
+          </div>
+          <div class="youtube-insight-stat">
+            <p class="vs-card-title mb-2">Average watched</p>
+            <div class="h4 mb-1">
+              {% if youtube_insights.average_view_percentage is not none %}
+                {{ '%.1f'|format(youtube_insights.average_view_percentage) }}%
+              {% else %}Pending{% endif %}
+            </div>
+            <div class="text-muted">
+              {% if youtube_insights.average_view_duration_seconds is not none %}
+                {{ '%.1f'|format(youtube_insights.average_view_duration_seconds) }} seconds
+              {% else %}Duration pending{% endif %}
+            </div>
+          </div>
+          {% if youtube_insights.subscribers_gained %}
+            <div class="youtube-insight-stat">
+              <p class="vs-card-title mb-2">Subscribers from Shorts</p>
+              <div class="h4 mb-1">+{{ "{:,}".format(youtube_insights.subscribers_gained) }}</div>
+              {% if youtube_insights.top_subscriber_short %}
+                <div class="text-muted">Top: {{ youtube_insights.top_subscriber_short.title }} · +{{ youtube_insights.top_subscriber_short.subscribers }}</div>
+              {% endif %}
+            </div>
+          {% endif %}
+        </div>
+        {% if youtube_insights.highlight %}
+          <div class="youtube-highlight mt-3 py-2 px-3">{{ youtube_insights.highlight }}</div>
+        {% endif %}
+      {% endif %}
     </div>
   </div>
 
