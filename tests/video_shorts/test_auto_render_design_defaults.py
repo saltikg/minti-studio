@@ -240,7 +240,7 @@ def test_preview_scales_new_and_legacy_auto_layout_coordinates_through_one_helpe
 
 @pytest.mark.parametrize(
     ("resolution", "expected_height"),
-    [("1080", 1920), ("720", 1280), ("", None), ("2160", None)],
+    [("1080", 1920), ("720", 1280), ("", 1280), ("2160", None)],
 )
 def test_legacy_auto_layout_coordinate_height_comes_from_render_job_resolution(
     resolution, expected_height

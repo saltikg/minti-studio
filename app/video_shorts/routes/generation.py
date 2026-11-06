@@ -8151,6 +8151,10 @@ def _render_job_auto_layout_coordinate_height(payload: Any) -> Optional[int]:
         return 1920
     if export_resolution == "720":
         return 1280
+    # Render jobs created before export resolution became configurable were
+    # always composed in the canonical 720x1280 frame.
+    if not export_resolution:
+        return 1280
     return None
 
 
