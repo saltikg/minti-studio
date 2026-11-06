@@ -172,9 +172,17 @@ from app.video_shorts.services.music import (
     normalize_music_level,
     normalize_music_start_seconds,
 )
-from app.video_shorts.services.compositor import _build_static_visual_clip, _compose_trimmed_with_background, _cut_clip, _has_audio_stream, _sanitize_text_for_overlay, resolve_keep_ranges_for_trim
-from app.video_shorts.services.compositor import _face_aware_fill_zoom_for_segment
-from app.video_shorts.services.compositor import _original_layout_target_dimensions
+from app.video_shorts.services.compositor import (
+    CLIP_EDGE_UNSELECTED_WORD_MARGIN_SECONDS,
+    _build_static_visual_clip,
+    _compose_trimmed_with_background,
+    _cut_clip,
+    _face_aware_fill_zoom_for_segment,
+    _has_audio_stream,
+    _original_layout_target_dimensions,
+    _sanitize_text_for_overlay,
+    resolve_keep_ranges_for_trim,
+)
 from app.video_shorts.services.db import (
     _ensure_transcript_schema,
     _ensure_video_crop_schema,
@@ -7358,17 +7366,23 @@ def _range_from_word_indexes(
         return {"start": 0.0, "end": 0.0}
     padded_start = max(0.0, float(start) - start_padding)
     padded_end = float(end) + end_padding
-    if kept_indexes is not None:
-        previous_index = first_index - 1
-        next_index = last_index + 1
-        if previous_index >= 0 and previous_index not in kept_indexes:
-            previous_end = _to_float(words[previous_index].get("end"))
-            if previous_end is not None:
-                padded_start = max(padded_start, float(previous_end))
-        if next_index < len(words) and next_index not in kept_indexes:
-            next_start = _to_float(words[next_index].get("start"))
-            if next_start is not None:
-                padded_end = min(padded_end, float(next_start))
+    selected_indexes = kept_indexes or set(range(first_index, last_index + 1))
+    previous_index = first_index - 1
+    next_index = last_index + 1
+    if previous_index >= 0 and previous_index not in selected_indexes:
+        previous_end = _to_float(words[previous_index].get("end"))
+        if previous_end is not None:
+            padded_start = max(
+                padded_start,
+                float(previous_end) + CLIP_EDGE_UNSELECTED_WORD_MARGIN_SECONDS,
+            )
+    if next_index < len(words) and next_index not in selected_indexes:
+        next_start = _to_float(words[next_index].get("start"))
+        if next_start is not None:
+            padded_end = min(
+                padded_end,
+                float(next_start) - CLIP_EDGE_UNSELECTED_WORD_MARGIN_SECONDS,
+            )
     return {
         "start": round(padded_start, 3),
         "end": round(max(padded_start, padded_end), 3),
@@ -10958,12 +10972,17 @@ def _render_settings_options_for_plan_entry(
     end = _to_float(plan_entry.get("end")) or start
     owner_user_id = str(video.get("owner_user_id") or "").strip() or None
     edit_keep_ranges = _normalize_edit_keep_ranges(plan_entry.get("edit_keep_ranges"))
+    selected_segments = (
+        _segments_for_indexed_keep_ranges(segments, edit_keep_ranges)
+        if edit_keep_ranges
+        else segments
+    )
     subtitle_text = (
         str(plan_entry.get("transcript_full_custom") or "").strip()
         or (
             " ".join(
                 str(segment.get("text") or "").strip()
-                for segment in _remap_transcript_segments_to_keep_ranges(segments, edit_keep_ranges)
+                for segment in _remap_transcript_segments_to_keep_ranges(selected_segments, edit_keep_ranges)
             ).strip()
             if edit_keep_ranges
             else ""

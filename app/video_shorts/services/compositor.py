@@ -77,6 +77,7 @@ OUTREACH_BLUR_SIGMA = 20
 OUTREACH_BACKGROUND_DARKEN_OPACITY = 0.32
 CLIP_EDGE_SNAP_WINDOW_SECONDS = 0.250
 CLIP_EDGE_WORD_GUARD_SECONDS = 0.030
+CLIP_EDGE_UNSELECTED_WORD_MARGIN_SECONDS = 0.080
 CLIP_AUDIO_FADE_IN_SECONDS = 0.050
 CLIP_AUDIO_FADE_OUT_SECONDS = 0.080
 CLIP_EDGE_ENERGY_FRAME_SECONDS = 0.010
@@ -706,6 +707,108 @@ def _outer_word_boundary_context(
     }
 
 
+def _guard_keep_ranges_from_unselected_words(
+    ranges: list[dict[str, float]],
+    transcript_words: Optional[list[Dict[str, Any]]],
+    *,
+    margin_seconds: float = CLIP_EDGE_UNSELECTED_WORD_MARGIN_SECONDS,
+) -> list[dict[str, float]]:
+    """Keep media ranges out of transcript words that were not selected.
+
+    Audio-based snapping is allowed to find a cleaner edge only inside these
+    hard word guards.  Explicit word indexes cover every edge of a multi-range
+    edit; legacy ranges without indexes still get outer-edge protection.
+    """
+    adjusted = [dict(item) for item in ranges]
+    words = _normalize_transcript_words_for_boundary_snap(transcript_words)
+    if not adjusted or not words:
+        return adjusted
+
+    by_index = {int(word["index"]): word for word in words}
+    selected_indexes: set[int] = set()
+    for item in adjusted:
+        first = item.get("start_word_index")
+        last = item.get("end_word_index")
+        if isinstance(first, int) and isinstance(last, int) and last >= first:
+            selected_indexes.update(range(first, last + 1))
+
+    has_explicit_indexes = bool(selected_indexes)
+    if has_explicit_indexes:
+        for item in adjusted:
+            first = item.get("start_word_index")
+            last = item.get("end_word_index")
+            if not isinstance(first, int) or not isinstance(last, int):
+                continue
+            first_word = by_index.get(first)
+            last_word = by_index.get(last)
+            previous_word = by_index.get(first - 1)
+            next_word = by_index.get(last + 1)
+            if first_word is not None:
+                item["start"] = round(
+                    max(
+                        float(item["start"]),
+                        float(first_word["start"]) - CLIP_AUDIO_FADE_IN_SECONDS,
+                    ),
+                    6,
+                )
+            if previous_word is not None and first - 1 not in selected_indexes:
+                hard_start = float(previous_word["end"]) + float(margin_seconds)
+                item["start"] = round(
+                    min(max(float(item["start"]), hard_start), float(item["end"]) - 0.001),
+                    6,
+                )
+            if last_word is not None:
+                item["end"] = round(
+                    min(
+                        float(item["end"]),
+                        float(last_word["end"]) + CLIP_AUDIO_FADE_OUT_SECONDS,
+                    ),
+                    6,
+                )
+            if next_word is not None and last + 1 not in selected_indexes:
+                hard_end = float(next_word["start"]) - float(margin_seconds)
+                item["end"] = round(
+                    max(min(float(item["end"]), hard_end), float(item["start"]) + 0.001),
+                    6,
+                )
+        return adjusted
+
+    context = _outer_word_boundary_context(adjusted, words)
+    previous_end = context.get("previous_end")
+    first_start = context.get("first_start")
+    last_end = context.get("last_end")
+    next_start = context.get("next_start")
+    if first_start is not None:
+        adjusted[0]["start"] = round(
+            max(
+                float(adjusted[0]["start"]),
+                float(first_start) - CLIP_AUDIO_FADE_IN_SECONDS,
+            ),
+            6,
+        )
+    if previous_end is not None:
+        hard_start = float(previous_end) + float(margin_seconds)
+        adjusted[0]["start"] = round(
+            min(max(float(adjusted[0]["start"]), hard_start), float(adjusted[0]["end"]) - 0.001),
+            6,
+        )
+    if last_end is not None:
+        adjusted[-1]["end"] = round(
+            min(
+                float(adjusted[-1]["end"]),
+                float(last_end) + CLIP_AUDIO_FADE_OUT_SECONDS,
+            ),
+            6,
+        )
+    if next_start is not None:
+        hard_end = float(next_start) - float(margin_seconds)
+        adjusted[-1]["end"] = round(
+            max(min(float(adjusted[-1]["end"]), hard_end), float(adjusted[-1]["start"]) + 0.001),
+            6,
+        )
+    return adjusted
+
+
 def _snap_outer_keep_range_boundaries_to_audio(
     src_path: Path,
     ranges: list[dict[str, float]],
@@ -832,6 +935,20 @@ def _snap_outer_keep_range_boundaries_to_audio(
         if next_start is not None and float(next_start) > float(last_end) + CLIP_EDGE_WORD_GUARD_SECONDS:
             end_search_end = min(end_search_end, float(next_start) + 0.100)
         analyze("end", end_search_start, end_search_end, float(last_end))
+    before_guards = [dict(item) for item in adjusted]
+    adjusted = _guard_keep_ranges_from_unselected_words(adjusted, transcript_words)
+    for index, (before, after) in enumerate(zip(before_guards, adjusted)):
+        for boundary in ("start", "end"):
+            if abs(float(before[boundary]) - float(after[boundary])) > 0.0005:
+                adjustments.append(
+                    {
+                        "boundary": boundary,
+                        "range_index": index,
+                        "from": round(float(before[boundary]), 6),
+                        "to": round(float(after[boundary]), 6),
+                        "reason": "unselected_word_guard",
+                    }
+                )
     if adjustments:
         try:
             current_app.logger.info(
@@ -986,6 +1103,12 @@ def resolve_keep_ranges_for_trim(
             ranges,
             transcript_words,
         )
+    elif ranges and transcript_word_selection and transcript_words:
+        ranges = _guard_keep_ranges_from_unselected_words(ranges, transcript_words)
+    if ranges and transcript_word_selection and transcript_words:
+        # Multi-range snapping can move inner edges too.  Re-apply the hard
+        # guard last so no audio heuristic can cross into an unselected word.
+        ranges = _guard_keep_ranges_from_unselected_words(ranges, transcript_words)
     if ranges:
         resolution = resolve_clip_ranges(
             start=ranges[0]["start"],
