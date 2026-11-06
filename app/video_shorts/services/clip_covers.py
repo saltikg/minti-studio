@@ -29,6 +29,13 @@ COVER_JOB_TYPE = "generate_cover"
 COVER_WIDTH = 1080
 COVER_HEIGHT = 1920
 MAX_COVER_BYTES = 2 * 1024 * 1024
+MIN_COVER_FONT_SIZE = 110
+MAX_COVER_FONT_SIZE = 174
+COVER_TEXT_MAX_WIDTH = int(COVER_WIDTH * 0.86)
+FACE_SHARPNESS_MIN = 45.0
+FACE_CONFIDENCE_MIN = 0.86
+LIGHT_BOX_HIGHLIGHT_FALLBACK = "#E11D48"
+DARK_BOX_HIGHLIGHT_FALLBACK = "#FFD400"
 
 
 def _json_value(conn: Any, value: Any) -> Any:
@@ -245,7 +252,48 @@ def list_covers_for_video(*, owner_user_id: str, brand_id: str, video_pk: int) -
 
 def _hex(value: Any, fallback: str) -> str:
     raw = str(value or "").strip()
-    return raw if len(raw) == 7 and raw.startswith("#") else fallback
+    return raw.upper() if len(raw) == 7 and raw.startswith("#") else fallback.upper()
+
+
+def _rgb(value: str) -> tuple[int, int, int]:
+    clean = _hex(value, "#000000")
+    return tuple(int(clean[index:index + 2], 16) for index in (1, 3, 5))
+
+
+def _relative_luminance(value: str) -> float:
+    channels = []
+    for channel in _rgb(value):
+        normalized = channel / 255.0
+        channels.append(normalized / 12.92 if normalized <= 0.04045 else ((normalized + 0.055) / 1.055) ** 2.4)
+    return 0.2126 * channels[0] + 0.7152 * channels[1] + 0.0722 * channels[2]
+
+
+def _contrast_ratio(first: str, second: str) -> float:
+    light, dark = sorted((_relative_luminance(first), _relative_luminance(second)), reverse=True)
+    return (light + 0.05) / (dark + 0.05)
+
+
+def _resolve_cover_colors(design: dict[str, Any]) -> tuple[str, str, str]:
+    """Return readable base, highlight, and box colors without outline text."""
+    box = _hex(design.get("title_bg_color"), DEFAULT_EDITOR_TITLE_BG_COLOR)
+    base = _hex(design.get("title_text_color"), DEFAULT_EDITOR_TITLE_TEXT_COLOR)
+    is_light_box = _relative_luminance(box) >= 0.55
+    if _contrast_ratio(base, box) < 4.5:
+        base = "#1F2937" if is_light_box else "#FFFFFF"
+
+    accent = _hex(
+        design.get("subtitle_highlight_color")
+        or design.get("highlight_color")
+        or design.get("accent_color"),
+        DARK_BOX_HIGHLIGHT_FALLBACK if not is_light_box else LIGHT_BOX_HIGHLIGHT_FALLBACK,
+    )
+    accent_is_usable = accent != base and _contrast_ratio(accent, box) >= 4.5
+    if not accent_is_usable:
+        accent = LIGHT_BOX_HIGHLIGHT_FALLBACK if is_light_box else DARK_BOX_HIGHLIGHT_FALLBACK
+    if accent == base:
+        alternate = "#1F2937" if is_light_box else "#FFFFFF"
+        accent = alternate if alternate != base else LIGHT_BOX_HIGHLIGHT_FALLBACK
+    return base, accent, box
 
 
 def _frame_at(cap: Any, cv2: Any, timestamp: float) -> Any:
@@ -264,6 +312,108 @@ def _source_time_for_clip_offset(ranges: list[tuple[float, float]], offset: floa
     return ranges[-1][1]
 
 
+def _yunet_faces(detector: Any, image: Any) -> list[dict[str, Any]]:
+    height, width = image.shape[:2]
+    detector.setInputSize((int(width), int(height)))
+    _, detections = detector.detect(image)
+    if detections is None:
+        return []
+    faces: list[dict[str, Any]] = []
+    landmark_names = ("right_eye", "left_eye", "nose", "right_mouth", "left_mouth")
+    for detection in detections:
+        if len(detection) < 15:
+            continue
+        confidence = float(detection[-1])
+        if confidence < 0.60:
+            continue
+        face = {
+            "x": max(0, int(round(float(detection[0])))),
+            "y": max(0, int(round(float(detection[1])))),
+            "w": max(1, int(round(float(detection[2])))),
+            "h": max(1, int(round(float(detection[3])))),
+            "confidence": round(confidence, 4),
+            "landmarks": {},
+        }
+        for index, name in enumerate(landmark_names):
+            face["landmarks"][name] = {
+                "x": round(float(detection[4 + index * 2]), 2),
+                "y": round(float(detection[5 + index * 2]), 2),
+            }
+        if face["x"] < width and face["y"] < height:
+            face["w"] = min(face["w"], width - face["x"])
+            face["h"] = min(face["h"], height - face["y"])
+            faces.append(face)
+    return faces
+
+
+def _landmark_geometry_is_visible(face: dict[str, Any]) -> bool:
+    landmarks = face.get("landmarks") or {}
+    if not all(name in landmarks for name in ("right_eye", "left_eye", "nose", "right_mouth", "left_mouth")):
+        return False
+    x, y, width, height = (float(face[key]) for key in ("x", "y", "w", "h"))
+    if width <= 0 or height <= 0:
+        return False
+    points = list(landmarks.values())
+    if any(not (x - 0.05 * width <= float(point["x"]) <= x + 1.05 * width
+                   and y - 0.05 * height <= float(point["y"]) <= y + 1.05 * height) for point in points):
+        return False
+    right_eye, left_eye = landmarks["right_eye"], landmarks["left_eye"]
+    nose = landmarks["nose"]
+    right_mouth, left_mouth = landmarks["right_mouth"], landmarks["left_mouth"]
+    eye_distance = abs(float(left_eye["x"]) - float(right_eye["x"])) / width
+    eye_level_delta = abs(float(left_eye["y"]) - float(right_eye["y"])) / height
+    eye_y = (float(left_eye["y"]) + float(right_eye["y"])) / 2.0
+    mouth_y = (float(left_mouth["y"]) + float(right_mouth["y"])) / 2.0
+    mouth_width = abs(float(left_mouth["x"]) - float(right_mouth["x"])) / width
+    return (
+        0.18 <= eye_distance <= 0.72
+        and eye_level_delta <= 0.20
+        and eye_y + 0.06 * height <= float(nose["y"]) <= eye_y + 0.52 * height
+        and float(nose["y"]) + 0.04 * height <= mouth_y <= y + 0.95 * height
+        and 0.12 <= mouth_width <= 0.72
+    )
+
+
+def _scale_face(face: dict[str, Any], scale: float) -> dict[str, Any]:
+    if scale == 1.0:
+        return dict(face)
+    result = dict(face)
+    for key in ("x", "y", "w", "h"):
+        result[key] = int(round(float(face[key]) / scale))
+    result["landmarks"] = {
+        name: {"x": round(float(point["x"]) / scale, 2), "y": round(float(point["y"]) / scale, 2)}
+        for name, point in (face.get("landmarks") or {}).items()
+    }
+    return result
+
+
+def _mouth_state(gray: Any, face: dict[str, Any], smile_detector: Any) -> tuple[str, float]:
+    x, y, width, height = (int(face[key]) for key in ("x", "y", "w", "h"))
+    landmarks = face.get("landmarks") or {}
+    right_mouth, left_mouth = landmarks.get("right_mouth"), landmarks.get("left_mouth")
+    if not right_mouth or not left_mouth:
+        return "neutral", 0.0
+    mouth_center_x = (float(right_mouth["x"]) + float(left_mouth["x"])) / 2.0
+    mouth_center_y = (float(right_mouth["y"]) + float(left_mouth["y"])) / 2.0
+    mouth_width = max(abs(float(right_mouth["x"]) - float(left_mouth["x"])) * 1.35, width * 0.22)
+    mouth_height = max(height * 0.17, 8.0)
+    x0 = max(x, int(round(mouth_center_x - mouth_width / 2.0)))
+    x1 = min(x + width, int(round(mouth_center_x + mouth_width / 2.0)))
+    y0 = max(y, int(round(mouth_center_y - mouth_height * 0.35)))
+    y1 = min(y + height, int(round(mouth_center_y + mouth_height * 0.65)))
+    mouth_roi = gray[y0:y1, x0:x1]
+    face_roi = gray[y:y + height, x:x + width]
+    if mouth_roi.size == 0 or face_roi.size == 0:
+        return "neutral", 0.0
+    dark_threshold = max(20.0, float(face_roi.mean()) - 42.0)
+    dark_ratio = float((mouth_roi < dark_threshold).mean())
+    lower_face = face_roi[int(height * 0.45):]
+    smiles = smile_detector.detectMultiScale(lower_face, scaleFactor=1.35, minNeighbors=22) if lower_face.size else []
+    if dark_ratio >= 0.24:
+        return "open", dark_ratio
+    return ("slight_smile" if len(smiles) else "neutral"), dark_ratio
+
+
 def _candidate_frames(
     source_path: Path,
     source_ranges: list[tuple[float, float]],
@@ -275,10 +425,14 @@ def _candidate_frames(
     duration = sum(max(0.0, end - start) for start, end in source_ranges)
     start = 0.5
     end = max(start, duration - 0.5)
-    clip_offsets = [start + (end - start) * i / 11.0 for i in range(12)] if end > start else [duration / 2.0]
+    # Sample enough of the clip that hard eye/blur/occlusion filters can still
+    # yield five genuinely usable choices instead of promoting rejected frames.
+    clip_offsets = [start + (end - start) * i / 47.0 for i in range(48)] if end > start else [duration / 2.0]
     samples = [(_source_time_for_clip_offset(source_ranges, value), value) for value in clip_offsets]
     scored: list[dict[str, Any]] = []
     detector = None
+    eye_detector = cv2.CascadeClassifier(cv2.data.haarcascades + "haarcascade_eye_tree_eyeglasses.xml")
+    smile_detector = cv2.CascadeClassifier(cv2.data.haarcascades + "haarcascade_smile.xml")
     for ts, clip_ts in samples:
         frame = _frame_at(cap, cv2, ts)
         if frame is None:
@@ -297,71 +451,113 @@ def _candidate_frames(
             if detector is None:
                 detector = cv2.FaceDetectorYN_create(
                     str(generation._YUNET_FACE_MODEL_PATH), "", (int(analysis_w), int(analysis_h)),
-                    float(generation._YUNET_FACE_SCORE_THRESHOLD), 0.3, 5000,
+                    0.60, 0.3, 5000,
                 )
-            faces = generation._yunet_face_detection_ratios(
-                cv2, analysis, analysis_w, analysis_h, detector=detector,
-            )
+            faces = _yunet_faces(detector, analysis)
         except Exception:
             faces = []
         face = max(faces, key=lambda item: float(item["w"]) * float(item["h"]), default=None)
-        if face and analysis_scale < 1.0:
-            face = dict(face)
-            for key in ("x", "y", "w", "h"):
-                face[key] = int(round(float(face[key]) / analysis_scale))
         gray = cv2.cvtColor(analysis, cv2.COLOR_BGR2GRAY)
-        sharpness = float(cv2.Laplacian(gray, cv2.CV_64F).var())
+        frame_sharpness = float(cv2.Laplacian(gray, cv2.CV_64F).var())
         eyes_open = False
-        mouth_closed = True
+        eye_count = 0
+        face_sharpness = 0.0
+        mouth_state = "unknown"
+        mouth_dark_ratio = 0.0
+        face_occluded = False
+        rejection_reasons: list[str] = []
         if face:
             x, y, fw, fh = (int(face[k]) for k in ("x", "y", "w", "h"))
-            ax, ay = int(round(x * analysis_scale)), int(round(y * analysis_scale))
-            afw, afh = int(round(fw * analysis_scale)), int(round(fh * analysis_scale))
-            roi = gray[max(0, ay):min(analysis_h, ay + afh), max(0, ax):min(analysis_w, ax + afw)]
+            roi = gray[max(0, y):min(analysis_h, y + fh), max(0, x):min(analysis_w, x + fw)]
+            face_sharpness = float(cv2.Laplacian(roi, cv2.CV_64F).var()) if roi.size else 0.0
             try:
-                eye_detector = cv2.CascadeClassifier(cv2.data.haarcascades + "haarcascade_eye_tree_eyeglasses.xml")
-                smile_detector = cv2.CascadeClassifier(cv2.data.haarcascades + "haarcascade_smile.xml")
-                eyes_open = len(eye_detector.detectMultiScale(roi[: max(1, int(len(roi) * 0.65))], 1.1, 4)) >= 1
-                mouth_closed = len(smile_detector.detectMultiScale(roi[max(0, int(len(roi) * 0.45)):], 1.4, 20)) == 0
+                upper_face = roi[: max(1, int(len(roi) * 0.62))]
+                eyes = eye_detector.detectMultiScale(upper_face, scaleFactor=1.08, minNeighbors=4)
+                eye_count = len(eyes)
+                # YuNet supplies stable eye landmarks; Haar supplies the open-eye
+                # evidence. At least one detected open eye rejects fully closed-eye
+                # frames without falsely discarding three-quarter/profile poses.
+                eyes_open = eye_count >= 1
+                mouth_state, mouth_dark_ratio = _mouth_state(gray, face, smile_detector)
             except Exception:
                 pass
-        face_area = (float(face["w"]) * float(face["h"]) / float(max(1, w * h))) if face else 0.0
-        score = (face_area * 10000.0) + min(sharpness, 1200.0) / 12.0
-        score += 35.0 if eyes_open else 0.0
-        score += 15.0 if mouth_closed else -15.0
+            face_occluded = (
+                float(face.get("confidence") or 0.0) < FACE_CONFIDENCE_MIN
+                or not _landmark_geometry_is_visible(face)
+            )
+            if not eyes_open:
+                rejection_reasons.append("eyes_closed_or_not_visible")
+            if face_sharpness < FACE_SHARPNESS_MIN:
+                rejection_reasons.append("face_motion_blur")
+            if face_occluded:
+                rejection_reasons.append("face_occluded")
+        else:
+            rejection_reasons.append("no_face")
+        stored_face = _scale_face(face, analysis_scale) if face else None
+        face_area = (
+            float(stored_face["w"]) * float(stored_face["h"]) / float(max(1, w * h))
+            if stored_face else 0.0
+        )
+        quality_score = (face_area * 10000.0) + min(face_sharpness, 1200.0) / 8.0
+        quality_score += float((face or {}).get("confidence") or 0.0) * 40.0
+        quality_score += 30.0 if eyes_open else -30.0
+        quality_score += 40.0 if mouth_state == "slight_smile" else (30.0 if mouth_state == "neutral" else -120.0)
+        eligible = bool(face and not rejection_reasons)
+        score = quality_score if eligible else quality_score - 10000.0
         scored.append({
             "timestamp": round(float(ts), 3), "source_timestamp": round(float(ts), 3),
             "clip_timestamp": round(float(clip_ts), 3), "score": round(score, 3),
-            "sharpness": round(sharpness, 2), "eyes_open": eyes_open,
-            "mouth_mostly_closed": mouth_closed, "face": dict(face) if face else None,
+            "frame_sharpness": round(frame_sharpness, 2), "face_sharpness": round(face_sharpness, 2),
+            "eyes_open": eyes_open, "eye_count": eye_count, "mouth_state": mouth_state,
+            "mouth_dark_ratio": round(mouth_dark_ratio, 4), "face_occluded": face_occluded,
+            "eligible": eligible, "rejection_reasons": rejection_reasons, "face": stored_face,
         })
     cap.release()
     faces = [item for item in scored if item.get("face")]
-    preferred = faces or scored
-    eyes_open = [item for item in preferred if item.get("eyes_open")]
-    if eyes_open:
-        preferred = eyes_open
-    mouths_closed = [item for item in preferred if item.get("mouth_mostly_closed")]
-    if mouths_closed:
-        preferred = mouths_closed
-    selected_best = max(preferred, key=lambda item: float(item["score"]), default=None)
-    all_ranked = sorted(faces or scored, key=lambda item: float(item["score"]), reverse=True)
-    ranked = ([selected_best] if selected_best else []) + [item for item in all_ranked if item is not selected_best]
-    ranked = ranked[:5]
-    if not ranked:
+    eligible = [item for item in faces if item.get("eligible")]
+    if eligible:
+        ranked = sorted(eligible, key=lambda item: float(item["score"]), reverse=True)[:5]
+        if len(ranked) < 5:
+            log.info(
+                "Cover quality filters yielded fewer than five usable frames source=%s usable=%s",
+                source_path.name, len(ranked),
+            )
+    elif faces:
+        fallback = max(faces, key=lambda item: float(item.get("face_sharpness") or 0.0))
+        fallback["selection_fallback"] = "all_face_candidates_rejected; selected sharpest face"
+        reason_counts: dict[str, int] = {}
+        for item in faces:
+            for reason in item.get("rejection_reasons") or []:
+                reason_counts[reason] = reason_counts.get(reason, 0) + 1
+        log.warning(
+            "All cover face candidates failed quality filters source=%s reasons=%s selected=%.3f",
+            source_path.name, reason_counts, float(fallback["timestamp"]),
+        )
+        rest = sorted(
+            (item for item in faces if item is not fallback),
+            key=lambda item: float(item.get("face_sharpness") or 0.0), reverse=True,
+        )
+        ranked = [fallback, *rest][:5]
+    else:
         middle = _source_time_for_clip_offset(source_ranges, duration / 2.0)
         ranked = [{"timestamp": round(middle, 3), "source_timestamp": round(middle, 3),
-                   "clip_timestamp": round(duration / 2.0, 3), "score": 0, "face": None}]
+                   "clip_timestamp": round(duration / 2.0, 3), "score": 0, "face": None,
+                   "eligible": False, "rejection_reasons": ["no_face"],
+                   "selection_fallback": "no_face_detected; selected middle frame"}]
+        log.warning("No face detected for cover source=%s; selected middle frame", source_path.name)
     return ranked, duration
 
 
-def _crop_frame(frame: Any, face: Optional[dict[str, Any]]) -> tuple[Image.Image, bool]:
+def _crop_frame(
+    frame: Any,
+    face: Optional[dict[str, Any]],
+) -> tuple[Image.Image, bool, Optional[dict[str, float]]]:
     import cv2
     rgb = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
     image = Image.fromarray(rgb)
     width, height = image.size
     if not face:
-        return image.resize((COVER_WIDTH, COVER_HEIGHT), Image.Resampling.LANCZOS), False
+        return image.resize((COVER_WIDTH, COVER_HEIGHT), Image.Resampling.LANCZOS), False, None
     fx, fy, fw, fh = (float(face[k]) for k in ("x", "y", "w", "h"))
     crop_w = min(float(width), max(fw * 2.8, float(height) * 9.0 / 16.0 * 0.52))
     crop_h = min(float(height), crop_w * 16.0 / 9.0)
@@ -373,71 +569,157 @@ def _crop_frame(frame: Any, face: Optional[dict[str, Any]]) -> tuple[Image.Image
     left = min(max(0.0, cx - crop_w / 2.0), max(0.0, width - crop_w))
     top = min(max(0.0, fy + fh / 2.0 - crop_h * 0.32), max(0.0, height - crop_h))
     box = (int(left), int(top), int(left + crop_w), int(top + crop_h))
-    return image.crop(box).resize((COVER_WIDTH, COVER_HEIGHT), Image.Resampling.LANCZOS), True
+    scale_x, scale_y = COVER_WIDTH / crop_w, COVER_HEIGHT / crop_h
+    cover_face = {
+        "x": (fx - left) * scale_x,
+        "y": (fy - top) * scale_y,
+        "w": fw * scale_x,
+        "h": fh * scale_y,
+    }
+    return (
+        image.crop(box).resize((COVER_WIDTH, COVER_HEIGHT), Image.Resampling.LANCZOS),
+        True,
+        cover_face,
+    )
 
 
-def _wrap_cover_text(text: str, font: Any, draw: ImageDraw.ImageDraw, max_width: int) -> list[str]:
+def _line_partitions(words: list[str], line_count: int) -> list[list[list[str]]]:
+    if line_count <= 1:
+        return [[words]] if words else []
+    if len(words) < line_count:
+        return []
+    partitions: list[list[list[str]]] = []
+    if line_count == 2:
+        for first in range(1, len(words)):
+            partitions.append([words[:first], words[first:]])
+    elif line_count == 3:
+        for first in range(1, len(words) - 1):
+            for second in range(first + 1, len(words)):
+                partitions.append([words[:first], words[first:second], words[second:]])
+    return partitions
+
+
+def _fit_cover_layout(
+    text: str,
+    *,
+    font_path: str,
+    preferred_size: int,
+) -> tuple[str, Any, int, list[str]]:
+    from app.video_shorts.services.compositor import _load_title_font
+
     words = text.split()
-    lines: list[str] = []
-    current: list[str] = []
-    for word in words:
-        candidate = " ".join(current + [word])
-        if current and draw.textbbox((0, 0), candidate, font=font)[2] > max_width:
-            lines.append(" ".join(current))
-            current = [word]
-        else:
-            current.append(word)
-    if current:
-        lines.append(" ".join(current))
-    if len(lines) == 1 and len(words) >= 2:
-        midpoint = int(math.ceil(len(words) / 2.0))
-        lines = [" ".join(words[:midpoint]), " ".join(words[midpoint:])]
-    if len(lines) > 3:
-        chunk = int(math.ceil(len(words) / 3.0))
-        lines = [" ".join(words[index:index + chunk]) for index in range(0, len(words), chunk)]
-    return [line for line in lines[:3] if line]
+    if not words:
+        raise ValueError("Cover text is empty")
+    candidate_words = list(words)
+    while candidate_words:
+        clean_text = " ".join(candidate_words)
+        for size in range(min(MAX_COVER_FONT_SIZE, preferred_size), MIN_COVER_FONT_SIZE - 1, -2):
+            font = _load_title_font(font_path, size)
+            if font is None:
+                raise RuntimeError("Brand title font could not be loaded")
+            measure = ImageDraw.Draw(Image.new("RGB", (8, 8)))
+            line_counts = (2, 3) if len(candidate_words) >= 3 else ((2,) if len(candidate_words) == 2 else (1,))
+            options: list[tuple[float, list[str]]] = []
+            for line_count in line_counts:
+                for partition in _line_partitions(candidate_words, line_count):
+                    lines = [" ".join(part) for part in partition]
+                    widths = [float(measure.textlength(line, font=font)) for line in lines]
+                    if max(widths, default=0.0) > COVER_TEXT_MAX_WIDTH:
+                        continue
+                    imbalance = max(widths) - min(widths)
+                    options.append((imbalance + (line_count - 2) * 24.0, lines))
+            if options:
+                lines = min(options, key=lambda item: item[0])[1]
+                return clean_text, font, size, lines
+        # Generated cover copy is constrained to be short. This final guard
+        # preserves the 110 px readability contract for unusual long words or
+        # manually edited six-word copy without making another model call.
+        candidate_words.pop()
+    raise ValueError("Cover text cannot fit at the minimum readable size")
 
 
-def _draw_cover_text(image: Image.Image, *, text: str, highlight: str, design: dict[str, Any]) -> None:
-    from app.video_shorts.services.compositor import _load_title_font, _title_font_path_for_text
+def _highlight_word_indexes(text: str, highlight: str) -> set[int]:
+    words = text.split()
+    phrase_words = highlight.split()
+    if not phrase_words:
+        return set()
+    folded_words = [word.casefold().strip(".,!?;:'\"()[]{}") for word in words]
+    folded_phrase = [word.casefold().strip(".,!?;:'\"()[]{}") for word in phrase_words]
+    for start in range(0, len(folded_words) - len(folded_phrase) + 1):
+        if folded_words[start:start + len(folded_phrase)] == folded_phrase:
+            return set(range(start, start + len(folded_phrase)))
+    return set()
+
+
+def _draw_cover_text(
+    image: Image.Image,
+    *,
+    text: str,
+    highlight: str,
+    design: dict[str, Any],
+    cover_face: Optional[dict[str, float]] = None,
+) -> dict[str, Any]:
+    from app.video_shorts.services.compositor import _title_font_path_for_text
 
     font_key = str(design.get("font") or DEFAULT_EDITOR_TITLE_FONT_KEY)
     font_cfg = TITLE_FONTS.get(font_key) or TITLE_FONTS[DEFAULT_EDITOR_TITLE_FONT_KEY]
     font_path = _title_font_path_for_text(text, str(font_cfg["path"]))
     saved_size = int(design.get("title_font_size") or 40)
-    font_size = max(78, min(150, int(saved_size * 2.25)))
-    font = _load_title_font(font_path, font_size)
-    if font is None:
-        raise RuntimeError("Brand title font could not be loaded")
-    draw = ImageDraw.Draw(image, "RGBA")
-    lines = _wrap_cover_text(text, font, draw, 920)
-    line_height = int(font_size * 1.15)
-    block_h = line_height * len(lines)
-    y = max(1040, min(1580 - block_h, int(COVER_HEIGHT * 0.63)))
-    text_color = _hex(design.get("title_text_color"), DEFAULT_EDITOR_TITLE_TEXT_COLOR)
-    highlight_color = _hex(
-        design.get("subtitle_highlight_color") or design.get("highlight_color"), "#FFD83D"
+    preferred_size = max(140, min(MAX_COVER_FONT_SIZE, int(saved_size * 3.2)))
+    rendered_text, font, font_size, lines = _fit_cover_layout(
+        text, font_path=font_path, preferred_size=preferred_size,
     )
-    bg_color = _hex(design.get("title_bg_color"), DEFAULT_EDITOR_TITLE_BG_COLOR)
-    bg_alpha = int(max(0, min(100, float(design.get("title_bg_alpha", DEFAULT_EDITOR_TITLE_BG_ALPHA)))))
-    for line in lines:
-        line_w = draw.textbbox((0, 0), line, font=font)[2]
-        x = int((COVER_WIDTH - line_w) / 2)
-        bbox = (x - 30, y - 15, x + line_w + 30, y + line_height - 4)
-        if bg_alpha:
-            rgb = tuple(int(bg_color[i:i + 2], 16) for i in (1, 3, 5))
-            draw.rounded_rectangle(bbox, radius=20, fill=(*rgb, int(255 * bg_alpha / 100)))
-        # Word-by-word drawing preserves the compositor font while emphasizing the requested phrase.
-        cursor = x
-        highlight_cf = highlight.casefold()
-        for word in line.split():
-            token = word + " "
-            clean = word.strip(".,!?;:'\"()[]{}").casefold()
-            is_highlight = bool(clean and clean in highlight_cf)
-            color = highlight_color if is_highlight else text_color
-            draw.text((cursor, y), word, font=font, fill=color, stroke_width=2, stroke_fill="#101010")
-            cursor += draw.textbbox((0, 0), token, font=font)[2]
-        y += line_height
+    if rendered_text != text:
+        log.warning("Cover copy shortened to preserve thumbnail readability original=%r rendered=%r", text, rendered_text)
+    if highlight.casefold() not in rendered_text.casefold():
+        highlight = " ".join(rendered_text.split()[:2])
+    draw = ImageDraw.Draw(image, "RGBA")
+    text_color, highlight_color, bg_color = _resolve_cover_colors(design)
+    bg_alpha = int(max(82, min(100, float(design.get("title_bg_alpha", DEFAULT_EDITOR_TITLE_BG_ALPHA)))))
+    line_widths = [int(math.ceil(draw.textlength(line, font=font))) for line in lines]
+    text_bbox = draw.textbbox((0, 0), "Ag", font=font)
+    text_height = max(1, int(text_bbox[3] - text_bbox[1]))
+    horizontal_padding, vertical_padding, line_gap = 34, 22, 14
+    box_width = min(COVER_WIDTH - 72, max(line_widths) + horizontal_padding * 2)
+    box_height = text_height + vertical_padding * 2
+    block_height = box_height * len(lines) + line_gap * (len(lines) - 1)
+    face_safe_bottom = 0.0
+    if cover_face:
+        # Mouth is normally around 70–80% down the face box. Keeping the
+        # text below 88% leaves a visible buffer around both eyes and mouth.
+        face_safe_bottom = float(cover_face["y"]) + float(cover_face["h"]) * 0.88
+    y = int(max(COVER_HEIGHT * (2.0 / 3.0), face_safe_bottom + 64.0))
+    y = min(y, COVER_HEIGHT - block_height - 92)
+    x = int((COVER_WIDTH - box_width) / 2)
+    highlight_indexes = _highlight_word_indexes(rendered_text, highlight)
+    global_word_index = 0
+    bg_rgb = _rgb(bg_color)
+    for line, line_width in zip(lines, line_widths):
+        bbox = (x, y, x + box_width, y + box_height)
+        draw.rounded_rectangle(bbox, radius=20, fill=(*bg_rgb, int(255 * bg_alpha / 100)))
+        cursor = x + horizontal_padding
+        baseline_y = y + vertical_padding - text_bbox[1]
+        words = line.split()
+        for index, word in enumerate(words):
+            is_highlight = global_word_index in highlight_indexes
+            draw.text(
+                (cursor, baseline_y), word, font=font,
+                fill=highlight_color if is_highlight else text_color,
+            )
+            cursor += float(draw.textlength(word, font=font))
+            if index < len(words) - 1:
+                cursor += float(draw.textlength(" ", font=font))
+            global_word_index += 1
+        y += box_height + line_gap
+    return {
+        "cover_text": rendered_text,
+        "highlight_phrase": highlight,
+        "font_size": font_size,
+        "lines": lines,
+        "text_color": text_color,
+        "highlight_color": highlight_color,
+        "box_color": bg_color,
+    }
 
 
 def _save_jpeg_under_limit(image: Image.Image, path: Path) -> int:
@@ -526,7 +808,7 @@ def generate_cover(payload: dict[str, Any]) -> dict[str, Any]:
             raise RuntimeError("Selected cover frame could not be decoded")
         chosen = min(candidates, key=lambda item: abs(float(item["timestamp"]) - selected_ts))
         face = chosen.get("face") if abs(float(chosen["timestamp"]) - selected_ts) < 0.08 else None
-        image, used_face_crop = _crop_frame(frame, face)
+        image, used_face_crop, cover_face = _crop_frame(frame, face)
 
         existing_text = str((existing[1] if existing else "") or "").strip()
         existing_highlight = str((existing[2] if existing else "") or "").strip()
@@ -543,7 +825,11 @@ def generate_cover(payload: dict[str, Any]) -> dict[str, Any]:
 
         from app.video_shorts.routes import generation
         design = generation._load_short_editor_defaults_json(owner, brand)
-        _draw_cover_text(image, text=cover_text, highlight=highlight, design=design)
+        text_layout = _draw_cover_text(
+            image, text=cover_text, highlight=highlight, design=design, cover_face=cover_face,
+        )
+        cover_text = str(text_layout["cover_text"])
+        highlight = str(text_layout["highlight_phrase"])
 
         with tempfile.TemporaryDirectory(prefix="short_cover_") as temp_dir:
             temp_root = Path(temp_dir)
@@ -560,7 +846,7 @@ def generate_cover(payload: dict[str, Any]) -> dict[str, Any]:
                 candidate_frame = _frame_at(cap, cv2, float(candidate["timestamp"]))
                 if candidate_frame is None:
                     continue
-                preview_image, _ = _crop_frame(candidate_frame, candidate.get("face"))
+                preview_image, _, _ = _crop_frame(candidate_frame, candidate.get("face"))
                 preview_image.thumbnail((270, 480), Image.Resampling.LANCZOS)
                 ms = int(round(float(candidate["timestamp"]) * 1000))
                 candidate_path = temp_root / f"candidate-{ms}.jpg"

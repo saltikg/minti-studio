@@ -356,9 +356,9 @@ def generate_clip_cover_copy(
     language_hint: str | None = None,
 ) -> dict[str, str]:
     """Return cover copy using no more than one additional model call."""
-    fallback = _truncate_whole_word(str(clip_title or "").strip(), 48)
-    if len(fallback.split()) > 6:
-        fallback = " ".join(fallback.split()[:6])
+    fallback = _truncate_whole_word(str(clip_title or "").strip(), 36)
+    if len(fallback.split()) > 5:
+        fallback = " ".join(fallback.split()[:5])
     fallback_highlight = " ".join((fallback.split() or [""])[:2]).strip()
     result = {"cover_text": fallback, "highlight_phrase": fallback_highlight}
     source_text = str(transcript_text or "").strip()
@@ -368,7 +368,7 @@ def generate_clip_cover_copy(
     language = _normalize_language_hint(language_hint) or _detect_title_language(source_text[:2000])
     prompt = (
         "Return JSON with cover_text and highlight_phrase. cover_text must be accurate, "
-        f"in {_title_language_name(language)}, at most 6 words, and punchier than the "
+        f"in {_title_language_name(language)}, 2-5 words, no more than 36 characters, and punchier than the "
         "clip title without clickbait. highlight_phrase must be an exact non-empty "
         "substring of cover_text, normally 1-3 words.\n\n"
         f"Clip title: {fallback}\nTranscript: {source_text[:2000]}"
@@ -387,7 +387,7 @@ def generate_clip_cover_copy(
         parsed = json.loads(raw or "{}")
         cover_text = " ".join(str(parsed.get("cover_text") or "").strip().split())
         highlight = " ".join(str(parsed.get("highlight_phrase") or "").strip().split())
-        if not cover_text or len(cover_text.split()) > 6 or len(cover_text) > 72:
+        if not cover_text or not 2 <= len(cover_text.split()) <= 5 or len(cover_text) > 36:
             return result
         if not highlight or highlight.casefold() not in cover_text.casefold():
             highlight = " ".join(cover_text.split()[:2])
