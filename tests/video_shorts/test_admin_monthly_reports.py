@@ -262,3 +262,23 @@ def test_tracking_redirect_records_click_and_range(app, monkeypatch):
     assert response.status_code == 302
     assert response.headers["Location"].endswith("/video_shorts/stats?start=2026-11-01&end=2026-11-30")
     assert any("first_clicked_at = COALESCE" in sql for sql, _params in conn.statements)
+
+
+def test_tracking_redirect_is_public_before_login_guard(monkeypatch):
+    test_app = Flask(__name__)
+    test_app.secret_key = "public-report-click"
+    test_app.register_blueprint(video_shorts_bp, url_prefix="/video_shorts")
+
+    class ClickConnection(_WriteConnection):
+        def execute(self, sql, params=None):
+            self.statements.append((sql, params or []))
+            if "SELECT month" in sql:
+                return _Result((date(2026, 11, 1),))
+            return _Result()
+
+    conn = ClickConnection()
+    monkeypatch.setattr(admin_reports, "get_db", lambda: conn)
+    response = test_app.test_client().get("/video_shorts/r/public-token")
+    assert response.status_code == 302
+    assert response.headers["Location"].endswith("/video_shorts/stats?start=2026-11-01&end=2026-11-30")
+    assert any("first_clicked_at = COALESCE" in sql for sql, _params in conn.statements)
