@@ -8062,6 +8062,7 @@ def _load_render_jobs_by_id(conn, job_ids: List[str], *, video_pk: int) -> Dict[
             "started_at": _as_utc_datetime(row[2]),
             "finished_at": _as_utc_datetime(row[3]),
             "error": row[4],
+            "auto_layout_coordinate_height": _render_job_auto_layout_coordinate_height(payload),
         }
     return jobs
 
@@ -8124,6 +8125,7 @@ def _load_active_render_jobs_for_video_by_plan(
                 "started_at": _as_utc_datetime(row[2]),
                 "finished_at": _as_utc_datetime(row[3]),
                 "error": row[4],
+                "auto_layout_coordinate_height": _render_job_auto_layout_coordinate_height(payload),
             },
         )
     return active_by_plan
@@ -8135,6 +8137,21 @@ def _coerce_positive_int(value: Any) -> Optional[int]:
     except (TypeError, ValueError):
         return None
     return parsed if parsed > 0 else None
+
+
+def _render_job_auto_layout_coordinate_height(payload: Any) -> Optional[int]:
+    """Return the renderer's portrait coordinate height, not probed media height."""
+    if not isinstance(payload, dict):
+        return None
+    options = payload.get("options")
+    if not isinstance(options, dict):
+        return None
+    export_resolution = str(options.get("export_resolution") or "").strip()
+    if export_resolution == "1080":
+        return 1920
+    if export_resolution == "720":
+        return 1280
+    return None
 
 
 def _render_aspect_from_dimensions(width: Any, height: Any) -> str:
@@ -15371,6 +15388,11 @@ def generate_short(video_pk):
 
         render_width = _coerce_positive_int(entry.get("render_width"))
         render_height = _coerce_positive_int(entry.get("render_height"))
+        auto_layout_coordinate_height = _coerce_positive_int(
+            (render_job or {}).get("auto_layout_coordinate_height")
+        )
+        if not auto_layout_coordinate_height and render_height in {1280, 1920}:
+            auto_layout_coordinate_height = render_height
         render_aspect = _render_aspect_from_dimensions(render_width, render_height)
         design_is_original = str(video.get("crop_aspect") or "").strip().lower() == "original"
         is_original_layout_preview = (
@@ -15445,6 +15467,7 @@ def generate_short(video_pk):
             "poster_url": poster_url,
             "render_width": render_width,
             "render_height": render_height,
+            "auto_layout_coordinate_height": auto_layout_coordinate_height,
             "render_aspect": render_aspect,
             "is_original_layout": is_original_layout_preview,
             "auto_layout_summary": auto_layout_summary,

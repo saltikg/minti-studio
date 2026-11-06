@@ -7593,6 +7593,7 @@
                  data-media-version="{{ row.media_version or '' }}"
                  data-render-width="{{ row.render_width or '' }}"
                  data-render-height="{{ row.render_height or '' }}"
+                 data-auto-layout-coordinate-height="{{ row.auto_layout_coordinate_height or '' }}"
                  data-render-aspect="{{ row.render_aspect or '' }}"
                  data-auto-layout-summary="{{ row.auto_layout_summary or '' }}"
                  data-auto-layout-segments='{{ (row.auto_layout_segments or [])|tojson|safe }}'
@@ -21426,10 +21427,13 @@ document.addEventListener("DOMContentLoaded", () => {
   const scaleAutoLayoutPreviewSegmentCoordinates = (segment, card) => {
     if (!segment || typeof segment !== "object") return segment;
     const explicitCoordinateHeight = Number(segment.coordinate_height);
+    const renderJobCoordinateHeight = Number(card?.dataset.autoLayoutCoordinateHeight);
     const legacyRenderHeight = Number(card?.dataset.renderHeight);
     const coordinateHeight = Number.isFinite(explicitCoordinateHeight) && explicitCoordinateHeight > 0
       ? explicitCoordinateHeight
-      : (Number.isFinite(legacyRenderHeight) && legacyRenderHeight > 0 ? legacyRenderHeight : renderFrameHeight);
+      : (Number.isFinite(renderJobCoordinateHeight) && renderJobCoordinateHeight > 0
+        ? renderJobCoordinateHeight
+        : (Number.isFinite(legacyRenderHeight) && legacyRenderHeight > 0 ? legacyRenderHeight : renderFrameHeight));
     const activeHeight = getActiveRenderFrameHeight();
     const scale = activeHeight / Math.max(1, coordinateHeight);
     const scaled = {...segment, coordinate_height: activeHeight};

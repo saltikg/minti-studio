@@ -232,9 +232,27 @@ def test_preview_scales_new_and_legacy_auto_layout_coordinates_through_one_helpe
 
     assert "const scaleAutoLayoutPreviewSegmentCoordinates" in template
     assert "segment.coordinate_height" in template
+    assert "card?.dataset.autoLayoutCoordinateHeight" in template
     assert "card?.dataset.renderHeight" in template
     assert "const activeHeight = getActiveRenderFrameHeight();" in template
     assert "return scaleAutoLayoutPreviewSegmentCoordinates(activeSegment, card);" in template
+
+
+@pytest.mark.parametrize(
+    ("resolution", "expected_height"),
+    [("1080", 1920), ("720", 1280), ("", None), ("2160", None)],
+)
+def test_legacy_auto_layout_coordinate_height_comes_from_render_job_resolution(
+    resolution, expected_height
+):
+    payload = {"options": {"export_resolution": resolution}}
+
+    assert generation._render_job_auto_layout_coordinate_height(payload) == expected_height
+
+
+def test_legacy_auto_layout_coordinate_height_ignores_invalid_job_payloads():
+    assert generation._render_job_auto_layout_coordinate_height(None) is None
+    assert generation._render_job_auto_layout_coordinate_height({"options": "1080"}) is None
 
 
 def test_auto_render_applies_explicit_saved_design_over_database_defaults(monkeypatch):
