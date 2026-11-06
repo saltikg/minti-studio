@@ -1478,6 +1478,9 @@ def _report_context(conn, tenant: Mapping[str, object], start_date: date, end_da
             "subscriber_parts": subscriber_parts,
             "subscriber_total_parts": subscriber_total_parts,
             "long_form_report": long_form,
+            "report_video_rows_limit": (
+                4 if report.get("facebook_unavailable_message") else 6
+            ),
             "report_generated_at": datetime.now(ZoneInfo(DEFAULT_TIME_ZONE)),
         }
     )
