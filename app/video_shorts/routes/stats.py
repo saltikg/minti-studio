@@ -1,11 +1,13 @@
 from __future__ import annotations
 import json
+import io
+import re
 from bisect import bisect_right
 from datetime import date, datetime, timedelta, timezone
 from pathlib import Path
 from typing import Dict, List, Mapping, Optional, Sequence, Tuple
 
-from flask import abort, current_app, g, jsonify, render_template, request, session, url_for
+from flask import abort, current_app, g, jsonify, render_template, request, session, url_for, send_file
 from markupsafe import Markup, escape
 from werkzeug.exceptions import HTTPException
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
@@ -17,7 +19,16 @@ from app.video_shorts.services.admin_operation_scope import request_admin_operat
 from app.video_shorts.services.db import get_db_readonly
 from app.video_shorts.services.dashboard_metrics import (
     load_dashboard_metrics,
+    load_monthly_report_metrics,
     load_top_videos_for_date,
+)
+from app.video_shorts.services.stats_report import (
+    REPORT_RENDER_ROUTE,
+    ReportGrantError,
+    ReportRenderBusy,
+    consume_report_grant,
+    issue_report_grant,
+    render_report_pdf,
 )
 from app.video_shorts.services.feature_flags import tiktok_enabled
 from app.video_shorts.services.video_metrics import (
@@ -1245,6 +1256,216 @@ def video_stats_page():
     return _render_video_stats(load_widgets=False)
 
 
+def _parse_report_range() -> Tuple[date, date]:
+    today = datetime.now(ZoneInfo(DEFAULT_TIME_ZONE)).date()
+    try:
+        start_date = _parse_date_param(request.args.get("start"))
+        end_date = _parse_date_param(request.args.get("end"))
+    except ValueError:
+        abort(400, description="Invalid report date range")
+    if start_date is None or end_date is None:
+        start_date = today.replace(day=1)
+        end_date = today
+    if start_date > end_date:
+        abort(400, description="Report start must not be after its end")
+    if (end_date - start_date).days > 62:
+        abort(400, description="Report range cannot exceed 63 days")
+    return start_date, end_date
+
+
+def _report_context(conn, tenant: Mapping[str, object], start_date: date, end_date: date) -> Dict[str, object]:
+    owner_user_id = str(tenant.get("owner_user_id") or "").strip()
+    brand_id = str(tenant.get("brand_id") or "").strip()
+    brand_name = str(tenant.get("brand_name") or "Customer").strip() or "Customer"
+    if not owner_user_id or not brand_id:
+        abort(403)
+    today = datetime.now(ZoneInfo(DEFAULT_TIME_ZONE)).date()
+    report = load_monthly_report_metrics(
+        conn,
+        owner_user_id=owner_user_id,
+        brand_id=brand_id,
+        brand_name=brand_name,
+        start_date=start_date,
+        end_date=end_date,
+        today=today,
+    )
+    connected = report["connections"]
+    connected_platforms = [platform for platform in ("youtube", "instagram", "facebook") if connected.get(platform)]
+    platform_labels = {"youtube": "YouTube", "instagram": "Instagram", "facebook": "Facebook"}
+    current = report["current_totals"]
+    total_views = current.get("all", {}).get("views")
+    view_segments = []
+    known_total = int(total_views or 0)
+    for platform in connected_platforms:
+        value = current.get(platform, {}).get("views")
+        view_segments.append(
+            {
+                "key": platform,
+                "label": platform_labels[platform],
+                "value": value,
+                "percent": round(int(value or 0) * 100 / known_total, 1) if value is not None and known_total else 0,
+            }
+        )
+
+    chart_by_date = {
+        str(row["date"]): row for row in report["chart_series_delta"]["all"]
+    }
+    raw_daily = []
+    for date_key, row in chart_by_date.items():
+        values = {
+            platform: row.get(f"{platform}_daily_views")
+            for platform in ("youtube", "instagram", "facebook")
+        }
+        total = sum(int(value) for value in values.values() if value is not None)
+        raw_daily.append({"date": date.fromisoformat(date_key), "values": values, "total": total})
+    daily_max = max((item["total"] for item in raw_daily), default=0) or 1
+    daily_bars = []
+    for item in raw_daily:
+        segments = []
+        for platform in connected_platforms:
+            value = item["values"].get(platform)
+            segments.append(
+                {
+                    "key": platform,
+                    "height": round(int(value or 0) * 100 / daily_max, 2),
+                    "value": value,
+                }
+            )
+        daily_bars.append({**item, "segments": segments})
+
+    insights = report.get("youtube_insights") or {}
+    traffic = insights.get("traffic_sources") or []
+    dominant = max(traffic, key=lambda item: float(item.get("percent") or 0), default=None)
+    source_meanings = {
+        "shorts_feed_views": "Your Shorts are being discovered in the Shorts feed, where strong openings help earn more watch time.",
+        "search_views": "Search is your leading discovery source, so clear topics and searchable titles are helping people find you.",
+        "subscriber_views": "Your existing subscribers are driving the most views, showing that your Shorts are reaching a loyal audience.",
+        "notification_views": "Notifications are driving discovery, which means your returning audience is responding quickly.",
+        "channel_page_views": "People are finding these Shorts from your channel page, often after exploring more of your content.",
+        "external_views": "External links are your leading discovery source, so sharing Shorts beyond YouTube is working.",
+        "other_views": "Your views are spread across several YouTube discovery surfaces rather than one dominant source.",
+    }
+    best = (report.get("range_top_videos") or [None])[0]
+    if start_date.year == end_date.year and start_date.month == end_date.month:
+        month_label = start_date.strftime("%B %Y")
+    else:
+        month_label = f"{start_date.strftime('%b %-d')} – {end_date.strftime('%b %-d, %Y')}"
+    audience_changes = report["audience_changes"]
+    subscriber_parts = [
+        {"key": platform, "label": platform_labels[platform], "value": audience_changes.get(platform)}
+        for platform in connected_platforms
+        if platform in {"youtube", "instagram"}
+    ]
+    report.update(
+        {
+            "owner_user_id": owner_user_id,
+            "brand_id": brand_id,
+            "start_date": start_date,
+            "end_date": end_date,
+            "month_label": month_label,
+            "connected_platforms": connected_platforms,
+            "platform_labels": platform_labels,
+            "view_segments": view_segments,
+            "daily_bars": daily_bars,
+            "best_short": best,
+            "traffic_meaning": source_meanings.get(str((dominant or {}).get("key") or "")),
+            "subscriber_parts": subscriber_parts,
+            "report_generated_at": datetime.now(ZoneInfo(DEFAULT_TIME_ZONE)),
+        }
+    )
+    return report
+
+
+@video_shorts_bp.route("/stats/report", methods=["GET"])
+def stats_report_page():
+    start_date, end_date = _parse_report_range()
+    conn = get_db_readonly()
+    try:
+        tenant = _resolve_stats_tenant(conn)
+        context = _report_context(conn, tenant, start_date, end_date)
+    finally:
+        conn.close()
+    return render_template("stats_report.html", **context)
+
+
+@video_shorts_bp.route("/stats/report/render", methods=["GET"])
+def stats_report_render():
+    start_date, end_date = _parse_report_range()
+    brand_id = str(request.args.get("brand_id") or "").strip()
+    try:
+        claims = consume_report_grant(
+            str(request.args.get("token") or ""),
+            brand_id=brand_id,
+            start=start_date.isoformat(),
+            end=end_date.isoformat(),
+            route=REPORT_RENDER_ROUTE,
+        )
+    except ReportGrantError as exc:
+        abort(403, description=str(exc))
+    conn = get_db_readonly()
+    try:
+        brand = _load_owned_brand(
+            conn,
+            user_id=claims["owner_user_id"],
+            brand_id=claims["brand_id"],
+        )
+        if not brand:
+            abort(403)
+        tenant = {
+            "owner_user_id": claims["owner_user_id"],
+            "brand_id": claims["brand_id"],
+            "brand_name": brand.get("name") or "Customer",
+            "is_admin_operation": False,
+        }
+        context = _report_context(conn, tenant, start_date, end_date)
+    finally:
+        conn.close()
+    return render_template("stats_report.html", **context)
+
+
+@video_shorts_bp.route("/stats/report.pdf", methods=["GET"])
+def stats_report_pdf():
+    start_date, end_date = _parse_report_range()
+    conn = get_db_readonly()
+    try:
+        tenant = _resolve_stats_tenant(conn)
+        owner_user_id = str(tenant.get("owner_user_id") or "").strip()
+        brand_id = str(tenant.get("brand_id") or "").strip()
+        brand_name = str(tenant.get("brand_name") or "Customer").strip() or "Customer"
+        if not owner_user_id or not brand_id or not _load_owned_brand(conn, user_id=owner_user_id, brand_id=brand_id):
+            abort(403)
+    finally:
+        conn.close()
+    token = issue_report_grant(
+        owner_user_id=owner_user_id,
+        brand_id=brand_id,
+        start_date=start_date,
+        end_date=end_date,
+    )
+    try:
+        pdf, elapsed = render_report_pdf(
+            token=token,
+            brand_id=brand_id,
+            start_date=start_date,
+            end_date=end_date,
+        )
+    except ReportRenderBusy as exc:
+        return jsonify({"error": str(exc)}), 429
+    current_app.logger.info(
+        "stats_report_rendered owner_user_id=%s brand_id=%s start=%s end=%s seconds=%.3f bytes=%s",
+        owner_user_id, brand_id, start_date, end_date, elapsed, len(pdf),
+    )
+    safe_brand = re.sub(r"[^A-Za-z0-9]+", "-", brand_name).strip("-") or "Brand"
+    month_part = start_date.strftime("%Y-%m")
+    return send_file(
+        io.BytesIO(pdf),
+        mimetype="application/pdf",
+        as_attachment=True,
+        download_name=f"Minti-{safe_brand}-{month_part}.pdf",
+        max_age=0,
+    )
+
+
 def _render_video_stats(*, load_widgets: bool):
     tiktok_feature_enabled = tiktok_enabled()
     end_param = request.args.get("end")
@@ -1287,6 +1508,7 @@ def _render_video_stats(*, load_widgets: bool):
         "stats_scope_query": _stats_scope_query(),
         "stats_admin_operation": is_admin_operation,
         "stats_admin_brand_name": str(tenant.get("brand_name") or "Customer"),
+        "stats_today": today,
     }
 
     if not load_widgets:

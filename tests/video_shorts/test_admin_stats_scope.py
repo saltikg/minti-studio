@@ -94,6 +94,8 @@ def test_dashboard_scope_mismatch_and_non_admin_fail_with_403(app):
         "/video_shorts/stats",
         "/video_shorts/stats/widgets",
         "/video_shorts/stats/top_videos?date=2026-11-05&channel=all",
+        "/video_shorts/stats/report?start=2026-11-01&end=2026-11-30",
+        "/video_shorts/stats/report.pdf?start=2026-11-01&end=2026-11-30",
     )
     for path in paths:
         separator = "&" if "?" in path else "?"

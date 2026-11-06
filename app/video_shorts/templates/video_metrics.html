@@ -396,6 +396,7 @@
             <li><button class="dropdown-item preset-item" type="button" data-date-preset="yesterday">Yesterday</button></li>
             <li><button class="dropdown-item preset-item" type="button" data-date-preset="this_week">This week</button></li>
             <li><button class="dropdown-item preset-item" type="button" data-date-preset="last_week">Last week</button></li>
+            <li><button class="dropdown-item preset-item" type="button" data-date-preset="this_month">Month</button></li>
             <li><button class="dropdown-item preset-item" type="button" data-date-preset="last_7">Last 7 days</button></li>
             <li><button class="dropdown-item preset-item" type="button" data-date-preset="last_28">Last 28 days</button></li>
             <li><button class="dropdown-item preset-item" type="button" data-date-preset="last_30">Last 30 days</button></li>
@@ -406,6 +407,9 @@
         </div>
         <input type="hidden" name="start" id="rangeStart" value="{{ start_date.isoformat() }}">
         <input type="hidden" name="end" id="rangeEnd" value="{{ end_date.isoformat() }}">
+        <a class="btn btn-sm btn-dark text-nowrap" id="downloadReportButton" href="{{ stats_url('stats_report_pdf', start=start_date.isoformat(), end=end_date.isoformat()) }}">
+          <i class="bi bi-download me-1" aria-hidden="true"></i>Download report (PDF)
+        </a>
       </form>
     </div>
   </div>
@@ -1639,7 +1643,7 @@
       const formatIso = (date) => date.toISOString().slice(0, 10);
 
       const calculateRange = (preset) => {
-        const today = new Date();
+        const today = new Date({{ (stats_today.isoformat() ~ 'T12:00:00')|tojson }});
         const normalize = (value) => {
           const cloned = new Date(value);
           cloned.setHours(0, 0, 0, 0);

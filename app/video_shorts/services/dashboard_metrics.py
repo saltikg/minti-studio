@@ -1,7 +1,8 @@
 from __future__ import annotations
 
-from datetime import date, datetime, timedelta
+from datetime import date, datetime, timedelta, timezone
 from typing import Dict, List, Mapping, Optional, Sequence
+from zoneinfo import ZoneInfo
 
 from app.video_shorts.services.brands import brand_scoped_user_id
 
@@ -908,6 +909,152 @@ def load_dashboard_metrics(
         "youtube_insights": youtube_insights,
         "last_api_at": last_updated,
         "stats_connect_empty": not any(connections.values()),
+    }
+
+
+REPORT_TIPS = (
+    "Keep the first sentence direct: name the problem or promise before adding context.",
+    "A strong on-screen hook in the first two seconds helps viewers decide to stay.",
+    "Reply to early comments while a Short is fresh; it can turn viewers into regulars.",
+    "Repeat the topics your audience finishes most often, then test a new opening line.",
+)
+
+
+def _audience_change(series: Sequence[Mapping[str, object]], platform: str) -> Optional[int]:
+    values = [
+        int(row[f"{platform}_net"])
+        for row in series
+        if row.get(f"{platform}_net") is not None
+    ]
+    return sum(values) if values else None
+
+
+def _as_utc(value: object) -> Optional[datetime]:
+    if not isinstance(value, datetime):
+        return None
+    if value.tzinfo is None:
+        return value.replace(tzinfo=timezone.utc)
+    return value.astimezone(timezone.utc)
+
+
+def load_monthly_report_metrics(
+    conn,
+    *,
+    owner_user_id: str,
+    brand_id: str,
+    brand_name: str,
+    start_date: date,
+    end_date: date,
+    today: date,
+) -> Dict[str, object]:
+    """Compose report-only presentation data from the canonical dashboard payload.
+
+    Metric values are never recalculated here: views, engagement, audience, rankings,
+    and YouTube insights come directly from ``load_dashboard_metrics``.  The two extra
+    queries cover publication counts and future schedules, neither of which is a
+    dashboard metric.
+    """
+    dashboard = load_dashboard_metrics(
+        conn,
+        owner_user_id=owner_user_id,
+        brand_id=brand_id,
+        start_date=start_date,
+        end_date=end_date,
+        selected_platform="all",
+        page=1,
+        page_size=500,
+        today=today,
+    )
+    publication = conn.execute(
+        f"""
+        SELECT
+            COUNT(DISTINCT generated_video_id) FILTER (
+                WHERE canonical_publish_date BETWEEN ? AND ?
+            ) AS shorts_published,
+            COUNT(DISTINCT CAST(generated_video_id AS VARCHAR) || ':' || platform) FILTER (
+                WHERE platform_publish_date BETWEEN ? AND ?
+            ) AS platform_posts
+        FROM {MART}
+        WHERE brand_id = ?
+        """,
+        [
+            start_date.isoformat(), end_date.isoformat(),
+            start_date.isoformat(), end_date.isoformat(), brand_id,
+        ],
+    ).fetchone()
+    platform_post_rows = _rows(
+        conn.execute(
+            f"""
+            SELECT platform, COUNT(DISTINCT generated_video_id) AS posts
+            FROM {MART}
+            WHERE brand_id = ?
+              AND platform_publish_date BETWEEN ? AND ?
+            GROUP BY platform
+            ORDER BY platform
+            """,
+            [brand_id, start_date.isoformat(), end_date.isoformat()],
+        )
+    )
+
+    schedule_start = end_date + timedelta(days=1)
+    schedule_end = end_date + timedelta(days=30)
+    scheduled_rows = _rows(
+        conn.execute(
+            """
+            SELECT id, generated_title, planned_publish_at
+            FROM shorts_generated_videos
+            WHERE CAST(user_id AS VARCHAR) = CAST(? AS VARCHAR)
+              AND CAST(brand_id AS VARCHAR) = CAST(? AS VARCHAR)
+              AND lower(coalesce(publish_status, '')) IN ('scheduled', 'pending', 'uploaded')
+              AND planned_publish_at IS NOT NULL
+              AND planned_publish_at >= ?
+              AND planned_publish_at < ?
+            ORDER BY planned_publish_at, id
+            """,
+            [
+                owner_user_id,
+                brand_id,
+                datetime.combine(schedule_start, datetime.min.time()),
+                datetime.combine(schedule_end + timedelta(days=1), datetime.min.time()),
+            ],
+        )
+    )
+    pt = ZoneInfo("America/Los_Angeles")
+    scheduled: List[Dict[str, object]] = []
+    for row in scheduled_rows:
+        planned = _as_utc(row.get("planned_publish_at"))
+        if planned is None:
+            continue
+        local = planned.astimezone(pt)
+        scheduled.append(
+            {
+                "id": row.get("id"),
+                "title": str(row.get("generated_title") or "Untitled Short"),
+                "date": local.date(),
+                "time": local.strftime("%-I:%M %p PT"),
+            }
+        )
+
+    audience_changes = {
+        platform: _audience_change(dashboard["subscriber_series"], platform)
+        for platform in PLATFORMS
+    }
+    platform_posts = {
+        str(row.get("platform")): int(row.get("posts") or 0)
+        for row in platform_post_rows
+    }
+    month_index = (start_date.year * 12 + start_date.month - 1) % len(REPORT_TIPS)
+    return {
+        **dashboard,
+        "brand_name": brand_name,
+        "shorts_published": int((publication or [0, 0])[0] or 0),
+        "platform_posts_total": int((publication or [0, 0])[1] or 0),
+        "platform_posts": platform_posts,
+        "audience_changes": audience_changes,
+        "scheduled_shorts": scheduled,
+        "schedule_start": schedule_start,
+        "schedule_end": schedule_end,
+        "tip": REPORT_TIPS[month_index],
     }
 
 

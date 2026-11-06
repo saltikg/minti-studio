@@ -1,0 +1,145 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>{{ brand_name }} · {{ month_label }} · Minti Studio</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=Space+Grotesk:wght@500;600;700&display=swap" rel="stylesheet">
+  <style>
+    :root { --ink:#10172A; --muted:#667085; --line:#E7EBF0; --paper:#fff; --soft:#F5F7F9; --teal:#14B8A6; --teal-dark:#0B7A6E; --youtube:#2563EB; --instagram:#F59E0B; --facebook:#64748B; }
+    * { box-sizing: border-box; }
+    html, body { margin:0; padding:0; background:#E9EDF2; color:var(--ink); font-family:Inter, sans-serif; -webkit-print-color-adjust:exact; print-color-adjust:exact; }
+    @page { size: 8.5in 11in; margin:0; }
+    .report-page { position:relative; width:816px; height:1056px; padding:56px 60px 58px; margin:18px auto; overflow:hidden; background:var(--paper); page-break-after:always; }
+    .report-page:last-child { page-break-after:auto; }
+    @media print { html,body { background:#fff; } .report-page { margin:0; } }
+    h1,h2,h3,p { margin-top:0; } h1,h2,h3 { font-family:"Space Grotesk",sans-serif; letter-spacing:-.025em; }
+    h1 { font-size:42px; line-height:1.04; margin:0 0 10px; } h2 { font-size:25px; margin:0 0 16px; } h3 { font-size:15px; margin:0; }
+    .eyebrow { color:var(--teal-dark); font-size:12px; font-weight:700; letter-spacing:.12em; text-transform:uppercase; margin-bottom:12px; }
+    .page-header { position:absolute; top:27px; left:60px; right:60px; display:flex; align-items:center; justify-content:space-between; color:#475467; font-size:10px; font-weight:600; }
+    .brand-lockup { color:var(--ink); font-size:11px; } .dot { display:inline-block; width:8px; height:8px; background:var(--teal); border-radius:50%; margin-right:7px; }
+    .page-footer { position:absolute; left:60px; right:60px; bottom:25px; border-top:1px solid var(--line); padding-top:10px; display:flex; justify-content:space-between; color:#7B8494; font-size:9px; }
+    .subtle { color:var(--muted); } .num { font-variant-numeric:tabular-nums; }
+    .highlight { padding:20px 22px; border-radius:14px; background:var(--ink); color:white; font:600 18px/1.35 "Space Grotesk",sans-serif; margin:25px 0 18px; }
+    .kpi-grid { display:grid; grid-template-columns:repeat(4,1fr); gap:10px; }
+    .kpi { min-height:106px; padding:14px; border:1px solid var(--line); border-radius:12px; background:#fff; }
+    .kpi-label { color:#667085; font-size:9px; font-weight:700; letter-spacing:.08em; text-transform:uppercase; }
+    .kpi-value { margin:7px 0 5px; font:700 24px/1 "Space Grotesk",sans-serif; }
+    .kpi-detail { color:#667085; font-size:8px; line-height:1.45; }
+    .best { display:grid; grid-template-columns:180px 1fr; gap:19px; margin-top:18px; padding:16px; border-radius:14px; background:var(--soft); }
+    .best-thumb { width:180px; height:102px; border-radius:10px; object-fit:cover; background:#DDE3EA; }
+    .best-title { font:600 17px/1.25 "Space Grotesk",sans-serif; margin:7px 0 6px; display:-webkit-box; -webkit-line-clamp:2; -webkit-box-orient:vertical; overflow:hidden; }
+    .best-stats { display:flex; gap:20px; align-items:flex-end; margin-top:9px; }
+    .best-total { font:700 25px/1 "Space Grotesk",sans-serif; }
+    .watch-link { color:var(--teal-dark); font-size:10px; font-weight:700; text-decoration:none; }
+    .section { margin-top:20px; } .section-title { display:flex; align-items:end; justify-content:space-between; margin-bottom:11px; }
+    .stacked-track { height:25px; display:flex; border-radius:7px; overflow:hidden; background:#EDF1F5; }
+    .seg-youtube { background:var(--youtube); } .seg-instagram { background:var(--instagram); } .seg-facebook { background:var(--facebook); }
+    .legend { display:flex; flex-wrap:wrap; gap:15px; margin-top:10px; font-size:9px; }
+    .legend i { display:inline-block; width:7px; height:7px; border-radius:2px; margin-right:5px; }
+    .daily-chart { height:132px; display:flex; gap:4px; align-items:flex-end; padding:8px 4px 18px; border-bottom:1px solid var(--line); }
+    .daily-column { height:106px; flex:1; min-width:3px; display:flex; flex-direction:column-reverse; justify-content:flex-start; position:relative; }
+    .daily-column span { display:block; min-height:0; }
+    .daily-column em { display:none; }
+    .table-wrap { border:1px solid var(--line); border-radius:10px; overflow:hidden; }
+    table { width:100%; border-collapse:collapse; table-layout:fixed; font-size:9px; }
+    th { padding:7px 8px; color:#667085; background:#F8FAFB; font-size:8px; text-align:right; text-transform:uppercase; letter-spacing:.05em; }
+    th:first-child, td:first-child { text-align:left; } td { padding:7px 8px; border-top:1px solid var(--line); text-align:right; font-variant-numeric:tabular-nums; }
+    .short-cell { white-space:nowrap; overflow:hidden; text-overflow:ellipsis; font-weight:600; }
+    .more-row { color:var(--muted); text-align:center!important; font-weight:600; }
+    .audience-grid { display:grid; grid-template-columns:repeat(3,1fr); gap:10px; }
+    .audience-card { padding:11px 13px; border:1px solid var(--line); border-radius:10px; }
+    .audience-total { font:700 20px/1.1 "Space Grotesk",sans-serif; margin-top:5px; }
+    .traffic-row { display:grid; grid-template-columns:105px 1fr 45px; gap:10px; align-items:center; margin:11px 0; font-size:10px; }
+    .traffic-track { height:10px; border-radius:10px; background:#E7EEF9; overflow:hidden; } .traffic-fill { height:100%; background:var(--youtube); border-radius:10px; }
+    .meaning { margin:18px 0; padding:15px 17px; border-left:4px solid var(--teal); background:#F0FDFA; color:#344054; font-size:11px; line-height:1.5; }
+    .insight-cards { display:grid; grid-template-columns:1fr 1fr; gap:14px; margin-top:22px; }
+    .insight-cards.single { grid-template-columns:1fr; }
+    .insight-card { min-height:145px; padding:20px; border:1px solid var(--line); border-radius:13px; }
+    .insight-big { font:700 34px/1 "Space Grotesk",sans-serif; margin:14px 0 8px; }
+    .footnote { margin-top:20px; color:#667085; font-size:9px; }
+    .schedule { border:1px solid var(--line); border-radius:13px; overflow:hidden; }
+    .schedule-row { display:grid; grid-template-columns:86px 1fr 70px; gap:12px; padding:11px 14px; border-top:1px solid var(--line); align-items:center; font-size:10px; }
+    .schedule-row:first-child { border-top:0; } .schedule-title { white-space:nowrap; overflow:hidden; text-overflow:ellipsis; font-weight:600; }
+    .empty-schedule { padding:26px; color:#475467; text-align:center; font:600 16px "Space Grotesk",sans-serif; }
+    .next-grid { display:grid; grid-template-columns:1fr 1fr; gap:14px; margin-top:20px; }
+    .next-card { min-height:152px; padding:20px; border:1px solid var(--line); border-radius:13px; }
+    .next-card p { margin:13px 0 0; color:#475467; font-size:11px; line-height:1.55; }
+    .referral { margin-top:20px; padding:22px 24px; border-radius:14px; background:var(--ink); color:white; }
+    .referral h3 { font-size:20px; line-height:1.25; margin-bottom:9px; }.referral p { color:#D5DAE3; font-size:10px; margin:4px 0; }
+  </style>
+</head>
+<body>
+{% macro fmt(value) -%}{% if value is none %}Pending{% elif value is string %}{{ value }}{% else %}{{ "{:,}".format(value|int) }}{% endif %}{%- endmacro %}
+{% macro chrome(page) -%}
+  <div class="page-header"><div class="brand-lockup"><span class="dot"></span>Minti Studio</div><div>{{ brand_name }} · {{ month_label }}</div></div>
+  <div class="page-footer"><div>Prepared by your Minti Studio team · mintistudio.com</div><div>Page {{ page }} of 4</div></div>
+{%- endmacro %}
+
+<section class="report-page">
+  {{ chrome(1) }}
+  <div class="eyebrow">Monthly performance report</div>
+  <h1>{{ month_label }}<br>{{ brand_name }}</h1>
+  <div class="highlight">{{ youtube_insights.highlight or "Your Shorts kept building your audience this month." }}</div>
+  <div class="kpi-grid">
+    <div class="kpi"><div class="kpi-label">Shorts published</div><div class="kpi-value num">{{ shorts_published }}</div><div class="kpi-detail">{{ platform_posts_total }} posts across {% if platform_posts %}{{ platform_posts.keys()|map('capitalize')|join(', ') }}{% else %}your channels{% endif %}</div></div>
+    <div class="kpi"><div class="kpi-label">Total views</div><div class="kpi-value num">{{ fmt(current_totals.all.views) }}</div><div class="kpi-detail">{% for item in view_segments %}{{ item.label }} {{ fmt(item.value) }}{% if not loop.last %} · {% endif %}{% endfor %}</div></div>
+    <div class="kpi"><div class="kpi-label">New subscribers</div><div class="kpi-value num">{% set known_subs = subscriber_parts|selectattr('value','ne',none)|map(attribute='value')|sum %}{{ fmt(known_subs) }}</div><div class="kpi-detail">{% for item in subscriber_parts %}{{ item.label }} {{ fmt(item.value) }}{% if not loop.last %} · {% endif %}{% endfor %}</div></div>
+    <div class="kpi"><div class="kpi-label">Likes</div><div class="kpi-value num">{{ fmt(current_totals.all.likes) }}</div><div class="kpi-detail">{% for p in connected_platforms %}{{ platform_labels[p] }} {{ fmt(current_totals[p].likes) }}{% if not loop.last %} · {% endif %}{% endfor %}</div></div>
+  </div>
+  <div class="best">
+    {% if best_short %}
+      {% if best_short.thumbnail_url %}<img class="best-thumb" src="{{ best_short.thumbnail_url }}" alt="">{% else %}<div class="best-thumb"></div>{% endif %}
+      <div><div class="eyebrow" style="margin:0">Best Short of the month</div><div class="best-title">{{ best_short.video_title }}</div><div class="subtle" style="font-size:9px">{{ best_short.publish_at.strftime('%b %-d, %Y') if best_short.publish_at else 'Publication pending' }} · {% for p in connected_platforms if best_short[p ~ '_views'] not in ['Not connected', 'Pending', none] %}{{ platform_labels[p] }}{% if not loop.last %}, {% endif %}{% endfor %}</div><div class="best-stats"><div><div class="best-total num">{{ fmt(best_short.views) }}</div><div class="subtle" style="font-size:8px">in-period views</div></div><div class="subtle" style="font-size:9px">{% for p in connected_platforms %}{{ platform_labels[p] }} {{ fmt(best_short[p ~ '_views']) }}{% if not loop.last %} · {% endif %}{% endfor %}</div>{% if best_short.video_url and 'youtube.com' in best_short.video_url %}<a class="watch-link" href="{{ best_short.video_url }}">Watch on YouTube →</a>{% endif %}</div></div>
+    {% else %}<div class="best-thumb"></div><div><div class="eyebrow">Best Short of the month</div><div class="best-title">Your first Short is on its way.</div></div>{% endif %}
+  </div>
+</section>
+
+<section class="report-page">
+  {{ chrome(2) }}
+  <h2>Performance</h2>
+  <div class="section"><div class="section-title"><h3>Where your views came from</h3><span class="subtle num" style="font-size:9px">{{ fmt(current_totals.all.views) }} total</span></div><div class="stacked-track">{% for item in view_segments %}<span class="seg-{{ item.key }}" style="width:{{ item.percent }}%"></span>{% endfor %}</div><div class="legend">{% for item in view_segments %}<span><i class="seg-{{ item.key }}"></i>{{ item.label }} · {{ fmt(item.value) }} · {{ item.percent }}%</span>{% endfor %}</div></div>
+  <div class="section"><div class="section-title"><h3>Views by day</h3></div><div class="daily-chart">{% for day in daily_bars %}<div class="daily-column" title="{{ day.date }} · {{ day.total }} views">{% for seg in day.segments %}<span class="seg-{{ seg.key }}" style="height:{{ seg.height }}%"></span>{% endfor %}</div>{% endfor %}</div></div>
+  <div class="section"><div class="section-title"><h3>Every Short this month</h3><span class="subtle" style="font-size:9px">In-period views</span></div><div class="table-wrap"><table><thead><tr><th style="width:39%">Short</th><th style="width:14%">Published</th><th>YouTube</th><th>Instagram</th>{% if connections.facebook %}<th>Facebook</th>{% endif %}<th>Total</th></tr></thead><tbody>{% for row in video_rows[:9] %}<tr><td class="short-cell" title="{{ row.video_title }}">{{ row.video_title }}</td><td>{{ row.publish_at.strftime('%b %-d') if row.publish_at else '—' }}</td><td>{{ fmt(row.youtube_views) }}</td><td>{{ fmt(row.instagram_views) }}</td>{% if connections.facebook %}<td>{{ fmt(row.facebook_views) }}</td>{% endif %}<td><strong>{{ fmt(row.views) }}</strong></td></tr>{% endfor %}{% if video_rows|length > 9 %}<tr><td class="more-row" colspan="{{ 6 if connections.facebook else 5 }}">+{{ video_rows|length - 9 }} more Shorts</td></tr>{% endif %}</tbody></table></div></div>
+  <div class="section"><div class="section-title"><h3>Your audience</h3></div><div class="audience-grid">{% for p in ['youtube','instagram','facebook'] %}<div class="audience-card"><div class="kpi-label">{{ platform_labels[p] }}</div>{% if not connections[p] %}<div class="audience-total">Not connected</div>{% else %}<div class="audience-total num">{{ fmt(subscriber_totals[p]) }}</div><div class="subtle" style="font-size:9px">{{ '+' if audience_changes[p] is not none and audience_changes[p] >= 0 else '' }}{{ fmt(audience_changes[p]) }} this month</div>{% endif %}</div>{% endfor %}</div></div>
+</section>
+
+<section class="report-page">
+  {{ chrome(3) }}
+  <div class="eyebrow">YouTube only</div><h2>YouTube insights</h2>
+  {% if youtube_insights.status == 'Ready' %}
+    <h3>How viewers found your Shorts</h3>
+    {% for source in youtube_insights.traffic_sources %}<div class="traffic-row"><span>{{ source.label }}</span><div class="traffic-track"><div class="traffic-fill" style="width:{{ source.percent }}%"></div></div><strong class="num">{{ source.percent }}%</strong></div>{% endfor %}
+    {% if traffic_meaning %}<div class="meaning"><strong>What this means:</strong> {{ traffic_meaning }}</div>{% endif %}
+    <div class="insight-cards{% if not youtube_insights.subscribers_gained %} single{% endif %}">
+      <div class="insight-card"><div class="kpi-label">Average watched</div><div class="insight-big num">{{ '%.1f'|format(youtube_insights.average_view_percentage) if youtube_insights.average_view_percentage is not none else 'Pending' }}{% if youtube_insights.average_view_percentage is not none %}%{% endif %}</div><div class="subtle">{{ '%.1f'|format(youtube_insights.average_view_duration_seconds) if youtube_insights.average_view_duration_seconds is not none else 'Pending' }}{% if youtube_insights.average_view_duration_seconds is not none %} seconds{% endif %}</div></div>
+      {% if youtube_insights.subscribers_gained %}<div class="insight-card"><div class="kpi-label">Subscribers from Shorts</div><div class="insight-big num">+{{ youtube_insights.subscribers_gained }}</div>{% if youtube_insights.top_subscriber_short %}<div class="subtle">Top Short: {{ youtube_insights.top_subscriber_short.title }} · +{{ youtube_insights.top_subscriber_short.subscribers }}</div>{% endif %}</div>{% endif %}
+    </div>
+    {% if youtube_insights.coverage_note %}<div class="footnote">{{ youtube_insights.coverage_note }}</div>{% endif %}
+    <div class="footnote">YouTube only · data through {{ youtube_insights.latest_date.strftime('%b %-d, %Y') if youtube_insights.latest_date else 'Pending' }}</div>
+  {% else %}<div class="meaning">YouTube insights are {{ youtube_insights.status|lower }} for this range.</div>{% endif %}
+</section>
+
+<section class="report-page">
+  {{ chrome(4) }}
+  <div class="eyebrow">Next month</div><h2>Coming up next</h2>
+  <div class="schedule">{% if scheduled_shorts %}{% for item in scheduled_shorts[:7] %}<div class="schedule-row"><strong>{{ item.date.strftime('%b %-d') }}</strong><div class="schedule-title" title="{{ item.title }}">{{ item.title }}</div><div class="subtle">{{ item.time }}</div></div>{% endfor %}{% if scheduled_shorts|length > 7 %}<div class="schedule-row"><div></div><div class="schedule-title">+{{ scheduled_shorts|length - 7 }} more scheduled Shorts</div><div></div></div>{% endif %}{% else %}<div class="empty-schedule">We’re preparing your next Shorts.</div>{% endif %}</div>
+  <div class="next-grid"><div class="next-card"><div class="eyebrow">Tip of the month</div><h3>A small move that can help</h3><p>{{ tip }}</p></div><div class="next-card"><div class="eyebrow">From your Minti team</div><h3>Human-reviewed, every time</h3><p>Every Short is checked by a person before it goes out. Want more on a topic? Just reply to this email.</p></div></div>
+  <div class="referral"><h3>Know a creator who should be on Shorts? You both get a free month.</h3><p><strong>Reply with a name</strong></p><p>mintistudio.com</p></div>
+</section>
+<script>
+  (async () => {
+    try { if (document.fonts && document.fonts.ready) await document.fonts.ready; } catch (_) {}
+    const images = Array.from(document.images);
+    await Promise.all(images.map((img) => img.complete ? Promise.resolve() : Promise.race([
+      new Promise((resolve) => { img.addEventListener('load', resolve, { once:true }); img.addEventListener('error', resolve, { once:true }); }),
+      new Promise((resolve) => setTimeout(resolve, 3000))
+    ])));
+    await new Promise((resolve) => requestAnimationFrame(() => requestAnimationFrame(resolve)));
+    window.__MINTI_REPORT_READY__ = true;
+  })();
+</script>
+</body>
+</html>
