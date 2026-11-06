@@ -21476,7 +21476,7 @@ document.addEventListener("DOMContentLoaded", () => {
     const segment = getAutoLayoutPreviewSegment();
     if (!segment) return null;
     const customPosition = initialSubtitleMarginCustom || dirtyOverlayFields.has("sub_margin");
-    return customPosition && segment.mode === "fit" ? null : segment;
+    return customPosition ? null : segment;
   };
   const getAutoFitPreviewDims = () => {
     if (getAutoLayoutPreviewSegment()?.mode !== "fit") return null;

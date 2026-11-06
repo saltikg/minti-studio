@@ -487,6 +487,14 @@ def test_editor_template_exposes_reset_and_visible_design_changed_state():
     assert "{% if has_short_editor_default %}" in template
 
 
+def test_manual_caption_position_disables_every_auto_layout_preview_override():
+    template = (ROOT / "app/video_shorts/templates/generate_short.html").read_text(encoding="utf-8")
+
+    assert 'const customPosition = initialSubtitleMarginCustom || dirtyOverlayFields.has("sub_margin");' in template
+    assert "return customPosition ? null : segment;" in template
+    assert 'customPosition && segment.mode === "fit"' not in template
+
+
 def test_worker_render_route_requires_and_receives_internal_snapshot_marker():
     worker_source = (ROOT / "app/video_shorts/worker.py").read_text(encoding="utf-8")
     generation_source = (ROOT / "app/video_shorts/routes/generation.py").read_text(encoding="utf-8")
