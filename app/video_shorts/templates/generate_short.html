@@ -1967,6 +1967,12 @@
     z-index: 2;
   }
   .generate-v2-regenerate-btn .generate-v2-needs-regenerate-dot { margin-left: 2px; }
+  .generate-v2-design-change-note {
+    color: #fbbf24;
+    font-size: .72rem;
+    font-weight: 700;
+    line-height: 1.25;
+  }
   .created-music-badge.is-not-applied { color: #fbbf24; }
   .generate-v2-panel,
   .generate-v2-right-panel {
@@ -6978,6 +6984,12 @@
                   <svg viewBox="0 0 24 24" aria-hidden="true" fill="none" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M19 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11l5 5v11a2 2 0 0 1-2 2Z"/><path d="M17 21v-8H7v8"/><path d="M7 3v5h8"/></svg>
                   <span>Save as default</span>
                 </button>
+                {% if has_short_editor_default %}
+                <button type="button" class="btn generate-v2-editor-action" id="generate-v2-editor-reset-default">
+                  <i class="bi bi-arrow-counterclockwise" aria-hidden="true"></i>
+                  <span>Reset to default</span>
+                </button>
+                {% endif %}
                 <button type="button" class="btn generate-v2-editor-action" id="generate-v2-editor-save">
                   <svg viewBox="0 0 24 24" aria-hidden="true" fill="none" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M20 6 9 17l-5-5"/></svg>
                   <span>Save design</span>
@@ -7717,6 +7729,7 @@
                       <div class="generate-v2-media-column{% if row.is_original_layout %} is-original-layout{% endif %}{% if row.render_job_status in ['queued', 'processing', 'running'] %} is-rendering{% endif %}">
                     {% endif %}
                     <video controls playsinline preload="none" src="{{ row.video_url }}" poster="{{ row.poster_url or short_bg_url }}" aria-label="Play {{ row.title or 'clip' }}"></video>
+	                    {% if generate_v2 %}<div class="generate-v2-design-change-note{% if not row.needs_regenerate or row.regenerate_reason == 'music' %} d-none{% endif %}">Design changed — Regenerate to apply</div>{% endif %}
 	                    {% if generate_v2 and row.regenerate_reason == 'music' %}<span class="created-music-badge is-not-applied" title="Music change has not been applied to this Short"><i class="bi bi-music-note-beamed" aria-hidden="true"></i><span>{% if row.music_audio_id %}Music changed{% else %}Music removed{% endif %} · not applied yet</span></span>{% elif row.has_music %}<span class="created-music-badge" data-music-audio-id="{{ row.rendered_music_audio_id }}" title="Background music"><i class="bi bi-music-note-beamed"></i><span class="created-music-name">Music</span><span class="created-music-level">· {{ row.rendered_music_level }}%</span></span>{% endif %}
 	                    {% if generate_v2 %}
 	                      <div class="generate-v2-render-overlay{% if row.render_job_status not in ['queued', 'processing', 'running'] %} d-none{% endif %}" aria-live="polite">
@@ -8721,6 +8734,7 @@
               <div class="short-video-body"
                data-save-url="{{ editor_url('save_short_settings', video_pk=video.id) }}"
                data-default-save-url="{{ editor_url('save_short_editor_defaults', video_pk=video.id) }}"
+               data-reset-default-url="{{ editor_url('reset_short_editor_design_to_default', video_pk=video.id) if has_short_editor_default else '' }}"
                data-static-audios-url="{{ url_for('video_shorts_bp.list_podcast_audios') }}{{ static_audio_scope_query }}"
                data-selected-podcast-audio="{{ selected_podcast_audio_filename or '' }}"
                data-selected-visual-mode="{{ selected_visual_mode or 'video' }}"
@@ -9470,6 +9484,11 @@
           <button type="button" class="btn btn-outline-primary" id="crop-save-default-btn">
             Save as default
           </button>
+          {% if has_short_editor_default %}
+          <button type="button" class="btn btn-outline-secondary" id="crop-reset-default-btn">
+            Reset to default
+          </button>
+          {% endif %}
           <span id="crop-save-status" class="ms-2 small crop-save-status" aria-live="polite"></span>
         </div>
       </div>
@@ -12698,6 +12717,13 @@ document.addEventListener("DOMContentLoaded", () => {
         }
       });
       saveDefaultButton.innerHTML = originalHtml;
+    }
+  });
+  document.getElementById("generate-v2-editor-reset-default")?.addEventListener("click", async () => {
+    try {
+      await window.cropEditorResetDefault?.();
+    } catch (error) {
+      setGenerateV2EditorStatus(error?.message || "The design could not be reset.", "error");
     }
   });
   document.addEventListener("keydown", (event) => {
@@ -16701,6 +16727,10 @@ const applyServerClipFreshness = (planIndex, freshness) => {
     regenerateButton.title = regenerateLabel;
     regenerateButton.setAttribute("aria-label", regenerateLabel);
   }
+  const designChangeNote = card?.querySelector(".generate-v2-design-change-note");
+  if (designChangeNote) {
+    designChangeNote.classList.toggle("d-none", !needsRegenerate || reason === "music");
+  }
   if (!needsRegenerate) {
     return;
   }
@@ -19698,6 +19728,7 @@ document.addEventListener("DOMContentLoaded", () => {
   const infoEl = modalEl.querySelector("#cropper-info");
   const saveBtn = modalEl.querySelector("#crop-save-btn");
   const saveDefaultBtn = modalEl.querySelector("#crop-save-default-btn");
+  const resetDefaultBtn = modalEl.querySelector("#crop-reset-default-btn");
   const previewCanvas = modalEl.querySelector("#crop-preview");
   const previewCtx = previewCanvas?.getContext("2d");
   const previewConfig = JSON.parse('{{ PREVIEW_CONFIG | tojson | safe }}');
@@ -19859,6 +19890,7 @@ document.addEventListener("DOMContentLoaded", () => {
   const previewToolbarSubtitle = modalEl.querySelector("#crop-preview-toolbar-subtitle");
   const settingsSaveUrl = settingsContainer?.dataset.saveUrl;
   const settingsDefaultSaveUrl = settingsContainer?.dataset.defaultSaveUrl || "";
+  const settingsResetDefaultUrl = settingsContainer?.dataset.resetDefaultUrl || "";
   const initialSubtitleMarginCustom = settingsContainer?.dataset.subtitleMarginCustom === "1";
   const previewFrameStartUrl = modalEl.dataset.previewFrameStartUrl || "";
   const previewFrameStatusUrl = modalEl.dataset.previewFrameStatusUrl || "";
@@ -23394,6 +23426,40 @@ document.addEventListener("DOMContentLoaded", () => {
       saveDefaultBtn.textContent = originalText;
     }
   });
+
+  const resetVideoDesignToDefault = async () => {
+    if (!settingsResetDefaultUrl) {
+      throw new Error("No saved brand default was found.");
+    }
+    if (!window.confirm("Replace this video's design with your saved default?")) {
+      return false;
+    }
+    const response = await fetch(settingsResetDefaultUrl, {
+      method: "POST",
+      credentials: "same-origin",
+      headers: {"X-Requested-With": "XMLHttpRequest"},
+    });
+    const payload = await response.json().catch(() => ({}));
+    if (!response.ok || !payload.success) {
+      throw createGenerateV2SaveError(response, payload, "The design could not be reset.");
+    }
+    window.location.reload();
+    return true;
+  };
+  window.cropEditorResetDefault = resetVideoDesignToDefault;
+
+  resetDefaultBtn?.addEventListener("click", async () => {
+    resetDefaultBtn.disabled = true;
+    setSaveStatus("Resetting design…", "");
+    try {
+      await resetVideoDesignToDefault();
+    } catch (err) {
+      const message = err.message || "The design could not be reset.";
+      setSaveStatus(message, "danger");
+      resetDefaultBtn.disabled = false;
+    }
+  });
+
 
   saveBtn?.addEventListener("click", async () => {
     if (cropSaveInFlight) {

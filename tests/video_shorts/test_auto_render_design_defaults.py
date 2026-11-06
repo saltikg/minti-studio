@@ -6,6 +6,7 @@ from pathlib import Path
 
 import pytest
 from flask import Flask, g, jsonify
+from werkzeug.exceptions import Forbidden
 
 from app.video_shorts.routes import generation
 from app.video_shorts.services import tenant_media
@@ -363,3 +364,190 @@ def test_autopilot_design_without_saved_default_uses_podcast_fallback(monkeypatc
     assert result["source"] == "podcast_fallback"
     assert captured["defaults_override"]["subtitle_preset"] == "podcast"
     assert captured["defaults_override"]["enable_subscribe_overlay"] is False
+
+
+def test_new_self_serve_video_copies_current_brand_default(monkeypatch):
+    saved = {"caption_anchor": "top", "sub_margin": 520, "subtitle_preset": "podcast"}
+    captured = {}
+    monkeypatch.setattr(
+        generation,
+        "get_db_readonly",
+        lambda: _AutopilotLookupConnection([json.dumps(saved), "self_serve"]),
+    )
+    monkeypatch.setattr(
+        generation,
+        "apply_short_editor_defaults_to_video_if_null",
+        lambda **kwargs: captured.update(kwargs) or {"updated": True, "fields": ["caption_anchor"]},
+    )
+
+    result = generation.apply_autopilot_design_to_video(
+        owner_user_id="owner-1", brand_id="brand-1", video_pk=9001
+    )
+
+    assert result["source"] == "saved_default"
+    assert captured["force"] is True
+    assert captured["defaults_override"] == saved
+
+
+@pytest.mark.parametrize("role", ["member", "admin"])
+def test_reset_to_default_route_is_video_scoped_for_customer_and_admin(monkeypatch, role):
+    app = Flask(__name__)
+    captured = {}
+    saved = {"caption_anchor": "top", "sub_margin": 520, "subtitle_preset": "podcast"}
+    monkeypatch.setattr(
+        generation,
+        "_active_editor_context",
+        lambda: {"owner_user_id": "owner-1", "brand_id": "brand-1"},
+    )
+    monkeypatch.setattr(
+        generation,
+        "get_db_readonly",
+        lambda: _AutopilotLookupConnection(("owner-1", "brand-1")),
+    )
+    monkeypatch.setattr(generation, "load_user_preference", lambda *_args: json.dumps(saved))
+    monkeypatch.setattr(
+        generation,
+        "apply_short_editor_defaults_to_video_if_null",
+        lambda **kwargs: captured.update(kwargs) or {"updated": True, "fields": ["caption_anchor"]},
+    )
+
+    with app.test_request_context("/video_shorts/generate/7956/settings/reset-default", method="POST"):
+        g.vs_current_user = {"id": "admin-1" if role == "admin" else "owner-1", "role": role}
+        response = generation.reset_short_editor_design_to_default(7956)
+        payload = response.get_json()
+
+    assert payload["success"] is True
+    assert captured == {
+        "owner_user_id": "owner-1",
+        "brand_id": "brand-1",
+        "video_pk": 7956,
+        "force": True,
+        "defaults_override": saved,
+    }
+
+
+def test_reset_to_default_route_fails_closed_on_video_tenant_mismatch(monkeypatch):
+    app = Flask(__name__)
+    monkeypatch.setattr(
+        generation,
+        "_active_editor_context",
+        lambda: {"owner_user_id": "owner-1", "brand_id": "brand-1"},
+    )
+    monkeypatch.setattr(
+        generation,
+        "get_db_readonly",
+        lambda: _AutopilotLookupConnection(("owner-1", "other-brand")),
+    )
+    with app.test_request_context("/video_shorts/generate/7956/settings/reset-default", method="POST"):
+        g.vs_current_user = {"id": "owner-1", "role": "member"}
+        with pytest.raises(Forbidden):
+            generation.reset_short_editor_design_to_default(7956)
+
+
+def test_force_copy_uses_saved_default_instead_of_existing_video_values(monkeypatch):
+    current = {
+        "subtitle_margin": 871,
+        "subtitle_margin_custom": True,
+        "caption_anchor": "bottom",
+        "subtitle_preset": "yellow_punch",
+    }
+    saved = {
+        "sub_margin": 520,
+        "caption_anchor": "top",
+        "subtitle_preset": "podcast",
+    }
+    conn = _DesignDefaultsConnection(current)
+    monkeypatch.setattr(generation, "get_db", lambda: conn)
+    monkeypatch.setattr(generation, "_ensure_video_crop_schema", lambda _conn: set(current))
+    monkeypatch.setattr(generation, "table_columns", lambda _conn, _table: set(current))
+
+    generation.apply_short_editor_defaults_to_video_if_null(
+        owner_user_id="owner-1",
+        brand_id="brand-1",
+        video_pk=7956,
+        force=True,
+        defaults_override=saved,
+    )
+
+    assert conn.updated["caption_anchor"] == "top"
+    assert conn.updated["subtitle_margin"] == 520
+    assert conn.updated["subtitle_preset"] == "podcast"
+
+
+def test_saved_render_snapshot_hash_detects_design_change():
+    base = {
+        "plan_index": 4,
+        "brand_id": "brand-1",
+        "caption_anchor": "top",
+        "subtitle_margin": 520,
+        "subtitle_highlight_color": "#45B89E",
+        "subtitle_effect": "outline_shadow",
+        "subscribe_overlay_key": "system:subscribe.png",
+    }
+    rendered_hash = generation._render_settings_hash_from_options(base)
+    changed_hash = generation._render_settings_hash_from_options(
+        {**base, "caption_anchor": "bottom", "subtitle_margin": 270}
+    )
+
+    assert rendered_hash != changed_hash
+
+
+def test_save_top_then_render_builder_immediately_uses_persisted_top(monkeypatch):
+    monkeypatch.setattr(generation, "_load_subscribe_overlay_key", lambda *_args: None)
+    monkeypatch.setattr(generation, "choose_deterministic_system_subscribe", lambda *_args: None)
+    monkeypatch.setattr(generation, "load_background_preference", lambda *_args: None)
+    monkeypatch.setattr(
+        generation,
+        "resolve_export_resolution",
+        lambda *_args: type("Resolution", (), {"resolution": "1080"})(),
+    )
+    video = {
+        "id": 7956,
+        "video_id": "source-7956",
+        "owner_user_id": "owner-1",
+        "brand_id": "brand-1",
+        "title": "Peptides for Women 40+",
+        "duration_seconds": 120,
+        "caption_anchor": "top",
+        "subtitle_margin": 520,
+        "subtitle_margin_custom": True,
+        "subtitle_preset": "podcast",
+        "subtitle_style": "plain",
+        "layout_mode": "manual",
+        "show_title": True,
+        "show_subtitle": True,
+    }
+    plan = {"plan_index": 4, "start": 10.0, "end": 30.0, "title": "Doctor's Warning"}
+
+    options = generation._render_settings_options_for_plan_entry(
+        video_pk=7956,
+        video=video,
+        plan_entry=plan,
+        segments=[],
+        brand_id="brand-1",
+        fallback_title=video["title"],
+    )
+
+    assert options["caption_anchor"] == "top"
+    assert options["subtitle_margin"] == 520
+    assert options["export_resolution"] == "1080"
+
+
+def test_editor_template_exposes_reset_and_visible_design_changed_state():
+    template = (ROOT / "app/video_shorts/templates/generate_short.html").read_text(encoding="utf-8")
+
+    assert "Replace this video's design with your saved default?" in template
+    assert 'id="generate-v2-editor-reset-default"' in template
+    assert 'id="crop-reset-default-btn"' in template
+    assert "Design changed — Regenerate to apply" in template
+    assert "{% if has_short_editor_default %}" in template
+
+
+def test_worker_render_route_requires_and_receives_internal_snapshot_marker():
+    worker_source = (ROOT / "app/video_shorts/worker.py").read_text(encoding="utf-8")
+    generation_source = (ROOT / "app/video_shorts/routes/generation.py").read_text(encoding="utf-8")
+
+    assert '"vs_render_worker_job": job' in worker_source
+    assert "Queued render context is invalid." in generation_source
+    assert "Queued render settings failed validation." in generation_source
+    assert "persisted_video_design = _load_video_design_mapping_for_render" in generation_source

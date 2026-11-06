@@ -1896,6 +1896,9 @@ def _execute_render_job(app, job: Dict[str, Any]) -> Dict[str, Any]:
         g_values={
             "vs_current_user": user,
             "vs_current_brand": brand,
+            # Only the durable worker may ask the route to consume a frozen,
+            # server-built render settings snapshot.
+            "vs_render_worker_job": job,
         },
     ):
         try:

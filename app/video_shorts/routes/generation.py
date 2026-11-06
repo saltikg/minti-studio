@@ -9354,9 +9354,15 @@ def apply_short_editor_defaults_to_video_if_null(
             for default_name, column_name in AUTO_RENDER_DESIGN_FIELD_MAP.items()
             if column_name in current_by_column
         }
+        normalized_saved_defaults = _clean_short_editor_default_payload(saved_defaults)
+        # ``force`` is used when a new video receives the brand snapshot and by
+        # Reset to default.  In both cases the saved default is the complete
+        # source of truth; values already present on the row must not leak into
+        # the replacement when the saved field is blank/default-valued.
+        if force:
+            raw_values = {name: None for name in raw_values}
         resolved = _apply_short_editor_defaults(raw_values, saved_defaults)
         if explicit_saved_fields:
-            normalized_saved_defaults = _clean_short_editor_default_payload(saved_defaults)
             for name in explicit_saved_fields:
                 if name in normalized_saved_defaults:
                     resolved[name] = normalized_saved_defaults[name]
@@ -9431,7 +9437,7 @@ def apply_autopilot_design_to_video(
     try:
         row = conn.execute(
             """
-            SELECT p.preference_value
+            SELECT p.preference_value, lower(COALESCE(u.service_mode, ''))
             FROM shorts_users u
             JOIN shorts_brands b
               ON CAST(b.owner_user_id AS VARCHAR) = CAST(u.id AS VARCHAR)
@@ -9440,7 +9446,6 @@ def apply_autopilot_design_to_video(
               ON CAST(p.user_id AS VARCHAR) = CAST(u.id AS VARCHAR)
              AND p.preference_key = ?
             WHERE CAST(u.id AS VARCHAR) = ?
-              AND lower(COALESCE(u.service_mode, '')) = 'autopilot'
             LIMIT 1
             """,
             [clean_brand, _short_editor_defaults_preference_key(clean_brand), clean_owner],
@@ -9448,10 +9453,13 @@ def apply_autopilot_design_to_video(
     finally:
         conn.close()
     if not row:
-        return {"updated": False, "fields": [], "reason": "not_autopilot"}
+        return {"updated": False, "fields": [], "reason": "brand_not_found"}
+    service_mode = str(row[1] or "autopilot").strip().lower() if len(row) > 1 else "autopilot"
     saved_defaults = _decode_short_editor_defaults(row[0], clean_owner) if row[0] is not None else {}
     source = "saved_default"
     if not saved_defaults:
+        if service_mode != "autopilot":
+            return {"updated": False, "fields": [], "reason": "no_saved_default"}
         saved_defaults = _clean_short_editor_default_payload(
             {"subtitle_preset": "podcast", "enable_subscribe_overlay": False}
         )
@@ -9704,7 +9712,7 @@ def execute_auto_suggest_render_job(payload: Dict[str, Any]) -> Dict[str, Any]:
         video_pk=video_pk,
         force=True,
     )
-    if defaults_result.get("reason") == "not_autopilot" and (
+    if defaults_result.get("reason") in {"brand_not_found", "no_saved_default"} and (
         legacy_mode or auto_suggest_mode == "user_added"
     ):
         defaults_result = apply_short_editor_defaults_to_video_if_null(
@@ -10573,6 +10581,8 @@ def _build_render_job_options(
     title_bg_alpha: Optional[int],
     title_text_color: Optional[str],
     subtitle_text_color: Optional[str],
+    subtitle_highlight_color: Optional[str],
+    subtitle_effect: Optional[str],
     subtitle_bg_color: Optional[str],
     subtitle_bg_alpha: Optional[int],
     subtitle_text_alpha: Optional[int],
@@ -10581,6 +10591,7 @@ def _build_render_job_options(
     show_title: bool,
     show_subtitle: bool,
     subscribe_overlay: bool,
+    subscribe_overlay_key: Optional[str],
     subscribe_overlay_image: Optional[str],
     is_music_only: bool,
     static_visual_key: Optional[str],
@@ -10625,6 +10636,8 @@ def _build_render_job_options(
         "title_bg_alpha": title_bg_alpha,
         "title_text_color": title_text_color,
         "subtitle_text_color": subtitle_text_color,
+        "subtitle_highlight_color": subtitle_highlight_color,
+        "subtitle_effect": subtitle_effect,
         "subtitle_bg_color": subtitle_bg_color,
         "subtitle_bg_alpha": subtitle_bg_alpha,
         "subtitle_text_alpha": subtitle_text_alpha,
@@ -10634,6 +10647,7 @@ def _build_render_job_options(
         "title_display_seconds": _normalize_title_display_seconds(title_display_seconds),
         "show_subtitle": bool(show_subtitle),
         "subscribe_overlay": bool(subscribe_overlay),
+        "subscribe_overlay_key": subscribe_overlay_key,
         "subscribe_overlay_image": subscribe_overlay_image,
         "is_music_only": bool(is_music_only),
         "static_visual_key": static_visual_key,
@@ -10700,6 +10714,11 @@ _LEGACY_MUSIC_HASH_FIELDS = (
     "music_duck",
     "music_fade_out",
     "music_speech_ranges",
+)
+_RENDER_HASH_FIELDS_ADDED_AFTER_V3 = (
+    "subtitle_highlight_color",
+    "subtitle_effect",
+    "subscribe_overlay_key",
 )
 
 
@@ -10811,10 +10830,17 @@ def _legacy_render_settings_hash_aliases(options: Dict[str, Any]) -> List[str]:
             {key: value for key, value in variant.items() if key not in _LEGACY_MUSIC_HASH_FIELDS}
             for variant in list(variants)
         ]
+    variants += [
+        {key: value for key, value in variant.items() if key not in _RENDER_HASH_FIELDS_ADDED_AFTER_V3}
+        for variant in list(variants)
+    ]
     for variant in variants:
         value = _raw_render_settings_hash_from_options(variant)
         if value not in aliases:
             aliases.append(value)
+        prefixed_value = f"v3:{value}"
+        if prefixed_value not in aliases:
+            aliases.append(prefixed_value)
     return aliases
 
 
@@ -11012,8 +11038,9 @@ def _render_settings_options_for_plan_entry(
         auto_subscribe_path = choose_deterministic_system_subscribe(str(video.get("video_id") or ""))
         if auto_subscribe_path:
             subscribe_key = make_system_subscribe_key(auto_subscribe_path.name)
-    background_key = load_background_preference(owner_user_id, brand_id) if owner_user_id else None
-    background_key = background_key or video.get("background_visual_key")
+    background_key = video.get("background_visual_key")
+    if not background_key and owner_user_id:
+        background_key = load_background_preference(owner_user_id, brand_id)
     subtitle_style = str(video.get("subtitle_style") or "plain").strip().lower()
     if subtitle_style not in {"plain", "karaoke"}:
         subtitle_style = "plain"
@@ -11056,6 +11083,12 @@ def _render_settings_options_for_plan_entry(
         title_bg_alpha=_normalize_alpha_percent(video.get("title_bg_alpha"), DEFAULT_EDITOR_TITLE_BG_ALPHA),
         title_text_color=_normalize_hex_color(video.get("title_text_color"), DEFAULT_EDITOR_TITLE_TEXT_COLOR),
         subtitle_text_color=_normalize_hex_color(video.get("subtitle_text_color"), DEFAULT_SUBTITLE_TEXT_COLOR),
+        subtitle_highlight_color=_normalize_hex_color(
+            video.get("subtitle_highlight_color"), SUBTITLE_HIGHLIGHT_COLOR
+        ),
+        subtitle_effect=resolve_caption_effect(
+            video.get("subtitle_effect"), SUBTITLE_PRESETS.get(subtitle_preset)
+        ),
         subtitle_bg_color=_normalize_hex_color(video.get("subtitle_bg_color"), DEFAULT_SUBTITLE_BG_COLOR),
         subtitle_bg_alpha=_normalize_alpha_percent(video.get("subtitle_bg_alpha"), DEFAULT_SUBTITLE_BG_ALPHA),
         subtitle_text_alpha=_normalize_alpha_percent(video.get("subtitle_text_alpha"), DEFAULT_SUBTITLE_TEXT_ALPHA),
@@ -11065,6 +11098,7 @@ def _render_settings_options_for_plan_entry(
         title_display_seconds=_normalize_title_display_seconds(video.get("title_display_seconds")),
         show_subtitle=_normalize_optional_bool(video.get("show_subtitle"), default=True),
         subscribe_overlay=_normalize_optional_bool(video.get("subscribe_overlay_enabled"), default=True),
+        subscribe_overlay_key=subscribe_key,
         subscribe_overlay_image=_subscribe_storage_reference_for_asset(
             subscribe_key,
             expected_owner_user_id=owner_user_id,
@@ -11765,6 +11799,32 @@ def _fetch_scoped_video_row_with_scope(
     else:
         sql += " AND brand_id IS NULL"
     return conn.execute(sql, params).fetchone()
+
+
+def _load_video_design_mapping_for_render(
+    *, video_pk: int, owner_user_id: str, brand_id: Optional[str]
+) -> Optional[Dict[str, Any]]:
+    """Load a render design from the persisted, explicitly scoped video row."""
+    conn = get_db_readonly()
+    try:
+        sql = "SELECT * FROM youtube_videos WHERE id = ? AND deleted_at IS NULL AND owner_user_id = ?"
+        params: List[Any] = [int(video_pk), owner_user_id]
+        if brand_id:
+            sql += " AND brand_id = ?"
+            params.append(brand_id)
+        else:
+            sql += " AND brand_id IS NULL"
+        result = conn.execute(sql, params)
+        row = result.fetchone()
+        if not row:
+            return None
+        mapping = dict(zip([str(item[0]) for item in (result.description or [])], row))
+        mapping["layout_mode"] = _effective_layout_mode_for_owner(
+            mapping.get("owner_user_id"), mapping.get("layout_mode")
+        )
+        return mapping
+    finally:
+        conn.close()
 
 
 def _format_lead_workspace_elapsed(started_at: Any, finished_at: Any) -> str:
@@ -15876,6 +15936,7 @@ def generate_short(video_pk):
         selected_music_duck=selected_music_duck,
         selected_music_fade_out=selected_music_fade_out,
         short_editor_design_field_names=SHORT_EDITOR_DESIGN_FIELD_NAMES,
+        has_short_editor_default=short_editor_defaults_source == "scoped",
         debug_info=debug_info,
         clip_rows=clip_rows,
         clip_edit_words=clip_edit_words,
@@ -17568,6 +17629,66 @@ def save_short_editor_defaults(video_pk: int):
         current_app.logger.warning("Failed to save short editor defaults for %s: %s", owner_user_id, exc)
         return jsonify({"success": False, "message": "Defaults could not be saved."}), 500
     return jsonify({"success": True, "defaults": payload})
+
+
+@video_shorts_bp.route("/generate/<int:video_pk>/settings/reset-default", methods=["POST"])
+def reset_short_editor_design_to_default(video_pk: int):
+    """Replace one video's saved design with its tenant-scoped brand default."""
+    current_user = getattr(g, "vs_current_user", None)
+    if not str((current_user or {}).get("id") or "").strip():
+        return jsonify({"success": False, "message": "Authentication required."}), 401
+    editor_context = _active_editor_context()
+    owner_user_id = str(editor_context.get("owner_user_id") or "").strip()
+    brand_id = str(editor_context.get("brand_id") or "").strip()
+    if not owner_user_id or not brand_id:
+        abort(403)
+
+    conn = get_db_readonly()
+    try:
+        video_tenant = conn.execute(
+            """
+            SELECT CAST(owner_user_id AS VARCHAR), CAST(brand_id AS VARCHAR)
+            FROM youtube_videos
+            WHERE id = ? AND deleted_at IS NULL
+            LIMIT 1
+            """,
+            [video_pk],
+        ).fetchone()
+    finally:
+        conn.close()
+    if not video_tenant:
+        return jsonify({"success": False, "message": "Video not found."}), 404
+    if str(video_tenant[0] or "").strip() != owner_user_id or str(video_tenant[1] or "").strip() != brand_id:
+        abort(403)
+
+    raw_default = load_user_preference(
+        owner_user_id,
+        _short_editor_defaults_preference_key(brand_id),
+    )
+    if raw_default is None:
+        return jsonify({"success": False, "message": "No saved brand default was found."}), 404
+    defaults = _decode_short_editor_defaults(raw_default, owner_user_id)
+    if not defaults:
+        return jsonify({"success": False, "message": "No saved brand default was found."}), 404
+    try:
+        result = apply_short_editor_defaults_to_video_if_null(
+            owner_user_id=owner_user_id,
+            brand_id=brand_id,
+            video_pk=video_pk,
+            force=True,
+            defaults_override=defaults,
+        )
+    except Exception:
+        current_app.logger.exception(
+            "Failed to reset video design to brand default video_pk=%s owner=%s brand=%s",
+            video_pk,
+            owner_user_id,
+            brand_id,
+        )
+        return jsonify({"success": False, "message": "The design could not be reset."}), 500
+    if result.get("reason") == "video_not_found":
+        abort(403)
+    return jsonify({"success": True, "defaults": defaults, "updated_fields": result.get("fields") or []})
 
 
 @video_shorts_bp.route("/generate/<int:video_pk>/create_long_from_shorts", methods=["POST"])
@@ -27604,7 +27725,6 @@ def adjust_clip_timing(video_pk):
         plan_index = int(plan_index_raw)
     except Exception:
         return _respond("Clip index is invalid.", status=400, category="danger")
-
     title_raw = request.form.get("title")
     title_candidate = title_raw.strip() if title_raw is not None else ""
     start_time_raw = (request.form.get("start_time") or "").strip()
@@ -32623,7 +32743,11 @@ def autoclip_video(video_pk):
     cleanup_video_shorts_temp_dir()
     plan_index_raw = (request.form.get("plan_index") or "").strip()
     is_ajax = request.headers.get("X-Requested-With") == "XMLHttpRequest"
-    queued_job = (request.form.get("_queued_job") or "").strip() in {"1", "true", "yes"}
+    queued_job_requested = (request.form.get("_queued_job") or "").strip() in {"1", "true", "yes"}
+    render_worker_job = getattr(g, "vs_render_worker_job", None)
+    if queued_job_requested and not isinstance(render_worker_job, dict):
+        return jsonify({"success": False, "message": "Queued render context is invalid."}), 403
+    queued_job = queued_job_requested
     regenerate_job = (request.form.get("_regenerate_job") or "").strip() in {"1", "true", "yes"}
     auto_render_job = (request.form.get("_auto_render_job") or "").strip() in {"1", "true", "yes"}
     internal_auto_context = getattr(g, "vs_auto_suggest_render_context", None) or {}
@@ -32644,6 +32768,11 @@ def autoclip_video(video_pk):
         queued_render_settings_options = {}
     if not isinstance(queued_render_settings_options, dict):
         queued_render_settings_options = {}
+    if queued_job:
+        if not queued_render_settings_hash or not queued_render_settings_options:
+            return jsonify({"success": False, "message": "Queued render settings are missing."}), 409
+        if _render_settings_hash_from_options(queued_render_settings_options) != queued_render_settings_hash:
+            return jsonify({"success": False, "message": "Queued render settings failed validation."}), 409
 
     def _respond(message, success=False, status=200, category="info", extras=None, redirect_to=None):
         if is_ajax:
@@ -32660,6 +32789,15 @@ def autoclip_video(video_pk):
     editor_context = _active_editor_context()
     target_owner_user_id = editor_context["owner_user_id"]
     brand_id = editor_context["brand_id"]
+    if queued_job:
+        worker_payload = dict((render_worker_job or {}).get("payload") or {})
+        if (
+            str((render_worker_job or {}).get("user_id") or "").strip() != str(target_owner_user_id or "").strip()
+            or str(worker_payload.get("brand_id") or "").strip() != str(brand_id or "").strip()
+            or int(worker_payload.get("video_pk") or 0) != int(video_pk)
+            or str(queued_render_settings_options.get("brand_id") or "").strip() != str(brand_id or "").strip()
+        ):
+            return jsonify({"success": False, "message": "Queued render tenant mismatch."}), 403
     owner_autopilot_quota_exempt = is_autopilot_quota_exempt(target_owner_user_id)
     owner_quota_exempt = admin_quota_exempt or owner_autopilot_quota_exempt
     target_owner_plan_id = (
@@ -32702,6 +32840,8 @@ def autoclip_video(video_pk):
         plan_index = int(plan_index_raw)
     except Exception:
         return _respond("Clip index is invalid.", status=400, category="danger")
+    if queued_job and int(queued_render_settings_options.get("plan_index") or 0) != plan_index:
+        return _respond("Queued render clip mismatch.", status=403, category="danger")
 
     video_info = _fetch_video_with_transcript(video_pk)
     if not video_info:
@@ -33399,6 +33539,57 @@ def autoclip_video(video_pk):
         video_title_line_spacing = int(video_title_line_spacing if video_title_line_spacing is not None else -4)
     except Exception:
         video_title_line_spacing = -4
+    # A render job carries a frozen snapshot that was built on the server from
+    # the video's persisted design.  The worker must render that snapshot, not
+    # re-resolve mutable defaults/session state and not accept browser fields.
+    queued_subscribe_overlay_key = None
+    if queued_job:
+        snapshot = queued_render_settings_options
+        video_crop_ratios = dict(snapshot.get("crop_ratios") or {})
+        video_crop_aspect = str(snapshot.get("crop_aspect") or "landscape")
+        video_layout_mode = _normalize_layout_mode(snapshot.get("layout_mode"))
+        video_font_key = snapshot.get("title_font_key") or DEFAULT_EDITOR_TITLE_FONT_KEY
+        video_title_font_size = snapshot.get("title_font_size") or DEFAULT_EDITOR_TITLE_FONT_SIZE
+        video_sub_font_key = snapshot.get("subtitle_font_key")
+        video_sub_font_size = snapshot.get("subtitle_font_size")
+        video_sub_margin = snapshot.get("subtitle_margin")
+        video_caption_anchor = str(snapshot.get("caption_anchor") or "bottom").strip().lower()
+        video_sub_margin_custom = snapshot.get("subtitle_margin_custom")
+        video_subtitle_style = str(snapshot.get("subtitle_style") or "plain").strip().lower()
+        video_subtitle_preset = str(snapshot.get("subtitle_preset") or DEFAULT_SUBTITLE_PRESET)
+        video_title_uppercase = bool(snapshot.get("title_uppercase"))
+        video_subtitle_uppercase = bool(snapshot.get("subtitle_uppercase"))
+        video_title_margin = snapshot.get("title_margin")
+        video_title_line_spacing = snapshot.get("title_line_spacing")
+        video_title_bg_color = snapshot.get("title_bg_color")
+        video_title_bg_alpha = snapshot.get("title_bg_alpha")
+        video_title_text_color = snapshot.get("title_text_color")
+        video_subtitle_text_color = snapshot.get("subtitle_text_color")
+        video_subtitle_highlight_color = snapshot.get("subtitle_highlight_color")
+        video_subtitle_effect = snapshot.get("subtitle_effect")
+        video_subtitle_bg_color = snapshot.get("subtitle_bg_color")
+        video_subtitle_bg_alpha = snapshot.get("subtitle_bg_alpha")
+        video_subtitle_text_alpha = snapshot.get("subtitle_text_alpha")
+        video_date_text = snapshot.get("date_text")
+        video_date_top = snapshot.get("date_top")
+        video_show_title = bool(snapshot.get("show_title"))
+        video_title_display_seconds = _normalize_title_display_seconds(snapshot.get("title_display_seconds"))
+        video_show_subtitle = bool(snapshot.get("show_subtitle"))
+        video_subscribe_overlay = bool(snapshot.get("subscribe_overlay"))
+        queued_subscribe_overlay_key = snapshot.get("subscribe_overlay_key")
+        video_is_music_only = bool(snapshot.get("is_music_only"))
+        video_static_visual_key = snapshot.get("static_visual_key")
+        video_background_visual_key = snapshot.get("background_visual_key")
+        video_visual_mode = str(snapshot.get("visual_mode") or "video").strip().lower()
+        video_podcast_audio_filename = str(snapshot.get("podcast_audio_filename") or "").strip()
+        video_podcast_overlay_short_ids = list(snapshot.get("podcast_overlay_short_ids") or [])[:2]
+        video_overlay_offset = snapshot.get("video_overlay_offset")
+        video_overlay_shapes = _normalize_overlay_shapes(snapshot.get("overlay_shapes"))
+        video_music_audio_id = _normalize_music_audio_id(snapshot.get("music_audio_id"))
+        video_music_level = normalize_music_level(snapshot.get("music_level"))
+        video_music_start_seconds = normalize_music_start_seconds(snapshot.get("music_start_seconds"))
+        video_music_duck = _normalize_optional_bool(snapshot.get("music_duck"), default=True)
+        video_music_fade_out = _normalize_optional_bool(snapshot.get("music_fade_out"), default=True)
     outreach_render = _is_discovery_demo_scope(
         target_owner_user_id,
         brand_id,
@@ -33523,6 +33714,12 @@ def autoclip_video(video_pk):
         expected_owner_user_id=video_owner_user_id,
         expected_brand_id=brand_id,
     )
+    if queued_job:
+        selected_subscribe_overlay_key = _normalize_subscribe_overlay_key(
+            queued_subscribe_overlay_key,
+            expected_owner_user_id=video_owner_user_id,
+            expected_brand_id=brand_id,
+        )
     if not selected_subscribe_overlay_key:
         auto_subscribe_path = choose_deterministic_system_subscribe(vid)
         if auto_subscribe_path:
@@ -33532,6 +33729,8 @@ def autoclip_video(video_pk):
     effective_export_resolution = resolve_export_resolution(
         video_owner_user_id or target_owner_user_id
     ).resolution
+    if queued_job:
+        effective_export_resolution = str(queued_render_settings_options.get("export_resolution") or "720")
     if outreach_render:
         effective_export_resolution = "720"
     if not queued_job:
@@ -33581,6 +33780,8 @@ def autoclip_video(video_pk):
                 title_bg_alpha=video_title_bg_alpha,
                 title_text_color=video_title_text_color,
                 subtitle_text_color=video_subtitle_text_color,
+                subtitle_highlight_color=video_subtitle_highlight_color,
+                subtitle_effect=video_subtitle_effect,
                 subtitle_bg_color=video_subtitle_bg_color,
                 subtitle_bg_alpha=video_subtitle_bg_alpha,
                 subtitle_text_alpha=video_subtitle_text_alpha,
@@ -33590,6 +33791,7 @@ def autoclip_video(video_pk):
                 title_display_seconds=video_title_display_seconds,
                 show_subtitle=video_show_subtitle,
                 subscribe_overlay=video_subscribe_overlay,
+                subscribe_overlay_key=selected_subscribe_overlay_key,
                 subscribe_overlay_image=_subscribe_storage_reference_for_asset(
                     selected_subscribe_overlay_key,
                     expected_owner_user_id=video_owner_user_id,
@@ -33615,6 +33817,27 @@ def autoclip_video(video_pk):
                 job_options["edit_keep_ranges"] = edit_keep_ranges_for_job
             if media_duration_seconds:
                 job_options["media_duration_seconds"] = media_duration_seconds
+            persisted_video_design = _load_video_design_mapping_for_render(
+                video_pk=int(video_pk),
+                owner_user_id=str(target_owner_user_id),
+                brand_id=brand_id,
+            )
+            if not persisted_video_design:
+                return _respond(
+                    "The saved video design could not be revalidated.",
+                    status=403,
+                    category="danger",
+                )
+            job_options = _render_settings_options_for_plan_entry(
+                video_pk=int(video_pk),
+                video=persisted_video_design,
+                plan_entry=plan_entry,
+                segments=segments,
+                brand_id=brand_id,
+                fallback_title=video_title,
+            )
+            if outreach_render:
+                job_options["export_resolution"] = "720"
             render_settings_hash = _render_settings_hash_from_options(job_options)
             input_hash = build_input_hash(
                 source_id=vid,
@@ -34314,7 +34537,11 @@ def autoclip_video(video_pk):
                 "original_zoom_rect",
             }
         }
-        preferred_bg_key = load_background_preference(video_owner_user_id, brand_id) if video_owner_user_id else None
+        preferred_bg_key = (
+            None
+            if queued_job
+            else (load_background_preference(video_owner_user_id, brand_id) if video_owner_user_id else None)
+        )
         bg_visual_key = preferred_bg_key or video_background_visual_key
         if selected_subscribe_overlay_key:
             subscribe_overlay_path, subscribe_overlay_path_is_temp = _resolve_subscribe_overlay_path(
