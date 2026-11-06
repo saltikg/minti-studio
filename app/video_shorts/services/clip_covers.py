@@ -250,6 +250,11 @@ def _candidate_frames(clip_path: Path) -> tuple[list[dict[str, Any]], float]:
             continue
         h, w = frame.shape[:2]
         try:
+            if detector is None:
+                detector = cv2.FaceDetectorYN_create(
+                    str(generation._YUNET_FACE_MODEL_PATH), "", (int(w), int(h)),
+                    float(generation._YUNET_FACE_SCORE_THRESHOLD), 0.3, 5000,
+                )
             faces = generation._yunet_face_detection_ratios(cv2, frame, w, h, detector=detector)
         except Exception:
             faces = []
@@ -417,7 +422,24 @@ def generate_cover(payload: dict[str, Any]) -> dict[str, Any]:
     storage = get_media_storage()
     clip_temp = storage.download_to_temp(target["clip_storage_key"])
     try:
-        candidates, duration = _candidate_frames(Path(clip_temp))
+        existing_candidates = _parse_json(existing[3]) if existing and existing[3] else []
+        is_cover_edit = bool(
+            existing_candidates
+            and (
+                payload.get("cover_text")
+                or payload.get("highlight_phrase")
+                or payload.get("selected_timestamp") is not None
+            )
+        )
+        if is_cover_edit:
+            candidates = existing_candidates
+            import cv2
+            probe = cv2.VideoCapture(str(clip_temp))
+            probe_fps = float(probe.get(cv2.CAP_PROP_FPS) or 30.0)
+            duration = float(probe.get(cv2.CAP_PROP_FRAME_COUNT) or 0.0) / probe_fps
+            probe.release()
+        else:
+            candidates, duration = _candidate_frames(Path(clip_temp))
         selected_ts = float(payload.get("selected_timestamp") if payload.get("selected_timestamp") is not None else candidates[0]["timestamp"])
         if selected_ts < 0.5 or (duration > 1.0 and selected_ts > duration - 0.5):
             selected_ts = max(0.5, min(selected_ts, max(0.5, duration - 0.5)))
