@@ -337,7 +337,17 @@ def _candidate_frames(
         })
     cap.release()
     faces = [item for item in scored if item.get("face")]
-    ranked = sorted(faces or scored, key=lambda item: float(item["score"]), reverse=True)[:5]
+    preferred = faces or scored
+    eyes_open = [item for item in preferred if item.get("eyes_open")]
+    if eyes_open:
+        preferred = eyes_open
+    mouths_closed = [item for item in preferred if item.get("mouth_mostly_closed")]
+    if mouths_closed:
+        preferred = mouths_closed
+    selected_best = max(preferred, key=lambda item: float(item["score"]), default=None)
+    all_ranked = sorted(faces or scored, key=lambda item: float(item["score"]), reverse=True)
+    ranked = ([selected_best] if selected_best else []) + [item for item in all_ranked if item is not selected_best]
+    ranked = ranked[:5]
     if not ranked:
         middle = _source_time_for_clip_offset(source_ranges, duration / 2.0)
         ranked = [{"timestamp": round(middle, 3), "source_timestamp": round(middle, 3),
