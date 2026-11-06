@@ -10,6 +10,7 @@ from app.video_shorts.services.clip_covers import (
     _contrast_ratio,
     _fit_cover_layout,
     _highlight_word_indexes,
+    _mouth_region_is_obscured,
     _resolve_cover_colors,
     _thumbnail_copy_fallback,
 )
@@ -76,3 +77,9 @@ def test_long_copy_requests_a_rewrite_instead_of_silently_dropping_words():
 
     fallback = _thumbnail_copy_fallback(text)
     assert fallback == "Kıtlık kilo verilemiyor"
+
+
+def test_missing_mouth_contrast_marks_face_as_occluded():
+    assert _mouth_region_is_obscured("neutral", 0.0087) is True
+    assert _mouth_region_is_obscured("neutral", 0.0256) is False
+    assert _mouth_region_is_obscured("unknown", 0.0) is False

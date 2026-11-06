@@ -34,6 +34,7 @@ MAX_COVER_FONT_SIZE = 174
 COVER_TEXT_MAX_WIDTH = int(COVER_WIDTH * 0.86)
 FACE_SHARPNESS_MIN = 45.0
 FACE_CONFIDENCE_MIN = 0.86
+MOUTH_VISIBILITY_DARK_RATIO_MIN = 0.012
 LIGHT_BOX_HIGHLIGHT_FALLBACK = "#E11D48"
 DARK_BOX_HIGHLIGHT_FALLBACK = "#FFD400"
 
@@ -418,6 +419,10 @@ def _mouth_state(gray: Any, face: dict[str, Any], smile_detector: Any) -> tuple[
     return ("slight_smile" if len(smiles) else "neutral"), dark_ratio
 
 
+def _mouth_region_is_obscured(mouth_state: str, dark_ratio: float) -> bool:
+    return mouth_state != "unknown" and float(dark_ratio) < MOUTH_VISIBILITY_DARK_RATIO_MIN
+
+
 def _candidate_frames(
     source_path: Path,
     source_ranges: list[tuple[float, float]],
@@ -468,6 +473,7 @@ def _candidate_frames(
         face_sharpness = 0.0
         mouth_state = "unknown"
         mouth_dark_ratio = 0.0
+        mouth_obscured = False
         face_occluded = False
         rejection_reasons: list[str] = []
         if face:
@@ -485,9 +491,11 @@ def _candidate_frames(
                 mouth_state, mouth_dark_ratio = _mouth_state(gray, face, smile_detector)
             except Exception:
                 pass
+            mouth_obscured = _mouth_region_is_obscured(mouth_state, mouth_dark_ratio)
             face_occluded = (
                 float(face.get("confidence") or 0.0) < FACE_CONFIDENCE_MIN
                 or not _landmark_geometry_is_visible(face)
+                or mouth_obscured
             )
             if not eyes_open:
                 rejection_reasons.append("eyes_closed_or_not_visible")
@@ -513,7 +521,8 @@ def _candidate_frames(
             "clip_timestamp": round(float(clip_ts), 3), "score": round(score, 3),
             "frame_sharpness": round(frame_sharpness, 2), "face_sharpness": round(face_sharpness, 2),
             "eyes_open": eyes_open, "eye_count": eye_count, "mouth_state": mouth_state,
-            "mouth_dark_ratio": round(mouth_dark_ratio, 4), "face_occluded": face_occluded,
+            "mouth_dark_ratio": round(mouth_dark_ratio, 4), "mouth_obscured": mouth_obscured,
+            "face_occluded": face_occluded,
             "eligible": eligible, "rejection_reasons": rejection_reasons, "face": stored_face,
         })
     cap.release()
