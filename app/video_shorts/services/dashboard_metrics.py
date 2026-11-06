@@ -711,22 +711,42 @@ def load_long_form_effect_metrics(
     end_date: date,
 ) -> Dict[str, object]:
     """Return tenant-scoped VOD views for a range and its pre-Minti baseline."""
+    # Provider timestamps can be historical imports (and therefore predate the
+    # customer's Minti workflow). A publication close to the Minti record creation
+    # is authoritative; otherwise creation marks the start of the imported series.
     first_publish_row = conn.execute(
         """
-        SELECT MIN(LEAST(
-            youtube_published_at,
-            instagram_published_at,
-            facebook_published_at,
-            published_at
-        ))
+        SELECT
+            MIN(created_at) AS first_created_at,
+            MIN(LEAST(
+                CASE WHEN youtube_published_at BETWEEN created_at AND created_at + INTERVAL '45 days'
+                     THEN youtube_published_at END,
+                CASE WHEN instagram_published_at BETWEEN created_at AND created_at + INTERVAL '45 days'
+                     THEN instagram_published_at END,
+                CASE WHEN facebook_published_at BETWEEN created_at AND created_at + INTERVAL '45 days'
+                     THEN facebook_published_at END,
+                CASE WHEN published_at BETWEEN created_at AND created_at + INTERVAL '45 days'
+                     THEN published_at END
+            )) AS first_workflow_publish_at
         FROM shorts_generated_videos
         WHERE CAST(user_id AS VARCHAR) = CAST(? AS VARCHAR)
           AND CAST(brand_id AS VARCHAR) = CAST(? AS VARCHAR)
           AND lower(COALESCE(publish_status, '')) = 'published'
+          AND COALESCE(
+              youtube_published_at,
+              instagram_published_at,
+              facebook_published_at,
+              published_at
+          ) IS NOT NULL
         """,
         [owner_user_id, brand_id],
     ).fetchone()
-    first_publish_date = _as_pt_date(first_publish_row[0] if first_publish_row else None)
+    first_publish_value = (
+        (first_publish_row[1] or first_publish_row[0])
+        if first_publish_row
+        else None
+    )
+    first_publish_date = _as_pt_date(first_publish_value)
     if first_publish_date is None:
         return {
             "status": "Pending",
@@ -742,6 +762,9 @@ def load_long_form_effect_metrics(
             "baseline_days": 0,
             "change_percent": None,
             "data_through_date": None,
+            "first_minti_publication_date": None,
+            "days_after_first_publication": 0,
+            "trend_status": "too_early",
         }
 
     baseline_start, baseline_end = _calendar_month_before(first_publish_date)
@@ -798,6 +821,14 @@ def load_long_form_effect_metrics(
         and baseline_average > 0
         else None
     )
+    data_through_date = _as_date(row[4] if row else None)
+    observed_end = min(end_date, data_through_date) if data_through_date else None
+    observed_start = max(start_date, first_publish_date)
+    days_after_first_publication = (
+        (observed_end - observed_start).days + 1
+        if observed_end is not None and observed_end >= observed_start
+        else 0
+    )
     return {
         "status": "ready" if range_average is not None else "Pending",
         "range_start": start_date,
@@ -811,7 +842,15 @@ def load_long_form_effect_metrics(
         "baseline_views_per_day": baseline_average,
         "baseline_days": baseline_days,
         "change_percent": change_percent,
-        "data_through_date": _as_date(row[4] if row else None),
+        "data_through_date": data_through_date,
+        "first_minti_publication_date": first_publish_date,
+        "days_after_first_publication": days_after_first_publication,
+        "trend_status": (
+            "too_early"
+            if days_after_first_publication
+            < int(REPORT_VERDICT_THRESHOLDS["long_form_min_days"])
+            else "ready"
+        ),
     }
 
 
@@ -1069,6 +1108,289 @@ REPORT_TIPS = (
     "Repeat the topics your audience finishes most often, then test a new opening line.",
 )
 
+REPORT_VERDICT_THRESHOLDS = {
+    "platform_ratio": 2.0,
+    "average_watched_percent": 60.0,
+    "dominant_traffic_percent": 40.0,
+    "mom_views_percent": 20.0,
+    "shorts_feed_opportunity_percent": 30.0,
+    "analytics_lag_days": 2,
+    "long_form_min_days": 7,
+}
+
+REPORT_PLATFORM_LABELS = {
+    "youtube": "YouTube",
+    "instagram": "Instagram",
+    "facebook": "Facebook",
+}
+
+
+def _mom_result(
+    current: Optional[int],
+    previous: Optional[int],
+    *,
+    previous_label: str,
+) -> Dict[str, object]:
+    if previous is None or previous <= 0:
+        return {
+            "current": current,
+            "previous": previous,
+            "percent": None,
+            "direction": "first",
+            "label": "First month",
+        }
+    current_value = int(current or 0)
+    percent = (current_value - previous) * 100.0 / previous
+    if percent > 0:
+        direction = "up"
+        label = f"↑ {abs(percent):.0f}% vs {previous_label}"
+    elif percent < 0:
+        direction = "down"
+        label = f"↓ {abs(percent):.0f}% vs {previous_label}"
+    else:
+        direction = "flat"
+        label = f"0% vs {previous_label}"
+    return {
+        "current": current_value,
+        "previous": int(previous),
+        "percent": round(percent, 1),
+        "direction": direction,
+        "label": label,
+    }
+
+
+def build_monthly_report_summary(
+    *,
+    current_totals: Mapping[str, Mapping[str, Optional[int]]],
+    connections: Mapping[str, bool],
+    youtube_insights: Mapping[str, object],
+    monthly_comparison: Mapping[str, Mapping[str, object]],
+    start_date: date,
+    end_date: date,
+    today: date,
+) -> Dict[str, object]:
+    """Build reusable rule-based report headline and verdict rows."""
+    lag_days = int(REPORT_VERDICT_THRESHOLDS["analytics_lag_days"])
+    analytics_target_end = min(end_date, today - timedelta(days=lag_days))
+    analytics_latest = _as_date(youtube_insights.get("latest_date"))
+    analytics_complete = bool(
+        analytics_latest
+        and analytics_target_end >= start_date
+        and analytics_latest >= analytics_target_end
+    )
+
+    strengths: List[Dict[str, object]] = []
+    opportunities: List[Dict[str, object]] = []
+    connected_views = sorted(
+        (
+            (
+                platform,
+                int((current_totals.get(platform) or {}).get("views") or 0),
+            )
+            for platform in PLATFORMS
+            if connections.get(platform)
+        ),
+        key=lambda item: item[1],
+        reverse=True,
+    )
+    platform_fact: Optional[Dict[str, object]] = None
+    if len(connected_views) >= 2 and connected_views[1][1] > 0:
+        leader, leader_views = connected_views[0]
+        runner, runner_views = connected_views[1]
+        ratio = leader_views / runner_views
+        if ratio >= float(REPORT_VERDICT_THRESHOLDS["platform_ratio"]):
+            platform_fact = {
+                "kind": "strength",
+                "tag": "Strength",
+                "metric": f"{REPORT_PLATFORM_LABELS[leader]} is leading",
+                "value": f"{ratio:.1f}×",
+                "context": f"your {REPORT_PLATFORM_LABELS[runner]} views",
+                "score": 100.0 + ratio,
+                "fact": "platform_ratio",
+                "platform": leader,
+                "runner": runner,
+            }
+            strengths.append(platform_fact)
+
+    traffic = [
+        item
+        for item in (youtube_insights.get("traffic_sources") or [])
+        if float(item.get("percent") or 0) > 0
+    ]
+    dominant = max(
+        traffic,
+        key=lambda item: float(item.get("percent") or 0),
+        default=None,
+    )
+    dominant_fact: Optional[Dict[str, object]] = None
+    dominant_percent = float((dominant or {}).get("percent") or 0)
+    if (
+        analytics_complete
+        and dominant
+        and dominant_percent
+        >= float(REPORT_VERDICT_THRESHOLDS["dominant_traffic_percent"])
+    ):
+        dominant_fact = {
+            "kind": "strength",
+            "tag": "Strength",
+            "metric": f"{dominant.get('label')} is working",
+            "value": f"{dominant_percent:.0f}%",
+            "context": "of attributed YouTube views",
+            "score": 80.0 + dominant_percent / 10.0,
+            "fact": "traffic_source",
+            "source_key": dominant.get("key"),
+            "source_label": dominant.get("label"),
+        }
+        strengths.append(dominant_fact)
+
+    average_watched = youtube_insights.get("average_view_percentage")
+    if (
+        analytics_complete
+        and average_watched is not None
+        and float(average_watched)
+        >= float(REPORT_VERDICT_THRESHOLDS["average_watched_percent"])
+    ):
+        strengths.append(
+            {
+                "kind": "strength",
+                "tag": "Strength",
+                "metric": "Viewers keep watching",
+                "value": f"{float(average_watched):.0f}%",
+                "context": "watched on average",
+                "score": 60.0 + float(average_watched) / 10.0,
+                "fact": "retention",
+            }
+        )
+
+    views_mom = monthly_comparison.get("views") or {}
+    views_growth = views_mom.get("percent")
+    if (
+        views_growth is not None
+        and float(views_growth)
+        >= float(REPORT_VERDICT_THRESHOLDS["mom_views_percent"])
+    ):
+        strengths.append(
+            {
+                "kind": "strength",
+                "tag": "Strength",
+                "metric": "Views grew",
+                "value": f"+{float(views_growth):.0f}%",
+                "context": str(views_mom.get("label") or "month over month").lstrip("↑ "),
+                "score": 70.0 + min(float(views_growth), 200.0) / 20.0,
+                "fact": "mom_views",
+            }
+        )
+
+    subscribers = youtube_insights.get("subscribers_gained")
+    if analytics_complete and subscribers is not None and int(subscribers) > 0:
+        strengths.append(
+            {
+                "kind": "strength",
+                "tag": "Strength",
+                "metric": "Shorts gained subscribers",
+                "value": f"+{int(subscribers):,}",
+                "context": "new YouTube subscribers from Shorts",
+                "score": 50.0 + min(int(subscribers), 500) / 100.0,
+                "fact": "subscribers",
+            }
+        )
+
+    shorts_feed = next(
+        (
+            item
+            for item in traffic
+            if str(item.get("key") or "") == "shorts_feed_views"
+        ),
+        None,
+    )
+    shorts_feed_percent = float((shorts_feed or {}).get("percent") or 0)
+    if (
+        analytics_complete
+        and shorts_feed is not None
+        and shorts_feed_percent
+        < float(REPORT_VERDICT_THRESHOLDS["shorts_feed_opportunity_percent"])
+    ):
+        opportunities.append(
+            {
+                "kind": "opportunity",
+                "tag": "Opportunity",
+                "metric": "Shorts feed",
+                "value": f"{shorts_feed_percent:.0f}%",
+                "context": "the feed is still learning your channel",
+                "score": 90.0 - shorts_feed_percent,
+                "fact": "shorts_feed",
+            }
+        )
+    if analytics_complete and subscribers is not None and int(subscribers) == 0:
+        opportunities.append(
+            {
+                "kind": "opportunity",
+                "tag": "Opportunity",
+                "metric": "Subscriber conversion",
+                "value": "0",
+                "context": "a ‘follow for more’ line can help",
+                "score": 85.0,
+                "fact": "subscriber_conversion",
+            }
+        )
+    for platform in ("facebook", "instagram", "youtube"):
+        if not connections.get(platform):
+            opportunities.append(
+                {
+                    "kind": "opportunity",
+                    "tag": "Opportunity",
+                    "metric": f"{REPORT_PLATFORM_LABELS[platform]} reach",
+                    "value": "Not connected",
+                    "context": f"connect {REPORT_PLATFORM_LABELS[platform]} to reach more viewers",
+                    "score": 50.0,
+                    "fact": "not_connected",
+                }
+            )
+            break
+
+    strengths.sort(key=lambda item: float(item["score"]), reverse=True)
+    opportunities.sort(key=lambda item: float(item["score"]), reverse=True)
+    selected_strengths = strengths[:3]
+    selected_opportunities = opportunities[:2]
+
+    if platform_fact:
+        platform_name = REPORT_PLATFORM_LABELS[str(platform_fact["platform"])]
+        if dominant_fact:
+            source = str(dominant_fact.get("source_label") or "YouTube").lower()
+            if dominant_fact.get("source_key") == "shorts_feed_views":
+                headline = (
+                    f"{platform_name} is your growth engine — and the Shorts feed "
+                    "is bringing people in"
+                )
+            else:
+                headline = (
+                    f"{platform_name} is your growth engine — and people find you "
+                    f"through {source}"
+                )
+        else:
+            headline = f"{platform_name} is your growth engine this month"
+    elif dominant_fact:
+        headline = f"People find your Shorts through {str(dominant_fact['source_label']).lower()}"
+    elif selected_strengths:
+        top = selected_strengths[0]
+        if top.get("fact") == "retention":
+            headline = f"People watched {top['value']} of your Shorts on average"
+        elif top.get("fact") == "mom_views":
+            headline = f"Your Shorts views grew {top['value']} month over month"
+        elif top.get("fact") == "subscribers":
+            headline = f"Your Shorts brought you {top['value']} new subscribers"
+        else:
+            headline = "Your Shorts kept building your audience this month"
+    else:
+        headline = "Your Shorts kept building your audience this month"
+
+    return {
+        "headline": headline,
+        "verdict_rows": [*selected_strengths, *selected_opportunities],
+        "analytics_complete_through_range": analytics_complete,
+        "analytics_target_end": analytics_target_end,
+    }
+
 
 def _audience_change(series: Sequence[Mapping[str, object]], platform: str) -> Optional[int]:
     values = [
@@ -1099,10 +1421,9 @@ def load_monthly_report_metrics(
 ) -> Dict[str, object]:
     """Compose report-only presentation data from the canonical dashboard payload.
 
-    Metric values are never recalculated here: views, engagement, audience, rankings,
-    and YouTube insights come directly from ``load_dashboard_metrics``.  The two extra
-    queries cover publication counts and future schedules, neither of which is a
-    dashboard metric.
+    Metric values are never redefined here: views, engagement, audience, rankings,
+    and YouTube insights use the same canonical loaders as ``load_dashboard_metrics``.
+    Extra reads cover the prior calendar month, publication counts, and future schedules.
     """
     dashboard = load_dashboard_metrics(
         conn,
@@ -1115,6 +1436,36 @@ def load_monthly_report_metrics(
         page_size=500,
         today=today,
     )
+    previous_month_start, previous_month_end = _calendar_month_before(start_date)
+    connected_platforms = [
+        platform for platform in PLATFORMS if dashboard["connections"].get(platform)
+    ]
+    previous_rows = _daily_metric_rows(
+        conn,
+        brand_id=brand_id,
+        start_date=previous_month_start,
+        end_date=previous_month_end,
+        platforms=connected_platforms,
+    )
+    previous_daily: Dict[str, Dict[str, Dict[str, object]]] = {}
+    for row in previous_rows:
+        platform = str(row.get("platform") or "")
+        metric_date = _as_date(row.get("metric_date"))
+        if platform and metric_date:
+            previous_daily.setdefault(platform, {})[metric_date.isoformat()] = row
+    previous_calendar_totals = _period_totals(
+        previous_daily,
+        start_date=previous_month_start,
+        end_date=previous_month_end,
+        connections=dashboard["connections"],
+    )
+    _, previous_audience_series, _ = _load_audience(
+        conn,
+        brand_id=brand_id,
+        start_date=previous_month_start,
+        end_date=previous_month_end,
+        connections=dashboard["connections"],
+    )
     publication = conn.execute(
         f"""
         SELECT
@@ -1123,13 +1474,18 @@ def load_monthly_report_metrics(
             ) AS shorts_published,
             COUNT(DISTINCT CAST(generated_video_id AS VARCHAR) || ':' || platform) FILTER (
                 WHERE platform_publish_date BETWEEN ? AND ?
-            ) AS platform_posts
+            ) AS platform_posts,
+            COUNT(DISTINCT generated_video_id) FILTER (
+                WHERE canonical_publish_date BETWEEN ? AND ?
+            ) AS previous_shorts_published
         FROM {MART}
         WHERE brand_id = ?
         """,
         [
             start_date.isoformat(), end_date.isoformat(),
-            start_date.isoformat(), end_date.isoformat(), brand_id,
+            start_date.isoformat(), end_date.isoformat(),
+            previous_month_start.isoformat(), previous_month_end.isoformat(),
+            brand_id,
         ],
     ).fetchone()
     platform_post_rows = _rows(
@@ -1189,18 +1545,74 @@ def load_monthly_report_metrics(
         platform: _audience_change(dashboard["subscriber_series"], platform)
         for platform in PLATFORMS
     }
+    previous_audience_changes = {
+        platform: _audience_change(previous_audience_series, platform)
+        for platform in PLATFORMS
+    }
     platform_posts = {
         str(row.get("platform")): int(row.get("posts") or 0)
         for row in platform_post_rows
     }
+    current_subscribers = _known_sum(
+        [
+            audience_changes.get(platform)
+            for platform in ("youtube", "instagram")
+            if dashboard["connections"].get(platform)
+        ]
+    )
+    previous_subscribers = _known_sum(
+        [
+            previous_audience_changes.get(platform)
+            for platform in ("youtube", "instagram")
+            if dashboard["connections"].get(platform)
+        ]
+    )
+    previous_label = previous_month_start.strftime("%b")
+    monthly_comparison = {
+        "shorts_published": _mom_result(
+            int((publication or [0, 0, 0])[0] or 0),
+            int((publication or [0, 0, 0])[2] or 0),
+            previous_label=previous_label,
+        ),
+        "views": _mom_result(
+            dashboard["current_totals"]["all"].get("views"),
+            previous_calendar_totals["all"].get("views"),
+            previous_label=previous_label,
+        ),
+        "subscribers": _mom_result(
+            current_subscribers,
+            previous_subscribers,
+            previous_label=previous_label,
+        ),
+        "likes": _mom_result(
+            dashboard["current_totals"]["all"].get("likes"),
+            previous_calendar_totals["all"].get("likes"),
+            previous_label=previous_label,
+        ),
+    }
+    report_summary = build_monthly_report_summary(
+        current_totals=dashboard["current_totals"],
+        connections=dashboard["connections"],
+        youtube_insights=dashboard["youtube_insights"],
+        monthly_comparison=monthly_comparison,
+        start_date=start_date,
+        end_date=end_date,
+        today=today,
+    )
     month_index = (start_date.year * 12 + start_date.month - 1) % len(REPORT_TIPS)
     return {
         **dashboard,
         "brand_name": brand_name,
-        "shorts_published": int((publication or [0, 0])[0] or 0),
-        "platform_posts_total": int((publication or [0, 0])[1] or 0),
+        "shorts_published": int((publication or [0, 0, 0])[0] or 0),
+        "platform_posts_total": int((publication or [0, 0, 0])[1] or 0),
         "platform_posts": platform_posts,
         "audience_changes": audience_changes,
+        "previous_month_start": previous_month_start,
+        "previous_month_end": previous_month_end,
+        "previous_calendar_totals": previous_calendar_totals,
+        "previous_audience_changes": previous_audience_changes,
+        "monthly_comparison": monthly_comparison,
+        "report_summary": report_summary,
         "scheduled_shorts": scheduled,
         "schedule_start": schedule_start,
         "schedule_end": schedule_end,

@@ -6,6 +6,7 @@ from app.video_shorts.services.dashboard_metrics import (
     _audience_net_by_date,
     _period_totals,
     _summarize_youtube_insight_rows,
+    build_monthly_report_summary,
     load_long_form_effect_metrics,
 )
 
@@ -19,14 +20,20 @@ class _Result:
 
 
 class _LongFormConnection:
-    def __init__(self):
+    def __init__(
+        self,
+        first_row=(date(2026, 10, 29), date(2026, 11, 2)),
+        metric_row=(1193, 31, 36797, 31, date(2026, 10, 31)),
+    ):
         self.calls = []
+        self.first_row = first_row
+        self.metric_row = metric_row
 
     def execute(self, query, params):
         self.calls.append((query, params))
-        if "MIN(LEAST" in query:
-            return _Result((date(2026, 11, 2),))
-        return _Result((1193, 31, 36797, 31, date(2026, 10, 31)))
+        if "first_created_at" in query:
+            return _Result(self.first_row)
+        return _Result(self.metric_row)
 
 
 def test_period_totals_require_complete_connected_platform_data():
@@ -221,3 +228,88 @@ def test_long_form_effect_uses_explicit_tenant_and_pre_publication_month():
     assert "user_id" in conn.calls[0][0] and "brand_id" in conn.calls[0][0]
     assert "owner_user_id" in conn.calls[1][0] and "brand_id" in conn.calls[1][0]
     assert conn.calls[0][1] == ["owner-a", "brand-a"]
+
+
+def test_long_form_baseline_ignores_historical_provider_import_dates():
+    conn = _LongFormConnection(
+        first_row=(date(2026, 3, 28), None),
+        metric_row=(1193, 31, 527, 28, date(2026, 10, 31)),
+    )
+
+    result = load_long_form_effect_metrics(
+        conn,
+        owner_user_id="hoca-owner",
+        brand_id="hoca-brand",
+        start_date=date(2026, 10, 1),
+        end_date=date(2026, 10, 31),
+    )
+
+    assert result["baseline_start"] == date(2026, 2, 1)
+    assert result["baseline_views_per_day"] == 527 / 28
+    assert round(result["long_form_views_per_day"], 1) == 38.5
+    assert round(result["change_percent"]) == 104
+    assert result["trend_status"] == "ready"
+
+
+def test_report_summary_uses_canonical_platform_ratio_and_fresh_analytics():
+    summary = build_monthly_report_summary(
+        current_totals={
+            "all": {"views": 998},
+            "youtube": {"views": 284},
+            "instagram": {"views": 714},
+            "facebook": {"views": None},
+        },
+        connections={"youtube": True, "instagram": True, "facebook": False},
+        youtube_insights={
+            "latest_date": date(2026, 11, 3),
+            "average_view_percentage": 66.4,
+            "subscribers_gained": 0,
+            "traffic_sources": [
+                {"key": "search_views", "label": "Search", "percent": 54.7},
+                {"key": "shorts_feed_views", "label": "Shorts feed", "percent": 14.7},
+            ],
+        },
+        monthly_comparison={"views": {"percent": None, "label": "First month"}},
+        start_date=date(2026, 11, 1),
+        end_date=date(2026, 11, 30),
+        today=date(2026, 11, 5),
+    )
+
+    assert summary["analytics_complete_through_range"] is True
+    assert summary["headline"] == (
+        "Instagram is your growth engine — and people find you through search"
+    )
+    assert len(summary["verdict_rows"]) == 5
+    assert summary["verdict_rows"][0]["value"] == "2.5×"
+    assert any(row["value"] == "55%" for row in summary["verdict_rows"])
+    assert [row["tag"] for row in summary["verdict_rows"]].count("Opportunity") == 2
+
+
+def test_report_summary_ignores_lagged_youtube_facts():
+    summary = build_monthly_report_summary(
+        current_totals={
+            "all": {"views": 300},
+            "youtube": {"views": 100},
+            "instagram": {"views": 200},
+            "facebook": {"views": None},
+        },
+        connections={"youtube": True, "instagram": True, "facebook": False},
+        youtube_insights={
+            "latest_date": date(2026, 11, 2),
+            "average_view_percentage": 80.0,
+            "subscribers_gained": 12,
+            "traffic_sources": [
+                {"key": "search_views", "label": "Search", "percent": 70.0},
+            ],
+        },
+        monthly_comparison={"views": {"percent": None, "label": "First month"}},
+        start_date=date(2026, 11, 1),
+        end_date=date(2026, 11, 30),
+        today=date(2026, 11, 5),
+    )
+
+    assert summary["analytics_complete_through_range"] is False
+    assert summary["headline"] == "Instagram is your growth engine this month"
+    assert {row["fact"] for row in summary["verdict_rows"]}.isdisjoint(
+        {"traffic_source", "retention", "subscribers"}
+    )

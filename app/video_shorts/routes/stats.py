@@ -1319,12 +1319,15 @@ def _report_context(conn, tenant: Mapping[str, object], start_date: date, end_da
     }
     raw_daily = []
     for date_key, row in chart_by_date.items():
+        metric_date = date.fromisoformat(date_key)
+        if metric_date > min(end_date, today):
+            continue
         values = {
             platform: row.get(f"{platform}_daily_views")
             for platform in ("youtube", "instagram", "facebook")
         }
         total = sum(int(value) for value in values.values() if value is not None)
-        raw_daily.append({"date": date.fromisoformat(date_key), "values": values, "total": total})
+        raw_daily.append({"date": metric_date, "values": values, "total": total})
     daily_max = max((item["total"] for item in raw_daily), default=0) or 1
     daily_bars = []
     for item in raw_daily:
@@ -1340,8 +1343,46 @@ def _report_context(conn, tenant: Mapping[str, object], start_date: date, end_da
             )
         daily_bars.append({**item, "segments": segments})
 
+    cumulative_total = 0
+    cumulative_values = []
+    for item in raw_daily:
+        cumulative_total += int(item["total"] or 0)
+        cumulative_values.append(
+            {"date": item["date"], "value": cumulative_total}
+        )
+    cumulative_max = max(
+        (int(item["value"]) for item in cumulative_values),
+        default=0,
+    ) or 1
+    cumulative_points = []
+    point_count = len(cumulative_values)
+    for index, item in enumerate(cumulative_values):
+        x = 12 + (index * 616 / max(point_count - 1, 1))
+        y = 174 - (int(item["value"]) * 140 / cumulative_max)
+        cumulative_points.append(
+            {**item, "x": round(x, 2), "y": round(y, 2)}
+        )
+    cumulative_polyline = " ".join(
+        f"{item['x']},{item['y']}" for item in cumulative_points
+    )
+    cumulative_area = (
+        f"12,174 {cumulative_polyline} 628,174" if cumulative_points else ""
+    )
+    cumulative_labels = []
+    if cumulative_points:
+        label_indexes = sorted({0, len(cumulative_points) // 2, len(cumulative_points) - 1})
+        cumulative_labels = [cumulative_points[index] for index in label_indexes]
+
     insights = report.get("youtube_insights") or {}
-    traffic = insights.get("traffic_sources") or []
+    traffic = sorted(
+        [
+            item
+            for item in (insights.get("traffic_sources") or [])
+            if float(item.get("percent") or 0) > 0
+        ],
+        key=lambda item: float(item.get("percent") or 0),
+        reverse=True,
+    )
     dominant = max(traffic, key=lambda item: float(item.get("percent") or 0), default=None)
     source_meanings = {
         "shorts_feed_views": "Your Shorts are being discovered in the Shorts feed, where strong openings help earn more watch time.",
@@ -1363,6 +1404,44 @@ def _report_context(conn, tenant: Mapping[str, object], start_date: date, end_da
         for platform in connected_platforms
         if platform in {"youtube", "instagram"}
     ]
+    subscriber_total_parts = [
+        {
+            "key": platform,
+            "label": platform_labels[platform],
+            "value": report["subscriber_totals"].get(platform),
+        }
+        for platform in connected_platforms
+        if platform in {"youtube", "instagram"}
+    ]
+    long_form = dict(report.get("long_form_effect") or {})
+    long_form_values = [
+        float(value)
+        for value in (
+            long_form.get("baseline_views_per_day"),
+            long_form.get("long_form_views_per_day"),
+        )
+        if value is not None
+    ]
+    long_form_max = max(long_form_values, default=0.0) or 1.0
+    long_form["baseline_bar_percent"] = round(
+        float(long_form.get("baseline_views_per_day") or 0) * 100 / long_form_max,
+        1,
+    )
+    long_form["range_bar_percent"] = round(
+        float(long_form.get("long_form_views_per_day") or 0) * 100 / long_form_max,
+        1,
+    )
+    if long_form.get("trend_status") == "too_early":
+        long_form["trend_line"] = "Too early to read a trend"
+    elif long_form.get("change_percent") is None:
+        long_form["trend_line"] = "Long-form trend data is pending"
+    else:
+        change = float(long_form["change_percent"])
+        prefix = "+" if change >= 0 else "−"
+        long_form["trend_line"] = (
+            f"{prefix}{abs(change):.0f}% vs before Minti. Many things affect long-form "
+            "views; this shows the trend, not a direct effect."
+        )
     report.update(
         {
             "owner_user_id": owner_user_id,
@@ -1374,9 +1453,17 @@ def _report_context(conn, tenant: Mapping[str, object], start_date: date, end_da
             "platform_labels": platform_labels,
             "view_segments": view_segments,
             "daily_bars": daily_bars,
+            "cumulative_points": cumulative_points,
+            "cumulative_polyline": cumulative_polyline,
+            "cumulative_area": cumulative_area,
+            "cumulative_labels": cumulative_labels,
+            "cumulative_end_value": cumulative_total,
             "best_short": best,
             "traffic_meaning": source_meanings.get(str((dominant or {}).get("key") or "")),
+            "traffic_sources_sorted": traffic,
             "subscriber_parts": subscriber_parts,
+            "subscriber_total_parts": subscriber_total_parts,
+            "long_form_report": long_form,
             "report_generated_at": datetime.now(ZoneInfo(DEFAULT_TIME_ZONE)),
         }
     )
