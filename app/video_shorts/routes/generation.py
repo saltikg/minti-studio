@@ -10632,6 +10632,43 @@ def _build_render_job_options(
     }
 
 
+AUTO_LAYOUT_SEGMENT_COORDINATE_FIELDS = (
+    "caption_top",
+    "caption_block_height",
+    "subscribe_top",
+)
+
+
+def _normalize_auto_layout_segment_coordinates(
+    segment: Dict[str, Any],
+    *,
+    source_height: Any,
+) -> Dict[str, Any]:
+    """Persist preview geometry in the canonical 720x1280 design frame."""
+    normalized = dict(segment or {})
+    canonical_height = float(DESIGN_GEOMETRY["height"])
+    try:
+        resolved_source_height = float(source_height)
+    except (TypeError, ValueError):
+        resolved_source_height = canonical_height
+    if not math.isfinite(resolved_source_height) or resolved_source_height <= 0:
+        resolved_source_height = canonical_height
+    scale = canonical_height / resolved_source_height
+    for field_name in AUTO_LAYOUT_SEGMENT_COORDINATE_FIELDS:
+        raw_value = normalized.get(field_name)
+        if raw_value is None:
+            normalized[field_name] = None
+            continue
+        try:
+            coordinate = float(raw_value)
+        except (TypeError, ValueError):
+            normalized[field_name] = None
+            continue
+        normalized[field_name] = round(coordinate * scale, 3) if math.isfinite(coordinate) else None
+    normalized["coordinate_height"] = int(canonical_height)
+    return normalized
+
+
 RENDER_SETTINGS_HASH_VERSION = 3
 RENDER_SETTINGS_HASH_PREFIX = f"v{RENDER_SETTINGS_HASH_VERSION}:"
 _LEGACY_OVERLAY_HASH_FIELDS = ("overlay_shapes",)
@@ -34667,7 +34704,7 @@ def autoclip_video(video_pk):
                     if isinstance(segment, dict)
                 }
                 plan_entry["auto_layout_segments"] = [
-                    {
+                    _normalize_auto_layout_segment_coordinates({
                         "start": round(float(segment.get("start") or 0.0), 6),
                         "end": round(float(segment.get("end") or 0.0), 6),
                         "mode": str(segment.get("mode") or ""),
@@ -34694,7 +34731,7 @@ def autoclip_video(video_pk):
                                 str(segment.get("mode") or ""),
                             ), {}).get("subscribe_top")
                         ),
-                    }
+                    }, source_height=render_target_height)
                     for segment in (face_aware_layout_result.get("segments") or [])
                 ]
             else:

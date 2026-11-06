@@ -21423,6 +21423,26 @@ document.addEventListener("DOMContentLoaded", () => {
     }
     return Math.max(0, Number(renderedVideo?.currentTime || 0));
   };
+  const scaleAutoLayoutPreviewSegmentCoordinates = (segment, card) => {
+    if (!segment || typeof segment !== "object") return segment;
+    const explicitCoordinateHeight = Number(segment.coordinate_height);
+    const legacyRenderHeight = Number(card?.dataset.renderHeight);
+    const coordinateHeight = Number.isFinite(explicitCoordinateHeight) && explicitCoordinateHeight > 0
+      ? explicitCoordinateHeight
+      : (Number.isFinite(legacyRenderHeight) && legacyRenderHeight > 0 ? legacyRenderHeight : renderFrameHeight);
+    const activeHeight = getActiveRenderFrameHeight();
+    const scale = activeHeight / Math.max(1, coordinateHeight);
+    const scaled = {...segment, coordinate_height: activeHeight};
+    ["caption_top", "caption_block_height", "subscribe_top"].forEach((fieldName) => {
+      if (segment[fieldName] === null || segment[fieldName] === undefined || segment[fieldName] === "") {
+        scaled[fieldName] = null;
+        return;
+      }
+      const coordinate = Number(segment[fieldName]);
+      scaled[fieldName] = Number.isFinite(coordinate) ? coordinate * scale : null;
+    });
+    return scaled;
+  };
   const getAutoLayoutPreviewSegment = () => {
     if (!isAutoLayoutMode()) return null;
     const card = getActiveClipCard();
@@ -21434,11 +21454,12 @@ document.addEventListener("DOMContentLoaded", () => {
     }
     if (!Array.isArray(segments) || !segments.length) return null;
     const playhead = getAutoLayoutPreviewTime();
-    return segments.find((segment, index) => {
+    const activeSegment = segments.find((segment, index) => {
       const start = Number(segment?.start || 0);
       const end = Number(segment?.end || 0);
       return playhead >= start && (playhead < end || (index === segments.length - 1 && playhead <= end));
     }) || segments[0];
+    return scaleAutoLayoutPreviewSegmentCoordinates(activeSegment, card);
   };
   const getAutoLayoutPreviewPlacement = () => {
     const segment = getAutoLayoutPreviewSegment();
