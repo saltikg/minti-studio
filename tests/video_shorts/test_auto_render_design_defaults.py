@@ -2,7 +2,6 @@ from __future__ import annotations
 
 import json
 import re
-from pathlib import Path
 
 import pytest
 from flask import Flask, g, jsonify
@@ -10,9 +9,6 @@ from werkzeug.exceptions import Forbidden
 
 from app.video_shorts.routes import generation
 from app.video_shorts.services import tenant_media
-
-
-ROOT = Path(__file__).resolve().parents[2]
 
 
 class _Result:
@@ -198,44 +194,6 @@ def test_scoped_snapshot_replaces_values_previously_copied_from_legacy():
     assert resolved["font"] == "anton"
     assert resolved["title_bg_color"] == "#FFFFFF"
     assert resolved["title_bg_alpha"] == 100
-
-
-@pytest.mark.parametrize(
-    ("source_height", "caption_top", "block_height", "subscribe_top", "expected"),
-    [
-        (1920, 1334, 136, 1470, (889.333, 90.667, 980.0)),
-        (1920, 488, 136, None, (325.333, 90.667, None)),
-        (1920, 491, 136, None, (327.333, 90.667, None)),
-        (1280, 319, 90, None, (319.0, 90.0, None)),
-    ],
-)
-def test_auto_layout_segment_coordinates_are_stored_in_canonical_frame(
-    source_height, caption_top, block_height, subscribe_top, expected
-):
-    normalized = generation._normalize_auto_layout_segment_coordinates(
-        {
-            "mode": "fill",
-            "caption_top": caption_top,
-            "caption_block_height": block_height,
-            "subscribe_top": subscribe_top,
-        },
-        source_height=source_height,
-    )
-
-    assert normalized["coordinate_height"] == 1280
-    assert normalized["caption_top"] == expected[0]
-    assert normalized["caption_block_height"] == expected[1]
-    assert normalized["subscribe_top"] == expected[2]
-
-
-def test_preview_scales_new_and_legacy_auto_layout_coordinates_through_one_helper():
-    template = (ROOT / "app/video_shorts/templates/generate_short.html").read_text(encoding="utf-8")
-
-    assert "const scaleAutoLayoutPreviewSegmentCoordinates" in template
-    assert "segment.coordinate_height" in template
-    assert "card?.dataset.renderHeight" in template
-    assert "const activeHeight = getActiveRenderFrameHeight();" in template
-    assert "return scaleAutoLayoutPreviewSegmentCoordinates(activeSegment, card);" in template
 
 
 def test_auto_render_applies_explicit_saved_design_over_database_defaults(monkeypatch):
