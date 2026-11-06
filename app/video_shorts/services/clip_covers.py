@@ -119,7 +119,27 @@ def _cover_target(
     ).fetchone()
     if not asset:
         raise tenant_media.TenantMediaConflict("Rendered clip asset is missing from this tenant")
-    location = tenant_media.storage_location(asset[0])
+    clip_location = tenant_media.storage_location(asset[0])
+    locations = tenant_media.source_locations(str(item[1]), video_pk=video_pk, conn=conn)
+    if len(locations) != 1:
+        raise tenant_media.TenantMediaConflict("Cover source video is missing or ambiguous")
+    edit_ranges = raw.get("edit_keep_ranges") if isinstance(raw.get("edit_keep_ranges"), list) else []
+    source_ranges = []
+    for value in edit_ranges:
+        try:
+            range_start, range_end = float(value["start"]), float(value["end"])
+        except (KeyError, TypeError, ValueError):
+            continue
+        if range_end > range_start:
+            source_ranges.append((range_start, range_end))
+    if not source_ranges:
+        try:
+            range_start, range_end = float(raw["start"]), float(raw["end"])
+        except (KeyError, TypeError, ValueError):
+            raise tenant_media.TenantMediaConflict("Cover target has no source time range")
+        if range_end <= range_start:
+            raise tenant_media.TenantMediaConflict("Cover target source time range is invalid")
+        source_ranges = [(range_start, range_end)]
     return {
         "generated_video_id": int(item[0]),
         "source_video_id": str(item[1]),
@@ -128,7 +148,10 @@ def _cover_target(
         "transcript": str(item[6] or raw.get("transcript_full") or raw.get("excerpt") or "").strip(),
         "plan_index": plan_index,
         "video_pk": video_pk,
-        "clip_storage_key": location["storage_key"],
+        "source_storage_key": locations[0]["storage_key"],
+        "clip_storage_key": clip_location["storage_key"],
+        "clip_local_path": clip_location["local_path"],
+        "source_ranges": source_ranges,
     }
 
 
@@ -231,20 +254,32 @@ def _frame_at(cap: Any, cv2: Any, timestamp: float) -> Any:
     return frame if ok else None
 
 
-def _candidate_frames(clip_path: Path) -> tuple[list[dict[str, Any]], float]:
+def _source_time_for_clip_offset(ranges: list[tuple[float, float]], offset: float) -> float:
+    remaining = max(0.0, float(offset))
+    for start, end in ranges:
+        duration = max(0.0, end - start)
+        if remaining <= duration:
+            return start + remaining
+        remaining -= duration
+    return ranges[-1][1]
+
+
+def _candidate_frames(
+    source_path: Path,
+    source_ranges: list[tuple[float, float]],
+) -> tuple[list[dict[str, Any]], float]:
     import cv2
     from app.video_shorts.routes import generation
 
-    cap = cv2.VideoCapture(str(clip_path))
-    fps = float(cap.get(cv2.CAP_PROP_FPS) or 30.0)
-    frame_count = float(cap.get(cv2.CAP_PROP_FRAME_COUNT) or 0.0)
-    duration = frame_count / fps if fps > 0 else 0.0
+    cap = cv2.VideoCapture(str(source_path))
+    duration = sum(max(0.0, end - start) for start, end in source_ranges)
     start = 0.5
     end = max(start, duration - 0.5)
-    samples = [start + (end - start) * i / 11.0 for i in range(12)] if end > start else [duration / 2.0]
+    clip_offsets = [start + (end - start) * i / 11.0 for i in range(12)] if end > start else [duration / 2.0]
+    samples = [(_source_time_for_clip_offset(source_ranges, value), value) for value in clip_offsets]
     scored: list[dict[str, Any]] = []
     detector = None
-    for ts in samples:
+    for ts, clip_ts in samples:
         frame = _frame_at(cap, cv2, ts)
         if frame is None:
             continue
@@ -295,7 +330,8 @@ def _candidate_frames(clip_path: Path) -> tuple[list[dict[str, Any]], float]:
         score += 35.0 if eyes_open else 0.0
         score += 15.0 if mouth_closed else -15.0
         scored.append({
-            "timestamp": round(float(ts), 3), "score": round(score, 3),
+            "timestamp": round(float(ts), 3), "source_timestamp": round(float(ts), 3),
+            "clip_timestamp": round(float(clip_ts), 3), "score": round(score, 3),
             "sharpness": round(sharpness, 2), "eyes_open": eyes_open,
             "mouth_mostly_closed": mouth_closed, "face": dict(face) if face else None,
         })
@@ -303,7 +339,9 @@ def _candidate_frames(clip_path: Path) -> tuple[list[dict[str, Any]], float]:
     faces = [item for item in scored if item.get("face")]
     ranked = sorted(faces or scored, key=lambda item: float(item["score"]), reverse=True)[:5]
     if not ranked:
-        ranked = [{"timestamp": round(max(0.0, duration / 2.0), 3), "score": 0, "face": None}]
+        middle = _source_time_for_clip_offset(source_ranges, duration / 2.0)
+        ranked = [{"timestamp": round(middle, 3), "source_timestamp": round(middle, 3),
+                   "clip_timestamp": round(duration / 2.0, 3), "score": 0, "face": None}]
     return ranked, duration
 
 
@@ -437,11 +475,24 @@ def generate_cover(payload: dict[str, Any]) -> dict[str, Any]:
         raise
 
     storage = get_media_storage()
-    clip_temp = storage.download_to_temp(target["clip_storage_key"])
+    if not Path(target["clip_local_path"]).is_file() and not storage.exists(target["clip_storage_key"]):
+        missing_error = "Rendered clip object is missing"
+        failed_conn = get_db()
+        try:
+            failed_conn.execute(
+                "UPDATE shorts_clip_covers SET status='failed', error=?, updated_at=CURRENT_TIMESTAMP WHERE generated_video_id=? AND owner_user_id=? AND brand_id=?",
+                [missing_error, generated_id, owner, brand],
+            )
+            failed_conn.commit()
+        finally:
+            failed_conn.close()
+        raise FileNotFoundError(missing_error)
+    source_temp = storage.download_to_temp(target["source_storage_key"])
     try:
         existing_candidates = _parse_json(existing[3]) if existing and existing[3] else []
         is_cover_edit = bool(
             existing_candidates
+            and all(candidate.get("source_timestamp") is not None for candidate in existing_candidates)
             and (
                 payload.get("cover_text")
                 or payload.get("highlight_phrase")
@@ -450,19 +501,15 @@ def generate_cover(payload: dict[str, Any]) -> dict[str, Any]:
         )
         if is_cover_edit:
             candidates = existing_candidates
-            import cv2
-            probe = cv2.VideoCapture(str(clip_temp))
-            probe_fps = float(probe.get(cv2.CAP_PROP_FPS) or 30.0)
-            duration = float(probe.get(cv2.CAP_PROP_FRAME_COUNT) or 0.0) / probe_fps
-            probe.release()
+            duration = sum(max(0.0, end - start) for start, end in target["source_ranges"])
         else:
-            candidates, duration = _candidate_frames(Path(clip_temp))
+            candidates, duration = _candidate_frames(Path(source_temp), target["source_ranges"])
         selected_ts = float(payload.get("selected_timestamp") if payload.get("selected_timestamp") is not None else candidates[0]["timestamp"])
-        if selected_ts < 0.5 or (duration > 1.0 and selected_ts > duration - 0.5):
-            selected_ts = max(0.5, min(selected_ts, max(0.5, duration - 0.5)))
+        if not any(start <= selected_ts <= end for start, end in target["source_ranges"]):
+            selected_ts = float(candidates[0]["timestamp"])
 
         import cv2
-        cap = cv2.VideoCapture(str(clip_temp))
+        cap = cv2.VideoCapture(str(source_temp))
         frame = _frame_at(cap, cv2, selected_ts)
         cap.release()
         if frame is None:
@@ -497,7 +544,7 @@ def generate_cover(payload: dict[str, Any]) -> dict[str, Any]:
             put_file_for_owner(cover_path, cover_key, owner_user_id=owner)
 
             # Candidate previews are tenant-private assets; timestamps remain the source of truth.
-            cap = cv2.VideoCapture(str(clip_temp))
+            cap = cv2.VideoCapture(str(source_temp))
             stored_candidates = []
             for candidate in candidates:
                 candidate_frame = _frame_at(cap, cv2, float(candidate["timestamp"]))
@@ -553,9 +600,9 @@ def generate_cover(payload: dict[str, Any]) -> dict[str, Any]:
         raise
     finally:
         try:
-            clip_temp.cleanup()  # ManagedTempPath
+            source_temp.cleanup()  # ManagedTempPath
         except AttributeError:
-            Path(clip_temp).unlink(missing_ok=True)
+            Path(source_temp).unlink(missing_ok=True)
 
 
 def signed_cover_payload(cover: dict[str, Any]) -> dict[str, Any]:
