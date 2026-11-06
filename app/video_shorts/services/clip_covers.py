@@ -241,7 +241,7 @@ def _candidate_frames(clip_path: Path) -> tuple[list[dict[str, Any]], float]:
     duration = frame_count / fps if fps > 0 else 0.0
     start = 0.5
     end = max(start, duration - 0.5)
-    samples = [start + (end - start) * i / 19.0 for i in range(20)] if end > start else [duration / 2.0]
+    samples = [start + (end - start) * i / 11.0 for i in range(12)] if end > start else [duration / 2.0]
     scored: list[dict[str, Any]] = []
     detector = None
     for ts in samples:
@@ -249,23 +249,40 @@ def _candidate_frames(clip_path: Path) -> tuple[list[dict[str, Any]], float]:
         if frame is None:
             continue
         h, w = frame.shape[:2]
+        analysis_scale = min(1.0, 540.0 / float(max(1, w)))
+        analysis = frame
+        if analysis_scale < 1.0:
+            analysis = cv2.resize(
+                frame,
+                (max(1, int(round(w * analysis_scale))), max(1, int(round(h * analysis_scale)))),
+                interpolation=cv2.INTER_AREA,
+            )
+        analysis_h, analysis_w = analysis.shape[:2]
         try:
             if detector is None:
                 detector = cv2.FaceDetectorYN_create(
-                    str(generation._YUNET_FACE_MODEL_PATH), "", (int(w), int(h)),
+                    str(generation._YUNET_FACE_MODEL_PATH), "", (int(analysis_w), int(analysis_h)),
                     float(generation._YUNET_FACE_SCORE_THRESHOLD), 0.3, 5000,
                 )
-            faces = generation._yunet_face_detection_ratios(cv2, frame, w, h, detector=detector)
+            faces = generation._yunet_face_detection_ratios(
+                cv2, analysis, analysis_w, analysis_h, detector=detector,
+            )
         except Exception:
             faces = []
         face = max(faces, key=lambda item: float(item["w"]) * float(item["h"]), default=None)
-        gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
+        if face and analysis_scale < 1.0:
+            face = dict(face)
+            for key in ("x", "y", "w", "h"):
+                face[key] = int(round(float(face[key]) / analysis_scale))
+        gray = cv2.cvtColor(analysis, cv2.COLOR_BGR2GRAY)
         sharpness = float(cv2.Laplacian(gray, cv2.CV_64F).var())
         eyes_open = False
         mouth_closed = True
         if face:
             x, y, fw, fh = (int(face[k]) for k in ("x", "y", "w", "h"))
-            roi = gray[max(0, y):min(h, y + fh), max(0, x):min(w, x + fw)]
+            ax, ay = int(round(x * analysis_scale)), int(round(y * analysis_scale))
+            afw, afh = int(round(fw * analysis_scale)), int(round(fh * analysis_scale))
+            roi = gray[max(0, ay):min(analysis_h, ay + afh), max(0, ax):min(analysis_w, ax + afw)]
             try:
                 eye_detector = cv2.CascadeClassifier(cv2.data.haarcascades + "haarcascade_eye_tree_eyeglasses.xml")
                 smile_detector = cv2.CascadeClassifier(cv2.data.haarcascades + "haarcascade_smile.xml")
