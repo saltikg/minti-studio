@@ -155,6 +155,30 @@ def test_admin_stats_tenant_never_falls_back_to_session_brand():
     assert tenant["brand_name"] == "Shelley"
 
 
+def test_customer_stats_tenant_loads_the_owned_brand_name(monkeypatch):
+    class TenantConnection:
+        def execute(self, sql, params=None):
+            assert "FROM shorts_brands" in sql
+            assert params == ["customer-owner", "customer-brand"]
+            return self
+
+        def fetchone(self):
+            return (
+                "customer-brand", "customer-owner", "Customer Brand", "customer-brand",
+                False, None, None,
+            )
+
+    test_app = Flask(__name__)
+    test_app.secret_key = "test-secret"
+    monkeypatch.setattr(stats, "current_brand_id", lambda: "customer-brand")
+    with test_app.test_request_context("/video_shorts/stats"):
+        g.vs_current_user = {"id": "customer-owner", "time_zone": "America/Los_Angeles"}
+        g.vs_current_brand = None
+        tenant = stats._resolve_stats_tenant(TenantConnection())
+    assert tenant["brand_id"] == "customer-brand"
+    assert tenant["brand_name"] == "Customer Brand"
+
+
 def test_top_videos_query_is_explicitly_tenant_scoped(monkeypatch):
     observed = {}
 

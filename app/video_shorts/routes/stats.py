@@ -188,8 +188,15 @@ def _resolve_stats_tenant(conn) -> Dict[str, object]:
     current_user = getattr(g, "vs_current_user", None) or {}
     active_brand_id = str(current_brand_id() or "").strip() or None
     current_brand = getattr(g, "vs_current_brand", None) or {}
+    owner_user_id = str(current_user.get("id") or "").strip()
+    if owner_user_id and active_brand_id and str(current_brand.get("id") or "") != active_brand_id:
+        current_brand = _load_owned_brand(
+            conn,
+            user_id=owner_user_id,
+            brand_id=active_brand_id,
+        ) or {}
     return {
-        "owner_user_id": str(current_user.get("id") or "").strip(),
+        "owner_user_id": owner_user_id,
         "brand_id": active_brand_id,
         "brand_name": str(current_brand.get("name") or "").strip(),
         "time_zone": str(current_user.get("time_zone") or DEFAULT_TIME_ZONE).strip() or DEFAULT_TIME_ZONE,
