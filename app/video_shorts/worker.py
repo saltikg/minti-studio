@@ -4,6 +4,7 @@ from app.video_shorts.services import render_timing
 from app.video_shorts.services import render_jobs
 
 import errno
+import hashlib
 import json
 import os
 import re
@@ -78,6 +79,7 @@ from app.video_shorts.services.render_jobs import (
     JOB_TYPE_ADMIN_PROXY_TRANSCRIPT,
     JOB_TYPE_ENRICH_AUTOPILOT_DISCOVERY_EMAILS,
     JOB_TYPE_ENRICH_DISCOVERY_EMAILS,
+    JOB_TYPE_GENERATE_COVER,
     GUEST_JOB_ORIGIN,
     JOB_TYPE_INGEST_YOUTUBE,
     JOB_TYPE_INSTAGRAM_COMMENT_WEBHOOK,
@@ -90,6 +92,7 @@ from app.video_shorts.services.render_jobs import (
     claim_next_job,
     count_processing_jobs,
     enqueue_preview_frame_job,
+    enqueue_cover_job,
     finalize_job_success,
     get_job,
     mark_job_done,
@@ -2097,6 +2100,10 @@ def _process_next_job(
             from app.video_shorts.services.video_deletion import execute_video_purge_job
 
             result = execute_video_purge_job(job.get("payload") or {})
+        elif job.get("type") == JOB_TYPE_GENERATE_COVER:
+            from app.video_shorts.services.clip_covers import generate_cover
+
+            result = generate_cover(job.get("payload") or {})
         else:
             with render_job_heartbeat(job["id"], worker_id):
                 result = _execute_render_job(app, job)
@@ -2114,6 +2121,47 @@ def _process_next_job(
             except Exception:
                 app.logger.exception("Render job finalize failed after done job_id=%s", job.get("id"))
             payload = job.get("payload") or {}
+            # A cover is a best-effort follow-up. Its enqueue/generation can
+            # never change a successful render into a failed render.
+            try:
+                from app.video_shorts.services.clip_covers import find_generated_video_id
+
+                clip_filename = str((result or {}).get("clip_filename") or "").strip()
+                brand_id = str(payload.get("brand_id") or "").strip()
+                video_pk = int(payload.get("video_pk") or 0)
+                source_video_id = str(payload.get("source_video_id") or "").strip()
+                if clip_filename and brand_id and video_pk and source_video_id:
+                    generated_video_id = find_generated_video_id(
+                        owner_user_id=str(job.get("user_id") or ""),
+                        brand_id=brand_id,
+                        video_pk=video_pk,
+                        source_video_id=source_video_id,
+                        clip_filename=clip_filename,
+                    )
+                    if generated_video_id:
+                        cover_payload = {
+                            "generated_video_id": generated_video_id,
+                            "owner_user_id": str(job.get("user_id") or ""),
+                            "brand_id": brand_id,
+                            "video_pk": video_pk,
+                            "source_video_id": source_video_id,
+                            "plan_index": payload.get("plan_index"),
+                            "job_origin": payload.get("job_origin"),
+                        }
+                        enqueue_cover_job(
+                            user_id=str(job.get("user_id") or ""),
+                            payload=cover_payload,
+                            input_hash=hashlib.sha256(
+                                f"cover:{job.get('id')}:{generated_video_id}".encode("utf-8")
+                            ).hexdigest(),
+                            priority=-20,
+                        )
+            except Exception:
+                app.logger.warning(
+                    "Cover follow-up enqueue failed after successful render job_id=%s",
+                    job.get("id"),
+                    exc_info=True,
+                )
             if str(payload.get("job_origin") or "").strip() == GUEST_JOB_ORIGIN:
                 source_video_id = str(payload.get("source_video_id") or "").strip()
                 if source_video_id:

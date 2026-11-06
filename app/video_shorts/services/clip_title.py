@@ -347,3 +347,51 @@ def generate_clip_title(transcript_text: str, language_hint: str | None = None) 
     _raw, title = generator_call(safe_messages)
     title = _truncate_whole_word(title, 45)
     return finish(title, "safe")
+
+
+def generate_clip_cover_copy(
+    transcript_text: str,
+    *,
+    clip_title: str,
+    language_hint: str | None = None,
+) -> dict[str, str]:
+    """Return cover copy using no more than one additional model call."""
+    fallback = _truncate_whole_word(str(clip_title or "").strip(), 48)
+    if len(fallback.split()) > 6:
+        fallback = " ".join(fallback.split()[:6])
+    fallback_highlight = " ".join((fallback.split() or [""])[:2]).strip()
+    result = {"cover_text": fallback, "highlight_phrase": fallback_highlight}
+    source_text = str(transcript_text or "").strip()
+    if not _openai_client or not source_text:
+        return result
+
+    language = _normalize_language_hint(language_hint) or _detect_title_language(source_text[:2000])
+    prompt = (
+        "Return JSON with cover_text and highlight_phrase. cover_text must be accurate, "
+        f"in {_title_language_name(language)}, at most 6 words, and punchier than the "
+        "clip title without clickbait. highlight_phrase must be an exact non-empty "
+        "substring of cover_text, normally 1-3 words.\n\n"
+        f"Clip title: {fallback}\nTranscript: {source_text[:2000]}"
+    )
+    try:
+        response = _openai_client.chat.completions.create(
+            model=TITLE_MODEL,
+            messages=[
+                {"role": "system", "content": "Write concise, faithful Short cover text. Output valid JSON only."},
+                {"role": "user", "content": prompt},
+            ],
+            temperature=0.4,
+            response_format={"type": "json_object"},
+        )
+        raw = response.choices[0].message.content if response.choices else ""
+        parsed = json.loads(raw or "{}")
+        cover_text = " ".join(str(parsed.get("cover_text") or "").strip().split())
+        highlight = " ".join(str(parsed.get("highlight_phrase") or "").strip().split())
+        if not cover_text or len(cover_text.split()) > 6 or len(cover_text) > 72:
+            return result
+        if not highlight or highlight.casefold() not in cover_text.casefold():
+            highlight = " ".join(cover_text.split()[:2])
+        return {"cover_text": cover_text, "highlight_phrase": highlight}
+    except Exception:
+        logger.warning("Cover copy generation failed; using the clip title", exc_info=True)
+        return result

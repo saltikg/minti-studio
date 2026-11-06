@@ -27,6 +27,7 @@ from app.video_shorts.services.email_verification import send_resend_email
 
 JOBS_TABLE = "shorts_render_jobs"
 JOB_TYPE_RENDER_SHORT = "render_short"
+JOB_TYPE_GENERATE_COVER = "generate_cover"
 JOB_TYPE_INGEST_YOUTUBE = "ingest_youtube"
 JOB_TYPE_NORMALIZE_UPLOAD = "normalize_upload"
 JOB_TYPE_PREVIEW_FRAME = "preview_frame"
@@ -1131,6 +1132,25 @@ def enqueue_render_job(
         payload=payload,
         input_hash=input_hash,
         max_attempts=max_attempts,
+        priority=priority,
+    )
+
+
+def enqueue_cover_job(
+    *,
+    user_id: str,
+    payload: Dict[str, Any],
+    input_hash: str,
+    priority: Optional[int] = None,
+) -> Dict[str, Any]:
+    # Cover jobs use the same durable video identity contract as renders.
+    validate_render_job_scope({"user_id": user_id, "payload": payload})
+    return enqueue_job(
+        user_id=user_id,
+        job_type=JOB_TYPE_GENERATE_COVER,
+        payload=payload,
+        input_hash=input_hash,
+        max_attempts=2,
         priority=priority,
     )
 

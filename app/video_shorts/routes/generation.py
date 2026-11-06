@@ -14979,6 +14979,20 @@ def generate_short(video_pk):
                     }
         except Exception:
             current_app.logger.exception("Failed to load generated short rows for video %s", source_video_id)
+    cover_map: Dict[int, Dict[str, Any]] = {}
+    try:
+        from app.video_shorts.services.clip_covers import list_covers_for_video, signed_cover_payload
+
+        cover_map = {
+            plan_index: signed_cover_payload(cover)
+            for plan_index, cover in list_covers_for_video(
+                owner_user_id=str(editor_owner_user_id), brand_id=str(brand_id or ""), video_pk=video_pk,
+            ).items()
+        }
+    except Exception:
+        # The migration is deployed before the app restart. Keeping this
+        # read fail-soft makes rolling deploys safe while the DDL is applied.
+        current_app.logger.debug("Clip covers unavailable during page load", exc_info=True)
     render_jobs_by_id: Dict[str, Dict[str, Any]] = {}
     active_render_jobs_by_plan: Dict[int, Dict[str, Any]] = {}
     render_job_ids = [
@@ -15485,6 +15499,8 @@ def generate_short(video_pk):
             "video_filename": video_filename,
             "video_url": _versioned_media_url(video_url, media_version),
             "poster_url": poster_url,
+            "cover": cover_map.get(pi) or {},
+            "cover_url": (cover_map.get(pi) or {}).get("cover_url") or "",
             "render_width": render_width,
             "render_height": render_height,
             "render_aspect": render_aspect,
@@ -18079,6 +18095,128 @@ def download_generated_clip(video_pk: int, plan_index: int):
         download_name=download_name,
         max_age=0,
     )
+
+
+def _scoped_generated_clip_for_cover(video_pk: int, plan_index: int) -> Dict[str, Any]:
+    context = _active_editor_context()
+    conn = get_db_readonly()
+    try:
+        video_row = _fetch_scoped_video_row(conn, video_pk, "video_id")
+        if not video_row:
+            abort(404)
+        source_video_id = str(video_row[0] or "").strip()
+        rows = conn.execute(
+            """
+            SELECT id, clip_filename, output_filename, raw_plan_entry_json
+              FROM shorts_generated_videos
+             WHERE source_video_id = ?
+               AND CAST(user_id AS VARCHAR) = ?
+               AND brand_id IS NOT DISTINCT FROM ?
+            """,
+            [source_video_id, str(context["owner_user_id"]), context["brand_id"]],
+        ).fetchall()
+        matches = []
+        for row in rows:
+            raw = row[3] if isinstance(row[3], dict) else json.loads(row[3] or "{}")
+            filename = str(row[2] or row[1] or "").strip()
+            try:
+                row_index = int(raw.get("plan_index") or filename.split("_", 1)[0])
+            except Exception:
+                continue
+            if row_index == int(plan_index):
+                matches.append((row, filename))
+        if len(matches) != 1:
+            abort(404)
+        row, filename = matches[0]
+        tenant_media.assert_clip_write_owner(
+            conn, filename, context["owner_user_id"], context["brand_id"],
+            video_pk=video_pk, source_id=source_video_id,
+        )
+        return {
+            "generated_video_id": int(row[0]), "clip_filename": filename,
+            "source_video_id": source_video_id, "owner_user_id": str(context["owner_user_id"]),
+            "brand_id": str(context["brand_id"] or ""), "video_pk": int(video_pk),
+            "plan_index": int(plan_index),
+        }
+    finally:
+        conn.close()
+
+
+@video_shorts_bp.route("/generate/<int:video_pk>/clip/<int:plan_index>/cover", methods=["GET", "POST"])
+def clip_cover(video_pk: int, plan_index: int):
+    target = _scoped_generated_clip_for_cover(video_pk, plan_index)
+    from app.video_shorts.services.clip_covers import get_cover_for_generated, signed_cover_payload
+    from app.video_shorts.services.render_jobs import enqueue_cover_job
+
+    if request.method == "POST":
+        data = request.get_json(silent=True) or request.form
+        cover_text = " ".join(str(data.get("cover_text") or "").strip().split())
+        highlight = " ".join(str(data.get("highlight_phrase") or "").strip().split())
+        if cover_text and len(cover_text.split()) > 6:
+            return jsonify({"success": False, "message": "Cover text must be 6 words or fewer."}), 400
+        if highlight and cover_text and highlight.casefold() not in cover_text.casefold():
+            return jsonify({"success": False, "message": "Highlight phrase must appear in the cover text."}), 400
+        selected_timestamp = data.get("selected_timestamp")
+        try:
+            selected_timestamp = float(selected_timestamp) if selected_timestamp not in (None, "") else None
+        except (TypeError, ValueError):
+            return jsonify({"success": False, "message": "Invalid candidate frame."}), 400
+        payload = {
+            **target,
+            "cover_text": cover_text,
+            "highlight_phrase": highlight,
+            "selected_timestamp": selected_timestamp,
+            **admin_operation_job_metadata(request_admin_operation_scope() or {}),
+        }
+        digest = sha256(
+            json.dumps([target["generated_video_id"], cover_text, highlight, selected_timestamp, time.time_ns()]).encode("utf-8")
+        ).hexdigest()
+        queued = enqueue_cover_job(
+            user_id=target["owner_user_id"], payload=payload, input_hash=digest, priority=5,
+        )
+        return jsonify({"success": True, "status": "queued", "job_id": queued["job"]["id"]}), 202
+
+    cover = get_cover_for_generated(
+        target["generated_video_id"], owner_user_id=target["owner_user_id"],
+        brand_id=target["brand_id"], video_pk=video_pk,
+    )
+    if not cover:
+        return jsonify({"success": True, "status": "missing", "cover": None})
+    return jsonify({"success": True, "status": cover["status"], "cover": signed_cover_payload(cover)})
+
+
+@video_shorts_bp.route("/generate/<int:video_pk>/clip/<int:plan_index>/cover/download", methods=["GET"])
+def download_clip_cover(video_pk: int, plan_index: int):
+    target = _scoped_generated_clip_for_cover(video_pk, plan_index)
+    from app.video_shorts.services.clip_covers import get_cover_for_generated
+
+    cover = get_cover_for_generated(
+        target["generated_video_id"], owner_user_id=target["owner_user_id"],
+        brand_id=target["brand_id"], video_pk=video_pk,
+    )
+    if not cover or cover.get("status") != "ready" or not cover.get("storage_key"):
+        abort(404)
+    storage = get_media_storage()
+    key = str(cover["storage_key"])
+    if getattr(storage, "backend_name", "local") == "s3":
+        client = getattr(storage, "client", None)
+        if client is None:
+            abort(404)
+        url = client.generate_presigned_url(
+            "get_object",
+            Params={
+                "Bucket": storage.bucket_name, "Key": key,
+                "ResponseContentDisposition": f'attachment; filename="Minti-cover-{plan_index}.jpg"',
+                "ResponseContentType": "image/jpeg",
+            },
+            ExpiresIn=300,
+        )
+        return redirect(url, code=302)
+    local_path = storage._key_path(key)
+    if not local_path.is_file():
+        abort(404)
+    return send_file(local_path, mimetype="image/jpeg", as_attachment=True,
+                     download_name=f"Minti-cover-{plan_index}.jpg", max_age=0)
 
 
 @video_shorts_bp.route("/generate/<int:video_pk>/save_crop", methods=["POST"])
