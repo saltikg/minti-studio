@@ -6,7 +6,27 @@ from app.video_shorts.services.dashboard_metrics import (
     _audience_net_by_date,
     _period_totals,
     _summarize_youtube_insight_rows,
+    load_long_form_effect_metrics,
 )
+
+
+class _Result:
+    def __init__(self, row):
+        self.row = row
+
+    def fetchone(self):
+        return self.row
+
+
+class _LongFormConnection:
+    def __init__(self):
+        self.calls = []
+
+    def execute(self, query, params):
+        self.calls.append((query, params))
+        if "MIN(LEAST" in query:
+            return _Result((date(2026, 11, 2),))
+        return _Result((1193, 31, 36797, 31, date(2026, 10, 31)))
 
 
 def test_period_totals_require_complete_connected_platform_data():
@@ -180,3 +200,24 @@ def test_youtube_insights_use_attributed_denominator_and_weighted_retention():
     assert result["average_view_duration_seconds"] == 42.1
     assert result["subscribers_gained"] == 0
     assert result["latest_date"] == date(2026, 11, 3)
+
+
+def test_long_form_effect_uses_explicit_tenant_and_pre_publication_month():
+    conn = _LongFormConnection()
+
+    result = load_long_form_effect_metrics(
+        conn,
+        owner_user_id="owner-a",
+        brand_id="brand-a",
+        start_date=date(2026, 11, 1),
+        end_date=date(2026, 11, 5),
+    )
+
+    assert result["long_form_views_per_day"] == 1193 / 31
+    assert result["baseline_start"] == date(2026, 10, 1)
+    assert result["baseline_end"] == date(2026, 10, 31)
+    assert result["baseline_views_per_day"] == 36797 / 31
+    assert result["data_through_date"] == date(2026, 10, 31)
+    assert "user_id" in conn.calls[0][0] and "brand_id" in conn.calls[0][0]
+    assert "owner_user_id" in conn.calls[1][0] and "brand_id" in conn.calls[1][0]
+    assert conn.calls[0][1] == ["owner-a", "brand-a"]

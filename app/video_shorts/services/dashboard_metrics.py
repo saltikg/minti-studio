@@ -9,6 +9,7 @@ from app.video_shorts.services.brands import brand_scoped_user_id
 
 MART = "analytics.fct_short_daily_gains"
 YOUTUBE_INSIGHTS_MART = "analytics.fct_short_youtube_insights_daily"
+YOUTUBE_CONTENT_TYPE_MART = "analytics.fct_brand_youtube_content_type_daily"
 SUBSCRIBER_TABLE = "main.shorts_channel_subscriber_daily"
 PLATFORMS = ("youtube", "instagram", "facebook")
 YOUTUBE_TRAFFIC_SOURCES = (
@@ -34,6 +35,34 @@ def _date_sequence(start_date: date, end_date: date) -> List[str]:
         values.append(current.isoformat())
         current += timedelta(days=1)
     return values
+
+
+def _as_date(value: object) -> Optional[date]:
+    if isinstance(value, datetime):
+        return value.date()
+    if isinstance(value, date):
+        return value
+    if isinstance(value, str):
+        try:
+            return date.fromisoformat(value[:10])
+        except ValueError:
+            return None
+    return None
+
+
+def _as_pt_date(value: object) -> Optional[date]:
+    if isinstance(value, datetime):
+        moment = value
+        if moment.tzinfo is None:
+            moment = moment.replace(tzinfo=timezone.utc)
+        return moment.astimezone(ZoneInfo("America/Los_Angeles")).date()
+    return _as_date(value)
+
+
+def _calendar_month_before(value: date) -> tuple[date, date]:
+    month_start = value.replace(day=1)
+    previous_end = month_start - timedelta(days=1)
+    return previous_end.replace(day=1), previous_end
 
 
 def _known_sum(values: Sequence[Optional[int]]) -> Optional[int]:
@@ -673,6 +702,119 @@ def _load_audience(
     return totals, series, youtube_pending
 
 
+def load_long_form_effect_metrics(
+    conn,
+    *,
+    owner_user_id: str,
+    brand_id: str,
+    start_date: date,
+    end_date: date,
+) -> Dict[str, object]:
+    """Return tenant-scoped VOD views for a range and its pre-Minti baseline."""
+    first_publish_row = conn.execute(
+        """
+        SELECT MIN(LEAST(
+            youtube_published_at,
+            instagram_published_at,
+            facebook_published_at,
+            published_at
+        ))
+        FROM shorts_generated_videos
+        WHERE CAST(user_id AS VARCHAR) = CAST(? AS VARCHAR)
+          AND CAST(brand_id AS VARCHAR) = CAST(? AS VARCHAR)
+          AND lower(COALESCE(publish_status, '')) = 'published'
+        """,
+        [owner_user_id, brand_id],
+    ).fetchone()
+    first_publish_date = _as_pt_date(first_publish_row[0] if first_publish_row else None)
+    if first_publish_date is None:
+        return {
+            "status": "Pending",
+            "range_start": start_date,
+            "range_end": end_date,
+            "long_form_views": None,
+            "long_form_views_per_day": None,
+            "days_in_range": 0,
+            "baseline_start": None,
+            "baseline_end": None,
+            "baseline_long_form_views": None,
+            "baseline_views_per_day": None,
+            "baseline_days": 0,
+            "change_percent": None,
+            "data_through_date": None,
+        }
+
+    baseline_start, baseline_end = _calendar_month_before(first_publish_date)
+    row = conn.execute(
+        f"""
+        SELECT
+            SUM(vod_views) FILTER (WHERE metric_date BETWEEN ? AND ?) AS range_views,
+            COUNT(DISTINCT metric_date) FILTER (
+                WHERE metric_date BETWEEN ? AND ?
+            ) AS range_days,
+            SUM(vod_views) FILTER (
+                WHERE metric_date BETWEEN ? AND ?
+            ) AS baseline_views,
+            COUNT(DISTINCT metric_date) FILTER (
+                WHERE metric_date BETWEEN ? AND ?
+            ) AS baseline_days,
+            MAX(metric_date) FILTER (
+                WHERE metric_date BETWEEN ? AND ?
+            ) AS data_through_date
+        FROM {YOUTUBE_CONTENT_TYPE_MART}
+        WHERE CAST(owner_user_id AS VARCHAR) = CAST(? AS VARCHAR)
+          AND CAST(brand_id AS VARCHAR) = CAST(? AS VARCHAR)
+          AND metric_date BETWEEN ? AND ?
+        """,
+        [
+            start_date.isoformat(), end_date.isoformat(),
+            start_date.isoformat(), end_date.isoformat(),
+            baseline_start.isoformat(), baseline_end.isoformat(),
+            baseline_start.isoformat(), baseline_end.isoformat(),
+            start_date.isoformat(), end_date.isoformat(),
+            owner_user_id, brand_id,
+            min(start_date, baseline_start).isoformat(),
+            max(end_date, baseline_end).isoformat(),
+        ],
+    ).fetchone()
+    range_views = int(row[0]) if row and row[0] is not None else None
+    range_days = int(row[1] or 0) if row else 0
+    baseline_views = int(row[2]) if row and row[2] is not None else None
+    baseline_days = int(row[3] or 0) if row else 0
+    range_average = (
+        range_views / range_days
+        if range_views is not None and range_days > 0
+        else None
+    )
+    baseline_average = (
+        baseline_views / baseline_days
+        if baseline_views is not None and baseline_days > 0
+        else None
+    )
+    change_percent = (
+        ((range_average - baseline_average) / baseline_average) * 100.0
+        if range_average is not None
+        and baseline_average is not None
+        and baseline_average > 0
+        else None
+    )
+    return {
+        "status": "ready" if range_average is not None else "Pending",
+        "range_start": start_date,
+        "range_end": end_date,
+        "long_form_views": range_views,
+        "long_form_views_per_day": range_average,
+        "days_in_range": range_days,
+        "baseline_start": baseline_start,
+        "baseline_end": baseline_end,
+        "baseline_long_form_views": baseline_views,
+        "baseline_views_per_day": baseline_average,
+        "baseline_days": baseline_days,
+        "change_percent": change_percent,
+        "data_through_date": _as_date(row[4] if row else None),
+    }
+
+
 def load_dashboard_metrics(
     conn,
     *,
@@ -890,6 +1032,13 @@ def load_dashboard_metrics(
             "highlight": None,
         }
     )
+    long_form_effect = load_long_form_effect_metrics(
+        conn,
+        owner_user_id=owner_user_id,
+        brand_id=brand_id,
+        start_date=start_date,
+        end_date=end_date,
+    )
     return {
         "connections": connections,
         "current_totals": current_totals,
@@ -907,6 +1056,7 @@ def load_dashboard_metrics(
         "subscriber_series": audience_series,
         "youtube_subscriber_data_missing": youtube_pending,
         "youtube_insights": youtube_insights,
+        "long_form_effect": long_form_effect,
         "last_api_at": last_updated,
         "stats_connect_empty": not any(connections.values()),
     }

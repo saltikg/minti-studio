@@ -20,6 +20,16 @@ def _parse_args():
         dest="start_date",
         help="Backfill start date (YYYY-MM-DD). Defaults to the rolling 4-day window.",
     )
+    parser.add_argument(
+        "--content-type-backfill",
+        action="store_true",
+        help="Backfill channel content types from the month before each brand's first Minti publication.",
+    )
+    parser.add_argument(
+        "--content-type-only",
+        action="store_true",
+        help="Run only the channel content-type phase (used for the one-time backfill).",
+    )
     return parser.parse_args()
 
 
@@ -34,10 +44,20 @@ def main() -> int:
     app = create_app()
     with app.app_context():
         from app.video_shorts.services.youtube_traffic_sources import ingest_traffic_sources
+        from app.video_shorts.services.youtube_channel_content_type import ingest_channel_content_types
 
         print("youtube_traffic_sources_snapshot starting", flush=True)
         try:
-            result = ingest_traffic_sources(start_date=_parse_start_date(args.start_date))
+            traffic_result = None
+            if not args.content_type_only:
+                traffic_result = ingest_traffic_sources(start_date=_parse_start_date(args.start_date))
+            content_type_result = ingest_channel_content_types(
+                backfill=bool(args.content_type_backfill)
+            )
+            result = {
+                "traffic_sources": traffic_result,
+                "channel_content_type": content_type_result,
+            }
             print(f"youtube_traffic_sources_snapshot result={result}", flush=True)
             return 0
         except Exception as exc:
