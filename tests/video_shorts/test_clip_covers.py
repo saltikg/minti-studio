@@ -1,13 +1,17 @@
 from __future__ import annotations
 
+import pytest
+
 from app.video_shorts.config import DEFAULT_EDITOR_TITLE_FONT_KEY, TITLE_FONTS
 from app.video_shorts.services.clip_covers import (
     COVER_TEXT_MAX_WIDTH,
+    CoverCopyDoesNotFit,
     MIN_COVER_FONT_SIZE,
     _contrast_ratio,
     _fit_cover_layout,
     _highlight_word_indexes,
     _resolve_cover_colors,
+    _thumbnail_copy_fallback,
 )
 from app.video_shorts.services.compositor import _title_font_path_for_text
 
@@ -60,3 +64,15 @@ def test_highlight_phrase_matches_only_contiguous_whole_words():
     assert _highlight_word_indexes(
         "Beware unregulated peptide vials", "regulated peptide"
     ) == set()
+
+
+def test_long_copy_requests_a_rewrite_instead_of_silently_dropping_words():
+    text = "Kıtlık metabolizmasıyla kilo verilemiyor"
+    configured_path = str(TITLE_FONTS["montserrat_black_italic"]["path"])
+    font_path = _title_font_path_for_text(text, configured_path)
+
+    with pytest.raises(CoverCopyDoesNotFit):
+        _fit_cover_layout(text, font_path=font_path, preferred_size=140)
+
+    fallback = _thumbnail_copy_fallback(text)
+    assert fallback == "Kıtlık kilo verilemiyor"

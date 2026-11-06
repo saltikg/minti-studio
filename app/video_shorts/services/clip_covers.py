@@ -38,6 +38,10 @@ LIGHT_BOX_HIGHLIGHT_FALLBACK = "#E11D48"
 DARK_BOX_HIGHLIGHT_FALLBACK = "#FFD400"
 
 
+class CoverCopyDoesNotFit(ValueError):
+    pass
+
+
 def _json_value(conn: Any, value: Any) -> Any:
     return json.dumps(value, ensure_ascii=False)
 
@@ -610,32 +614,45 @@ def _fit_cover_layout(
     words = text.split()
     if not words:
         raise ValueError("Cover text is empty")
-    candidate_words = list(words)
-    while candidate_words:
-        clean_text = " ".join(candidate_words)
-        for size in range(min(MAX_COVER_FONT_SIZE, preferred_size), MIN_COVER_FONT_SIZE - 1, -2):
-            font = _load_title_font(font_path, size)
-            if font is None:
-                raise RuntimeError("Brand title font could not be loaded")
-            measure = ImageDraw.Draw(Image.new("RGB", (8, 8)))
-            line_counts = (2, 3) if len(candidate_words) >= 3 else ((2,) if len(candidate_words) == 2 else (1,))
-            options: list[tuple[float, list[str]]] = []
-            for line_count in line_counts:
-                for partition in _line_partitions(candidate_words, line_count):
-                    lines = [" ".join(part) for part in partition]
-                    widths = [float(measure.textlength(line, font=font)) for line in lines]
-                    if max(widths, default=0.0) > COVER_TEXT_MAX_WIDTH:
-                        continue
-                    imbalance = max(widths) - min(widths)
-                    options.append((imbalance + (line_count - 2) * 24.0, lines))
-            if options:
-                lines = min(options, key=lambda item: item[0])[1]
-                return clean_text, font, size, lines
-        # Generated cover copy is constrained to be short. This final guard
-        # preserves the 110 px readability contract for unusual long words or
-        # manually edited six-word copy without making another model call.
-        candidate_words.pop()
-    raise ValueError("Cover text cannot fit at the minimum readable size")
+    clean_text = " ".join(words)
+    for size in range(min(MAX_COVER_FONT_SIZE, preferred_size), MIN_COVER_FONT_SIZE - 1, -2):
+        font = _load_title_font(font_path, size)
+        if font is None:
+            raise RuntimeError("Brand title font could not be loaded")
+        measure = ImageDraw.Draw(Image.new("RGB", (8, 8)))
+        line_counts = (2, 3) if len(words) >= 3 else ((2,) if len(words) == 2 else (1,))
+        options: list[tuple[float, list[str]]] = []
+        for line_count in line_counts:
+            for partition in _line_partitions(words, line_count):
+                lines = [" ".join(part) for part in partition]
+                widths = [float(measure.textlength(line, font=font)) for line in lines]
+                if max(widths, default=0.0) > COVER_TEXT_MAX_WIDTH:
+                    continue
+                imbalance = max(widths) - min(widths)
+                options.append((imbalance + (line_count - 2) * 24.0, lines))
+        if options:
+            lines = min(options, key=lambda item: item[0])[1]
+            return clean_text, font, size, lines
+    raise CoverCopyDoesNotFit("Cover text cannot fit at the minimum readable size")
+
+
+def _thumbnail_copy_fallback(text: str) -> str:
+    """Keep source words while producing a last-resort, readable short phrase."""
+    words = text.split()
+    if len(words) <= 3:
+        value = " ".join(words)
+        return value if len(value) <= 36 else value[:35].rstrip() + "…"
+    candidates = (
+        [words[0], *words[-2:]],
+        [words[0], words[-1]],
+        words[:3],
+        words[:2],
+    )
+    for candidate in candidates:
+        value = " ".join(candidate)
+        if len(value) <= 36:
+            return value
+    return words[0]
 
 
 def _highlight_word_indexes(text: str, highlight: str) -> set[int]:
@@ -669,8 +686,6 @@ def _draw_cover_text(
     rendered_text, font, font_size, lines = _fit_cover_layout(
         text, font_path=font_path, preferred_size=preferred_size,
     )
-    if rendered_text != text:
-        log.warning("Cover copy shortened to preserve thumbnail readability original=%r rendered=%r", text, rendered_text)
     if highlight.casefold() not in rendered_text.casefold():
         highlight = " ".join(rendered_text.split()[:2])
     draw = ImageDraw.Draw(image, "RGBA")
@@ -814,8 +829,10 @@ def generate_cover(payload: dict[str, Any]) -> dict[str, Any]:
         existing_highlight = str((existing[2] if existing else "") or "").strip()
         cover_text = " ".join(str(payload.get("cover_text") or existing_text).strip().split())
         highlight = " ".join(str(payload.get("highlight_phrase") or existing_highlight).strip().split())
+        copy_call_used = False
         if not cover_text:
             copy = generate_clip_cover_copy(target["transcript"], clip_title=target["title"])
+            copy_call_used = True
             cover_text = copy["cover_text"]
             highlight = copy["highlight_phrase"]
         if len(cover_text.split()) > 6:
@@ -825,9 +842,32 @@ def generate_cover(payload: dict[str, Any]) -> dict[str, Any]:
 
         from app.video_shorts.routes import generation
         design = generation._load_short_editor_defaults_json(owner, brand)
-        text_layout = _draw_cover_text(
-            image, text=cover_text, highlight=highlight, design=design, cover_face=cover_face,
-        )
+        try:
+            text_layout = _draw_cover_text(
+                image, text=cover_text, highlight=highlight, design=design, cover_face=cover_face,
+            )
+        except CoverCopyDoesNotFit:
+            original_text = cover_text
+            if not copy_call_used:
+                copy = generate_clip_cover_copy(target["transcript"], clip_title=target["title"])
+                copy_call_used = True
+                cover_text = copy["cover_text"]
+                highlight = copy["highlight_phrase"]
+            try:
+                text_layout = _draw_cover_text(
+                    image, text=cover_text, highlight=highlight, design=design, cover_face=cover_face,
+                )
+            except CoverCopyDoesNotFit:
+                cover_text = _thumbnail_copy_fallback(original_text)
+                if not highlight or highlight.casefold() not in cover_text.casefold():
+                    highlight = " ".join(cover_text.split()[:2])
+                text_layout = _draw_cover_text(
+                    image, text=cover_text, highlight=highlight, design=design, cover_face=cover_face,
+                )
+            log.info(
+                "Cover copy shortened for thumbnail layout generated_video_id=%s original=%r rendered=%r",
+                generated_id, original_text, text_layout["cover_text"],
+            )
         cover_text = str(text_layout["cover_text"])
         highlight = str(text_layout["highlight_phrase"])
 
