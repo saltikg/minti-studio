@@ -136,7 +136,7 @@ def render_report_pdf(*, token: str, brand_id: str, start_date: date, end_date: 
     with _render_lock(), sync_playwright() as playwright:
         browser = playwright.chromium.launch(headless=True, args=["--no-sandbox"])
         try:
-            page = browser.new_page(viewport={"width": 816, "height": 1056}, device_scale_factor=1)
+            page = browser.new_page(viewport={"width": 816, "height": 1056}, device_scale_factor=2)
             page.set_default_timeout(60_000)
             response = page.goto(f"{base_url}{REPORT_RENDER_ROUTE}?{query}", wait_until="networkidle", timeout=60_000)
             if response is None or not response.ok:
