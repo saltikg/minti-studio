@@ -1297,7 +1297,11 @@ def _report_context(conn, tenant: Mapping[str, object], start_date: date, end_da
         today=today,
     )
     connected = report["connections"]
-    connected_platforms = [platform for platform in ("youtube", "instagram", "facebook") if connected.get(platform)]
+    metric_connected = report.get("metric_connections") or connected
+    connected_platforms = [
+        platform for platform in ("youtube", "instagram", "facebook")
+        if metric_connected.get(platform)
+    ]
     platform_labels = {"youtube": "YouTube", "instagram": "Instagram", "facebook": "Facebook"}
     current = report["current_totals"]
     total_views = current.get("all", {}).get("views")
@@ -1430,6 +1434,16 @@ def _report_context(conn, tenant: Mapping[str, object], start_date: date, end_da
     long_form["range_bar_percent"] = round(
         float(long_form.get("long_form_views_per_day") or 0) * 100 / long_form_max,
         1,
+    )
+    long_form["baseline_value_label"] = (
+        f"{float(long_form['baseline_views_per_day']):,.0f}/day"
+        if long_form.get("baseline_views_per_day") is not None
+        else "Pending"
+    )
+    long_form["range_value_label"] = (
+        f"{float(long_form['long_form_views_per_day']):,.0f}/day"
+        if long_form.get("long_form_views_per_day") is not None
+        else "Pending"
     )
     if long_form.get("trend_status") == "too_early":
         long_form["trend_line"] = "Too early to read a trend"
@@ -1666,7 +1680,11 @@ def _render_video_stats(*, load_widgets: bool):
         for title, metric_key, icon in summary_specs:
             current_value = current_totals.get(metric_key)
             previous_value = previous_totals.get(metric_key)
-            if not is_connected:
+            if channel_key == "facebook" and canonical.get("facebook_unavailable_message"):
+                display_value = canonical["facebook_unavailable_message"]
+                direction = "neutral"
+                delta_label = "Reconnect Facebook to resume insights"
+            elif not is_connected:
                 display_value: object = "Not connected"
                 direction = "neutral"
                 delta_label = previous_period_label
@@ -1738,6 +1756,7 @@ def _render_video_stats(*, load_widgets: bool):
         last_api_at=canonical["last_api_at"],
         stats_connect_empty=canonical["stats_connect_empty"],
         platform_connections=platform_connections,
+        facebook_unavailable_message=canonical.get("facebook_unavailable_message"),
         tiktok_enabled=tiktok_feature_enabled,
         **shared_template_context,
     )

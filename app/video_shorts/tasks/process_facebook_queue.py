@@ -11,10 +11,14 @@ from app.video_shorts.services.facebook_queue import (
     fetch_due_facebook_jobs,
     update_facebook_job_status,
 )
+from app.video_shorts.services.facebook_metrics import (
+    FacebookMetricsError,
+    fetch_facebook_metrics,
+)
 from app.video_shorts.services.storage import get_media_storage
 from requests.exceptions import ConnectionError as RequestsConnectionError
-from src.trends.facebook_page_tokens import get_facebook_page_data
-from app.video_shorts.services.social_queue_identity import queue_token_identity
+from src.trends.facebook_page_tokens import get_facebook_page_data, mark_facebook_insights_status
+from app.video_shorts.services.social_queue_identity import queue_identity, queue_token_identity
 from app.video_shorts.services.media_access import worker_clip_path
 from app.video_shorts.services.publish_target_guard import (
     PublishTargetMismatch,
@@ -103,62 +107,7 @@ def _publish_facebook_video(
     return resp.json()
 
 
-def _fetch_facebook_metrics(video_id: str, page_token: str):
-    insights_url = f"{FB_API_BASE.rstrip('/')}/{video_id}/video_insights"
-    metrics = "total_video_impressions,total_video_impressions_unique"
-    view_count = None
-    reach = None
-    impressions = None
-    reactions = None
-    comment_count = None
-    try:
-        resp = requests.get(
-            insights_url,
-            params={"access_token": page_token, "metric": metrics},
-            timeout=30,
-        )
-        if resp.status_code == 200:
-            data = resp.json().get("data") or []
-            for item in data:
-                name = (item.get("name") or "").lower()
-                values = item.get("values") or []
-                if not values:
-                    continue
-                value = values[-1].get("value")
-                if name == "total_video_impressions":
-                    impressions = value
-                elif name == "total_video_impressions_unique":
-                    reach = value
-    except Exception:
-        pass
-    try:
-        meta_url = f"{FB_API_BASE.rstrip('/')}/{video_id}"
-        resp = requests.get(
-            meta_url,
-            params={
-                "access_token": page_token,
-                "fields": "views,likes.summary(true).limit(0),comments.summary(true).limit(0),permalink_url",
-            },
-            timeout=30,
-        )
-        if resp.status_code == 200:
-            payload = resp.json()
-            view_count = payload.get("views") or view_count
-            reactions = (payload.get("likes") or {}).get("summary", {}).get("total_count")
-            comment_count = (payload.get("comments") or {}).get("summary", {}).get("total_count")
-            permalink = payload.get("permalink_url")
-        else:
-            permalink = None
-    except Exception:
-        permalink = None
-    return {
-        "view_count": view_count,
-        "reach": reach,
-        "impressions": impressions,
-        "reactions": reactions,
-        "comment_count": comment_count,
-        "permalink": permalink,
-    }
+_fetch_facebook_metrics = fetch_facebook_metrics
 
 
 def _queue_credentials(job: dict) -> dict:
@@ -222,7 +171,21 @@ def process_queue(max_jobs: int = 5) -> None:
             video_id = payload.get("id") or payload.get("video_id")
             metrics = {}
             if video_id:
-                metrics = _fetch_facebook_metrics(video_id, creds.get("page_access_token"))
+                try:
+                    metrics = _fetch_facebook_metrics(video_id, creds.get("page_access_token"))
+                except FacebookMetricsError as exc:
+                    owner_user_id, brand_id = queue_identity(
+                        job.get("user_id"), job.get("brand_id")
+                    )
+                    mark_facebook_insights_status(
+                        owner_user_id,
+                        brand_id=str(brand_id),
+                        status="needs_reconnect" if exc.needs_reconnect else "error",
+                        error=str(exc),
+                    )
+                    print(
+                        f"Facebook published without metrics queue_id={queue_id}: {exc}"
+                    )
             update_facebook_job_status(
                 queue_id,
                 status="published",

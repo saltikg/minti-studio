@@ -17,12 +17,16 @@ from typing import Any, Dict, Iterable, List, Mapping, Optional, Tuple, Union
 import duckdb
 
 from app import DB_PATH
-from app.video_shorts.config import FB_API_BASE, SHORTS_DIR
+from app.video_shorts.config import SHORTS_DIR
 from app.video_shorts.services.db import get_db, get_db_readonly
 from app.video_shorts.services.instagram_queue import load_instagram_queue_map
 from app.video_shorts.services.facebook_queue import (
     load_facebook_queue_map,
     update_facebook_queue_metrics,
+)
+from app.video_shorts.services.facebook_metrics import (
+    FacebookMetricsError,
+    fetch_facebook_metrics,
 )
 from app.video_shorts.services.ai_video_workspace import ensure_ai_video_schema
 from app.video_shorts.services.video_metrics import (
@@ -33,7 +37,10 @@ from app.video_shorts.services.video_metrics import (
     ensure_snapshot_table,
 )
 from app.video_shorts.youtube_api import YoutubeApiError, fetch_video_stats
-from src.trends.facebook_page_tokens import get_facebook_page_data
+from src.trends.facebook_page_tokens import (
+    get_facebook_page_data,
+    mark_facebook_insights_status,
+)
 from app.video_shorts.services.social_queue_identity import queue_identity, queue_token_identity
 
 
@@ -398,65 +405,6 @@ def _build_instagram_rows(
     return rows
 
 
-def _fetch_facebook_metrics(video_id: str, page_token: str) -> Dict[str, Optional[int]]:
-    import requests
-
-    metrics = "total_video_impressions,total_video_impressions_unique"
-    insights_url = f"{FB_API_BASE.rstrip('/')}/{video_id}/video_insights"
-    view_count = None
-    reach = None
-    impressions = None
-    reactions = None
-    comment_count = None
-    permalink = None
-    try:
-        resp = requests.get(
-            insights_url,
-            params={"access_token": page_token, "metric": metrics},
-            timeout=30,
-        )
-        if resp.status_code == 200:
-            data = resp.json().get("data") or []
-            for item in data:
-                name = (item.get("name") or "").lower()
-                values = item.get("values") or []
-                if not values:
-                    continue
-                value = values[-1].get("value")
-                if name == "total_video_impressions":
-                    impressions = value
-                elif name == "total_video_impressions_unique":
-                    reach = value
-    except Exception:
-        pass
-    try:
-        meta_url = f"{FB_API_BASE.rstrip('/')}/{video_id}"
-        resp = requests.get(
-            meta_url,
-            params={
-                "access_token": page_token,
-                "fields": "views,likes.summary(true).limit(0),comments.summary(true).limit(0),permalink_url",
-            },
-            timeout=30,
-        )
-        if resp.status_code == 200:
-            payload = resp.json()
-            view_count = payload.get("views") or view_count
-            reactions = (payload.get("likes") or {}).get("summary", {}).get("total_count")
-            comment_count = (payload.get("comments") or {}).get("summary", {}).get("total_count")
-            permalink = payload.get("permalink_url")
-    except Exception:
-        pass
-    return {
-        "view_count": _int_or_none(view_count),
-        "reach": _int_or_none(reach),
-        "impressions": _int_or_none(impressions),
-        "reactions": _int_or_none(reactions),
-        "comment_count": _int_or_none(comment_count),
-        "permalink": permalink,
-    }
-
-
 def _build_facebook_rows(
     entries: List[Dict[str, Any]],
     facebook_map: Dict[tuple, List[Dict[str, Any]]],
@@ -484,19 +432,80 @@ def _build_facebook_rows(
             }
             user_id = record.get("user_id")
             if user_id and refresh_metrics:
+                owner_user_id, brand_id = queue_identity(
+                    record.get("user_id"), record.get("brand_id")
+                )
                 creds = get_facebook_page_data(queue_token_identity(record))
-                if creds and creds.get("page_access_token"):
-                    metrics = _fetch_facebook_metrics(fb_video_id, creds.get("page_access_token"))
-                    update_facebook_queue_metrics(
-                        record.get("id"),
-                        facebook_video_id=fb_video_id,
-                        permalink=metrics.get("permalink"),
-                        view_count=metrics.get("view_count"),
-                        reach=metrics.get("reach"),
-                        impressions=metrics.get("impressions"),
-                        reactions=metrics.get("reactions"),
-                        comment_count=metrics.get("comment_count"),
-                    )
+                credential_page_id = str((creds or {}).get("page_id") or "")
+                queue_page_id = str(record.get("page_id") or "")
+                if (
+                    creds
+                    and creds.get("page_access_token")
+                    and credential_page_id == queue_page_id
+                    and creds.get("insights_status") != "needs_reconnect"
+                ):
+                    try:
+                        metrics = fetch_facebook_metrics(
+                            str(fb_video_id), str(creds.get("page_access_token"))
+                        )
+                        update_facebook_queue_metrics(
+                            record.get("id"),
+                            facebook_video_id=fb_video_id,
+                            permalink=metrics.get("permalink"),
+                            view_count=metrics.get("view_count"),
+                            reach=metrics.get("reach"),
+                            impressions=metrics.get("impressions"),
+                            reactions=metrics.get("reactions"),
+                            comment_count=metrics.get("comment_count"),
+                        )
+                        mark_facebook_insights_status(
+                            owner_user_id,
+                            brand_id=str(brand_id),
+                            status="active",
+                        )
+                    except FacebookMetricsError as exc:
+                        metrics = {
+                            "view_count": None,
+                            "reach": None,
+                            "impressions": None,
+                            "reactions": None,
+                            "comment_count": None,
+                            "permalink": record.get("permalink"),
+                        }
+                        mark_facebook_insights_status(
+                            owner_user_id,
+                            brand_id=str(brand_id),
+                            status="needs_reconnect" if exc.needs_reconnect else "error",
+                            error=str(exc),
+                        )
+                elif creds and creds.get("insights_status") == "needs_reconnect":
+                    metrics = {
+                        "view_count": None,
+                        "reach": None,
+                        "impressions": None,
+                        "reactions": None,
+                        "comment_count": None,
+                        "permalink": record.get("permalink"),
+                    }
+                else:
+                    metrics = {
+                        "view_count": None,
+                        "reach": None,
+                        "impressions": None,
+                        "reactions": None,
+                        "comment_count": None,
+                        "permalink": record.get("permalink"),
+                    }
+                    if creds:
+                        mark_facebook_insights_status(
+                            owner_user_id,
+                            brand_id=str(brand_id),
+                            status="error",
+                            error=(
+                                "Facebook credential Page does not match the published "
+                                "media Page; metrics were not fetched."
+                            ),
+                        )
             rows.append(
                 {
                     "snapshot_date": target_date,

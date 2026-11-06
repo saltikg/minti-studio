@@ -88,6 +88,7 @@ def claim_instagram_metrics_alert(
     summary: Dict[str, object],
     *,
     cooldown_hours: int = 24,
+    alert_key: str = ALERT_KEY,
 ) -> bool:
     conn = get_db()
     now = datetime.now(timezone.utc)
@@ -108,13 +109,13 @@ def claim_instagram_metrics_alert(
                 WHERE instagram_metrics_alert_state.last_sent_at <= ?
                 RETURNING alert_key
                 """,
-                [ALERT_KEY, now, summary_value, cutoff],
+                [alert_key, now, summary_value, cutoff],
             ).fetchone()
             conn.commit()
             return bool(row)
         row = conn.execute(
             "SELECT last_sent_at FROM instagram_metrics_alert_state WHERE alert_key = ?",
-            [ALERT_KEY],
+            [alert_key],
         ).fetchone()
         last_sent_at = _coerce_utc(row[0]) if row else None
         if last_sent_at is not None and last_sent_at > cutoff:
@@ -127,7 +128,7 @@ def claim_instagram_metrics_alert(
             SET last_sent_at = excluded.last_sent_at,
                 summary_json = excluded.summary_json
             """,
-            [ALERT_KEY, now, summary_value],
+            [alert_key, now, summary_value],
         )
         conn.commit()
         return True

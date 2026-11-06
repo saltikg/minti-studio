@@ -399,7 +399,11 @@ def update_facebook_queue_metrics(
         conn.close()
 
 
-def fetch_facebook_media_jobs(limit: Optional[int] = None) -> List[Dict[str, Optional[str]]]:
+def fetch_facebook_media_jobs(
+    limit: Optional[int] = None,
+    *,
+    published_since: Optional[str] = None,
+) -> List[Dict[str, Optional[str]]]:
     try:
         conn = _connect(read_only=True, retries=3)
     except Exception as exc:
@@ -409,16 +413,21 @@ def fetch_facebook_media_jobs(limit: Optional[int] = None) -> List[Dict[str, Opt
     try:
         ensure_facebook_queue_schema(conn)
         query = """
-            SELECT id, user_id, facebook_video_id, page_id, page_name, plan_title, media_type
+            SELECT id, user_id, brand_id, facebook_video_id, page_id, page_name,
+                   plan_title, media_type, published_at
             FROM shorts_facebook_queue
             WHERE facebook_video_id IS NOT NULL
-            ORDER BY updated_at DESC
         """
+        params: List[object] = []
+        if published_since:
+            query += " AND CAST(NULLIF(published_at, '') AS TIMESTAMPTZ) >= CAST(? AS TIMESTAMPTZ)"
+            params.append(published_since)
+        query += " ORDER BY updated_at DESC"
         try:
             if limit:
-                rows = conn.execute(query + " LIMIT ?", [limit]).fetchall()
+                rows = conn.execute(query + " LIMIT ?", [*params, limit]).fetchall()
             else:
-                rows = conn.execute(query).fetchall()
+                rows = conn.execute(query, params).fetchall()
         except Exception as exc:
             if "shorts_facebook_queue" in str(exc).lower():
                 return []

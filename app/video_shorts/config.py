@@ -761,10 +761,17 @@ IG_TOKEN_REFRESH_BUFFER_DAYS = int(os.getenv("IG_TOKEN_REFRESH_BUFFER_DAYS", "14
 FB_APP_ID = os.getenv("FB_APP_ID")
 FB_APP_SECRET = os.getenv("FB_APP_SECRET")
 FB_REDIRECT_URI = os.getenv("FB_REDIRECT_URI")
-FB_OAUTH_SCOPES = os.getenv(
-    "FB_OAUTH_SCOPES",
-    "pages_show_list,pages_read_engagement,pages_manage_posts,pages_read_user_content",
-)
+_fb_oauth_scopes = [
+    scope.strip()
+    for scope in os.getenv(
+        "FB_OAUTH_SCOPES",
+        "pages_show_list,pages_read_engagement,pages_manage_posts,pages_read_user_content,read_insights",
+    ).split(",")
+    if scope.strip()
+]
+if "read_insights" not in _fb_oauth_scopes:
+    _fb_oauth_scopes.append("read_insights")
+FB_OAUTH_SCOPES = ",".join(dict.fromkeys(_fb_oauth_scopes))
 FB_API_BASE = os.getenv("FB_API_BASE", "https://graph.facebook.com/v24.0")
 FB_TARGET_PAGE_ID = os.getenv("FB_TARGET_PAGE_ID", "841809229026467")
 TIKTOK_CLIENT_KEY = os.getenv("TIKTOK_CLIENT_KEY")

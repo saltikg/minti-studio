@@ -7,6 +7,7 @@ from app.video_shorts.services.dashboard_metrics import (
     _period_totals,
     _summarize_youtube_insight_rows,
     build_monthly_report_summary,
+    load_platform_state,
     load_long_form_effect_metrics,
 )
 
@@ -17,6 +18,24 @@ class _Result:
 
     def fetchone(self):
         return self.row
+
+
+def test_facebook_reconnect_state_stays_connected_but_is_excluded_from_metrics():
+    class _Connection:
+        def execute(self, _query, _params):
+            return _Result((True, True, True, "needs_reconnect", "permission missing"))
+
+    state = load_platform_state(
+        _Connection(),
+        owner_user_id="owner-a",
+        brand_id="brand-a",
+    )
+
+    assert state["connections"]["facebook"] is True
+    assert state["metric_connections"]["facebook"] is False
+    assert state["facebook_unavailable_message"] == (
+        "Views unavailable — reconnect Facebook"
+    )
 
 
 class _LongFormConnection:
@@ -313,3 +332,35 @@ def test_report_summary_ignores_lagged_youtube_facts():
     assert {row["fact"] for row in summary["verdict_rows"]}.isdisjoint(
         {"traffic_source", "retention", "subscribers"}
     )
+
+
+def test_report_summary_excludes_unavailable_facebook_and_flags_low_share_platform():
+    summary = build_monthly_report_summary(
+        current_totals={
+            "all": {"views": 100},
+            "youtube": {"views": 97},
+            "instagram": {"views": 3},
+            "facebook": {"views": None},
+        },
+        connections={"youtube": True, "instagram": True, "facebook": True},
+        metric_connections={"youtube": True, "instagram": True, "facebook": False},
+        youtube_insights={
+            "latest_date": date(2026, 10, 31),
+            "average_view_percentage": 50.0,
+            "subscribers_gained": 1,
+            "traffic_sources": [],
+        },
+        monthly_comparison={"views": {"percent": None, "label": "First month"}},
+        start_date=date(2026, 10, 1),
+        end_date=date(2026, 10, 31),
+        today=date(2026, 11, 5),
+    )
+
+    rows = summary["verdict_rows"]
+    assert any(
+        row.get("fact") == "platform_low_share"
+        and row.get("platform") == "instagram"
+        and row.get("value") == "3%"
+        for row in rows
+    )
+    assert not any(row.get("platform") == "facebook" for row in rows)

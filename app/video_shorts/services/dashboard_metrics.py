@@ -70,15 +70,24 @@ def _known_sum(values: Sequence[Optional[int]]) -> Optional[int]:
     return sum(known) if known else None
 
 
-def load_platform_connections(
+FACEBOOK_INSIGHTS_UNAVAILABLE = "Views unavailable — reconnect Facebook"
+
+
+def load_platform_state(
     conn,
     *,
     owner_user_id: str,
     brand_id: str,
-) -> Dict[str, bool]:
+) -> Dict[str, object]:
     scoped_owner = brand_scoped_user_id(owner_user_id, brand_id=brand_id)
     if not scoped_owner:
-        return {platform: False for platform in PLATFORMS}
+        return {
+            "connections": {platform: False for platform in PLATFORMS},
+            "metric_connections": {platform: False for platform in PLATFORMS},
+            "facebook_insights_status": "not_connected",
+            "facebook_insights_error": None,
+            "facebook_unavailable_message": None,
+        }
     row = conn.execute(
         """
         SELECT
@@ -97,15 +106,54 @@ def load_platform_connections(
                 WHERE user_id = ?
                   AND NULLIF(BTRIM(page_access_token), '') IS NOT NULL
                   AND NULLIF(BTRIM(page_id), '') IS NOT NULL
-            ) AS facebook_connected
+            ) AS facebook_connected,
+            (
+                SELECT insights_status FROM facebook_page_tokens
+                WHERE user_id = ?
+                LIMIT 1
+            ) AS facebook_insights_status,
+            (
+                SELECT insights_error FROM facebook_page_tokens
+                WHERE user_id = ?
+                LIMIT 1
+            ) AS facebook_insights_error
         """,
-        [scoped_owner, scoped_owner, scoped_owner],
+        [scoped_owner, scoped_owner, scoped_owner, scoped_owner, scoped_owner],
     ).fetchone()
-    return {
+    connections = {
         "youtube": bool(row and row[0]),
         "instagram": bool(row and row[1]),
         "facebook": bool(row and row[2]),
     }
+    facebook_status = str((row and row[3]) or "active").strip().lower()
+    facebook_unavailable = connections["facebook"] and facebook_status in {
+        "needs_reconnect", "error"
+    }
+    metric_connections = dict(connections)
+    if facebook_unavailable:
+        metric_connections["facebook"] = False
+    return {
+        "connections": connections,
+        "metric_connections": metric_connections,
+        "facebook_insights_status": facebook_status,
+        "facebook_insights_error": row[4] if row else None,
+        "facebook_unavailable_message": (
+            FACEBOOK_INSIGHTS_UNAVAILABLE if facebook_unavailable else None
+        ),
+    }
+
+
+def load_platform_connections(
+    conn,
+    *,
+    owner_user_id: str,
+    brand_id: str,
+) -> Dict[str, bool]:
+    return load_platform_state(
+        conn,
+        owner_user_id=owner_user_id,
+        brand_id=brand_id,
+    )["connections"]
 
 
 def _daily_metric_rows(
@@ -866,12 +914,17 @@ def load_dashboard_metrics(
     page_size: int,
     today: date,
 ) -> Dict[str, object]:
-    connections = load_platform_connections(
+    platform_state = load_platform_state(
         conn,
         owner_user_id=owner_user_id,
         brand_id=brand_id,
     )
-    connected_platforms = [platform for platform in PLATFORMS if connections[platform]]
+    connections = platform_state["connections"]
+    metric_connections = platform_state["metric_connections"]
+    facebook_unavailable_message = platform_state["facebook_unavailable_message"]
+    connected_platforms = [
+        platform for platform in PLATFORMS if metric_connections[platform]
+    ]
     period_days = (end_date - start_date).days + 1
     previous_end = start_date - timedelta(days=1)
     previous_start = previous_end - timedelta(days=period_days - 1)
@@ -900,13 +953,13 @@ def load_dashboard_metrics(
         daily_map,
         start_date=start_date,
         end_date=end_date,
-        connections=connections,
+        connections=metric_connections,
     )
     previous_totals = _period_totals(
         daily_map,
         start_date=previous_start,
         end_date=previous_end,
-        connections=connections,
+        connections=metric_connections,
     )
 
     chart_series: Dict[str, List[Dict[str, object]]] = {
@@ -919,7 +972,7 @@ def load_dashboard_metrics(
             source = (daily_map.get(platform) or {}).get(date_key)
             values: Dict[str, Optional[int]] = {}
             for metric in ("views", "likes", "comments"):
-                if not connections.get(platform):
+                if not metric_connections.get(platform):
                     values[metric] = None
                 elif source is None:
                     values[metric] = 0
@@ -944,7 +997,7 @@ def load_dashboard_metrics(
             values = [
                 per_platform[platform][metric]
                 for platform in PLATFORMS
-                if connections.get(platform)
+                if metric_connections.get(platform)
             ]
             all_values[metric] = _known_sum(values)
         chart_series["all"].append(
@@ -964,22 +1017,22 @@ def load_dashboard_metrics(
                 "views": all_values["views"],
                 "comments": all_values["comments"],
                 "youtube_daily_views": _display_metric(
-                    per_platform["youtube"]["views"], connected=connections["youtube"]
+                    per_platform["youtube"]["views"], connected=metric_connections["youtube"]
                 ),
                 "instagram_daily_views": _display_metric(
-                    per_platform["instagram"]["views"], connected=connections["instagram"]
+                    per_platform["instagram"]["views"], connected=metric_connections["instagram"]
                 ),
                 "facebook_daily_views": _display_metric(
-                    per_platform["facebook"]["views"], connected=connections["facebook"]
+                    per_platform["facebook"]["views"], connected=metric_connections["facebook"]
                 ),
                 "youtube_daily_likes": _display_metric(
-                    per_platform["youtube"]["likes"], connected=connections["youtube"]
+                    per_platform["youtube"]["likes"], connected=metric_connections["youtube"]
                 ),
                 "instagram_daily_likes": _display_metric(
-                    per_platform["instagram"]["likes"], connected=connections["instagram"]
+                    per_platform["instagram"]["likes"], connected=metric_connections["instagram"]
                 ),
                 "facebook_daily_likes": _display_metric(
-                    per_platform["facebook"]["likes"], connected=connections["facebook"]
+                    per_platform["facebook"]["likes"], connected=metric_connections["facebook"]
                 ),
                 "last_updated": last_updated,
                 "last_updated_epoch": int(last_updated.timestamp()) if last_updated else 0,
@@ -988,7 +1041,7 @@ def load_dashboard_metrics(
     selected_platforms = (
         connected_platforms
         if selected_platform == "all"
-        else ([selected_platform] if connections.get(selected_platform) else [])
+        else ([selected_platform] if metric_connections.get(selected_platform) else [])
     )
     video_rows = _video_rollup(
         conn,
@@ -996,7 +1049,7 @@ def load_dashboard_metrics(
         start_date=start_date,
         end_date=end_date,
         platforms=selected_platforms,
-        connections=connections,
+        connections=metric_connections,
         limit=page_size,
         offset=(page - 1) * page_size,
     )
@@ -1007,7 +1060,7 @@ def load_dashboard_metrics(
         start_date=start_date,
         end_date=end_date,
         platforms=selected_platforms,
-        connections=connections,
+        connections=metric_connections,
         limit=6,
     )
     first_publish_row = conn.execute(
@@ -1033,7 +1086,7 @@ def load_dashboard_metrics(
         start_date=today,
         end_date=today,
         platforms=selected_platforms,
-        connections=connections,
+        connections=metric_connections,
         limit=5,
     )
     week_rows = _video_rollup(
@@ -1042,7 +1095,7 @@ def load_dashboard_metrics(
         start_date=today - timedelta(days=6),
         end_date=today,
         platforms=selected_platforms,
-        connections=connections,
+        connections=metric_connections,
         limit=5,
     )
     audience_totals, audience_series, youtube_pending = _load_audience(
@@ -1078,8 +1131,24 @@ def load_dashboard_metrics(
         start_date=start_date,
         end_date=end_date,
     )
+    if facebook_unavailable_message:
+        for row in daily_totals:
+            row["facebook_daily_views"] = facebook_unavailable_message
+            row["facebook_daily_likes"] = facebook_unavailable_message
+        for rows_for_view in (
+            video_rows,
+            range_top_rows,
+            today_rows,
+            week_rows,
+        ):
+            for row in rows_for_view:
+                row["facebook_views"] = facebook_unavailable_message
     return {
         "connections": connections,
+        "metric_connections": metric_connections,
+        "facebook_insights_status": platform_state["facebook_insights_status"],
+        "facebook_insights_error": platform_state["facebook_insights_error"],
+        "facebook_unavailable_message": facebook_unavailable_message,
         "current_totals": current_totals,
         "previous_totals": previous_totals,
         "previous_start": previous_start,
@@ -1114,6 +1183,7 @@ REPORT_VERDICT_THRESHOLDS = {
     "dominant_traffic_percent": 40.0,
     "mom_views_percent": 20.0,
     "shorts_feed_opportunity_percent": 30.0,
+    "platform_low_share_percent": 10.0,
     "analytics_lag_days": 2,
     "long_form_min_days": 7,
 }
@@ -1168,6 +1238,7 @@ def build_monthly_report_summary(
     start_date: date,
     end_date: date,
     today: date,
+    metric_connections: Optional[Mapping[str, bool]] = None,
 ) -> Dict[str, object]:
     """Build reusable rule-based report headline and verdict rows."""
     lag_days = int(REPORT_VERDICT_THRESHOLDS["analytics_lag_days"])
@@ -1179,6 +1250,7 @@ def build_monthly_report_summary(
         and analytics_latest >= analytics_target_end
     )
 
+    available = metric_connections or connections
     strengths: List[Dict[str, object]] = []
     opportunities: List[Dict[str, object]] = []
     connected_views = sorted(
@@ -1188,7 +1260,7 @@ def build_monthly_report_summary(
                 int((current_totals.get(platform) or {}).get("views") or 0),
             )
             for platform in PLATFORMS
-            if connections.get(platform)
+            if connections.get(platform) and available.get(platform)
         ),
         key=lambda item: item[1],
         reverse=True,
@@ -1348,6 +1420,50 @@ def build_monthly_report_summary(
             )
             break
 
+    total_views = int((current_totals.get("all") or {}).get("views") or 0)
+    existing_opportunity_facts = {
+        (item.get("fact"), item.get("platform")) for item in opportunities
+    }
+    for platform in PLATFORMS:
+        if not connections.get(platform) or not available.get(platform):
+            continue
+        platform_views = (current_totals.get(platform) or {}).get("views")
+        label = REPORT_PLATFORM_LABELS[platform]
+        if platform_views is None or int(platform_views) == 0:
+            fact = "platform_pending" if platform_views is None else "platform_zero"
+            if (fact, platform) not in existing_opportunity_facts:
+                opportunities.append(
+                    {
+                        "kind": "opportunity",
+                        "tag": "Opportunity",
+                        "metric": f"{label} reach",
+                        "value": "Pending" if platform_views is None else "0",
+                        "context": (
+                            "views are still pending for this month"
+                            if platform_views is None
+                            else "no measured views this month"
+                        ),
+                        "score": 65.0 if platform_views is None else 70.0,
+                        "fact": fact,
+                        "platform": platform,
+                    }
+                )
+            continue
+        share = (int(platform_views) * 100.0 / total_views) if total_views else 0.0
+        if share < float(REPORT_VERDICT_THRESHOLDS["platform_low_share_percent"]):
+            opportunities.append(
+                {
+                    "kind": "opportunity",
+                    "tag": "Opportunity",
+                    "metric": f"{label} reach",
+                    "value": f"{share:.0f}%",
+                    "context": "of your views",
+                    "score": 60.0 + (10.0 - share),
+                    "fact": "platform_low_share",
+                    "platform": platform,
+                }
+            )
+
     strengths.sort(key=lambda item: float(item["score"]), reverse=True)
     opportunities.sort(key=lambda item: float(item["score"]), reverse=True)
     selected_strengths = strengths[:3]
@@ -1438,7 +1554,8 @@ def load_monthly_report_metrics(
     )
     previous_month_start, previous_month_end = _calendar_month_before(start_date)
     connected_platforms = [
-        platform for platform in PLATFORMS if dashboard["connections"].get(platform)
+        platform for platform in PLATFORMS
+        if dashboard["metric_connections"].get(platform)
     ]
     previous_rows = _daily_metric_rows(
         conn,
@@ -1457,7 +1574,7 @@ def load_monthly_report_metrics(
         previous_daily,
         start_date=previous_month_start,
         end_date=previous_month_end,
-        connections=dashboard["connections"],
+        connections=dashboard["metric_connections"],
     )
     _, previous_audience_series, _ = _load_audience(
         conn,
@@ -1502,30 +1619,77 @@ def load_monthly_report_metrics(
         )
     )
 
-    schedule_start = end_date + timedelta(days=1)
-    schedule_end = end_date + timedelta(days=30)
+    effective_range_end = min(end_date, today)
+    schedule_start = max(today, effective_range_end)
+    schedule_end = schedule_start + timedelta(days=30)
+    pt = ZoneInfo("America/Los_Angeles")
+    now_pt = datetime.now(pt)
+    schedule_start_at = (
+        now_pt.astimezone(timezone.utc).replace(tzinfo=None)
+        if now_pt.date() == today
+        else datetime.combine(schedule_start, datetime.min.time())
+    )
+    schedule_end_at = schedule_start_at + timedelta(days=30)
     scheduled_rows = _rows(
         conn.execute(
             """
-            SELECT id, generated_title, planned_publish_at
-            FROM shorts_generated_videos
-            WHERE CAST(user_id AS VARCHAR) = CAST(? AS VARCHAR)
-              AND CAST(brand_id AS VARCHAR) = CAST(? AS VARCHAR)
-              AND lower(coalesce(publish_status, '')) IN ('scheduled', 'pending', 'uploaded')
-              AND planned_publish_at IS NOT NULL
-              AND planned_publish_at >= ?
+            WITH scoped_shorts AS (
+                SELECT id, source_video_id, clip_filename, generated_title,
+                       planned_publish_at, publish_status
+                FROM shorts_generated_videos
+                WHERE CAST(user_id AS VARCHAR) = CAST(? AS VARCHAR)
+                  AND CAST(brand_id AS VARCHAR) = CAST(? AS VARCHAR)
+            ), schedule_candidates AS (
+                SELECT id, generated_title, planned_publish_at
+                FROM scoped_shorts
+                WHERE planned_publish_at IS NOT NULL
+                  AND lower(coalesce(publish_status, '')) IN
+                      ('scheduled', 'pending', 'retry', 'uploading', 'uploaded', 'queued')
+                UNION ALL
+                SELECT generated.id, COALESCE(generated.generated_title, queue.plan_title),
+                       CAST(NULLIF(queue.publish_at, '') AS TIMESTAMP)
+                FROM scoped_shorts generated
+                JOIN shorts_instagram_queue queue
+                  ON CAST(queue.user_id AS VARCHAR) = CAST(? AS VARCHAR)
+                 AND CAST(queue.brand_id AS VARCHAR) = CAST(? AS VARCHAR)
+                 AND CAST(queue.video_id AS VARCHAR) = CAST(generated.source_video_id AS VARCHAR)
+                 AND queue.clip_filename = generated.clip_filename
+                WHERE lower(coalesce(queue.status, '')) IN
+                      ('scheduled', 'pending', 'retry', 'uploading', 'queued')
+                  AND NULLIF(queue.publish_at, '') IS NOT NULL
+                UNION ALL
+                SELECT generated.id, COALESCE(generated.generated_title, queue.plan_title),
+                       CAST(NULLIF(queue.publish_at, '') AS TIMESTAMP)
+                FROM scoped_shorts generated
+                JOIN shorts_facebook_queue queue
+                  ON CAST(queue.user_id AS VARCHAR) = CAST(? AS VARCHAR)
+                 AND CAST(queue.brand_id AS VARCHAR) = CAST(? AS VARCHAR)
+                 AND CAST(queue.video_id AS VARCHAR) = CAST(generated.source_video_id AS VARCHAR)
+                 AND queue.clip_filename = generated.clip_filename
+                WHERE lower(coalesce(queue.status, '')) IN
+                      ('scheduled', 'pending', 'retry', 'uploading', 'queued')
+                  AND NULLIF(queue.publish_at, '') IS NOT NULL
+            )
+            SELECT id, MAX(generated_title) AS generated_title,
+                   MIN(planned_publish_at) AS planned_publish_at
+            FROM schedule_candidates
+            WHERE planned_publish_at >= ?
               AND planned_publish_at < ?
+            GROUP BY id
             ORDER BY planned_publish_at, id
             """,
             [
                 owner_user_id,
                 brand_id,
-                datetime.combine(schedule_start, datetime.min.time()),
-                datetime.combine(schedule_end + timedelta(days=1), datetime.min.time()),
+                owner_user_id,
+                brand_id,
+                owner_user_id,
+                brand_id,
+                schedule_start_at,
+                schedule_end_at,
             ],
         )
     )
-    pt = ZoneInfo("America/Los_Angeles")
     scheduled: List[Dict[str, object]] = []
     for row in scheduled_rows:
         planned = _as_utc(row.get("planned_publish_at"))
@@ -1590,6 +1754,11 @@ def load_monthly_report_metrics(
             previous_label=previous_label,
         ),
     }
+    if int((publication or [0, 0, 0])[2] or 0) == 0:
+        monthly_comparison = {
+            key: _mom_result(item.get("current"), None, previous_label=previous_label)
+            for key, item in monthly_comparison.items()
+        }
     report_summary = build_monthly_report_summary(
         current_totals=dashboard["current_totals"],
         connections=dashboard["connections"],
@@ -1598,6 +1767,7 @@ def load_monthly_report_metrics(
         start_date=start_date,
         end_date=end_date,
         today=today,
+        metric_connections=dashboard["metric_connections"],
     )
     month_index = (start_date.year * 12 + start_date.month - 1) % len(REPORT_TIPS)
     return {
@@ -1629,17 +1799,18 @@ def load_top_videos_for_date(
     selected_platform: str,
     limit: int,
 ) -> List[Dict[str, object]]:
-    connections = load_platform_connections(
+    platform_state = load_platform_state(
         conn,
         owner_user_id=owner_user_id,
         brand_id=brand_id,
     )
+    connections = platform_state["metric_connections"]
     platforms = (
         [platform for platform in PLATFORMS if connections[platform]]
         if selected_platform == "all"
         else ([selected_platform] if connections.get(selected_platform) else [])
     )
-    return _video_rollup(
+    rows = _video_rollup(
         conn,
         brand_id=brand_id,
         start_date=target_date,
@@ -1648,3 +1819,7 @@ def load_top_videos_for_date(
         connections=connections,
         limit=limit,
     )
+    if platform_state["facebook_unavailable_message"]:
+        for row in rows:
+            row["facebook_views"] = platform_state["facebook_unavailable_message"]
+    return rows

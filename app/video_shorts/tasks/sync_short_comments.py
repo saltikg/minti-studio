@@ -37,6 +37,7 @@ from app.video_shorts.services.db import (
     table_columns,
 )
 from app.video_shorts.services.facebook_queue import update_facebook_queue_metrics, load_facebook_queue_map
+from app.video_shorts.services.facebook_metrics import FacebookMetricsError, fetch_facebook_metrics
 from app.video_shorts.services.feature_flags import comments_enabled
 from app.video_shorts.services.instagram_queue import load_instagram_queue_map
 from app.video_shorts.services.instagram_api import refresh_instagram_media, InstagramActionError
@@ -46,8 +47,8 @@ from app.video_shorts.tasks.daily_video_metrics_snapshot import capture_daily_sn
 from app.video_shorts.tasks.daily_subscriber_snapshot import capture_daily_subscriber_snapshot
 from app.video_shorts.services.youtube_oauth import resolve_token_lookup_user_id
 from app.video_shorts.youtube_api import YoutubeApiError, fetch_video_comments, fetch_video_stats
-from app.video_shorts.tasks.sync_instagram_metrics import _fetch_facebook_metrics
-from src.trends.facebook_page_tokens import get_facebook_page_data
+from app.video_shorts.services.social_queue_identity import queue_identity, queue_token_identity
+from src.trends.facebook_page_tokens import get_facebook_page_data, mark_facebook_insights_status
 
 logger = logging.getLogger(__name__)
 
@@ -289,15 +290,31 @@ def _sync_facebook_comment_counts(entries: List[Dict[str, object]]) -> int:
             user_id = record.get("user_id")
             if not queue_id or not fb_video_id or not user_id:
                 continue
-            page_info = get_facebook_page_data(user_id)
-            if not page_info or not page_info.get("page_access_token"):
+            try:
+                owner_user_id, brand_id = queue_identity(user_id, record.get("brand_id"))
+                page_info = get_facebook_page_data(queue_token_identity(record))
+            except ValueError as exc:
+                logger.warning("Facebook comment count tenant check failed: %s", exc)
+                continue
+            if (
+                not page_info
+                or not page_info.get("page_access_token")
+                or page_info.get("insights_status") == "needs_reconnect"
+                or str(page_info.get("page_id") or "") != str(record.get("page_id") or "")
+            ):
                 continue
             try:
-                metrics = _fetch_facebook_metrics(
+                metrics = fetch_facebook_metrics(
                     fb_video_id,
                     page_info.get("page_access_token"),
                 )
-            except Exception as exc:
+            except FacebookMetricsError as exc:
+                mark_facebook_insights_status(
+                    owner_user_id,
+                    brand_id=str(brand_id),
+                    status="needs_reconnect" if exc.needs_reconnect else "error",
+                    error=str(exc),
+                )
                 logger.warning(
                     "Facebook comment count sync failed video_id=%s: %s",
                     fb_video_id,

@@ -33,6 +33,9 @@ def _ensure_table(conn):
             token_created_at VARCHAR,
             expires_at VARCHAR,
             scopes VARCHAR,
+            insights_status VARCHAR,
+            insights_error TEXT,
+            insights_status_updated_at VARCHAR,
             updated_at VARCHAR
         )
         """
@@ -56,6 +59,12 @@ def _ensure_table(conn):
         conn.execute("ALTER TABLE facebook_page_tokens ADD COLUMN scopes VARCHAR")
     if "updated_at" not in cols:
         conn.execute("ALTER TABLE facebook_page_tokens ADD COLUMN updated_at VARCHAR")
+    if "insights_status" not in cols:
+        conn.execute("ALTER TABLE facebook_page_tokens ADD COLUMN insights_status VARCHAR")
+    if "insights_error" not in cols:
+        conn.execute("ALTER TABLE facebook_page_tokens ADD COLUMN insights_error TEXT")
+    if "insights_status_updated_at" not in cols:
+        conn.execute("ALTER TABLE facebook_page_tokens ADD COLUMN insights_status_updated_at VARCHAR")
 
 
 def _scope_owner(user_id: Optional[str], brand_id: Optional[str] = None) -> str:
@@ -97,8 +106,10 @@ def store_facebook_page_token(
         conn.execute(
             """
             INSERT INTO facebook_page_tokens
-            (user_id, fb_user_id, page_id, page_name, page_access_token, token_created_at, expires_at, scopes, updated_at)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+            (user_id, fb_user_id, page_id, page_name, page_access_token, token_created_at,
+             expires_at, scopes, insights_status, insights_error,
+             insights_status_updated_at, updated_at)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'active', NULL, ?, ?)
             ON CONFLICT(user_id)
             DO UPDATE SET
               fb_user_id = excluded.fb_user_id,
@@ -108,6 +119,9 @@ def store_facebook_page_token(
               token_created_at = excluded.token_created_at,
               expires_at = excluded.expires_at,
               scopes = excluded.scopes,
+              insights_status = 'active',
+              insights_error = NULL,
+              insights_status_updated_at = excluded.insights_status_updated_at,
               updated_at = excluded.updated_at
             """,
             [
@@ -119,6 +133,7 @@ def store_facebook_page_token(
                 now,
                 expires_at,
                 scopes,
+                now,
                 now,
             ],
         )
@@ -136,7 +151,9 @@ def get_facebook_page_data(
         if user_id:
             row = conn.execute(
                 """
-                SELECT user_id, fb_user_id, page_id, page_name, page_access_token, token_created_at, expires_at, scopes, updated_at
+                SELECT user_id, fb_user_id, page_id, page_name, page_access_token,
+                       token_created_at, expires_at, scopes, insights_status,
+                       insights_error, insights_status_updated_at, updated_at
                 FROM facebook_page_tokens
                 WHERE user_id = ?
                 LIMIT 1
@@ -146,7 +163,9 @@ def get_facebook_page_data(
         else:
             row = conn.execute(
                 """
-                SELECT user_id, fb_user_id, page_id, page_name, page_access_token, token_created_at, expires_at, scopes, updated_at
+                SELECT user_id, fb_user_id, page_id, page_name, page_access_token,
+                       token_created_at, expires_at, scopes, insights_status,
+                       insights_error, insights_status_updated_at, updated_at
                 FROM facebook_page_tokens
                 ORDER BY updated_at DESC
                 LIMIT 1
@@ -169,8 +188,44 @@ def get_facebook_page_data(
         "token_created_at": row[5],
         "expires_at": row[6],
         "scopes": row[7],
-        "updated_at": row[8],
+        "insights_status": row[8],
+        "insights_error": row[9],
+        "insights_status_updated_at": row[10],
+        "updated_at": row[11],
     }
+
+
+def mark_facebook_insights_status(
+    user_id: Optional[str],
+    *,
+    brand_id: str,
+    status: str,
+    error: Optional[str] = None,
+) -> None:
+    if status not in {"active", "needs_reconnect", "error"}:
+        raise FacebookTokenStoreError("Invalid Facebook insights status.")
+    token_owner = _required_scope_owner(user_id, brand_id)
+    conn = _connect(read_only=False)
+    try:
+        _ensure_table(conn)
+        now = datetime.datetime.utcnow().isoformat()
+        updated = conn.execute(
+            """
+            UPDATE facebook_page_tokens
+            SET insights_status = ?,
+                insights_error = ?,
+                insights_status_updated_at = ?,
+                updated_at = updated_at
+            WHERE user_id = ?
+            RETURNING user_id
+            """,
+            [status, (error or "")[:1000] or None, now, token_owner],
+        ).fetchone()
+        if not updated:
+            raise FacebookTokenStoreError("Facebook connection was not found for this brand.")
+        conn.commit()
+    finally:
+        conn.close()
 
 
 def list_facebook_page_credentials() -> List[Dict[str, Optional[str]]]:
@@ -179,7 +234,9 @@ def list_facebook_page_credentials() -> List[Dict[str, Optional[str]]]:
         _ensure_table(conn)
         rows = conn.execute(
             """
-            SELECT user_id, fb_user_id, page_id, page_name, page_access_token, scopes, expires_at, updated_at
+            SELECT user_id, fb_user_id, page_id, page_name, page_access_token, scopes,
+                   expires_at, insights_status, insights_error,
+                   insights_status_updated_at, updated_at
             FROM facebook_page_tokens
             ORDER BY updated_at DESC
             """
@@ -199,7 +256,10 @@ def list_facebook_page_credentials() -> List[Dict[str, Optional[str]]]:
             "page_access_token": row[4],
             "scopes": row[5],
             "expires_at": row[6],
-            "updated_at": row[7],
+            "insights_status": row[7],
+            "insights_error": row[8],
+            "insights_status_updated_at": row[9],
+            "updated_at": row[10],
         }
         for row in rows
     ]
