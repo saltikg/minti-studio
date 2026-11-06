@@ -23,6 +23,14 @@ class InstagramActionError(RuntimeError):
     pass
 
 
+class InstagramUnsyncableError(InstagramActionError):
+    """Permanent queue/credential identity mismatch; never retry with this token."""
+
+    def __init__(self, reason_code: str, message: str):
+        super().__init__(message)
+        self.reason_code = reason_code
+
+
 def _extract_graph_error_message(resp: requests.Response) -> str:
     body = (resp.text or "").strip()
     try:
@@ -215,18 +223,29 @@ def _get_entry_and_token(queue_id: str):
     try:
         token_owner = queue_token_identity(entry)
     except ValueError as exc:
-        raise InstagramActionError(str(exc)) from exc
+        reason_code = (
+            "missing_brand_id"
+            if "brand is missing" in str(exc).lower()
+            else "invalid_queue_identity"
+        )
+        raise InstagramUnsyncableError(reason_code, str(exc)) from exc
     creds = get_instagram_credentials(token_owner)
     if not creds:
         raise InstagramActionError(
             f"Instagram credentials missing for scoped owner={token_owner}."
         )
     if str(creds.get("user_id") or "").strip() != token_owner:
-        raise InstagramActionError("Instagram credential owner mismatch.")
+        raise InstagramUnsyncableError(
+            "credential_owner_mismatch",
+            "Instagram credential owner mismatch.",
+        )
     expected_account = str(entry.get("instagram_business_account_id") or "").strip()
     actual_account = str(creds.get("instagram_business_account_id") or "").strip()
     if not expected_account or expected_account != actual_account:
-        raise InstagramActionError("Instagram credential account mismatch.")
+        raise InstagramUnsyncableError(
+            "credential_account_mismatch",
+            "Instagram credential account mismatch.",
+        )
     token = creds.get("page_access_token")
     if not token:
         raise InstagramActionError("Instagram page token eksik.")

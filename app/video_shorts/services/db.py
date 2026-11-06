@@ -1667,6 +1667,9 @@ def ensure_instagram_queue_schema(conn):
                 reach INTEGER,
                 saved INTEGER,
                 shares INTEGER,
+                insights_status VARCHAR,
+                insights_status_reason VARCHAR,
+                insights_status_updated_at VARCHAR,
                 media_type VARCHAR DEFAULT 'reel'
             )
             """
@@ -1689,6 +1692,25 @@ def ensure_instagram_queue_schema(conn):
     if "views" not in cols:
         try:
             conn.execute("ALTER TABLE shorts_instagram_queue ADD COLUMN views INTEGER")
+        except Exception:
+            pass
+    if "insights_status" not in cols:
+        try:
+            conn.execute("ALTER TABLE shorts_instagram_queue ADD COLUMN insights_status VARCHAR")
+        except Exception:
+            pass
+    if "insights_status_reason" not in cols:
+        try:
+            conn.execute(
+                "ALTER TABLE shorts_instagram_queue ADD COLUMN insights_status_reason VARCHAR"
+            )
+        except Exception:
+            pass
+    if "insights_status_updated_at" not in cols:
+        try:
+            conn.execute(
+                "ALTER TABLE shorts_instagram_queue ADD COLUMN insights_status_updated_at VARCHAR"
+            )
         except Exception:
             pass
 

@@ -33,6 +33,30 @@ def test_instagram_token_lookup_is_explicitly_brand_scoped(monkeypatch):
     assert observed == ["owner-1::brand-1"]
 
 
+def test_instagram_account_mismatch_fails_closed_as_unsyncable(monkeypatch):
+    entry = {
+        "id": "queue-1",
+        "user_id": "owner-1",
+        "brand_id": "brand-1",
+        "instagram_business_account_id": "old-account",
+    }
+    monkeypatch.setattr(instagram_api, "get_instagram_queue_entry", lambda _queue_id: entry)
+    monkeypatch.setattr(
+        instagram_api,
+        "get_instagram_credentials",
+        lambda _identity: {
+            "user_id": "owner-1::brand-1",
+            "instagram_business_account_id": "current-account",
+            "page_access_token": "secret",
+        },
+    )
+
+    with pytest.raises(instagram_api.InstagramUnsyncableError) as exc_info:
+        instagram_api._get_entry_and_token("queue-1")
+
+    assert exc_info.value.reason_code == "credential_account_mismatch"
+
+
 def test_refresh_instagram_media_stores_views_without_overwriting_impressions(monkeypatch):
     monkeypatch.setattr(
         instagram_api,
@@ -133,14 +157,101 @@ def test_sync_summary_alerts_above_twenty_percent(monkeypatch):
     alerts = []
     monkeypatch.setattr(sync_instagram_metrics, "refresh_instagram_media", fake_refresh)
     monkeypatch.setattr(sync_instagram_metrics, "_send_failure_alert", alerts.append)
+    monkeypatch.setattr(sync_instagram_metrics, "fetch_instagram_unsyncable_counts", lambda: {})
+    monkeypatch.setattr(
+        sync_instagram_metrics,
+        "claim_instagram_metrics_alert",
+        lambda _summary, **_kwargs: True,
+    )
 
     summary = sync_instagram_metrics.sync_instagram_metrics(None, 0)
 
     assert summary["total"] == 3
+    assert summary["attempted"] == 3
     assert summary["succeeded"] == 2
     assert summary["failed"] == 1
     assert summary["by_brand"]["brand-b"]["failed"] == 1
     assert alerts == [summary]
+
+
+def test_sync_quarantines_unscoped_and_mismatched_rows_without_counting_failures(monkeypatch):
+    jobs = [
+        {"id": "1", "brand_id": None, "instagram_media_id": "legacy-media"},
+        {"id": "2", "brand_id": "brand-a", "instagram_media_id": "old-account-media"},
+        {"id": "3", "brand_id": "brand-a", "instagram_media_id": "current-media"},
+    ]
+    captured_since = []
+
+    def fake_fetch(_limit, *, published_since=None):
+        captured_since.append(published_since)
+        return jobs
+
+    def fake_refresh(queue_id, comments_limit):
+        assert comments_limit == 0
+        if queue_id == "2":
+            raise instagram_api.InstagramUnsyncableError(
+                "credential_account_mismatch",
+                "Instagram credential account mismatch.",
+            )
+        assert queue_id == "3"
+        return {"views": 12, "reach": 9}
+
+    marked = []
+    monkeypatch.setattr(sync_instagram_metrics, "fetch_instagram_media_jobs", fake_fetch)
+    monkeypatch.setattr(sync_instagram_metrics, "fetch_instagram_unsyncable_counts", lambda: {})
+    monkeypatch.setattr(sync_instagram_metrics, "refresh_instagram_media", fake_refresh)
+    monkeypatch.setattr(
+        sync_instagram_metrics,
+        "mark_instagram_insights_unsyncable",
+        lambda queue_id, **values: marked.append((queue_id, values)),
+    )
+    monkeypatch.setattr(
+        sync_instagram_metrics,
+        "_send_failure_alert",
+        lambda _summary: pytest.fail("unsyncable rows must not alert"),
+    )
+
+    summary = sync_instagram_metrics.sync_instagram_metrics(None, 0)
+
+    assert captured_since and captured_since[0].endswith("Z")
+    assert summary["total"] == 3
+    assert summary["attempted"] == 1
+    assert summary["succeeded"] == 1
+    assert summary["failed"] == 0
+    assert summary["unsyncable"] == 2
+    assert summary["unsyncable_by_brand"] == {"unknown": 1, "brand-a": 1}
+    assert [item[1]["reason_code"] for item in marked] == [
+        "missing_brand_id",
+        "credential_account_mismatch",
+    ]
+
+
+def test_sync_alert_is_suppressed_during_24_hour_cooldown(monkeypatch):
+    jobs = [{"id": "1", "brand_id": "brand-a", "instagram_media_id": "media-1"}]
+    monkeypatch.setattr(sync_instagram_metrics, "fetch_instagram_media_jobs", lambda *_args, **_kwargs: jobs)
+    monkeypatch.setattr(sync_instagram_metrics, "fetch_instagram_unsyncable_counts", lambda: {})
+    monkeypatch.setattr(
+        sync_instagram_metrics,
+        "refresh_instagram_media",
+        lambda *_args, **_kwargs: (_ for _ in ()).throw(
+            instagram_api.InstagramActionError("provider error")
+        ),
+    )
+    monkeypatch.setattr(
+        sync_instagram_metrics,
+        "claim_instagram_metrics_alert",
+        lambda _summary, **_kwargs: False,
+    )
+    monkeypatch.setattr(
+        sync_instagram_metrics,
+        "_send_failure_alert",
+        lambda _summary: pytest.fail("cooldown must suppress the email"),
+    )
+
+    summary = sync_instagram_metrics.sync_instagram_metrics(None, 0)
+
+    assert summary["attempted"] == 1
+    assert summary["failed"] == 1
 
 
 def test_versioned_instagram_graph_base(monkeypatch):

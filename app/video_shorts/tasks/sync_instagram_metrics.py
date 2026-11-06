@@ -15,10 +15,16 @@ from typing import Dict, Optional
 
 from app.video_shorts.services.instagram_api import (
     InstagramActionError,
+    InstagramUnsyncableError,
     refresh_instagram_media,
 )
 from app.video_shorts.config import FB_API_BASE
 from app.video_shorts.services.instagram_queue import fetch_instagram_media_jobs
+from app.video_shorts.services.instagram_metrics_state import (
+    claim_instagram_metrics_alert,
+    fetch_instagram_unsyncable_counts,
+    mark_instagram_insights_unsyncable,
+)
 from app.video_shorts.services.email_verification import send_resend_email
 from app.video_shorts.services.facebook_queue import (
     fetch_facebook_media_jobs,
@@ -29,6 +35,7 @@ from src.trends.facebook_page_tokens import get_facebook_page_data
 import requests
 
 logger = logging.getLogger(__name__)
+ACTIVE_INSTAGRAM_METRICS_DAYS = 60
 
 
 def _send_failure_alert(summary: Dict[str, object]) -> None:
@@ -36,7 +43,9 @@ def _send_failure_alert(summary: Dict[str, object]) -> None:
     lines = [
         "Instagram media insight sync exceeded the failure threshold.",
         f"Checked: {summary['total']}",
+        f"Attempted: {summary['attempted']}",
         f"Failed: {summary['failed']}",
+        f"Unsyncable (excluded): {sum((summary.get('unsyncable_by_brand') or {}).values())}",
         "",
     ]
     lines.extend(
@@ -46,7 +55,7 @@ def _send_failure_alert(summary: Dict[str, object]) -> None:
     text = "\n".join(lines)
     send_resend_email(
         to_email=(os.getenv("ADMIN_NOTIFICATION_EMAIL") or "info@mintistudio.com").strip(),
-        subject=f"Minti Instagram metrics alert: {summary['failed']}/{summary['total']} failed",
+        subject=f"Minti Instagram metrics alert: {summary['failed']}/{summary['attempted']} failed",
         html="<p>" + html.escape(text).replace("\n", "<br>") + "</p>",
         text=text,
         error_message="Instagram metrics alert could not be sent.",
@@ -59,35 +68,95 @@ def sync_instagram_metrics(
     *,
     published_since: Optional[str] = None,
 ) -> Dict[str, object]:
+    if published_since is None:
+        published_since = (
+            datetime.now(timezone.utc) - timedelta(days=ACTIVE_INSTAGRAM_METRICS_DAYS)
+        ).replace(microsecond=0).isoformat().replace("+00:00", "Z")
     jobs = fetch_instagram_media_jobs(max_items, published_since=published_since)
+    try:
+        unsyncable_by_brand = fetch_instagram_unsyncable_counts()
+    except Exception:
+        logger.exception("Instagram unsyncable counts could not be loaded")
+        unsyncable_by_brand = {}
     summary: Dict[str, object] = {
         "total": len(jobs),
+        "attempted": 0,
         "succeeded": 0,
         "failed": 0,
+        "unsyncable": 0,
         "failures": [],
         "by_brand": {},
+        "unsyncable_by_brand": unsyncable_by_brand,
+        "published_since": published_since,
     }
     if not jobs:
-        print("Instagram: no media with instagram_media_id stored.")
-        print("Instagram summary: checked=0 succeeded=0 failed=0")
+        print(f"Instagram: no active media published since {published_since}.")
+        print("Instagram summary: checked=0 attempted=0 succeeded=0 failed=0 unsyncable=0")
+        for brand_id, count in sorted(unsyncable_by_brand.items()):
+            print(f" - brand={brand_id} unsyncable_total={count}")
         return summary
-    print(f"Instagram: checking {len(jobs)} media entries.")
+    print(
+        f"Instagram: checking {len(jobs)} active media entries "
+        f"published since {published_since}."
+    )
     for job in jobs:
         brand_id = str(job.get("brand_id") or "unknown")
         brand_counts = summary["by_brand"].setdefault(
-            brand_id, {"checked": 0, "succeeded": 0, "failed": 0}
+            brand_id,
+            {"checked": 0, "attempted": 0, "succeeded": 0, "failed": 0, "unsyncable": 0},
         )
         brand_counts["checked"] += 1
+        if brand_id == "unknown":
+            reason_code = "missing_brand_id"
+            reason = "Instagram queue row has no stored brand_id."
+            mark_instagram_insights_unsyncable(
+                job["id"],
+                reason_code=reason_code,
+                reason=reason,
+            )
+            summary["unsyncable"] += 1
+            brand_counts["unsyncable"] += 1
+            unsyncable_by_brand[brand_id] = unsyncable_by_brand.get(brand_id, 0) + 1
+            logger.warning(
+                "Instagram media marked unsyncable media_id=%s brand_id=%s reason=%s",
+                job.get("instagram_media_id"), brand_id, reason_code,
+            )
+            print(
+                f" - unsyncable media_id={job.get('instagram_media_id')} "
+                f"reason={reason_code}"
+            )
+            continue
         try:
             metrics = refresh_instagram_media(job["id"], comments_limit=comments_limit)
+            summary["attempted"] += 1
             summary["succeeded"] += 1
+            brand_counts["attempted"] += 1
             brand_counts["succeeded"] += 1
             print(
                 f" - refreshed media_id={job.get('instagram_media_id')} "
                 f"views={metrics.get('views')} reach={metrics.get('reach')}"
             )
+        except InstagramUnsyncableError as exc:
+            mark_instagram_insights_unsyncable(
+                job["id"],
+                reason_code=exc.reason_code,
+                reason=str(exc),
+            )
+            summary["unsyncable"] += 1
+            brand_counts["unsyncable"] += 1
+            unsyncable_by_brand[brand_id] = unsyncable_by_brand.get(brand_id, 0) + 1
+            logger.warning(
+                "Instagram media marked unsyncable media_id=%s brand_id=%s reason=%s",
+                job.get("instagram_media_id"), brand_id, exc.reason_code,
+            )
+            print(
+                f" - unsyncable media_id={job.get('instagram_media_id')} "
+                f"reason={exc.reason_code}"
+            )
         except InstagramActionError as exc:
+            summary["attempted"] += 1
             summary["failed"] += 1
+            brand_counts["attempted"] += 1
             brand_counts["failed"] += 1
             summary["failures"].append(
                 {
@@ -103,16 +172,23 @@ def sync_instagram_metrics(
             print(f" - failed media_id={job.get('instagram_media_id')}: {exc}")
     print(
         f"Instagram summary: checked={summary['total']} "
-        f"succeeded={summary['succeeded']} failed={summary['failed']}"
+        f"attempted={summary['attempted']} succeeded={summary['succeeded']} "
+        f"failed={summary['failed']} unsyncable={summary['unsyncable']}"
     )
     for brand_id, counts in sorted(summary["by_brand"].items()):
         print(
             f" - brand={brand_id} checked={counts['checked']} "
-            f"succeeded={counts['succeeded']} failed={counts['failed']}"
+            f"attempted={counts['attempted']} succeeded={counts['succeeded']} "
+            f"failed={counts['failed']} unsyncable={counts['unsyncable']}"
         )
-    if summary["total"] and (summary["failed"] / summary["total"]) > 0.20:
+    for brand_id, count in sorted(unsyncable_by_brand.items()):
+        print(f" - brand={brand_id} unsyncable_total={count}")
+    if summary["attempted"] and (summary["failed"] / summary["attempted"]) > 0.20:
         try:
-            _send_failure_alert(summary)
+            if claim_instagram_metrics_alert(summary, cooldown_hours=24):
+                _send_failure_alert(summary)
+            else:
+                print("Instagram alert suppressed: 24-hour cooldown active.")
         except Exception:
             logger.exception("Instagram media insight failure alert could not be sent")
     return summary

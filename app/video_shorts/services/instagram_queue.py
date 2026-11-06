@@ -771,6 +771,7 @@ def fetch_instagram_media_jobs(
             FROM shorts_instagram_queue
             WHERE instagram_media_id IS NOT NULL
               AND status = 'published'
+              AND COALESCE(insights_status, 'active') <> 'unsyncable'
               {published_clause}
             ORDER BY updated_at DESC
         """
@@ -1045,6 +1046,7 @@ def fetch_instagram_media_jobs(
             FROM shorts_instagram_queue
             WHERE instagram_media_id IS NOT NULL
               AND status = 'published'
+              AND COALESCE(insights_status, 'active') <> 'unsyncable'
               {published_clause}
             ORDER BY updated_at DESC
         """
