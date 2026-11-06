@@ -222,11 +222,9 @@ def _build_change_meta(current_value: int, previous_value: Optional[int]) -> Map
     if previous_value is None:
         return {"direction": "neutral", "change_label": "—"}
     if previous_value == 0:
-        if current_value == 0:
-            return {"direction": "neutral", "change_label": "0.0%"}
         return {
             "direction": "up" if current_value > 0 else "neutral",
-            "change_label": "Prev day 0",
+            "change_label": "New this period",
         }
     pct_change = ((current_value - previous_value) / abs(previous_value)) * 100
     if pct_change > 0:
@@ -237,7 +235,7 @@ def _build_change_meta(current_value: int, previous_value: Optional[int]) -> Map
         direction = "neutral"
     return {
         "direction": direction,
-        "change_label": f"{pct_change:.1f}%",
+        "change_label": f"{pct_change:.0f}%",
     }
 
 
@@ -1367,7 +1365,9 @@ def _render_video_stats(*, load_widgets: bool):
                     int(previous_value) if previous_value is not None else None,
                 )
                 direction = str(change["direction"])
-                delta_label = f"{change['change_label']} {previous_period_label}"
+                delta_label = str(change["change_label"])
+                if previous_value != 0:
+                    delta_label = f"{delta_label} {previous_period_label}"
             card_map[metric_key] = {
                 "key": metric_key,
                 "title": title,
@@ -1414,7 +1414,7 @@ def _render_video_stats(*, load_widgets: bool):
         week_top_videos=canonical["week_top_videos"],
         user_time_zone_label=_timezone_label(str(tenant.get("time_zone") or DEFAULT_TIME_ZONE)),
         earliest_snapshot=start_date,
-        default_insights=canonical["today_top_videos"],
+        default_insights=canonical["range_top_videos"],
         subscriber_totals=canonical["subscriber_totals"],
         subscriber_series=canonical["subscriber_series"],
         youtube_subscriber_data_missing=canonical["youtube_subscriber_data_missing"],

@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from datetime import date
 
-from app.video_shorts.services.dashboard_metrics import _period_totals
+from app.video_shorts.services.dashboard_metrics import _audience_net_by_date, _period_totals
 
 
 def test_period_totals_require_complete_connected_platform_data():
@@ -95,3 +95,29 @@ def test_connected_active_platform_with_only_missing_metrics_is_pending():
 
     assert totals["youtube"] == {"views": None, "likes": None, "comments": None}
     assert totals["all"] == {"views": None, "likes": None, "comments": None}
+
+
+def test_instagram_audience_net_is_derived_from_consecutive_totals():
+    rows = {
+        "2026-11-01": {"audience_total": 1620, "audience_gain": None, "gain_rows": 0},
+        "2026-11-02": {"audience_total": 1623, "audience_gain": None, "gain_rows": 0},
+        "2026-11-03": {"audience_total": 1625, "audience_gain": None, "gain_rows": 0},
+    }
+
+    assert _audience_net_by_date("instagram", rows) == {
+        "2026-11-01": None,
+        "2026-11-02": 3,
+        "2026-11-03": 2,
+    }
+
+
+def test_youtube_audience_net_keeps_reported_gain_and_pending_days():
+    rows = {
+        "2026-11-01": {"audience_total": 100, "audience_gain": 2, "gain_rows": 1},
+        "2026-11-02": {"audience_total": 100, "audience_gain": None, "gain_rows": 0},
+    }
+
+    assert _audience_net_by_date("youtube", rows) == {
+        "2026-11-01": 2,
+        "2026-11-02": None,
+    }

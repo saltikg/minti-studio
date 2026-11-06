@@ -928,7 +928,7 @@
         const rawSubscriberDatasets = [
           {
             label: "YouTube",
-            data: subscriberSeries.map((item, index) => (index === 0 ? null : (item.youtube_net ?? null))),
+            data: subscriberSeries.map((item) => item.youtube_net ?? null),
             borderColor: "#0ea5e9",
             backgroundColor: "rgba(14, 165, 233, 0.2)",
             tension: 0.28,
@@ -940,7 +940,7 @@
           },
           {
             label: "Instagram",
-            data: subscriberSeries.map((item, index) => (index === 0 ? null : (item.instagram_net ?? null))),
+            data: subscriberSeries.map((item) => item.instagram_net ?? null),
             borderColor: "#f59e0b",
             backgroundColor: "rgba(245, 158, 11, 0.2)",
             tension: 0.28,
@@ -952,7 +952,7 @@
           },
           {
             label: "Facebook",
-            data: subscriberSeries.map((item, index) => (index === 0 ? null : (item.facebook_net ?? null))),
+            data: subscriberSeries.map((item) => item.facebook_net ?? null),
             borderColor: "#3b82f6",
             backgroundColor: "rgba(59, 130, 246, 0.2)",
             tension: 0.28,
@@ -964,7 +964,7 @@
           },
           {% if tiktok_enabled %}{
             label: "TikTok",
-            data: subscriberSeries.map((item, index) => (index === 0 ? null : (item.tiktok_net ?? null))),
+            data: subscriberSeries.map((item) => item.tiktok_net ?? null),
             borderColor: "#ec4899",
             backgroundColor: "rgba(236, 72, 153, 0.2)",
             tension: 0.28,
@@ -1274,7 +1274,7 @@
             tiktokNet: current.tiktok_net,{% endif %}
           });
         }
-        return deltas.slice(1);
+        return deltas;
       };
       const subscriberDeltas = buildSubscriberDeltas();
       const renderSubscriberTable = () => {

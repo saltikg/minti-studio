@@ -163,6 +163,34 @@ def _display_metric(value: Optional[int], *, connected: bool) -> object:
     return int(value)
 
 
+def _audience_net_by_date(
+    platform: str,
+    platform_rows: Mapping[str, Mapping[str, object]],
+) -> Dict[str, Optional[int]]:
+    result: Dict[str, Optional[int]] = {}
+    previous_total: Optional[int] = None
+    for date_key in sorted(platform_rows):
+        row = platform_rows[date_key]
+        total_value = row.get("audience_total")
+        current_total = int(total_value) if total_value is not None else None
+        if platform == "youtube":
+            result[date_key] = (
+                int(row["audience_gain"])
+                if int(row.get("gain_rows") or 0) > 0
+                and row.get("audience_gain") is not None
+                else None
+            )
+        else:
+            result[date_key] = (
+                current_total - previous_total
+                if current_total is not None and previous_total is not None
+                else None
+            )
+        if current_total is not None:
+            previous_total = current_total
+    return result
+
+
 def _video_rollup(
     conn,
     *,
@@ -344,6 +372,11 @@ def _load_audience(
         if platform and isinstance(snapshot_date, date):
             by_platform.setdefault(platform, {})[snapshot_date.isoformat()] = row
 
+    net_by_platform = {
+        platform: _audience_net_by_date(platform, by_platform.get(platform) or {})
+        for platform in PLATFORMS
+    }
+
     totals: Dict[str, object] = {}
     for platform in PLATFORMS:
         if not connections.get(platform):
@@ -367,11 +400,7 @@ def _load_audience(
                 item[f"{platform}_net"] = None
             else:
                 item[f"{platform}_total"] = row.get("audience_total")
-                item[f"{platform}_net"] = (
-                    row.get("audience_gain")
-                    if int(row.get("gain_rows") or 0) > 0
-                    else None
-                )
+                item[f"{platform}_net"] = (net_by_platform.get(platform) or {}).get(date_key)
         series.append(item)
     youtube_pending = bool(connections.get("youtube")) and totals.get("youtube") == "Pending"
     return totals, series, youtube_pending
@@ -508,8 +537,6 @@ def load_dashboard_metrics(
                 "last_updated_epoch": int(last_updated.timestamp()) if last_updated else 0,
             }
         )
-    daily_totals.reverse()
-
     selected_platforms = (
         connected_platforms
         if selected_platform == "all"
@@ -526,6 +553,32 @@ def load_dashboard_metrics(
         offset=(page - 1) * page_size,
     )
     video_total = int(video_rows[0].get("total_count") or 0) if video_rows else 0
+    range_top_rows = _video_rollup(
+        conn,
+        brand_id=brand_id,
+        start_date=start_date,
+        end_date=end_date,
+        platforms=selected_platforms,
+        connections=connections,
+        limit=6,
+    )
+    first_publish_row = conn.execute(
+        f"""
+        SELECT MIN(canonical_publish_date)
+        FROM {MART}
+        WHERE brand_id = ?
+          AND canonical_publish_date BETWEEN ? AND ?
+        """,
+        [brand_id, start_date.isoformat(), end_date.isoformat()],
+    ).fetchone()
+    first_publish_date = first_publish_row[0] if first_publish_row else None
+    if isinstance(first_publish_date, datetime):
+        first_publish_date = first_publish_date.date()
+    if isinstance(first_publish_date, date):
+        daily_totals = [
+            row for row in daily_totals if row["snapshot_date"] >= first_publish_date
+        ]
+    daily_totals.reverse()
     today_rows = _video_rollup(
         conn,
         brand_id=brand_id,
@@ -561,6 +614,7 @@ def load_dashboard_metrics(
         "daily_totals": daily_totals,
         "video_rows": video_rows,
         "video_rows_total": video_total,
+        "range_top_videos": range_top_rows,
         "today_top_videos": today_rows,
         "week_top_videos": week_rows,
         "subscriber_totals": audience_totals,
