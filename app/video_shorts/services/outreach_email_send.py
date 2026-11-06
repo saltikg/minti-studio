@@ -350,6 +350,7 @@ def _build_zoho_message(
     html: str | None = None,
     extra_headers: dict[str, str] | None = None,
     from_name: str | None = None,
+    attachments: list[dict[str, Any]] | None = None,
 ) -> tuple[EmailMessage, str, str]:
     recipient = str(to_email or "").strip()
     if not recipient or "@" not in recipient:
@@ -377,6 +378,16 @@ def _build_zoho_message(
     message.set_content(str(text or ""))
     if html is not None:
         message.add_alternative(str(html), subtype="html")
+    for attachment in attachments or []:
+        filename = str(attachment.get("filename") or "attachment").strip() or "attachment"
+        content_type = str(attachment.get("content_type") or "application/octet-stream").strip().lower()
+        maintype, separator, subtype = content_type.partition("/")
+        if not separator or not maintype or not subtype:
+            maintype, subtype = "application", "octet-stream"
+        data = attachment.get("data")
+        if not isinstance(data, (bytes, bytearray)):
+            raise RuntimeError(f"Email attachment {filename} is not binary data")
+        message.add_attachment(bytes(data), maintype=maintype, subtype=subtype, filename=filename)
     return message, recipient, message_id
 
 
@@ -395,6 +406,7 @@ def send_zoho_email(
     html: str | None = None,
     extra_headers: dict[str, str] | None = None,
     from_name: str | None = None,
+    attachments: list[dict[str, Any]] | None = None,
 ) -> dict[str, object]:
     settings = _zoho_smtp_settings()
     message, recipient, message_id = _build_zoho_message(
@@ -404,6 +416,7 @@ def send_zoho_email(
         html=html,
         extra_headers=extra_headers,
         from_name=from_name,
+        attachments=attachments,
     )
     raw_message = _serialize_zoho_message(message)
 

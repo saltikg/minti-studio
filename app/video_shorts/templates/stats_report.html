@@ -36,7 +36,6 @@
     }
     .brand-lockup { height:32px; display:flex; align-items:center; }
     .report-logo { display:block; width:auto; height:31px; object-fit:contain; image-rendering:auto; }
-    .page-watermark { position:absolute; z-index:0; width:360px; height:360px; right:-112px; bottom:-108px; object-fit:contain; opacity:.06; }
     .page-footer {
       position:absolute; z-index:2; left:64px; right:64px; bottom:19px; padding-top:9px;
       border-top:1px solid var(--line); display:flex; justify-content:space-between;
@@ -154,7 +153,6 @@
 
 <section class="report-page">
   {{ chrome(1) }}
-  <img class="page-watermark" src="{{ url_for('video_shorts_bp.static', filename='img/logo/mint_rounded_square_with_center_dot.png') }}" alt="">
   <div class="page-body summary-page">
     <div class="summary-title"><div class="eyebrow">Your month in one line</div><h1>{{ report_summary.headline }}</h1></div>
     <div class="kpi-grid">

@@ -1,0 +1,202 @@
+{% extends "vs_admin_base.html" %}
+
+{% block title %}Monthly reports{% endblock %}
+{% block admin_heading %}Monthly reports{% endblock %}
+{% block admin_subheading %}
+  <p>Generate, review, and send frozen monthly reports for converted Autopilot customers.</p>
+{% endblock %}
+
+{% block extra_styles %}
+  <style>
+    .reports-toolbar {
+      display:flex;
+      align-items:end;
+      justify-content:space-between;
+      gap:16px;
+      margin-bottom:20px;
+    }
+    .reports-month-form { display:flex; align-items:end; gap:10px; }
+    .reports-month-form label {
+      display:block;
+      margin-bottom:6px;
+      color:rgba(255,255,255,.58);
+      font-size:.72rem;
+      font-weight:700;
+      letter-spacing:.08em;
+      text-transform:uppercase;
+    }
+    .reports-table-wrap { overflow-x:auto; }
+    .reports-table {
+      width:100%;
+      min-width:1120px;
+      color:rgba(255,255,255,.92);
+      border-collapse:separate;
+      border-spacing:0;
+    }
+    .reports-table th,
+    .reports-table td {
+      padding:13px 12px;
+      vertical-align:middle;
+      border-bottom:1px solid rgba(255,255,255,.08);
+    }
+    .reports-table th {
+      color:rgba(255,255,255,.52);
+      font-size:.72rem;
+      font-weight:700;
+      letter-spacing:.08em;
+      text-align:left;
+      text-transform:uppercase;
+      white-space:nowrap;
+    }
+    .reports-customer { min-width:210px; }
+    .reports-customer strong,
+    .reports-brand { display:block; font-weight:650; }
+    .reports-muted { color:rgba(255,255,255,.52); font-size:.78rem; }
+    .reports-platforms { display:flex; flex-wrap:wrap; gap:6px; min-width:170px; }
+    .reports-platform {
+      padding:4px 7px;
+      border-radius:999px;
+      color:#d1fae5;
+      background:rgba(20,184,166,.14);
+      font-size:.7rem;
+      font-weight:700;
+    }
+    .reports-status {
+      display:inline-flex;
+      padding:5px 9px;
+      border-radius:999px;
+      font-size:.74rem;
+      font-weight:700;
+      white-space:nowrap;
+    }
+    .reports-status.not_generated { color:#d1d5db; background:rgba(156,163,175,.13); }
+    .reports-status.draft { color:#fde68a; background:rgba(245,158,11,.15); }
+    .reports-status.sent { color:#86efac; background:rgba(34,197,94,.15); }
+    .reports-error { max-width:220px; margin-top:6px; color:#fca5a5; font-size:.72rem; }
+    .reports-actions { display:flex; align-items:center; gap:7px; min-width:390px; }
+    .reports-actions .btn { white-space:nowrap; }
+    .reports-empty { padding:32px!important; color:rgba(255,255,255,.5); text-align:center; }
+    .reports-busy { opacity:.62; pointer-events:none; }
+    @media (max-width:800px) {
+      .reports-toolbar { align-items:stretch; flex-direction:column; }
+      .reports-month-form { align-items:stretch; flex-direction:column; }
+    }
+  </style>
+{% endblock %}
+
+{% block content %}
+  <div class="reports-toolbar">
+    <form method="get" class="reports-month-form">
+      <div>
+        <label for="reports-month">Report month</label>
+        <input id="reports-month" class="form-control" type="month" name="month" value="{{ selected_month }}" required>
+      </div>
+      <button class="btn btn-outline-light" type="submit">View month</button>
+    </form>
+    <div class="reports-muted">{{ rows|length }} converted Autopilot customers · {{ selected_month_label }}</div>
+  </div>
+
+  <div class="reports-table-wrap">
+    <table class="reports-table">
+      <thead>
+        <tr>
+          <th>Customer</th>
+          <th>Brand</th>
+          <th>Connected platforms</th>
+          <th>Shorts published</th>
+          <th>Status</th>
+          <th>Actions</th>
+        </tr>
+      </thead>
+      <tbody>
+        {% for row in rows %}
+          <tr data-report-row>
+            <td class="reports-customer">
+              <strong>{{ row.account_name or row.recipient }}</strong>
+              <span class="reports-muted">{{ row.recipient }}</span>
+            </td>
+            <td><span class="reports-brand">{{ row.brand_name }}</span></td>
+            <td>
+              <div class="reports-platforms">
+                {% for platform in row.platforms %}<span class="reports-platform">{{ platform }}</span>{% else %}<span class="reports-muted">None</span>{% endfor %}
+              </div>
+            </td>
+            <td>{{ row.shorts_published }}</td>
+            <td>
+              <span class="reports-status {{ row.status }}">{{ row.status_label }}</span>
+              {% if row.report and row.report.error %}<div class="reports-error">{{ row.report.error }}</div>{% endif %}
+            </td>
+            <td>
+              <div class="reports-actions">
+                <a class="btn btn-sm btn-outline-light" href="{{ row.dashboard_url }}" target="_blank" rel="noopener">Open dashboard</a>
+                <button
+                  class="btn btn-sm btn-primary"
+                  type="button"
+                  data-report-generate
+                  data-url="{{ url_for('video_shorts_bp.admin_generate_monthly_report', brand_id=row.brand_id, month=selected_month) }}"
+                  {% if row.status == 'sent' %}disabled title="Sent reports are locked"{% endif %}>
+                  {{ 'Regenerate PDF' if row.status == 'draft' else 'Generate PDF' }}
+                </button>
+                {% if row.report %}
+                  <a class="btn btn-sm btn-outline-info" href="{{ url_for('video_shorts_bp.admin_preview_monthly_report', brand_id=row.brand_id, month=selected_month) }}" target="_blank" rel="noopener">Preview</a>
+                  <button
+                    class="btn btn-sm btn-success"
+                    type="button"
+                    data-report-send
+                    data-url="{{ url_for('video_shorts_bp.admin_send_monthly_report', brand_id=row.brand_id, month=selected_month) }}"
+                    data-recipient="{{ row.recipient }}"
+                    data-subject="{{ row.email_subject }}"
+                    data-resend="{{ 'true' if row.status == 'sent' else 'false' }}">
+                    {{ 'Send again' if row.status == 'sent' else 'Send' }}
+                  </button>
+                {% endif %}
+              </div>
+            </td>
+          </tr>
+        {% else %}
+          <tr><td class="reports-empty" colspan="6">No converted Autopilot customers were found.</td></tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+{% endblock %}
+
+{% block extra_scripts %}
+  {{ super() }}
+  <script>
+    (() => {
+      const requestAction = async (button, payload = {}) => {
+        const row = button.closest('[data-report-row]');
+        row?.classList.add('reports-busy');
+        try {
+          const response = await fetch(button.dataset.url, {
+            method: 'POST',
+            credentials: 'same-origin',
+            headers: {'Content-Type': 'application/json', 'Accept': 'application/json'},
+            body: JSON.stringify(payload)
+          });
+          const data = await response.json().catch(() => ({}));
+          if (!response.ok || !data.ok) throw new Error(data.message || 'The report action could not be completed.');
+          window.location.reload();
+        } catch (error) {
+          row?.classList.remove('reports-busy');
+          window.alert(error.message || 'The report action could not be completed.');
+        }
+      };
+
+      document.querySelectorAll('[data-report-generate]').forEach((button) => {
+        button.addEventListener('click', () => requestAction(button));
+      });
+
+      document.querySelectorAll('[data-report-send]').forEach((button) => {
+        button.addEventListener('click', () => {
+          const message = `Send to: ${button.dataset.recipient}\nSubject: ${button.dataset.subject}\n\nSend this report now?`;
+          if (!window.confirm(message)) return;
+          const isResend = button.dataset.resend === 'true';
+          if (isResend && !window.confirm('This frozen report was already sent. Send it again?')) return;
+          requestAction(button, {confirm_resend: isResend});
+        });
+      });
+    })();
+  </script>
+{% endblock %}

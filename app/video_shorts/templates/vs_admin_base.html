@@ -304,6 +304,14 @@
               <span>Scheduled Shorts</span>
             </span>
           </a>
+          <a
+            href="{{ url_for('video_shorts_bp.admin_monthly_reports') }}"
+            class="vs-admin-nav-link {% if request.path.startswith('/video_shorts/admin/reports') %}is-active{% endif %}">
+            <span aria-hidden="true">●</span>
+            <span class="vs-admin-nav-label">
+              <span>Monthly reports</span>
+            </span>
+          </a>
         </div>
 
         <div class="vs-admin-nav-group">
