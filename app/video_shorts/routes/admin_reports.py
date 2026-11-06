@@ -21,6 +21,7 @@ from app.video_shorts.services.autopilot_monthly_reports import (
     parse_report_month,
     report_storage_key,
     report_tracking_token,
+    resolve_admin_owned_report_brand,
     resolve_converted_customer,
     safe_report_filename,
     send_monthly_report_email,
@@ -52,6 +53,13 @@ def _month_or_400(raw: object):
 
 def _scope_or_403(conn, brand_id: str) -> dict[str, str]:
     scope = resolve_converted_customer(conn, brand_id=brand_id)
+    if not scope:
+        acting_admin_id = str((getattr(g, "vs_current_user", None) or {}).get("id") or "").strip()
+        scope = resolve_admin_owned_report_brand(
+            conn,
+            brand_id=brand_id,
+            acting_admin_id=acting_admin_id,
+        )
     if not scope or scope.get("brand_id") != str(brand_id or "").strip():
         abort(403)
     return scope

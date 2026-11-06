@@ -128,6 +128,7 @@ def test_preview_returns_frozen_pdf_and_brand_mismatch_is_403(app, monkeypatch):
     storage.objects[_record()["s3_key"]] = b"%PDF-preview"
     monkeypatch.setattr(admin_reports, "get_db_readonly", lambda: _ReadConnection())
     monkeypatch.setattr(admin_reports, "resolve_converted_customer", lambda _conn, *, brand_id: _scope("brand-1"))
+    monkeypatch.setattr(admin_reports, "resolve_admin_owned_report_brand", lambda *_args, **_kwargs: None)
     monkeypatch.setattr(admin_reports, "load_report_record", lambda *_args, **_kwargs: _record())
     monkeypatch.setattr(admin_reports, "get_media_storage", lambda: storage)
     client = test_app.test_client()
@@ -144,6 +145,23 @@ def test_reports_non_admin_is_403(app):
     actor["role"] = "member"
     response = test_app.test_client().get("/video_shorts/admin/reports")
     assert response.status_code == 403
+
+
+def test_admin_owned_qa_brand_is_scoped_to_the_acting_admin(app, monkeypatch):
+    test_app, _actor = app
+    observed = {}
+    monkeypatch.setattr(admin_reports, "resolve_converted_customer", lambda *_args, **_kwargs: None)
+
+    def owned(_conn, *, brand_id, acting_admin_id):
+        observed.update(brand_id=brand_id, acting_admin_id=acting_admin_id)
+        return _scope(brand_id) if brand_id == "hoca-brand" and acting_admin_id == "admin-1" else None
+
+    monkeypatch.setattr(admin_reports, "resolve_admin_owned_report_brand", owned)
+    with test_app.test_request_context("/video_shorts/admin/reports/hoca-brand/2026-10/generate"):
+        g.vs_current_user = {"id": "admin-1", "role": "admin"}
+        scope = admin_reports._scope_or_403(_ReadConnection(), "hoca-brand")
+    assert scope["brand_id"] == "hoca-brand"
+    assert observed == {"brand_id": "hoca-brand", "acting_admin_id": "admin-1"}
 
 
 def test_mocked_zoho_message_has_report_attachment_and_headers(monkeypatch):

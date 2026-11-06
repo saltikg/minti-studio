@@ -183,6 +183,44 @@ def resolve_converted_customer(conn, *, brand_id: str) -> Optional[dict[str, str
     }
 
 
+def resolve_admin_owned_report_brand(
+    conn,
+    *,
+    brand_id: str,
+    acting_admin_id: str,
+) -> Optional[dict[str, str]]:
+    """Allow an admin to use their own brand as a report QA fixture.
+
+    Customer rows remain converted-Autopilot-only. This narrow fallback exists
+    for real-route report verification and can never target another user's brand.
+    """
+    row = conn.execute(
+        """
+        SELECT CAST(b.owner_user_id AS VARCHAR), CAST(b.id AS VARCHAR),
+               COALESCE(NULLIF(b.name, ''), 'Customer'),
+               COALESCE(NULLIF(u.email, ''), NULLIF(u.username, ''), ''),
+               COALESCE(NULLIF(u.name, ''), NULLIF(b.name, ''), '')
+        FROM shorts_brands b
+        JOIN shorts_users u
+          ON CAST(u.id AS VARCHAR) = CAST(b.owner_user_id AS VARCHAR)
+         AND lower(coalesce(u.role, '')) = 'admin'
+        WHERE CAST(b.id AS VARCHAR) = CAST(? AS VARCHAR)
+          AND CAST(b.owner_user_id AS VARCHAR) = CAST(? AS VARCHAR)
+        LIMIT 1
+        """,
+        [str(brand_id or "").strip(), str(acting_admin_id or "").strip()],
+    ).fetchone()
+    if not row:
+        return None
+    return {
+        "owner_user_id": str(row[0] or "").strip(),
+        "brand_id": str(row[1] or "").strip(),
+        "brand_name": str(row[2] or "Customer").strip() or "Customer",
+        "recipient": str(row[3] or "").strip(),
+        "account_name": str(row[4] or "").strip(),
+    }
+
+
 def load_converted_customers(conn) -> list[dict[str, str]]:
     rows = conn.execute(
         """
