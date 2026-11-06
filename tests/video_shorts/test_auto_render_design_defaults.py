@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import re
+from pathlib import Path
 
 import pytest
 from flask import Flask, g, jsonify
@@ -9,6 +10,9 @@ from werkzeug.exceptions import Forbidden
 
 from app.video_shorts.routes import generation
 from app.video_shorts.services import tenant_media
+
+
+ROOT = Path(__file__).resolve().parents[2]
 
 
 class _Result:
