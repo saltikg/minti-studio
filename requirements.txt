@@ -24,3 +24,4 @@ bleach
 youtube-transcript-api
 CairoSVG>=2.7
 playwright>=1.48,<2
+mediapipe==0.10.35; python_version >= "3.12"

@@ -8255,10 +8255,30 @@
             </div>
           </div>
           <div class="col-md-7">
-            <label class="form-label" for="clip-cover-text">Cover text <span class="text-white-50">(max 6 words)</span></label>
-            <input class="form-control bg-black text-white border-secondary" id="clip-cover-text" maxlength="72">
-            <label class="form-label mt-3" for="clip-cover-highlight">Highlight phrase</label>
-            <input class="form-control bg-black text-white border-secondary" id="clip-cover-highlight" maxlength="48">
+            <div class="mb-3">
+              <div class="small text-white-50 mb-2">Template</div>
+              <div class="btn-group" role="group" aria-label="Cover template">
+                <input type="radio" class="btn-check" name="clip-cover-template" id="clip-cover-template-bold" value="bold" autocomplete="off">
+                <label class="btn btn-outline-light" for="clip-cover-template-bold">Bold</label>
+                <input type="radio" class="btn-check" name="clip-cover-template" id="clip-cover-template-clean" value="clean" autocomplete="off">
+                <label class="btn btn-outline-light" for="clip-cover-template-clean">Clean</label>
+              </div>
+            </div>
+            <div id="clip-cover-clean-fields">
+              <label class="form-label" for="clip-cover-text">Cover text <span class="text-white-50">(max 4 words)</span></label>
+              <input class="form-control bg-black text-white border-secondary" id="clip-cover-text" maxlength="72">
+              <label class="form-label mt-3" for="clip-cover-highlight">Highlight phrase</label>
+              <input class="form-control bg-black text-white border-secondary" id="clip-cover-highlight" maxlength="48">
+            </div>
+            <div id="clip-cover-bold-fields" class="d-none">
+              <label class="form-label" for="clip-cover-kicker">Kicker <span class="text-white-50">(optional, max 3 words)</span></label>
+              <input class="form-control bg-black text-white border-secondary" id="clip-cover-kicker" maxlength="48">
+              <label class="form-label mt-3" for="clip-cover-main">Main <span class="text-white-50">(1–2 words)</span></label>
+              <input class="form-control bg-black text-white border-secondary" id="clip-cover-main" maxlength="40">
+              <label class="form-label mt-3" for="clip-cover-bold-highlight">Highlight <span class="text-white-50">(1–3 words)</span></label>
+              <input class="form-control bg-black text-white border-secondary" id="clip-cover-bold-highlight" maxlength="56">
+              <div class="small text-white-50 mt-1">Kicker, main and highlight: 6 words total.</div>
+            </div>
             <div class="mt-3">
               <div class="small text-white-50 mb-2">Choose a frame</div>
               <div id="clip-cover-candidates" class="d-flex gap-2 flex-wrap"></div>
@@ -26178,6 +26198,13 @@ document.addEventListener("DOMContentLoaded", () => {
   const empty = document.getElementById("clip-cover-empty");
   const textInput = document.getElementById("clip-cover-text");
   const highlightInput = document.getElementById("clip-cover-highlight");
+  const kickerInput = document.getElementById("clip-cover-kicker");
+  const mainInput = document.getElementById("clip-cover-main");
+  const boldHighlightInput = document.getElementById("clip-cover-bold-highlight");
+  const boldToggle = document.getElementById("clip-cover-template-bold");
+  const cleanToggle = document.getElementById("clip-cover-template-clean");
+  const boldFields = document.getElementById("clip-cover-bold-fields");
+  const cleanFields = document.getElementById("clip-cover-clean-fields");
   const candidatesEl = document.getElementById("clip-cover-candidates");
   const feedback = document.getElementById("clip-cover-feedback");
   const saveButton = document.getElementById("clip-cover-save");
@@ -26185,6 +26212,17 @@ document.addEventListener("DOMContentLoaded", () => {
   let activeCard = null;
   let selectedTimestamp = null;
   let pollTimer = null;
+
+  const selectedTemplate = () => boldToggle.checked ? "bold" : "clean";
+  const applyTemplate = (template) => {
+    const isBold = template === "bold";
+    boldToggle.checked = isBold;
+    cleanToggle.checked = !isBold;
+    boldFields.classList.toggle("d-none", !isBold);
+    cleanFields.classList.toggle("d-none", isBold);
+  };
+  boldToggle.addEventListener("change", () => applyTemplate("bold"));
+  cleanToggle.addEventListener("change", () => applyTemplate("clean"));
 
   const showPreview = (url) => {
     if (url) {
@@ -26202,11 +26240,16 @@ document.addEventListener("DOMContentLoaded", () => {
     feedback.textContent = payload?.status === "processing" || payload?.status === "queued"
       ? "Creating cover…" : (cover?.error || "");
     if (!cover) {
+      applyTemplate(payload?.cover_template || "clean");
       showPreview(""); candidatesEl.innerHTML = ""; download.classList.add("d-none");
       return;
     }
+    applyTemplate(cover.cover_template || payload?.cover_template || "clean");
     textInput.value = cover.cover_text || "";
     highlightInput.value = cover.highlight_phrase || "";
+    kickerInput.value = cover.kicker || "";
+    mainInput.value = cover.main || "";
+    boldHighlightInput.value = cover.bold_highlight || "";
     selectedTimestamp = cover.selected_timestamp ?? null;
     showPreview(cover.cover_url || "");
     candidatesEl.innerHTML = "";
@@ -26248,21 +26291,38 @@ document.addEventListener("DOMContentLoaded", () => {
     button.addEventListener("click", () => {
       activeCard = button.closest(".clip-card");
       selectedTimestamp = null;
-      textInput.value = ""; highlightInput.value = ""; feedback.textContent = "";
+      textInput.value = ""; highlightInput.value = ""; kickerInput.value = "";
+      mainInput.value = ""; boldHighlightInput.value = ""; feedback.textContent = "";
+      applyTemplate("clean");
       bootstrap.Modal.getOrCreateInstance(modalEl).show();
       loadCover();
     });
   });
   saveButton?.addEventListener("click", async () => {
     if (!activeCard?.dataset.coverUrl) return;
-    const words = textInput.value.trim().split(/\s+/).filter(Boolean);
-    if (words.length > 6) { feedback.textContent = "Cover text must be 6 words or fewer."; return; }
+    const template = selectedTemplate();
+    const cleanWords = textInput.value.trim().split(/\s+/).filter(Boolean);
+    const kickerWords = kickerInput.value.trim().split(/\s+/).filter(Boolean);
+    const mainWords = mainInput.value.trim().split(/\s+/).filter(Boolean);
+    const boldHighlightWords = boldHighlightInput.value.trim().split(/\s+/).filter(Boolean);
+    if (template === "clean" && cleanWords.length > 4) { feedback.textContent = "Clean cover text must be 4 words or fewer."; return; }
+    if (template === "bold" && (kickerWords.length > 3 || mainWords.length > 2 || boldHighlightWords.length > 3 || kickerWords.length + mainWords.length + boldHighlightWords.length > 6)) {
+      feedback.textContent = "Bold copy must fit the 3 / 2 / 3 word limits and 6 words total."; return;
+    }
     saveButton.disabled = true;
     feedback.textContent = "Creating cover…";
     try {
       const response = await fetch(activeCard.dataset.coverUrl, {
         method:"POST", headers:{"Content-Type":"application/json", "Accept":"application/json"},
-        body:JSON.stringify({cover_text:textInput.value, highlight_phrase:highlightInput.value, selected_timestamp:selectedTimestamp})
+        body:JSON.stringify({
+          cover_template:template,
+          cover_text:textInput.value,
+          highlight_phrase:highlightInput.value,
+          kicker:kickerInput.value,
+          main:mainInput.value,
+          bold_highlight:boldHighlightInput.value,
+          selected_timestamp:selectedTimestamp
+        })
       });
       const payload = await response.json();
       if (!response.ok) throw new Error(payload.message || "Cover could not be saved.");

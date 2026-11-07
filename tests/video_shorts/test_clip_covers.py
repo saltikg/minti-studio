@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import pytest
+import numpy as np
 
 from app.video_shorts.config import DEFAULT_EDITOR_TITLE_FONT_KEY, TITLE_FONTS
 from app.video_shorts.services.clip_covers import (
@@ -11,9 +12,13 @@ from app.video_shorts.services.clip_covers import (
     _fit_cover_layout,
     _highlight_word_indexes,
     _mouth_region_is_obscured,
+    _locale_upper,
     _resolve_cover_colors,
+    _tag_main_speaker,
     _thumbnail_copy_fallback,
+    normalize_cover_template,
 )
+from app.video_shorts.services.clip_title import generate_clip_cover_copy
 from app.video_shorts.services.compositor import _title_font_path_for_text
 
 
@@ -83,3 +88,39 @@ def test_missing_mouth_contrast_marks_face_as_occluded():
     assert _mouth_region_is_obscured("neutral", 0.0087) is True
     assert _mouth_region_is_obscured("neutral", 0.0256) is False
     assert _mouth_region_is_obscured("unknown", 0.0) is False
+
+
+def test_brand_cover_template_defaults_are_explicit():
+    assert normalize_cover_template(None, brand_id="37594f93-7692-49b2-b559-2e0841fe0268") == "bold"
+    assert normalize_cover_template(None, brand_id="3dab32b8-a17a-4b96-a027-e49774813247") == "clean"
+    assert normalize_cover_template("clean", brand_id="37594f93-7692-49b2-b559-2e0841fe0268") == "clean"
+
+
+def test_bold_copy_fallback_obeys_both_template_limits(monkeypatch):
+    monkeypatch.setattr("app.video_shorts.services.clip_title._openai_client", None)
+    copy = generate_clip_cover_copy(
+        "Kıtlık metabolizması kilo vermeyi neden durduruyor?",
+        clip_title="Kıtlık metabolizması kilo vermeyi durduruyor",
+    )
+
+    assert len(copy["cover_text"].split()) <= 4
+    assert 1 <= len(copy["main"].split()) <= 2
+    assert 1 <= len(copy["highlight"].split()) <= 3
+    assert sum(len(copy[key].split()) for key in ("kicker", "main", "highlight")) <= 6
+    assert _locale_upper("kıtlık metabolizması", turkish=True) == "KITLIK METABOLİZMASI"
+
+
+def test_main_speaker_cluster_rejects_a_brief_different_face():
+    candidates = [
+        {"face": {"x": 1}, "_speaker_feature": np.array([1.0, 0.0]), "eligible": True, "score": 10, "face_sharpness": 100},
+        {"face": {"x": 2}, "_speaker_feature": np.array([0.99, 0.01]), "eligible": True, "score": 11, "face_sharpness": 110},
+        {"face": {"x": 3}, "_speaker_feature": np.array([0.0, 1.0]), "eligible": True, "score": 12, "face_sharpness": 120},
+    ]
+
+    _tag_main_speaker(candidates)
+
+    assert candidates[0]["main_speaker"] is True
+    assert candidates[1]["main_speaker"] is True
+    assert candidates[2]["main_speaker"] is False
+    assert candidates[2]["eligible"] is False
+    assert "different_speaker" in candidates[2]["rejection_reasons"]

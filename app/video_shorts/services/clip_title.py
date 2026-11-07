@@ -357,20 +357,44 @@ def generate_clip_cover_copy(
 ) -> dict[str, str]:
     """Return cover copy using no more than one additional model call."""
     fallback = _truncate_whole_word(str(clip_title or "").strip(), 36)
-    if len(fallback.split()) > 5:
-        fallback = " ".join(fallback.split()[:5])
+    if len(fallback.split()) > 4:
+        fallback = " ".join(fallback.split()[:4])
     fallback_highlight = " ".join((fallback.split() or [""])[:2]).strip()
-    result = {"cover_text": fallback, "highlight_phrase": fallback_highlight}
+    fallback_words = fallback.split()
+    if len(fallback_words) >= 4:
+        fallback_kicker = fallback_words[0]
+        fallback_main = " ".join(fallback_words[1:3])
+        fallback_bold_highlight = " ".join(fallback_words[3:])
+    elif len(fallback_words) == 3:
+        fallback_kicker = ""
+        fallback_main = " ".join(fallback_words[:2])
+        fallback_bold_highlight = fallback_words[2]
+    elif len(fallback_words) == 2:
+        fallback_kicker = ""
+        fallback_main, fallback_bold_highlight = fallback_words
+    else:
+        fallback_kicker = ""
+        fallback_main = fallback_words[0] if fallback_words else "SHORT"
+        fallback_bold_highlight = fallback_main
+    result = {
+        "cover_text": fallback,
+        "highlight_phrase": fallback_highlight,
+        "kicker": fallback_kicker,
+        "main": fallback_main,
+        "highlight": fallback_bold_highlight,
+    }
     source_text = str(transcript_text or "").strip()
     if not _openai_client or not source_text:
         return result
 
     language = _normalize_language_hint(language_hint) or _detect_title_language(source_text[:2000])
     prompt = (
-        "Return JSON with cover_text and highlight_phrase. cover_text must be accurate, "
-        f"in {_title_language_name(language)}, 2-5 words, no more than 36 characters, and punchier than the "
-        "clip title without clickbait. highlight_phrase must be an exact non-empty "
-        "substring of cover_text, normally 1-3 words.\n\n"
+        "Return JSON with cover_text, highlight_phrase, kicker, main, and highlight. "
+        f"All copy must be accurate and in {_title_language_name(language)}, punchier than the clip title, "
+        "and never clickbait. For the Clean design: cover_text is 2-4 words and at most 36 characters; "
+        "highlight_phrase is an exact non-empty 1-2 word substring of cover_text. For the Bold design: "
+        "kicker is optional and at most 3 words, main is 1-2 words, highlight is 1-3 words, and those three "
+        "fields total no more than 6 words. Use different phrasing only when it remains faithful.\n\n"
         f"Clip title: {fallback}\nTranscript: {source_text[:2000]}"
     )
     try:
@@ -386,12 +410,31 @@ def generate_clip_cover_copy(
         raw = response.choices[0].message.content if response.choices else ""
         parsed = json.loads(raw or "{}")
         cover_text = " ".join(str(parsed.get("cover_text") or "").strip().split())
-        highlight = " ".join(str(parsed.get("highlight_phrase") or "").strip().split())
-        if not cover_text or not 2 <= len(cover_text.split()) <= 5 or len(cover_text) > 36:
+        highlight_phrase = " ".join(str(parsed.get("highlight_phrase") or "").strip().split())
+        kicker = " ".join(str(parsed.get("kicker") or "").strip().split())
+        main = " ".join(str(parsed.get("main") or "").strip().split())
+        bold_highlight = " ".join(str(parsed.get("highlight") or "").strip().split())
+        if not cover_text or not 2 <= len(cover_text.split()) <= 4 or len(cover_text) > 36:
             return result
-        if not highlight or highlight.casefold() not in cover_text.casefold():
-            highlight = " ".join(cover_text.split()[:2])
-        return {"cover_text": cover_text, "highlight_phrase": highlight}
+        if not highlight_phrase or highlight_phrase.casefold() not in cover_text.casefold():
+            highlight_phrase = " ".join(cover_text.split()[:2])
+        bold_word_count = sum(len(value.split()) for value in (kicker, main, bold_highlight))
+        if (
+            len(kicker.split()) > 3
+            or not 1 <= len(main.split()) <= 2
+            or not 1 <= len(bold_highlight.split()) <= 3
+            or bold_word_count > 6
+        ):
+            kicker = result["kicker"]
+            main = result["main"]
+            bold_highlight = result["highlight"]
+        return {
+            "cover_text": cover_text,
+            "highlight_phrase": highlight_phrase,
+            "kicker": kicker,
+            "main": main,
+            "highlight": bold_highlight,
+        }
     except Exception:
         logger.warning("Cover copy generation failed; using the clip title", exc_info=True)
         return result

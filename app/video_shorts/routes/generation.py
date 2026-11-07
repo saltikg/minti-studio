@@ -18145,17 +18145,31 @@ def _scoped_generated_clip_for_cover(video_pk: int, plan_index: int) -> Dict[str
 @video_shorts_bp.route("/generate/<int:video_pk>/clip/<int:plan_index>/cover", methods=["GET", "POST"])
 def clip_cover(video_pk: int, plan_index: int):
     target = _scoped_generated_clip_for_cover(video_pk, plan_index)
-    from app.video_shorts.services.clip_covers import get_cover_for_generated, signed_cover_payload
+    from app.video_shorts.services.clip_covers import (
+        get_brand_cover_template,
+        get_cover_for_generated,
+        normalize_cover_template,
+        save_brand_cover_template,
+        signed_cover_payload,
+    )
     from app.video_shorts.services.render_jobs import enqueue_cover_job
 
     if request.method == "POST":
         data = request.get_json(silent=True) or request.form
+        template = normalize_cover_template(data.get("cover_template"), brand_id=target["brand_id"])
         cover_text = " ".join(str(data.get("cover_text") or "").strip().split())
         highlight = " ".join(str(data.get("highlight_phrase") or "").strip().split())
-        if cover_text and len(cover_text.split()) > 6:
-            return jsonify({"success": False, "message": "Cover text must be 6 words or fewer."}), 400
+        kicker = " ".join(str(data.get("kicker") or "").strip().split())
+        main = " ".join(str(data.get("main") or "").strip().split())
+        bold_highlight = " ".join(str(data.get("bold_highlight") or "").strip().split())
+        if cover_text and len(cover_text.split()) > 4:
+            return jsonify({"success": False, "message": "Clean cover text must be 4 words or fewer."}), 400
         if highlight and cover_text and highlight.casefold() not in cover_text.casefold():
             return jsonify({"success": False, "message": "Highlight phrase must appear in the cover text."}), 400
+        if len(kicker.split()) > 3 or len(main.split()) > 2 or len(bold_highlight.split()) > 3:
+            return jsonify({"success": False, "message": "Bold copy must use a 3-word kicker, 2-word main, and 3-word highlight at most."}), 400
+        if sum(len(value.split()) for value in (kicker, main, bold_highlight)) > 6:
+            return jsonify({"success": False, "message": "Bold cover copy must be 6 words or fewer in total."}), 400
         selected_timestamp = data.get("selected_timestamp")
         try:
             selected_timestamp = float(selected_timestamp) if selected_timestamp not in (None, "") else None
@@ -18163,14 +18177,22 @@ def clip_cover(video_pk: int, plan_index: int):
             return jsonify({"success": False, "message": "Invalid candidate frame."}), 400
         payload = {
             **target,
+            "cover_template": template,
             "cover_text": cover_text,
             "highlight_phrase": highlight,
+            "kicker": kicker,
+            "main": main,
+            "bold_highlight": bold_highlight,
             "selected_timestamp": selected_timestamp,
             **admin_operation_job_metadata(request_admin_operation_scope() or {}),
         }
         digest = sha256(
-            json.dumps([target["generated_video_id"], cover_text, highlight, selected_timestamp, time.time_ns()]).encode("utf-8")
+            json.dumps([
+                target["generated_video_id"], template, cover_text, highlight, kicker, main,
+                bold_highlight, selected_timestamp, time.time_ns(),
+            ]).encode("utf-8")
         ).hexdigest()
+        save_brand_cover_template(target["owner_user_id"], target["brand_id"], template)
         queued = enqueue_cover_job(
             user_id=target["owner_user_id"], payload=payload, input_hash=digest, priority=5,
         )
@@ -18181,7 +18203,12 @@ def clip_cover(video_pk: int, plan_index: int):
         brand_id=target["brand_id"], video_pk=video_pk,
     )
     if not cover:
-        return jsonify({"success": True, "status": "missing", "cover": None})
+        return jsonify({
+            "success": True,
+            "status": "missing",
+            "cover": None,
+            "cover_template": get_brand_cover_template(target["owner_user_id"], target["brand_id"]),
+        })
     return jsonify({"success": True, "status": cover["status"], "cover": signed_cover_payload(cover)})
 
 
