@@ -3893,6 +3893,7 @@ def videos_page(channel_id):
         "videos.html",
         channel=channel,
         videos=videos,
+        is_admin=is_admin,
         is_local_uploads_channel=is_local_uploads_channel,
         page=page,
         total_pages=total_pages,
@@ -3944,7 +3945,7 @@ def add_video_by_url(channel_id):
     try:
         row = conn.execute(
             """
-            SELECT channel_id, channel_name, channel_url, owner_user_id, brand_id
+            SELECT channel_id, channel_name, channel_url, owner_user_id, brand_id, youtube_channel_id
             FROM youtube_channels
             WHERE channel_id = ?
             """,
@@ -3960,6 +3961,7 @@ def add_video_by_url(channel_id):
             "channel_url": row[2],
             "owner_user_id": row[3],
             "brand_id": row[4],
+            "youtube_channel_id": row[5],
         }
         preferred_channel_ids = _preferred_brand_channel_ids(
             channel.get("owner_user_id"),
@@ -3974,8 +3976,15 @@ def add_video_by_url(channel_id):
         if preferred_channel_ids and str(channel.get("channel_id")) not in preferred_channel_ids:
             flash("Bu channel aktif brand scope'una ait değil.", "warning")
             return redirect(url_for("video_shorts_bp.channels_page"))
-        if str(channel.get("channel_url") or "").strip().lower() != "local://uploads":
-            flash("Add by URL is only available in Local uploads.", "warning")
+        is_local_uploads_channel = str(channel.get("channel_url") or "").strip().lower() == "local://uploads"
+        if not is_local_uploads_channel and not is_admin:
+            flash("Only admins can download a video by URL into a YouTube channel.", "warning")
+            return redirect(url_for("video_shorts_bp.videos_page", channel_id=channel_id))
+        if not is_local_uploads_channel and (
+            not str(channel.get("owner_user_id") or "").strip()
+            or not str(channel.get("brand_id") or "").strip()
+        ):
+            flash("This channel needs an owner and brand before a download can be queued.", "danger")
             return redirect(url_for("video_shorts_bp.videos_page", channel_id=channel_id))
 
         raw_url = (request.form.get("video_url") or "").strip()
@@ -3996,7 +4005,7 @@ def add_video_by_url(channel_id):
             """,
             [video_id, channel.get("owner_user_id"), channel.get("brand_id"), channel_id, channel_id],
         ).fetchone()
-        if existing:
+        if existing and is_local_uploads_channel:
             flash("This video is already visible in Local uploads.", "info")
             return redirect(url_for("video_shorts_bp.videos_page", channel_id=channel_id))
 
@@ -4045,8 +4054,47 @@ def add_video_by_url(channel_id):
             thumbnail_url = str(meta.get("thumbnail_url") or "").strip() or thumbnail_url
             meta = _enrich_real_youtube_channel_meta(meta)
 
+        if not is_local_uploads_channel:
+            expected_youtube_channel_id = str(channel.get("youtube_channel_id") or "").strip()
+            actual_youtube_channel_id = str((meta or {}).get("channel_id") or "").strip()
+            if expected_youtube_channel_id and actual_youtube_channel_id != expected_youtube_channel_id:
+                flash("That video does not belong to this YouTube channel.", "warning")
+                return redirect(url_for("video_shorts_bp.videos_page", channel_id=channel_id))
+            if not meta:
+                flash("YouTube metadata could not be read, so the download was not queued.", "danger")
+                return redirect(url_for("video_shorts_bp.videos_page", channel_id=channel_id))
+
+        def _queue_admin_channel_download(video_pk: int) -> Optional[Dict[str, Any]]:
+            from app.video_shorts.routes.quick_short import create_youtube_ingest_session_for_user
+
+            try:
+                return create_youtube_ingest_session_for_user(
+                    user_id=str(channel.get("owner_user_id")),
+                    brand_id=str(channel.get("brand_id")),
+                    video_url=canonical_url,
+                    meta=meta,
+                    source="admin_channel_url_download",
+                    existing_video_pk=video_pk,
+                    existing_video_id=video_id,
+                    job_payload_extra={
+                        "quota_exempt": True,
+                        "made_by_admin": True,
+                        "acting_admin_id": str(current_user.get("id") or ""),
+                        "admin_operation_kind": "channel",
+                    },
+                )
+            except Exception:
+                current_app.logger.exception(
+                    "Admin channel URL download enqueue failed channel_id=%s video_pk=%s video_id=%s",
+                    channel_id,
+                    video_pk,
+                    video_id,
+                )
+                flash("The video is saved, but the download could not be queued.", "danger")
+                return None
+
         conn = get_db()
-        if meta:
+        if meta and is_local_uploads_channel:
             try:
                 resolved_channel_id = _get_or_create_real_youtube_channel(
                     conn,
@@ -4060,11 +4108,16 @@ def add_video_by_url(channel_id):
                     video_id,
                 )
                 resolved_channel_id = None
-        else:
+        elif not meta:
             current_app.logger.warning(
                 "Real YouTube channel_id unavailable for add-by-url video_id=%s; storing NULL channel linkage",
                 video_id,
             )
+        if not is_local_uploads_channel:
+            # The metadata match above proves this belongs to the selected channel;
+            # keep the row attached to that exact admin page even if duplicate
+            # internal channel records exist for the same YouTube channel.
+            resolved_channel_id = channel_id
 
         if is_admin and meta and str(meta.get("channel_id") or "").strip():
             outreach_match = _load_admin_global_outreach_match(
@@ -4094,16 +4147,27 @@ def add_video_by_url(channel_id):
                 and existing_brand_id == requested_brand_id
             )
             if same_scope and existing_local_bucket_channel_id != channel_id:
-                conn.execute(
-                    """
-                    UPDATE youtube_videos
-                    SET local_bucket_channel_id = ?
-                    WHERE id = ?
-                    """,
-                    [channel_id, existing[0]],
-                )
-                conn.commit()
-                flash("Video already existed and is now visible in Local uploads.", "success")
+                if is_local_uploads_channel:
+                    conn.execute(
+                        """
+                        UPDATE youtube_videos
+                        SET local_bucket_channel_id = ?
+                        WHERE id = ?
+                        """,
+                        [channel_id, existing[0]],
+                    )
+                    conn.commit()
+                    flash("Video already existed and is now visible in Local uploads.", "success")
+                    return redirect(url_for("video_shorts_bp.videos_page", channel_id=channel_id))
+            if not is_local_uploads_channel and same_scope:
+                video_pk = int(existing[0])
+                conn.close()
+                conn = None
+                result = _queue_admin_channel_download(video_pk)
+                if result is None:
+                    return redirect(url_for("video_shorts_bp.videos_page", channel_id=channel_id))
+                queue_state = "already processed" if result.get("cached") else "queued for download"
+                flash(f"Video {queue_state}.", "success")
                 return redirect(url_for("video_shorts_bp.videos_page", channel_id=channel_id))
             flash("This video was already added.", "info")
             return redirect(url_for("video_shorts_bp.videos_page", channel_id=channel_id))
@@ -4127,7 +4191,7 @@ def add_video_by_url(channel_id):
                 None,
                 None,
                 canonical_url,
-                channel_id,
+                channel_id if is_local_uploads_channel else None,
                 channel.get("owner_user_id"),
                 channel.get("brand_id"),
                 "pending",
@@ -4152,7 +4216,17 @@ def add_video_by_url(channel_id):
                 video_pk=int(inserted[0]),
                 force=True,
             )
-        flash("Video added and visible in Local uploads.", "success")
+        if inserted and not is_local_uploads_channel:
+            video_pk = int(inserted[0])
+            conn.close()
+            conn = None
+            result = _queue_admin_channel_download(video_pk)
+            if result is None:
+                return redirect(url_for("video_shorts_bp.videos_page", channel_id=channel_id))
+            queue_state = "already processed" if result.get("cached") else "queued for download"
+            flash(f"Video added to the channel and {queue_state}.", "success")
+        else:
+            flash("Video added and visible in Local uploads.", "success")
         return redirect(url_for("video_shorts_bp.videos_page", channel_id=channel_id))
     finally:
         if conn is not None:
