@@ -1201,6 +1201,7 @@ def _load_face_track_points(
             t_abs = float(row.get("t"))
             cx = float(row.get("cx_ratio"))
             cy = float(row.get("cy_ratio"))
+            w_ratio = float(row.get("w_ratio") or 0.0)
             h_ratio = float(row.get("h_ratio") or 0.0)
         except Exception:
             continue
@@ -1211,6 +1212,7 @@ def _load_face_track_points(
                 "t": max(0.0, t_abs - float(clip_start)),
                 "cx": cx,
                 "cy": cy,
+                "w": max(0.0, min(1.0, w_ratio)),
                 "h": max(0.0, min(1.0, h_ratio)),
                 "cut": bool(row.get("cut")),
                 "x": max(0.0, min(max_x, cx - (float(crop_w) / 2.0))),
@@ -1225,6 +1227,52 @@ def _load_face_track_points(
         else:
             deduped.append(point)
     return deduped
+
+
+def _has_manual_reframe(
+    *,
+    crop_locked: bool,
+    crop_x: float,
+    crop_y: float,
+    crop_w: float,
+    crop_h: float,
+) -> bool:
+    """A lock only represents a manual reframe when the saved box is non-default."""
+    eps = 1e-6
+    is_default = (
+        abs(float(crop_x)) < eps
+        and abs(float(crop_y)) < eps
+        and abs(float(crop_w) - 1.0) < eps
+        and abs(float(crop_h) - 1.0) < eps
+    )
+    return bool(crop_locked and not is_default)
+
+
+def _fill_crop_box_for_canvas(
+    *,
+    crop_x: float,
+    crop_y: float,
+    crop_w: float,
+    crop_h: float,
+    is_default_crop: bool,
+    source_width: Optional[int],
+    source_height: Optional[int],
+    target_width: int,
+    target_height: int,
+) -> tuple[float, float, float, float]:
+    """Return the effective source-ratio crop used to fill the output canvas."""
+    if not is_default_crop:
+        return crop_x, crop_y, crop_w, crop_h
+    try:
+        source_aspect = float(source_width) / float(source_height)
+        target_aspect = float(target_width) / float(target_height)
+    except (TypeError, ValueError, ZeroDivisionError):
+        return crop_x, crop_y, crop_w, crop_h
+    if source_aspect > target_aspect:
+        fill_w = max(0.01, min(1.0, target_aspect / source_aspect))
+        return (1.0 - fill_w) / 2.0, 0.0, fill_w, 1.0
+    fill_h = max(0.01, min(1.0, source_aspect / target_aspect))
+    return 0.0, (1.0 - fill_h) / 2.0, 1.0, fill_h
 
 
 def _face_aware_fill_zoom_for_segment(
@@ -4010,16 +4058,17 @@ def _compose_trimmed_with_background(
     source_fps = _probe_video_frame_rate(layout_video_source) or 30.0
     output_fps = max(1.0, min(float(source_fps), 60.0))
     _log_video_dimensions("clip_scaled source", layout_video_source)
+    try:
+        layout_source_width, layout_source_height = _probe_video_dimensions(layout_video_source)
+    except Exception:
+        layout_source_width, layout_source_height = None, None
     overlay_aspect = (crop_aspect or "landscape").lower()
     original_layout_mode = overlay_aspect == "original" and not podcast_mode
     # Shorts layout behavior:
     # - non-podcast: always render on 9:16 canvas and place overlay inside it.
     # - podcast: allow true horizontal canvas when landscape is selected.
     if original_layout_mode:
-        try:
-            source_width, source_height = _probe_video_dimensions(layout_video_source)
-        except Exception:
-            source_width, source_height = None, None
+        source_width, source_height = layout_source_width, layout_source_height
         target_width, target_height = _original_layout_target_dimensions(source_width, source_height)
         current_app.logger.info(
             "Original layout target source=%sx%s output=%sx%s",
@@ -4195,6 +4244,24 @@ def _compose_trimmed_with_background(
             {"start": 0.0, "end": float(duration), "mode": "fill", "zoom": 1.0}
         ]
     face_aware_layout_active = len(layout_segments) >= 1
+    manual_reframe = _has_manual_reframe(
+        crop_locked=crop_locked,
+        crop_x=crop_x,
+        crop_y=crop_y,
+        crop_w=crop_w,
+        crop_h=crop_h,
+    )
+    fill_crop_x, fill_crop_y, fill_crop_w, fill_crop_h = _fill_crop_box_for_canvas(
+        crop_x=crop_x,
+        crop_y=crop_y,
+        crop_w=crop_w,
+        crop_h=crop_h,
+        is_default_crop=is_default_crop,
+        source_width=layout_source_width,
+        source_height=layout_source_height,
+        target_width=target_width,
+        target_height=target_height,
+    )
     isolated_face_segments = bool(
         face_aware_layout_active
         and len(layout_segments) > 1
@@ -4403,8 +4470,8 @@ def _compose_trimmed_with_background(
     else:
         face_track_points = []
         if (
-            not is_default_crop
-            and not crop_locked
+            not manual_reframe
+            and (face_aware_layout_active or not is_default_crop)
             and face_track_smooth_path
             and not podcast_mode
             and not video_override_source
@@ -4412,12 +4479,13 @@ def _compose_trimmed_with_background(
             face_track_points = _load_face_track_points(
                 face_track_smooth_path,
                 clip_start=start,
-                crop_w=crop_w,
-                crop_h=crop_h,
+                crop_w=fill_crop_w if face_aware_layout_active else crop_w,
+                crop_h=fill_crop_h if face_aware_layout_active else crop_h,
             )
-        elif crop_locked and face_track_smooth_path and not split_stack_enabled:
+        elif manual_reframe and face_track_smooth_path and not split_stack_enabled:
             current_app.logger.info(
-                "Face-track skipped: crop_locked crop_x=%.6f crop_y=%.6f crop_w=%.6f crop_h=%.6f",
+                "Face-track skipped: manual_reframe crop_locked=%s crop_x=%.6f crop_y=%.6f crop_w=%.6f crop_h=%.6f",
+                crop_locked,
                 crop_x,
                 crop_y,
                 crop_w,
@@ -4444,7 +4512,7 @@ def _compose_trimmed_with_background(
                 metrics = _face_aware_fill_caption_metrics_for_segment(
                     segment,
                     face_track_points=face_track_points,
-                    crop_h=crop_h,
+                    crop_h=fill_crop_h,
                     target_height=target_height,
                     subtitle_font_size=subtitle_font_size,
                     subtitle_margin=subtitle_margin,
@@ -4485,8 +4553,8 @@ def _compose_trimmed_with_background(
                 "Dynamic face-track crop enabled path=%s points=%s crop_w=%.6f crop_h=%.6f x_expr=%s y_expr=%s",
                 face_track_smooth_path,
                 len(face_track_points),
-                crop_w,
-                crop_h,
+                fill_crop_w if face_aware_layout_active else crop_w,
+                fill_crop_h if face_aware_layout_active else crop_h,
                 crop_x_expr,
                 crop_y_expr,
             )
@@ -4606,25 +4674,25 @@ def _compose_trimmed_with_background(
                     except Exception:
                         segment_zoom = 1.0
                     if segment_zoom > 1.0001:
-                        seg_crop_w = max(0.01, min(1.0, crop_w / segment_zoom))
-                        seg_crop_h = max(0.01, min(1.0, crop_h / segment_zoom))
+                        seg_crop_w = max(0.01, min(1.0, fill_crop_w / segment_zoom))
+                        seg_crop_h = max(0.01, min(1.0, fill_crop_h / segment_zoom))
                         if dynamic_crop_enabled:
                             segment_time_expr = f"(t+{seg_start:.6f})"
                             seg_cx_expr = _piecewise_linear_ratio_expr(
                                 face_track_points,
                                 "cx",
                                 time_expr=segment_time_expr,
-                            ) or _fmt(crop_x + crop_w / 2.0)
+                            ) or _fmt(fill_crop_x + fill_crop_w / 2.0)
                             seg_crop_x_expr_raw = f"min(max(({seg_cx_expr})-{_fmt(seg_crop_w / 2.0)},0),{_fmt(max(0.0, 1.0 - seg_crop_w))})"
                             seg_cy_expr = _piecewise_linear_ratio_expr(
                                 face_track_points,
                                 "cy",
                                 time_expr=segment_time_expr,
-                            ) or _fmt(crop_y + crop_h / 2.0)
+                            ) or _fmt(fill_crop_y + fill_crop_h / 2.0)
                             seg_crop_y_expr_raw = f"min(max(({seg_cy_expr})-{_fmt(seg_crop_h / 2.0)},0),{_fmt(max(0.0, 1.0 - seg_crop_h))})"
                         else:
-                            seg_crop_x_expr_raw = f"{_fmt(crop_x + (crop_w - seg_crop_w) / 2.0)}"
-                            seg_crop_y_expr_raw = f"{_fmt(crop_y + (crop_h - seg_crop_h) / 2.0)}"
+                            seg_crop_x_expr_raw = f"{_fmt(fill_crop_x + (fill_crop_w - seg_crop_w) / 2.0)}"
+                            seg_crop_y_expr_raw = f"{_fmt(fill_crop_y + (fill_crop_h - seg_crop_h) / 2.0)}"
                         seg_crop_x_expr = f"iw*({_ffmpeg_filter_expr(seg_crop_x_expr_raw)})"
                         seg_crop_y_expr = f"ih*({_ffmpeg_filter_expr(seg_crop_y_expr_raw)})"
                         seg_crop_w_for_filter = seg_crop_w
@@ -4635,21 +4703,21 @@ def _compose_trimmed_with_background(
                             face_track_points,
                             "x",
                             time_expr=segment_time_expr,
-                        ) or _fmt(crop_x)
+                        ) or _fmt(fill_crop_x)
                         seg_y_expr = _piecewise_linear_ratio_expr(
                             face_track_points,
                             "y",
                             time_expr=segment_time_expr,
-                        ) or _fmt(crop_y)
+                        ) or _fmt(fill_crop_y)
                         seg_crop_x_expr = f"iw*({_ffmpeg_filter_expr(seg_x_expr)})"
                         seg_crop_y_expr = f"ih*({_ffmpeg_filter_expr(seg_y_expr)})"
-                        seg_crop_w_for_filter = crop_w
-                        seg_crop_h_for_filter = crop_h
+                        seg_crop_w_for_filter = fill_crop_w
+                        seg_crop_h_for_filter = fill_crop_h
                     else:
-                        seg_crop_x_expr = f"iw*{_fmt(crop_x)}"
-                        seg_crop_y_expr = f"ih*{_fmt(crop_y)}"
-                        seg_crop_w_for_filter = crop_w
-                        seg_crop_h_for_filter = crop_h
+                        seg_crop_x_expr = f"iw*{_fmt(fill_crop_x)}"
+                        seg_crop_y_expr = f"ih*{_fmt(fill_crop_y)}"
+                        seg_crop_w_for_filter = fill_crop_w
+                        seg_crop_h_for_filter = fill_crop_h
                     filter_parts.append(
                         f"{seg_trim}crop=iw*{_fmt(seg_crop_w_for_filter)}:ih*{_fmt(seg_crop_h_for_filter)}:{seg_crop_x_expr}:{seg_crop_y_expr},"
                         f"{face_aware_fill_scale_stage}{face_aware_segment_output_stage}{seg_out}"

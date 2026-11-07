@@ -73,6 +73,94 @@ def test_manual_custom_caption_position_is_unchanged() -> None:
     assert compositor.caption_block_top(857, "bottom", 124, 1280) == 299
 
 
+def test_default_locked_crop_is_not_a_manual_reframe_and_tracks_face(tmp_path: Path) -> None:
+    assert not compositor._has_manual_reframe(
+        crop_locked=True,
+        crop_x=0.0,
+        crop_y=0.0,
+        crop_w=1.0,
+        crop_h=1.0,
+    )
+    fill_x, fill_y, fill_w, fill_h = compositor._fill_crop_box_for_canvas(
+        crop_x=0.0,
+        crop_y=0.0,
+        crop_w=1.0,
+        crop_h=1.0,
+        is_default_crop=True,
+        source_width=1280,
+        source_height=720,
+        target_width=1080,
+        target_height=1920,
+    )
+    assert (fill_x, fill_y, fill_w, fill_h) == pytest.approx(
+        (0.341796875, 0.0, 0.31640625, 1.0)
+    )
+
+    track_path = tmp_path / "track.json"
+    track_path.write_text(
+        json.dumps(
+            [
+                {"t": 0.0, "cx_ratio": 0.22, "cy_ratio": 0.4, "w_ratio": 0.12, "h_ratio": 0.2},
+                {"t": 1.0, "cx_ratio": 0.78, "cy_ratio": 0.4, "w_ratio": 0.12, "h_ratio": 0.2},
+            ]
+        ),
+        encoding="utf-8",
+    )
+    points = compositor._load_face_track_points(
+        track_path,
+        clip_start=0.0,
+        crop_w=fill_w,
+        crop_h=fill_h,
+    )
+
+    assert len(points) == 2
+    for point in points:
+        crop_left = point["x"]
+        crop_right = crop_left + fill_w
+        face_left = point["cx"] - point["w"] / 2.0
+        face_right = point["cx"] + point["w"] / 2.0
+        assert crop_left <= point["cx"] <= crop_right
+        assert crop_left <= face_left and face_right <= crop_right
+
+
+def test_locked_non_default_crop_is_manual_and_preserved_exactly() -> None:
+    manual = (0.11, 0.07, 0.42, 0.81)
+    assert compositor._has_manual_reframe(
+        crop_locked=True,
+        crop_x=manual[0],
+        crop_y=manual[1],
+        crop_w=manual[2],
+        crop_h=manual[3],
+    )
+    assert compositor._fill_crop_box_for_canvas(
+        crop_x=manual[0],
+        crop_y=manual[1],
+        crop_w=manual[2],
+        crop_h=manual[3],
+        is_default_crop=False,
+        source_width=1280,
+        source_height=720,
+        target_width=1080,
+        target_height=1920,
+    ) == manual
+
+
+def test_no_track_keeps_existing_center_fill_fallback() -> None:
+    fill_x, fill_y, fill_w, fill_h = compositor._fill_crop_box_for_canvas(
+        crop_x=0.0,
+        crop_y=0.0,
+        crop_w=1.0,
+        crop_h=1.0,
+        is_default_crop=True,
+        source_width=1280,
+        source_height=720,
+        target_width=1080,
+        target_height=1920,
+    )
+    assert fill_x == pytest.approx((1.0 - fill_w) / 2.0)
+    assert fill_y == pytest.approx((1.0 - fill_h) / 2.0)
+
+
 @pytest.mark.parametrize(
     ("target_height", "font_size", "expected_face_bottom", "expected_caption_top"),
     [
