@@ -3,11 +3,12 @@
 
 {% set is_tr = locale == 'tr' %}
 {% set switch_href = '/tools/youtube-to-shorts' if is_tr else '/tr/araclar/youtube-shorts' %}
-{% set page_title = "YouTube'dan Shorts — Ücretsiz AI Klip Bulucu" if is_tr else "YouTube to Shorts — Free AI Clip Finder" %}
-{% set page_description = "YouTube videolarını ücretsiz Shorts'a çevir. AI en iyi anı bulur; altyazı, kadraj ve düzenleme hazır olur." if is_tr else "Turn YouTube videos into Shorts for free. AI finds the best moment, adds editable captions, and opens your clip for editing." %}
+{% set page_title = "YouTube'dan Shorts — Ücretsiz AI Klip Bulucu" if is_tr else "Free AI Video Clipping Tool | YouTube to Shorts | MintiStudio" %}
+{% set page_description = "YouTube videolarını ücretsiz Shorts'a çevir. AI en iyi anı bulur; altyazı, kadraj ve düzenleme hazır olur." if is_tr else "Turn long YouTube videos into captioned Shorts with MintiStudio's free AI video clipping tool. Paste a URL and try it without registration." %}
+{% set page_h1 = page_title if is_tr else "Free AI Video Clipping Tool for YouTube Shorts" %}
 {% set canonical_path = '/tr/araclar/youtube-shorts' if is_tr else '/tools/youtube-to-shorts' %}
 {% set alternate_path = '/tools/youtube-to-shorts' if is_tr else '/tr/araclar/youtube-shorts' %}
-{% set site_origin = request.url_root.rstrip('/') %}
+{% set site_origin = 'https://mintistudio.com' %}
 {% if is_tr %}
   {% set faq_items = [
     ('Gerçekten ücretsiz mi?', 'Evet. Hesap açmadan bir video deneyebilirsin. İndirmek için ücretsiz hesap yeterli, kart bilgisi istenmez.'),
@@ -19,12 +20,12 @@
   ] %}
 {% else %}
   {% set faq_items = [
-    ('Is this YouTube to Shorts tool really free?', 'Yes. Paste a YouTube video up to 30 minutes and Minti creates your best Short automatically — no sign-up, no credit card. You can edit it and make up to 2 more. A free account unlocks downloads, scheduling, longer videos and more clips.'),
+    ('Is this AI video clipping tool really free?', 'Yes. Paste a YouTube video up to 30 minutes and Minti creates your first captioned Short automatically — no sign-up or credit card required. You can edit the captions and framing and create up to two more Shorts. A free account is required for downloads, scheduling, longer videos and more AI suggestions.'),
     ('How do I turn a long YouTube video into Shorts?', 'Copy the video link, paste it above and click Find Shorts. Minti transcribes the video, finds the strongest self-contained moment, reframes it to vertical 9:16 and adds captions. You land in the editor to fine-tune it.'),
     ('Do I need to download the video first?', 'No. Just paste the YouTube link — Minti fetches the video for you. Nothing to install, it runs in your browser.'),
     ('How does the AI pick the best moments?', "Minti transcribes the full video with its own speech model (not YouTube's auto-captions), then scores each passage for a strong hook, clarity and whether it makes sense without the rest of the video. The highest-scoring moment becomes your first Short."),
     ('How long are the Shorts?', 'AI-picked clips are usually 25–60 seconds. In the editor, you can lengthen or shorten a clip between 5 and 180 seconds by adding or removing words from the transcript.'),
-    ('Can I edit the captions and the clip?', 'Yes. Remove words from the transcript to cut them from the video, fix caption text, change the title, caption style and layout (face-aware vertical or the original 16:9), then regenerate in one click.'),
+    ('Can I edit the captions and vertical framing?', 'Yes. Remove words from the transcript to cut them from the video, fix caption text, change the title and caption style, and choose face-aware vertical framing or the original 16:9 layout before regenerating.'),
     ('Which videos work best?', "Videos where people talk: podcasts, interviews, lessons, talks, sermons, reviews and vlogs. Music videos or footage without speech don't give the AI much to work with."),
     ("Can I use someone else's YouTube video?", "Use videos you own or have permission to repurpose. Posting clips of other creators' content without permission can lead to copyright claims on your channel.")
   ] %}
@@ -370,7 +371,6 @@
       grid-template-columns: repeat(4, minmax(0, 1fr));
       gap: 0.85rem;
     }
-{% if is_tr %}
     .free-tool-content-grid {
       display: grid;
       grid-template-columns: repeat(3, minmax(0, 1fr));
@@ -395,7 +395,18 @@
     .free-tool-content-card strong {
       color: rgba(248, 250, 252, 0.96);
     }
-{% endif %}    .free-tool-feature-card,
+    .free-tool-related-guides {
+      max-width: 760px;
+      margin: 1.1rem auto 0;
+      color: rgba(203, 213, 225, 0.78);
+      font-size: 0.94rem;
+      line-height: 1.65;
+      text-align: center;
+    }
+    .free-tool-related-guides a {
+      color: #5dd8c7;
+    }
+    .free-tool-feature-card,
     .free-tool-compare-card {
       border: 1px solid rgba(255, 255, 255, 0.1);
       border-radius: 16px;
@@ -514,10 +525,9 @@
     @media (max-width: 720px) {
       .mv-url-row,
       .free-tool-feature-grid,
-{% if is_tr -%}
       .free-tool-content-grid,
       .free-tool-content-grid.is-audience,
-{% endif %}      .free-tool-compare {
+      .free-tool-compare {
         grid-template-columns: 1fr;
         display: grid;
       }
@@ -537,9 +547,9 @@
 {% block content %}
   <main class="free-tool-page">
     <section class="free-tool-hero">
-      <h1>{{ page_title }}</h1>
+      <h1>{{ page_h1 }}</h1>
       <p class="free-tool-subhead">
-        {{ "Bir YouTube bağlantısı yapıştır — Minti en güçlü anı bulur ve düzenlemeye hazır bir Short’a dönüştürür." if is_tr else "Paste a YouTube link — Minti finds the strongest moment and turns it into a ready-to-edit Short." }}
+        {{ "Bir YouTube bağlantısı yapıştır — Minti en güçlü anı bulur ve düzenlemeye hazır bir Short’a dönüştürür." if is_tr else "Paste a YouTube video URL and let Minti's AI identify promising clips, generate a captioned Short, and open it for caption and vertical-framing adjustments. Try it without registration." }}
       </p>
       <div class="free-tool-card" id="free-tool-paste-box">
         {% if processing_context %}
@@ -599,9 +609,25 @@
         </ul>
       </section>
 
+{% else %}
+      <section class="free-tool-section" aria-labelledby="free-tool-how-title">
+        <div class="free-tool-section-head">
+          <h2 id="free-tool-how-title">How This AI Video Clipping Tool Works</h2>
+        </div>
+        <ol class="free-tool-content-grid">
+          <li class="free-tool-content-card"><strong>Paste a YouTube URL</strong> — Use a public video up to 30 minutes long; there is nothing to upload or install.</li>
+          <li class="free-tool-content-card"><strong>AI identifies promising clips</strong> — Minti transcribes the video and scores self-contained moments with clear hooks.</li>
+          <li class="free-tool-content-card"><strong>Adjust your captioned Short</strong> — Review the generated clip, edit captions, and choose vertical or original framing in the editor.</li>
+        </ol>
+        <p class="free-tool-related-guides">
+          Learn more in our guides to <a href="/video_shorts/blog/free-youtube-to-shorts-tool/">turning YouTube videos into Shorts with AI</a>
+          and <a href="/video_shorts/blog/ai-can-suggest-your-clips-you-should-still-decide-which-ones-go-out/">reviewing AI clip suggestions</a>.
+        </p>
+      </section>
+
 {% endif %}    <section class="free-tool-section" aria-labelledby="free-tool-get-title">
       <div class="free-tool-section-head">
-        <h2 id="free-tool-get-title">{{ "Neler alırsın" if is_tr else "What you get" }}</h2>
+        <h2 id="free-tool-get-title">{{ "Neler alırsın" if is_tr else "Create Captioned Shorts From Long Videos" }}</h2>
       </div>
       <div class="free-tool-feature-grid">
         {% set features = [
@@ -622,16 +648,16 @@
 
     <section class="free-tool-section" aria-labelledby="free-tool-compare-title">
       <div class="free-tool-section-head">
-        <h2 id="free-tool-compare-title">{{ "Ücretsiz araç ve ücretsiz hesap" if is_tr else "Free tool vs free account" }}</h2>
+        <h2 id="free-tool-compare-title">{{ "Ücretsiz araç ve ücretsiz hesap" if is_tr else "Free AI Video Clipping Tool vs Free Account" }}</h2>
       </div>
       <div class="free-tool-compare">
         <article class="free-tool-compare-card">
           <h3>{{ "Ücretsiz araç (kayıt yok)" if is_tr else "Free tool (no sign-up)" }}</h3>
-          <p>{{ "30 dakikaya kadar 1 video · en fazla 3 Short · altyazı ve yerleşim düzenleme" if is_tr else "1 video up to 30 min · up to 3 Shorts · edit captions & layout" }}</p>
+          <p>{{ "30 dakikaya kadar 1 video · en fazla 3 Short · altyazı ve yerleşim düzenleme" if is_tr else "Try 1 public YouTube video up to 30 minutes · create up to 3 Shorts · edit captions and framing" }}</p>
         </article>
         <article class="free-tool-compare-card is-account">
           <h3>{{ "Ücretsiz hesap (kredi kartı yok)" if is_tr else "Free account (no credit card)" }}</h3>
-          <p>{{ "Daha fazla ve daha uzun video · temiz Shorts indirme (marksız) · planlama · daha fazla klip için AI Suggest" if is_tr else "More & longer videos · download clean Shorts (no mark) · scheduling · AI Suggest for more clips" }}</p>
+          <p>{{ "Daha fazla ve daha uzun video · temiz Shorts indirme (marksız) · planlama · daha fazla klip için AI Suggest" if is_tr else "Download your Shorts · schedule them for connected channels · work with longer videos · get more AI clip suggestions" }}</p>
           <a class="free-tool-account-link" href="{{ url_for('video_shorts_bp.register') }}">{{ "Ücretsiz hesap oluştur" if is_tr else "Create free account" }}</a>
         </article>
       </div>
@@ -639,7 +665,7 @@
 
     <section class="free-tool-section" id="faq" aria-labelledby="free-tool-faq-title">
       <div class="free-tool-section-head">
-        <h2 id="free-tool-faq-title">{{ "Sık sorulan sorular" if is_tr else "FAQ" }}</h2>
+        <h2 id="free-tool-faq-title">{{ "Sık sorulan sorular" if is_tr else "AI Video Clipping Tool FAQ" }}</h2>
       </div>
       <div class="free-tool-faq" id="free-tool-faq">
         {% for question, answer in faq_items %}

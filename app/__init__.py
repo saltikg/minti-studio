@@ -23,7 +23,7 @@ logging.basicConfig(level=logging.INFO)
 BASE_URL = os.getenv("BASE_URL", "https://mintistudio.com").rstrip("/")
 DB_PATH  = os.getenv("DB_PATH", "/home/ubuntu/blog-factory/warehouse/blog_factory.duckdb")
 ENABLE_LEGACY_BLOG = (os.getenv("ENABLE_LEGACY_BLOG", "0") or "0").strip().lower() in {"1", "true", "yes", "on"}
-FREE_TOOL_LASTMOD = "2026-10-24"
+FREE_TOOL_LASTMOD = "2026-11-06"
 
 
 def from_json_safe(val):

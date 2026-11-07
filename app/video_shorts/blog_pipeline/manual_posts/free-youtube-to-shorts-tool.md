@@ -8,7 +8,7 @@ secondary_keywords: ["free youtube to shorts converter", "ai clip finder", "yout
 
 > Your best Short is already inside a video you published.
 
-[Try YouTube to Shorts free](https://mintistudio.com/tools/youtube-to-shorts)
+[Try MintiStudio's free AI video clipping tool](https://mintistudio.com/tools/youtube-to-shorts)
 
 You spent hours recording a 20-minute video. Somewhere inside it there are two or three moments that would stop someone mid-scroll: a sharp answer, a personal story, a line that lands.
 
@@ -22,7 +22,7 @@ The goal is simple: one paste, one finished Short, and the freedom to fix anythi
 
 ## What the free tool does
 
-**YouTube to Shorts** is the same engine our customers use every day, open to anyone, with no sign-up needed to try it.
+MintiStudio's **AI video clipping tool** uses the same engine our customers use every day, open to anyone with no sign-up needed to try it.
 
 - It transcribes your video with its own speech model, not YouTube's auto-captions.
 - It scores every passage for a strong hook, clarity, and whether it makes sense on its own.
@@ -143,4 +143,4 @@ Use Autopilot if you want the long-video-to-Shorts workflow handled for you, whi
 
 Pick the last long video you uploaded and paste the link. In a few minutes you'll see which moment the AI picked, and whether it would have been your pick too.
 
-[Turn your YouTube video into Shorts, free](https://mintistudio.com/tools/youtube-to-shorts)
+[Turn your YouTube video into Shorts with the free AI video clipping tool](https://mintistudio.com/tools/youtube-to-shorts)

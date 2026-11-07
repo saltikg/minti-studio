@@ -100,6 +100,24 @@ def _ensure_minimal_video_tables() -> None:
         )
         conn.execute(
             """
+            CREATE TABLE IF NOT EXISTS shorts_transcript_overrides (
+                video_pk BIGINT PRIMARY KEY,
+                full_text TEXT NOT NULL,
+                segments_json TEXT NOT NULL,
+                updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+            )
+            """
+        )
+        conn.execute(
+            """
+            CREATE TABLE IF NOT EXISTS shorts_video_legacy_owners (
+                youtube_id VARCHAR PRIMARY KEY,
+                video_pk BIGINT
+            )
+            """
+        )
+        conn.execute(
+            """
             CREATE TABLE IF NOT EXISTS autopilot_leads (
                 id VARCHAR PRIMARY KEY,
                 creator_name VARCHAR,
@@ -116,8 +134,20 @@ def _ensure_minimal_video_tables() -> None:
 
 
 def _patch_free_tool() -> None:
+    from app.video_shorts.routes import generation
+
     free_tool._verify_turnstile_or_fail = lambda: True
     auth_routes._verify_turnstile_or_fail = lambda: True
+    generation.build_auto_suggest_render_status_payload = lambda video_pk, current_user: (
+        {
+            "success": True,
+            "pending": True,
+            "clip_count": 0,
+            "active_render_count": 0,
+            "selected_rendered_plan_index": "",
+        },
+        200,
+    )
     free_tool.fetch_video_metadata = lambda video_id: {
         "video_id": video_id,
         "title": f"Video {video_id}",
@@ -137,11 +167,11 @@ def _post_video(client, url: str = "https://www.youtube.com/watch?v=dQw4w9WgXcQ"
 
 
 def main() -> None:
+    _ensure_minimal_video_tables()
     app = create_app()
     app.config["TESTING"] = True
     app.secret_key = "test-secret"
     _patch_free_tool()
-    _ensure_minimal_video_tables()
     client = app.test_client()
 
     disabled = client.get("/tools/youtube-to-shorts")
@@ -149,7 +179,29 @@ def main() -> None:
 
     preview = client.get("/tools/youtube-to-shorts?preview=preview-secret")
     assert preview.status_code == 200, preview.status_code
-    assert b"YouTube to Shorts" in preview.data
+    page_html = preview.get_data(as_text=True)
+    assert "<title>Free AI Video Clipping Tool | YouTube to Shorts | MintiStudio</title>" in page_html
+    assert '<meta name="description" content="Turn long YouTube videos into captioned Shorts with MintiStudio&#39;s free AI video clipping tool. Paste a URL and try it without registration.">' in page_html
+    assert '<h1>Free AI Video Clipping Tool for YouTube Shorts</h1>' in page_html
+    assert '<link rel="canonical" href="https://mintistudio.com/tools/youtube-to-shorts">' in page_html
+    assert '<meta name="robots" content="index, follow">' in page_html
+    assert "How This AI Video Clipping Tool Works" in page_html
+    assert "/video_shorts/blog/free-youtube-to-shorts-tool/" in page_html
+    assert "/video_shorts/blog/ai-can-suggest-your-clips-you-should-still-decide-which-ones-go-out/" in page_html
+
+    os.environ["FREE_TOOL_ENABLED"] = "1"
+    sitemap = client.get("/sitemap.xml")
+    assert sitemap.status_code == 200, sitemap.status_code
+    assert "https://mintistudio.com/tools/youtube-to-shorts" in sitemap.get_data(as_text=True)
+    robots = client.get("/robots.txt")
+    assert robots.status_code == 200, robots.status_code
+    robots_text = robots.get_data(as_text=True)
+    assert "Sitemap: https://mintistudio.com/sitemap.xml" in robots_text
+    assert "Disallow: /tools/" not in robots_text
+    turkish_page = client.get("/tr/araclar/youtube-shorts")
+    assert turkish_page.status_code == 200, turkish_page.status_code
+    assert '<html lang="tr">' in turkish_page.get_data(as_text=True)
+    os.environ["FREE_TOOL_ENABLED"] = "0"
 
     attributed_client = app.test_client()
     ignored_lid = attributed_client.get(
