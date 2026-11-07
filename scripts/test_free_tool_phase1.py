@@ -30,7 +30,9 @@ from app import create_app
 from app.video_shorts.routes import auth as auth_routes
 from app.video_shorts.routes import free_tool
 from app.video_shorts.services.db import get_db, table_columns
+from app.video_shorts.services import blog_articles as blog_articles_service
 from app.video_shorts.services.render_jobs import GUEST_JOB_ORIGIN, JOBS_TABLE
+from scripts.update_ai_video_clipping_tools_comparison import OLD_SLUG, TARGET_SLUG
 
 
 def _ensure_minimal_video_tables() -> None:
@@ -209,10 +211,19 @@ def main() -> None:
     assert '"@type": "Service"' in service_html
 
     os.environ["FREE_TOOL_ENABLED"] = "1"
+    blog_articles_service.list_published_blog_articles = lambda limit=None: [
+        {
+            "slug": TARGET_SLUG,
+            "content_updated_at": None,
+            "published_at": None,
+        }
+    ]
     sitemap = client.get("/sitemap.xml")
     assert sitemap.status_code == 200, sitemap.status_code
     assert "https://mintistudio.com/tools/youtube-to-shorts" in sitemap.get_data(as_text=True)
     assert "https://mintistudio.com/services/short-form-video-editing" in sitemap.get_data(as_text=True)
+    assert f"https://mintistudio.com/video_shorts/blog/{TARGET_SLUG}/" in sitemap.get_data(as_text=True)
+    assert f"https://mintistudio.com/video_shorts/blog/{OLD_SLUG}/" not in sitemap.get_data(as_text=True)
     robots = client.get("/robots.txt")
     assert robots.status_code == 200, robots.status_code
     robots_text = robots.get_data(as_text=True)

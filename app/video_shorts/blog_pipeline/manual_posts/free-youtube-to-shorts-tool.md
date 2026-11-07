@@ -135,6 +135,7 @@ Use [MintiStudio's done-for-you short form video editing service](/services/shor
 
 ## Related guides
 
+- [Best AI Video Clipping Tools in 2026: 6 Tools Compared](/video_shorts/blog/best-ai-video-clipping-tools-2026/)
 - [How to Turn YouTube Videos into Shorts](https://mintistudio.com/video_shorts/blog/how-to-turn-youtube-videos-into-shorts/)
 - [The Weekly Shorts Workflow for Busy Creators](https://mintistudio.com/video_shorts/blog/weekly-shorts-workflow-for-busy-creators/)
 - [Done-for-You vs DIY Video Clipping: Which Fits Your Week?](https://mintistudio.com/video_shorts/blog/done-for-you-vs-diy-video-clipping/)

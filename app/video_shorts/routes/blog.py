@@ -5,7 +5,7 @@ from datetime import datetime, timezone
 from typing import Any
 from urllib.parse import urlparse
 
-from flask import abort, current_app, render_template, request, url_for
+from flask import abort, current_app, redirect, render_template, request, url_for
 
 from app.video_shorts import video_shorts_bp
 from app.video_shorts.services.blog_articles import (
@@ -15,6 +15,10 @@ from app.video_shorts.services.blog_articles import (
     list_published_blog_articles,
 )
 from app.video_shorts.services.blog_markdown import render_markdown
+
+
+OLD_AI_CLIPPING_COMPARISON_SLUG = "best-opusclip-alternatives-for-busy-experts-who-need-less-clipping-work"
+AI_CLIPPING_COMPARISON_SLUG = "best-ai-video-clipping-tools-2026"
 
 
 def _base_url() -> str:
@@ -100,6 +104,14 @@ def blog_index():
         meta_description=(
             "Actionable guides on turning long videos into Shorts, scheduling releases, and building a more consistent short-form publishing workflow."
         ),
+    )
+
+
+@video_shorts_bp.get(f"/blog/{OLD_AI_CLIPPING_COMPARISON_SLUG}/")
+def legacy_ai_clipping_comparison_redirect():
+    return redirect(
+        url_for("video_shorts_bp.blog_article", slug=AI_CLIPPING_COMPARISON_SLUG),
+        code=301,
     )
 
 
