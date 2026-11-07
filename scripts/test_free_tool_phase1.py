@@ -7,6 +7,8 @@ import os
 import sys
 import tempfile
 import json
+import xml.etree.ElementTree as ET
+from datetime import datetime, timezone
 from pathlib import Path
 from uuid import uuid4
 
@@ -214,16 +216,33 @@ def main() -> None:
     blog_articles_service.list_published_blog_articles = lambda limit=None: [
         {
             "slug": TARGET_SLUG,
-            "content_updated_at": None,
-            "published_at": None,
+            "content_updated_at": datetime(2026, 10, 31, 18, 45, tzinfo=timezone.utc),
+            "published_at": datetime(2026, 10, 7, 13, 0, tzinfo=timezone.utc),
         }
     ]
     sitemap = client.get("/sitemap.xml")
     assert sitemap.status_code == 200, sitemap.status_code
-    assert "https://mintistudio.com/tools/youtube-to-shorts" in sitemap.get_data(as_text=True)
-    assert "https://mintistudio.com/services/short-form-video-editing" in sitemap.get_data(as_text=True)
-    assert f"https://mintistudio.com/video_shorts/blog/{TARGET_SLUG}/" in sitemap.get_data(as_text=True)
-    assert f"https://mintistudio.com/video_shorts/blog/{OLD_SLUG}/" not in sitemap.get_data(as_text=True)
+    sitemap_text = sitemap.get_data(as_text=True)
+    assert "2026-11-06" not in sitemap_text
+    sitemap_root = ET.fromstring(sitemap.data)
+    sitemap_ns = {"sm": "http://www.sitemaps.org/schemas/sitemap/0.9"}
+    sitemap_entries = {}
+    for url_node in sitemap_root.findall("sm:url", sitemap_ns):
+        loc_node = url_node.find("sm:loc", sitemap_ns)
+        assert loc_node is not None and loc_node.text
+        assert loc_node.text not in sitemap_entries, f"duplicate sitemap URL: {loc_node.text}"
+        lastmod_node = url_node.find("sm:lastmod", sitemap_ns)
+        sitemap_entries[loc_node.text] = lastmod_node.text if lastmod_node is not None else None
+
+    free_tool_url = "https://mintistudio.com/tools/youtube-to-shorts"
+    free_tool_tr_url = "https://mintistudio.com/tr/araclar/youtube-shorts"
+    service_url = "https://mintistudio.com/services/short-form-video-editing"
+    comparison_url = f"https://mintistudio.com/video_shorts/blog/{TARGET_SLUG}/"
+    assert sitemap_entries[free_tool_url] is None
+    assert sitemap_entries[free_tool_tr_url] is None
+    assert sitemap_entries[service_url] is None
+    assert sitemap_entries[comparison_url] == "2026-10-31T18:45:00+00:00"
+    assert f"https://mintistudio.com/video_shorts/blog/{OLD_SLUG}/" not in sitemap_entries
     robots = client.get("/robots.txt")
     assert robots.status_code == 200, robots.status_code
     robots_text = robots.get_data(as_text=True)
