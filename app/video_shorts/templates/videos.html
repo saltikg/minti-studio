@@ -2,6 +2,10 @@
 
 {% block title %}Videos – {{ channel.channel_name }}{% endblock %}
 
+{% block extra_styles %}
+<link rel="stylesheet" href="{{ url_for('video_shorts_bp.static', filename='css/ingestion_progress.css') }}">
+{% endblock %}
+
 {% block content %}
 
 <style>
@@ -470,7 +474,8 @@
               {% else %}
                 <form method="post"
                       action="{{ url_for('video_shorts_bp.download_channel_video', channel_id=channel.channel_id, video_pk=v.id) }}"
-                      class="m-0">
+                      class="m-0"
+                      data-channel-download-form>
                   <input type="hidden" name="sort" value="{{ sort }}">
                   <input type="hidden" name="dir" value="{{ sort_dir }}">
                   <input type="hidden" name="page" value="{{ page }}">
@@ -484,6 +489,12 @@
                   <input type="hidden" name="has_email" value="{{ has_email_filter }}">
                   <button type="submit" class="vs-btn vs-btn-primary vs-btn-sm">Download</button>
                 </form>
+                <div class="vs-ingestion-progress"
+                     data-channel-download-progress
+                     data-video-pk="{{ v.id }}"
+                     data-status-url="{{ url_for('video_shorts_bp.channel_video_processing_status', channel_id=channel.channel_id) }}"
+                     data-retry-url="{{ url_for('video_shorts_bp.download_channel_video', channel_id=channel.channel_id, video_pk=v.id) }}"
+                     hidden></div>
               {% endif %}
             </td>
             {% endif %}
@@ -586,6 +597,58 @@
   {% endblock %}
 
 {% block scripts %}
+<script src="{{ url_for('video_shorts_bp.static', filename='js/ingestion_progress.js') }}"></script>
+<script>
+(() => {
+  document.querySelectorAll("[data-channel-download-form]").forEach((form) => {
+    form.addEventListener("submit", async (event) => {
+      event.preventDefault();
+      const button = form.querySelector("button[type='submit']");
+      const progress = form.parentElement?.querySelector("[data-channel-download-progress]");
+      if (!button || !progress) return;
+      button.disabled = true;
+      button.textContent = "Queueing…";
+      try {
+        const response = await fetch(form.action, {
+          method: "POST",
+          body: new FormData(form),
+          credentials: "same-origin",
+          headers: {
+            "Accept": "application/json",
+            "X-Requested-With": "XMLHttpRequest",
+          },
+        });
+        const payload = await response.json().catch(() => ({}));
+        if (!response.ok || !payload.ok) {
+          throw new Error(payload.message || "Download could not be queued.");
+        }
+        form.hidden = true;
+        progress.hidden = false;
+        progress.setAttribute("data-ingestion-progress", "");
+        progress.dataset.statusUrl = payload.status_url || progress.dataset.statusUrl || "";
+        progress.dataset.wasActive = "1";
+        progress.innerHTML = '<div class="vs-ingestion-progress-copy"><span>Queued…</span></div><div class="vs-ingestion-progress-track"><div class="vs-ingestion-progress-bar"></div></div>';
+        window.MintiIngestionProgress?.wakePolling();
+
+        const readyWatcher = window.setInterval(() => {
+          if (progress.dataset.lastStage === "ready") {
+            window.clearInterval(readyWatcher);
+            const done = document.createElement("span");
+            done.className = "text-success";
+            done.title = "Downloaded";
+            done.textContent = "✅ Downloaded";
+            progress.replaceWith(done);
+          }
+        }, 750);
+      } catch (error) {
+        button.disabled = false;
+        button.textContent = "Download";
+        window.alert(error.message || "Download could not be queued.");
+      }
+    });
+  });
+})();
+</script>
 <script>
 (() => {
   const modalEl = document.getElementById("deletedVideoModal");

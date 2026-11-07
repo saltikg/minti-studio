@@ -2,6 +2,7 @@ from flask import Flask, g, get_flashed_messages
 
 from app.video_shorts import video_shorts_bp
 from app.video_shorts.routes import generation, quick_short, videos
+from app.video_shorts.services import ingestion_progress
 
 
 VIDEO_ID = "abc123DEF45"
@@ -220,12 +221,16 @@ def test_admin_can_queue_download_from_existing_video_row(monkeypatch):
         "/video_shorts/videos/4/99/download",
         method="POST",
         data={"sort": "published", "dir": "desc", "page": "2"},
+        headers={"X-Requested-With": "XMLHttpRequest", "Accept": "application/json"},
     ):
         g.vs_current_user = {"id": "admin-1", "role": "admin"}
         response = videos.download_channel_video(4, 99)
-        messages = get_flashed_messages(with_categories=True)
 
-    assert response.status_code == 302
+    assert response.status_code == 200
+    payload = response.get_json()
+    assert payload["ok"] is True
+    assert payload["video_pk"] == 99
+    assert payload["status_url"] == "/video_shorts/videos/4/processing-status"
     assert captured["channel_id"] == 4
     assert captured["video_pk"] == 99
     assert captured["video_id"] == VIDEO_ID
@@ -233,4 +238,40 @@ def test_admin_can_queue_download_from_existing_video_row(monkeypatch):
     assert captured["brand_id"] == "brand-1"
     assert captured["acting_admin_id"] == "admin-1"
     assert captured["meta"]["duration_seconds"] == 3600
-    assert ("success", "Video queued for download.") in messages
+
+
+def test_admin_channel_progress_uses_channel_owner_scope(monkeypatch):
+    app = _app()
+
+    class _ProgressConnection:
+        def execute(self, sql, params=None):
+            assert "FROM youtube_channels" in sql
+            assert params == [4]
+            return _Result(("owner-1", "brand-1", "https://www.youtube.com/@HerkulNagme"))
+
+        def close(self):
+            return None
+
+    monkeypatch.setattr(videos, "get_db_readonly", lambda: _ProgressConnection())
+    captured = {}
+
+    def _statuses(**kwargs):
+        captured.update(kwargs)
+        return {"99": {"stage": "downloading", "active": True, "percent": 42}}
+
+    monkeypatch.setattr(ingestion_progress, "get_video_ingestion_statuses", _statuses)
+
+    with app.test_request_context(
+        "/video_shorts/videos/4/processing-status?video_ids=99,100",
+        method="GET",
+    ):
+        g.vs_current_user = {"id": "admin-1", "role": "admin"}
+        response = videos.channel_video_processing_status(4)
+
+    assert response.status_code == 200
+    assert response.get_json()["statuses"]["99"]["percent"] == 42
+    assert captured == {
+        "owner_user_id": "owner-1",
+        "brand_id": "brand-1",
+        "video_pks": [99, 100],
+    }

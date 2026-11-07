@@ -3976,6 +3976,7 @@ def download_channel_video(channel_id: int, video_pk: int):
     if current_user.get("role") != "admin":
         abort(403)
 
+    wants_json = request.is_json or request.headers.get("X-Requested-With") == "XMLHttpRequest"
     redirect_params = {
         key: request.form.get(key, "")
         for key in (
@@ -4009,9 +4010,13 @@ def download_channel_video(channel_id: int, video_pk: int):
     brand_id = str(row[10] or "").strip()
     video_id = str(row[0] or "").strip()
     if not owner_user_id or not brand_id or not video_id:
+        if wants_json:
+            return jsonify(ok=False, message="This video is missing its owner, brand, or YouTube ID."), 400
         flash("This video is missing its owner, brand, or YouTube ID.", "danger")
         return redirect(url_for("video_shorts_bp.videos_page", channel_id=channel_id, **redirect_params))
     if str(row[8] or "").strip().lower() == "downloaded":
+        if wants_json:
+            return jsonify(ok=True, already_ready=True, video_pk=video_pk)
         flash("This video is already downloaded.", "info")
         return redirect(url_for("video_shorts_bp.videos_page", channel_id=channel_id, **redirect_params))
 
@@ -4035,12 +4040,70 @@ def download_channel_video(channel_id: int, video_pk: int):
         meta=meta,
     )
     if result is None:
+        if wants_json:
+            return jsonify(ok=False, message="The download could not be queued."), 500
         flash("The download could not be queued.", "danger")
     elif result.get("cached"):
+        if wants_json:
+            return jsonify(ok=True, cached=True, video_pk=video_pk)
         flash("This video was already processed.", "info")
     else:
+        if wants_json:
+            return jsonify(
+                ok=True,
+                video_pk=video_pk,
+                job_id=result.get("job_id"),
+                status_url=url_for(
+                    "video_shorts_bp.channel_video_processing_status",
+                    channel_id=channel_id,
+                ),
+            )
         flash("Video queued for download.", "success")
     return redirect(url_for("video_shorts_bp.videos_page", channel_id=channel_id, **redirect_params))
+
+
+@video_shorts_bp.route("/videos/<int:channel_id>/processing-status", methods=["GET"])
+def channel_video_processing_status(channel_id: int):
+    current_user = getattr(g, "vs_current_user", None)
+    if not current_user:
+        return jsonify(ok=False, message="Authentication required."), 401
+    if current_user.get("role") != "admin":
+        return jsonify(ok=False, message="Admin access required."), 403
+
+    conn = get_db_readonly()
+    try:
+        channel_row = conn.execute(
+            """
+            SELECT owner_user_id, brand_id, channel_url
+            FROM youtube_channels
+            WHERE channel_id = ?
+            LIMIT 1
+            """,
+            [channel_id],
+        ).fetchone()
+    finally:
+        conn.close()
+    if not channel_row or str(channel_row[2] or "").strip().lower() == "local://uploads":
+        return jsonify(ok=False, message="Channel not found."), 404
+    owner_user_id = str(channel_row[0] or "").strip()
+    brand_id = str(channel_row[1] or "").strip()
+    if not owner_user_id or not brand_id:
+        return jsonify(ok=False, message="Channel scope is incomplete."), 400
+
+    video_pks = []
+    for value in (request.args.get("video_ids") or "").split(",")[:100]:
+        try:
+            video_pks.append(int(value))
+        except (TypeError, ValueError):
+            continue
+    from app.video_shorts.services.ingestion_progress import get_video_ingestion_statuses
+
+    statuses = get_video_ingestion_statuses(
+        owner_user_id=owner_user_id,
+        brand_id=brand_id,
+        video_pks=video_pks,
+    )
+    return jsonify(ok=True, statuses=statuses)
 
 
 @video_shorts_bp.route("/videos/<int:channel_id>/add-by-url", methods=["POST"])
