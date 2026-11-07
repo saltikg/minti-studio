@@ -977,14 +977,53 @@ def update_selected_background():
     if scope_query is None:
         return jsonify(success=False, message="Invalid admin workspace."), 403
 
+    video_pk = request.args.get("video_pk", type=int)
     requested_key = (request.form.get("background_key") or "").strip()
     if requested_key:
         resolved_key = _resolve_selected_background_key(asset_user_id, brand_id, requested_key)
         if not resolved_key:
             return jsonify(success=False, message="Background not found."), 404
+        if video_pk is not None:
+            conn = get_db()
+            try:
+                cursor = conn.execute(
+                    """
+                    UPDATE youtube_videos
+                    SET background_visual_key = ?
+                    WHERE id = ? AND owner_user_id = ?
+                      AND coalesce(brand_id, '') = coalesce(?, '')
+                      AND deleted_at IS NULL
+                    """,
+                    [resolved_key, video_pk, asset_user_id, brand_id],
+                )
+                if cursor.rowcount == 0:
+                    conn.rollback()
+                    return jsonify(success=False, message="Video not found."), 404
+                conn.commit()
+            finally:
+                conn.close()
         save_background_preference(asset_user_id, brand_id, resolved_key)
         return jsonify(success=True, background_key=resolved_key), 200
 
+    if video_pk is not None:
+        conn = get_db()
+        try:
+            cursor = conn.execute(
+                """
+                UPDATE youtube_videos
+                SET background_visual_key = NULL
+                WHERE id = ? AND owner_user_id = ?
+                  AND coalesce(brand_id, '') = coalesce(?, '')
+                  AND deleted_at IS NULL
+                """,
+                [video_pk, asset_user_id, brand_id],
+            )
+            if cursor.rowcount == 0:
+                conn.rollback()
+                return jsonify(success=False, message="Video not found."), 404
+            conn.commit()
+        finally:
+            conn.close()
     save_background_preference(asset_user_id, brand_id, None)
     return jsonify(success=True, background_key=""), 200
 

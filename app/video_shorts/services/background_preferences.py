@@ -24,6 +24,17 @@ def load_background_preference(user_id: Optional[str], brand_id: Optional[str]) 
         conn.close()
 
 
+def resolve_background_key(
+    video_background_key: Optional[str],
+    brand_background_key: Optional[str],
+) -> Optional[str]:
+    """Resolve the editor/render background with video design taking precedence."""
+    video_key = str(video_background_key or "").strip()
+    if video_key:
+        return video_key
+    return str(brand_background_key or "").strip() or None
+
+
 def save_background_preference(user_id: str, brand_id: Optional[str], background_key: Optional[str]) -> None:
     conn = get_db()
     try:

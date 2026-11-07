@@ -205,7 +205,11 @@ from app.video_shorts.services.db import (
 )
 from app.video_shorts.services.auth_protection import RateLimitRule, check_rate_limits
 from app.video_shorts.services.free_tool_analytics import track_free_tool_event
-from app.video_shorts.services.background_preferences import load_background_preference
+from app.video_shorts.services.background_preferences import (
+    load_background_preference,
+    resolve_background_key,
+    save_background_preference,
+)
 from app.video_shorts.services.onboarding_magic_links import (
     mint_onboarding_magic_link,
     normalize_outreach_language,
@@ -4342,12 +4346,80 @@ def _build_face_aware_layout_segments_from_samples(
         next_mode = _face_aware_mode_for_count(current["face_count"])
         if next_mode == current_mode:
             continue
-        boundary = max(run_start, min(duration, (float(prev["t"]) + float(current["t"])) / 2.0))
+        if current_mode == "split":
+            boundary = float(prev["t"])
+        elif next_mode == "split":
+            boundary = float(current["t"])
+        else:
+            boundary = (float(prev["t"]) + float(current["t"])) / 2.0
+        boundary = max(run_start, min(duration, boundary))
         runs.append({"start": run_start, "end": boundary, "mode": current_mode})
         run_start = boundary
         current_mode = next_mode
     runs.append({"start": run_start, "end": duration, "mode": current_mode})
     return _smooth_face_aware_runs(runs)
+
+
+def _build_face_track_rows(
+    samples: List[Dict[str, Any]],
+    *,
+    absolute_start: float,
+    shot_cuts: Optional[List[float]] = None,
+) -> List[Dict[str, Any]]:
+    """Choose one stable subject per sample, including samples with multiple faces."""
+    cuts = sorted(float(value) for value in (shot_cuts or []))
+
+    def _shot_index(sample_time: float) -> int:
+        absolute_time = float(absolute_start) + sample_time
+        return sum(1 for cut in cuts if absolute_time >= cut)
+
+    clean_samples = sorted(samples or [], key=lambda item: float(item.get("t") or 0.0))
+    single_faces: List[Tuple[float, int, Dict[str, Any]]] = []
+    for sample in clean_samples:
+        faces = [face for face in (sample.get("faces") or []) if isinstance(face, dict)]
+        if len(faces) == 1:
+            sample_time = float(sample.get("t") or 0.0)
+            single_faces.append((sample_time, _shot_index(sample_time), faces[0]))
+
+    rows: List[Dict[str, Any]] = []
+    for sample in clean_samples:
+        sample_time = float(sample.get("t") or 0.0)
+        faces = [face for face in (sample.get("faces") or []) if isinstance(face, dict)]
+        face: Dict[str, Any] = {}
+        if len(faces) == 1:
+            face = faces[0]
+        elif len(faces) > 1:
+            shot_index = _shot_index(sample_time)
+            neighbor = min(
+                (item for item in single_faces if item[1] == shot_index),
+                key=lambda item: abs(item[0] - sample_time),
+                default=None,
+            )
+            if neighbor:
+                reference = neighbor[2]
+                face = min(
+                    faces,
+                    key=lambda item: math.hypot(
+                        float(item.get("cx_ratio") or 0.5) - float(reference.get("cx_ratio") or 0.5),
+                        float(item.get("cy_ratio") or 0.5) - float(reference.get("cy_ratio") or 0.5),
+                    ),
+                )
+            else:
+                face = max(
+                    faces,
+                    key=lambda item: float(item.get("w_ratio") or 0.0) * float(item.get("h_ratio") or 0.0),
+                )
+        rows.append(
+            {
+                "t": float(absolute_start) + sample_time,
+                "cx_ratio": face.get("cx_ratio"),
+                "cy_ratio": face.get("cy_ratio"),
+                "w_ratio": face.get("w_ratio"),
+                "h_ratio": face.get("h_ratio"),
+                "found": bool(face),
+            }
+        )
+    return rows
 
 
 def _build_shot_based_layout_segments(
@@ -4696,11 +4768,19 @@ def _snap_face_aware_segments(
     boundaries = [float(seg["end"]) for seg in segments[:-1]]
     duration = float(segments[-1]["end"])
     for idx, boundary in enumerate(boundaries):
-        snapped_abs = _snap_face_aware_boundary(
-            source_path,
-            absolute_boundary=float(absolute_start) + boundary,
-            fps=fps,
-            known_scene_candidates=known_scene_candidates,
+        split_transition = (
+            str(segments[idx].get("mode") or "").strip().lower() == "split"
+            or str(segments[idx + 1].get("mode") or "").strip().lower() == "split"
+        )
+        snapped_abs = (
+            _round_to_frame_time(float(absolute_start) + boundary, fps)
+            if split_transition
+            else _snap_face_aware_boundary(
+                source_path,
+                absolute_boundary=float(absolute_start) + boundary,
+                fps=fps,
+                known_scene_candidates=known_scene_candidates,
+            )
         )
         snapped_rel = max(0.0, min(duration, float(snapped_abs or (absolute_start + boundary)) - float(absolute_start)))
         snapped_rel = _round_to_frame_time(snapped_rel, fps)
@@ -5375,21 +5455,7 @@ def _compute_face_aware_layout_segments(
         "t": round(float(sample["source_t"]) - float(start_seconds), 6),
     } for sample in extra_samples)
     samples.sort(key=lambda sample: float(sample.get("t") or 0.0))
-    track_rows: list[dict[str, Any]] = []
-    if samples:
-        for sample in samples:
-            faces = sample.get("faces") if isinstance(sample.get("faces"), list) else []
-            face = faces[0] if len(faces) == 1 and isinstance(faces[0], dict) else {}
-            track_rows.append(
-                {
-                    "t": float(start_seconds) + float(sample.get("t") or 0.0),
-                    "cx_ratio": face.get("cx_ratio"),
-                    "cy_ratio": face.get("cy_ratio"),
-                    "w_ratio": face.get("w_ratio"),
-                    "h_ratio": face.get("h_ratio"),
-                    "found": bool(face),
-                }
-            )
+    track_rows = _build_face_track_rows(samples, absolute_start=float(start_seconds))
     segments, shot_decisions = _build_shot_based_layout_segments(
         samples, duration_seconds=duration, scene_cuts=scene_cuts,
     )
@@ -5422,6 +5488,11 @@ def _compute_face_aware_layout_segments(
                 duration=float(duration),
                 source_keep_ranges=keep_ranges,
                 known_scene_candidates=scene_candidates,
+            )
+            track_rows = _build_face_track_rows(
+                samples,
+                absolute_start=float(start_seconds),
+                shot_cuts=face_shot_cuts,
             )
             face_track_smooth_path = _write_preview_face_track_smooth(
                 video_id,
@@ -11032,9 +11103,10 @@ def _render_settings_options_for_plan_entry(
         auto_subscribe_path = choose_deterministic_system_subscribe(str(video.get("video_id") or ""))
         if auto_subscribe_path:
             subscribe_key = make_system_subscribe_key(auto_subscribe_path.name)
-    background_key = video.get("background_visual_key")
-    if not background_key and owner_user_id:
-        background_key = load_background_preference(owner_user_id, brand_id)
+    background_key = resolve_background_key(
+        video.get("background_visual_key"),
+        load_background_preference(owner_user_id, brand_id) if owner_user_id else None,
+    )
     subtitle_style = str(video.get("subtitle_style") or "plain").strip().lower()
     if subtitle_style not in {"plain", "karaoke"}:
         subtitle_style = "plain"
@@ -14587,12 +14659,12 @@ def generate_short(video_pk):
     ]
     subscribe_visual_options = list(system_subscribe_visual_options) + list(user_subscribe_visual_options)
     subscribe_visual_map = {opt["key"]: opt for opt in subscribe_visual_options}
-    preferred_bg_key = None
-    if editor_owner_user_id:
-        preferred_bg_key = load_background_preference(editor_owner_user_id, brand_id)
-        if preferred_bg_key not in bg_visual_map:
-            preferred_bg_key = None
-    video_background_visual_key = preferred_bg_key or video.get("background_visual_key")
+    video_background_visual_key = resolve_background_key(
+        video.get("background_visual_key"),
+        load_background_preference(editor_owner_user_id, brand_id) if editor_owner_user_id else None,
+    )
+    if video_background_visual_key not in bg_visual_map:
+        video_background_visual_key = None
     if not video_background_visual_key:
         auto_bg_path = choose_deterministic_system_background(str(video.get("video_id") or ""))
         if auto_bg_path:
@@ -15996,10 +16068,10 @@ def generate_short(video_pk):
         subscribe_visual_label=subscribe_visual_label,
         background_preference_update_url=url_for(
             "video_shorts_bp.update_selected_background",
+            video_pk=video_pk,
             **({
                 "admin_operation_brand": editor_context["brand_id"],
                 "admin_operation_kind": editor_context["workspace_kind"],
-                "video_pk": video_pk,
             } if editor_context["is_admin_operation"] else {}),
         ),
         clip_coachmark_preference_url=url_for("video_shorts_bp.update_clip_coachmark_preference"),
@@ -18539,6 +18611,13 @@ def save_crop_area(video_pk):
         return jsonify(success=False, message="Unable to save crop settings."), 500
     finally:
         conn.close()
+
+    if "background_visual_key" in form_fields:
+        save_background_preference(
+            editor_owner_user_id,
+            brand_id,
+            background_visual_key,
+        )
 
     return jsonify(
         success=True,
@@ -34009,7 +34088,10 @@ def autoclip_video(video_pk):
                 ),
                 is_music_only=video_is_music_only,
                 static_visual_key=video_static_visual_key,
-                background_visual_key=(load_background_preference(video_owner_user_id, brand_id) if video_owner_user_id else None) or video_background_visual_key,
+                background_visual_key=resolve_background_key(
+                    video_background_visual_key,
+                    load_background_preference(video_owner_user_id, brand_id) if video_owner_user_id else None,
+                ),
                 visual_mode=video_visual_mode,
                 podcast_audio_filename=video_podcast_audio_filename,
                 podcast_overlay_short_ids=video_podcast_overlay_short_ids,
@@ -34747,12 +34829,14 @@ def autoclip_video(video_pk):
                 "original_zoom_rect",
             }
         }
-        preferred_bg_key = (
-            None
+        bg_visual_key = (
+            video_background_visual_key
             if queued_job
-            else (load_background_preference(video_owner_user_id, brand_id) if video_owner_user_id else None)
+            else resolve_background_key(
+                video_background_visual_key,
+                load_background_preference(video_owner_user_id, brand_id) if video_owner_user_id else None,
+            )
         )
-        bg_visual_key = preferred_bg_key or video_background_visual_key
         if selected_subscribe_overlay_key:
             subscribe_overlay_path, subscribe_overlay_path_is_temp = _resolve_subscribe_overlay_path(
                 selected_subscribe_overlay_key,

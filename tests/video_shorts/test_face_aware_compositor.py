@@ -53,7 +53,7 @@ def test_auto_caption_policy_is_mode_specific_with_custom_position(
         caption_anchor="top",
     )
     fit_top = compositor._face_aware_caption_top_for_block(
-        {"mode": "fit"},
+        {"mode": "fit", "auto_layout": True},
         block_height=block_height,
         target_width=target_width,
         target_height=target_height,
@@ -65,7 +65,15 @@ def test_auto_caption_policy_is_mode_specific_with_custom_position(
     assert split_top == expected_split_top
     assert fill_top == expected_fill_top
     assert fill_top > fill_face_bottom
-    assert fit_top == custom_position
+    fit_metrics = compositor._face_aware_fit_position_metrics(
+        target_width=target_width,
+        target_height=target_height,
+        subtitle_font_size=int(block_height / 2),
+    )
+    expected_fit_top = fit_metrics["frame_bottom"] + (
+        compositor.DESIGN_GEOMETRY["fit_caption_gap"] * target_height / compositor.DESIGN_GEOMETRY["height"]
+    )
+    assert fit_top == pytest.approx(expected_fit_top)
 
 
 def test_manual_custom_caption_position_is_unchanged() -> None:
@@ -346,7 +354,7 @@ def test_pillow_overlay_specs_receive_fill_caption_offset() -> None:
     assert specs[0]["y_offset"] == pytest.approx(532.0)
 
 
-def test_face_aware_ass_uses_canvas_split_position_and_custom_fit(tmp_path: Path) -> None:
+def test_face_aware_ass_uses_automatic_split_and_fit_positions(tmp_path: Path) -> None:
     subtitle_path = tmp_path / "captions.srt"
     subtitle_path.write_text(
         "1\n00:00:00,000 --> 00:00:01,000\nSplit words\n\n"
@@ -377,7 +385,63 @@ def test_face_aware_ass_uses_canvas_split_position_and_custom_fit(tmp_path: Path
     assert output_path is not None
     content = output_path.read_text(encoding="utf-8")
     assert r"{\an5\pos(540,960)}Split words" in content
-    assert r"{\an8\pos(540,1286)}Fit words" in content
+    assert "FitStyle,,0,0,0,,Fit words" in content
+    assert r"{\an8\pos(540,1286)}Fit words" not in content
+
+
+def test_caption_event_is_split_at_layout_boundary_for_ass(tmp_path: Path) -> None:
+    subtitle_path = tmp_path / "cross-boundary.srt"
+    subtitle_path.write_text(
+        "1\n00:00:00,500 --> 00:00:01,500\nCrossing words\n",
+        encoding="utf-8",
+    )
+
+    output_path = compositor._build_face_aware_subtitle_path(
+        subtitle_path,
+        layout_segments=[
+            {"start": 0.0, "end": 1.0, "mode": "fill", "caption_style_suffix": "Fill0"},
+            {"start": 1.0, "end": 2.0, "mode": "fit", "auto_layout": True},
+        ],
+        target_width=1080,
+        target_height=1920,
+        subtitle_font_size=62,
+        fit_margin=694,
+        subtitle_font="DejaVu Sans",
+        subtitle_text_color="#FFFFFF",
+        subtitle_text_alpha=100,
+        subtitle_bg_color="#000000",
+        subtitle_bg_alpha=0,
+        subtitle_style="plain",
+        subtitle_margin=1286,
+        subtitle_margin_custom=True,
+        caption_anchor="top",
+    )
+
+    content = output_path.read_text(encoding="utf-8")
+    assert "0:00:00.50,0:00:01.00,FillStyleFill0" in content
+    assert "0:00:01.00,0:00:01.50,FitStyle" in content
+
+
+def test_pillow_caption_event_is_split_at_layout_boundary() -> None:
+    specs = compositor._face_aware_subtitle_overlay_specs(
+        [{"path": Path("caption.png"), "start": 0.5, "end": 1.5}],
+        overlay_events=[
+            {"start": 0.5, "end": 1.5, "metrics": {"block_bbox": [0.0, 300.0, 720.0, 400.0]}}
+        ],
+        layout_segments=[
+            {"start": 0.0, "end": 1.0, "mode": "fill", "auto_layout": True},
+            {"start": 1.0, "end": 2.0, "mode": "fit", "auto_layout": True},
+        ],
+        target_width=720,
+        target_height=1280,
+        subtitle_font_size=41,
+        subtitle_margin=857,
+        subtitle_margin_custom=True,
+        caption_anchor="top",
+    )
+
+    assert [(spec["start"], spec["end"]) for spec in specs] == [(0.5, 1.0), (1.0, 1.5)]
+    assert specs[0]["y_offset"] != specs[1]["y_offset"]
 
 
 @pytest.mark.skipif(not FFMPEG or not FFPROBE, reason="ffmpeg and ffprobe are required")

@@ -8,8 +8,8 @@ import pytest
 from flask import Flask, g, jsonify
 from werkzeug.exceptions import Forbidden
 
-from app.video_shorts.routes import generation
-from app.video_shorts.services import tenant_media
+from app.video_shorts.routes import generation, settings
+from app.video_shorts.services import background_preferences, tenant_media
 
 
 ROOT = Path(__file__).resolve().parents[2]
@@ -487,12 +487,64 @@ def test_editor_template_exposes_reset_and_visible_design_changed_state():
     assert "{% if has_short_editor_default %}" in template
 
 
-def test_manual_caption_position_disables_every_auto_layout_preview_override():
+def test_auto_layout_preview_ignores_manual_caption_position():
     template = (ROOT / "app/video_shorts/templates/generate_short.html").read_text(encoding="utf-8")
 
-    assert 'const customPosition = initialSubtitleMarginCustom || dirtyOverlayFields.has("sub_margin");' in template
-    assert "return customPosition ? null : segment;" in template
-    assert 'customPosition && segment.mode === "fit"' not in template
+    assert "const getAutoLayoutPreviewPlacement = () =>" in template
+    assert "return segment;" in template
+    assert "return customPosition ? null : segment;" not in template
+
+
+def test_background_resolver_prefers_video_design_then_brand_default():
+    assert background_preferences.resolve_background_key("systembg:video.png", "systembg:brand.png") == "systembg:video.png"
+    assert background_preferences.resolve_background_key(None, "systembg:brand.png") == "systembg:brand.png"
+    assert background_preferences.resolve_background_key(None, None) is None
+
+
+def test_editor_background_picker_saves_video_and_brand_preference(monkeypatch):
+    app = Flask(__name__)
+    executed = []
+    saved_preferences = []
+
+    class _Cursor:
+        rowcount = 1
+
+    class _Connection:
+        def execute(self, sql, params=None):
+            executed.append((sql, params))
+            return _Cursor()
+
+        def commit(self):
+            pass
+
+        def rollback(self):
+            pass
+
+        def close(self):
+            pass
+
+    monkeypatch.setattr(settings, "get_db", lambda: _Connection())
+    monkeypatch.setattr(settings, "_static_asset_scope", lambda *_args: ("owner-1", "brand-1", "scope"))
+    monkeypatch.setattr(settings, "_resolve_selected_background_key", lambda *_args: "userbg:bg2")
+    monkeypatch.setattr(
+        settings,
+        "save_background_preference",
+        lambda owner, brand, key: saved_preferences.append((owner, brand, key)),
+    )
+
+    with app.test_request_context(
+        "/settings/static-images/background-selection?video_pk=7928",
+        method="POST",
+        data={"background_key": "userbg:bg2"},
+    ):
+        g.vs_current_user = {"id": "owner-1"}
+        response, status = settings.update_selected_background()
+
+    assert status == 200
+    assert response.get_json()["background_key"] == "userbg:bg2"
+    assert any("UPDATE youtube_videos" in sql for sql, _params in executed)
+    assert executed[-1][1] == ["userbg:bg2", 7928, "owner-1", "brand-1"]
+    assert saved_preferences == [("owner-1", "brand-1", "userbg:bg2")]
 
 
 def test_worker_render_route_requires_and_receives_internal_snapshot_marker():

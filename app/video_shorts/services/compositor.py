@@ -2432,7 +2432,7 @@ def _face_aware_caption_top_for_block(
     )
     if mode == "split":
         return max(0.0, min(float(target_height) - safe_block_height, (float(target_height) * DESIGN_GEOMETRY["split_ratio"]) - (safe_block_height / 2.0)))
-    if mode == "fit" and custom_position:
+    if mode == "fit" and custom_position and not bool(segment.get("auto_layout")):
         return caption_block_top(
             subtitle_margin,
             caption_anchor,
@@ -2446,7 +2446,14 @@ def _face_aware_caption_top_for_block(
             subtitle_font_size=int(max(1, round(safe_block_height / 2.0))),
         )
         fit_gap = float(DESIGN_GEOMETRY["fit_caption_gap"]) * (float(target_height) / float(DESIGN_GEOMETRY["height"]))
-        return max(0.0, min(float(target_height) - safe_block_height, float(metrics["frame_bottom"]) + fit_gap))
+        caption_top = float(metrics["frame_bottom"]) + fit_gap
+        try:
+            overlay_top = float(segment.get("bottom_overlay_top"))
+        except (TypeError, ValueError):
+            overlay_top = None
+        if overlay_top is not None:
+            caption_top = min(caption_top, overlay_top - fit_gap - safe_block_height)
+        return max(0.0, min(float(target_height) - safe_block_height, caption_top))
     if custom_position and not bool(segment.get("auto_layout")):
         return caption_block_top(
             subtitle_margin,
@@ -2663,6 +2670,33 @@ def _face_aware_segment_for_time(layout_segments: List[Dict[str, Any]], event_st
     return {"mode": "fill", "_index": 0}
 
 
+def _face_aware_event_slices(
+    layout_segments: List[Dict[str, Any]],
+    start: float,
+    end: float,
+) -> List[Tuple[float, float, Dict[str, Any]]]:
+    """Split one caption event wherever the automatic layout mode changes."""
+    safe_start = float(start)
+    safe_end = float(end)
+    if safe_end <= safe_start:
+        return []
+    boundaries = sorted({
+        float(segment.get("start") or 0.0)
+        for segment in layout_segments or []
+        if safe_start < float(segment.get("start") or 0.0) < safe_end
+    } | {
+        float(segment.get("end") or 0.0)
+        for segment in layout_segments or []
+        if safe_start < float(segment.get("end") or 0.0) < safe_end
+    })
+    points = [safe_start, *boundaries, safe_end]
+    return [
+        (slice_start, slice_end, _face_aware_segment_for_time(layout_segments, slice_start))
+        for slice_start, slice_end in zip(points, points[1:])
+        if slice_end - slice_start > 1e-6
+    ]
+
+
 def _face_aware_style_suffix_for_time(layout_segments: List[Dict[str, Any]], event_start: float) -> str:
     segment = _face_aware_segment_for_time(layout_segments, event_start)
     mode = str(segment.get("mode") or "fill").strip().lower()
@@ -2845,24 +2879,18 @@ def _build_face_aware_subtitle_path(
             "Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text",
         ]
         for start, end, body in events:
-            suffix = _face_aware_style_suffix_for_time(layout_segments, start)
-            style = f"{suffix}Style" if suffix in {"Fit", "Split"} else f"FillStyle{suffix}"
-            if suffix == "Split":
-                body = (
-                    rf"{{\an5\pos({int(target_width) // 2},{int(round(float(target_height) * DESIGN_GEOMETRY['split_ratio']))})}}"
-                    + body
+            for slice_start, slice_end, segment in _face_aware_event_slices(layout_segments, start, end):
+                suffix = _face_aware_style_suffix_for_time(layout_segments, slice_start)
+                style = f"{suffix}Style" if suffix in {"Fit", "Split"} else f"FillStyle{suffix}"
+                rendered_body = body
+                if suffix == "Split":
+                    rendered_body = (
+                        rf"{{\an5\pos({int(target_width) // 2},{int(round(float(target_height) * DESIGN_GEOMETRY['split_ratio']))})}}"
+                        + rendered_body
+                    )
+                ass_lines.append(
+                    f"Dialogue: 0,{_format_face_aware_ass_time(slice_start)},{_format_face_aware_ass_time(slice_end)},{style},,0,0,0,,{rendered_body}"
                 )
-            elif suffix == "Fit" and not _is_face_aware_default_subtitle_margin(
-                subtitle_margin,
-                subtitle_margin_custom=subtitle_margin_custom,
-            ):
-                anchor = normalize_caption_anchor(caption_anchor)
-                alignment = {"top": 8, "center": 5, "bottom": 2}[anchor]
-                y = int(round(float(subtitle_margin or 0))) if anchor in {"top", "center"} else int(target_height) - int(round(float(subtitle_margin or 0)))
-                body = rf"{{\an{alignment}\pos({int(target_width) // 2},{y})}}" + body
-            ass_lines.append(
-                f"Dialogue: 0,{_format_face_aware_ass_time(start)},{_format_face_aware_ass_time(end)},{style},,0,0,0,,{body}"
-            )
         tmp = tempfile.NamedTemporaryFile(delete=False, suffix=".face-aware.ass")
         tmp_path = Path(tmp.name)
         tmp.write("\n".join(ass_lines).encode("utf-8"))
@@ -2923,22 +2951,25 @@ def _build_face_aware_subtitle_path(
         if line.startswith("Dialogue:"):
             parts = line.split(":", 1)[1].split(",", 9)
             if len(parts) >= 10:
-                suffix = _face_aware_style_suffix_for_time(layout_segments, _ass_time_to_seconds(parts[1]))
-                parts[3] = f"{(parts[3].strip() or 'Default')}{suffix}"
-                if suffix == "Split":
-                    parts[9] = (
-                        rf"{{\an5\pos({int(target_width) // 2},{int(round(float(target_height) * DESIGN_GEOMETRY['split_ratio']))})}}"
-                        + parts[9]
-                    )
-                elif suffix == "Fit" and not _is_face_aware_default_subtitle_margin(
-                    subtitle_margin,
-                    subtitle_margin_custom=subtitle_margin_custom,
+                event_start = _ass_time_to_seconds(parts[1])
+                event_end = _ass_time_to_seconds(parts[2])
+                base_style = parts[3].strip() or "Default"
+                base_body = parts[9]
+                for slice_start, slice_end, segment in _face_aware_event_slices(
+                    layout_segments, event_start, event_end,
                 ):
-                    anchor = normalize_caption_anchor(caption_anchor)
-                    alignment = {"top": 8, "center": 5, "bottom": 2}[anchor]
-                    y = int(round(float(subtitle_margin or 0))) if anchor in {"top", "center"} else int(target_height) - int(round(float(subtitle_margin or 0)))
-                    parts[9] = rf"{{\an{alignment}\pos({int(target_width) // 2},{y})}}" + parts[9]
-                output.append("Dialogue: " + ",".join(parts))
+                    slice_parts = list(parts)
+                    suffix = _face_aware_style_suffix_for_time(layout_segments, slice_start)
+                    slice_parts[1] = _format_face_aware_ass_time(slice_start)
+                    slice_parts[2] = _format_face_aware_ass_time(slice_end)
+                    slice_parts[3] = f"{base_style}{suffix}"
+                    slice_parts[9] = base_body
+                    if suffix == "Split":
+                        slice_parts[9] = (
+                            rf"{{\an5\pos({int(target_width) // 2},{int(round(float(target_height) * DESIGN_GEOMETRY['split_ratio']))})}}"
+                            + slice_parts[9]
+                        )
+                    output.append("Dialogue: " + ",".join(slice_parts))
                 continue
         output.append(line)
     if in_styles:
@@ -3082,6 +3113,7 @@ def _face_aware_subtitle_overlay_specs(
     fallback_height = _face_aware_caption_block_height(subtitle_font_size)
     for spec in overlay_specs:
         start = float(spec.get("start") or 0.0)
+        end = float(spec.get("end") or start)
         event = next(
             (
                 item for item in overlay_events
@@ -3090,22 +3122,27 @@ def _face_aware_subtitle_overlay_specs(
             ),
             None,
         )
-        segment = _face_aware_segment_for_time(layout_segments, start)
         block = _face_aware_event_caption_block(
             (event or {}).get("metrics") or {},
-            fallback_top=float(segment.get("caption_top") or 0.0),
+            fallback_top=float(_face_aware_segment_for_time(layout_segments, start).get("caption_top") or 0.0),
             fallback_height=fallback_height,
         )
-        desired_top = _face_aware_caption_top_for_block(
-            segment,
-            block_height=block["height"],
-            target_width=target_width,
-            target_height=target_height,
-            subtitle_margin=subtitle_margin,
-            subtitle_margin_custom=subtitle_margin_custom,
-            caption_anchor=caption_anchor,
-        )
-        adjusted.append({**spec, "y_offset": desired_top - block["top"]})
+        for slice_start, slice_end, segment in _face_aware_event_slices(layout_segments, start, end):
+            desired_top = _face_aware_caption_top_for_block(
+                segment,
+                block_height=block["height"],
+                target_width=target_width,
+                target_height=target_height,
+                subtitle_margin=subtitle_margin,
+                subtitle_margin_custom=subtitle_margin_custom,
+                caption_anchor=caption_anchor,
+            )
+            adjusted.append({
+                **spec,
+                "start": slice_start,
+                "end": slice_end,
+                "y_offset": desired_top - block["top"],
+            })
     return adjusted
 
 
@@ -4792,6 +4829,7 @@ def _compose_trimmed_with_background(
                 segment["subscribe_y"] = float(metrics["subscribe_y"] or 0.0)
             caption_block_height = _face_aware_caption_block_height(subtitle_font_size)
             for segment in layout_segments:
+                segment["bottom_overlay_top"] = bottom_overlay_top
                 caption_top = _face_aware_caption_top_for_block(
                     segment,
                     block_height=caption_block_height,
@@ -5366,23 +5404,25 @@ def _compose_trimmed_with_background(
                     event_end = min(float(duration), float(event["end"]))
                     if event_end <= event_start:
                         continue
-                    event_segment = _face_aware_segment_for_time(caption_layout_segments, event_start)
                     block = _face_aware_event_caption_block(
                         event.get("metrics") or {},
                         fallback_top=fallback_top,
                         fallback_height=fallback_height,
                     )
-                    desired_top = _face_aware_caption_top_for_block(
-                        event_segment,
-                        block_height=block["height"],
-                        target_width=target_width,
-                        target_height=target_height,
-                        subtitle_margin=subtitle_margin,
-                        subtitle_margin_custom=subtitle_margin_custom,
-                        caption_anchor=caption_anchor,
-                    )
-                    segment_caption_y = desired_top - block["top"]
-                    caption_y_intervals.append((event_start, event_end, segment_caption_y))
+                    for slice_start, slice_end, event_segment in _face_aware_event_slices(
+                        caption_layout_segments, event_start, event_end,
+                    ):
+                        desired_top = _face_aware_caption_top_for_block(
+                            event_segment,
+                            block_height=block["height"],
+                            target_width=target_width,
+                            target_height=target_height,
+                            subtitle_margin=subtitle_margin,
+                            subtitle_margin_custom=subtitle_margin_custom,
+                            caption_anchor=caption_anchor,
+                        )
+                        segment_caption_y = desired_top - block["top"]
+                        caption_y_intervals.append((slice_start, slice_end, segment_caption_y))
                 caption_overlay_y_expr = _piecewise_constant_overlay_y_expr(caption_y_intervals, duration=duration)
             else:
                 caption_block_height = _face_aware_caption_block_height(subtitle_font_size)

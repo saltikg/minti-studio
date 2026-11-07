@@ -1,3 +1,5 @@
+import pytest
+
 from app.video_shorts.routes import generation
 from app.video_shorts.routes.generation import _build_shot_based_layout_segments
 
@@ -50,8 +52,8 @@ def test_no_scene_cut_keeps_sample_based_switching():
 
     assert decisions == []
     assert segments == [
-        {"start": 0.0, "end": 2.75, "mode": "fill"},
-        {"start": 2.75, "end": 6.0, "mode": "split"},
+        {"start": 0.0, "end": 3.0, "mode": "fill"},
+        {"start": 3.0, "end": 6.0, "mode": "split"},
     ]
 
 
@@ -66,10 +68,10 @@ def test_missed_scene_cut_preserves_a_long_split_inside_the_shot():
     )
 
     assert decisions[0]["mode"] == "fill"
-    assert {"start": 8.25, "end": 11.75, "mode": "split"} in segments
+    assert {"start": 8.5, "end": 11.5, "mode": "split"} in segments
 
 
-def test_in_shot_switch_near_a_scene_cut_snaps_to_the_cut(monkeypatch, tmp_path):
+def test_confirmed_split_boundary_is_not_moved_to_an_unrelated_nearby_cut(monkeypatch, tmp_path):
     monkeypatch.setattr(generation, "_probe_video_fps", lambda _source_path: 30.0)
     segments = [
         {"start": 0.0, "end": 5.0, "mode": "fill"},
@@ -85,5 +87,51 @@ def test_in_shot_switch_near_a_scene_cut_snaps_to_the_cut(monkeypatch, tmp_path)
     )
 
     assert result[0]["end"] == 5.0
-    assert abs(result[1]["end"] - 12.173) < 0.02
+    assert result[1]["end"] == pytest.approx(11.766667)
     assert snapped[1]["from"] == 11.75
+
+
+def test_split_transition_uses_shot_cut_between_face_samples():
+    segments, _decisions = _build_shot_based_layout_segments(
+        [
+            {"t": 4.5, "face_count": 1},
+            {"t": 5.5, "face_count": 2},
+            {"t": 6.0, "face_count": 2},
+            {"t": 6.5, "face_count": 2},
+            {"t": 7.0, "face_count": 2},
+        ],
+        duration_seconds=8.0,
+        scene_cuts=[5.0],
+    )
+
+    assert segments == [
+        {"start": 0.0, "end": 5.0, "mode": "fill"},
+        {"start": 5.0, "end": 8.0, "mode": "split"},
+    ]
+
+
+def test_multiface_track_picks_nearest_single_face_in_same_shot():
+    samples = [
+        {"t": 0.0, "faces": [{"cx_ratio": 0.2, "cy_ratio": 0.4, "w_ratio": 0.2, "h_ratio": 0.3}]},
+        {"t": 0.5, "faces": [
+            {"cx_ratio": 0.22, "cy_ratio": 0.4, "w_ratio": 0.15, "h_ratio": 0.25},
+            {"cx_ratio": 0.78, "cy_ratio": 0.4, "w_ratio": 0.25, "h_ratio": 0.35},
+        ]},
+    ]
+
+    rows = generation._build_face_track_rows(samples, absolute_start=10.0, shot_cuts=[])
+
+    assert rows[1]["found"] is True
+    assert rows[1]["cx_ratio"] == pytest.approx(0.22)
+
+
+def test_multiface_track_uses_largest_face_without_single_face_neighbor():
+    samples = [{"t": 0.5, "faces": [
+        {"cx_ratio": 0.22, "cy_ratio": 0.4, "w_ratio": 0.15, "h_ratio": 0.25},
+        {"cx_ratio": 0.78, "cy_ratio": 0.4, "w_ratio": 0.25, "h_ratio": 0.35},
+    ]}]
+
+    rows = generation._build_face_track_rows(samples, absolute_start=10.0, shot_cuts=[])
+
+    assert rows[0]["found"] is True
+    assert rows[0]["cx_ratio"] == pytest.approx(0.78)
