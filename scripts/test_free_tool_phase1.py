@@ -180,9 +180,9 @@ def main() -> None:
     preview = client.get("/tools/youtube-to-shorts?preview=preview-secret")
     assert preview.status_code == 200, preview.status_code
     page_html = preview.get_data(as_text=True)
-    assert "<title>Free AI Video Clipping Tool | YouTube to Shorts | MintiStudio</title>" in page_html
+    assert "<title>YouTube to Shorts | Free AI Video Clipping Tool | MintiStudio</title>" in page_html
     assert '<meta name="description" content="Turn long YouTube videos into captioned Shorts with MintiStudio&#39;s free AI video clipping tool. Paste a URL and try it without registration.">' in page_html
-    assert '<h1>Free AI Video Clipping Tool for YouTube Shorts</h1>' in page_html
+    assert '<h1>YouTube to Shorts: Free AI Video Clipping Tool</h1>' in page_html
     assert '<link rel="canonical" href="https://mintistudio.com/tools/youtube-to-shorts">' in page_html
     assert '<meta name="robots" content="index, follow">' in page_html
     assert "How This AI Video Clipping Tool Works" in page_html
