@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import atexit
 import json
 import hashlib
 import logging
@@ -53,6 +54,19 @@ SELFIE_SEGMENTER_URL = (
 SELFIE_SEGMENTER_SHA256 = "191ac9529ae506ee0beefa6b2c945a172dab9d07d1e802a290a4e4038226658b"
 _SEGMENTER = None
 _SEGMENTER_LOCK = threading.Lock()
+
+
+def _close_segmenter() -> None:
+    global _SEGMENTER
+    segmenter, _SEGMENTER = _SEGMENTER, None
+    if segmenter is not None:
+        try:
+            segmenter.close()
+        except Exception:
+            log.debug("MediaPipe segmenter close failed during process shutdown", exc_info=True)
+
+
+atexit.register(_close_segmenter)
 
 
 class CoverCopyDoesNotFit(ValueError):
