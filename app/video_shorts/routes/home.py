@@ -69,6 +69,30 @@ def home():
     )
 
 
+def render_short_form_video_editing_service():
+    return render_template(
+        "short_form_video_editing_service.html",
+        locale="en",
+        canonical_url="https://mintistudio.com/services/short-form-video-editing",
+        autopilot_register_url=url_for(
+            "video_shorts_bp.register",
+            intent="autopilot",
+            tier=15,
+        ),
+        free_tool_url="/tools/youtube-to-shorts",
+        pricing_url=f"{url_for('video_shorts_bp.home')}#pricing",
+        done_for_you_guide_url=(
+            "/video_shorts/blog/done-for-you-vs-diy-video-clipping/"
+        ),
+        weekly_workflow_guide_url=(
+            "/video_shorts/blog/weekly-shorts-workflow-for-busy-creators/"
+        ),
+        repurposing_guide_url=(
+            "/video_shorts/blog/how-to-repurpose-long-videos-into-short-clips/"
+        ),
+    )
+
+
 @video_shorts_bp.route("/pricing/autopilot-interest", methods=["POST"])
 def capture_autopilot_interest():
     payload = request.get_json(silent=True) or request.form

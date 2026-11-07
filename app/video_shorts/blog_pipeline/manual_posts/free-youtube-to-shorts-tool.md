@@ -131,7 +131,7 @@ The free tool is the fastest way to see what Minti picks from your video.
 
 Use the DIY plans if you want to keep making Shorts yourself from longer videos, with AI suggestions, scheduling and publishing.
 
-Use Autopilot if you want the long-video-to-Shorts workflow handled for you, while you still review every Short before it goes live.
+Use [MintiStudio's done-for-you short form video editing service](/services/short-form-video-editing) if you want the long-video-to-Shorts workflow handled for you, while you still review every Short before it goes live.
 
 ## Related guides
 

@@ -24,6 +24,7 @@ BASE_URL = os.getenv("BASE_URL", "https://mintistudio.com").rstrip("/")
 DB_PATH  = os.getenv("DB_PATH", "/home/ubuntu/blog-factory/warehouse/blog_factory.duckdb")
 ENABLE_LEGACY_BLOG = (os.getenv("ENABLE_LEGACY_BLOG", "0") or "0").strip().lower() in {"1", "true", "yes", "on"}
 FREE_TOOL_LASTMOD = "2026-11-06"
+SHORT_FORM_EDITING_SERVICE_LASTMOD = "2026-11-06"
 
 
 def from_json_safe(val):
@@ -144,6 +145,12 @@ def create_app():
 
         return render_free_tool_landing("en")
 
+    @app.get("/services/short-form-video-editing")
+    def short_form_video_editing_service():
+        from app.video_shorts.routes.home import render_short_form_video_editing_service
+
+        return render_short_form_video_editing_service()
+
     @app.get("/tools/youtube-to-shorts/status/<int:video_pk>")
     def free_tool_youtube_to_shorts_status(video_pk):
         from app.video_shorts.routes.free_tool import free_tool_processing_status
@@ -217,6 +224,10 @@ def create_app():
             {
                 "loc": _absolute_public_url(url_for("video_shorts_bp.home")),
                 "lastmod": "",
+            },
+            {
+                "loc": _absolute_public_url("/services/short-form-video-editing"),
+                "lastmod": SHORT_FORM_EDITING_SERVICE_LASTMOD,
             },
             {
                 "loc": _absolute_public_url(url_for("video_shorts_bp.privacy_page")),

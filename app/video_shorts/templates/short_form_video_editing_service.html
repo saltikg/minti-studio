@@ -1,0 +1,610 @@
+{% extends "vs_marketing_base.html" %}
+
+{% set page_title = "Short Form Video Editing Service | Done-for-You Shorts | MintiStudio" %}
+{% set page_description = "Turn your long videos into ready-to-review Shorts with MintiStudio's done-for-you short form video editing service. Clips, captions, vertical framing, titles, and publishing prep handled for you." %}
+{% set faq_items = [
+  ('What is short-form video editing?', 'Short-form video editing turns useful moments from a longer recording into focused vertical clips. For MintiStudio Autopilot, that includes clip selection, vertical framing, captions, titles, and preparation for your publishing workflow.'),
+  ('Can MintiStudio turn my existing YouTube videos into Shorts?', 'Yes. Connect your YouTube channel so MintiStudio can use the long-form videos you already publish as source material for prepared Shorts.'),
+  ('Do I need to edit every clip myself?', 'No. Autopilot is the done-for-you path. MintiStudio prepares the clips, captions, framing, and titles. You can review the prepared Shorts in your account before they move through your publishing workflow.'),
+  ('Can I review Shorts before they are published?', 'Yes. Prepared Shorts remain available in your MintiStudio account so you can review what was created before publishing.'),
+  ('Is this different from the free AI video clipping tool?', 'Yes. The free tool is the DIY path: you paste a YouTube URL and work with the generated clip yourself. Autopilot is for people who want MintiStudio to keep the short-form production workflow moving for them.'),
+  ('What kinds of long videos work best?', 'Speech-led videos such as educational videos, podcasts, interviews, coaching videos, presentations, and expert commentary give the clip-selection system clear ideas and self-contained moments to work with.'),
+  ('Does MintiStudio add captions and vertical formatting?', 'Yes. Prepared Shorts can include captions, titles, and vertical framing designed for short-form viewing.')
+] %}
+
+{% block title %}{{ page_title }}{% endblock %}
+{% block meta_description %}{{ page_description }}{% endblock %}
+
+{% block seo_meta %}
+  {{ super() }}
+  <meta property="og:type" content="website">
+  <meta property="og:title" content="{{ page_title }}">
+  <meta property="og:description" content="{{ page_description }}">
+  <meta property="og:url" content="{{ canonical_url }}">
+{% endblock %}
+
+{% block marketing_cta %}
+  <a
+    class="vs-marketing-cta"
+    href="{{ autopilot_register_url }}"
+    data-minti-cta
+    data-cta-location="short_form_service_topnav"
+  >Start Autopilot</a>
+{% endblock %}
+
+{% block extra_styles %}
+  {{ super() }}
+  <style>
+    .sf-service-page {
+      width: min(100%, 1120px);
+      margin: 0 auto;
+      padding: clamp(2.8rem, 7vw, 5.5rem) 1rem clamp(3.5rem, 7vw, 6rem);
+    }
+    .sf-service-hero {
+      display: grid;
+      grid-template-columns: minmax(0, 1.08fr) minmax(300px, 0.92fr);
+      align-items: center;
+      gap: clamp(2rem, 6vw, 4.5rem);
+    }
+    .sf-service-eyebrow {
+      margin: 0 0 0.85rem;
+      color: #78e8d7;
+      font-size: 0.78rem;
+      font-weight: 800;
+      letter-spacing: 0.14em;
+      text-transform: uppercase;
+    }
+    .sf-service-hero h1 {
+      max-width: 760px;
+      margin: 0;
+      color: rgba(248, 250, 252, 0.99);
+      font-size: clamp(2.55rem, 6vw, 4.6rem);
+      line-height: 0.98;
+      letter-spacing: -0.055em;
+      text-wrap: balance;
+    }
+    .sf-service-lede {
+      max-width: 670px;
+      margin: 1.35rem 0 0;
+      color: rgba(226, 232, 240, 0.82);
+      font-size: clamp(1.05rem, 2vw, 1.22rem);
+      line-height: 1.65;
+    }
+    .sf-service-lede strong {
+      color: #f8fafc;
+    }
+    .sf-service-actions {
+      display: flex;
+      flex-wrap: wrap;
+      align-items: center;
+      gap: 0.8rem;
+      margin-top: 1.6rem;
+    }
+    .sf-service-primary,
+    .sf-service-secondary {
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      min-height: 48px;
+      padding: 0.78rem 1.15rem;
+      border-radius: 999px;
+      font-weight: 800;
+      text-decoration: none;
+    }
+    .sf-service-primary {
+      background: #2bb3a3;
+      color: #06201d;
+      box-shadow: 0 15px 35px rgba(43, 179, 163, 0.2);
+    }
+    .sf-service-secondary {
+      border: 1px solid rgba(140, 241, 225, 0.35);
+      color: #a7f3e8;
+      background: rgba(15, 23, 42, 0.45);
+    }
+    .sf-service-note {
+      width: 100%;
+      margin: 0.15rem 0 0;
+      color: rgba(148, 163, 184, 0.8);
+      font-size: 0.86rem;
+    }
+    .sf-service-visual {
+      position: relative;
+      min-height: 430px;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      isolation: isolate;
+    }
+    .sf-service-visual::before {
+      content: "";
+      position: absolute;
+      inset: 8% 3% 2%;
+      z-index: -1;
+      border-radius: 44px;
+      background: radial-gradient(circle at 50% 30%, rgba(43, 179, 163, 0.23), rgba(15, 23, 42, 0.2) 62%, transparent 72%);
+      filter: blur(4px);
+    }
+    .sf-service-short {
+      position: absolute;
+      width: min(42%, 170px);
+      aspect-ratio: 9 / 16;
+      overflow: hidden;
+      border: 1px solid rgba(255, 255, 255, 0.16);
+      border-radius: 20px;
+      background: #0f172a;
+      box-shadow: 0 30px 65px rgba(0, 0, 0, 0.38);
+    }
+    .sf-service-short img {
+      width: 100%;
+      height: 100%;
+      display: block;
+      object-fit: cover;
+    }
+    .sf-service-short:nth-child(1) { transform: translate(-78%, 2%) rotate(-7deg); }
+    .sf-service-short:nth-child(2) { z-index: 2; transform: translateY(-5%); }
+    .sf-service-short:nth-child(3) { transform: translate(78%, 7%) rotate(7deg); }
+    .sf-service-review-chip {
+      position: absolute;
+      z-index: 3;
+      bottom: 2.2rem;
+      left: 50%;
+      transform: translateX(-50%);
+      display: inline-flex;
+      align-items: center;
+      gap: 0.45rem;
+      padding: 0.62rem 0.9rem;
+      border: 1px solid rgba(140, 241, 225, 0.32);
+      border-radius: 999px;
+      background: rgba(8, 12, 18, 0.94);
+      color: #d8fff8;
+      font-size: 0.82rem;
+      font-weight: 750;
+      white-space: nowrap;
+    }
+    .sf-service-review-chip i { color: #5dd8c7; }
+    .sf-service-section {
+      margin-top: clamp(4rem, 9vw, 7.5rem);
+    }
+    .sf-service-section-head {
+      max-width: 760px;
+      margin: 0 auto 1.6rem;
+      text-align: center;
+    }
+    .sf-service-section-head.is-left {
+      margin-left: 0;
+      text-align: left;
+    }
+    .sf-service-section h2 {
+      margin: 0;
+      color: rgba(248, 250, 252, 0.98);
+      font-size: clamp(1.8rem, 4vw, 2.8rem);
+      line-height: 1.08;
+      letter-spacing: -0.04em;
+      text-wrap: balance;
+    }
+    .sf-service-section-copy {
+      margin: 0.9rem 0 0;
+      color: rgba(203, 213, 225, 0.8);
+      line-height: 1.7;
+    }
+    .sf-audience-grid,
+    .sf-handles-grid,
+    .sf-guide-grid {
+      display: grid;
+      grid-template-columns: repeat(3, minmax(0, 1fr));
+      gap: 0.9rem;
+    }
+    .sf-audience-card,
+    .sf-handle-card,
+    .sf-guide-card {
+      border: 1px solid rgba(255, 255, 255, 0.1);
+      border-radius: 18px;
+      background: rgba(15, 23, 42, 0.56);
+      box-shadow: 0 20px 52px rgba(0, 0, 0, 0.17);
+    }
+    .sf-audience-card {
+      display: flex;
+      align-items: center;
+      gap: 0.75rem;
+      padding: 1rem;
+      color: rgba(226, 232, 240, 0.88);
+      font-weight: 700;
+    }
+    .sf-audience-card i,
+    .sf-handle-icon {
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      width: 2.4rem;
+      height: 2.4rem;
+      flex: 0 0 auto;
+      border-radius: 12px;
+      background: rgba(43, 179, 163, 0.12);
+      color: #8cf1e1;
+    }
+    .sf-steps {
+      display: grid;
+      grid-template-columns: repeat(3, minmax(0, 1fr));
+      gap: 0.9rem;
+      margin: 0;
+      padding: 0;
+      list-style: none;
+      counter-reset: sf-step;
+    }
+    .sf-step {
+      position: relative;
+      min-height: 220px;
+      padding: 1.25rem;
+      border: 1px solid rgba(255, 255, 255, 0.1);
+      border-radius: 20px;
+      background: linear-gradient(180deg, rgba(43, 179, 163, 0.08), rgba(15, 23, 42, 0.58));
+      counter-increment: sf-step;
+    }
+    .sf-step::before {
+      content: "0" counter(sf-step);
+      display: block;
+      margin-bottom: 2.2rem;
+      color: rgba(140, 241, 225, 0.72);
+      font-size: 0.82rem;
+      font-weight: 850;
+      letter-spacing: 0.12em;
+    }
+    .sf-step h3,
+    .sf-handle-card h3,
+    .sf-guide-card h3,
+    .sf-control-copy h3 {
+      margin: 0;
+      color: rgba(248, 250, 252, 0.96);
+      font-size: 1.05rem;
+      line-height: 1.35;
+    }
+    .sf-step p,
+    .sf-handle-card p,
+    .sf-guide-card p,
+    .sf-control-copy p {
+      margin: 0.55rem 0 0;
+      color: rgba(203, 213, 225, 0.78);
+      font-size: 0.94rem;
+      line-height: 1.65;
+    }
+    .sf-handle-card { padding: 1.05rem; }
+    .sf-handle-icon { margin-bottom: 0.85rem; }
+    .sf-control-panel {
+      display: grid;
+      grid-template-columns: minmax(0, 0.8fr) minmax(0, 1.2fr);
+      align-items: center;
+      gap: clamp(1.5rem, 5vw, 4rem);
+      padding: clamp(1.4rem, 4vw, 2.5rem);
+      border: 1px solid rgba(43, 179, 163, 0.25);
+      border-radius: 26px;
+      background: linear-gradient(135deg, rgba(43, 179, 163, 0.11), rgba(15, 23, 42, 0.66));
+    }
+    .sf-control-preview {
+      padding: 1rem;
+      border: 1px solid rgba(255, 255, 255, 0.1);
+      border-radius: 18px;
+      background: rgba(8, 12, 18, 0.78);
+    }
+    .sf-control-preview-head {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 1rem;
+      margin-bottom: 0.8rem;
+      color: rgba(226, 232, 240, 0.86);
+      font-size: 0.85rem;
+      font-weight: 750;
+    }
+    .sf-control-status {
+      display: inline-flex;
+      align-items: center;
+      gap: 0.35rem;
+      color: #8cf1e1;
+    }
+    .sf-control-row {
+      display: grid;
+      grid-template-columns: 54px 1fr;
+      gap: 0.8rem;
+      align-items: center;
+      padding: 0.8rem 0;
+      border-top: 1px solid rgba(255, 255, 255, 0.07);
+    }
+    .sf-control-thumb {
+      aspect-ratio: 9 / 16;
+      border-radius: 8px;
+      background: linear-gradient(145deg, #234a48, #111827);
+    }
+    .sf-control-lines span {
+      display: block;
+      height: 6px;
+      margin: 0.38rem 0;
+      border-radius: 99px;
+      background: rgba(203, 213, 225, 0.18);
+    }
+    .sf-control-lines span:first-child { width: 86%; background: rgba(248, 250, 252, 0.5); }
+    .sf-control-lines span:last-child { width: 58%; }
+    .sf-compare {
+      display: grid;
+      grid-template-columns: repeat(2, minmax(0, 1fr));
+      gap: 1rem;
+    }
+    .sf-compare-card {
+      padding: 1.3rem;
+      border: 1px solid rgba(255, 255, 255, 0.1);
+      border-radius: 22px;
+      background: rgba(15, 23, 42, 0.56);
+    }
+    .sf-compare-card.is-featured {
+      border-color: rgba(43, 179, 163, 0.32);
+      background: linear-gradient(180deg, rgba(43, 179, 163, 0.1), rgba(15, 23, 42, 0.6));
+    }
+    .sf-compare-label {
+      color: #78e8d7;
+      font-size: 0.76rem;
+      font-weight: 850;
+      letter-spacing: 0.1em;
+      text-transform: uppercase;
+    }
+    .sf-compare-card h3 {
+      margin: 0.55rem 0 0;
+      color: #f8fafc;
+      font-size: 1.3rem;
+    }
+    .sf-compare-list {
+      margin: 1rem 0 0;
+      padding: 0;
+      list-style: none;
+    }
+    .sf-compare-list li {
+      display: flex;
+      gap: 0.55rem;
+      margin-top: 0.65rem;
+      color: rgba(203, 213, 225, 0.82);
+      line-height: 1.5;
+    }
+    .sf-compare-list i { color: #5dd8c7; }
+    .sf-inline-link,
+    .sf-guide-card a {
+      color: #78e8d7;
+      font-weight: 750;
+      text-underline-offset: 0.2em;
+    }
+    .sf-reuse-panel {
+      max-width: 900px;
+      margin-inline: auto;
+      padding: clamp(1.4rem, 4vw, 2.4rem);
+      border-left: 3px solid #2bb3a3;
+      border-radius: 0 22px 22px 0;
+      background: rgba(15, 23, 42, 0.54);
+    }
+    .sf-reuse-panel p {
+      margin: 0;
+      color: rgba(226, 232, 240, 0.84);
+      font-size: clamp(1.05rem, 2vw, 1.2rem);
+      line-height: 1.75;
+    }
+    .sf-guide-card { padding: 1.1rem; }
+    .sf-faq {
+      max-width: 900px;
+      margin: 0 auto;
+      display: grid;
+      gap: 0.75rem;
+    }
+    .sf-faq details {
+      border: 1px solid rgba(255, 255, 255, 0.1);
+      border-radius: 16px;
+      background: rgba(255, 255, 255, 0.035);
+    }
+    .sf-faq summary {
+      padding: 1rem 1.05rem;
+      color: rgba(248, 250, 252, 0.96);
+      cursor: pointer;
+      font-weight: 750;
+      line-height: 1.45;
+    }
+    .sf-faq-answer {
+      padding: 0 1.05rem 1rem;
+      color: rgba(203, 213, 225, 0.82);
+      line-height: 1.68;
+    }
+    .sf-final-cta {
+      padding: clamp(2rem, 6vw, 4rem);
+      border: 1px solid rgba(43, 179, 163, 0.28);
+      border-radius: 28px;
+      background: radial-gradient(circle at 50% 0%, rgba(43, 179, 163, 0.18), rgba(15, 23, 42, 0.7) 62%);
+      text-align: center;
+    }
+    .sf-final-cta p {
+      max-width: 620px;
+      margin: 0.9rem auto 0;
+      color: rgba(203, 213, 225, 0.8);
+      line-height: 1.7;
+    }
+    .sf-final-cta .sf-service-actions { justify-content: center; }
+    .vs-marketing-footer .footer-cta { display: none; }
+    @media (max-width: 900px) {
+      .sf-service-hero { grid-template-columns: 1fr; }
+      .sf-service-visual { min-height: 380px; }
+    }
+    @media (max-width: 720px) {
+      .sf-audience-grid,
+      .sf-handles-grid,
+      .sf-guide-grid,
+      .sf-steps,
+      .sf-control-panel,
+      .sf-compare {
+        grid-template-columns: 1fr;
+      }
+      .sf-service-hero h1 { font-size: clamp(2.4rem, 13vw, 3.55rem); }
+      .sf-service-actions { align-items: stretch; }
+      .sf-service-primary,
+      .sf-service-secondary { width: 100%; }
+      .sf-service-visual { min-height: 330px; }
+      .sf-service-short { width: min(39%, 135px); }
+      .sf-service-review-chip { bottom: 1.4rem; }
+    }
+  </style>
+{% endblock %}
+
+{% block content %}
+  <main class="sf-service-page">
+    <section class="sf-service-hero">
+      <div>
+        <p class="sf-service-eyebrow">MintiStudio Autopilot</p>
+        <h1>Done-for-You Short Form Video Editing</h1>
+        <p class="sf-service-lede"><strong>You already create the long videos. MintiStudio turns them into Shorts.</strong> Get AI-assisted clip selection, vertical reframing, captions, titles, and publishing preparation without managing every editing step yourself.</p>
+        <div class="sf-service-actions">
+          <a class="sf-service-primary" href="{{ autopilot_register_url }}" data-minti-cta data-cta-location="short_form_service_hero">Start with Autopilot</a>
+          <a class="sf-service-secondary" href="{{ free_tool_url }}">Try the DIY clipping tool</a>
+          <p class="sf-service-note">Uses the existing MintiStudio signup and Autopilot onboarding flow.</p>
+        </div>
+      </div>
+      <div class="sf-service-visual" aria-label="Examples of vertical Shorts prepared from long-form video">
+        <div class="sf-service-short"><img src="{{ url_for('video_shorts_bp.static', filename='img/sample-short-1.png') }}" alt="Example captioned vertical Short" width="180" height="320"></div>
+        <div class="sf-service-short"><img src="{{ url_for('video_shorts_bp.static', filename='img/sample-short-3.png') }}" alt="Example short-form video prepared by MintiStudio" width="180" height="320"></div>
+        <div class="sf-service-short"><img src="{{ url_for('video_shorts_bp.static', filename='img/sample-short-5.png') }}" alt="Example vertically framed Short" width="180" height="320"></div>
+        <div class="sf-service-review-chip"><i class="bi bi-eye" aria-hidden="true"></i> Ready for your review</div>
+      </div>
+    </section>
+
+    <section class="sf-service-section" aria-labelledby="sf-audience-title">
+      <div class="sf-service-section-head">
+        <h2 id="sf-audience-title">For experts who already have something worth clipping</h2>
+        <p class="sf-service-section-copy">This done-for-you short-form content workflow is built for people who regularly publish substantial, speech-led videos.</p>
+      </div>
+      <div class="sf-audience-grid">
+        {% for icon, label in [
+          ('youtube', 'YouTube creators'),
+          ('briefcase', 'Consultants and coaches'),
+          ('mortarboard', 'Educators and course creators'),
+          ('mic', 'Podcasters and interviewers'),
+          ('person-video3', 'Presenters and speakers'),
+          ('lightbulb', 'Experts with long-form libraries')
+        ] %}
+          <div class="sf-audience-card"><i class="bi bi-{{ icon }}" aria-hidden="true"></i><span>{{ label }}</span></div>
+        {% endfor %}
+      </div>
+    </section>
+
+    <section class="sf-service-section" aria-labelledby="sf-how-title">
+      <div class="sf-service-section-head">
+        <h2 id="sf-how-title">How the short form video editing service works</h2>
+      </div>
+      <ol class="sf-steps">
+        <li class="sf-step"><h3>Share your YouTube channel</h3><p>Choose the Autopilot path during signup and connect the channel that contains your long-form videos.</p></li>
+        <li class="sf-step"><h3>MintiStudio prepares the Shorts</h3><p>The workflow identifies useful moments and prepares short clips with vertical framing, captions, and titles.</p></li>
+        <li class="sf-step"><h3>Review and publish</h3><p>Review prepared Shorts in your MintiStudio account before they continue through scheduling and publishing.</p></li>
+      </ol>
+    </section>
+
+    <section class="sf-service-section" aria-labelledby="sf-handles-title">
+      <div class="sf-service-section-head is-left">
+        <p class="sf-service-eyebrow">What MintiStudio handles</p>
+        <h2 id="sf-handles-title">The production steps between recording and publishing</h2>
+        <p class="sf-service-section-copy">MintiStudio is a software-led, done-for-you alternative to coordinating a traditional short form video editing agency workflow.</p>
+      </div>
+      <div class="sf-handles-grid">
+        {% for icon, title, copy in [
+          ('stars', 'Promising moment selection', 'AI-assisted analysis helps identify focused moments that can stand on their own.'),
+          ('scissors', 'Short clip preparation', 'Selected moments are shaped into focused short-form clips.'),
+          ('aspect-ratio', 'Vertical reframing', 'Wide source video is prepared for vertical short-form viewing.'),
+          ('badge-cc', 'Captions', 'Spoken content is transcribed and turned into readable on-screen captions.'),
+          ('type-h1', 'Titles', 'Each prepared Short can include a title suited to the selected moment.'),
+          ('calendar-check', 'Publishing preparation', 'Prepared Shorts can move into MintiStudio\'s scheduling and publishing workflow.')
+        ] %}
+          <article class="sf-handle-card"><span class="sf-handle-icon"><i class="bi bi-{{ icon }}" aria-hidden="true"></i></span><h3>{{ title }}</h3><p>{{ copy }}</p></article>
+        {% endfor %}
+      </div>
+    </section>
+
+    <section class="sf-service-section" aria-labelledby="sf-control-title">
+      <div class="sf-control-panel">
+        <div class="sf-control-preview" aria-hidden="true">
+          <div class="sf-control-preview-head"><span>Your prepared Shorts</span><span class="sf-control-status"><i class="bi bi-check-circle-fill"></i> Ready to review</span></div>
+          {% for _ in range(3) %}<div class="sf-control-row"><div class="sf-control-thumb"></div><div class="sf-control-lines"><span></span><span></span><span></span></div></div>{% endfor %}
+        </div>
+        <div class="sf-control-copy">
+          <p class="sf-service-eyebrow">You keep control</p>
+          <h2 id="sf-control-title">Done for you does not mean published without review</h2>
+          <p>Prepared Shorts remain accessible in your MintiStudio account. You can see what was created and review the work before publishing, while spending less time managing the production steps yourself.</p>
+        </div>
+      </div>
+    </section>
+
+    <section class="sf-service-section" aria-labelledby="sf-compare-title">
+      <div class="sf-service-section-head">
+        <h2 id="sf-compare-title">Done-for-you editing or the DIY AI clipping tool?</h2>
+        <p class="sf-service-section-copy">Both workflows turn long videos into short form content. The difference is how much of the process you want to run yourself.</p>
+      </div>
+      <div class="sf-compare">
+        <article class="sf-compare-card is-featured">
+          <span class="sf-compare-label">Autopilot</span><h3>Done-for-you short form video editing</h3>
+          <ul class="sf-compare-list"><li><i class="bi bi-check-lg"></i><span>Connect your channel</span></li><li><i class="bi bi-check-lg"></i><span>MintiStudio prepares clips, captions, framing, and titles</span></li><li><i class="bi bi-check-lg"></i><span>Review prepared Shorts in your account</span></li><li><i class="bi bi-check-lg"></i><span>Continue into scheduling and publishing</span></li></ul>
+          <div class="sf-service-actions"><a class="sf-service-primary" href="{{ autopilot_register_url }}" data-minti-cta data-cta-location="short_form_service_compare">Choose Autopilot</a></div>
+        </article>
+        <article class="sf-compare-card">
+          <span class="sf-compare-label">DIY</span><h3>Free AI video clipping tool</h3>
+          <ul class="sf-compare-list"><li><i class="bi bi-check-lg"></i><span>Paste a public YouTube URL</span></li><li><i class="bi bi-check-lg"></i><span>Try one video without registration</span></li><li><i class="bi bi-check-lg"></i><span>Edit captions and framing yourself</span></li><li><i class="bi bi-check-lg"></i><span>Create an account for downloads and scheduling</span></li></ul>
+          <div class="sf-service-actions"><a class="sf-service-secondary" href="{{ free_tool_url }}">Open the free tool</a></div>
+        </article>
+      </div>
+      <p class="sf-service-section-copy" style="text-align:center;">Compare the current options on the <a class="sf-inline-link" href="{{ pricing_url }}">MintiStudio pricing page</a>.</p>
+    </section>
+
+    <section class="sf-service-section" aria-labelledby="sf-reuse-title">
+      <div class="sf-reuse-panel">
+        <p class="sf-service-eyebrow">Reuse what you already create</p>
+        <h2 id="sf-reuse-title">Your next batch of Shorts may already be inside your long videos</h2>
+        <p>Video repurposing reduces the pressure to record something new for every short-form post. One useful lesson, interview, podcast, or presentation can supply several focused ideas while the original long video remains the source.</p>
+      </div>
+    </section>
+
+    <section class="sf-service-section" aria-labelledby="sf-guides-title">
+      <div class="sf-service-section-head"><h2 id="sf-guides-title">Plan a sustainable Shorts workflow</h2></div>
+      <div class="sf-guide-grid">
+        <article class="sf-guide-card"><h3>Done-for-you vs DIY clipping</h3><p>Decide which parts of short-form production you want to keep managing.</p><p><a href="{{ done_for_you_guide_url }}">Compare the two workflows</a></p></article>
+        <article class="sf-guide-card"><h3>A weekly Shorts workflow</h3><p>See how one long recording can support a more consistent publishing rhythm.</p><p><a href="{{ weekly_workflow_guide_url }}">Build a weekly workflow</a></p></article>
+        <article class="sf-guide-card"><h3>Repurpose long videos</h3><p>Learn how to extract useful short-form ideas without recording from scratch.</p><p><a href="{{ repurposing_guide_url }}">Read the video repurposing guide</a></p></article>
+      </div>
+    </section>
+
+    <section class="sf-service-section" id="faq" aria-labelledby="sf-faq-title">
+      <div class="sf-service-section-head"><h2 id="sf-faq-title">Short Form Video Editing FAQ</h2></div>
+      <div class="sf-faq">
+        {% for question, answer in faq_items %}<details{% if loop.first %} open{% endif %}><summary>{{ question }}</summary><div class="sf-faq-answer">{{ answer }}</div></details>{% endfor %}
+      </div>
+    </section>
+
+    <section class="sf-service-section sf-final-cta" aria-labelledby="sf-final-title">
+      <p class="sf-service-eyebrow">MintiStudio Autopilot</p>
+      <h2 id="sf-final-title">Keep making the long videos. Let MintiStudio prepare the Shorts.</h2>
+      <p>Start through the existing Autopilot signup flow and connect the channel you want to repurpose.</p>
+      <div class="sf-service-actions"><a class="sf-service-primary" href="{{ autopilot_register_url }}" data-minti-cta data-cta-location="short_form_service_final">Start with Autopilot</a></div>
+    </section>
+  </main>
+{% endblock %}
+
+{% block scripts %}
+  {{ super() }}
+  <script type="application/ld+json">
+  {
+    "@context": "https://schema.org",
+    "@graph": [
+      {
+        "@type": "Service",
+        "name": "MintiStudio Done-for-You Short Form Video Editing",
+        "serviceType": "Short-form video editing and video repurposing",
+        "url": {{ canonical_url | tojson }},
+        "description": {{ page_description | tojson }},
+        "provider": {"@type": "Organization", "name": "MintiStudio", "url": "https://mintistudio.com"}
+      },
+      {
+        "@type": "FAQPage",
+        "mainEntity": [
+          {% for question, answer in faq_items %}{"@type": "Question", "name": {{ question | tojson }}, "acceptedAnswer": {"@type": "Answer", "text": {{ answer | tojson }}}}{% if not loop.last %},{% endif %}{% endfor %}
+        ]
+      }
+    ]
+  }
+  </script>
+{% endblock %}

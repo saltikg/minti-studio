@@ -570,6 +570,7 @@
           {% for label, anchor in marketing_nav_items %}
             <a class="vs-marketing-nav-link" href="{{ home_anchor_base }}{{ anchor }}">{{ label }}</a>
           {% endfor %}
+          <a class="vs-marketing-nav-link" href="{{ url_for('short_form_video_editing_service') }}">Done-for-you</a>
           {% if free_tool_enabled %}
             {% set free_tool_is_tr = locale|default('en') == 'tr' or request.path.startswith('/tr/') %}
             <div class="vs-marketing-dropdown">
@@ -621,6 +622,7 @@
           {% for label, anchor in marketing_nav_items %}
             <a class="vs-marketing-mobile-link" href="{{ home_anchor_base }}{{ anchor }}">{{ label }}</a>
           {% endfor %}
+          <a class="vs-marketing-mobile-link" href="{{ url_for('short_form_video_editing_service') }}">Done-for-you editing</a>
           {% if free_tool_enabled %}
             {% set free_tool_is_tr = locale|default('en') == 'tr' or request.path.startswith('/tr/') %}
             <a class="vs-marketing-mobile-link" href="{{ '/tr/araclar/youtube-shorts' if free_tool_is_tr else '/tools/youtube-to-shorts' }}">

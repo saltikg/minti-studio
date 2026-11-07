@@ -189,15 +189,36 @@ def main() -> None:
     assert "/video_shorts/blog/free-youtube-to-shorts-tool/" in page_html
     assert "/video_shorts/blog/ai-can-suggest-your-clips-you-should-still-decide-which-ones-go-out/" in page_html
 
+    service_page = client.get("/services/short-form-video-editing")
+    assert service_page.status_code == 200, service_page.status_code
+    service_html = service_page.get_data(as_text=True)
+    assert "<title>Short Form Video Editing Service | Done-for-You Shorts | MintiStudio</title>" in service_html
+    assert "Turn your long videos into ready-to-review Shorts with MintiStudio&#39;s done-for-you short form video editing service." in service_html
+    assert service_html.count("<h1") == 1
+    assert '<html lang="en">' in service_html
+    assert "<h1>Done-for-You Short Form Video Editing</h1>" in service_html
+    assert "How the short form video editing service works" in service_html
+    assert "The production steps between recording and publishing" in service_html
+    assert "Done for you does not mean published without review" in service_html
+    assert '<link rel="canonical" href="https://mintistudio.com/services/short-form-video-editing">' in service_html
+    assert '<meta name="robots" content="index, follow">' in service_html
+    assert '<meta property="og:url" content="https://mintistudio.com/services/short-form-video-editing">' in service_html
+    assert 'href="/video_shorts/register?intent=autopilot&amp;tier=15"' in service_html
+    assert 'href="/tools/youtube-to-shorts"' in service_html
+    assert "/video_shorts/blog/done-for-you-vs-diy-video-clipping/" in service_html
+    assert '"@type": "Service"' in service_html
+
     os.environ["FREE_TOOL_ENABLED"] = "1"
     sitemap = client.get("/sitemap.xml")
     assert sitemap.status_code == 200, sitemap.status_code
     assert "https://mintistudio.com/tools/youtube-to-shorts" in sitemap.get_data(as_text=True)
+    assert "https://mintistudio.com/services/short-form-video-editing" in sitemap.get_data(as_text=True)
     robots = client.get("/robots.txt")
     assert robots.status_code == 200, robots.status_code
     robots_text = robots.get_data(as_text=True)
     assert "Sitemap: https://mintistudio.com/sitemap.xml" in robots_text
     assert "Disallow: /tools/" not in robots_text
+    assert "Disallow: /services/" not in robots_text
     turkish_page = client.get("/tr/araclar/youtube-shorts")
     assert turkish_page.status_code == 200, turkish_page.status_code
     assert '<html lang="tr">' in turkish_page.get_data(as_text=True)

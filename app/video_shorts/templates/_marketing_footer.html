@@ -22,6 +22,10 @@
     </a>
 
     <div class="footer-links" aria-label="Footer links">
+      <a class="footer-link footer-tool-link" href="{{ url_for('short_form_video_editing_service') }}">
+        <span class="footer-tool-title">Done-for-you Shorts</span>
+        <span class="footer-tool-desc">Short-form video editing from your long videos</span>
+      </a>
       {% if free_tool_enabled %}
         {% set free_tool_is_tr = locale|default('en') == 'tr' or request.path.startswith('/tr/') %}
         <span class="footer-link-disabled">{{ 'Ücretsiz araçlar' if free_tool_is_tr else 'Free tools' }}</span>
