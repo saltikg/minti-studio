@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import io
 import pytest
 import numpy as np
 
@@ -21,6 +22,7 @@ from app.video_shorts.services.clip_covers import (
     _locale_upper,
     _resolve_cover_colors,
     _tag_main_speaker,
+    _uploaded_cover_image,
     _thumbnail_copy_fallback,
     normalize_cover_template,
 )
@@ -100,6 +102,7 @@ def test_brand_cover_template_defaults_are_explicit():
     assert normalize_cover_template(None, brand_id="37594f93-7692-49b2-b559-2e0841fe0268") == "bold"
     assert normalize_cover_template(None, brand_id="3dab32b8-a17a-4b96-a027-e49774813247") == "clean"
     assert normalize_cover_template("clean", brand_id="37594f93-7692-49b2-b559-2e0841fe0268") == "clean"
+    assert normalize_cover_template("ai", brand_id="37594f93-7692-49b2-b559-2e0841fe0268") == "ai"
 
 
 def test_bold_copy_fallback_obeys_both_template_limits(monkeypatch):
@@ -174,3 +177,43 @@ def test_bold_text_refuses_to_clamp_back_over_face():
             image, kicker="", main="KİLO", highlight="ENGELİ",
             cover_face={"x": 300, "y": 1050, "w": 500, "h": 600, "chin_y": 1650},
         )
+
+
+def test_manual_upload_fill_and_fit_strip_metadata():
+    image = Image.new("RGB", (800, 600), "#DC241E")
+    ImageDraw.Draw(image).rectangle((250, 150, 550, 450), fill="#FFFFFF")
+    source = io.BytesIO()
+    image.save(source, "PNG")
+
+    filled = _uploaded_cover_image(source.getvalue(), fit_mode="fill", add_text=False,
+                                   kicker="", main="", highlight="")
+    fitted = _uploaded_cover_image(source.getvalue(), fit_mode="fit", add_text=False,
+                                   kicker="", main="", highlight="")
+
+    assert filled.size == fitted.size == (1080, 1920)
+    assert filled.getpixel((540, 960)) == (255, 255, 255)
+    assert fitted.getpixel((540, 960)) == (255, 255, 255)
+    assert filled.getpixel((540, 50)) != fitted.getpixel((540, 50))
+    assert not filled.getexif() and not fitted.getexif()
+
+
+def test_manual_upload_rejects_spoofed_content():
+    with pytest.raises(ValueError):
+        _uploaded_cover_image(b"not-a-png", fit_mode="fill", add_text=False,
+                              kicker="", main="", highlight="")
+
+
+def test_upload_revalidates_video_tenant_before_storage(monkeypatch):
+    import app.video_shorts.services.clip_covers as covers
+    from app.video_shorts.services.tenant_media import TenantMediaConflict
+
+    class Conn:
+        def close(self):
+            pass
+
+    monkeypatch.setattr(covers, "get_db", lambda: Conn())
+    monkeypatch.setattr(covers, "_cover_target", lambda *_args, **_kwargs: (_ for _ in ()).throw(TenantMediaConflict("mismatch")))
+    monkeypatch.setattr(covers, "put_file_for_owner", lambda *_args, **_kwargs: pytest.fail("storage must not be reached"))
+    with pytest.raises(TenantMediaConflict):
+        covers.upload_cover(generated_video_id=1, owner_user_id="wrong", brand_id="wrong",
+                            video_pk=2, data=b"image", fit_mode="fill", add_text=False)

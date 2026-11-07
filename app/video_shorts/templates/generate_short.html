@@ -7616,6 +7616,8 @@
                  data-regenerate-url="{{ editor_url('regenerate_clip_video', video_pk=video.id, plan_index=row.plan_index) }}"
                  data-cover-url="{{ editor_url('clip_cover', video_pk=video.id, plan_index=row.plan_index) }}"
                  data-cover-download-url="{{ editor_url('download_clip_cover', video_pk=video.id, plan_index=row.plan_index) }}"
+                 data-cover-upload-url="{{ editor_url('upload_clip_cover', video_pk=video.id, plan_index=row.plan_index) }}"
+                 data-cover-restore-url="{{ editor_url('restore_generated_clip_cover', video_pk=video.id, plan_index=row.plan_index) }}"
                  data-publish="{{ row.publish_status }}"
                  data-preview-caption="{{ (row.transcript_full or row.excerpt or '')|e }}"
                  data-start="{{ row.start or 0 }}"
@@ -8258,11 +8260,16 @@
             <div class="mb-3">
               <div class="small text-white-50 mb-2">Template</div>
               <div class="btn-group" role="group" aria-label="Cover template">
+                <input type="radio" class="btn-check" name="clip-cover-template" id="clip-cover-template-ai" value="ai" autocomplete="off">
+                <label class="btn btn-outline-light" for="clip-cover-template-ai">AI</label>
                 <input type="radio" class="btn-check" name="clip-cover-template" id="clip-cover-template-bold" value="bold" autocomplete="off">
                 <label class="btn btn-outline-light" for="clip-cover-template-bold">Bold</label>
                 <input type="radio" class="btn-check" name="clip-cover-template" id="clip-cover-template-clean" value="clean" autocomplete="off">
                 <label class="btn btn-outline-light" for="clip-cover-template-clean">Clean</label>
+                <input type="radio" class="btn-check" name="clip-cover-template" id="clip-cover-template-upload" value="upload" autocomplete="off">
+                <label class="btn btn-outline-light" for="clip-cover-template-upload">Upload</label>
               </div>
+              <div id="clip-cover-active-mode" class="small text-info mt-2"></div>
             </div>
             <div id="clip-cover-clean-fields">
               <label class="form-label" for="clip-cover-text">Cover text <span class="text-white-50">(max 4 words)</span></label>
@@ -8279,7 +8286,21 @@
               <input class="form-control bg-black text-white border-secondary" id="clip-cover-bold-highlight" maxlength="56">
               <div class="small text-white-50 mt-1">Kicker, main and highlight: 6 words total.</div>
             </div>
-            <div class="mt-3">
+            <div id="clip-cover-upload-fields" class="d-none">
+              <label class="form-label" for="clip-cover-file">Upload your own <span class="text-white-50">JPG, PNG or WebP · max 10 MB</span></label>
+              <input class="form-control bg-black text-white border-secondary" type="file" id="clip-cover-file" accept="image/jpeg,image/png,image/webp">
+              <label class="form-label mt-3" for="clip-cover-fit-mode">Framing</label>
+              <select class="form-select bg-black text-white border-secondary" id="clip-cover-fit-mode">
+                <option value="fill">Fill · center crop</option>
+                <option value="fit">Fit · blurred background</option>
+              </select>
+              <label class="form-check mt-3">
+                <input type="checkbox" class="form-check-input" id="clip-cover-add-text">
+                <span class="form-check-label">Add Minti text on top</span>
+              </label>
+              <button type="button" class="btn btn-sm btn-outline-light mt-3 d-none" id="clip-cover-restore">Switch back to generated cover</button>
+            </div>
+            <div class="mt-3" id="clip-cover-frame-fields">
               <div class="small text-white-50 mb-2">Choose a frame</div>
               <div id="clip-cover-candidates" class="d-flex gap-2 flex-wrap"></div>
             </div>
@@ -26201,10 +26222,19 @@ document.addEventListener("DOMContentLoaded", () => {
   const kickerInput = document.getElementById("clip-cover-kicker");
   const mainInput = document.getElementById("clip-cover-main");
   const boldHighlightInput = document.getElementById("clip-cover-bold-highlight");
+  const aiToggle = document.getElementById("clip-cover-template-ai");
   const boldToggle = document.getElementById("clip-cover-template-bold");
   const cleanToggle = document.getElementById("clip-cover-template-clean");
+  const uploadToggle = document.getElementById("clip-cover-template-upload");
   const boldFields = document.getElementById("clip-cover-bold-fields");
   const cleanFields = document.getElementById("clip-cover-clean-fields");
+  const uploadFields = document.getElementById("clip-cover-upload-fields");
+  const frameFields = document.getElementById("clip-cover-frame-fields");
+  const uploadFile = document.getElementById("clip-cover-file");
+  const fitMode = document.getElementById("clip-cover-fit-mode");
+  const addText = document.getElementById("clip-cover-add-text");
+  const restoreButton = document.getElementById("clip-cover-restore");
+  const activeMode = document.getElementById("clip-cover-active-mode");
   const candidatesEl = document.getElementById("clip-cover-candidates");
   const feedback = document.getElementById("clip-cover-feedback");
   const saveButton = document.getElementById("clip-cover-save");
@@ -26213,16 +26243,23 @@ document.addEventListener("DOMContentLoaded", () => {
   let selectedTimestamp = null;
   let pollTimer = null;
 
-  const selectedTemplate = () => boldToggle.checked ? "bold" : "clean";
+  const selectedTemplate = () => aiToggle.checked ? "ai" : (boldToggle.checked ? "bold" : (uploadToggle.checked ? "upload" : "clean"));
   const applyTemplate = (template) => {
-    const isBold = template === "bold";
-    boldToggle.checked = isBold;
-    cleanToggle.checked = !isBold;
-    boldFields.classList.toggle("d-none", !isBold);
-    cleanFields.classList.toggle("d-none", isBold);
+    const mode = ["ai", "bold", "clean", "upload"].includes(template) ? template : "clean";
+    aiToggle.checked = mode === "ai";
+    boldToggle.checked = mode === "bold";
+    cleanToggle.checked = mode === "clean";
+    uploadToggle.checked = mode === "upload";
+    boldFields.classList.toggle("d-none", !["ai", "bold"].includes(mode));
+    cleanFields.classList.toggle("d-none", mode !== "clean");
+    uploadFields.classList.toggle("d-none", mode !== "upload");
+    frameFields.classList.toggle("d-none", mode === "upload");
+    saveButton.textContent = mode === "ai" ? "Regenerate with AI" : (mode === "upload" ? "Upload cover" : "Save cover");
   };
+  aiToggle.addEventListener("change", () => applyTemplate("ai"));
   boldToggle.addEventListener("change", () => applyTemplate("bold"));
   cleanToggle.addEventListener("change", () => applyTemplate("clean"));
+  uploadToggle.addEventListener("change", () => applyTemplate("upload"));
 
   const showPreview = (url) => {
     if (url) {
@@ -26238,13 +26275,18 @@ document.addEventListener("DOMContentLoaded", () => {
   const renderCover = (payload) => {
     const cover = payload?.cover || null;
     feedback.textContent = payload?.status === "processing" || payload?.status === "queued"
-      ? "Creating cover…" : (cover?.error || "");
+      ? "Creating cover…" : (cover?.ai_notice || cover?.error || "");
+    aiToggle.disabled = !payload?.ai_enabled;
+    aiToggle.nextElementSibling?.classList.toggle("disabled", !payload?.ai_enabled);
+    aiToggle.nextElementSibling.title = payload?.ai_enabled ? `AI images this month: ${payload.ai_used || 0} / ${payload.ai_cap || 60}` : "AI is not enabled for this brand";
     if (!cover) {
       applyTemplate(payload?.cover_template || "clean");
       showPreview(""); candidatesEl.innerHTML = ""; download.classList.add("d-none");
       return;
     }
-    applyTemplate(cover.cover_template || payload?.cover_template || "clean");
+    applyTemplate(cover.source || cover.cover_template || payload?.cover_template || "clean");
+    activeMode.textContent = `Active: ${(cover.source || cover.cover_template || "clean").toUpperCase()}`;
+    restoreButton.classList.toggle("d-none", !cover.generated_storage_key || cover.source !== "upload");
     textInput.value = cover.cover_text || "";
     highlightInput.value = cover.highlight_phrase || "";
     kickerInput.value = cover.kicker || "";
@@ -26293,6 +26335,7 @@ document.addEventListener("DOMContentLoaded", () => {
       selectedTimestamp = null;
       textInput.value = ""; highlightInput.value = ""; kickerInput.value = "";
       mainInput.value = ""; boldHighlightInput.value = ""; feedback.textContent = "";
+      uploadFile.value = ""; addText.checked = false; activeMode.textContent = "";
       applyTemplate("clean");
       bootstrap.Modal.getOrCreateInstance(modalEl).show();
       loadCover();
@@ -26301,12 +26344,30 @@ document.addEventListener("DOMContentLoaded", () => {
   saveButton?.addEventListener("click", async () => {
     if (!activeCard?.dataset.coverUrl) return;
     const template = selectedTemplate();
+    if (template === "upload") {
+      const file = uploadFile.files?.[0];
+      if (!file) { feedback.textContent = "Choose an image to upload."; return; }
+      if (file.size > 10 * 1024 * 1024) { feedback.textContent = "Image must be 10 MB or smaller."; return; }
+      const form = new FormData();
+      form.append("file", file);
+      form.append("fit_mode", fitMode.value);
+      form.append("add_text", addText.checked ? "1" : "0");
+      saveButton.disabled = true; feedback.textContent = "Uploading cover…";
+      try {
+        const response = await fetch(activeCard.dataset.coverUploadUrl, {method:"POST", body:form, headers:{"Accept":"application/json"}});
+        const payload = await response.json();
+        if (!response.ok) throw new Error(payload.message || "Cover upload failed.");
+        await loadCover();
+      } catch (error) { feedback.textContent = error.message || "Cover upload failed."; }
+      finally { saveButton.disabled = false; }
+      return;
+    }
     const cleanWords = textInput.value.trim().split(/\s+/).filter(Boolean);
     const kickerWords = kickerInput.value.trim().split(/\s+/).filter(Boolean);
     const mainWords = mainInput.value.trim().split(/\s+/).filter(Boolean);
     const boldHighlightWords = boldHighlightInput.value.trim().split(/\s+/).filter(Boolean);
     if (template === "clean" && cleanWords.length > 4) { feedback.textContent = "Clean cover text must be 4 words or fewer."; return; }
-    if (template === "bold" && (kickerWords.length > 3 || mainWords.length > 2 || boldHighlightWords.length > 3 || kickerWords.length + mainWords.length + boldHighlightWords.length > 6)) {
+    if (["bold", "ai"].includes(template) && (kickerWords.length > 3 || mainWords.length > 2 || boldHighlightWords.length > 3 || kickerWords.length + mainWords.length + boldHighlightWords.length > 6)) {
       feedback.textContent = "Bold copy must fit the 3 / 2 / 3 word limits and 6 words total."; return;
     }
     saveButton.disabled = true;
@@ -26329,6 +26390,17 @@ document.addEventListener("DOMContentLoaded", () => {
       pollTimer = window.setTimeout(loadCover, 700);
     } catch (error) { feedback.textContent = error.message || "Cover could not be saved."; }
     finally { saveButton.disabled = false; }
+  });
+  restoreButton?.addEventListener("click", async () => {
+    if (!activeCard?.dataset.coverRestoreUrl) return;
+    restoreButton.disabled = true;
+    try {
+      const response = await fetch(activeCard.dataset.coverRestoreUrl, {method:"POST", headers:{"Accept":"application/json"}});
+      const payload = await response.json();
+      if (!response.ok) throw new Error(payload.message || "Could not restore generated cover.");
+      await loadCover();
+    } catch (error) { feedback.textContent = error.message || "Could not restore generated cover."; }
+    finally { restoreButton.disabled = false; }
   });
   modalEl.addEventListener("hidden.bs.modal", () => window.clearTimeout(pollTimer));
 });

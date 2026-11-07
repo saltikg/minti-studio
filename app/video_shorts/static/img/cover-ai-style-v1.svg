@@ -1,0 +1,14 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1080" height="1920" viewBox="0 0 1080 1920">
+  <!-- Replaceable style reference for Gemini cover generation; no customer image. -->
+  <defs>
+    <radialGradient id="glow"><stop stop-color="#B3121B"/><stop offset="0.65" stop-color="#65080E"/><stop offset="1" stop-color="#0B0B0D"/></radialGradient>
+    <linearGradient id="person" x2="0" y2="1"><stop stop-color="#50545B"/><stop offset="1" stop-color="#15171B"/></linearGradient>
+  </defs>
+  <rect width="1080" height="1920" fill="#0B0B0D"/>
+  <ellipse cx="540" cy="780" rx="540" ry="750" fill="url(#glow)"/>
+  <path d="M80 1920V1210Q110 1040 315 1000Q270 870 305 540Q330 250 540 250Q750 250 775 540Q810 870 765 1000Q970 1040 1000 1210V1920Z" fill="url(#person)"/>
+  <rect x="110" y="1560" width="860" height="215" rx="14" fill="#E11D2E"/>
+  <text x="540" y="1320" text-anchor="middle" font-family="Arial,sans-serif" font-weight="900" font-size="72" fill="white">SMALL KICKER</text>
+  <text x="540" y="1520" text-anchor="middle" font-family="Arial Narrow,Arial,sans-serif" font-weight="900" font-size="235" fill="white">MAIN</text>
+  <text x="540" y="1720" text-anchor="middle" font-family="Arial Narrow,Arial,sans-serif" font-weight="900" font-size="145" fill="white">HIGHLIGHT</text>
+</svg>

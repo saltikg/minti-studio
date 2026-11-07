@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import atexit
+import io
 import json
 import hashlib
 import logging
@@ -15,7 +16,7 @@ from pathlib import Path
 from typing import Any, Optional
 from uuid import uuid4
 
-from PIL import Image, ImageDraw, ImageEnhance, ImageFilter
+from PIL import Image, ImageDraw, ImageEnhance, ImageFilter, ImageOps
 
 from app.video_shorts.config import (
     DEFAULT_EDITOR_TITLE_BG_ALPHA,
@@ -45,7 +46,7 @@ LIGHT_BOX_HIGHLIGHT_FALLBACK = "#E11D48"
 DARK_BOX_HIGHLIGHT_FALLBACK = "#FFD400"
 CANDIDATE_RANK_VERSION = 3
 COVER_TEMPLATE_PREFERENCE_PREFIX = "cover_template"
-COVER_TEMPLATES = {"clean", "bold"}
+COVER_TEMPLATES = {"clean", "bold", "ai"}
 METIN_BRAND_ID = "37594f93-7692-49b2-b559-2e0841fe0268"
 SELFIE_SEGMENTER_URL = (
     "https://storage.googleapis.com/mediapipe-models/image_segmenter/"
@@ -119,6 +120,11 @@ def ensure_clip_covers_schema(conn: Any) -> None:
           plan_index INTEGER NOT NULL,
           clip_filename VARCHAR NOT NULL,
           storage_key TEXT,
+          source VARCHAR,
+          generated_storage_key TEXT,
+          generated_source VARCHAR,
+          ai_notice TEXT,
+          ai_path VARCHAR,
           cover_text TEXT,
           highlight_phrase TEXT,
           cover_template VARCHAR NOT NULL DEFAULT 'clean',
@@ -152,6 +158,11 @@ def ensure_clip_covers_schema(conn: Any) -> None:
         "segmentation_ms": "INTEGER",
         "segmentation_confidence": "DOUBLE PRECISION",
         "peak_memory_mb": "DOUBLE PRECISION",
+        "source": "VARCHAR",
+        "generated_storage_key": "TEXT",
+        "generated_source": "VARCHAR",
+        "ai_notice": "TEXT",
+        "ai_path": "VARCHAR",
     }
     if getattr(conn, "backend_name", "") == "postgres":
         for name, definition in additions.items():
@@ -302,7 +313,7 @@ def get_cover_for_generated(
                    cover_text, highlight_phrase, cover_template, kicker_text, main_text, bold_highlight_text,
                    candidate_frames_json, selected_timestamp, used_face_crop, status, error,
                    generation_ms, segmentation_ms, segmentation_confidence, peak_memory_mb,
-                   size_bytes, generated_at
+                   size_bytes, generated_at, source, generated_storage_key, generated_source, ai_notice, ai_path
               FROM shorts_clip_covers
              WHERE generated_video_id = ? AND owner_user_id = ? AND brand_id = ?
         """
@@ -324,6 +335,8 @@ def get_cover_for_generated(
             "status": row[15], "error": row[16], "generation_ms": row[17],
             "segmentation_ms": row[18], "segmentation_confidence": row[19],
             "peak_memory_mb": row[20], "size_bytes": row[21], "generated_at": row[22],
+            "source": row[23] or row[8] or "clean", "generated_storage_key": row[24],
+            "generated_source": row[25], "ai_notice": row[26] or "", "ai_path": row[27] or "",
         }
     finally:
         conn.close()
@@ -338,7 +351,7 @@ def list_covers_for_video(*, owner_user_id: str, brand_id: str, video_pk: int) -
                    cover_text, highlight_phrase, cover_template, kicker_text, main_text, bold_highlight_text,
                    candidate_frames_json, selected_timestamp, used_face_crop, status, error,
                    generation_ms, segmentation_ms, segmentation_confidence, peak_memory_mb,
-                   size_bytes, generated_at
+                   size_bytes, generated_at, source, generated_storage_key, generated_source, ai_notice, ai_path
               FROM shorts_clip_covers
              WHERE owner_user_id = ? AND brand_id = ? AND video_pk = ?
             """, [str(owner_user_id), str(brand_id), int(video_pk)]
@@ -360,6 +373,8 @@ def list_covers_for_video(*, owner_user_id: str, brand_id: str, video_pk: int) -
             "status": row[15], "error": row[16], "generation_ms": row[17],
             "segmentation_ms": row[18], "segmentation_confidence": row[19],
             "peak_memory_mb": row[20], "size_bytes": row[21], "generated_at": row[22],
+            "source": row[23] or row[8] or "clean", "generated_storage_key": row[24],
+            "generated_source": row[25], "ai_notice": row[26] or "", "ai_path": row[27] or "",
         }
         result[int(cover["plan_index"])] = cover
     return result
@@ -1455,12 +1470,16 @@ def generate_cover(payload: dict[str, Any]) -> dict[str, Any]:
         existing = conn.execute(
             """
             SELECT id, cover_text, highlight_phrase, candidate_frames_json,
-                   cover_template, kicker_text, main_text, bold_highlight_text
+                   cover_template, kicker_text, main_text, bold_highlight_text,
+                   storage_key, source, generated_storage_key, size_bytes,
+                   owner_user_id, brand_id, video_pk
               FROM shorts_clip_covers
              WHERE generated_video_id = ?
             """,
             [generated_id],
         ).fetchone()
+        if existing and (str(existing[12]) != owner or str(existing[13]) != brand or int(existing[14]) != requested_video_pk):
+            raise tenant_media.TenantMediaConflict("Existing cover row belongs to another tenant video")
         cover_id = str(existing[0]) if existing else str(uuid4())
         conn.execute(
             """
@@ -1565,6 +1584,26 @@ def generate_cover(payload: dict[str, Any]) -> dict[str, Any]:
         segmentation_used = False
         segmentation_confidence = 0.0
         segmentation_ms = 0
+        ai_path = ""
+        ai_notice = ""
+        ai_calls: list[dict[str, Any]] = []
+        if template == "ai":
+            from app.video_shorts.services.ai_covers import AiCoverLimitReached, generate_ai_cover
+
+            try:
+                full_frame = Image.fromarray(cv2.cvtColor(frame, cv2.COLOR_BGR2RGB))
+                image, ai_path, ai_calls = generate_ai_cover(
+                    full_frame, owner=owner, brand=brand, generated_id=generated_id,
+                    kicker=kicker, main=main, highlight=bold_highlight,
+                )
+                image = ImageOps.fit(image, (COVER_WIDTH, COVER_HEIGHT), method=Image.Resampling.LANCZOS)
+            except AiCoverLimitReached:
+                ai_notice = "AI limit reached this month"
+                log.info("AI cover monthly limit reached brand=%s clip=%s", brand, generated_id)
+                template = "bold"
+            except Exception:
+                log.exception("AI cover failed; falling back to Bold brand=%s clip=%s", brand, generated_id)
+                template = "bold"
         if template == "bold":
             original_image = image
             for main_maximum in (260, 240, 220, 200, 190, 180, 170):
@@ -1582,7 +1621,7 @@ def generate_cover(payload: dict[str, Any]) -> dict[str, Any]:
                     if main_maximum == 170:
                         raise
                     log.info("Bold cover text needs smaller main font generated_video_id=%s max=%s", generated_id, main_maximum)
-        else:
+        elif template == "clean":
             try:
                 text_layout = _draw_cover_text(
                     image, text=cover_text, highlight=highlight, design=design, cover_face=cover_face,
@@ -1619,6 +1658,10 @@ def generate_cover(payload: dict[str, Any]) -> dict[str, Any]:
             prefix = f"brands/{brand}/private/short-covers/{generated_id}"
             cover_key = f"{prefix}/cover.jpg"
             put_file_for_owner(cover_path, cover_key, owner_user_id=owner)
+            preserve_upload = bool(existing and str(existing[9] or "") == "upload" and not payload.get("cover_template"))
+            active_key = str(existing[8]) if preserve_upload else cover_key
+            active_source = "upload" if preserve_upload else template
+            active_size = int(existing[11] or 0) if preserve_upload else size
 
             # Candidate previews are tenant-private assets; timestamps remain the source of truth.
             cap = cv2.VideoCapture(str(source_temp))
@@ -1642,28 +1685,30 @@ def generate_cover(payload: dict[str, Any]) -> dict[str, Any]:
         conn = get_db()
         try:
             tenant_media.upsert_asset(
-                conn, file_key=f"cover:{generated_id}", file_path=build_storage_reference(cover_key),
-                file_type="short_cover", size_bytes=size, user_id=owner, brand_id=brand,
+                conn, file_key=f"cover:{generated_id}", file_path=build_storage_reference(active_key),
+                file_type="short_cover", size_bytes=active_size, user_id=owner, brand_id=brand,
             )
             conn.execute(
                 """
                 UPDATE shorts_clip_covers
-                   SET storage_key=?, cover_text=?, highlight_phrase=?, cover_template=?,
+                   SET storage_key=?, generated_storage_key=?, generated_source=?, source=?,
+                       ai_notice=?, ai_path=?, cover_text=?, highlight_phrase=?, cover_template=?,
                        kicker_text=?, main_text=?, bold_highlight_text=?, candidate_frames_json=?,
                        selected_timestamp=?, used_face_crop=?, status='ready', error=NULL,
                        generation_ms=?, segmentation_ms=?, segmentation_confidence=?, peak_memory_mb=?,
                        size_bytes=?, generated_at=CURRENT_TIMESTAMP, updated_at=CURRENT_TIMESTAMP
                  WHERE generated_video_id=? AND owner_user_id=? AND brand_id=?
                 """,
-                [cover_key, cover_text, highlight, template, kicker, main, bold_highlight,
+                [active_key, cover_key, template, active_source, ai_notice, ai_path,
+                 cover_text, highlight, template, kicker, main, bold_highlight,
                  _json_value(conn, stored_candidates), selected_ts, used_face_crop, elapsed_ms,
-                 segmentation_ms, segmentation_confidence, peak_memory_mb, size, generated_id, owner, brand],
+                 segmentation_ms, segmentation_confidence, peak_memory_mb, active_size, generated_id, owner, brand],
             )
             conn.commit()
         finally:
             conn.close()
         return {
-            "generated_video_id": generated_id, "storage_key": cover_key,
+            "generated_video_id": generated_id, "storage_key": active_key, "source": active_source,
             "cover_text": cover_text, "highlight_phrase": highlight,
             "cover_template": template, "kicker": kicker, "main": main,
             "bold_highlight": bold_highlight, "segmentation_used": segmentation_used,
@@ -1671,6 +1716,7 @@ def generate_cover(payload: dict[str, Any]) -> dict[str, Any]:
             "selected_timestamp": selected_ts, "candidate_count": len(stored_candidates),
             "used_face_crop": used_face_crop, "generation_ms": elapsed_ms,
             "peak_memory_mb": peak_memory_mb, "size_bytes": size,
+            "ai_path": ai_path, "ai_notice": ai_notice, "ai_calls": ai_calls,
         }
     except Exception as exc:
         conn = get_db()
@@ -1701,3 +1747,120 @@ def signed_cover_payload(cover: dict[str, Any]) -> dict[str, Any]:
         candidates.append(item)
     result["candidates"] = candidates
     return result
+
+
+def _uploaded_cover_image(data: bytes, *, fit_mode: str, add_text: bool,
+                          kicker: str, main: str, highlight: str) -> Image.Image:
+    if not data or len(data) > 10 * 1024 * 1024:
+        raise ValueError("Cover upload must be 10 MB or smaller")
+    if fit_mode not in {"fill", "fit"}:
+        raise ValueError("Choose Fill or Fit")
+    try:
+        with Image.open(io.BytesIO(data)) as probe:
+            if probe.format not in {"JPEG", "PNG", "WEBP"} or probe.width * probe.height > 50_000_000:
+                raise ValueError("Upload a JPG, PNG or WebP image under 50 megapixels")
+            probe.verify()
+        with Image.open(io.BytesIO(data)) as opened:
+            source = ImageOps.exif_transpose(opened).convert("RGB")
+    except (OSError, Image.DecompressionBombError) as exc:
+        raise ValueError("Cover file is not a valid JPG, PNG or WebP image") from exc
+    if fit_mode == "fill":
+        result = ImageOps.fit(source, (COVER_WIDTH, COVER_HEIGHT), method=Image.Resampling.LANCZOS)
+    else:
+        result = ImageOps.fit(source, (COVER_WIDTH, COVER_HEIGHT), method=Image.Resampling.LANCZOS)
+        result = result.filter(ImageFilter.GaussianBlur(48))
+        result = ImageEnhance.Brightness(result).enhance(0.68)
+        foreground = ImageOps.contain(source, (COVER_WIDTH, COVER_HEIGHT), method=Image.Resampling.LANCZOS)
+        result.paste(foreground, ((COVER_WIDTH - foreground.width) // 2,
+                                  (COVER_HEIGHT - foreground.height) // 2))
+    if add_text:
+        if not main or not highlight:
+            raise ValueError("Generate a cover first to add Minti text")
+        _draw_bold_text(result, kicker=kicker, main=main, highlight=highlight, cover_face=None)
+    return result
+
+
+def upload_cover(*, generated_video_id: int, owner_user_id: str, brand_id: str,
+                 video_pk: int, data: bytes, fit_mode: str, add_text: bool) -> dict[str, Any]:
+    conn = get_db()
+    try:
+        target = _cover_target(conn, generated_video_id, owner_user_id=owner_user_id,
+                               brand_id=brand_id, video_pk=video_pk)
+        old = conn.execute("""
+            SELECT storage_key, source, generated_storage_key, generated_source,
+                   kicker_text, main_text, bold_highlight_text, cover_template
+              FROM shorts_clip_covers
+             WHERE generated_video_id=? AND owner_user_id=? AND brand_id=? AND video_pk=?
+        """, [generated_video_id, owner_user_id, brand_id, video_pk]).fetchone()
+        foreign = conn.execute(
+            "SELECT 1 FROM shorts_clip_covers WHERE generated_video_id=? AND (owner_user_id<>? OR brand_id<>? OR video_pk<>?)",
+            [generated_video_id, owner_user_id, brand_id, video_pk],
+        ).fetchone()
+        if foreign:
+            raise tenant_media.TenantMediaConflict("Existing cover row belongs to another tenant video")
+        kicker, main, highlight = ((old[index] or "") if old else "" for index in (4, 5, 6))
+        image = _uploaded_cover_image(data, fit_mode=fit_mode, add_text=add_text,
+                                      kicker=kicker, main=main, highlight=highlight)
+        with tempfile.TemporaryDirectory(prefix="cover_upload_") as directory:
+            image_path = Path(directory) / "cover.jpg"
+            size = _save_jpeg_under_limit(image, image_path)
+            key = f"brands/{brand_id}/private/short-covers/{generated_video_id}/uploads/{uuid4()}.jpg"
+            put_file_for_owner(image_path, key, owner_user_id=owner_user_id)
+        generated_key = (old[2] or (old[0] if old[1] != "upload" else None)) if old else None
+        generated_source = (old[3] or (old[1] if old[1] and old[1] != "upload" else old[7])) if old else None
+        conn.execute("""
+            INSERT INTO shorts_clip_covers
+              (id, generated_video_id, owner_user_id, brand_id, video_pk, plan_index,
+               clip_filename, storage_key, source, generated_storage_key, generated_source,
+               cover_template, status, size_bytes, generated_at, updated_at)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'upload', ?, ?, ?, 'ready', ?, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
+            ON CONFLICT(generated_video_id) DO UPDATE SET
+              storage_key=excluded.storage_key, source='upload',
+              generated_storage_key=excluded.generated_storage_key,
+              generated_source=excluded.generated_source, status='ready', error=NULL,
+              size_bytes=excluded.size_bytes, generated_at=CURRENT_TIMESTAMP,
+              updated_at=CURRENT_TIMESTAMP
+        """, [str(uuid4()), generated_video_id, owner_user_id, brand_id, video_pk,
+              target["plan_index"], target["clip_filename"], key, generated_key,
+              generated_source, old[7] if old else get_brand_cover_template(owner_user_id, brand_id), size])
+        tenant_media.upsert_asset(conn, file_key=f"cover:{generated_video_id}",
+                                  file_path=build_storage_reference(key), file_type="short_cover",
+                                  size_bytes=size, user_id=owner_user_id, brand_id=brand_id)
+        conn.commit()
+        return {"source": "upload", "storage_key": key, "size_bytes": size}
+    finally:
+        conn.close()
+
+
+def activate_generated_cover(*, generated_video_id: int, owner_user_id: str,
+                             brand_id: str, video_pk: int) -> None:
+    conn = get_db()
+    try:
+        _cover_target(conn, generated_video_id, owner_user_id=owner_user_id,
+                      brand_id=brand_id, video_pk=video_pk)
+        row = conn.execute("""
+            SELECT generated_storage_key, generated_source
+              FROM shorts_clip_covers
+             WHERE generated_video_id=? AND owner_user_id=? AND brand_id=? AND video_pk=?
+        """, [generated_video_id, owner_user_id, brand_id, video_pk]).fetchone()
+        if not row or not row[0] or not str(row[0]).startswith(f"brands/{brand_id}/private/short-covers/{generated_video_id}/"):
+            raise ValueError("There is no generated cover to restore")
+        storage = get_media_storage()
+        if not storage.exists(str(row[0])):
+            raise FileNotFoundError("Generated cover is no longer available")
+        restored = storage.download_to_temp(str(row[0]))
+        try:
+            restored_size = Path(restored).stat().st_size
+        finally:
+            restored.cleanup()
+        conn.execute("""
+            UPDATE shorts_clip_covers SET storage_key=?, source=?, size_bytes=?, status='ready',
+                   updated_at=CURRENT_TIMESTAMP
+             WHERE generated_video_id=? AND owner_user_id=? AND brand_id=? AND video_pk=?
+        """, [row[0], row[1] or "bold", restored_size, generated_video_id, owner_user_id, brand_id, video_pk])
+        tenant_media.upsert_asset(conn, file_key=f"cover:{generated_video_id}",
+                                  file_path=build_storage_reference(str(row[0])), file_type="short_cover",
+                                  size_bytes=restored_size, user_id=owner_user_id, brand_id=brand_id)
+        conn.commit()
+    finally:
+        conn.close()

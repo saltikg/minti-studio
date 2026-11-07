@@ -18153,10 +18153,13 @@ def clip_cover(video_pk: int, plan_index: int):
         signed_cover_payload,
     )
     from app.video_shorts.services.render_jobs import enqueue_cover_job
+    from app.video_shorts.services.ai_covers import ai_cover_enabled, ai_cover_usage
 
     if request.method == "POST":
         data = request.get_json(silent=True) or request.form
         template = normalize_cover_template(data.get("cover_template"), brand_id=target["brand_id"])
+        if template == "ai" and not ai_cover_enabled(target["owner_user_id"], target["brand_id"]):
+            return jsonify({"success": False, "message": "AI covers are not enabled for this brand."}), 403
         cover_text = " ".join(str(data.get("cover_text") or "").strip().split())
         highlight = " ".join(str(data.get("highlight_phrase") or "").strip().split())
         kicker = " ".join(str(data.get("kicker") or "").strip().split())
@@ -18208,8 +18211,48 @@ def clip_cover(video_pk: int, plan_index: int):
             "status": "missing",
             "cover": None,
             "cover_template": get_brand_cover_template(target["owner_user_id"], target["brand_id"]),
+            "ai_enabled": ai_cover_enabled(target["owner_user_id"], target["brand_id"]),
         })
-    return jsonify({"success": True, "status": cover["status"], "cover": signed_cover_payload(cover)})
+    ai_enabled = ai_cover_enabled(target["owner_user_id"], target["brand_id"])
+    ai_used, ai_cap = ai_cover_usage(target["owner_user_id"], target["brand_id"]) if ai_enabled else (0, 0)
+    return jsonify({"success": True, "status": cover["status"], "cover": signed_cover_payload(cover),
+                    "ai_enabled": ai_enabled, "ai_used": ai_used, "ai_cap": ai_cap})
+
+
+@video_shorts_bp.route("/generate/<int:video_pk>/clip/<int:plan_index>/cover/upload", methods=["POST"])
+def upload_clip_cover(video_pk: int, plan_index: int):
+    target = _scoped_generated_clip_for_cover(video_pk, plan_index)
+    from app.video_shorts.services.clip_covers import upload_cover
+
+    uploaded = request.files.get("file")
+    if uploaded is None:
+        return jsonify({"success": False, "message": "Choose an image to upload."}), 400
+    data = uploaded.stream.read(10 * 1024 * 1024 + 1)
+    try:
+        result = upload_cover(
+            generated_video_id=target["generated_video_id"], owner_user_id=target["owner_user_id"],
+            brand_id=target["brand_id"], video_pk=video_pk, data=data,
+            fit_mode=str(request.form.get("fit_mode") or "fill").strip().lower(),
+            add_text=str(request.form.get("add_text") or "").lower() in {"1", "true", "on", "yes"},
+        )
+    except ValueError as exc:
+        return jsonify({"success": False, "message": str(exc)}), 400
+    return jsonify({"success": True, "status": "ready", "source": "upload", "size_bytes": result["size_bytes"]})
+
+
+@video_shorts_bp.route("/generate/<int:video_pk>/clip/<int:plan_index>/cover/restore", methods=["POST"])
+def restore_generated_clip_cover(video_pk: int, plan_index: int):
+    target = _scoped_generated_clip_for_cover(video_pk, plan_index)
+    from app.video_shorts.services.clip_covers import activate_generated_cover
+
+    try:
+        activate_generated_cover(
+            generated_video_id=target["generated_video_id"], owner_user_id=target["owner_user_id"],
+            brand_id=target["brand_id"], video_pk=video_pk,
+        )
+    except (ValueError, FileNotFoundError) as exc:
+        return jsonify({"success": False, "message": str(exc)}), 409
+    return jsonify({"success": True, "status": "ready"})
 
 
 @video_shorts_bp.route("/generate/<int:video_pk>/clip/<int:plan_index>/cover/download", methods=["GET"])
