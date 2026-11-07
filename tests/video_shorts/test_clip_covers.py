@@ -10,7 +10,9 @@ from app.video_shorts.config import DEFAULT_EDITOR_TITLE_FONT_KEY, TITLE_FONTS
 from app.video_shorts.services.clip_covers import (
     COVER_TEXT_MAX_WIDTH,
     CoverCopyDoesNotFit,
+    CoverValidationError,
     MIN_COVER_FONT_SIZE,
+    _cover_status_after_failure,
     _contrast_ratio,
     _fit_cover_layout,
     _fit_bold_main,
@@ -21,10 +23,12 @@ from app.video_shorts.services.clip_covers import (
     _mouth_region_is_obscured,
     _locale_upper,
     _resolve_cover_colors,
+    _resolve_cover_copy,
     _tag_main_speaker,
     _uploaded_cover_image,
     _thumbnail_copy_fallback,
     normalize_cover_template,
+    validate_clean_cover_text,
 )
 from app.video_shorts.services.clip_title import generate_clip_cover_copy
 from app.video_shorts.services.compositor import _title_font_path_for_text
@@ -117,6 +121,97 @@ def test_bold_copy_fallback_obeys_both_template_limits(monkeypatch):
     assert 1 <= len(copy["highlight"].split()) <= 3
     assert sum(len(copy[key].split()) for key in ("kicker", "main", "highlight")) <= 6
     assert _locale_upper("kıtlık metabolizması", turkish=True) == "KITLIK METABOLİZMASI"
+
+
+def test_auto_cover_replaces_saved_five_word_copy(monkeypatch):
+    generated = {
+        "cover_text": "Aileyle zaman çok sınırlı",
+        "highlight_phrase": "çok sınırlı",
+        "kicker": "AİLEYLE",
+        "main": "ZAMAN",
+        "highlight": "SINIRLI",
+    }
+    calls = []
+    monkeypatch.setattr(
+        "app.video_shorts.services.clip_covers.generate_clip_cover_copy",
+        lambda transcript, *, clip_title: calls.append((transcript, clip_title)) or generated,
+    )
+
+    resolved = _resolve_cover_copy(
+        cover_text="Aileyle kalan görüşme sayısı az",
+        highlight="görüşme sayısı",
+        kicker="ESKİ",
+        main="KAYITLI",
+        bold_highlight="METİN",
+        transcript="Anne babayla görüşmek için kalan zaman sınırlı.",
+        clip_title="Aileyle Kalan Zaman Sınırlı",
+        auto_cover_followup=True,
+    )
+
+    assert resolved["cover_text"] == generated["cover_text"]
+    assert len(resolved["cover_text"].split()) <= 4
+    assert resolved["copy_call_used"] is True
+    assert calls == [("Anne babayla görüşmek için kalan zaman sınırlı.", "Aileyle Kalan Zaman Sınırlı")]
+
+
+def test_manual_five_word_cover_copy_has_clear_validation_message():
+    with pytest.raises(CoverValidationError, match="^Cover text must be at most 4 words$"):
+        validate_clean_cover_text("Aileyle kalan görüşme sayısı az")
+
+    with pytest.raises(CoverValidationError, match="^Cover text must be at most 4 words$"):
+        _resolve_cover_copy(
+            cover_text="Aileyle kalan görüşme sayısı az",
+            highlight="görüşme sayısı",
+            kicker="ESKİ",
+            main="KAYITLI",
+            bold_highlight="METİN",
+            transcript="transcript",
+            clip_title="title",
+            auto_cover_followup=False,
+        )
+
+    from app.video_shorts.services.render_jobs import JOB_TYPE_GENERATE_COVER
+    from app.video_shorts.worker import _user_facing_terminal_media_message
+
+    message = _user_facing_terminal_media_message(
+        {"type": JOB_TYPE_GENERATE_COVER},
+        CoverValidationError("Cover text must be at most 4 words"),
+    )
+    assert message == "Cover text must be at most 4 words"
+
+
+def test_failed_cover_with_previous_storage_remains_ready(monkeypatch):
+    import app.video_shorts.services.clip_covers as covers
+
+    updates = []
+
+    class Result:
+        def __init__(self, row=None):
+            self.row = row
+
+        def fetchone(self):
+            return self.row
+
+    class Conn:
+        def execute(self, sql, params):
+            if sql.startswith("SELECT storage_key"):
+                return Result(("brands/test/private/short-covers/1/cover.jpg",))
+            updates.append((sql, params))
+            return Result()
+
+        def commit(self):
+            pass
+
+        def close(self):
+            pass
+
+    monkeypatch.setattr(covers, "get_db", Conn)
+
+    covers._record_cover_failure(1, "owner", "brand", "generation failed")
+
+    assert _cover_status_after_failure("brands/test/private/short-covers/1/cover.jpg") == "ready"
+    assert _cover_status_after_failure("") == "failed"
+    assert updates[0][1] == ["ready", "generation failed", 1, "owner", "brand"]
 
 
 def test_main_speaker_cluster_rejects_a_brief_different_face():

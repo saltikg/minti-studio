@@ -94,6 +94,97 @@ class CoverCopyDoesNotFit(ValueError):
     pass
 
 
+class CoverValidationError(ValueError):
+    pass
+
+
+def validate_clean_cover_text(value: Any) -> str:
+    cover_text = " ".join(str(value or "").strip().split())
+    if len(cover_text.split()) > 4:
+        raise CoverValidationError("Cover text must be at most 4 words")
+    return cover_text
+
+
+def _resolve_cover_copy(
+    *,
+    cover_text: str,
+    highlight: str,
+    kicker: str,
+    main: str,
+    bold_highlight: str,
+    transcript: str,
+    clip_title: str,
+    auto_cover_followup: bool,
+) -> dict[str, Any]:
+    copy: Optional[dict[str, str]] = None
+
+    def generated_copy() -> dict[str, str]:
+        nonlocal copy
+        if copy is None:
+            copy = generate_clip_cover_copy(transcript, clip_title=clip_title)
+        return copy
+
+    if not cover_text or not main or not bold_highlight:
+        generated = generated_copy()
+        cover_text = cover_text or generated["cover_text"]
+        highlight = highlight or generated["highlight_phrase"]
+        kicker = kicker or generated["kicker"]
+        main = main or generated["main"]
+        bold_highlight = bold_highlight or generated["highlight"]
+
+    try:
+        cover_text = validate_clean_cover_text(cover_text)
+    except CoverValidationError:
+        if not auto_cover_followup:
+            raise
+        generated = generated_copy()
+        cover_text = validate_clean_cover_text(generated["cover_text"])
+        highlight = generated["highlight_phrase"]
+        kicker = generated["kicker"]
+        main = generated["main"]
+        bold_highlight = generated["highlight"]
+
+    if not highlight or highlight.casefold() not in cover_text.casefold():
+        highlight = " ".join(cover_text.split()[:2])
+    bold_word_count = sum(len(value.split()) for value in (kicker, main, bold_highlight))
+    if len(kicker.split()) > 3 or not 1 <= len(main.split()) <= 2 or not 1 <= len(bold_highlight.split()) <= 3:
+        raise CoverValidationError(
+            "Bold cover requires an optional 3-word kicker, 1-2 main words, and 1-3 highlight words"
+        )
+    if bold_word_count > 6:
+        raise CoverValidationError("Bold cover copy must be at most 6 words total")
+    return {
+        "cover_text": cover_text,
+        "highlight": highlight,
+        "kicker": kicker,
+        "main": main,
+        "bold_highlight": bold_highlight,
+        "copy_call_used": copy is not None,
+    }
+
+
+def _cover_status_after_failure(storage_key: Any) -> str:
+    return "ready" if str(storage_key or "").strip() else "failed"
+
+
+def _record_cover_failure(generated_id: int, owner: str, brand: str, error: Any) -> None:
+    conn = get_db()
+    try:
+        row = conn.execute(
+            "SELECT storage_key FROM shorts_clip_covers WHERE generated_video_id=? AND owner_user_id=? AND brand_id=?",
+            [generated_id, owner, brand],
+        ).fetchone()
+        status = _cover_status_after_failure(row[0] if row else None)
+        conn.execute(
+            "UPDATE shorts_clip_covers SET status=?, error=?, updated_at=CURRENT_TIMESTAMP "
+            "WHERE generated_video_id=? AND owner_user_id=? AND brand_id=?",
+            [status, str(error)[:1000], generated_id, owner, brand],
+        )
+        conn.commit()
+    finally:
+        conn.close()
+
+
 def _json_value(conn: Any, value: Any) -> Any:
     return json.dumps(value, ensure_ascii=False)
 
@@ -1499,15 +1590,7 @@ def generate_cover(payload: dict[str, Any]) -> dict[str, Any]:
     storage = get_media_storage()
     if not Path(target["clip_local_path"]).is_file() and not storage.exists(target["clip_storage_key"]):
         missing_error = "Rendered clip object is missing"
-        failed_conn = get_db()
-        try:
-            failed_conn.execute(
-                "UPDATE shorts_clip_covers SET status='failed', error=?, updated_at=CURRENT_TIMESTAMP WHERE generated_video_id=? AND owner_user_id=? AND brand_id=?",
-                [missing_error, generated_id, owner, brand],
-            )
-            failed_conn.commit()
-        finally:
-            failed_conn.close()
+        _record_cover_failure(generated_id, owner, brand, missing_error)
         raise FileNotFoundError(missing_error)
     source_temp = storage.download_to_temp(target["source_storage_key"])
     try:
@@ -1560,24 +1643,22 @@ def generate_cover(payload: dict[str, Any]) -> dict[str, Any]:
         bold_highlight = " ".join(
             str(payload.get("bold_highlight") or existing_bold_highlight).strip().split()
         )
-        copy_call_used = False
-        if not cover_text or not main or not bold_highlight:
-            copy = generate_clip_cover_copy(target["transcript"], clip_title=target["title"])
-            copy_call_used = True
-            cover_text = cover_text or copy["cover_text"]
-            highlight = highlight or copy["highlight_phrase"]
-            kicker = kicker or copy["kicker"]
-            main = main or copy["main"]
-            bold_highlight = bold_highlight or copy["highlight"]
-        if len(cover_text.split()) > 4:
-            raise ValueError("Clean cover text must be at most 4 words")
-        if not highlight or highlight.casefold() not in cover_text.casefold():
-            highlight = " ".join(cover_text.split()[:2])
-        bold_word_count = sum(len(value.split()) for value in (kicker, main, bold_highlight))
-        if len(kicker.split()) > 3 or not 1 <= len(main.split()) <= 2 or not 1 <= len(bold_highlight.split()) <= 3:
-            raise ValueError("Bold cover requires an optional 3-word kicker, 1-2 main words, and 1-3 highlight words")
-        if bold_word_count > 6:
-            raise ValueError("Bold cover copy must be at most 6 words total")
+        resolved_copy = _resolve_cover_copy(
+            cover_text=cover_text,
+            highlight=highlight,
+            kicker=kicker,
+            main=main,
+            bold_highlight=bold_highlight,
+            transcript=target["transcript"],
+            clip_title=target["title"],
+            auto_cover_followup=bool(payload.get("auto_cover_followup")),
+        )
+        cover_text = resolved_copy["cover_text"]
+        highlight = resolved_copy["highlight"]
+        kicker = resolved_copy["kicker"]
+        main = resolved_copy["main"]
+        bold_highlight = resolved_copy["bold_highlight"]
+        copy_call_used = bool(resolved_copy["copy_call_used"])
 
         from app.video_shorts.routes import generation
         design = generation._load_short_editor_defaults_json(owner, brand)
@@ -1719,15 +1800,7 @@ def generate_cover(payload: dict[str, Any]) -> dict[str, Any]:
             "ai_path": ai_path, "ai_notice": ai_notice, "ai_calls": ai_calls,
         }
     except Exception as exc:
-        conn = get_db()
-        try:
-            conn.execute(
-                "UPDATE shorts_clip_covers SET status='failed', error=?, updated_at=CURRENT_TIMESTAMP WHERE generated_video_id=? AND owner_user_id=? AND brand_id=?",
-                [str(exc)[:1000], generated_id, owner, brand],
-            )
-            conn.commit()
-        finally:
-            conn.close()
+        _record_cover_failure(generated_id, owner, brand, exc)
         raise
     finally:
         try:

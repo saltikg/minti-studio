@@ -713,6 +713,11 @@ def _user_facing_timeout_message(job: Dict[str, Any]) -> str:
 
 
 def _user_facing_terminal_media_message(job: Dict[str, Any], exc: Exception) -> str:
+    if job.get("type") == JOB_TYPE_GENERATE_COVER:
+        from app.video_shorts.services.clip_covers import CoverValidationError
+
+        if isinstance(exc, CoverValidationError):
+            return str(exc)
     if isinstance(exc, FileNotFoundError):
         if job.get("type") == JOB_TYPE_RENDER_SHORT:
             return "This source video could not be found. Please upload or download it again, then try again."
@@ -2147,6 +2152,7 @@ def _process_next_job(
                             "source_video_id": source_video_id,
                             "plan_index": payload.get("plan_index"),
                             "job_origin": payload.get("job_origin"),
+                            "auto_cover_followup": True,
                         }
                         enqueue_cover_job(
                             user_id=str(job.get("user_id") or ""),

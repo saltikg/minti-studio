@@ -26399,7 +26399,7 @@ document.addEventListener("DOMContentLoaded", () => {
     const kickerWords = kickerInput.value.trim().split(/\s+/).filter(Boolean);
     const mainWords = mainInput.value.trim().split(/\s+/).filter(Boolean);
     const boldHighlightWords = boldHighlightInput.value.trim().split(/\s+/).filter(Boolean);
-    if (template === "clean" && cleanWords.length > 4) { feedback.textContent = "Clean cover text must be 4 words or fewer."; return; }
+    if (template === "clean" && cleanWords.length > 4) { feedback.textContent = "Cover text must be at most 4 words"; return; }
     if (["bold", "ai"].includes(template) && (kickerWords.length > 3 || mainWords.length > 2 || boldHighlightWords.length > 3 || kickerWords.length + mainWords.length + boldHighlightWords.length > 6)) {
       feedback.textContent = "Bold copy must fit the 3 / 2 / 3 word limits and 6 words total."; return;
     }

@@ -18251,11 +18251,13 @@ def _scoped_generated_clip_for_cover(video_pk: int, plan_index: int) -> Dict[str
 def clip_cover(video_pk: int, plan_index: int):
     target = _scoped_generated_clip_for_cover(video_pk, plan_index)
     from app.video_shorts.services.clip_covers import (
+        CoverValidationError,
         get_brand_cover_template,
         get_cover_for_generated,
         normalize_cover_template,
         save_brand_cover_template,
         signed_cover_payload,
+        validate_clean_cover_text,
     )
     from app.video_shorts.services.render_jobs import enqueue_cover_job
     from app.video_shorts.services.ai_covers import ai_cover_enabled, ai_cover_usage
@@ -18270,8 +18272,10 @@ def clip_cover(video_pk: int, plan_index: int):
         kicker = " ".join(str(data.get("kicker") or "").strip().split())
         main = " ".join(str(data.get("main") or "").strip().split())
         bold_highlight = " ".join(str(data.get("bold_highlight") or "").strip().split())
-        if cover_text and len(cover_text.split()) > 4:
-            return jsonify({"success": False, "message": "Clean cover text must be 4 words or fewer."}), 400
+        try:
+            cover_text = validate_clean_cover_text(cover_text)
+        except CoverValidationError as exc:
+            return jsonify({"success": False, "message": str(exc)}), 400
         if highlight and cover_text and highlight.casefold() not in cover_text.casefold():
             return jsonify({"success": False, "message": "Highlight phrase must appear in the cover text."}), 400
         if len(kicker.split()) > 3 or len(main.split()) > 2 or len(bold_highlight.split()) > 3:
