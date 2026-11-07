@@ -19,8 +19,8 @@ FFPROBE = shutil.which("ffprobe")
 @pytest.mark.parametrize(
     ("target_width", "target_height", "custom_position", "expected_split_top", "expected_fill_top"),
     [
-        (720, 1280, 857, 578.0, 736.0),
-        (1080, 1920, 1286, 898.0, 1104.0),
+        (720, 1280, 857, 578.0, 832.0),
+        (1080, 1920, 1286, 898.0, 1248.0),
     ],
 )
 def test_auto_caption_policy_is_mode_specific_with_custom_position(
@@ -44,7 +44,7 @@ def test_auto_caption_policy_is_mode_specific_with_custom_position(
         caption_anchor="top",
     )
     fill_top = compositor._face_aware_caption_top_for_block(
-        {"mode": "fill", "caption_face_bottom": fill_face_bottom},
+        {"mode": "fill", "caption_face_bottom": fill_face_bottom, "auto_layout": True},
         block_height=block_height,
         target_width=target_width,
         target_height=target_height,
@@ -254,8 +254,8 @@ def test_face_track_loader_holds_rows_with_missing_detection_coordinates(tmp_pat
 @pytest.mark.parametrize(
     ("target_height", "font_size", "expected_face_bottom", "expected_caption_top"),
     [
-        (1280, 41, 640.0, 676.0),
-        (1920, 62, 960.0, 1014.0),
+        (1280, 41, 640.0, 832.0),
+        (1920, 62, 960.0, 1248.0),
     ],
 )
 def test_auto_fill_uses_detected_face_with_custom_position(
@@ -278,6 +278,72 @@ def test_auto_fill_uses_detected_face_with_custom_position(
     assert metrics["caption_top"] == expected_caption_top
     assert metrics["caption_top"] > metrics["median_face_bottom"]
     assert metrics["subscribe_y"] > metrics["caption_top"] + metrics["caption_block_height"]
+
+
+@pytest.mark.parametrize(
+    ("target_height", "block_height"),
+    [(1280, 100.0), (1920, 150.0)],
+)
+def test_fill_caption_lower_third_low_face_and_bottom_overlay(
+    target_height: int,
+    block_height: float,
+) -> None:
+    scale = target_height / 1280.0
+    lower_third = target_height * 0.65
+
+    assert compositor._face_aware_fill_caption_top(
+        face_bottom=target_height * 0.30,
+        block_height=block_height,
+        target_height=target_height,
+    ) == pytest.approx(lower_third)
+
+    low_face_bottom = target_height * 0.75
+    assert compositor._face_aware_fill_caption_top(
+        face_bottom=low_face_bottom,
+        block_height=block_height,
+        target_height=target_height,
+    ) == pytest.approx(low_face_bottom + (36.0 * scale))
+
+    overlay_top = target_height * 0.80
+    caption_top = compositor._face_aware_fill_caption_top(
+        face_bottom=low_face_bottom,
+        block_height=block_height,
+        target_height=target_height,
+        bottom_overlay_top=overlay_top,
+    )
+    assert caption_top + block_height + (36.0 * scale) == pytest.approx(overlay_top)
+
+
+def test_manual_fill_custom_caption_position_is_unchanged() -> None:
+    caption_top = compositor._face_aware_caption_top_for_block(
+        {"mode": "fill", "auto_layout": False},
+        block_height=124.0,
+        target_width=720,
+        target_height=1280,
+        subtitle_margin=857,
+        subtitle_margin_custom=True,
+        caption_anchor="top",
+    )
+    assert caption_top == 857.0
+
+
+def test_pillow_overlay_specs_receive_fill_caption_offset() -> None:
+    specs = compositor._face_aware_subtitle_overlay_specs(
+        [{"path": Path("caption.png"), "start": 0.0, "end": 1.0}],
+        overlay_events=[
+            {"start": 0.0, "end": 1.0, "metrics": {"block_bbox": [0.0, 300.0, 720.0, 400.0]}}
+        ],
+        layout_segments=[
+            {"start": 0.0, "end": 1.0, "mode": "fill", "auto_layout": True, "caption_face_bottom": 400.0}
+        ],
+        target_width=720,
+        target_height=1280,
+        subtitle_font_size=41,
+        subtitle_margin=405,
+        subtitle_margin_custom=False,
+        caption_anchor="bottom",
+    )
+    assert specs[0]["y_offset"] == pytest.approx(532.0)
 
 
 def test_face_aware_ass_uses_canvas_split_position_and_custom_fit(tmp_path: Path) -> None:

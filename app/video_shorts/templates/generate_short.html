@@ -21564,7 +21564,7 @@ document.addEventListener("DOMContentLoaded", () => {
     const segment = getAutoLayoutPreviewSegment();
     if (!segment) return null;
     const customPosition = initialSubtitleMarginCustom || dirtyOverlayFields.has("sub_margin");
-    return customPosition ? null : segment;
+    return customPosition && String(segment?.mode || "fill") === "fit" ? null : segment;
   };
   const getAutoFitPreviewDims = () => {
     if (getAutoLayoutPreviewSegment()?.mode !== "fit") return null;
@@ -21893,8 +21893,42 @@ document.addEventListener("DOMContentLoaded", () => {
     const subtitleSafeMargin = originalPreview && getCaptionAnchor() === "bottom" && !subtitleMarginCustom ? safeMargin : 0;
     const autoPlacement = getAutoLayoutPreviewPlacement();
     const resolvedAutoCaptionTop = Number(autoPlacement?.caption_top);
+    const lowerThirdRatio = Number(DESIGN_GEOMETRY.fill_caption_lower_third_y || 0.65);
+    const fillUsesDefaultPosition = !subtitleMarginCustom && (
+      (isAutoLayoutMode() && String(getAutoLayoutPreviewSegment()?.mode || "fill") === "fill")
+      || (!isAutoLayoutMode() && isPortraitCropAspect() && !getEffectiveSplitEnabled())
+    );
+    let fillDefaultCaptionTop = activeRenderHeight * lowerThirdRatio;
+    if (fillUsesDefaultPosition) {
+      const bottomOverlayTops = [];
+      try {
+        const shapes = JSON.parse(String(getDesignField("overlay_shapes")?.value || "[]"));
+        (Array.isArray(shapes) ? shapes : []).forEach((shape) => {
+          const top = Number(shape?.y || 0) / 1920 * activeRenderHeight;
+          const height = Math.max(1, Number(shape?.h || 1) / 1920 * activeRenderHeight);
+          if (Number(shape?.alpha ?? 100) > 0 && top + height / 2 >= activeRenderHeight * lowerThirdRatio) {
+            bottomOverlayTops.push(Math.max(0, top));
+          }
+        });
+      } catch (_) {}
+      if (subscribeToggle?.checked && subscribeCanvas?.height) {
+        bottomOverlayTops.push(Math.max(
+          0,
+          activeRenderHeight - subscribeCanvas.height - Number(DESIGN_GEOMETRY.subscribe_bottom || 0),
+        ));
+      }
+      if (bottomOverlayTops.length) {
+        const gap = 36 * activeRenderHeight / Number(DESIGN_GEOMETRY.height || 1280);
+        fillDefaultCaptionTop = Math.min(
+          fillDefaultCaptionTop,
+          Math.max(0, Math.min(...bottomOverlayTops) - gap - subtitleHeight),
+        );
+      }
+    }
     const subtitleTop = Number.isFinite(resolvedAutoCaptionTop)
       ? clampRenderValue(resolvedAutoCaptionTop, 0, Math.max(0, activeRenderHeight - subtitleHeight))
+      : fillUsesDefaultPosition
+        ? clampRenderValue(fillDefaultCaptionTop, 0, Math.max(0, activeRenderHeight - subtitleHeight))
       : clampRenderValue(
           captionTopForPosition(subtitleMargin, getCaptionAnchor(), subtitleHeight, activeRenderHeight),
           subtitleSafeMargin,

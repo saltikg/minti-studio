@@ -707,6 +707,10 @@ FACE_AWARE_FILL_ZOOM_MIN_FACE_FRAC = max(
     min(1.0, _env_float("FACE_AWARE_FILL_ZOOM_MIN_FACE_FRAC", 0.10)),
 )
 FACE_AWARE_FILL_ZOOM_MAX = max(1.0, _env_float("FACE_AWARE_FILL_ZOOM_MAX", 1.2))
+FACE_AWARE_FILL_CAPTION_LOWER_THIRD_Y = max(
+    0.0,
+    min(1.0, _env_float("FACE_AWARE_FILL_CAPTION_LOWER_THIRD_Y", 0.65)),
+)
 FACE_AWARE_SPLIT_TARGET_FACE_RATIO = max(0.01, _env_float("FACE_AWARE_SPLIT_TARGET_FACE_RATIO", 0.50))
 MAX_CLIP_LEN = int(os.getenv("MAX_CLIP_LEN", "120"))  # safety cap for per-clip duration
 SHORT_MIN_LEN = float(os.getenv("SHORT_MIN_LEN", "40"))
@@ -1587,6 +1591,7 @@ DESIGN_GEOMETRY = {
     "gradient_mid": 0.46,
     "caption_padding_x": 0.32, "caption_padding_y": 0.16,
     "caption_padding_min_x": 10, "caption_padding_min_y": 5,
+    "fill_caption_lower_third_y": FACE_AWARE_FILL_CAPTION_LOWER_THIRD_Y,
     "pill_padding_x": 0.48, "pill_padding_y": 0.14,
     "pill_padding_min_x": 10, "pill_padding_min_y": 4,
     "pill_min_aspect": 2.0, "box_radius": 0.18, "box_radius_min": 6,

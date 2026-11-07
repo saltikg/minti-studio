@@ -35188,6 +35188,13 @@ def autoclip_video(video_pk):
                                 str(segment.get("mode") or ""),
                             ), {}).get("caption_block_height")
                         ),
+                        "bottom_overlay_top": (
+                            placement_by_window.get((
+                                round(float(segment.get("start") or 0.0), 6),
+                                round(float(segment.get("end") or 0.0), 6),
+                                str(segment.get("mode") or ""),
+                            ), {}).get("bottom_overlay_top")
+                        ),
                         "subscribe_top": (
                             placement_by_window.get((
                                 round(float(segment.get("start") or 0.0), 6),
