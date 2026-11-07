@@ -42,6 +42,7 @@ FACE_CONFIDENCE_MIN = 0.86
 MOUTH_VISIBILITY_DARK_RATIO_MIN = 0.012
 LIGHT_BOX_HIGHLIGHT_FALLBACK = "#E11D48"
 DARK_BOX_HIGHLIGHT_FALLBACK = "#FFD400"
+CANDIDATE_RANK_VERSION = 2
 COVER_TEMPLATE_PREFERENCE_PREFIX = "cover_template"
 COVER_TEMPLATES = {"clean", "bold"}
 METIN_BRAND_ID = "37594f93-7692-49b2-b559-2e0841fe0268"
@@ -663,6 +664,7 @@ def _candidate_frames(
         eligible = bool(face and not rejection_reasons)
         score = quality_score if eligible else quality_score - 10000.0
         scored.append({
+            "rank_version": CANDIDATE_RANK_VERSION,
             "timestamp": round(float(ts), 3), "source_timestamp": round(float(ts), 3),
             "clip_timestamp": round(float(clip_ts), 3), "score": round(score, 3),
             "frame_sharpness": round(frame_sharpness, 2), "face_sharpness": round(face_sharpness, 2),
@@ -701,7 +703,8 @@ def _candidate_frames(
         ranked = [fallback, *rest][:5]
     else:
         middle = _source_time_for_clip_offset(source_ranges, duration / 2.0)
-        ranked = [{"timestamp": round(middle, 3), "source_timestamp": round(middle, 3),
+        ranked = [{"rank_version": CANDIDATE_RANK_VERSION,
+                   "timestamp": round(middle, 3), "source_timestamp": round(middle, 3),
                    "clip_timestamp": round(duration / 2.0, 3), "score": 0, "face": None,
                    "eligible": False, "rejection_reasons": ["no_face"],
                    "selection_fallback": "no_face_detected; selected middle frame"}]
@@ -1162,6 +1165,7 @@ def generate_cover(payload: dict[str, Any]) -> dict[str, Any]:
         is_cover_edit = bool(
             existing_candidates
             and all(candidate.get("source_timestamp") is not None for candidate in existing_candidates)
+            and all(int(candidate.get("rank_version") or 0) == CANDIDATE_RANK_VERSION for candidate in existing_candidates)
             and (
                 payload.get("cover_text")
                 or payload.get("highlight_phrase")
