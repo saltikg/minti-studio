@@ -161,6 +161,96 @@ def test_no_track_keeps_existing_center_fill_fallback() -> None:
     assert fill_y == pytest.approx((1.0 - fill_h) / 2.0)
 
 
+@pytest.mark.parametrize("face_height", [0.28, 0.42, 0.46])
+def test_fill_zoom_defaults_to_one_for_normal_face_sizes(face_height: float) -> None:
+    zoom = compositor._face_aware_fill_zoom_for_segment(
+        [{"t": 0.5, "h": face_height, "w": 0.12}],
+        segment_start=0.0,
+        segment_end=1.0,
+        crop_w=0.31640625,
+        crop_h=1.0,
+    )
+
+    assert zoom == 1.0
+
+
+def test_fill_zoom_for_small_face_is_bounded_and_keeps_headroom_and_side_margin() -> None:
+    point = {"t": 0.5, "cx": 0.52, "cy": 0.08, "w": 0.05, "h": 0.07, "found": True}
+    base_crop_w = 0.31640625
+    zoom = compositor._face_aware_fill_zoom_for_segment(
+        [point],
+        segment_start=0.0,
+        segment_end=1.0,
+        crop_w=base_crop_w,
+        crop_h=1.0,
+    )
+    crop_w = base_crop_w / zoom
+    crop_h = 1.0 / zoom
+    tracked = compositor._stabilize_face_track_crop([point], crop_w=crop_w, crop_h=crop_h)[0]
+    face_left = point["cx"] - point["w"] / 2.0
+    face_right = point["cx"] + point["w"] / 2.0
+    face_top = point["cy"] - point["h"] / 2.0
+
+    assert 1.0 < zoom <= 1.2
+    assert tracked["y"] <= face_top
+    assert face_left >= tracked["x"] + crop_w * 0.15
+    assert face_right <= tracked["x"] + crop_w * 0.85
+
+
+def test_face_track_dead_zone_does_not_move_for_small_face_moves() -> None:
+    points = [
+        {"t": 0.0, "cx": 0.50, "cy": 0.40, "w": 0.08, "h": 0.20, "found": True},
+        {"t": 0.5, "cx": 0.51, "cy": 0.40, "w": 0.08, "h": 0.20, "found": True},
+        {"t": 1.0, "cx": 0.52, "cy": 0.40, "w": 0.08, "h": 0.20, "found": True},
+    ]
+
+    tracked = compositor._stabilize_face_track_crop(points, crop_w=0.31640625, crop_h=1.0)
+
+    assert [point["x"] for point in tracked] == pytest.approx([tracked[0]["x"]] * 3)
+
+
+def test_face_track_holds_position_during_gap_and_on_resume() -> None:
+    points = [
+        {"t": 0.0, "cx": 0.30, "cy": 0.40, "w": 0.08, "h": 0.20, "found": True},
+        {"t": 0.5, "cx": 0.30, "cy": 0.40, "w": 0.08, "h": 0.20, "found": False},
+        {"t": 1.0, "cx": 0.30, "cy": 0.40, "w": 0.08, "h": 0.20, "found": False},
+        {"t": 1.5, "cx": 0.80, "cy": 0.40, "w": 0.08, "h": 0.20, "found": True},
+        {"t": 2.0, "cx": 0.80, "cy": 0.40, "w": 0.08, "h": 0.20, "found": True},
+    ]
+
+    tracked = compositor._stabilize_face_track_crop(points, crop_w=0.31640625, crop_h=1.0)
+
+    assert [point["x"] for point in tracked[:4]] == pytest.approx([tracked[0]["x"]] * 4)
+    assert tracked[4]["x"] > tracked[3]["x"]
+
+
+def test_face_track_loader_holds_rows_with_missing_detection_coordinates(tmp_path: Path) -> None:
+    track_path = tmp_path / "track_with_gap.json"
+    track_path.write_text(
+        json.dumps(
+            [
+                {"t": 0.0, "cx_ratio": 0.30, "cy_ratio": 0.40, "w_ratio": 0.08, "h_ratio": 0.20, "found": True},
+                {"t": 0.5, "cx_ratio": None, "cy_ratio": None, "found": False},
+                {"t": 1.0, "cx_ratio": None, "cy_ratio": None, "found": False},
+                {"t": 1.5, "cx_ratio": 0.80, "cy_ratio": 0.40, "w_ratio": 0.08, "h_ratio": 0.20, "found": True},
+                {"t": 2.0, "cx_ratio": 0.80, "cy_ratio": 0.40, "w_ratio": 0.08, "h_ratio": 0.20, "found": True},
+            ]
+        ),
+        encoding="utf-8",
+    )
+
+    tracked = compositor._load_face_track_points(
+        track_path,
+        clip_start=0.0,
+        crop_w=0.31640625,
+        crop_h=1.0,
+    )
+
+    assert len(tracked) == 5
+    assert [point["x"] for point in tracked[:4]] == pytest.approx([tracked[0]["x"]] * 4)
+    assert tracked[4]["x"] > tracked[3]["x"]
+
+
 @pytest.mark.parametrize(
     ("target_height", "font_size", "expected_face_bottom", "expected_caption_top"),
     [

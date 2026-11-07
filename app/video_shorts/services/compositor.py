@@ -36,8 +36,8 @@ from app.video_shorts.config import (
     FFMPEG_RENDER_TIMEOUT,
     FFMPEG_SHORT_TIMEOUT,
     FFPROBE_TIMEOUT,
-    FACE_AWARE_MAX_ZOOM,
-    FACE_AWARE_TARGET_FACE_RATIO,
+    FACE_AWARE_FILL_ZOOM_MAX,
+    FACE_AWARE_FILL_ZOOM_MIN_FACE_FRAC,
     STATIC_VISUAL_PRESETS,
     SUBTITLE_PRESETS,
     SUB_MARGIN_DEFAULT,
@@ -63,6 +63,8 @@ FACE_AWARE_FIT_FRAME_TOP = DESIGN_GEOMETRY["fit_top"]
 FACE_AWARE_FILL_FALLBACK_SUBTITLE_MARGIN = 405
 FACE_AWARE_FILL_CAPTION_GAP = 36.0
 FACE_AWARE_FILL_CAPTION_MIN_TOP = 640.0
+FACE_AWARE_FILL_FACE_SIDE_MARGIN = 0.15
+FACE_AWARE_FILL_TRACK_EASE = 0.35
 FACE_AWARE_FILL_SUBSCRIBE_ROOM = 300.0
 FACE_AWARE_LEGACY_DEFAULT_SUBTITLE_MARGINS = {270, 320, 405, 520}
 FACE_AWARE_TOP_CAPTION_MAX_LINES = 2
@@ -1191,21 +1193,37 @@ def _load_face_track_points(
         return []
     if not isinstance(payload, list):
         return []
-    max_x = max(0.0, 1.0 - float(crop_w))
-    max_y = max(0.0, 1.0 - float(crop_h))
-    points: list[dict[str, float]] = []
+    sortable_rows: list[tuple[float, dict[str, Any]]] = []
     for row in payload:
         if not isinstance(row, dict):
             continue
         try:
             t_abs = float(row.get("t"))
-            cx = float(row.get("cx_ratio"))
-            cy = float(row.get("cy_ratio"))
-            w_ratio = float(row.get("w_ratio") or 0.0)
-            h_ratio = float(row.get("h_ratio") or 0.0)
         except Exception:
             continue
-        if not (0.0 <= cx <= 1.0 and 0.0 <= cy <= 1.0):
+        sortable_rows.append((t_abs, row))
+    points: list[dict[str, float]] = []
+    last_face: Optional[tuple[float, float, float, float]] = None
+    for t_abs, row in sorted(sortable_rows, key=lambda item: item[0]):
+        found = bool(row.get("found", True))
+        if found:
+            try:
+                cx = float(row.get("cx_ratio"))
+                cy = float(row.get("cy_ratio"))
+                w_ratio = float(row.get("w_ratio") or 0.0)
+                h_ratio = float(row.get("h_ratio") or 0.0)
+            except Exception:
+                found = False
+            else:
+                if not (0.0 <= cx <= 1.0 and 0.0 <= cy <= 1.0):
+                    found = False
+                else:
+                    last_face = (cx, cy, w_ratio, h_ratio)
+        if not found:
+            if last_face is None:
+                continue
+            cx, cy, w_ratio, h_ratio = last_face
+        if last_face is None:
             continue
         points.append(
             {
@@ -1215,8 +1233,7 @@ def _load_face_track_points(
                 "w": max(0.0, min(1.0, w_ratio)),
                 "h": max(0.0, min(1.0, h_ratio)),
                 "cut": bool(row.get("cut")),
-                "x": max(0.0, min(max_x, cx - (float(crop_w) / 2.0))),
-                "y": max(0.0, min(max_y, cy - (float(crop_h) / 2.0))),
+                "found": found,
             }
         )
     deduped: list[dict[str, float]] = []
@@ -1226,7 +1243,81 @@ def _load_face_track_points(
             deduped[-1] = point
         else:
             deduped.append(point)
-    return deduped
+    return _stabilize_face_track_crop(
+        deduped,
+        crop_w=float(crop_w),
+        crop_h=float(crop_h),
+    )
+
+
+def _stabilize_face_track_crop(
+    face_track_points: list[dict[str, float]],
+    *,
+    crop_w: float,
+    crop_h: float,
+    side_margin: float = FACE_AWARE_FILL_FACE_SIDE_MARGIN,
+    ease: float = FACE_AWARE_FILL_TRACK_EASE,
+) -> list[dict[str, float]]:
+    """Apply a horizontal safe-zone, easing, and exact hold across detection gaps."""
+    safe_crop_w = max(0.01, min(1.0, float(crop_w)))
+    safe_crop_h = max(0.01, min(1.0, float(crop_h)))
+    safe_margin = max(0.0, min(0.45, float(side_margin)))
+    safe_ease = max(0.01, min(1.0, float(ease)))
+    max_x = max(0.0, 1.0 - safe_crop_w)
+    max_y = max(0.0, 1.0 - safe_crop_h)
+    current_x: Optional[float] = None
+    current_y: Optional[float] = None
+    gap_active = False
+    stabilized: list[dict[str, float]] = []
+
+    for raw_point in sorted(face_track_points or [], key=lambda item: float(item.get("t") or 0.0)):
+        point = dict(raw_point)
+        found = bool(point.get("found", True))
+        try:
+            cx = float(point.get("cx") or 0.0)
+            cy = float(point.get("cy") or 0.0)
+            face_w = max(0.0, min(1.0, float(point.get("w") or 0.0)))
+            face_h = max(0.0, min(1.0, float(point.get("h") or 0.0)))
+        except Exception:
+            found = False
+            cx = cy = face_w = face_h = 0.0
+
+        if current_x is None:
+            if not found:
+                continue
+            current_x = max(0.0, min(max_x, cx - (safe_crop_w / 2.0)))
+            current_y = max(0.0, min(max_y, cy - (safe_crop_h / 2.0)))
+        elif not found:
+            gap_active = True
+        elif gap_active:
+            # Resume on the last crop position. Subsequent detections ease toward the face.
+            gap_active = False
+        else:
+            face_left = cx - (face_w / 2.0)
+            face_right = cx + (face_w / 2.0)
+            safe_left = current_x + (safe_crop_w * safe_margin)
+            safe_right = current_x + (safe_crop_w * (1.0 - safe_margin))
+            target_x = current_x
+            if face_left < safe_left:
+                target_x = face_left - (safe_crop_w * safe_margin)
+            elif face_right > safe_right:
+                target_x = face_right - (safe_crop_w * (1.0 - safe_margin))
+            target_x = max(0.0, min(max_x, target_x))
+            current_x += (target_x - current_x) * safe_ease
+            # Easing may lag, but it must never leave the detected bbox outside the crop.
+            current_x = max(face_right - safe_crop_w, min(face_left, current_x))
+            current_x = max(0.0, min(max_x, current_x))
+
+            centered_y = cy - (safe_crop_h / 2.0)
+            face_top = cy - (face_h / 2.0)
+            current_y = min(centered_y, face_top)
+            current_y = max(0.0, min(max_y, current_y))
+
+        point["found"] = found
+        point["x"] = float(current_x)
+        point["y"] = float(current_y or 0.0)
+        stabilized.append(point)
+    return stabilized
 
 
 def _has_manual_reframe(
@@ -1280,36 +1371,45 @@ def _face_aware_fill_zoom_for_segment(
     *,
     segment_start: float,
     segment_end: float,
+    crop_w: float,
     crop_h: float,
-    target_face_ratio: float = FACE_AWARE_TARGET_FACE_RATIO,
-    max_zoom: float = FACE_AWARE_MAX_ZOOM,
+    min_face_frac: float = FACE_AWARE_FILL_ZOOM_MIN_FACE_FRAC,
+    max_zoom: float = FACE_AWARE_FILL_ZOOM_MAX,
 ) -> float:
-    """Return a static fill-segment zoom that makes the median face reach the target output-height ratio."""
+    """Zoom only unusually small faces, bounded by headroom and horizontal face margins."""
     try:
+        safe_crop_w = max(0.01, min(1.0, float(crop_w)))
         safe_crop_h = max(0.01, min(1.0, float(crop_h)))
-        safe_target = max(0.01, float(target_face_ratio or FACE_AWARE_TARGET_FACE_RATIO))
-        safe_max_zoom = max(1.0, float(max_zoom or FACE_AWARE_MAX_ZOOM))
+        safe_min_face_frac = max(0.01, min(1.0, float(min_face_frac)))
+        safe_max_zoom = max(1.0, float(max_zoom))
     except Exception:
         return 1.0
-    heights: list[float] = []
+    observations: list[tuple[float, float]] = []
     for point in face_track_points or []:
+        if point.get("found") is False:
+            continue
         try:
             t_val = float(point.get("t") or 0.0)
             h_val = float(point.get("h") or 0.0)
+            w_val = float(point.get("w") or 0.0)
         except Exception:
             continue
         if float(segment_start) <= t_val <= float(segment_end) and h_val > 0:
-            heights.append(h_val)
-    if not heights:
+            observations.append((h_val, max(0.0, w_val)))
+    if not observations:
         return 1.0
-    heights.sort()
+    heights = sorted(item[0] for item in observations)
     mid = len(heights) // 2
     median_h = heights[mid] if len(heights) % 2 else (heights[mid - 1] + heights[mid]) / 2.0
-    h_portrait_equiv = median_h / safe_crop_h
-    if h_portrait_equiv <= 0:
+    if median_h >= safe_min_face_frac:
         return 1.0
-    zoom = safe_target / h_portrait_equiv
-    return round(max(1.0, min(safe_max_zoom, zoom)), 6)
+    zoom = min(safe_max_zoom, safe_min_face_frac / max(0.001, median_h))
+    usable_width_ratio = 1.0 - (2.0 * FACE_AWARE_FILL_FACE_SIDE_MARGIN)
+    for face_h, face_w in observations:
+        zoom = min(zoom, safe_crop_h / max(0.001, face_h))
+        if face_w > 0:
+            zoom = min(zoom, (safe_crop_w * usable_width_ratio) / face_w)
+    return round(max(1.0, zoom), 6)
 
 
 def _piecewise_linear_ratio_expr(
@@ -2411,7 +2511,7 @@ def _face_aware_fill_caption_metrics_for_segment(
         seg_start = 0.0
         seg_end = 0.0
     try:
-        segment_zoom = max(1.0, min(float(FACE_AWARE_MAX_ZOOM), float(segment.get("zoom") or 1.0)))
+        segment_zoom = max(1.0, min(float(FACE_AWARE_FILL_ZOOM_MAX), float(segment.get("zoom") or 1.0)))
     except Exception:
         segment_zoom = 1.0
     segment_crop_h = max(0.01, min(1.0, float(crop_h or 1.0) / segment_zoom))
@@ -4197,7 +4297,7 @@ def _compose_trimmed_with_background(
             normalized_segment = {"start": seg_start, "end": seg_end, "mode": mode}
             if mode == "fill":
                 try:
-                    normalized_segment["zoom"] = max(1.0, min(float(FACE_AWARE_MAX_ZOOM), float(segment.get("zoom") or 1.0)))
+                    normalized_segment["zoom"] = max(1.0, min(float(FACE_AWARE_FILL_ZOOM_MAX), float(segment.get("zoom") or 1.0)))
                 except Exception:
                     normalized_segment["zoom"] = 1.0
             elif mode == "split":
@@ -4670,26 +4770,31 @@ def _compose_trimmed_with_background(
                     )
                 else:
                     try:
-                        segment_zoom = max(1.0, min(float(FACE_AWARE_MAX_ZOOM), float(segment.get("zoom") or 1.0)))
+                        segment_zoom = max(1.0, min(float(FACE_AWARE_FILL_ZOOM_MAX), float(segment.get("zoom") or 1.0)))
                     except Exception:
                         segment_zoom = 1.0
                     if segment_zoom > 1.0001:
                         seg_crop_w = max(0.01, min(1.0, fill_crop_w / segment_zoom))
                         seg_crop_h = max(0.01, min(1.0, fill_crop_h / segment_zoom))
                         if dynamic_crop_enabled:
+                            segment_track_points = _stabilize_face_track_crop(
+                                face_track_points,
+                                crop_w=seg_crop_w,
+                                crop_h=seg_crop_h,
+                            )
                             segment_time_expr = f"(t+{seg_start:.6f})"
-                            seg_cx_expr = _piecewise_linear_ratio_expr(
-                                face_track_points,
-                                "cx",
+                            seg_x_expr = _piecewise_linear_ratio_expr(
+                                segment_track_points,
+                                "x",
                                 time_expr=segment_time_expr,
-                            ) or _fmt(fill_crop_x + fill_crop_w / 2.0)
-                            seg_crop_x_expr_raw = f"min(max(({seg_cx_expr})-{_fmt(seg_crop_w / 2.0)},0),{_fmt(max(0.0, 1.0 - seg_crop_w))})"
-                            seg_cy_expr = _piecewise_linear_ratio_expr(
-                                face_track_points,
-                                "cy",
+                            ) or _fmt(fill_crop_x + (fill_crop_w - seg_crop_w) / 2.0)
+                            seg_crop_x_expr_raw = seg_x_expr
+                            seg_y_expr = _piecewise_linear_ratio_expr(
+                                segment_track_points,
+                                "y",
                                 time_expr=segment_time_expr,
-                            ) or _fmt(fill_crop_y + fill_crop_h / 2.0)
-                            seg_crop_y_expr_raw = f"min(max(({seg_cy_expr})-{_fmt(seg_crop_h / 2.0)},0),{_fmt(max(0.0, 1.0 - seg_crop_h))})"
+                            ) or _fmt(fill_crop_y + (fill_crop_h - seg_crop_h) / 2.0)
+                            seg_crop_y_expr_raw = seg_y_expr
                         else:
                             seg_crop_x_expr_raw = f"{_fmt(fill_crop_x + (fill_crop_w - seg_crop_w) / 2.0)}"
                             seg_crop_y_expr_raw = f"{_fmt(fill_crop_y + (fill_crop_h - seg_crop_h) / 2.0)}"

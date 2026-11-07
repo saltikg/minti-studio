@@ -178,8 +178,10 @@ from app.video_shorts.services.compositor import (
     _compose_trimmed_with_background,
     _cut_clip,
     _face_aware_fill_zoom_for_segment,
+    _fill_crop_box_for_canvas,
     _has_audio_stream,
     _original_layout_target_dimensions,
+    _probe_video_dimensions,
     _sanitize_text_for_overlay,
     resolve_keep_ranges_for_trim,
 )
@@ -4734,6 +4736,8 @@ def _load_face_aware_zoom_points(
                 {
                     "t": max(0.0, float(row.get("t")) - float(clip_start)),
                     "h": max(0.0, min(1.0, float(row.get("h_ratio") or 0.0))),
+                    "w": max(0.0, min(1.0, float(row.get("w_ratio") or 0.0))),
+                    "found": bool(row.get("found", True)),
                 }
             )
         except Exception:
@@ -4747,11 +4751,38 @@ def _attach_face_aware_zoom_to_segments(
     face_track_smooth_path: Optional[Path],
     clip_start: float,
     crop_settings: Dict[str, Any],
+    source_path: Path,
 ) -> List[Dict[str, Any]]:
     try:
+        crop_x = float((crop_settings or {}).get("crop_x_ratio") or 0.0)
+        crop_y = float((crop_settings or {}).get("crop_y_ratio") or 0.0)
+        crop_w = float((crop_settings or {}).get("crop_w_ratio") or 1.0)
         crop_h = float((crop_settings or {}).get("crop_h_ratio") or 1.0)
     except Exception:
+        crop_x = crop_y = 0.0
+        crop_w = 1.0
         crop_h = 1.0
+    is_default_crop = (
+        abs(crop_x) < 1e-6
+        and abs(crop_y) < 1e-6
+        and abs(crop_w - 1.0) < 1e-6
+        and abs(crop_h - 1.0) < 1e-6
+    )
+    try:
+        source_width, source_height = _probe_video_dimensions(source_path)
+    except Exception:
+        source_width = source_height = None
+    _, _, crop_w, crop_h = _fill_crop_box_for_canvas(
+        crop_x=crop_x,
+        crop_y=crop_y,
+        crop_w=crop_w,
+        crop_h=crop_h,
+        is_default_crop=is_default_crop,
+        source_width=source_width,
+        source_height=source_height,
+        target_width=int(DESIGN_GEOMETRY["width"]),
+        target_height=int(DESIGN_GEOMETRY["height"]),
+    )
     points = _load_face_aware_zoom_points(face_track_smooth_path, clip_start=clip_start)
     enriched: List[Dict[str, Any]] = []
     for segment in segments or []:
@@ -4761,6 +4792,7 @@ def _attach_face_aware_zoom_to_segments(
                 points,
                 segment_start=float(item.get("start") or 0.0),
                 segment_end=float(item.get("end") or 0.0),
+                crop_w=crop_w,
                 crop_h=crop_h,
             )
         else:
@@ -5411,6 +5443,7 @@ def _compute_face_aware_layout_segments(
         face_track_smooth_path=face_track_smooth_path,
         clip_start=start_seconds,
         crop_settings=crop_settings,
+        source_path=source_path,
     )
     segments = _attach_face_aware_split_crops_to_segments(
         segments,
