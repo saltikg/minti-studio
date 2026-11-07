@@ -3928,6 +3928,121 @@ def videos_page(channel_id):
     )
 
 
+def _enqueue_admin_channel_video_download(
+    *,
+    channel_id: int,
+    video_pk: int,
+    video_id: str,
+    owner_user_id: str,
+    brand_id: str,
+    acting_admin_id: str,
+    meta: Dict[str, Any],
+) -> Optional[Dict[str, Any]]:
+    from app.video_shorts.routes.quick_short import create_youtube_ingest_session_for_user
+
+    canonical_url = f"https://www.youtube.com/watch?v={video_id}"
+    try:
+        return create_youtube_ingest_session_for_user(
+            user_id=owner_user_id,
+            brand_id=brand_id,
+            video_url=canonical_url,
+            meta=meta,
+            source="admin_channel_row_download",
+            existing_video_pk=video_pk,
+            existing_video_id=video_id,
+            job_payload_extra={
+                "quota_exempt": True,
+                "made_by_admin": True,
+                "acting_admin_id": acting_admin_id,
+                "admin_operation_kind": "channel",
+                "channel_id": channel_id,
+            },
+        )
+    except Exception:
+        current_app.logger.exception(
+            "Admin channel download enqueue failed channel_id=%s video_pk=%s video_id=%s",
+            channel_id,
+            video_pk,
+            video_id,
+        )
+        return None
+
+
+@video_shorts_bp.route("/videos/<int:channel_id>/<int:video_pk>/download", methods=["POST"])
+def download_channel_video(channel_id: int, video_pk: int):
+    current_user = getattr(g, "vs_current_user", None)
+    if not current_user:
+        return redirect(url_for("video_shorts_bp.login", next=request.url))
+    if current_user.get("role") != "admin":
+        abort(403)
+
+    redirect_params = {
+        key: request.form.get(key, "")
+        for key in (
+            "sort", "dir", "page", "q", "vid", "dstatus", "dmin", "dmax",
+            "short_filter", "email_sent", "has_email",
+        )
+    }
+    conn = get_db_readonly()
+    try:
+        row = conn.execute(
+            """
+            SELECT
+                v.video_id, v.title, v.published_at, v.thumbnail_url,
+                v.duration_seconds, v.view_count, v.like_count, v.comment_count,
+                v.download_status, c.owner_user_id, c.brand_id, c.channel_url
+            FROM youtube_videos v
+            JOIN youtube_channels c ON c.channel_id = v.channel_id
+            WHERE v.id = ? AND c.channel_id = ? AND v.deleted_at IS NULL
+            LIMIT 1
+            """,
+            [video_pk, channel_id],
+        ).fetchone()
+    finally:
+        conn.close()
+
+    if not row:
+        abort(404)
+    if str(row[11] or "").strip().lower() == "local://uploads":
+        abort(404)
+    owner_user_id = str(row[9] or "").strip()
+    brand_id = str(row[10] or "").strip()
+    video_id = str(row[0] or "").strip()
+    if not owner_user_id or not brand_id or not video_id:
+        flash("This video is missing its owner, brand, or YouTube ID.", "danger")
+        return redirect(url_for("video_shorts_bp.videos_page", channel_id=channel_id, **redirect_params))
+    if str(row[8] or "").strip().lower() == "downloaded":
+        flash("This video is already downloaded.", "info")
+        return redirect(url_for("video_shorts_bp.videos_page", channel_id=channel_id, **redirect_params))
+
+    meta = {
+        "video_id": video_id,
+        "title": str(row[1] or video_id),
+        "published_at": row[2].isoformat() if hasattr(row[2], "isoformat") else row[2],
+        "thumbnail_url": row[3],
+        "duration_seconds": row[4],
+        "view_count": row[5],
+        "like_count": row[6],
+        "comment_count": row[7],
+    }
+    result = _enqueue_admin_channel_video_download(
+        channel_id=channel_id,
+        video_pk=video_pk,
+        video_id=video_id,
+        owner_user_id=owner_user_id,
+        brand_id=brand_id,
+        acting_admin_id=str(current_user.get("id") or ""),
+        meta=meta,
+    )
+    if result is None:
+        flash("The download could not be queued.", "danger")
+    elif result.get("cached"):
+        flash("This video was already processed.", "info")
+    else:
+        flash("Video queued for download.", "success")
+    return redirect(url_for("video_shorts_bp.videos_page", channel_id=channel_id, **redirect_params))
+
+
 @video_shorts_bp.route("/videos/<int:channel_id>/add-by-url", methods=["POST"])
 def add_video_by_url(channel_id):
     current_user = getattr(g, "vs_current_user", None)
@@ -4064,35 +4179,6 @@ def add_video_by_url(channel_id):
                 flash("YouTube metadata could not be read, so the download was not queued.", "danger")
                 return redirect(url_for("video_shorts_bp.videos_page", channel_id=channel_id))
 
-        def _queue_admin_channel_download(video_pk: int) -> Optional[Dict[str, Any]]:
-            from app.video_shorts.routes.quick_short import create_youtube_ingest_session_for_user
-
-            try:
-                return create_youtube_ingest_session_for_user(
-                    user_id=str(channel.get("owner_user_id")),
-                    brand_id=str(channel.get("brand_id")),
-                    video_url=canonical_url,
-                    meta=meta,
-                    source="admin_channel_url_download",
-                    existing_video_pk=video_pk,
-                    existing_video_id=video_id,
-                    job_payload_extra={
-                        "quota_exempt": True,
-                        "made_by_admin": True,
-                        "acting_admin_id": str(current_user.get("id") or ""),
-                        "admin_operation_kind": "channel",
-                    },
-                )
-            except Exception:
-                current_app.logger.exception(
-                    "Admin channel URL download enqueue failed channel_id=%s video_pk=%s video_id=%s",
-                    channel_id,
-                    video_pk,
-                    video_id,
-                )
-                flash("The video is saved, but the download could not be queued.", "danger")
-                return None
-
         conn = get_db()
         if meta and is_local_uploads_channel:
             try:
@@ -4163,8 +4249,17 @@ def add_video_by_url(channel_id):
                 video_pk = int(existing[0])
                 conn.close()
                 conn = None
-                result = _queue_admin_channel_download(video_pk)
+                result = _enqueue_admin_channel_video_download(
+                    channel_id=channel_id,
+                    video_pk=video_pk,
+                    video_id=video_id,
+                    owner_user_id=str(channel.get("owner_user_id")),
+                    brand_id=str(channel.get("brand_id")),
+                    acting_admin_id=str(current_user.get("id") or ""),
+                    meta=meta,
+                )
                 if result is None:
+                    flash("The video is saved, but the download could not be queued.", "danger")
                     return redirect(url_for("video_shorts_bp.videos_page", channel_id=channel_id))
                 queue_state = "already processed" if result.get("cached") else "queued for download"
                 flash(f"Video {queue_state}.", "success")
@@ -4220,8 +4315,17 @@ def add_video_by_url(channel_id):
             video_pk = int(inserted[0])
             conn.close()
             conn = None
-            result = _queue_admin_channel_download(video_pk)
+            result = _enqueue_admin_channel_video_download(
+                channel_id=channel_id,
+                video_pk=video_pk,
+                video_id=video_id,
+                owner_user_id=str(channel.get("owner_user_id")),
+                brand_id=str(channel.get("brand_id")),
+                acting_admin_id=str(current_user.get("id") or ""),
+                meta=meta,
+            )
             if result is None:
+                flash("The video is saved, but the download could not be queued.", "danger")
                 return redirect(url_for("video_shorts_bp.videos_page", channel_id=channel_id))
             queue_state = "already processed" if result.get("cached") else "queued for download"
             flash(f"Video added to the channel and {queue_state}.", "success")

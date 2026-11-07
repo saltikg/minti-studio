@@ -112,14 +112,12 @@
         <input type="text" name="video_to_fetch" placeholder="Video ID (e.g., abc123)" class="form-control form-control-sm vs-input vs-input-140">
         <button class="vs-btn vs-btn-primary vs-btn-sm">Fetch Video</button>
       </form>
-      {% if (channel.channel_url or '')|lower == 'local://uploads' or is_admin %}
+      {% if (channel.channel_url or '')|lower == 'local://uploads' %}
       <form method="post"
             action="{{ url_for('video_shorts_bp.add_video_by_url', channel_id=channel.channel_id) }}"
             class="d-flex gap-1 vs-fetch-form">
         <input type="text" name="video_url" placeholder="Paste a YouTube video URL" class="form-control form-control-sm vs-input" style="min-width: 260px;">
-        <button class="vs-btn vs-btn-primary vs-btn-sm">
-          {% if (channel.channel_url or '')|lower == 'local://uploads' %}Add{% else %}Download by URL{% endif %}
-        </button>
+        <button class="vs-btn vs-btn-primary vs-btn-sm">Add</button>
       </form>
       {% endif %}
     </div>
@@ -314,6 +312,9 @@
               </a>
             </th>
             <th class="vs-col-status">Status</th>
+            {% if is_admin and not is_local_uploads_channel %}
+            <th class="vs-col-status">Download</th>
+            {% endif %}
             <th class="vs-col-status">Shared link</th>
             <th class="vs-col-generate">Generate short</th>
             <th class="vs-col-generate">Delete</th>
@@ -461,6 +462,32 @@
               {% endif %}
             </td>
 
+            {% if is_admin and not is_local_uploads_channel %}
+            <td class="small text-nowrap">
+              {% set row_download_status = (v.download_status or '')|lower %}
+              {% if row_download_status == 'downloaded' %}
+                <span class="text-success" title="Downloaded">✅ Downloaded</span>
+              {% else %}
+                <form method="post"
+                      action="{{ url_for('video_shorts_bp.download_channel_video', channel_id=channel.channel_id, video_pk=v.id) }}"
+                      class="m-0">
+                  <input type="hidden" name="sort" value="{{ sort }}">
+                  <input type="hidden" name="dir" value="{{ sort_dir }}">
+                  <input type="hidden" name="page" value="{{ page }}">
+                  <input type="hidden" name="q" value="{{ search_q }}">
+                  <input type="hidden" name="vid" value="{{ video_id_q }}">
+                  <input type="hidden" name="dstatus" value="{{ download_filter }}">
+                  <input type="hidden" name="dmin" value="{{ duration_min }}">
+                  <input type="hidden" name="dmax" value="{{ duration_max }}">
+                  <input type="hidden" name="short_filter" value="{{ short_filter }}">
+                  <input type="hidden" name="email_sent" value="{{ email_sent_filter }}">
+                  <input type="hidden" name="has_email" value="{{ has_email_filter }}">
+                  <button type="submit" class="vs-btn vs-btn-primary vs-btn-sm">Download</button>
+                </form>
+              {% endif %}
+            </td>
+            {% endif %}
+
             <td class="small text-center">
               {% if v.share_links_count|default(0) > 0 %}
                 <span class="text-success" title="Share link created">✓</span>
@@ -525,7 +552,7 @@
 
           {% if videos|length == 0 %}
           <tr>
-            <td colspan="9" class="text-center text-muted py-3">
+            <td colspan="{{ 11 if is_admin and not is_local_uploads_channel else 10 }}" class="text-center text-muted py-3">
               No videos in database yet. Click "Fetch next batch" to import.
             </td>
           </tr>

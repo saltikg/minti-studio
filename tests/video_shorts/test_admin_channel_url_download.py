@@ -115,12 +115,13 @@ def test_admin_can_add_channel_video_by_url_and_queue_shared_ingest(monkeypatch)
     assert captured["user_id"] == "owner-1"
     assert captured["brand_id"] == "brand-1"
     assert captured["existing_video_pk"] == 99
-    assert captured["source"] == "admin_channel_url_download"
+    assert captured["source"] == "admin_channel_row_download"
     assert captured["job_payload_extra"] == {
         "quota_exempt": True,
         "made_by_admin": True,
         "acting_admin_id": "admin-1",
         "admin_operation_kind": "channel",
+        "channel_id": 4,
     }
     assert ("success", "Video added to the channel and queued for download.") in messages
 
@@ -177,3 +178,59 @@ def test_admin_url_download_rejects_video_from_another_channel(monkeypatch):
     assert response.status_code == 302
     assert conn.inserted is False
     assert ("warning", "That video does not belong to this YouTube channel.") in messages
+
+
+def test_admin_can_queue_download_from_existing_video_row(monkeypatch):
+    app = _app()
+
+    class _ReadConnection:
+        def execute(self, sql, params=None):
+            assert "JOIN youtube_channels" in sql
+            assert params == [99, 4]
+            return _Result(
+                (
+                    VIDEO_ID,
+                    "A lecture",
+                    "2026-11-01T12:00:00+00:00",
+                    "https://example.com/thumb.jpg",
+                    3600,
+                    10,
+                    2,
+                    1,
+                    "pending",
+                    "owner-1",
+                    "brand-1",
+                    "https://www.youtube.com/@HerkulNagme",
+                )
+            )
+
+        def close(self):
+            return None
+
+    monkeypatch.setattr(videos, "get_db_readonly", lambda: _ReadConnection())
+    captured = {}
+
+    def _queue(**kwargs):
+        captured.update(kwargs)
+        return {"cached": False}
+
+    monkeypatch.setattr(videos, "_enqueue_admin_channel_video_download", _queue)
+
+    with app.test_request_context(
+        "/video_shorts/videos/4/99/download",
+        method="POST",
+        data={"sort": "published", "dir": "desc", "page": "2"},
+    ):
+        g.vs_current_user = {"id": "admin-1", "role": "admin"}
+        response = videos.download_channel_video(4, 99)
+        messages = get_flashed_messages(with_categories=True)
+
+    assert response.status_code == 302
+    assert captured["channel_id"] == 4
+    assert captured["video_pk"] == 99
+    assert captured["video_id"] == VIDEO_ID
+    assert captured["owner_user_id"] == "owner-1"
+    assert captured["brand_id"] == "brand-1"
+    assert captured["acting_admin_id"] == "admin-1"
+    assert captured["meta"]["duration_seconds"] == 3600
+    assert ("success", "Video queued for download.") in messages
