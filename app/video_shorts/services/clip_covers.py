@@ -43,7 +43,7 @@ FACE_CONFIDENCE_MIN = 0.86
 MOUTH_VISIBILITY_DARK_RATIO_MIN = 0.012
 LIGHT_BOX_HIGHLIGHT_FALLBACK = "#E11D48"
 DARK_BOX_HIGHLIGHT_FALLBACK = "#FFD400"
-CANDIDATE_RANK_VERSION = 2
+CANDIDATE_RANK_VERSION = 3
 COVER_TEMPLATE_PREFERENCE_PREFIX = "cover_template"
 COVER_TEMPLATES = {"clean", "bold"}
 METIN_BRAND_ID = "37594f93-7692-49b2-b559-2e0841fe0268"
@@ -54,16 +54,36 @@ SELFIE_SEGMENTER_URL = (
 SELFIE_SEGMENTER_SHA256 = "191ac9529ae506ee0beefa6b2c945a172dab9d07d1e802a290a4e4038226658b"
 _SEGMENTER = None
 _SEGMENTER_LOCK = threading.Lock()
+_FACE_LANDMARKER = None
+_HAND_LANDMARKER = None
+_LANDMARKER_LOCK = threading.Lock()
+_LANDMARK_MODELS = {
+    "face": (
+        "https://storage.googleapis.com/mediapipe-models/face_landmarker/face_landmarker/float16/1/face_landmarker.task",
+        "64184e229b263107bc2b804c6625db1341ff2bb731874b0bcc2fe6544e0bc9ff",
+    ),
+    "hand": (
+        "https://storage.googleapis.com/mediapipe-models/hand_landmarker/hand_landmarker/float16/1/hand_landmarker.task",
+        "fbc2a30080c3c557093b5ddfc334698132eb341044ccee322ccf8bcf3607cde1",
+    ),
+}
 
 
 def _close_segmenter() -> None:
-    global _SEGMENTER
+    global _SEGMENTER, _FACE_LANDMARKER, _HAND_LANDMARKER
     segmenter, _SEGMENTER = _SEGMENTER, None
     if segmenter is not None:
         try:
             segmenter.close()
         except Exception:
             log.debug("MediaPipe segmenter close failed during process shutdown", exc_info=True)
+    for landmark_model in (_FACE_LANDMARKER, _HAND_LANDMARKER):
+        if landmark_model is not None:
+            try:
+                landmark_model.close()
+            except Exception:
+                log.debug("MediaPipe landmarker close failed during process shutdown", exc_info=True)
+    _FACE_LANDMARKER = _HAND_LANDMARKER = None
 
 
 atexit.register(_close_segmenter)
@@ -479,6 +499,8 @@ def _scale_face(face: dict[str, Any], scale: float) -> dict[str, Any]:
         name: {"x": round(float(point["x"]) / scale, 2), "y": round(float(point["y"]) / scale, 2)}
         for name, point in (face.get("landmarks") or {}).items()
     }
+    if face.get("chin"):
+        result["chin"] = {axis: round(float(face["chin"][axis]) / scale, 2) for axis in ("x", "y")}
     return result
 
 
@@ -597,7 +619,10 @@ def _candidate_frames(
     end = max(start, duration - 0.5)
     # Sample enough of the clip that hard eye/blur/occlusion filters can still
     # yield five genuinely usable choices instead of promoting rejected frames.
-    clip_offsets = [start + (end - start) * i / 47.0 for i in range(48)] if end > start else [duration / 2.0]
+    # Long talking-head clips often contain hands near the chin for most of the
+    # runtime; sample more densely so five safe frames can still be found.
+    sample_count = 144 if duration >= 45.0 else 48
+    clip_offsets = [start + (end - start) * i / float(sample_count - 1) for i in range(sample_count)] if end > start else [duration / 2.0]
     samples = [(_source_time_for_clip_offset(source_ranges, value), value) for value in clip_offsets]
     scored: list[dict[str, Any]] = []
     detector = None
@@ -636,6 +661,8 @@ def _candidate_frames(
         mouth_dark_ratio = 0.0
         mouth_obscured = False
         face_occluded = False
+        eye_aspect_ratio = None
+        hand_overlap = False
         rejection_reasons: list[str] = []
         if face:
             x, y, fw, fh = (int(face[k]) for k in ("x", "y", "w", "h"))
@@ -658,6 +685,15 @@ def _candidate_frames(
                 or not _landmark_geometry_is_visible(face)
                 or mouth_obscured
             )
+            try:
+                eye_aspect_ratio, hand_overlap, chin = _landmark_frame_quality(analysis, face)
+                if chin:
+                    face["chin"] = chin
+            except Exception:
+                log.exception("Cover eye/hand landmark evaluation failed at %.3f", ts)
+                rejection_reasons.append("landmarks_unavailable")
+            if hand_overlap:
+                rejection_reasons.append("hand_over_face_or_chin")
             if not eyes_open:
                 rejection_reasons.append("eyes_closed_or_not_visible")
             if face_sharpness < FACE_SHARPNESS_MIN:
@@ -683,12 +719,27 @@ def _candidate_frames(
             "clip_timestamp": round(float(clip_ts), 3), "score": round(score, 3),
             "frame_sharpness": round(frame_sharpness, 2), "face_sharpness": round(face_sharpness, 2),
             "eyes_open": eyes_open, "eye_count": eye_count, "mouth_state": mouth_state,
+            "eye_aspect_ratio": round(eye_aspect_ratio, 4) if eye_aspect_ratio is not None else None,
+            "hand_overlap": hand_overlap,
             "mouth_dark_ratio": round(mouth_dark_ratio, 4), "mouth_obscured": mouth_obscured,
             "face_occluded": face_occluded,
             "eligible": eligible, "rejection_reasons": rejection_reasons, "face": stored_face,
             "_speaker_feature": _speaker_feature(analysis, face, cv2) if face else None,
         })
     cap.release()
+    measured_eyes = sorted(float(item["eye_aspect_ratio"]) for item in scored if item.get("eye_aspect_ratio") is not None)
+    open_eye_reference = measured_eyes[max(0, int(len(measured_eyes) * 0.85) - 1)] if measured_eyes else None
+    if open_eye_reference:
+        threshold = 0.60 * open_eye_reference
+        for item in scored:
+            ear = item.get("eye_aspect_ratio")
+            if ear is not None and float(ear) < threshold:
+                reasons = list(item.get("rejection_reasons") or [])
+                reasons.append("eyes_below_60_percent_open")
+                item["rejection_reasons"] = reasons
+                item["eligible"] = False
+                item["score"] = round(float(item["score"]) - 10000.0, 3)
+            item["eye_open_reference"] = round(open_eye_reference, 4)
     _tag_main_speaker(scored)
     faces = [item for item in scored if item.get("face")]
     eligible = [item for item in faces if item.get("eligible")]
@@ -754,6 +805,13 @@ def _crop_frame(
         "w": fw * scale_x,
         "h": fh * scale_y,
     }
+    if face.get("chin"):
+        cover_face["chin_y"] = (float(face["chin"]["y"]) - top) * scale_y
+    if face.get("landmarks"):
+        cover_face["landmarks"] = {
+            name: {"x": (float(point["x"]) - left) * scale_x, "y": (float(point["y"]) - top) * scale_y}
+            for name, point in face["landmarks"].items()
+        }
     return (
         image.crop(box).resize((COVER_WIDTH, COVER_HEIGHT), Image.Resampling.LANCZOS),
         True,
@@ -927,6 +985,93 @@ def _model_path() -> Path:
     return path
 
 
+def _landmark_model_path(kind: str) -> Path:
+    url, digest = _LANDMARK_MODELS[kind]
+    path = Path(tempfile.gettempdir()) / "minti_models" / f"{kind}_landmarker.task"
+    if path.is_file() and hashlib.sha256(path.read_bytes()).hexdigest() == digest:
+        return path
+    path.parent.mkdir(parents=True, exist_ok=True)
+    with urllib.request.urlopen(url, timeout=20) as response:
+        data = response.read()
+    if hashlib.sha256(data).hexdigest() != digest:
+        raise RuntimeError(f"{kind} landmark model checksum mismatch")
+    temporary = path.with_suffix(".download")
+    temporary.write_bytes(data)
+    temporary.replace(path)
+    return path
+
+
+def _get_landmarkers() -> tuple[Any, Any]:
+    global _FACE_LANDMARKER, _HAND_LANDMARKER
+    if _FACE_LANDMARKER is not None and _HAND_LANDMARKER is not None:
+        return _FACE_LANDMARKER, _HAND_LANDMARKER
+    with _LANDMARKER_LOCK:
+        import mediapipe as mp
+
+        if _FACE_LANDMARKER is None:
+            options = mp.tasks.vision.FaceLandmarkerOptions(
+                base_options=mp.tasks.BaseOptions(model_asset_path=str(_landmark_model_path("face"))),
+                num_faces=3,
+            )
+            _FACE_LANDMARKER = mp.tasks.vision.FaceLandmarker.create_from_options(options)
+        if _HAND_LANDMARKER is None:
+            options = mp.tasks.vision.HandLandmarkerOptions(
+                base_options=mp.tasks.BaseOptions(model_asset_path=str(_landmark_model_path("hand"))),
+                num_hands=2,
+            )
+            _HAND_LANDMARKER = mp.tasks.vision.HandLandmarker.create_from_options(options)
+    return _FACE_LANDMARKER, _HAND_LANDMARKER
+
+
+def _eye_aspect_ratio(points: Any, indices: tuple[int, int, int, int, int, int]) -> float:
+    import math
+
+    a, b, c, d, e, f = (points[index] for index in indices)
+    distance = lambda p, q: math.hypot(float(p.x) - float(q.x), float(p.y) - float(q.y))
+    return (distance(b, f) + distance(c, e)) / max(2.0 * distance(a, d), 1e-6)
+
+
+def _landmark_frame_quality(image: Any, face: dict[str, Any]) -> tuple[Optional[float], bool, Optional[dict[str, float]]]:
+    """EAR and hand overlap for the selected face, in analysis-frame coordinates."""
+    import cv2
+    import mediapipe as mp
+    import numpy as np
+
+    height, width = image.shape[:2]
+    rgb = np.ascontiguousarray(cv2.cvtColor(image, cv2.COLOR_BGR2RGB))
+    mp_image = mp.Image(image_format=mp.ImageFormat.SRGB, data=rgb)
+    face_model, hand_model = _get_landmarkers()
+    face_result = face_model.detect(mp_image)
+    hand_result = hand_model.detect(mp_image)
+    center_x = (float(face["x"]) + float(face["w"]) / 2) / width
+    center_y = (float(face["y"]) + float(face["h"]) / 2) / height
+    points = min(
+        face_result.face_landmarks,
+        key=lambda landmarks: (float(landmarks[1].x) - center_x) ** 2 + (float(landmarks[1].y) - center_y) ** 2,
+        default=None,
+    )
+    ear = None
+    chin = None
+    if points is not None:
+        ear = (
+            _eye_aspect_ratio(points, (33, 160, 158, 133, 153, 144))
+            + _eye_aspect_ratio(points, (362, 385, 387, 263, 373, 380))
+        ) / 2.0
+        chin = {"x": float(points[152].x) * width, "y": float(points[152].y) * height}
+    # A hand intruding into the face or immediately below the chin is unsuitable,
+    # even when all five YuNet landmarks remain visible.
+    x0 = max(0.0, float(face["x"]) - 0.08 * float(face["w"])) / width
+    x1 = min(float(width), float(face["x"]) + 1.08 * float(face["w"])) / width
+    y0 = max(0.0, float(face["y"]) - 0.08 * float(face["h"])) / height
+    y1 = min(float(height), float(face["y"]) + 1.40 * float(face["h"])) / height
+    hand_overlap = any(
+        min(point.x for point in hand) <= x1 and max(point.x for point in hand) >= x0
+        and min(point.y for point in hand) <= y1 and max(point.y for point in hand) >= y0
+        for hand in hand_result.hand_landmarks
+    )
+    return ear, hand_overlap, chin
+
+
 def _get_segmenter() -> Any:
     global _SEGMENTER
     if _SEGMENTER is not None:
@@ -963,6 +1108,7 @@ def _red_glow_background() -> Image.Image:
 
 
 def _segment_subject(image: Image.Image, cover_face: Optional[dict[str, float]]) -> tuple[Optional[Image.Image], float, int]:
+    import cv2
     import mediapipe as mp
     import numpy as np
 
@@ -985,30 +1131,101 @@ def _segment_subject(image: Image.Image, cover_face: Optional[dict[str, float]])
     confidence = float(confidence_region.mean()) if confidence_region.size else 0.0
     if confidence < 0.58 or foreground_ratio < 0.055:
         return None, confidence, int(round((time.monotonic() - started) * 1000))
-    mask = Image.fromarray(np.uint8(np.clip(mask_array, 0.0, 1.0) * 255), mode="L")
-    mask = mask.resize((COVER_WIDTH, COVER_HEIGHT), Image.Resampling.BILINEAR).filter(ImageFilter.GaussianBlur(3.0))
+    # Reject uncertain background pixels before feathering. Keep the connected
+    # person component only; shelves and wall texture must not survive the matte.
+    soft = np.clip((mask_array - 0.52) / 0.32, 0.0, 1.0)
+    component_count, labels, stats, _ = cv2.connectedComponentsWithStats((soft > 0.24).astype("uint8"), 8)
+    if component_count > 1:
+        keep = 1 + int(np.argmax(stats[1:, cv2.CC_STAT_AREA]))
+        soft[labels != keep] = 0.0
+    if cover_face:
+        # The small selfie model sometimes mistakes a shelf beside the hair for
+        # foreground. Above the shoulders the person must remain near the face;
+        # clip that peripheral region before edge feathering.
+        face_x = float(cover_face["x"]) / COVER_WIDTH * soft.shape[1]
+        face_y = float(cover_face["y"]) / COVER_HEIGHT * soft.shape[0]
+        face_w = float(cover_face["w"]) / COVER_WIDTH * soft.shape[1]
+        face_h = float(cover_face["h"]) / COVER_HEIGHT * soft.shape[0]
+        for row in range(min(soft.shape[0], max(0, int(face_y + face_h * 0.80)))):
+            progress = max(0.0, min(1.0, (row - face_y) / max(face_h * 0.80, 1.0)))
+            above_face = 1.0 - min(1.0, row / max(face_y, 1.0))
+            left_bound = face_x + face_w * (0.08 + 0.15 * above_face - 0.40 * progress)
+            right_bound = face_x + face_w * (0.96 + 0.30 * progress)
+            fade = np.clip((np.arange(soft.shape[1]) - left_bound) / 8.0, 0.0, 1.0)
+            soft[row] *= fade
+            soft[row, min(soft.shape[1], int(right_bound)):] = 0.0
+    mask = cv2.resize(soft, (COVER_WIDTH, COVER_HEIGHT), interpolation=cv2.INTER_LINEAR)
+    mask = cv2.erode(mask, np.ones((3, 3), dtype="uint8"), iterations=1)
+    mask = cv2.GaussianBlur(mask, (0, 0), 3.2)
+    mask = np.clip(mask, 0.0, 1.0)
     subject = ImageEnhance.Contrast(image.convert("RGB")).enhance(1.08)
-    subject = ImageEnhance.Brightness(subject).enhance(1.05).convert("RGBA")
-    subject.putalpha(mask)
+    subject = ImageEnhance.Brightness(subject).enhance(1.05)
+    rgb = np.asarray(subject, dtype="float32").copy()
+    # Pull semi-transparent edge colors from confident subject pixels, so pale
+    # studio walls cannot leave a white fringe against the dark red background.
+    interior = (mask >= 0.85).astype("float32")
+    blur_weight = cv2.GaussianBlur(interior, (0, 0), 3.0)
+    blur_color = cv2.GaussianBlur(rgb * interior[..., None], (0, 0), 3.0)
+    decontaminated = blur_color / np.maximum(blur_weight[..., None], 1e-4)
+    edge = (mask > 0.02) & (mask < 0.92) & (blur_weight > 0.01)
+    rgb[edge] = decontaminated[edge]
+    subject = Image.fromarray(np.uint8(np.clip(rgb, 0, 255)), mode="RGB").convert("RGBA")
+    subject.putalpha(Image.fromarray(np.uint8(mask * 255), mode="L"))
     return subject, confidence, int(round((time.monotonic() - started) * 1000))
 
 
 def _compose_bold_background(
     image: Image.Image,
     cover_face: Optional[dict[str, float]],
-) -> tuple[Image.Image, bool, float, int]:
+    text_height: float,
+) -> tuple[Image.Image, dict[str, Any] | None, bool, float, int]:
     background = _red_glow_background()
     try:
         subject, confidence, elapsed_ms = _segment_subject(image, cover_face)
     except Exception:
-        log.exception("Bold cover person segmentation failed; using darkened-frame fallback")
-        subject, confidence, elapsed_ms = None, 0.0, 0
-    if subject is not None:
-        return Image.alpha_composite(background, subject).convert("RGB"), True, confidence, elapsed_ms
-    darkened = ImageEnhance.Brightness(image.convert("RGB")).enhance(0.55).convert("RGBA")
-    # Keep the glow visible while retaining the real frame when confidence is low.
-    fallback = Image.blend(darkened, background, 0.34)
-    return fallback.convert("RGB"), False, confidence, elapsed_ms
+        log.exception("Bold cover person segmentation failed")
+        raise
+    if subject is None:
+        raise RuntimeError("Bold cover segmentation confidence too low; refusing to retain the original background")
+    subject, cover_face = _fit_subject_below_text(subject, cover_face, text_height)
+    return Image.alpha_composite(background, subject).convert("RGB"), cover_face, True, confidence, elapsed_ms
+
+
+def _fit_subject_below_text(
+    subject: Image.Image, cover_face: Optional[dict[str, Any]], text_height: float,
+) -> tuple[Image.Image, Optional[dict[str, Any]]]:
+    if not cover_face:
+        return subject, None
+    face = dict(cover_face)
+    chin_y = float(face.get("chin_y") or (float(face["y"]) + float(face["h"])))
+    max_chin = COVER_HEIGHT - float(text_height) - 115.0 - 40.0
+    if chin_y <= max_chin:
+        return subject, face
+    # Move up first; if the top margin would fall below 60 px, scale the
+    # cutout around the horizontal center and keep the face top at 60 px.
+    shift = min(chin_y - max_chin, max(0.0, float(face["y"]) - 60.0))
+    scale = 1.0
+    if chin_y - shift > max_chin:
+        scale = min(1.0, (max_chin - 60.0) / max(chin_y - float(face["y"]), 1.0))
+        if scale < 0.72:
+            raise CoverCopyDoesNotFit("Bold text cannot fit below the face")
+        shift = float(face["y"]) * scale - 60.0
+    offset_x = (COVER_WIDTH - COVER_WIDTH * scale) / 2.0
+    offset_y = -shift
+    resized = subject.resize((round(COVER_WIDTH * scale), round(COVER_HEIGHT * scale)), Image.Resampling.LANCZOS)
+    canvas = Image.new("RGBA", (COVER_WIDTH, COVER_HEIGHT), (0, 0, 0, 0))
+    canvas.alpha_composite(resized, (round(offset_x), round(offset_y)))
+    for key, offset in (("x", offset_x), ("y", offset_y)):
+        face[key] = float(face[key]) * scale + offset
+    for key in ("w", "h"):
+        face[key] = float(face[key]) * scale
+    face["chin_y"] = chin_y * scale + offset_y
+    if face.get("landmarks"):
+        face["landmarks"] = {
+            name: {"x": float(point["x"]) * scale + offset_x, "y": float(point["y"]) * scale + offset_y}
+            for name, point in face["landmarks"].items()
+        }
+    return canvas, face
 
 
 def _locale_upper(value: str, *, turkish: bool) -> str:
@@ -1030,29 +1247,63 @@ def _fit_single_line(draw: Any, text: str, font_path: str, maximum: int, minimum
     return font, minimum
 
 
-def _fit_bold_main(draw: Any, text: str, font_path: str) -> tuple[Any, int, list[str]]:
+def _fit_bold_main(draw: Any, text: str, font_path: str, maximum: int = 260) -> tuple[Any, int, list[str]]:
     from app.video_shorts.services.compositor import _load_title_font
 
     maximum_width = int(COVER_WIDTH * 0.88)
-    for size in range(260, 199, -2):
+    minimum = min(200, maximum)
+    for size in range(maximum, minimum - 1, -2):
         font = _load_title_font(font_path, size)
         if font and float(draw.textlength(text, font=font)) <= maximum_width:
             return font, size, [text]
     words = text.split()
     if len(words) == 2:
-        for size in range(260, 199, -2):
+        for size in range(maximum, minimum - 1, -2):
             font = _load_title_font(font_path, size)
             if font and max(float(draw.textlength(word, font=font)) for word in words) <= maximum_width:
                 return font, size, words
-        font = _load_title_font(font_path, 200)
+        font = _load_title_font(font_path, minimum)
         if font:
-            return font, 200, words
+            return font, minimum, words
     # Preserve the requested visual height and condense an exceptionally long
     # word horizontally at draw time instead of clipping it or making it small.
-    font = _load_title_font(font_path, 200)
+    font = _load_title_font(font_path, minimum)
     if font is None:
         raise RuntimeError("Bold cover font could not be loaded")
-    return font, 200, [text]
+    return font, minimum, [text]
+
+
+def _bold_text_metrics(kicker: str, main: str, highlight: str, main_maximum: int = 260) -> dict[str, Any]:
+    from app.video_shorts.services.compositor import _title_font_path_for_text
+
+    all_text = " ".join(value for value in (kicker, main, highlight) if value).strip()
+    turkish = any(character in all_text for character in "çğıöşüÇĞİÖŞÜ")
+    kicker, main, highlight = (_locale_upper(value, turkish=turkish) for value in (kicker, main, highlight))
+    font_path = _title_font_path_for_text(
+        all_text, str((TITLE_FONTS.get("oswald_bold") or TITLE_FONTS[DEFAULT_EDITOR_TITLE_FONT_KEY])["path"]),
+    )
+    draw = ImageDraw.Draw(Image.new("RGB", (1, 1)))
+    main_font, main_size, main_lines = _fit_bold_main(draw, main, font_path, main_maximum)
+    highlight_font, highlight_size = _fit_single_line(draw, highlight, font_path, 150, 110, int(COVER_WIDTH * 0.82))
+    kicker_font, kicker_size = _fit_single_line(draw, kicker or " ", font_path, 64, 52, int(COVER_WIDTH * 0.82))
+    main_boxes = [draw.textbbox((0, 0), line, font=main_font) for line in main_lines]
+    highlight_box = draw.textbbox((0, 0), highlight, font=highlight_font)
+    kicker_box = draw.textbbox((0, 0), kicker or " ", font=kicker_font)
+    main_line_heights = [box[3] - box[1] for box in main_boxes]
+    main_line_gap = -18 if len(main_lines) > 1 else 0
+    main_height = sum(main_line_heights) + main_line_gap * max(0, len(main_lines) - 1)
+    highlight_height = highlight_box[3] - highlight_box[1]
+    kicker_height = kicker_box[3] - kicker_box[1] if kicker else 0
+    return {
+        "kicker": kicker, "main": main, "highlight": highlight,
+        "main_font": main_font, "main_size": main_size, "main_lines": main_lines,
+        "main_boxes": main_boxes, "main_line_heights": main_line_heights,
+        "main_line_gap": main_line_gap, "main_height": main_height,
+        "highlight_font": highlight_font, "highlight_size": highlight_size, "highlight_box": highlight_box,
+        "highlight_height": highlight_height, "kicker_font": kicker_font, "kicker_size": kicker_size,
+        "kicker_box": kicker_box, "kicker_height": kicker_height,
+        "total_height": main_height + highlight_height + kicker_height + (45 if kicker else 24) + 76,
+    }
 
 
 def _draw_centered_scaled_text(
@@ -1095,41 +1346,42 @@ def _draw_bold_text(
     main: str,
     highlight: str,
     cover_face: Optional[dict[str, float]],
+    main_maximum: int = 260,
 ) -> dict[str, Any]:
-    from app.video_shorts.services.compositor import _title_font_path_for_text
-
-    all_text = " ".join(value for value in (kicker, main, highlight) if value).strip()
-    turkish = any(character in all_text for character in "çğıöşüÇĞİÖŞÜ")
-    kicker = _locale_upper(kicker, turkish=turkish)
-    main = _locale_upper(main, turkish=turkish)
-    highlight = _locale_upper(highlight, turkish=turkish)
-    font_path = _title_font_path_for_text(
-        all_text, str((TITLE_FONTS.get("oswald_bold") or TITLE_FONTS[DEFAULT_EDITOR_TITLE_FONT_KEY])["path"]),
+    metrics = _bold_text_metrics(kicker, main, highlight, main_maximum)
+    kicker, main, highlight = (metrics[key] for key in ("kicker", "main", "highlight"))
+    main_font, main_size, main_lines = (metrics[key] for key in ("main_font", "main_size", "main_lines"))
+    main_boxes, main_line_heights, main_line_gap = (
+        metrics[key] for key in ("main_boxes", "main_line_heights", "main_line_gap")
     )
-    draw = ImageDraw.Draw(image, "RGBA")
-    main_font, main_size, main_lines = _fit_bold_main(draw, main, font_path)
-    highlight_font, highlight_size = _fit_single_line(draw, highlight, font_path, 150, 110, int(COVER_WIDTH * 0.82))
-    kicker_font, kicker_size = _fit_single_line(draw, kicker or " ", font_path, 64, 52, int(COVER_WIDTH * 0.82))
-    main_boxes = [draw.textbbox((0, 0), line, font=main_font) for line in main_lines]
-    highlight_box = draw.textbbox((0, 0), highlight, font=highlight_font)
-    kicker_box = draw.textbbox((0, 0), kicker or " ", font=kicker_font)
-    main_line_heights = [box[3] - box[1] for box in main_boxes]
-    main_line_gap = -18 if len(main_lines) > 1 else 0
-    main_height = sum(main_line_heights) + main_line_gap * max(0, len(main_lines) - 1)
-    highlight_height = highlight_box[3] - highlight_box[1]
-    kicker_height = kicker_box[3] - kicker_box[1] if kicker else 0
-    total_height = main_height + highlight_height + kicker_height + (45 if kicker else 24) + 76
+    main_height, highlight_height, kicker_height = (
+        metrics[key] for key in ("main_height", "highlight_height", "kicker_height")
+    )
+    highlight_font, highlight_size, highlight_box = (
+        metrics[key] for key in ("highlight_font", "highlight_size", "highlight_box")
+    )
+    kicker_font, kicker_size, kicker_box = (
+        metrics[key] for key in ("kicker_font", "kicker_size", "kicker_box")
+    )
+    total_height = float(metrics["total_height"])
     face_safe_bottom = (
-        float(cover_face["y"]) + float(cover_face["h"]) * 0.92 + 50.0 if cover_face else 760.0
+        float(cover_face.get("chin_y") or (float(cover_face["y"]) + float(cover_face["h"]))) + 40.0
+        if cover_face else 760.0
     )
-    y = min(max(800.0, face_safe_bottom), COVER_HEIGHT - total_height - 115.0)
+    y = max(800.0, face_safe_bottom)
+    max_top = COVER_HEIGHT - total_height - 115.0
+    if y > max_top + 1.0:
+        raise CoverCopyDoesNotFit("Bold text cannot fit below the chin")
+    y = min(y, max_top)  # tolerate only subpixel rounding after subject fitting
+    text_layer = Image.new("RGBA", image.size, (0, 0, 0, 0))
+    draw = ImageDraw.Draw(text_layer, "RGBA")
     if kicker:
         _draw_letter_spaced(draw, kicker, kicker_font, y - kicker_box[1], (255, 255, 255, 255))
         y += kicker_height + 28
     main_y = y
     for index, (line, box_value, line_height) in enumerate(zip(main_lines, main_boxes, main_line_heights)):
         _draw_centered_scaled_text(
-            image, line, main_font, main_y,
+            text_layer, line, main_font, main_y,
             maximum_width=int(COVER_WIDTH * 0.88),
         )
         main_y += line_height + (main_line_gap if index < len(main_lines) - 1 else 0)
@@ -1147,6 +1399,18 @@ def _draw_bold_text(
         ((COVER_WIDTH - highlight_width) / 2.0, y + padding_y - highlight_box[1]),
         highlight, font=highlight_font, fill=(255, 255, 255, 255),
     )
+    if cover_face and cover_face.get("landmarks"):
+        alpha = text_layer.getchannel("A")
+        for name in ("right_eye", "left_eye", "right_mouth", "left_mouth"):
+            point = cover_face["landmarks"].get(name)
+            if not point:
+                continue
+            x, py = float(point["x"]), float(point["y"])
+            region = (max(0, int(x - 36)), max(0, int(py - 36)),
+                      min(COVER_WIDTH, int(x + 36)), min(COVER_HEIGHT, int(py + 36)))
+            if region[2] > region[0] and region[3] > region[1] and alpha.crop(region).getbbox():
+                raise CoverCopyDoesNotFit(f"Bold text overlaps the {name} landmark box")
+    image.paste(text_layer, (0, 0), text_layer)
     return {
         "kicker": kicker,
         "main": main,
@@ -1302,12 +1566,22 @@ def generate_cover(payload: dict[str, Any]) -> dict[str, Any]:
         segmentation_confidence = 0.0
         segmentation_ms = 0
         if template == "bold":
-            image, segmentation_used, segmentation_confidence, segmentation_ms = _compose_bold_background(
-                image, cover_face,
-            )
-            _draw_bold_text(
-                image, kicker=kicker, main=main, highlight=bold_highlight, cover_face=cover_face,
-            )
+            original_image = image
+            for main_maximum in (260, 240, 220, 200, 190, 180, 170):
+                try:
+                    text_height = float(_bold_text_metrics(kicker, main, bold_highlight, main_maximum)["total_height"])
+                    image, fitted_face, segmentation_used, segmentation_confidence, segmentation_ms = _compose_bold_background(
+                        original_image, cover_face, text_height,
+                    )
+                    _draw_bold_text(
+                        image, kicker=kicker, main=main, highlight=bold_highlight,
+                        cover_face=fitted_face, main_maximum=main_maximum,
+                    )
+                    break
+                except CoverCopyDoesNotFit:
+                    if main_maximum == 170:
+                        raise
+                    log.info("Bold cover text needs smaller main font generated_video_id=%s max=%s", generated_id, main_maximum)
         else:
             try:
                 text_layout = _draw_cover_text(

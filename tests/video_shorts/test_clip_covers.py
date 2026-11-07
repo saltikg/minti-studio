@@ -13,6 +13,9 @@ from app.video_shorts.services.clip_covers import (
     _contrast_ratio,
     _fit_cover_layout,
     _fit_bold_main,
+    _fit_subject_below_text,
+    _draw_bold_text,
+    _eye_aspect_ratio,
     _highlight_word_indexes,
     _mouth_region_is_obscured,
     _locale_upper,
@@ -137,3 +140,37 @@ def test_long_two_word_bold_main_wraps_instead_of_clipping():
 
     assert size >= 200
     assert lines == ["KÜÇÜK", "ATIŞTIRMALIKLAR"]
+
+
+def test_eye_aspect_ratio_rejects_a_partly_closed_eye():
+    from types import SimpleNamespace
+
+    points = [SimpleNamespace(x=0.0, y=0.0) for _ in range(6)]
+    for index, pair in enumerate(((0, 0), (2, -1), (8, -1), (10, 0), (8, 1), (2, 1))):
+        points[index] = SimpleNamespace(x=pair[0], y=pair[1])
+    open_ratio = _eye_aspect_ratio(points, (0, 1, 2, 3, 4, 5))
+    points[1] = SimpleNamespace(x=2, y=-0.4)
+    points[2] = SimpleNamespace(x=8, y=-0.4)
+    points[4] = SimpleNamespace(x=8, y=0.4)
+    points[5] = SimpleNamespace(x=2, y=0.4)
+    assert _eye_aspect_ratio(points, (0, 1, 2, 3, 4, 5)) < 0.60 * open_ratio
+
+
+def test_bold_text_starts_below_chin_after_subject_is_moved():
+    subject = Image.new("RGBA", (1080, 1920), (200, 180, 150, 255))
+    face = {"x": 300, "y": 600, "w": 500, "h": 900, "chin_y": 1550,
+            "landmarks": {"left_eye": {"x": 450, "y": 780}, "right_mouth": {"x": 550, "y": 1400}}}
+    moved, fitted = _fit_subject_below_text(subject, face, 650)
+    assert moved.size == (1080, 1920)
+    assert fitted["y"] >= 60
+    assert fitted["chin_y"] + 40 <= 1920 - 650 - 115
+    assert fitted["landmarks"]["right_mouth"]["y"] < fitted["chin_y"]
+
+
+def test_bold_text_refuses_to_clamp_back_over_face():
+    image = Image.new("RGB", (1080, 1920), "#0B0B0D")
+    with pytest.raises(CoverCopyDoesNotFit):
+        _draw_bold_text(
+            image, kicker="", main="KİLO", highlight="ENGELİ",
+            cover_face={"x": 300, "y": 1050, "w": 500, "h": 600, "chin_y": 1650},
+        )
