@@ -1016,6 +1016,55 @@ def _fit_single_line(draw: Any, text: str, font_path: str, maximum: int, minimum
     return font, minimum
 
 
+def _fit_bold_main(draw: Any, text: str, font_path: str) -> tuple[Any, int, list[str]]:
+    from app.video_shorts.services.compositor import _load_title_font
+
+    maximum_width = int(COVER_WIDTH * 0.88)
+    for size in range(260, 199, -2):
+        font = _load_title_font(font_path, size)
+        if font and float(draw.textlength(text, font=font)) <= maximum_width:
+            return font, size, [text]
+    words = text.split()
+    if len(words) == 2:
+        for size in range(260, 199, -2):
+            font = _load_title_font(font_path, size)
+            if font and max(float(draw.textlength(word, font=font)) for word in words) <= maximum_width:
+                return font, size, words
+        font = _load_title_font(font_path, 200)
+        if font:
+            return font, 200, words
+    # Preserve the requested visual height and condense an exceptionally long
+    # word horizontally at draw time instead of clipping it or making it small.
+    font = _load_title_font(font_path, 200)
+    if font is None:
+        raise RuntimeError("Bold cover font could not be loaded")
+    return font, 200, [text]
+
+
+def _draw_centered_scaled_text(
+    image: Image.Image,
+    text: str,
+    font: Any,
+    y: float,
+    *,
+    maximum_width: int,
+) -> None:
+    stroke_width = 3
+    bbox = font.getbbox(text, stroke_width=stroke_width)
+    width = max(1, int(math.ceil(bbox[2] - bbox[0])))
+    height = max(1, int(math.ceil(bbox[3] - bbox[1])))
+    layer = Image.new("RGBA", (width, height), (0, 0, 0, 0))
+    layer_draw = ImageDraw.Draw(layer)
+    layer_draw.text(
+        (-bbox[0], -bbox[1]), text, font=font, fill=(255, 255, 255, 255),
+        stroke_width=stroke_width, stroke_fill=(0, 0, 0, 170),
+    )
+    if width > maximum_width:
+        layer = layer.resize((maximum_width, height), Image.Resampling.LANCZOS)
+        width = maximum_width
+    image.paste(layer, (int((COVER_WIDTH - width) / 2), int(y)), layer)
+
+
 def _draw_letter_spaced(draw: Any, text: str, font: Any, y: float, fill: tuple[int, int, int, int], spacing: int = 7) -> None:
     widths = [float(draw.textlength(character, font=font)) for character in text]
     total = sum(widths) + max(0, len(widths) - 1) * spacing
@@ -1044,13 +1093,15 @@ def _draw_bold_text(
         all_text, str((TITLE_FONTS.get("oswald_bold") or TITLE_FONTS[DEFAULT_EDITOR_TITLE_FONT_KEY])["path"]),
     )
     draw = ImageDraw.Draw(image, "RGBA")
-    main_font, main_size = _fit_single_line(draw, main, font_path, 260, 200, int(COVER_WIDTH * 0.88))
+    main_font, main_size, main_lines = _fit_bold_main(draw, main, font_path)
     highlight_font, highlight_size = _fit_single_line(draw, highlight, font_path, 150, 110, int(COVER_WIDTH * 0.82))
     kicker_font, kicker_size = _fit_single_line(draw, kicker or " ", font_path, 64, 52, int(COVER_WIDTH * 0.82))
-    main_box = draw.textbbox((0, 0), main, font=main_font)
+    main_boxes = [draw.textbbox((0, 0), line, font=main_font) for line in main_lines]
     highlight_box = draw.textbbox((0, 0), highlight, font=highlight_font)
     kicker_box = draw.textbbox((0, 0), kicker or " ", font=kicker_font)
-    main_height = main_box[3] - main_box[1]
+    main_line_heights = [box[3] - box[1] for box in main_boxes]
+    main_line_gap = -18 if len(main_lines) > 1 else 0
+    main_height = sum(main_line_heights) + main_line_gap * max(0, len(main_lines) - 1)
     highlight_height = highlight_box[3] - highlight_box[1]
     kicker_height = kicker_box[3] - kicker_box[1] if kicker else 0
     total_height = main_height + highlight_height + kicker_height + (45 if kicker else 24) + 76
@@ -1061,11 +1112,13 @@ def _draw_bold_text(
     if kicker:
         _draw_letter_spaced(draw, kicker, kicker_font, y - kicker_box[1], (255, 255, 255, 255))
         y += kicker_height + 28
-    main_width = float(draw.textlength(main, font=main_font))
-    draw.text(
-        ((COVER_WIDTH - main_width) / 2.0, y - main_box[1]), main, font=main_font,
-        fill=(255, 255, 255, 255), stroke_width=3, stroke_fill=(0, 0, 0, 170),
-    )
+    main_y = y
+    for index, (line, box_value, line_height) in enumerate(zip(main_lines, main_boxes, main_line_heights)):
+        _draw_centered_scaled_text(
+            image, line, main_font, main_y,
+            maximum_width=int(COVER_WIDTH * 0.88),
+        )
+        main_y += line_height + (main_line_gap if index < len(main_lines) - 1 else 0)
     y += main_height + 24
     highlight_width = float(draw.textlength(highlight, font=highlight_font))
     padding_x, padding_y = 30, 16

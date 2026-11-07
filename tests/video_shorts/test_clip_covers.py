@@ -3,6 +3,8 @@ from __future__ import annotations
 import pytest
 import numpy as np
 
+from PIL import Image, ImageDraw
+
 from app.video_shorts.config import DEFAULT_EDITOR_TITLE_FONT_KEY, TITLE_FONTS
 from app.video_shorts.services.clip_covers import (
     COVER_TEXT_MAX_WIDTH,
@@ -10,6 +12,7 @@ from app.video_shorts.services.clip_covers import (
     MIN_COVER_FONT_SIZE,
     _contrast_ratio,
     _fit_cover_layout,
+    _fit_bold_main,
     _highlight_word_indexes,
     _mouth_region_is_obscured,
     _locale_upper,
@@ -124,3 +127,13 @@ def test_main_speaker_cluster_rejects_a_brief_different_face():
     assert candidates[2]["main_speaker"] is False
     assert candidates[2]["eligible"] is False
     assert "different_speaker" in candidates[2]["rejection_reasons"]
+
+
+def test_long_two_word_bold_main_wraps_instead_of_clipping():
+    draw = ImageDraw.Draw(Image.new("RGB", (1080, 1920)))
+    font_path = str(TITLE_FONTS["oswald_bold"]["path"])
+
+    font, size, lines = _fit_bold_main(draw, "KÜÇÜK ATIŞTIRMALIKLAR", font_path)
+
+    assert size >= 200
+    assert lines == ["KÜÇÜK", "ATIŞTIRMALIKLAR"]
