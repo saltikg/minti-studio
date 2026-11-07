@@ -1257,7 +1257,7 @@ def _stabilize_face_track_crop(
     side_margin: float = FACE_AWARE_FILL_FACE_SIDE_MARGIN,
     ease: float = FACE_AWARE_FILL_TRACK_EASE,
 ) -> list[dict[str, float]]:
-    """Apply a horizontal safe-zone, easing, and exact hold across detection gaps."""
+    """Apply safe-zone/easing within shots and jump immediately at shot cuts."""
     safe_crop_w = max(0.01, min(1.0, float(crop_w)))
     safe_crop_h = max(0.01, min(1.0, float(crop_h)))
     safe_margin = max(0.0, min(0.45, float(side_margin)))
@@ -1269,7 +1269,8 @@ def _stabilize_face_track_crop(
     gap_active = False
     stabilized: list[dict[str, float]] = []
 
-    for raw_point in sorted(face_track_points or [], key=lambda item: float(item.get("t") or 0.0)):
+    ordered_points = sorted(face_track_points or [], key=lambda item: float(item.get("t") or 0.0))
+    for point_index, raw_point in enumerate(ordered_points):
         point = dict(raw_point)
         found = bool(point.get("found", True))
         try:
@@ -1281,11 +1282,41 @@ def _stabilize_face_track_crop(
             found = False
             cx = cy = face_w = face_h = 0.0
 
+        if point.get("cut"):
+            # A cut is a discontinuity, not motion. Seed the new shot from its first
+            # confirmed face (the cut row normally carries it); never ease from the
+            # previous shot or hold its crop while detection catches up.
+            seed = point if found else next(
+                (
+                    candidate
+                    for candidate in ordered_points[point_index + 1:]
+                    if candidate.get("cut") or candidate.get("found", True)
+                ),
+                None,
+            )
+            if seed is not None and (seed is point or not seed.get("cut")):
+                try:
+                    seed_cx = float(seed.get("cx") or 0.0)
+                    seed_cy = float(seed.get("cy") or 0.0)
+                    seed_h = max(0.0, min(1.0, float(seed.get("h") or 0.0)))
+                except Exception:
+                    seed = None
+                else:
+                    current_x = max(0.0, min(max_x, seed_cx - (safe_crop_w / 2.0)))
+                    centered_y = seed_cy - (safe_crop_h / 2.0)
+                    face_top = seed_cy - (seed_h / 2.0)
+                    current_y = max(0.0, min(max_y, min(centered_y, face_top)))
+                    gap_active = False
+
         if current_x is None:
             if not found:
                 continue
             current_x = max(0.0, min(max_x, cx - (safe_crop_w / 2.0)))
             current_y = max(0.0, min(max_y, cy - (safe_crop_h / 2.0)))
+        elif point.get("cut"):
+            # The crop was initialized from this shot's seed above. Preserve the
+            # discontinuity on the cut point so the ffmpeg expression emits a jump.
+            gap_active = not found
         elif not found:
             gap_active = True
         elif gap_active:

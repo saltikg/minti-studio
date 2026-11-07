@@ -217,6 +217,41 @@ def test_face_track_dead_zone_does_not_move_for_small_face_moves() -> None:
     assert [point["x"] for point in tracked] == pytest.approx([tracked[0]["x"]] * 3)
 
 
+def test_face_track_jumps_at_cut_then_eases_only_within_new_shot() -> None:
+    points = [
+        {"t": 0.0, "cx": 0.20, "cy": 0.40, "w": 0.08, "h": 0.20, "found": True},
+        {"t": 0.5, "cx": 0.21, "cy": 0.40, "w": 0.08, "h": 0.20, "found": True},
+        {"t": 1.0, "cx": 0.80, "cy": 0.40, "w": 0.08, "h": 0.20, "found": True, "cut": True},
+        {"t": 1.5, "cx": 0.82, "cy": 0.40, "w": 0.08, "h": 0.20, "found": True},
+        {"t": 2.0, "cx": 0.90, "cy": 0.40, "w": 0.08, "h": 0.20, "found": True},
+    ]
+
+    tracked = compositor._stabilize_face_track_crop(points, crop_w=0.31640625, crop_h=1.0)
+
+    assert tracked[1]["x"] == pytest.approx(tracked[0]["x"])
+    assert tracked[2]["x"] == pytest.approx(0.80 - (0.31640625 / 2.0))
+    assert tracked[2]["x"] != pytest.approx((tracked[0]["x"] + tracked[2]["x"]) / 2.0)
+    assert tracked[3]["x"] == pytest.approx(tracked[2]["x"])
+    assert tracked[2]["x"] < tracked[4]["x"] < 1.0 - 0.31640625
+
+
+def test_face_track_cut_looks_ahead_to_first_confirmed_face() -> None:
+    points = [
+        {"t": 0.0, "cx": 0.20, "cy": 0.40, "w": 0.08, "h": 0.20, "found": True},
+        {"t": 1.0, "cx": 0.20, "cy": 0.40, "w": 0.08, "h": 0.20, "found": False, "cut": True},
+        {"t": 1.5, "cx": 0.78, "cy": 0.40, "w": 0.08, "h": 0.20, "found": True},
+    ]
+
+    tracked = compositor._stabilize_face_track_crop(points, crop_w=0.31640625, crop_h=1.0)
+
+    assert tracked[1]["x"] == pytest.approx(0.78 - (0.31640625 / 2.0))
+    assert tracked[2]["x"] == pytest.approx(tracked[1]["x"])
+
+    expression = compositor._piecewise_linear_ratio_expr(tracked, "x")
+    assert expression is not None
+    assert "if(lt(t,1.000000)" in expression
+
+
 def test_face_track_holds_position_during_gap_and_on_resume() -> None:
     points = [
         {"t": 0.0, "cx": 0.30, "cy": 0.40, "w": 0.08, "h": 0.20, "found": True},

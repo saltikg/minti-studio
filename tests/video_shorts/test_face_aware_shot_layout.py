@@ -110,6 +110,36 @@ def test_split_transition_uses_shot_cut_between_face_samples():
     ]
 
 
+def test_late_detected_shot_cut_snaps_split_transition_between_samples():
+    segments = [
+        {"start": 0.0, "end": 5.5, "mode": "fill"},
+        {"start": 5.5, "end": 8.0, "mode": "split"},
+    ]
+    samples = [
+        {"t": 5.0, "face_count": 1},
+        {"t": 5.5, "face_count": 2},
+        {"t": 6.0, "face_count": 2},
+    ]
+
+    result, snapped = generation._snap_split_transitions_to_shot_cuts(
+        segments,
+        samples,
+        shot_cuts=[105.25],
+        absolute_start=100.0,
+    )
+
+    assert result == [
+        {"start": 0.0, "end": 5.25, "mode": "fill"},
+        {"start": 5.25, "end": 8.0, "mode": "split"},
+    ]
+    assert snapped == [{
+        "from": 5.5,
+        "to": 5.25,
+        "reason": "split_shot_cut",
+        "sample_gap": [5.0, 5.5],
+    }]
+
+
 def test_multiface_track_picks_nearest_single_face_in_same_shot():
     samples = [
         {"t": 0.0, "faces": [{"cx_ratio": 0.2, "cy_ratio": 0.4, "w_ratio": 0.2, "h_ratio": 0.3}]},
