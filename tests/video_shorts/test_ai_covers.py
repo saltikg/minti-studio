@@ -3,10 +3,18 @@ from __future__ import annotations
 import base64
 import io
 import json
+from datetime import datetime
+from zoneinfo import ZoneInfo
 
 from PIL import Image
 
-from app.video_shorts.services.ai_covers import _api_request, _normalize_ocr, _prompt, ai_cover_enabled
+from app.video_shorts.services.ai_covers import (
+    _api_request,
+    _normalize_ocr,
+    _prompt,
+    ai_cover_allowance,
+    ai_cover_enabled,
+)
 
 
 def test_ai_prompt_is_versioned_and_exact_copy_is_preserved():
@@ -74,3 +82,38 @@ def test_ai_requires_global_flag_key_and_brand_opt_in(monkeypatch):
     assert ai_cover_enabled("owner", "brand")
     monkeypatch.setattr(ai_covers, "load_user_bool_preference", lambda *_args: False)
     assert not ai_cover_enabled("owner", "brand")
+
+
+def test_monthly_allowance_counts_ai_covered_and_rendered_shorts_in_pacific_month(monkeypatch):
+    import app.video_shorts.services.ai_covers as ai_covers
+
+    queries = []
+
+    class Result:
+        def __init__(self, value):
+            self.value = value
+
+        def fetchone(self):
+            return (self.value,)
+
+    class Conn:
+        def execute(self, sql, params):
+            queries.append((sql, params))
+            return Result(2 if "shorts_cover_ai_calls" in sql else 5)
+
+        def close(self):
+            pass
+
+    monkeypatch.setattr(ai_covers, "get_db_readonly", Conn)
+    monkeypatch.setattr(ai_covers, "table_columns", lambda _conn, table: {"id"} if table == "shorts_cover_ai_calls" else set())
+
+    used, allowed = ai_cover_allowance(
+        "owner", "brand",
+        now=datetime(2026, 11, 8, 12, tzinfo=ZoneInfo("America/Los_Angeles")),
+    )
+
+    assert (used, allowed) == (2, 5)
+    assert "COUNT(DISTINCT generated_video_id)" in queries[0][0]
+    assert "COUNT(DISTINCT id)" in queries[1][0]
+    assert queries[0][1][2:] == [datetime(2026, 11, 1, 7), datetime(2026, 12, 1, 8)]
+    assert queries[1][1][2:] == [datetime(2026, 11, 1, 7), datetime(2026, 12, 1, 8)]

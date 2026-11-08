@@ -1905,6 +1905,54 @@ def upload_cover(*, generated_video_id: int, owner_user_id: str, brand_id: str,
         conn.close()
 
 
+def remove_cover(*, generated_video_id: int, owner_user_id: str,
+                 brand_id: str, video_pk: int) -> bool:
+    """Remove the active cover record and its currently referenced private objects."""
+    conn = get_db()
+    keys: set[str] = set()
+    try:
+        _cover_target(conn, generated_video_id, owner_user_id=owner_user_id,
+                      brand_id=brand_id, video_pk=video_pk)
+        row = conn.execute(
+            """
+            SELECT storage_key, generated_storage_key, candidate_frames_json
+              FROM shorts_clip_covers
+             WHERE generated_video_id=? AND owner_user_id=? AND brand_id=? AND video_pk=?
+            """,
+            [generated_video_id, owner_user_id, brand_id, video_pk],
+        ).fetchone()
+        if not row:
+            return False
+        keys.update(str(value) for value in row[:2] if str(value or "").strip())
+        for candidate in _parse_json(row[2]) if row[2] else []:
+            key = str((candidate or {}).get("storage_key") or "").strip()
+            if key:
+                keys.add(key)
+        conn.execute(
+            "DELETE FROM shorts_clip_covers WHERE generated_video_id=? AND owner_user_id=? AND brand_id=? AND video_pk=?",
+            [generated_video_id, owner_user_id, brand_id, video_pk],
+        )
+        conn.execute(
+            "DELETE FROM shorts_storage_assets WHERE file_key=? AND CAST(user_id AS VARCHAR)=? AND brand_id=?",
+            [f"cover:{generated_video_id}", str(owner_user_id), brand_id],
+        )
+        conn.commit()
+    finally:
+        conn.close()
+
+    prefix = f"brands/{brand_id}/private/short-covers/{generated_video_id}/"
+    storage = get_media_storage()
+    for key in keys:
+        if not key.startswith(prefix):
+            log.warning("Refusing to delete out-of-scope cover object key=%s", key)
+            continue
+        try:
+            storage.delete(key)
+        except Exception:
+            log.warning("Could not delete removed cover object key=%s", key, exc_info=True)
+    return True
+
+
 def activate_generated_cover(*, generated_video_id: int, owner_user_id: str,
                              brand_id: str, video_pk: int) -> None:
     conn = get_db()

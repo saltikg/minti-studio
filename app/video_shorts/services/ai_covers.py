@@ -20,7 +20,7 @@ from zoneinfo import ZoneInfo
 
 from PIL import Image, ImageOps
 
-from app.video_shorts.services.db import get_db, get_db_readonly
+from app.video_shorts.services.db import get_db, get_db_readonly, table_columns
 from app.video_shorts.services.user_preferences import load_user_bool_preference
 
 log = logging.getLogger(__name__)
@@ -74,10 +74,25 @@ def ensure_ai_cover_schema(conn) -> None:
     conn.execute("CREATE INDEX IF NOT EXISTS idx_cover_ai_cap ON shorts_cover_ai_calls(brand_id, created_at, image_returned)")
 
 
-def _month_start_utc() -> datetime:
-    now_pt = datetime.now(ZoneInfo("America/Los_Angeles"))
+def _month_bounds_utc(now: datetime | None = None) -> tuple[datetime, datetime]:
+    now_pt = now or datetime.now(ZoneInfo("America/Los_Angeles"))
+    if now_pt.tzinfo is None:
+        now_pt = now_pt.replace(tzinfo=timezone.utc).astimezone(ZoneInfo("America/Los_Angeles"))
+    else:
+        now_pt = now_pt.astimezone(ZoneInfo("America/Los_Angeles"))
     start_pt = now_pt.replace(day=1, hour=0, minute=0, second=0, microsecond=0)
-    return start_pt.astimezone(timezone.utc).replace(tzinfo=None)
+    if start_pt.month == 12:
+        end_pt = start_pt.replace(year=start_pt.year + 1, month=1)
+    else:
+        end_pt = start_pt.replace(month=start_pt.month + 1)
+    return (
+        start_pt.astimezone(timezone.utc).replace(tzinfo=None),
+        end_pt.astimezone(timezone.utc).replace(tzinfo=None),
+    )
+
+
+def _month_start_utc() -> datetime:
+    return _month_bounds_utc()[0]
 
 
 def ai_cover_usage(owner_user_id: str, brand_id: str) -> tuple[int, int]:
@@ -88,6 +103,43 @@ def ai_cover_usage(owner_user_id: str, brand_id: str) -> tuple[int, int]:
             [owner_user_id, brand_id, _month_start_utc()],
         ).fetchone()
         return int(row[0] or 0), ai_cover_monthly_cap()
+    finally:
+        conn.close()
+
+
+def ai_cover_allowance(
+    owner_user_id: str,
+    brand_id: str,
+    *,
+    now: datetime | None = None,
+) -> tuple[int, int]:
+    """Return AI-covered Shorts / rendered Shorts for the current Pacific month."""
+    start_utc, end_utc = _month_bounds_utc(now)
+    conn = get_db_readonly()
+    try:
+        if table_columns(conn, "shorts_cover_ai_calls"):
+            used = int(conn.execute(
+                """
+                SELECT COUNT(DISTINCT generated_video_id)
+                  FROM shorts_cover_ai_calls
+                 WHERE owner_user_id=? AND brand_id=? AND image_returned=TRUE
+                   AND created_at>=? AND created_at<?
+                """,
+                [str(owner_user_id), str(brand_id), start_utc, end_utc],
+            ).fetchone()[0] or 0)
+        else:
+            used = 0
+        allowed = int(conn.execute(
+            """
+            SELECT COUNT(DISTINCT id)
+              FROM shorts_generated_videos
+             WHERE CAST(user_id AS VARCHAR)=? AND brand_id=?
+               AND generation_status='created'
+               AND created_at>=? AND created_at<?
+            """,
+            [str(owner_user_id), str(brand_id), start_utc, end_utc],
+        ).fetchone()[0] or 0)
+        return used, allowed
     finally:
         conn.close()
 

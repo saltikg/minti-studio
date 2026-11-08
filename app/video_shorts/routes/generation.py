@@ -18387,6 +18387,12 @@ def download_generated_clip(video_pk: int, plan_index: int):
     )
 
 
+def _require_cover_admin() -> None:
+    current_user = getattr(g, "vs_current_user", None) or {}
+    if str(current_user.get("role") or "").strip().lower() != "admin":
+        abort(403)
+
+
 def _scoped_generated_clip_for_cover(video_pk: int, plan_index: int) -> Dict[str, Any]:
     context = _active_editor_context()
     conn = get_db_readonly()
@@ -18432,89 +18438,37 @@ def _scoped_generated_clip_for_cover(video_pk: int, plan_index: int) -> Dict[str
         conn.close()
 
 
-@video_shorts_bp.route("/generate/<int:video_pk>/clip/<int:plan_index>/cover", methods=["GET", "POST"])
+@video_shorts_bp.route("/generate/<int:video_pk>/clip/<int:plan_index>/cover", methods=["GET"])
 def clip_cover(video_pk: int, plan_index: int):
+    _require_cover_admin()
     target = _scoped_generated_clip_for_cover(video_pk, plan_index)
     from app.video_shorts.services.clip_covers import (
-        CoverValidationError,
-        get_brand_cover_template,
         get_cover_for_generated,
-        normalize_cover_template,
-        save_brand_cover_template,
         signed_cover_payload,
-        validate_clean_cover_text,
     )
-    from app.video_shorts.services.render_jobs import enqueue_cover_job
-    from app.video_shorts.services.ai_covers import ai_cover_enabled, ai_cover_usage
-
-    if request.method == "POST":
-        data = request.get_json(silent=True) or request.form
-        template = normalize_cover_template(data.get("cover_template"), brand_id=target["brand_id"])
-        if template == "ai" and not ai_cover_enabled(target["owner_user_id"], target["brand_id"]):
-            return jsonify({"success": False, "message": "AI covers are not enabled for this brand."}), 403
-        cover_text = " ".join(str(data.get("cover_text") or "").strip().split())
-        highlight = " ".join(str(data.get("highlight_phrase") or "").strip().split())
-        kicker = " ".join(str(data.get("kicker") or "").strip().split())
-        main = " ".join(str(data.get("main") or "").strip().split())
-        bold_highlight = " ".join(str(data.get("bold_highlight") or "").strip().split())
-        try:
-            cover_text = validate_clean_cover_text(cover_text)
-        except CoverValidationError as exc:
-            return jsonify({"success": False, "message": str(exc)}), 400
-        if highlight and cover_text and highlight.casefold() not in cover_text.casefold():
-            return jsonify({"success": False, "message": "Highlight phrase must appear in the cover text."}), 400
-        if len(kicker.split()) > 3 or len(main.split()) > 2 or len(bold_highlight.split()) > 3:
-            return jsonify({"success": False, "message": "Bold copy must use a 3-word kicker, 2-word main, and 3-word highlight at most."}), 400
-        if sum(len(value.split()) for value in (kicker, main, bold_highlight)) > 6:
-            return jsonify({"success": False, "message": "Bold cover copy must be 6 words or fewer in total."}), 400
-        selected_timestamp = data.get("selected_timestamp")
-        try:
-            selected_timestamp = float(selected_timestamp) if selected_timestamp not in (None, "") else None
-        except (TypeError, ValueError):
-            return jsonify({"success": False, "message": "Invalid candidate frame."}), 400
-        payload = {
-            **target,
-            "cover_template": template,
-            "cover_text": cover_text,
-            "highlight_phrase": highlight,
-            "kicker": kicker,
-            "main": main,
-            "bold_highlight": bold_highlight,
-            "selected_timestamp": selected_timestamp,
-            **admin_operation_job_metadata(request_admin_operation_scope() or {}),
-        }
-        digest = sha256(
-            json.dumps([
-                target["generated_video_id"], template, cover_text, highlight, kicker, main,
-                bold_highlight, selected_timestamp, time.time_ns(),
-            ]).encode("utf-8")
-        ).hexdigest()
-        save_brand_cover_template(target["owner_user_id"], target["brand_id"], template)
-        queued = enqueue_cover_job(
-            user_id=target["owner_user_id"], payload=payload, input_hash=digest, priority=5,
-        )
-        return jsonify({"success": True, "status": "queued", "job_id": queued["job"]["id"]}), 202
+    from app.video_shorts.services.ai_covers import ai_cover_allowance
 
     cover = get_cover_for_generated(
         target["generated_video_id"], owner_user_id=target["owner_user_id"],
         brand_id=target["brand_id"], video_pk=video_pk,
     )
+    ai_used, ai_allowed = ai_cover_allowance(target["owner_user_id"], target["brand_id"])
     if not cover:
         return jsonify({
             "success": True,
             "status": "missing",
             "cover": None,
-            "cover_template": get_brand_cover_template(target["owner_user_id"], target["brand_id"]),
-            "ai_enabled": ai_cover_enabled(target["owner_user_id"], target["brand_id"]),
+            "ai_enabled": False,
+            "ai_used": ai_used,
+            "ai_allowed": ai_allowed,
         })
-    ai_enabled = ai_cover_enabled(target["owner_user_id"], target["brand_id"])
-    ai_used, ai_cap = ai_cover_usage(target["owner_user_id"], target["brand_id"]) if ai_enabled else (0, 0)
     return jsonify({"success": True, "status": cover["status"], "cover": signed_cover_payload(cover),
-                    "ai_enabled": ai_enabled, "ai_used": ai_used, "ai_cap": ai_cap})
+                    "ai_enabled": False, "ai_used": ai_used, "ai_allowed": ai_allowed})
 
 
 @video_shorts_bp.route("/generate/<int:video_pk>/clip/<int:plan_index>/cover/upload", methods=["POST"])
 def upload_clip_cover(video_pk: int, plan_index: int):
+    _require_cover_admin()
     target = _scoped_generated_clip_for_cover(video_pk, plan_index)
     from app.video_shorts.services.clip_covers import upload_cover
 
@@ -18534,8 +18488,22 @@ def upload_clip_cover(video_pk: int, plan_index: int):
     return jsonify({"success": True, "status": "ready", "source": "upload", "size_bytes": result["size_bytes"]})
 
 
+@video_shorts_bp.route("/generate/<int:video_pk>/clip/<int:plan_index>/cover/remove", methods=["POST"])
+def remove_clip_cover(video_pk: int, plan_index: int):
+    _require_cover_admin()
+    target = _scoped_generated_clip_for_cover(video_pk, plan_index)
+    from app.video_shorts.services.clip_covers import remove_cover
+
+    removed = remove_cover(
+        generated_video_id=target["generated_video_id"], owner_user_id=target["owner_user_id"],
+        brand_id=target["brand_id"], video_pk=video_pk,
+    )
+    return jsonify({"success": True, "status": "missing", "removed": removed})
+
+
 @video_shorts_bp.route("/generate/<int:video_pk>/clip/<int:plan_index>/cover/restore", methods=["POST"])
 def restore_generated_clip_cover(video_pk: int, plan_index: int):
+    _require_cover_admin()
     target = _scoped_generated_clip_for_cover(video_pk, plan_index)
     from app.video_shorts.services.clip_covers import activate_generated_cover
 
@@ -18551,6 +18519,7 @@ def restore_generated_clip_cover(video_pk: int, plan_index: int):
 
 @video_shorts_bp.route("/generate/<int:video_pk>/clip/<int:plan_index>/cover/download", methods=["GET"])
 def download_clip_cover(video_pk: int, plan_index: int):
+    _require_cover_admin()
     target = _scoped_generated_clip_for_cover(video_pk, plan_index)
     from app.video_shorts.services.clip_covers import get_cover_for_generated
 
