@@ -4526,6 +4526,9 @@ def _round_to_frame_time(value: float, fps: Optional[float]) -> float:
     return round(round(float(value or 0.0) * clean_fps) / clean_fps, 6)
 
 
+_FACE_MODE_CUT_LOOKAHEAD_SECONDS = 0.2
+
+
 def _face_aware_scene_candidates(
     source_path: Path,
     *,
@@ -4604,6 +4607,140 @@ def _face_aware_scene_candidates(
                     )
                     cut_samples.append(sample)
         return candidates
+
+
+def _real_cut_candidates_in_timeline_window(
+    source_path: Path,
+    *,
+    absolute_start: float,
+    window_start: float,
+    window_end: float,
+    source_keep_ranges: Optional[List[Dict[str, float]]] = None,
+) -> List[Tuple[float, float]]:
+    """Return frame-level scene cuts mapped onto the edited clip timeline."""
+    clean_start = max(0.0, float(window_start or 0.0))
+    clean_end = max(clean_start, float(window_end or clean_start))
+    if clean_end - clean_start <= 1e-6:
+        return []
+
+    keep_ranges = _normalize_edit_keep_ranges(source_keep_ranges)
+    if not keep_ranges:
+        keep_ranges = [{
+            "start": float(absolute_start),
+            "end": float(absolute_start) + clean_end,
+        }]
+
+    candidates: List[Tuple[float, float]] = []
+    timeline_offset = 0.0
+    for item in keep_ranges:
+        source_range_start = float(item["start"])
+        source_range_end = float(item["end"])
+        source_range_duration = max(0.0, source_range_end - source_range_start)
+        timeline_end = timeline_offset + source_range_duration
+        overlap_start = max(clean_start, timeline_offset)
+        overlap_end = min(clean_end, timeline_end)
+        if overlap_end - overlap_start > 1e-6:
+            source_scan_start = source_range_start + (overlap_start - timeline_offset)
+            source_scan_duration = overlap_end - overlap_start
+            for score, source_time in _face_aware_scene_candidates(
+                source_path,
+                start=source_scan_start,
+                duration=source_scan_duration,
+            ):
+                timeline_time = (
+                    float(absolute_start)
+                    + timeline_offset
+                    + (float(source_time) - source_range_start)
+                )
+                candidates.append((float(score), timeline_time))
+        timeline_offset = timeline_end
+        if timeline_offset >= clean_end:
+            break
+    return candidates
+
+
+def _snap_mode_transitions_to_real_cuts(
+    segments: List[Dict[str, Any]],
+    samples: List[Dict[str, Any]],
+    *,
+    source_path: Path,
+    absolute_start: float,
+    source_keep_ranges: Optional[List[Dict[str, float]]] = None,
+) -> Tuple[List[Dict[str, Any]], List[Dict[str, Any]], List[float]]:
+    """Snap every layout transition to a verified frame cut or the new-mode sample."""
+    if len(segments or []) <= 1 or not samples:
+        return segments, [], []
+
+    fps = _probe_video_fps(source_path)
+    ordered_samples = sorted(samples, key=lambda sample: float(sample.get("t") or 0.0))
+    snapped: List[Dict[str, Any]] = []
+    real_cut_times: List[float] = []
+    for index in range(len(segments) - 1):
+        left_mode = str(segments[index].get("mode") or "").strip().lower()
+        right_mode = str(segments[index + 1].get("mode") or "").strip().lower()
+        boundary = float(segments[index].get("end") or 0.0)
+        left_sample = next(
+            (
+                sample for sample in reversed(ordered_samples)
+                if float(sample.get("t") or 0.0) <= boundary + 1e-6
+                and _face_aware_mode_for_count(int(sample.get("face_count") or 0)) == left_mode
+            ),
+            None,
+        )
+        right_sample = next(
+            (
+                sample for sample in ordered_samples
+                if float(sample.get("t") or 0.0) >= boundary - 1e-6
+                and _face_aware_mode_for_count(int(sample.get("face_count") or 0)) == right_mode
+            ),
+            None,
+        )
+        if not right_sample:
+            continue
+        left_time = (
+            float(left_sample.get("t") or 0.0)
+            if left_sample
+            else max(0.0, boundary - float(FACE_AWARE_SNAP_WINDOW_SEC or 0.0))
+        )
+        right_time = float(right_sample.get("t") or 0.0)
+        if right_time < left_time:
+            continue
+        scan_end = right_time + _FACE_MODE_CUT_LOOKAHEAD_SECONDS
+        candidates = _real_cut_candidates_in_timeline_window(
+            source_path,
+            absolute_start=float(absolute_start),
+            window_start=left_time,
+            window_end=scan_end,
+            source_keep_ranges=source_keep_ranges,
+        )
+        if candidates:
+            score, cut_absolute = max(
+                candidates,
+                key=lambda item: (item[0], -abs(item[1] - (float(absolute_start) + boundary))),
+            )
+            cut_time = _round_to_frame_time(
+                float(cut_absolute) - float(absolute_start),
+                fps,
+            )
+            reason = "real_frame_cut"
+            real_cut_times.append(float(absolute_start) + cut_time)
+        else:
+            score = None
+            cut_time = _round_to_frame_time(right_time, fps)
+            reason = "first_confirmed_sample"
+        cut_time = max(0.0, min(float(segments[-1]["end"]), cut_time))
+        segments[index]["end"] = cut_time
+        segments[index + 1]["start"] = cut_time
+        snapped.append({
+            "from": round(boundary, 6),
+            "to": round(cut_time, 6),
+            "reason": reason,
+            "modes": [left_mode, right_mode],
+            "sample_gap": [round(left_time, 6), round(right_time, 6)],
+            "scan_window": [round(left_time, 6), round(scan_end, 6)],
+            "scene_score": round(float(score), 6) if score is not None else None,
+        })
+    return _merge_face_aware_runs(segments), snapped, sorted(set(real_cut_times))
 
 
 def _snap_face_aware_boundary(
@@ -4723,9 +4860,34 @@ def _face_track_shot_boundaries(
             if nearby_scene is not None and abs(nearby_scene - midpoint) <= 0.5
             else midpoint
         )
+        reason = "jump_scene" if cut_time == nearby_scene else "face_jump"
+        if reason == "face_jump":
+            verified_candidates = _real_cut_candidates_in_timeline_window(
+                source_path,
+                absolute_start=float(absolute_start),
+                window_start=max(0.0, previous_time - float(absolute_start)),
+                window_end=(
+                    current_time
+                    - float(absolute_start)
+                    + _FACE_MODE_CUT_LOOKAHEAD_SECONDS
+                ),
+                source_keep_ranges=source_keep_ranges,
+            )
+            if verified_candidates:
+                score, verified_time = max(
+                    verified_candidates,
+                    key=lambda item: (item[0], -abs(item[1] - midpoint)),
+                )
+                cut_details.append({
+                    "time": verified_time,
+                    "reason": "face_jump_scene",
+                    "jump": round(jump, 6),
+                    "scene_score": round(float(score), 6),
+                    "samples": [round(previous_time, 6), round(current_time, 6)],
+                })
         cut_details.append({
             "time": cut_time,
-            "reason": "jump_scene" if cut_time == nearby_scene else "face_jump",
+            "reason": reason,
             "jump": round(jump, 6),
             "samples": [round(previous_time, 6), round(current_time, 6)],
         })
@@ -4735,7 +4897,11 @@ def _face_track_shot_boundaries(
         for item in cut_details
         if item.get("reason") == "range_join"
     }
-    candidate_cuts = sorted({round(float(item["time"]), 6) for item in cut_details})
+    candidate_cuts = sorted({
+        round(float(item["time"]), 6)
+        for item in cut_details
+        if item.get("reason") in {"scene", "jump_scene", "face_jump_scene", "range_join"}
+    })
     range_start = float(absolute_start)
     range_end = range_start + float(duration)
     boundaries = [range_start, *candidate_cuts, range_end]
@@ -4792,66 +4958,6 @@ def _snap_face_aware_segments(
         segments[idx + 1]["start"] = snapped_rel
         snapped_boundaries.append({"from": round(boundary, 6), "to": round(snapped_rel, 6)})
     return _merge_face_aware_runs(segments), snapped_boundaries
-
-
-def _snap_split_transitions_to_shot_cuts(
-    segments: List[Dict[str, Any]],
-    samples: List[Dict[str, Any]],
-    *,
-    shot_cuts: List[float],
-    absolute_start: float,
-) -> Tuple[List[Dict[str, Any]], List[Dict[str, Any]]]:
-    """Put a Split transition on a cut that lies between its face-count samples."""
-    if len(segments or []) <= 1 or not samples or not shot_cuts:
-        return segments, []
-
-    ordered_samples = sorted(samples, key=lambda sample: float(sample.get("t") or 0.0))
-    relative_cuts = sorted(
-        float(cut) - float(absolute_start)
-        for cut in shot_cuts
-    )
-    snapped: List[Dict[str, Any]] = []
-    for index in range(len(segments) - 1):
-        left_mode = str(segments[index].get("mode") or "").strip().lower()
-        right_mode = str(segments[index + 1].get("mode") or "").strip().lower()
-        if "split" not in {left_mode, right_mode}:
-            continue
-        boundary = float(segments[index].get("end") or 0.0)
-        left_sample = next(
-            (
-                sample for sample in reversed(ordered_samples)
-                if float(sample.get("t") or 0.0) <= boundary
-                and _face_aware_mode_for_count(int(sample.get("face_count") or 0)) == left_mode
-            ),
-            None,
-        )
-        right_sample = next(
-            (
-                sample for sample in ordered_samples
-                if float(sample.get("t") or 0.0) >= boundary
-                and _face_aware_mode_for_count(int(sample.get("face_count") or 0)) == right_mode
-            ),
-            None,
-        )
-        if not left_sample or not right_sample:
-            continue
-        left_time = float(left_sample.get("t") or 0.0)
-        right_time = float(right_sample.get("t") or 0.0)
-        if right_time < left_time:
-            continue
-        candidates = [cut for cut in relative_cuts if left_time <= cut <= right_time]
-        if not candidates:
-            continue
-        cut_time = min(candidates, key=lambda cut: abs(cut - boundary))
-        segments[index]["end"] = cut_time
-        segments[index + 1]["start"] = cut_time
-        snapped.append({
-            "from": round(boundary, 6),
-            "to": round(cut_time, 6),
-            "reason": "split_shot_cut",
-            "sample_gap": [round(left_time, 6), round(right_time, 6)],
-        })
-    return _merge_face_aware_runs(segments), snapped
 
 
 def _load_face_aware_zoom_points(
@@ -5520,21 +5626,15 @@ def _compute_face_aware_layout_segments(
         samples, duration_seconds=duration, scene_cuts=scene_cuts,
     )
     snapped_boundaries: List[Dict[str, Any]] = []
-    if len(segments) > 1 and len(keep_ranges) <= 1:
-        segments, snapped_boundaries = _snap_face_aware_segments(
+    mode_boundary_cuts: List[float] = []
+    if len(segments) > 1:
+        segments, snapped_boundaries, mode_boundary_cuts = _snap_mode_transitions_to_real_cuts(
             segments,
+            samples,
             source_path=source_path,
             absolute_start=start_seconds,
-            known_scene_candidates=scene_candidates,
+            source_keep_ranges=keep_ranges,
         )
-    elif len(segments) > 1:
-        fps = _probe_video_fps(source_path)
-        for idx, segment in enumerate(segments[:-1]):
-            original_boundary = float(segment["end"])
-            snapped = _round_to_frame_time(original_boundary, fps)
-            segment["end"] = snapped
-            segments[idx + 1]["start"] = snapped
-            snapped_boundaries.append({"from": round(original_boundary, 6), "to": snapped})
     face_shot_cuts: list[float] = []
     face_shot_holds: list[tuple[float, float]] = []
     face_shot_details: list[dict[str, Any]] = []
@@ -5549,13 +5649,7 @@ def _compute_face_aware_layout_segments(
                 source_keep_ranges=keep_ranges,
                 known_scene_candidates=scene_candidates,
             )
-            segments, split_cut_snaps = _snap_split_transitions_to_shot_cuts(
-                segments,
-                samples,
-                shot_cuts=face_shot_cuts,
-                absolute_start=float(start_seconds),
-            )
-            snapped_boundaries.extend(split_cut_snaps)
+            face_shot_cuts = sorted(set(face_shot_cuts + mode_boundary_cuts))
             track_rows = _build_face_track_rows(
                 samples,
                 absolute_start=float(start_seconds),

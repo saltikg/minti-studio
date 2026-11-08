@@ -110,34 +110,64 @@ def test_split_transition_uses_shot_cut_between_face_samples():
     ]
 
 
-def test_late_detected_shot_cut_snaps_split_transition_between_samples():
+def test_real_cut_two_frames_after_first_split_sample_wins(monkeypatch, tmp_path):
+    monkeypatch.setattr(generation, "_probe_video_fps", lambda _source_path: 30.0)
+    calls = []
+
+    def scene_candidates(_source_path, *, start, duration, cut_samples=None):
+        calls.append((start, duration))
+        return [(0.73, 105.0 + (2.0 / 30.0))]
+
+    monkeypatch.setattr(generation, "_face_aware_scene_candidates", scene_candidates)
     segments = [
-        {"start": 0.0, "end": 5.5, "mode": "fill"},
-        {"start": 5.5, "end": 8.0, "mode": "split"},
+        {"start": 0.0, "end": 5.0, "mode": "fill"},
+        {"start": 5.0, "end": 8.0, "mode": "split"},
     ]
     samples = [
-        {"t": 5.0, "face_count": 1},
+        {"t": 4.5, "face_count": 1},
+        {"t": 5.0, "face_count": 2},
         {"t": 5.5, "face_count": 2},
-        {"t": 6.0, "face_count": 2},
     ]
 
-    result, snapped = generation._snap_split_transitions_to_shot_cuts(
+    result, snapped, cuts = generation._snap_mode_transitions_to_real_cuts(
         segments,
         samples,
-        shot_cuts=[105.25],
+        source_path=tmp_path / "source.mp4",
         absolute_start=100.0,
     )
 
-    assert result == [
-        {"start": 0.0, "end": 5.25, "mode": "fill"},
-        {"start": 5.25, "end": 8.0, "mode": "split"},
+    assert result[0]["end"] == pytest.approx(5.066667)
+    assert result[1]["start"] == pytest.approx(5.066667)
+    assert snapped[0]["reason"] == "real_frame_cut"
+    assert snapped[0]["scan_window"] == [4.5, 5.2]
+    assert cuts == [pytest.approx(105.066667)]
+    assert calls == [(104.5, pytest.approx(0.7))]
+
+
+def test_face_jump_without_real_cut_uses_first_confirmed_sample(monkeypatch, tmp_path):
+    monkeypatch.setattr(generation, "_probe_video_fps", lambda _source_path: 30.0)
+    monkeypatch.setattr(generation, "_face_aware_scene_candidates", lambda *args, **kwargs: [])
+    segments = [
+        {"start": 0.0, "end": 5.0, "mode": "fill"},
+        {"start": 5.0, "end": 8.0, "mode": "split"},
     ]
-    assert snapped == [{
-        "from": 5.5,
-        "to": 5.25,
-        "reason": "split_shot_cut",
-        "sample_gap": [5.0, 5.5],
-    }]
+    samples = [
+        {"t": 4.5, "face_count": 1},
+        {"t": 5.0, "face_count": 2},
+        {"t": 5.5, "face_count": 2},
+    ]
+
+    result, snapped, cuts = generation._snap_mode_transitions_to_real_cuts(
+        segments,
+        samples,
+        source_path=tmp_path / "source.mp4",
+        absolute_start=100.0,
+    )
+
+    assert result == segments
+    assert snapped[0]["to"] == 5.0
+    assert snapped[0]["reason"] == "first_confirmed_sample"
+    assert cuts == []
 
 
 def test_multiface_track_picks_nearest_single_face_in_same_shot():
