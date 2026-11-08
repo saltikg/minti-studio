@@ -170,6 +170,35 @@ def test_face_jump_without_real_cut_uses_first_confirmed_sample(monkeypatch, tmp
     assert cuts == []
 
 
+def test_smoothed_mode_without_exact_face_count_still_scans_boundary(monkeypatch, tmp_path):
+    monkeypatch.setattr(generation, "_probe_video_fps", lambda _source_path: 30.0)
+    monkeypatch.setattr(generation, "_face_aware_scene_candidates", lambda *args, **kwargs: [])
+    segments = [
+        {"start": 0.0, "end": 30.0, "mode": "split"},
+        {"start": 30.0, "end": 31.0, "mode": "fill"},
+        {"start": 31.0, "end": 35.0, "mode": "split"},
+    ]
+    samples = [
+        {"t": 29.5, "face_count": 2},
+        {"t": 30.0, "face_count": 2},
+        {"t": 30.5, "face_count": 3},
+        {"t": 31.0, "face_count": 2},
+    ]
+
+    result, snapped, cuts = generation._snap_mode_transitions_to_real_cuts(
+        segments,
+        samples,
+        source_path=tmp_path / "source.mp4",
+        absolute_start=100.0,
+    )
+
+    assert result[0]["end"] == 30.5
+    assert result[1]["start"] == 30.5
+    assert snapped[0]["sample_gap"] == [30.0, 30.5]
+    assert snapped[0]["reason"] == "first_confirmed_sample"
+    assert cuts == []
+
+
 def test_multiface_track_picks_nearest_single_face_in_same_shot():
     samples = [
         {"t": 0.0, "faces": [{"cx_ratio": 0.2, "cy_ratio": 0.4, "w_ratio": 0.2, "h_ratio": 0.3}]},

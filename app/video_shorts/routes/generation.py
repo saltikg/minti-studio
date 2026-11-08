@@ -4676,13 +4676,15 @@ def _snap_mode_transitions_to_real_cuts(
     snapped: List[Dict[str, Any]] = []
     real_cut_times: List[float] = []
     for index in range(len(segments) - 1):
+        left_start = float(segments[index].get("start") or 0.0)
         left_mode = str(segments[index].get("mode") or "").strip().lower()
         right_mode = str(segments[index + 1].get("mode") or "").strip().lower()
         boundary = float(segments[index].get("end") or 0.0)
+        right_end = float(segments[index + 1].get("end") or boundary)
         left_sample = next(
             (
                 sample for sample in reversed(ordered_samples)
-                if float(sample.get("t") or 0.0) <= boundary + 1e-6
+                if left_start - 1e-6 <= float(sample.get("t") or 0.0) <= boundary + 1e-6
                 and _face_aware_mode_for_count(int(sample.get("face_count") or 0)) == left_mode
             ),
             None,
@@ -4690,11 +4692,33 @@ def _snap_mode_transitions_to_real_cuts(
         right_sample = next(
             (
                 sample for sample in ordered_samples
-                if float(sample.get("t") or 0.0) >= boundary - 1e-6
+                if boundary - 1e-6 <= float(sample.get("t") or 0.0) <= right_end + 1e-6
                 and _face_aware_mode_for_count(int(sample.get("face_count") or 0)) == right_mode
             ),
             None,
         )
+        # Run smoothing can relabel a short raw Fit/Split/Fill run, so an exact
+        # face-count mapping for the displayed mode may not exist. In that case,
+        # the first sample that actually leaves the old mode is the confirmed
+        # transition sample; never leave the midpoint boundary unverified.
+        if not right_sample:
+            right_sample = next(
+                (
+                    sample for sample in ordered_samples
+                    if boundary - 1e-6 <= float(sample.get("t") or 0.0) <= right_end + 1e-6
+                    and _face_aware_mode_for_count(int(sample.get("face_count") or 0)) != left_mode
+                ),
+                None,
+            )
+        if not left_sample:
+            left_sample = next(
+                (
+                    sample for sample in reversed(ordered_samples)
+                    if left_start - 1e-6 <= float(sample.get("t") or 0.0) <= boundary + 1e-6
+                    and _face_aware_mode_for_count(int(sample.get("face_count") or 0)) != right_mode
+                ),
+                None,
+            )
         if not right_sample:
             continue
         left_time = (
