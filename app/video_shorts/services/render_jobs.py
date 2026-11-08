@@ -757,6 +757,7 @@ def enqueue_job(
     input_hash: str,
     max_attempts: int = DEFAULT_MAX_ATTEMPTS,
     priority: Optional[int] = None,
+    reuse_completed: bool = True,
 ) -> Dict[str, Any]:
     conn = get_db()
     try:
@@ -771,8 +772,16 @@ def enqueue_job(
             input_hash = hashlib.sha256(raw.encode("utf-8")).hexdigest()
         ensure_render_jobs_schema(conn)
         payload, priority = _prepare_owner_job_payload(conn, user_id, payload, priority)
-        existing_done = _find_job_by_hash(conn, user_id=user_id, input_hash=input_hash,
-                                          statuses=(JOB_STATUS_DONE,), job_type=job_type, payload=payload)
+        existing_done = None
+        if reuse_completed:
+            existing_done = _find_job_by_hash(
+                conn,
+                user_id=user_id,
+                input_hash=input_hash,
+                statuses=(JOB_STATUS_DONE,),
+                job_type=job_type,
+                payload=payload,
+            )
         if existing_done and job_type in {JOB_TYPE_RENDER_SHORT, JOB_TYPE_PREVIEW_FRAME} and not is_render_job_cache_valid(existing_done, conn=conn):
             _invalidate_done_job_cache_entry(conn, existing_done["id"])
             existing_done = None
@@ -1125,6 +1134,7 @@ def enqueue_render_job(
     input_hash: str,
     max_attempts: int = DEFAULT_MAX_ATTEMPTS,
     priority: Optional[int] = None,
+    reuse_completed: bool = True,
 ) -> Dict[str, Any]:
     return enqueue_job(
         user_id=user_id,
@@ -1133,6 +1143,7 @@ def enqueue_render_job(
         input_hash=input_hash,
         max_attempts=max_attempts,
         priority=priority,
+        reuse_completed=reuse_completed,
     )
 
 

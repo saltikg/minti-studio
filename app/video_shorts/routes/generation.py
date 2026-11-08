@@ -36050,6 +36050,7 @@ def regenerate_clip_video(video_pk: int, plan_index: int):
         user_id=str(target_owner_user_id),
         payload=payload,
         input_hash=input_hash,
+        reuse_completed=not force_regenerate,
     )
     kind = enqueue_result.get("kind")
     job = enqueue_result.get("job") or {}
@@ -36092,6 +36093,7 @@ def regenerate_clip_video(video_pk: int, plan_index: int):
         job_id=job.get("id"),
         status=job.get("status") or ("done" if kind == "cached" else "queued"),
         queue_position=job.get("queue_position"),
+        cached=kind == "cached",
     ), 202
 
 

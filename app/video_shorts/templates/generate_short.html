@@ -17235,6 +17235,13 @@ const enqueueRegenerateClip = async (card, options = {}) => {
     handleClipJobFailurePayload(planIndex, payload);
     return false;
   }
+  if (payload.cached) {
+    setRegenerateFeedback(planIndex, "This Short is already up to date.", false);
+    setGenerateV2ClipMutationLocked(planIndex, false);
+    setGenerateV2RenderOverlay(planIndex, { active: false, failed: false });
+    injectClipNotice(planIndex, "You've already generated this clip.");
+    return true;
+  }
   renderClipJobProgressState(card, payload.status || "queued", payload.queue_position, { mode: "regenerate" });
   void pollClipJobUntilDone(planIndex, payload.job_id, {
     initialStatus: payload.status || "queued",

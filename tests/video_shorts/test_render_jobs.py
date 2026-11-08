@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import errno
+import inspect
 import json
 import logging
 import sys
@@ -109,6 +110,9 @@ from app.video_shorts.services import render_jobs, usage_metering, tenant_media
 from app.video_shorts.services.media_utils import MediaSubprocessStartError, MediaSubprocessTimeoutError
 from app.video_shorts import worker as worker_module
 from app.video_shorts.worker import process_next_job
+
+
+ROOT = Path(__file__).resolve().parents[2]
 
 
 @pytest.fixture(autouse=True)
@@ -1270,6 +1274,81 @@ def test_done_job_cache_returns_existing_result_without_new_job(monkeypatch, tmp
     assert uncached["job"]["payload"]["video_pk"] == 1
     assert other_path.read_bytes() == other_before
     assert other_output.read_bytes() == b"other tenant output"
+
+
+def test_force_render_skips_done_cache_but_keeps_active_dedupe(monkeypatch, tmp_path):
+    _configure_duckdb(monkeypatch, tmp_path, "force_render_cache.duckdb")
+    monkeypatch.setattr(tenant_media, "get_db_readonly", db_service.get_db)
+    monkeypatch.setattr(render_jobs, "is_render_job_cache_valid", lambda job, *, conn=None: True)
+
+    user_id = str(uuid4())
+    _insert_user(user_id, "plan_10gb")
+    _insert_video(1, "force-cache-video", user_id, brand_id="brand-1")
+    _write_plan(tmp_path / "shorts", "force-cache-video", video_pk=1)
+    plan_path = tmp_path / "shorts" / "1_plan.json"
+    plan = json.loads(plan_path.read_text())
+    plan["plan"][0].update(status="created", output_filename="1_force-cache-video_v1.mp4")
+    plan_path.write_text(json.dumps(plan))
+    (tmp_path / "shorts" / "1_force-cache-video_v1.mp4").write_bytes(b"rendered output")
+    monkeypatch.setattr(generation, "get_media_storage", lambda: SimpleNamespace(backend_name="local"))
+
+    payload = _payload(1, "force-cache-video")
+    input_hash = _input_hash("force-cache-video")
+    first = render_jobs.enqueue_render_job(
+        user_id=user_id,
+        payload=payload,
+        input_hash=input_hash,
+    )
+    render_jobs.mark_job_done(
+        first["job"]["id"],
+        {"clip_filename": "1_force-cache-video_v1.mp4", "status": "created"},
+    )
+
+    normal = render_jobs.enqueue_render_job(
+        user_id=user_id,
+        payload=payload,
+        input_hash=input_hash,
+    )
+
+    forced = render_jobs.enqueue_render_job(
+        user_id=user_id,
+        payload=payload,
+        input_hash=input_hash,
+        reuse_completed=False,
+    )
+    duplicate_force = render_jobs.enqueue_render_job(
+        user_id=user_id,
+        payload=payload,
+        input_hash=input_hash,
+        reuse_completed=False,
+    )
+
+    assert normal["kind"] == "cached"
+    assert normal["job"]["id"] == first["job"]["id"]
+    assert forced["kind"] == "queued"
+    assert forced["job"]["id"] != first["job"]["id"]
+    assert duplicate_force["kind"] == "existing"
+    assert duplicate_force["job"]["id"] == forced["job"]["id"]
+
+    conn = db_service.get_db_readonly()
+    try:
+        assert conn.execute("SELECT COUNT(*) FROM shorts_render_jobs").fetchone()[0] == 2
+    finally:
+        conn.close()
+
+
+def test_regenerate_route_and_ui_wire_force_and_cached_semantics():
+    route_source = inspect.getsource(generation.regenerate_clip_video)
+    template = (ROOT / "app/video_shorts/templates/generate_short.html").read_text(encoding="utf-8")
+    enqueue_start = template.index("const enqueueRegenerateClip")
+    enqueue_end = template.index("const initGenerateV2RegenerateControls", enqueue_start)
+    enqueue_source = template[enqueue_start:enqueue_end]
+
+    assert "stored_hash in current_hash_aliases and not force_regenerate" in route_source
+    assert "reuse_completed=not force_regenerate" in route_source
+    assert 'cached=kind == "cached"' in route_source
+    assert "if (payload.cached)" in enqueue_source
+    assert enqueue_source.index("if (payload.cached)") < enqueue_source.index("pollClipJobUntilDone")
 
 
 def test_job_status_endpoint_is_owner_scoped(monkeypatch, tmp_path):
