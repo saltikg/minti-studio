@@ -3,6 +3,7 @@ from app.video_shorts.services.social_queue_identity import queue_identity_filte
 from app.video_shorts.services import youtube_scheduling
 
 import json
+import io
 from app.video_shorts.services import tenant_media
 from app.video_shorts.services import overlay_assets
 import errno
@@ -18446,24 +18447,183 @@ def clip_cover(video_pk: int, plan_index: int):
         get_cover_for_generated,
         signed_cover_payload,
     )
-    from app.video_shorts.services.ai_covers import ai_cover_allowance
+    from app.video_shorts.services.ai_covers import ai_cover_allowance, ai_cover_history, cover_ai_presets
 
     cover = get_cover_for_generated(
         target["generated_video_id"], owner_user_id=target["owner_user_id"],
         brand_id=target["brand_id"], video_pk=video_pk,
     )
     ai_used, ai_allowed = ai_cover_allowance(target["owner_user_id"], target["brand_id"])
+    history = ai_cover_history(
+        owner=target["owner_user_id"], brand=target["brand_id"],
+        generated_id=target["generated_video_id"],
+    )
+    ai_meta = {
+        "ai_enabled": bool(os.getenv("GEMINI_API_KEY", "").strip()),
+        "ai_used": ai_used,
+        "ai_allowed": ai_allowed,
+        "ai_history": history,
+        "ai_presets": cover_ai_presets(),
+    }
     if not cover:
         return jsonify({
             "success": True,
             "status": "missing",
             "cover": None,
-            "ai_enabled": False,
-            "ai_used": ai_used,
-            "ai_allowed": ai_allowed,
+            **ai_meta,
         })
     return jsonify({"success": True, "status": cover["status"], "cover": signed_cover_payload(cover),
-                    "ai_enabled": False, "ai_used": ai_used, "ai_allowed": ai_allowed})
+                    **ai_meta})
+
+
+def _cover_ai_error_response(exc: Exception):
+    from app.video_shorts.services.ai_covers import AiCoverLimitReached, GeminiApiError, GeminiSafetyError
+
+    if isinstance(exc, AiCoverLimitReached):
+        return jsonify({"success": False, "message": str(exc), "code": "allowance_exhausted"}), 409
+    if isinstance(exc, GeminiApiError):
+        message = str(exc)
+        try:
+            detail = json.loads(exc.body)
+            message = str(((detail.get("error") or {}).get("message")) or message)
+        except Exception:
+            pass
+        return jsonify({"success": False, "message": message, "code": f"gemini_{exc.status}"}), exc.status
+    if isinstance(exc, GeminiSafetyError):
+        return jsonify({"success": False, "message": str(exc), "code": "safety_block"}), 422
+    if isinstance(exc, (ValueError, FileNotFoundError)):
+        return jsonify({"success": False, "message": str(exc)}), 400
+    if "timed out" in str(exc).lower():
+        return jsonify({"success": False, "message": str(exc), "code": "timeout"}), 504
+    current_app.logger.exception("AI cover request failed")
+    return jsonify({"success": False, "message": str(exc) or "AI cover generation failed."}), 500
+
+
+@video_shorts_bp.route("/generate/<int:video_pk>/clip/<int:plan_index>/cover/ai/candidates", methods=["GET"])
+def clip_cover_ai_candidates(video_pk: int, plan_index: int):
+    _require_cover_admin()
+    target = _scoped_generated_clip_for_cover(video_pk, plan_index)
+    from app.video_shorts.services.ai_covers import phase2_candidate_frames
+
+    try:
+        payload = phase2_candidate_frames(
+            owner=target["owner_user_id"], brand=target["brand_id"],
+            generated_id=target["generated_video_id"], video_pk=video_pk,
+        )
+    except Exception as exc:
+        return _cover_ai_error_response(exc)
+    return jsonify({"success": True, **payload})
+
+
+@video_shorts_bp.route("/generate/<int:video_pk>/clip/<int:plan_index>/cover/ai/frame", methods=["GET"])
+def clip_cover_ai_frame(video_pk: int, plan_index: int):
+    _require_cover_admin()
+    target = _scoped_generated_clip_for_cover(video_pk, plan_index)
+    from app.video_shorts.services.ai_covers import extract_reference_frame
+
+    try:
+        clip_timestamp = float(request.args.get("t") or 0.0)
+        face_raw = request.args.get("face") or ""
+        face = json.loads(face_raw) if face_raw else None
+        if face is not None and not isinstance(face, dict):
+            raise ValueError("Invalid face reference.")
+        image = extract_reference_frame(
+            owner=target["owner_user_id"], brand=target["brand_id"],
+            generated_id=target["generated_video_id"], video_pk=video_pk,
+            clip_timestamp=clip_timestamp, face=face, thumbnail=True,
+        )
+        output = io.BytesIO()
+        image.save(output, "JPEG", quality=86)
+        output.seek(0)
+        return send_file(output, mimetype="image/jpeg", max_age=60)
+    except Exception as exc:
+        return _cover_ai_error_response(exc)
+
+
+@video_shorts_bp.route("/generate/<int:video_pk>/clip/<int:plan_index>/cover/ai/prompt", methods=["POST"])
+def clip_cover_ai_prompt(video_pk: int, plan_index: int):
+    _require_cover_admin()
+    _scoped_generated_clip_for_cover(video_pk, plan_index)
+    from app.video_shorts.services.ai_covers import assemble_phase2_prompt
+
+    data = request.get_json(silent=True) or {}
+    try:
+        prompt = assemble_phase2_prompt(
+            people_count=int(data.get("people_count") or 0),
+            title=str(data.get("title") or ""), no_title=bool(data.get("no_title")),
+            title_style=str(data.get("title_style") or ""), tone=str(data.get("tone") or ""),
+        )
+    except Exception as exc:
+        return _cover_ai_error_response(exc)
+    return jsonify({"success": True, "prompt": prompt})
+
+
+@video_shorts_bp.route("/generate/<int:video_pk>/clip/<int:plan_index>/cover/ai/suggest", methods=["POST"])
+def clip_cover_ai_suggest(video_pk: int, plan_index: int):
+    _require_cover_admin()
+    target = _scoped_generated_clip_for_cover(video_pk, plan_index)
+    from app.video_shorts.services.ai_covers import suggest_cover_titles
+    data = request.get_json(silent=True) or {}
+
+    conn = get_db_readonly()
+    try:
+        row = conn.execute(
+            "SELECT generated_title, generated_transcript_full FROM shorts_generated_videos "
+            "WHERE id=? AND CAST(user_id AS VARCHAR)=? AND brand_id=?",
+            [target["generated_video_id"], target["owner_user_id"], target["brand_id"]],
+        ).fetchone()
+    finally:
+        conn.close()
+    try:
+        suggestions = suggest_cover_titles(
+            clip_title=str((row[0] if row else "") or data.get("title") or ""),
+            transcript=str((row[1] if row else "") or ""),
+        )
+    except Exception as exc:
+        return _cover_ai_error_response(exc)
+    return jsonify({"success": True, "suggestions": suggestions})
+
+
+@video_shorts_bp.route("/generate/<int:video_pk>/clip/<int:plan_index>/cover/ai/generate", methods=["POST"])
+def clip_cover_ai_generate(video_pk: int, plan_index: int):
+    _require_cover_admin()
+    target = _scoped_generated_clip_for_cover(video_pk, plan_index)
+    from app.video_shorts.services.ai_covers import ai_cover_allowance, generate_phase2_cover
+
+    data = request.get_json(silent=True) or {}
+    selected_frames = data.get("selected_frames") or []
+    if not isinstance(selected_frames, list):
+        return jsonify({"success": False, "message": "Select one or two people."}), 400
+    try:
+        result = generate_phase2_cover(
+            owner=target["owner_user_id"], brand=target["brand_id"],
+            generated_id=target["generated_video_id"], video_pk=video_pk,
+            selected_frames=selected_frames, title=str(data.get("title") or ""),
+            no_title=bool(data.get("no_title")), title_style=str(data.get("title_style") or ""),
+            tone=str(data.get("tone") or ""), advanced_prompt=data.get("advanced_prompt"),
+        )
+    except Exception as exc:
+        return _cover_ai_error_response(exc)
+    used, allowed = ai_cover_allowance(target["owner_user_id"], target["brand_id"])
+    return jsonify({"success": True, **result, "ai_used": used, "ai_allowed": allowed})
+
+
+@video_shorts_bp.route("/generate/<int:video_pk>/clip/<int:plan_index>/cover/ai/use", methods=["POST"])
+def clip_cover_ai_use(video_pk: int, plan_index: int):
+    _require_cover_admin()
+    target = _scoped_generated_clip_for_cover(video_pk, plan_index)
+    from app.video_shorts.services.ai_covers import use_ai_generation
+
+    data = request.get_json(silent=True) or {}
+    try:
+        result = use_ai_generation(
+            owner=target["owner_user_id"], brand=target["brand_id"],
+            generated_id=target["generated_video_id"], video_pk=video_pk,
+            generation_id=str(data.get("generation_id") or ""),
+        )
+    except Exception as exc:
+        return _cover_ai_error_response(exc)
+    return jsonify({"success": True, "status": "ready", **result})
 
 
 @video_shorts_bp.route("/generate/<int:video_pk>/clip/<int:plan_index>/cover/upload", methods=["POST"])

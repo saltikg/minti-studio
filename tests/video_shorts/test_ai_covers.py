@@ -6,14 +6,19 @@ import json
 from datetime import datetime
 from zoneinfo import ZoneInfo
 
+import pytest
 from PIL import Image
 
 from app.video_shorts.services.ai_covers import (
     _api_request,
+    _history_rows,
     _normalize_ocr,
     _prompt,
+    _select_face_candidate_records,
     ai_cover_allowance,
     ai_cover_enabled,
+    assemble_phase2_prompt,
+    generate_phase2_cover,
 )
 
 
@@ -113,7 +118,92 @@ def test_monthly_allowance_counts_ai_covered_and_rendered_shorts_in_pacific_mont
     )
 
     assert (used, allowed) == (2, 5)
-    assert "COUNT(DISTINCT generated_video_id)" in queries[0][0]
+    assert "COUNT(*)" in queries[0][0]
     assert "COUNT(DISTINCT id)" in queries[1][0]
     assert queries[0][1][2:] == [datetime(2026, 11, 1, 7), datetime(2026, 12, 1, 8)]
     assert queries[1][1][2:] == [datetime(2026, 11, 1, 7), datetime(2026, 12, 1, 8)]
+
+
+def test_phase2_candidate_selection_supports_one_and_two_people():
+    single = [
+        {"id": str(index), "person_key": "single", "score": 100 - index}
+        for index in range(8)
+    ]
+    selected_single = _select_face_candidate_records(single)
+    assert len(selected_single) == 6
+    assert {item["person_label"] for item in selected_single} == {"Person 1"}
+
+    split = [
+        {"id": f"left-{index}", "person_key": "left", "score": 100 - index}
+        for index in range(4)
+    ] + [
+        {"id": f"right-{index}", "person_key": "right", "score": 90 - index}
+        for index in range(4)
+    ]
+    selected_split = _select_face_candidate_records(split)
+    assert len(selected_split) == 6
+    assert [item["person_label"] for item in selected_split].count("Person 1") == 3
+    assert [item["person_label"] for item in selected_split].count("Person 2") == 3
+
+
+def test_phase2_prompt_uses_presets_and_advanced_override_verbatim():
+    prompt = assemble_phase2_prompt(
+        people_count=2,
+        title="İşin Özü Şudur",
+        no_title=False,
+        title_style="big_bold_yellow",
+        tone="interview_podcast",
+    )
+    assert "both selected people" in prompt
+    assert '"İşin Özü Şudur"' in prompt
+    assert "bold yellow" in prompt
+    assert "Turkish characters" in prompt
+
+    edited = "My exact advanced prompt — ı ş ğ ç ö ü İ"
+    assert assemble_phase2_prompt(
+        people_count=1, title="ignored", no_title=False,
+        title_style="white_box", tone="dramatic", advanced_override=edited,
+    ) == edited
+
+
+def test_phase2_allowance_blocks_before_reference_or_api_work(monkeypatch):
+    import app.video_shorts.services.ai_covers as ai_covers
+
+    monkeypatch.setenv("GEMINI_API_KEY", "test-only")
+    monkeypatch.setattr(ai_covers, "ai_cover_allowance", lambda *_args: (3, 3))
+    monkeypatch.setattr(
+        ai_covers,
+        "extract_reference_frame",
+        lambda **_kwargs: (_ for _ in ()).throw(AssertionError("reference extraction must not run")),
+    )
+    with pytest.raises(ai_covers.AiCoverLimitReached):
+        generate_phase2_cover(
+            owner="owner", brand="brand", generated_id=1, video_pk=2,
+            selected_frames=[{"clip_timestamp": 1.0}], title="Three Word Title",
+            no_title=False, title_style="minimal_clean", tone="curiosity",
+        )
+
+
+def test_phase2_history_returns_only_last_three(monkeypatch):
+    import app.video_shorts.services.ai_covers as ai_covers
+
+    class Result:
+        def fetchall(self):
+            return [
+                (f"id-{index}", f"key-{index}", f"prompt-{index}", "model", [], "title", "style", "tone", datetime(2026, 11, 8, 10 + index))
+                for index in range(3)
+            ]
+
+    class Conn:
+        def execute(self, sql, params):
+            assert "LIMIT 3" in sql
+            return Result()
+
+    class Storage:
+        def public_url(self, key):
+            return f"signed:{key}"
+
+    monkeypatch.setattr(ai_covers, "get_media_storage", lambda: Storage())
+    history = _history_rows(Conn(), owner="owner", brand="brand", generated_id=1)
+    assert len(history) == 3
+    assert history[0]["url"] == "signed:key-0"

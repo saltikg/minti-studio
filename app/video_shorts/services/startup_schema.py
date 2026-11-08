@@ -26,6 +26,8 @@ from app.video_shorts.services.db import (
 )
 from app.video_shorts.services.video_deletion import ensure_video_deletion_schema
 from app.video_shorts.services.email_sequence import ensure_email_sequence_schema
+from app.video_shorts.services.ai_covers import ensure_ai_cover_schema
+from app.video_shorts.services.clip_covers import ensure_clip_covers_schema
 
 
 _schema_lock = threading.Lock()
@@ -61,6 +63,8 @@ def initialize_runtime_schema() -> None:
             ensure_ai_video_schema(conn)
             ensure_video_deletion_schema(conn)
             ensure_email_sequence_schema(conn)
+            ensure_clip_covers_schema(conn)
+            ensure_ai_cover_schema(conn)
             conn.commit()
             _schema_ready = True
         finally:

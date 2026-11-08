@@ -31,6 +31,12 @@ def test_non_admin_cover_access_is_forbidden_and_routes_check_first():
         generation.remove_clip_cover,
         generation.restore_generated_clip_cover,
         generation.download_clip_cover,
+        generation.clip_cover_ai_candidates,
+        generation.clip_cover_ai_frame,
+        generation.clip_cover_ai_prompt,
+        generation.clip_cover_ai_suggest,
+        generation.clip_cover_ai_generate,
+        generation.clip_cover_ai_use,
     ):
         source = inspect.getsource(view)
         assert source.index("_require_cover_admin()") < source.index("_scoped_generated_clip_for_cover")

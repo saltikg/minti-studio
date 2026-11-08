@@ -1915,7 +1915,7 @@ def remove_cover(*, generated_video_id: int, owner_user_id: str,
                       brand_id=brand_id, video_pk=video_pk)
         row = conn.execute(
             """
-            SELECT storage_key, generated_storage_key, candidate_frames_json
+            SELECT storage_key, generated_storage_key, candidate_frames_json, source
               FROM shorts_clip_covers
              WHERE generated_video_id=? AND owner_user_id=? AND brand_id=? AND video_pk=?
             """,
@@ -1923,7 +1923,12 @@ def remove_cover(*, generated_video_id: int, owner_user_id: str,
         ).fetchone()
         if not row:
             return False
-        keys.update(str(value) for value in row[:2] if str(value or "").strip())
+        active_source = str(row[3] or "").strip().lower()
+        keys.update(
+            str(value) for value in row[:2]
+            if str(value or "").strip()
+            and not (active_source == "ai" and "/ai-history/" in str(value))
+        )
         for candidate in _parse_json(row[2]) if row[2] else []:
             key = str((candidate or {}).get("storage_key") or "").strip()
             if key:
