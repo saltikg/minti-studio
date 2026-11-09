@@ -3,6 +3,7 @@ from __future__ import annotations
 import base64
 import io
 import json
+import sqlite3
 import sys
 import time
 import types
@@ -17,13 +18,17 @@ from app.video_shorts.services.ai_covers import (
     _candidate_source_path,
     _candidate_records_from_render_data,
     _history_rows,
+    _identity_checked_edit,
     _normalize_ocr,
     _prompt,
+    _record_call,
     _select_face_candidate_records,
     ai_cover_allowance,
     ai_cover_enabled,
     assemble_phase2_prompt,
+    build_cover_base_image,
     generate_phase2_cover,
+    ensure_ai_cover_schema,
     phase2_candidate_frames,
 )
 from app.video_shorts.services.cover_ai_config import COVER_LOOKS
@@ -126,9 +131,30 @@ def test_monthly_allowance_counts_ai_covered_and_rendered_shorts_in_pacific_mont
 
     assert (used, allowed) == (2, 5)
     assert "COUNT(*)" in queries[0][0]
+    assert "request_kind='phase2_image'" in queries[0][0]
     assert "COUNT(DISTINCT id)" in queries[1][0]
     assert queries[0][1][2:] == [datetime(2026, 11, 1, 7), datetime(2026, 12, 1, 8)]
     assert queries[1][1][2:] == [datetime(2026, 11, 1, 7), datetime(2026, 12, 1, 8)]
+
+
+def test_identity_call_schema_records_attempt_scores_and_pass_state():
+    conn = sqlite3.connect(":memory:")
+    ensure_ai_cover_schema(conn)
+    _record_call(
+        conn, owner="owner", brand="brand", generated_id=7, model="sface-test",
+        request_kind="phase2_image_retry", result_path="identity_pass",
+        image_returned=True, latency_ms=123, usage={}, attempt_number=2,
+        identity_scores=[0.71, 0.82], identity_passed=True,
+    )
+
+    row = conn.execute(
+        "SELECT request_kind, attempt_number, identity_scores_json, identity_passed "
+        "FROM shorts_cover_ai_calls"
+    ).fetchone()
+    assert row[:2] == ("phase2_image_retry", 2)
+    assert json.loads(row[2]) == [0.71, 0.82]
+    assert bool(row[3]) is True
+    ensure_ai_cover_schema(conn)
 
 
 def test_phase2_candidate_selection_supports_one_and_two_people():
@@ -290,6 +316,84 @@ def test_phase2_prompt_safe_zones_and_look_hints_are_configured():
     assert COVER_LOOKS["yellow_title"]["label"] == "Yellow Title"
 
 
+def test_phase2_prompt_is_an_edit_instruction_that_forbids_redrawing_people():
+    prompt = assemble_phase2_prompt(
+        people_count=1, title="Gerçek Yüz", no_title=False, look="yellow_title",
+    )
+
+    assert prompt.startswith("Edit this photo into a YouTube Shorts cover.")
+    assert "Do NOT redraw, replace, or alter the people" in prompt
+    assert "expression, hair, skin, glasses, clothing and pose exactly" in prompt
+
+
+def test_base_image_builds_one_person_two_shot_and_two_separate_frames():
+    face_left = {"cx_ratio": 0.30, "cy_ratio": 0.35, "w_ratio": 0.12, "h_ratio": 0.24}
+    face_right = {"cx_ratio": 0.70, "cy_ratio": 0.35, "w_ratio": 0.12, "h_ratio": 0.24}
+    one = build_cover_base_image([(Image.new("RGB", (1920, 1080), "red"), face_left)])
+    two_shot = build_cover_base_image([
+        (Image.new("RGB", (1920, 1080), "green"), face_left),
+        (Image.new("RGB", (1920, 1080), "green"), face_right),
+    ], same_frame=True)
+    separate = build_cover_base_image([
+        (Image.new("RGB", (1920, 1080), "red"), face_left),
+        (Image.new("RGB", (1920, 1080), "blue"), face_right),
+    ], same_frame=False)
+
+    assert one.size == two_shot.size == separate.size == (1080, 1920)
+    assert separate.getpixel((100, 960))[0] > separate.getpixel((100, 960))[2]
+    assert separate.getpixel((980, 960))[2] > separate.getpixel((980, 960))[0]
+
+
+def test_identity_check_retries_twice_and_retries_do_not_count_as_allowance(monkeypatch):
+    import app.video_shorts.services.ai_covers as ai_covers
+
+    api_calls = []
+    score_values = iter([[0.20], [0.32], [0.51]])
+    colors = iter(["red", "green", "blue"])
+    monkeypatch.setattr(
+        ai_covers, "_phase2_api_request",
+        lambda model, prompt, references: (
+            api_calls.append((model, prompt, len(references))) or Image.new("RGB", (1080, 1920), next(colors)),
+            {"promptTokenCount": 1},
+        ),
+    )
+    monkeypatch.setattr(ai_covers, "identity_similarity_scores", lambda *_args: next(score_values))
+    recorded = []
+
+    image, scores, passed, attempts = _identity_checked_edit(
+        model="model", prompt="edit", base_image=Image.new("RGB", (1080, 1920), "white"),
+        people_count=1, on_attempt=recorded.append,
+    )
+
+    assert image.getpixel((0, 0)) == (0, 0, 255)
+    assert scores == [0.51] and passed is True and len(attempts) == 3
+    assert [entry["request_kind"] for entry in recorded] == [
+        "phase2_image", "phase2_image_retry", "phase2_image_retry",
+    ]
+    assert sum(entry["request_kind"] == "phase2_image" for entry in recorded) == 1
+    assert len(api_calls) == 3
+
+
+def test_identity_check_returns_best_attempt_with_warning_state_after_three_failures(monkeypatch):
+    import app.video_shorts.services.ai_covers as ai_covers
+
+    colors = iter(["red", "green", "blue"])
+    scores = iter([[0.21], [0.36], [0.28]])
+    monkeypatch.setattr(
+        ai_covers, "_phase2_api_request",
+        lambda *_args: (Image.new("RGB", (1080, 1920), next(colors)), {}),
+    )
+    monkeypatch.setattr(ai_covers, "identity_similarity_scores", lambda *_args: next(scores))
+
+    image, best_scores, passed, attempts = _identity_checked_edit(
+        model="model", prompt="edit", base_image=Image.new("RGB", (1080, 1920), "white"),
+        people_count=1,
+    )
+
+    assert image.getpixel((0, 0)) == (0, 128, 0)
+    assert best_scores == [0.36] and passed is False and len(attempts) == 3
+
+
 def test_phase2_prompt_uses_presets_and_advanced_override_verbatim():
     prompt = assemble_phase2_prompt(
         people_count=2,
@@ -344,7 +448,8 @@ def test_phase2_history_returns_only_last_three(monkeypatch):
     class Result:
         def fetchall(self):
             return [
-                (f"id-{index}", f"key-{index}", f"prompt-{index}", "model", [], "title", "style", "tone", datetime(2026, 11, 8, 10 + index))
+                (f"id-{index}", f"key-{index}", f"prompt-{index}", "model", [], "title", "style", "tone",
+                 datetime(2026, 11, 8, 10 + index), f"base-{index}", [0.9], True, 1)
                 for index in range(3)
             ]
 

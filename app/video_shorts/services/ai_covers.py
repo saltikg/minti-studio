@@ -4,6 +4,7 @@ from __future__ import annotations
 import base64
 import hashlib
 import io
+import itertools
 import json
 import logging
 import os
@@ -21,12 +22,17 @@ from typing import Any, Optional
 from uuid import uuid4
 from zoneinfo import ZoneInfo
 
-from PIL import Image, ImageOps
+from PIL import Image, ImageFilter, ImageOps
 
 from app.video_shorts.services.db import get_db, get_db_readonly, table_columns
 from app.video_shorts.services.storage import get_media_storage, put_file_for_owner
 from app.video_shorts.services.user_preferences import load_user_bool_preference
-from app.video_shorts.services.cover_ai_config import BASE_PROMPT, COVER_LOOKS
+from app.video_shorts.services.cover_ai_config import (
+    BASE_PROMPT,
+    COVER_LOOKS,
+    FACE_IDENTITY_COSINE_THRESHOLD,
+    FACE_IDENTITY_MAX_ATTEMPTS,
+)
 
 log = logging.getLogger(__name__)
 PROMPT_VERSION = "cover-ai-v1"
@@ -35,6 +41,14 @@ CANDIDATE_ALGORITHM_VERSION = "render-layout-v1"
 _AI_LOCK = threading.Lock()
 _ADVISORY_LOCK_ID = 843715902
 _STYLE_REFERENCE = Path(__file__).resolve().parents[1] / "static" / "img" / "cover-ai-style-v1.svg"
+_YUNET_MODEL = Path(__file__).resolve().parents[1] / "models" / "face_detection_yunet_2023mar.onnx"
+_SFACE_MODEL_URL = (
+    "https://github.com/opencv/opencv_zoo/raw/main/models/face_recognition_sface/"
+    "face_recognition_sface_2021dec.onnx"
+)
+_SFACE_MODEL_SHA256 = "0ba9fbfa01b5270c96627c4ef784da859931e02f04419c829e83484087c34e79"
+_SFACE_LOCK = threading.Lock()
+_SFACE_PATH_CACHE: Optional[Path] = None
 
 
 class AiCoverLimitReached(RuntimeError):
@@ -95,6 +109,16 @@ def ensure_ai_cover_schema(conn) -> None:
         else:
             conn.execute("ALTER TABLE shorts_cover_ai_calls ADD COLUMN image_count INTEGER")
             conn.execute("UPDATE shorts_cover_ai_calls SET image_count=0 WHERE image_count IS NULL")
+    call_columns = table_columns(conn, "shorts_cover_ai_calls")
+    call_additions = {
+        "attempt_number": "INTEGER NOT NULL DEFAULT 1",
+        "identity_scores_json": "JSONB" if getattr(conn, "backend_name", "") == "postgres" else "TEXT",
+        "identity_passed": "BOOLEAN",
+    }
+    for column, definition in call_additions.items():
+        if column not in call_columns:
+            clause = "IF NOT EXISTS " if getattr(conn, "backend_name", "") == "postgres" else ""
+            conn.execute(f"ALTER TABLE shorts_cover_ai_calls ADD COLUMN {clause}{column} {definition}")
     json_type = "JSONB" if getattr(conn, "backend_name", "") == "postgres" else "TEXT"
     conn.execute(f"""
         CREATE TABLE IF NOT EXISTS shorts_cover_ai_generations (
@@ -117,6 +141,17 @@ def ensure_ai_cover_schema(conn) -> None:
         "CREATE INDEX IF NOT EXISTS idx_cover_ai_history "
         "ON shorts_cover_ai_generations(owner_user_id, brand_id, generated_video_id, created_at)"
     )
+    generation_columns = table_columns(conn, "shorts_cover_ai_generations")
+    generation_additions = {
+        "base_storage_key": "TEXT",
+        "identity_scores_json": json_type,
+        "identity_passed": "BOOLEAN",
+        "attempts": "INTEGER NOT NULL DEFAULT 1",
+    }
+    for column, definition in generation_additions.items():
+        if column not in generation_columns:
+            clause = "IF NOT EXISTS " if getattr(conn, "backend_name", "") == "postgres" else ""
+            conn.execute(f"ALTER TABLE shorts_cover_ai_generations ADD COLUMN {clause}{column} {definition}")
     conn.execute(f"""
         CREATE TABLE IF NOT EXISTS shorts_cover_ai_candidate_cache (
           cache_key VARCHAR PRIMARY KEY,
@@ -189,6 +224,7 @@ def ai_cover_allowance(
                 SELECT COUNT(*)
                   FROM shorts_cover_ai_calls
                  WHERE owner_user_id=? AND brand_id=? AND image_returned=TRUE
+                   AND request_kind='phase2_image'
                    AND created_at>=? AND created_at<?
                 """,
                 [str(owner_user_id), str(brand_id), start_utc, end_utc],
@@ -314,7 +350,9 @@ def _api_request(model: str, prompt: str, style: bytes, frame: bytes) -> tuple[I
 
 def _record_call(conn, *, owner: str, brand: str, generated_id: int, model: str,
                  request_kind: str, result_path: str, image_returned: bool,
-                 latency_ms: int, usage: dict, error: str = "", image_count: int = 0) -> dict:
+                 latency_ms: int, usage: dict, error: str = "", image_count: int = 0,
+                 attempt_number: int = 1, identity_scores: Optional[list[float]] = None,
+                 identity_passed: Optional[bool] = None) -> dict:
     input_tokens = int(usage.get("promptTokenCount") or 0)
     output_tokens = int(usage.get("candidatesTokenCount") or 0)
     recorded_image_count = int(image_count or (1 if image_returned else 0))
@@ -326,15 +364,21 @@ def _record_call(conn, *, owner: str, brand: str, generated_id: int, model: str,
         INSERT INTO shorts_cover_ai_calls
           (id, owner_user_id, brand_id, generated_video_id, model, prompt_version,
            request_kind, result_path, image_returned, latency_ms, cost_usd,
-           cost_estimated, input_tokens, output_tokens, error, image_count, created_at)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, TRUE, ?, ?, ?, ?, ?)
+           cost_estimated, input_tokens, output_tokens, error, image_count,
+           attempt_number, identity_scores_json, identity_passed, created_at)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, TRUE, ?, ?, ?, ?, ?, ?, ?, ?)
     """, [call_id, owner, brand, generated_id, model, PROMPT_VERSION,
           request_kind, result_path, image_returned, latency_ms, cost,
           input_tokens or None, output_tokens or None, error[:500] or None, recorded_image_count,
+          max(1, int(attempt_number)),
+          json.dumps(identity_scores) if identity_scores is not None else None,
+          identity_passed,
           datetime.now(timezone.utc).replace(tzinfo=None)])
     conn.commit()
     return {"id": call_id, "model": model, "latency_ms": latency_ms, "path": result_path,
-            "cost_usd_estimated": cost, "request_kind": request_kind}
+            "cost_usd_estimated": cost, "request_kind": request_kind,
+            "attempt_number": max(1, int(attempt_number)),
+            "identity_scores": identity_scores, "identity_passed": identity_passed}
 
 
 def generate_ai_cover(frame: Image.Image, *, owner: str, brand: str, generated_id: int,
@@ -442,9 +486,9 @@ def assemble_phase2_prompt(
     if not text_free and not clean_title:
         raise ValueError("Enter a cover title or choose No title.")
     people_instruction = (
-        "Feature the one selected person as the clear single subject."
+        "The base photo contains the one selected person; keep that person's composition and pose unchanged."
         if people_count == 1
-        else "Feature both selected people clearly, side by side or facing each other; give both faces equal importance."
+        else "The base photo already contains both selected people side by side or facing each other; keep their positions and poses unchanged."
     )
     title_instruction = (
         "Do not include any title or other visible text."
@@ -940,6 +984,149 @@ def extract_reference_frame(
             Path(source_temp).unlink(missing_ok=True)
 
 
+def _face_box_pixels(face: Optional[dict[str, Any]], size: tuple[int, int]) -> Optional[tuple[float, float, float, float]]:
+    if not face:
+        return None
+    width, height = size
+    try:
+        fw = max(1.0, float(face.get("w_ratio") or 0.0) * width)
+        fh = max(1.0, float(face.get("h_ratio") or 0.0) * height)
+        cx = float(face.get("cx_ratio") or 0.5) * width
+        cy = float(face.get("cy_ratio") or 0.5) * height
+    except (TypeError, ValueError):
+        return None
+    if fw <= 1.0 or fh <= 1.0:
+        return None
+    return cx - fw / 2.0, cy - fh / 2.0, cx + fw / 2.0, cy + fh / 2.0
+
+
+def _portrait_crop(frame: Image.Image, faces: list[Optional[dict[str, Any]]]) -> Image.Image:
+    """Crop real pixels to 9:16 while retaining the selected head(s)."""
+    image = frame.convert("RGB")
+    width, height = image.size
+    boxes = [box for box in (_face_box_pixels(face, image.size) for face in faces) if box]
+    target_ratio = 9.0 / 16.0
+    crop_h = float(height)
+    crop_w = crop_h * target_ratio
+    if crop_w > width:
+        crop_w = float(width)
+        crop_h = crop_w / target_ratio
+    if boxes:
+        leftmost = min(box[0] for box in boxes)
+        rightmost = max(box[2] for box in boxes)
+        topmost = min(box[1] for box in boxes)
+        bottommost = max(box[3] for box in boxes)
+        needed_w = (rightmost - leftmost) * 1.18
+        needed_h = (bottommost - topmost) * 2.8
+        if needed_w <= width and needed_h <= height:
+            crop_w = max(crop_w, needed_w)
+            crop_h = crop_w / target_ratio
+            if crop_h > height:
+                crop_h = float(height)
+                crop_w = crop_h * target_ratio
+        center_x = (leftmost + rightmost) / 2.0
+        # Put the head below the title-safe upper third whenever vertical room allows.
+        desired_top = topmost - crop_h * 0.30
+        top = min(max(0.0, desired_top), max(0.0, height - crop_h))
+        if bottommost > top + crop_h:
+            top = min(max(0.0, bottommost - crop_h), max(0.0, height - crop_h))
+    else:
+        center_x = width / 2.0
+        top = max(0.0, (height - crop_h) / 2.0)
+    left = min(max(0.0, center_x - crop_w / 2.0), max(0.0, width - crop_w))
+    crop = image.crop((round(left), round(top), round(left + crop_w), round(top + crop_h)))
+    return crop.resize((1080, 1920), Image.Resampling.LANCZOS)
+
+
+def _two_shot_base(frame: Image.Image, faces: list[Optional[dict[str, Any]]]) -> Image.Image:
+    boxes = [box for box in (_face_box_pixels(face, frame.size) for face in faces) if box]
+    direct = _portrait_crop(frame, faces)
+    if len(boxes) < 2:
+        return direct
+    # If a portrait crop cannot contain both heads, retain the real two-shot as a
+    # foreground plate and extend only its background into the vertical canvas.
+    span = max(box[2] for box in boxes) - min(box[0] for box in boxes)
+    portrait_source_width = frame.height * 9.0 / 16.0
+    if span * 1.18 <= portrait_source_width:
+        return direct
+    background = direct.filter(ImageFilter.GaussianBlur(radius=32))
+    x1 = max(0, round(min(box[0] for box in boxes) - span * 0.10))
+    x2 = min(frame.width, round(max(box[2] for box in boxes) + span * 0.10))
+    y1 = max(0, round(min(box[1] for box in boxes) - frame.height * 0.12))
+    y2 = min(frame.height, round(max(box[3] for box in boxes) + frame.height * 0.48))
+    plate = frame.convert("RGB").crop((x1, y1, x2, y2))
+    plate.thumbnail((1080, 1450), Image.Resampling.LANCZOS)
+    background.paste(plate, ((1080 - plate.width) // 2, max(360, (1920 - plate.height) // 2)))
+    return background
+
+
+def build_cover_base_image(frames: list[tuple[Image.Image, Optional[dict[str, Any]]]], *, same_frame: bool = False) -> Image.Image:
+    """Build the Gemini edit input entirely from decoded source-video pixels."""
+    if len(frames) == 1:
+        return _portrait_crop(frames[0][0], [frames[0][1]])
+    if len(frames) != 2:
+        raise ValueError("Select one or two people.")
+    if same_frame:
+        return _two_shot_base(frames[0][0], [frames[0][1], frames[1][1]])
+    left = ImageOps.fit(
+        _portrait_crop(frames[0][0], [frames[0][1]]), (570, 1920),
+        method=Image.Resampling.LANCZOS,
+    )
+    right = ImageOps.fit(
+        _portrait_crop(frames[1][0], [frames[1][1]]), (570, 1920),
+        method=Image.Resampling.LANCZOS,
+    )
+    canvas = Image.new("RGB", (1080, 1920))
+    canvas.paste(left, (0, 0))
+    overlap = 60
+    mask = Image.new("L", (570, 1920), 255)
+    for x in range(overlap):
+        value = round(255 * x / max(1, overlap - 1))
+        mask.paste(value, (x, 0, x + 1, 1920))
+    canvas.paste(right, (510, 0), mask)
+    return canvas
+
+
+def build_phase2_base_image(
+    *, owner: str, brand: str, generated_id: int, video_pk: int,
+    selected_frames: list[dict[str, Any]],
+) -> Image.Image:
+    import cv2
+
+    target, source_temp = _cover_source_target(
+        owner=owner, brand=brand, generated_id=generated_id, video_pk=video_pk,
+    )
+    cap = None
+    try:
+        cap = cv2.VideoCapture(str(source_temp))
+        decoded: dict[int, Image.Image] = {}
+        prepared: list[tuple[Image.Image, Optional[dict[str, Any]]]] = []
+        source_times: list[float] = []
+        duration = _clip_duration(target["source_ranges"])
+        for item in selected_frames:
+            offset = max(0.0, min(float(item.get("clip_timestamp") or 0.0), duration))
+            source_time = _source_time_for_offset(target["source_ranges"], offset)
+            source_times.append(source_time)
+            key = round(source_time * 1000)
+            if key not in decoded:
+                cap.set(cv2.CAP_PROP_POS_MSEC, source_time * 1000.0)
+                ok, raw = cap.read()
+                if not ok or raw is None:
+                    raise RuntimeError("Selected source frame could not be decoded.")
+                decoded[key] = Image.fromarray(cv2.cvtColor(raw, cv2.COLOR_BGR2RGB))
+            face = item.get("face") if isinstance(item.get("face"), dict) else None
+            prepared.append((decoded[key], face))
+        same_frame = len(source_times) == 2 and abs(source_times[0] - source_times[1]) <= 0.08
+        return build_cover_base_image(prepared, same_frame=same_frame)
+    finally:
+        if cap is not None:
+            cap.release()
+        try:
+            source_temp.cleanup()
+        except AttributeError:
+            Path(source_temp).unlink(missing_ok=True)
+
+
 def _phase2_api_request(model: str, prompt: str, references: list[Image.Image]) -> tuple[Image.Image, dict]:
     parts: list[dict[str, Any]] = [{"text": prompt}]
     for reference in references:
@@ -980,6 +1167,136 @@ def _phase2_api_request(model: str, prompt: str, references: list[Image.Image]) 
     if safety.get("blockReason") or any(reason in {"SAFETY", "BLOCKLIST", "PROHIBITED_CONTENT"} for reason in reasons):
         raise GeminiSafetyError(f"Gemini safety block: {safety.get('blockReason') or ', '.join(reasons)}")
     raise RuntimeError("Gemini returned no image.")
+
+
+def _identity_threshold() -> float:
+    try:
+        return max(0.0, min(1.0, float(os.getenv(
+            "AI_COVER_IDENTITY_COSINE_THRESHOLD", str(FACE_IDENTITY_COSINE_THRESHOLD),
+        ))))
+    except ValueError:
+        return FACE_IDENTITY_COSINE_THRESHOLD
+
+
+def _sface_model_path() -> Path:
+    global _SFACE_PATH_CACHE
+    if _SFACE_PATH_CACHE is not None and _SFACE_PATH_CACHE.exists():
+        return _SFACE_PATH_CACHE
+    configured = os.getenv("AI_COVER_SFACE_MODEL_PATH", "").strip()
+    if configured:
+        path = Path(configured)
+    else:
+        path = Path(tempfile.gettempdir()) / "minti-studio-models" / "face_recognition_sface_2021dec.onnx"
+    with _SFACE_LOCK:
+        if path.exists() and hashlib.sha256(path.read_bytes()).hexdigest() == _SFACE_MODEL_SHA256:
+            _SFACE_PATH_CACHE = path
+            return path
+        path.parent.mkdir(parents=True, exist_ok=True)
+        temporary = path.with_suffix(".download")
+        digest = hashlib.sha256()
+        try:
+            with urllib.request.urlopen(_SFACE_MODEL_URL, timeout=120) as response, temporary.open("wb") as output:
+                while True:
+                    chunk = response.read(1024 * 1024)
+                    if not chunk:
+                        break
+                    digest.update(chunk)
+                    output.write(chunk)
+            if digest.hexdigest() != _SFACE_MODEL_SHA256:
+                raise RuntimeError("SFace model checksum mismatch.")
+            os.replace(temporary, path)
+        finally:
+            temporary.unlink(missing_ok=True)
+    _SFACE_PATH_CACHE = path
+    return path
+
+
+def _sface_features(image: Image.Image, expected_faces: int) -> list[Any]:
+    import cv2
+    import numpy as np
+
+    if not _YUNET_MODEL.exists():
+        raise RuntimeError("YuNet face detector model is unavailable.")
+    bgr = cv2.cvtColor(np.asarray(image.convert("RGB")), cv2.COLOR_RGB2BGR)
+    height, width = bgr.shape[:2]
+    detector = cv2.FaceDetectorYN_create(str(_YUNET_MODEL), "", (width, height), 0.55, 0.3, 5000)
+    _, detections = detector.detect(bgr)
+    if detections is None:
+        return []
+    rows = sorted(detections, key=lambda row: float(row[2]) * float(row[3]), reverse=True)[:expected_faces]
+    recognizer = cv2.FaceRecognizerSF_create(str(_sface_model_path()), "")
+    features = []
+    for row in rows:
+        try:
+            aligned = recognizer.alignCrop(bgr, row)
+            features.append(recognizer.feature(aligned))
+        except Exception:
+            log.warning("SFace alignment failed", exc_info=True)
+    return features
+
+
+def identity_similarity_scores(base_image: Image.Image, output_image: Image.Image, people_count: int) -> list[float]:
+    """Return the best one-to-one SFace cosine match for every base person."""
+    import numpy as np
+
+    base_features = _sface_features(base_image, people_count)
+    output_features = _sface_features(output_image, people_count)
+    if len(base_features) < people_count or len(output_features) < people_count:
+        return [0.0] * people_count
+    best: Optional[list[float]] = None
+    for permutation in itertools.permutations(output_features, people_count):
+        scores = []
+        for base, candidate in zip(base_features, permutation):
+            base_vector = np.asarray(base, dtype=np.float32).reshape(-1)
+            candidate_vector = np.asarray(candidate, dtype=np.float32).reshape(-1)
+            denominator = float(np.linalg.norm(base_vector) * np.linalg.norm(candidate_vector))
+            scores.append(float(np.dot(base_vector, candidate_vector) / denominator) if denominator else 0.0)
+        if best is None or min(scores) > min(best):
+            best = scores
+    return [round(score, 4) for score in (best or [0.0] * people_count)]
+
+
+def _identity_checked_edit(
+    *, model: str, prompt: str, base_image: Image.Image, people_count: int,
+    on_attempt: Optional[Any] = None,
+) -> tuple[Image.Image, list[float], bool, list[dict[str, Any]]]:
+    threshold = _identity_threshold()
+    best_image: Optional[Image.Image] = None
+    best_scores: list[float] = []
+    attempts: list[dict[str, Any]] = []
+    for attempt in range(1, FACE_IDENTITY_MAX_ATTEMPTS + 1):
+        started = time.monotonic()
+        request_kind = "phase2_image" if attempt == 1 else "phase2_image_retry"
+        try:
+            candidate, usage = _phase2_api_request(model, prompt, [base_image])
+            candidate = ImageOps.fit(candidate.convert("RGB"), (1080, 1920), method=Image.Resampling.LANCZOS)
+            scores = identity_similarity_scores(base_image, candidate, people_count)
+            passed = len(scores) == people_count and all(score >= threshold for score in scores)
+            entry = {
+                "attempt": attempt, "request_kind": request_kind, "scores": scores,
+                "passed": passed, "latency_ms": round((time.monotonic() - started) * 1000),
+                "usage": usage, "image": candidate,
+            }
+        except Exception as exc:
+            entry = {
+                "attempt": attempt, "request_kind": request_kind, "scores": [],
+                "passed": False, "latency_ms": round((time.monotonic() - started) * 1000),
+                "usage": {}, "error": exc,
+            }
+            if on_attempt:
+                on_attempt(entry)
+            raise
+        if on_attempt:
+            on_attempt(entry)
+        public_entry = {key: value for key, value in entry.items() if key not in {"usage", "image"}}
+        attempts.append(public_entry)
+        if best_image is None or min(scores or [0.0]) > min(best_scores or [0.0]):
+            best_image, best_scores = candidate, scores
+        if passed:
+            return candidate, scores, True, attempts
+    if best_image is None:
+        raise RuntimeError("Gemini returned no usable cover image.")
+    return best_image, best_scores, False, attempts
 
 
 def suggest_cover_titles(*, clip_title: str, transcript: str = "") -> list[str]:
@@ -1023,7 +1340,8 @@ def _history_rows(conn: Any, *, owner: str, brand: str, generated_id: int) -> li
     rows = conn.execute(
         """
         SELECT id, storage_key, prompt, model, selected_frames_json, title_text,
-               title_style, tone, created_at
+               title_style, tone, created_at, base_storage_key,
+               identity_scores_json, identity_passed, attempts
           FROM shorts_cover_ai_generations
          WHERE owner_user_id=? AND brand_id=? AND generated_video_id=?
          ORDER BY created_at DESC, id DESC LIMIT 3
@@ -1034,11 +1352,17 @@ def _history_rows(conn: Any, *, owner: str, brand: str, generated_id: int) -> li
     result = []
     for row in rows:
         frames = row[4] if isinstance(row[4], list) else json.loads(row[4] or "[]")
+        scores = row[10] if isinstance(row[10], list) else json.loads(row[10] or "[]")
         result.append({
             "id": row[0], "storage_key": row[1], "url": storage.public_url(row[1]),
             "prompt": row[2], "model": row[3], "selected_frames": frames,
             "title": row[5] or "", "look": row[6] or "", "tone": row[7] or "",
             "created_at": row[8].isoformat() if hasattr(row[8], "isoformat") else str(row[8]),
+            "base_storage_key": row[9] or "",
+            "base_url": storage.public_url(row[9]) if row[9] else "",
+            "identity_scores": scores, "identity_passed": bool(row[11]),
+            "attempts": int(row[12] or 1),
+            "warning": "" if bool(row[11]) else "Face may look different",
         })
     return result
 
@@ -1069,61 +1393,78 @@ def generate_phase2_cover(
     used, allowed = ai_cover_allowance(owner, brand)
     if allowed <= 0 or used >= allowed:
         raise AiCoverLimitReached(f"AI cover allowance used up ({used} / {allowed} this month).")
-    references = [
-        extract_reference_frame(
-            owner=owner, brand=brand, generated_id=generated_id, video_pk=video_pk,
-            clip_timestamp=float(item.get("clip_timestamp") or 0.0),
-            face=item.get("face") if isinstance(item.get("face"), dict) else None,
-        )
-        for item in selected_frames
-    ]
+    base_image = build_phase2_base_image(
+        owner=owner, brand=brand, generated_id=generated_id, video_pk=video_pk,
+        selected_frames=selected_frames,
+    )
     model = os.getenv("GEMINI_IMAGE_MODEL", DEFAULT_MODEL).strip() or DEFAULT_MODEL
-    started = time.monotonic()
+    total_started = time.monotonic()
     conn = get_db()
     try:
         ensure_ai_cover_schema(conn)
         conn.commit()
-        try:
-            image, usage = _phase2_api_request(model, prompt, references)
-        except Exception as exc:
-            latency_ms = round((time.monotonic() - started) * 1000)
+        threshold = _identity_threshold()
+        def record_attempt(entry: dict[str, Any]) -> None:
+            exc = entry.get("error")
+            if exc is not None:
+                _record_call(
+                    conn, owner=owner, brand=brand, generated_id=generated_id, model=model,
+                    request_kind=entry["request_kind"], result_path="api_error", image_returned=False,
+                    latency_ms=entry["latency_ms"], usage={},
+                    error=f"{type(exc).__name__}: {exc}", image_count=0,
+                    attempt_number=entry["attempt"],
+                )
+                log.warning(
+                    "AI cover edit brand=%s clip=%s attempt=%s model=%s latency_ms=%s "
+                    "success=false image_count=0 error=%s",
+                    brand, generated_id, entry["attempt"], model, entry["latency_ms"], exc,
+                )
+                return
+            result_path = "identity_pass" if entry["passed"] else "identity_failed"
             _record_call(
                 conn, owner=owner, brand=brand, generated_id=generated_id, model=model,
-                request_kind="phase2_image", result_path="api_error", image_returned=False,
-                latency_ms=latency_ms, usage={}, error=f"{type(exc).__name__}: {exc}", image_count=0,
+                request_kind=entry["request_kind"], result_path=result_path, image_returned=True,
+                latency_ms=entry["latency_ms"], usage=entry["usage"], image_count=1,
+                attempt_number=entry["attempt"], identity_scores=entry["scores"],
+                identity_passed=entry["passed"],
             )
-            log.warning(
-                "AI cover call brand=%s clip=%s model=%s latency_ms=%s success=false image_count=0 error=%s",
-                brand, generated_id, model, latency_ms, exc,
+            log.info(
+                "AI cover identity brand=%s clip=%s attempt=%s scores=%s threshold=%.3f "
+                "passed=%s latency_ms=%s",
+                brand, generated_id, entry["attempt"], entry["scores"], threshold,
+                entry["passed"], entry["latency_ms"],
             )
-            raise
-        image = ImageOps.fit(image.convert("RGB"), (1080, 1920), method=Image.Resampling.LANCZOS)
+        image, best_scores, identity_passed, attempt_log = _identity_checked_edit(
+            model=model, prompt=prompt, base_image=base_image,
+            people_count=len(selected_frames), on_attempt=record_attempt,
+        )
         generation_id = str(uuid4())
         key = f"brands/{brand}/private/short-covers/{generated_id}/ai-history/{generation_id}.jpg"
+        base_key = f"brands/{brand}/private/short-covers/{generated_id}/ai-history/{generation_id}-base.jpg"
         with tempfile.TemporaryDirectory(prefix="cover_ai_phase2_") as directory:
             image_path = Path(directory) / "cover.jpg"
+            base_path = Path(directory) / "base.jpg"
             image.save(image_path, "JPEG", quality=92, optimize=True, progressive=True)
+            base_image.save(base_path, "JPEG", quality=92, optimize=True, progressive=True)
             put_file_for_owner(image_path, key, owner_user_id=owner)
-        latency_ms = round((time.monotonic() - started) * 1000)
+            put_file_for_owner(base_path, base_key, owner_user_id=owner)
+        latency_ms = round((time.monotonic() - total_started) * 1000)
         conn.execute(
             """
             INSERT INTO shorts_cover_ai_generations
               (id, owner_user_id, brand_id, generated_video_id, video_pk, storage_key,
-               prompt, model, selected_frames_json, title_text, title_style, tone, created_at)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+               prompt, model, selected_frames_json, title_text, title_style, tone,
+               base_storage_key, identity_scores_json, identity_passed, attempts, created_at)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             """,
             [generation_id, owner, brand, generated_id, video_pk, key, prompt, model,
              json.dumps(selected_frames, ensure_ascii=False), "" if no_title else title,
-             look, None, datetime.now(timezone.utc).replace(tzinfo=None)],
-        )
-        _record_call(
-            conn, owner=owner, brand=brand, generated_id=generated_id, model=model,
-            request_kind="phase2_image", result_path=key, image_returned=True,
-            latency_ms=latency_ms, usage=usage, image_count=1,
+             look, None, base_key, json.dumps(best_scores), identity_passed, len(attempt_log),
+             datetime.now(timezone.utc).replace(tzinfo=None)],
         )
         old_rows = conn.execute(
             """
-            SELECT id, storage_key FROM shorts_cover_ai_generations
+            SELECT id, storage_key, base_storage_key FROM shorts_cover_ai_generations
              WHERE owner_user_id=? AND brand_id=? AND generated_video_id=?
              ORDER BY created_at DESC, id DESC OFFSET 3
             """,
@@ -1134,25 +1475,34 @@ def generate_phase2_cover(
             [generated_id, owner, brand],
         ).fetchone()
         active_cover_key = str((active_cover_row[0] if active_cover_row else "") or "")
-        for old_id, _old_key in old_rows:
+        for old_id, _old_key, _old_base_key in old_rows:
             conn.execute(
                 "DELETE FROM shorts_cover_ai_generations WHERE id=? AND owner_user_id=? AND brand_id=?",
                 [old_id, owner, brand],
             )
         conn.commit()
-        for _old_id, old_key in old_rows:
-            if str(old_key) == active_cover_key:
-                continue
-            try:
-                get_media_storage().delete(old_key)
-            except Exception:
-                log.warning("Could not prune old AI cover history key=%s", old_key, exc_info=True)
+        for _old_id, old_key, old_base_key in old_rows:
+            for stale_key in (old_key, old_base_key):
+                if not stale_key or str(stale_key) == active_cover_key:
+                    continue
+                try:
+                    get_media_storage().delete(stale_key)
+                except Exception:
+                    log.warning("Could not prune old AI cover history key=%s", stale_key, exc_info=True)
         log.info(
-            "AI cover call brand=%s clip=%s model=%s latency_ms=%s success=true image_count=1",
-            brand, generated_id, model, latency_ms,
+            "AI cover edit brand=%s clip=%s model=%s attempts=%s scores=%s threshold=%.3f "
+            "passed=%s latency_ms=%s success=true image_count=1",
+            brand, generated_id, model, len(attempt_log), best_scores, threshold,
+            identity_passed, latency_ms,
         )
         history = _history_rows(conn, owner=owner, brand=brand, generated_id=generated_id)
-        return {"generation": history[0], "history": history, "prompt": prompt, "latency_ms": latency_ms}
+        warning = "" if identity_passed else "Face may look different"
+        return {
+            "generation": history[0], "history": history, "prompt": prompt,
+            "latency_ms": latency_ms, "attempts": attempt_log,
+            "identity_scores": best_scores, "identity_passed": identity_passed,
+            "identity_threshold": threshold, "warning": warning,
+        }
     finally:
         conn.close()
 

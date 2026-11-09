@@ -1,12 +1,13 @@
 """Editable prompt fragments for admin AI cover generation."""
 
-BASE_PROMPT = """Create one polished vertical 9:16 YouTube Shorts cover at 1080x1920.
-Use the supplied source-video reference image(s) as identity references. Preserve each selected person's real identity, facial features, skin tone, age, hair, glasses, and clothing cues. Keep the full head visible and leave safe margins around faces. Do not add extra people, logos, watermarks, or unrelated objects.
-Keep the title in the upper third. Keep the bottom 20% and the right edge free of text and faces (YouTube Shorts UI overlays).
+BASE_PROMPT = """Edit this photo into a YouTube Shorts cover. Do NOT redraw, replace, or alter the people: keep every face, expression, hair, skin, glasses, clothing and pose exactly as in the photo. You may only: add the title text, adjust lighting/color grading, and restyle or extend the background behind the people. Keep the title in the upper third. Keep the bottom 20% and the right edge free of text and faces.
 {people_instruction}
 {title_instruction}
 {look_instruction}
-All visible title text must be spelled exactly as supplied. Turkish characters must render correctly, including ı, ş, ğ, ç, ö, ü, and İ. Produce a single finished cover image, not a collage or mockup."""
+All visible title text must be spelled exactly as supplied. Turkish characters must render correctly, including ı, ş, ğ, ç, ö, ü, and İ. Produce a single finished vertical 9:16 cover at 1080x1920, not a collage or mockup."""
+
+FACE_IDENTITY_COSINE_THRESHOLD = 0.40
+FACE_IDENTITY_MAX_ATTEMPTS = 3
 
 COVER_LOOKS = {
     "yellow_title": {

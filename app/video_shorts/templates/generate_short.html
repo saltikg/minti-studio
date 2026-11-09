@@ -26999,7 +26999,9 @@ document.addEventListener("DOMContentLoaded", () => {
       allowanceUsed = Number(payload.ai_used || 0);
       allowanceAllowed = Number(payload.ai_allowed || 0);
       allowance.textContent = `${allowanceUsed} / ${allowanceAllowed} this month`;
-      feedback.textContent = "";
+      feedback.textContent = payload.warning
+        ? `${payload.warning} (${(payload.identity_scores || []).map((score) => Number(score).toFixed(3)).join(", ")})`
+        : "";
     } catch (error) {
       feedback.textContent = plainError(error, responseStatus);
     } finally {
