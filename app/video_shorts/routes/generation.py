@@ -18551,7 +18551,7 @@ def clip_cover_ai_prompt(video_pk: int, plan_index: int):
         prompt = assemble_phase2_prompt(
             people_count=int(data.get("people_count") or 0),
             title=str(data.get("title") or ""), no_title=bool(data.get("no_title")),
-            title_style=str(data.get("title_style") or ""), tone=str(data.get("tone") or ""),
+            look=str(data.get("look") or ""),
         )
     except Exception as exc:
         return _cover_ai_error_response(exc)
@@ -18599,8 +18599,8 @@ def clip_cover_ai_generate(video_pk: int, plan_index: int):
             owner=target["owner_user_id"], brand=target["brand_id"],
             generated_id=target["generated_video_id"], video_pk=video_pk,
             selected_frames=selected_frames, title=str(data.get("title") or ""),
-            no_title=bool(data.get("no_title")), title_style=str(data.get("title_style") or ""),
-            tone=str(data.get("tone") or ""), advanced_prompt=data.get("advanced_prompt"),
+            no_title=bool(data.get("no_title")), look=str(data.get("look") or ""),
+            advanced_prompt=data.get("advanced_prompt"),
         )
     except Exception as exc:
         return _cover_ai_error_response(exc)

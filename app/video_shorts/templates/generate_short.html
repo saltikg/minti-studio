@@ -8293,11 +8293,11 @@
   .cover-chip-group { display:flex; flex-wrap:wrap; gap:.45rem; }
   .cover-chip { border:1px solid rgba(255,255,255,.18); background:#15181e; color:#e9ecef; border-radius:999px; padding:.38rem .65rem; font-size:.8rem; display:inline-flex; align-items:center; gap:.4rem; }
   .cover-chip.active { border-color:#71a6ff; background:rgba(55,116,220,.24); color:#fff; }
-  .cover-style-grid { display:grid; grid-template-columns:repeat(4,minmax(0,1fr)); gap:.5rem; }
-  .cover-style-card { border:1px solid rgba(255,255,255,.18); background:#15181e; color:#e9ecef; border-radius:9px; padding:.3rem; font-size:.72rem; text-align:center; }
-  .cover-style-card img { display:block; width:100%; max-width:90px; aspect-ratio:9/16; object-fit:cover; border-radius:6px; margin:0 auto .35rem; }
-  .cover-style-card.active { border-color:#71a6ff; background:rgba(55,116,220,.24); box-shadow:0 0 0 2px rgba(89,145,255,.2); }
-  .cover-tone-hint { min-height:18px; }
+  .cover-look-grid { display:grid; grid-template-columns:repeat(3,minmax(0,1fr)); gap:.5rem; }
+  .cover-look-card { border:1px solid rgba(255,255,255,.18); background:#15181e; color:#e9ecef; border-radius:9px; padding:.3rem; font-size:.72rem; text-align:center; }
+  .cover-look-card img { display:block; width:100%; max-width:100px; aspect-ratio:9/16; object-fit:cover; border-radius:6px; margin:0 auto .35rem; }
+  .cover-look-card.active { border-color:#71a6ff; background:rgba(55,116,220,.24); box-shadow:0 0 0 2px rgba(89,145,255,.2); }
+  .cover-look-hint { min-height:18px; }
   #clipCoverModal .modal-footer { flex-wrap:nowrap; min-height:66px; }
   .cover-footer-main { display:flex; align-items:center; gap:.8rem; margin-left:auto; }
   @media (max-width: 767.98px) {
@@ -8363,26 +8363,22 @@
               <div class="cover-step-title"><span class="cover-step-number">2</span><span>Title</span></div>
               <div class="input-group mb-2">
                 <input class="form-control bg-black text-white border-secondary" id="clip-cover-ai-title" maxlength="120">
-                <button type="button" class="btn btn-outline-light" id="clip-cover-ai-suggest" title="Suggest titles" aria-label="Suggest titles"><i class="bi bi-stars" aria-hidden="true"></i></button>
+                <button type="button" class="btn btn-outline-light" id="clip-cover-ai-suggest" title="Suggest titles" aria-label="Suggest titles"><i class="bi bi-stars" aria-hidden="true"></i><span class="ms-1">Suggest</span></button>
               </div>
+              <div class="small text-white-50 mb-2 d-none" id="clip-cover-title-hint">Short titles read better.</div>
               <div class="cover-chip-group" id="clip-cover-ai-suggestions"></div>
             </section>
             <section class="cover-step">
-              <div class="cover-step-title"><span class="cover-step-number">3</span><span>Style</span></div>
-              <div class="cover-style-grid mb-3" id="clip-cover-ai-styles">
-                <button type="button" class="cover-style-card active" data-style="big_bold_yellow"><img src="{{ url_for('video_shorts_bp.static', filename='img/cover-style-yellow-bold.svg') }}" alt="Yellow bold example">Yellow bold</button>
-                <button type="button" class="cover-style-card" data-style="white_box"><img src="{{ url_for('video_shorts_bp.static', filename='img/cover-style-white-box.svg') }}" alt="White box example">White box</button>
-                <button type="button" class="cover-style-card" data-style="minimal_clean"><img src="{{ url_for('video_shorts_bp.static', filename='img/cover-style-minimal.svg') }}" alt="Minimal example">Minimal</button>
-                <button type="button" class="cover-style-card" data-style="no_text"><img src="{{ url_for('video_shorts_bp.static', filename='img/cover-style-no-text.svg') }}" alt="No text example">No text</button>
+              <div class="cover-step-title"><span class="cover-step-number">3</span><span>Look</span></div>
+              <div class="cover-look-grid" id="clip-cover-ai-looks">
+                <button type="button" class="cover-look-card active" data-look="yellow_title"><img src="{{ url_for('video_shorts_bp.static', filename='cover_looks/yellow-title.webp') }}" alt="Yellow Title example">Yellow Title</button>
+                <button type="button" class="cover-look-card" data-look="white_box"><img src="{{ url_for('video_shorts_bp.static', filename='cover_looks/white-box.webp') }}" alt="White Box example">White Box</button>
+                <button type="button" class="cover-look-card" data-look="minimal"><img src="{{ url_for('video_shorts_bp.static', filename='cover_looks/minimal.webp') }}" alt="Minimal example">Minimal</button>
+                <button type="button" class="cover-look-card" data-look="dramatic"><img src="{{ url_for('video_shorts_bp.static', filename='cover_looks/dramatic.webp') }}" alt="Dramatic example">Dramatic</button>
+                <button type="button" class="cover-look-card" data-look="curiosity"><img src="{{ url_for('video_shorts_bp.static', filename='cover_looks/curiosity.webp') }}" alt="Curiosity example">Curiosity</button>
+                <button type="button" class="cover-look-card" data-look="no_text"><img src="{{ url_for('video_shorts_bp.static', filename='cover_looks/no-text.webp') }}" alt="No Text example">No Text</button>
               </div>
-              <div class="small text-white-50 mb-2">Tone</div>
-              <div class="cover-chip-group" id="clip-cover-ai-tones">
-                <button type="button" class="cover-chip" data-tone="dramatic">Dramatic</button>
-                <button type="button" class="cover-chip active" data-tone="clean_professional">Clean</button>
-                <button type="button" class="cover-chip" data-tone="interview_podcast">Interview</button>
-                <button type="button" class="cover-chip" data-tone="curiosity">Curiosity</button>
-              </div>
-              <div class="cover-tone-hint small text-white-50 mt-2" id="clip-cover-tone-hint"></div>
+              <div class="cover-look-hint small text-white-50 mt-2" id="clip-cover-look-hint"></div>
               <details class="mt-3" id="clip-cover-ai-advanced">
                 <summary class="small">Edit prompt</summary>
                 <textarea class="form-control bg-black text-white border-secondary mt-2" id="clip-cover-ai-prompt" rows="6" aria-label="Final AI cover prompt"></textarea>
@@ -26365,11 +26361,11 @@ document.addEventListener("DOMContentLoaded", () => {
   const aiTime = document.getElementById("clip-cover-ai-time");
   const aiGrab = document.getElementById("clip-cover-ai-grab");
   const aiTitle = document.getElementById("clip-cover-ai-title");
+  const titleHint = document.getElementById("clip-cover-title-hint");
   const aiSuggest = document.getElementById("clip-cover-ai-suggest");
   const aiSuggestions = document.getElementById("clip-cover-ai-suggestions");
-  const aiStyles = document.getElementById("clip-cover-ai-styles");
-  const aiTones = document.getElementById("clip-cover-ai-tones");
-  const toneHint = document.getElementById("clip-cover-tone-hint");
+  const aiLooks = document.getElementById("clip-cover-ai-looks");
+  const lookHint = document.getElementById("clip-cover-look-hint");
   const aiPrompt = document.getElementById("clip-cover-ai-prompt");
   const aiRebuildPrompt = document.getElementById("clip-cover-ai-rebuild-prompt");
   const aiGenerate = document.getElementById("clip-cover-ai-generate");
@@ -26399,7 +26395,7 @@ document.addEventListener("DOMContentLoaded", () => {
   let elapsedTimer = null;
   let closeConfirmed = false;
   let currentCoverUrl = "";
-  let toneHints = {};
+  let lookPresets = {};
   let openToken = 0;
   let openController = null;
 
@@ -26416,17 +26412,21 @@ document.addEventListener("DOMContentLoaded", () => {
     return url.toString();
   };
 
-  const selectedStyle = () => aiStyles.querySelector("[data-style].active")?.dataset.style || "big_bold_yellow";
-  const selectedTone = () => aiTones.querySelector("[data-tone].active")?.dataset.tone || "clean_professional";
-  const noTextSelected = () => selectedStyle() === "no_text";
+  const selectedLook = () => aiLooks.querySelector("[data-look].active")?.dataset.look || "yellow_title";
+  const noTextSelected = () => selectedLook() === "no_text";
   const isAllowanceExhausted = () => allowanceAllowed <= allowanceUsed;
   const requestIsCurrent = (token, card) => token === openToken && card === activeCard;
 
-  const updateToneHint = () => {
-    const tone = selectedTone();
-    const label = aiTones.querySelector(`[data-tone="${tone}"]`)?.textContent?.trim() || "";
-    const hint = String(toneHints[tone] || "").trim();
-    toneHint.textContent = hint ? `${label} — ${hint}` : "";
+  const updateLookHint = () => {
+    const look = selectedLook();
+    const label = aiLooks.querySelector(`[data-look="${look}"]`)?.textContent?.trim() || "";
+    const hint = String(lookPresets?.[look]?.hint || "").trim();
+    lookHint.textContent = hint ? `${label} — ${hint}` : "";
+  };
+
+  const updateTitleHint = () => {
+    const wordCount = String(aiTitle.value || "").trim().split(/\s+/).filter(Boolean).length;
+    titleHint.classList.toggle("d-none", wordCount <= 6 || noTextSelected());
   };
 
   const updateCreateAvailability = () => {
@@ -26559,8 +26559,7 @@ document.addEventListener("DOMContentLoaded", () => {
     people_count: selectedFrames.length,
     title: aiTitle.value,
     no_title: noTextSelected(),
-    title_style: selectedStyle(),
-    tone: selectedTone(),
+    look: selectedLook(),
   });
 
   const rebuildPrompt = async (token = openToken, card = activeCard) => {
@@ -26665,8 +26664,8 @@ document.addEventListener("DOMContentLoaded", () => {
     allowanceUsed = Number(payload?.ai_used || 0);
     allowanceAllowed = Number(payload?.ai_allowed || 0);
     allowance.textContent = `${allowanceUsed} / ${allowanceAllowed} this month`;
-    toneHints = payload?.ai_presets?.tone_hints || {};
-    updateToneHint();
+    lookPresets = payload?.ai_presets?.looks || {};
+    updateLookHint();
     renderHistory(payload?.ai_history || []);
     feedback.textContent = "";
     if (isAllowanceExhausted()) feedback.textContent = "Monthly AI cover allowance used up.";
@@ -26703,7 +26702,7 @@ document.addEventListener("DOMContentLoaded", () => {
     allowanceUsed = 0;
     allowanceAllowed = Number.POSITIVE_INFINITY;
     currentCoverUrl = "";
-    toneHints = {};
+    lookPresets = {};
     closeConfirmed = false;
     feedback.textContent = "";
     allowance.textContent = "— / — this month";
@@ -26718,9 +26717,9 @@ document.addEventListener("DOMContentLoaded", () => {
     const cardVideo = card?.querySelector("video");
     const playerSource = cardVideo?.currentSrc || cardVideo?.getAttribute("src") || "";
     if (playerSource) framePlayer.src = playerSource;
-    aiStyles.querySelectorAll("[data-style]").forEach((item) => item.classList.toggle("active", item.dataset.style === "big_bold_yellow"));
-    aiTones.querySelectorAll("[data-tone]").forEach((item) => item.classList.toggle("active", item.dataset.tone === "clean_professional"));
-    toneHint.textContent = "";
+    aiLooks.querySelectorAll("[data-look]").forEach((item) => item.classList.toggle("active", item.dataset.look === "yellow_title"));
+    lookHint.textContent = "";
+    updateTitleHint();
     document.getElementById("clip-cover-ai-advanced")?.removeAttribute("open");
     resultActions.classList.add("d-none");
     renderCandidateSkeletons();
@@ -26965,6 +26964,7 @@ document.addEventListener("DOMContentLoaded", () => {
         button.textContent = suggestion;
         button.addEventListener("click", () => {
           aiTitle.value = suggestion;
+          updateTitleHint();
           promptDirty = false;
           void rebuildPrompt();
         });
@@ -26978,23 +26978,18 @@ document.addEventListener("DOMContentLoaded", () => {
     }
   });
 
+  aiTitle.addEventListener("input", updateTitleHint);
   aiTitle.addEventListener("change", () => {
     promptDirty = false;
     void rebuildPrompt();
   });
-  aiStyles.addEventListener("click", (event) => {
-    const chip = event.target.closest?.("[data-style]");
+  aiLooks.addEventListener("click", (event) => {
+    const chip = event.target.closest?.("[data-look]");
     if (!chip || isGenerating) return;
-    aiStyles.querySelectorAll("[data-style]").forEach((item) => item.classList.toggle("active", item === chip));
+    aiLooks.querySelectorAll("[data-look]").forEach((item) => item.classList.toggle("active", item === chip));
     updateCreateAvailability();
-    promptDirty = false;
-    void rebuildPrompt();
-  });
-  aiTones.addEventListener("click", (event) => {
-    const chip = event.target.closest?.("[data-tone]");
-    if (!chip || isGenerating) return;
-    aiTones.querySelectorAll("[data-tone]").forEach((item) => item.classList.toggle("active", item === chip));
-    updateToneHint();
+    updateLookHint();
+    updateTitleHint();
     promptDirty = false;
     void rebuildPrompt();
   });

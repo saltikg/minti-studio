@@ -26,7 +26,7 @@ from PIL import Image, ImageOps
 from app.video_shorts.services.db import get_db, get_db_readonly, table_columns
 from app.video_shorts.services.storage import get_media_storage, put_file_for_owner
 from app.video_shorts.services.user_preferences import load_user_bool_preference
-from app.video_shorts.services.cover_ai_config import BASE_PROMPT, TITLE_STYLES, TONES
+from app.video_shorts.services.cover_ai_config import BASE_PROMPT, COVER_LOOKS
 
 log = logging.getLogger(__name__)
 PROMPT_VERSION = "cover-ai-v1"
@@ -416,9 +416,10 @@ def generate_ai_cover(frame: Image.Image, *, owner: str, brand: str, generated_i
 
 def cover_ai_presets() -> dict[str, Any]:
     return {
-        "title_styles": {key: value["label"] for key, value in TITLE_STYLES.items()},
-        "tones": {key: value["label"] for key, value in TONES.items()},
-        "tone_hints": {key: value["hint"] for key, value in TONES.items()},
+        "looks": {
+            key: {"label": value["label"], "hint": value["hint"]}
+            for key, value in COVER_LOOKS.items()
+        },
     }
 
 
@@ -427,20 +428,17 @@ def assemble_phase2_prompt(
     people_count: int,
     title: str,
     no_title: bool,
-    title_style: str,
-    tone: str,
+    look: str,
     advanced_override: Optional[str] = None,
 ) -> str:
     if advanced_override is not None and str(advanced_override).strip():
         return str(advanced_override)
     if people_count not in {1, 2}:
         raise ValueError("Select one or two people.")
-    if title_style not in TITLE_STYLES:
-        raise ValueError("Choose a valid title style.")
-    if tone not in TONES:
-        raise ValueError("Choose a valid tone.")
+    if look not in COVER_LOOKS:
+        raise ValueError("Choose a valid look.")
     clean_title = " ".join(str(title or "").split())
-    text_free = bool(no_title or title_style == "no_text")
+    text_free = bool(no_title or look == "no_text")
     if not text_free and not clean_title:
         raise ValueError("Enter a cover title or choose No title.")
     people_instruction = (
@@ -456,8 +454,7 @@ def assemble_phase2_prompt(
     return BASE_PROMPT.format(
         people_instruction=people_instruction,
         title_instruction=title_instruction,
-        style_instruction=TITLE_STYLES[title_style]["prompt"],
-        tone_instruction=TONES[tone]["prompt"],
+        look_instruction=COVER_LOOKS[look]["prompt"],
     ).strip()
 
 
@@ -1040,7 +1037,7 @@ def _history_rows(conn: Any, *, owner: str, brand: str, generated_id: int) -> li
         result.append({
             "id": row[0], "storage_key": row[1], "url": storage.public_url(row[1]),
             "prompt": row[2], "model": row[3], "selected_frames": frames,
-            "title": row[5] or "", "title_style": row[6] or "", "tone": row[7] or "",
+            "title": row[5] or "", "look": row[6] or "", "tone": row[7] or "",
             "created_at": row[8].isoformat() if hasattr(row[8], "isoformat") else str(row[8]),
         })
     return result
@@ -1059,7 +1056,7 @@ def ai_cover_history(*, owner: str, brand: str, generated_id: int) -> list[dict[
 def generate_phase2_cover(
     *, owner: str, brand: str, generated_id: int, video_pk: int,
     selected_frames: list[dict[str, Any]], title: str, no_title: bool,
-    title_style: str, tone: str, advanced_prompt: Optional[str] = None,
+    look: str, advanced_prompt: Optional[str] = None,
 ) -> dict[str, Any]:
     if not os.getenv("GEMINI_API_KEY", "").strip():
         raise RuntimeError("Gemini API key is not configured.")
@@ -1067,7 +1064,7 @@ def generate_phase2_cover(
         raise ValueError("Select one or two people.")
     prompt = assemble_phase2_prompt(
         people_count=len(selected_frames), title=title, no_title=no_title,
-        title_style=title_style, tone=tone, advanced_override=advanced_prompt,
+        look=look, advanced_override=advanced_prompt,
     )
     used, allowed = ai_cover_allowance(owner, brand)
     if allowed <= 0 or used >= allowed:
@@ -1117,7 +1114,7 @@ def generate_phase2_cover(
             """,
             [generation_id, owner, brand, generated_id, video_pk, key, prompt, model,
              json.dumps(selected_frames, ensure_ascii=False), "" if no_title else title,
-             title_style, tone, datetime.now(timezone.utc).replace(tzinfo=None)],
+             look, None, datetime.now(timezone.utc).replace(tzinfo=None)],
         )
         _record_call(
             conn, owner=owner, brand=brand, generated_id=generated_id, model=model,

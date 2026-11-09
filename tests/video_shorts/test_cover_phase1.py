@@ -117,13 +117,18 @@ def test_cover_modal_generation_state_disables_controls_and_prevents_double_subm
     assert 'id="clip-cover-elapsed"' in template
 
 
-def test_cover_modal_no_text_style_disables_title_and_uses_no_title_prompt():
+def test_cover_modal_looks_use_real_images_and_no_text_disables_title():
     template = TEMPLATE.read_text(encoding="utf-8")
 
-    assert 'data-style="no_text"' in template
-    assert 'const noTextSelected = () => selectedStyle() === "no_text";' in template
+    assert template.count('class="cover-look-card') == 6
+    assert template.count("filename='cover_looks/") == 6
+    assert 'data-look="no_text"' in template
+    assert 'const noTextSelected = () => selectedLook() === "no_text";' in template
     assert 'aiTitle.disabled = isGenerating || noTextSelected();' in template
     assert 'no_title: noTextSelected(),' in template
+    assert 'id="clip-cover-ai-tones"' not in template
+    assert 'Short titles read better.' in template
+    assert '<span class="ms-1">Suggest</span>' in template
 
 
 def test_cover_modal_resets_clip_state_and_ignores_late_previous_responses():
@@ -145,19 +150,20 @@ def test_cover_modal_resets_clip_state_and_ignores_late_previous_responses():
     assert 'aiTitle.value = payload.title' not in cover_js
 
 
-def test_cover_modal_renders_four_static_visual_style_cards():
+def test_cover_modal_renders_six_static_visual_look_cards():
     template = TEMPLATE.read_text(encoding="utf-8")
-    assets = ROOT / "app/video_shorts/static/img"
+    assets = ROOT / "app/video_shorts/static/cover_looks"
 
-    assert template.count('class="cover-style-card') == 4
+    assert template.count('class="cover-look-card') == 6
     for filename in (
-        "cover-style-yellow-bold.svg", "cover-style-white-box.svg",
-        "cover-style-minimal.svg", "cover-style-no-text.svg",
+        "yellow-title.webp", "white-box.webp", "minimal.webp",
+        "dramatic.webp", "curiosity.webp", "no-text.webp",
     ):
         assert filename in template
         assert (assets / filename).is_file()
-    assert 'id="clip-cover-tone-hint"' in template
-    assert 'payload?.ai_presets?.tone_hints || {}' in template
+    assert 'id="clip-cover-look-hint"' in template
+    assert 'payload?.ai_presets?.looks || {}' in template
+    assert 'id="clip-cover-ai-tones"' not in template
 
 
 def test_cover_candidates_keep_picker_visible_and_fail_to_retry():

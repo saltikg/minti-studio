@@ -5,49 +5,39 @@ Use the supplied source-video reference image(s) as identity references. Preserv
 Keep the title in the upper third. Keep the bottom 20% and the right edge free of text and faces (YouTube Shorts UI overlays).
 {people_instruction}
 {title_instruction}
-{style_instruction}
-{tone_instruction}
+{look_instruction}
 All visible title text must be spelled exactly as supplied. Turkish characters must render correctly, including ı, ş, ğ, ç, ö, ü, and İ. Produce a single finished cover image, not a collage or mockup."""
 
-TITLE_STYLES = {
-    "big_bold_yellow": {
-        "label": "Big bold yellow",
-        "prompt": "Use large condensed bold yellow title lettering with strong dark contrast, readable at thumbnail size.",
+COVER_LOOKS = {
+    "yellow_title": {
+        "label": "Yellow Title",
+        "hint": "bold yellow type, dark contrast",
+        "prompt": "Use a big condensed bold yellow title with strong dark contrast and an energetic, high-impact mood, readable at thumbnail size.",
     },
     "white_box": {
-        "label": "White box",
-        "prompt": "Place the title in a clean white rectangular box with dark bold lettering; never cover a face.",
+        "label": "White Box",
+        "hint": "simple, bright, clean",
+        "prompt": "Use dark bold title text in a clean white box with a simple, bright mood; never cover a face.",
     },
-    "minimal_clean": {
-        "label": "Minimal clean",
-        "prompt": "Use restrained modern typography, generous spacing, and a minimal clean editorial layout.",
+    "minimal": {
+        "label": "Minimal",
+        "hint": "calm, uncluttered, professional",
+        "prompt": "Use a thin clean white title with a calm, uncluttered, professional mood and generous spacing.",
     },
-    "no_text": {
-        "label": "No text",
-        "prompt": "Do not render any text, letters, captions, logos, or symbols.",
-    },
-}
-
-TONES = {
     "dramatic": {
         "label": "Dramatic",
-        "hint": "dark, high contrast, intense",
-        "prompt": "Use dramatic cinematic lighting, deep contrast, and strong visual tension without changing identity.",
-    },
-    "clean_professional": {
-        "label": "Clean/professional",
-        "hint": "bright, simple, professional",
-        "prompt": "Use polished professional lighting, balanced composition, and credible editorial restraint.",
-    },
-    "interview_podcast": {
-        "label": "Interview/podcast",
-        "hint": "two people, conversational",
-        "prompt": "Use a premium interview or podcast thumbnail composition with natural expressions and conversational energy.",
+        "hint": "cinematic, dark, intense",
+        "prompt": "Use cinematic dark lighting, deep contrast, and a bold white title with a subtle red accent.",
     },
     "curiosity": {
         "label": "Curiosity",
-        "hint": "intriguing, question-like",
-        "prompt": "Create a curiosity-driven composition with an intriguing expression and visual question, avoiding clickbait distortions.",
+        "hint": "intriguing, expressive, question-like",
+        "prompt": "Create an intriguing, question-like mood with an expressive face and a bold yellow-and-white title, avoiding clickbait distortions.",
+    },
+    "no_text": {
+        "label": "No Text",
+        "hint": "people only, no lettering",
+        "prompt": "Do not render any text, letters, captions, logos, or symbols; show only the selected person or people.",
     },
 }
 

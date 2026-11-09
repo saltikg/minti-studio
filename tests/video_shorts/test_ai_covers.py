@@ -26,7 +26,7 @@ from app.video_shorts.services.ai_covers import (
     generate_phase2_cover,
     phase2_candidate_frames,
 )
-from app.video_shorts.services.cover_ai_config import TONES
+from app.video_shorts.services.cover_ai_config import COVER_LOOKS
 
 
 def test_ai_prompt_is_versioned_and_exact_copy_is_preserved():
@@ -277,18 +277,17 @@ def test_candidate_fallback_uses_three_evenly_spaced_frames():
     assert [item["clip_timestamp"] for item in candidates] == [3.0, 6.0, 9.0]
 
 
-def test_phase2_prompt_safe_zones_and_tone_hints_are_configured():
+def test_phase2_prompt_safe_zones_and_look_hints_are_configured():
     prompt = assemble_phase2_prompt(
         people_count=1, title="Three Word Title", no_title=False,
-        title_style="minimal_clean", tone="interview_podcast",
+        look="minimal",
     )
 
     assert "Keep the title in the upper third" in prompt
     assert "Keep the bottom 20% and the right edge free" in prompt
-    assert "a premium interview" in prompt
-    assert "an premium" not in prompt
-    assert TONES["dramatic"]["hint"] == "dark, high contrast, intense"
-    assert TONES["clean_professional"]["hint"] == "bright, simple, professional"
+    assert "calm, uncluttered, professional" in prompt
+    assert COVER_LOOKS["dramatic"]["hint"] == "cinematic, dark, intense"
+    assert COVER_LOOKS["yellow_title"]["label"] == "Yellow Title"
 
 
 def test_phase2_prompt_uses_presets_and_advanced_override_verbatim():
@@ -296,10 +295,10 @@ def test_phase2_prompt_uses_presets_and_advanced_override_verbatim():
         people_count=2,
         title="İşin Özü Şudur",
         no_title=False,
-        title_style="big_bold_yellow",
-        tone="interview_podcast",
+        look="yellow_title",
     )
     assert "both selected people" in prompt
+    assert "side by side or facing each other" in prompt
     assert '"İşin Özü Şudur"' in prompt
     assert "bold yellow" in prompt
     assert "Turkish characters" in prompt
@@ -307,8 +306,18 @@ def test_phase2_prompt_uses_presets_and_advanced_override_verbatim():
     edited = "My exact advanced prompt — ı ş ğ ç ö ü İ"
     assert assemble_phase2_prompt(
         people_count=1, title="ignored", no_title=False,
-        title_style="white_box", tone="dramatic", advanced_override=edited,
+        look="white_box", advanced_override=edited,
     ) == edited
+
+
+def test_phase2_no_text_look_omits_title_and_all_six_looks_are_configured():
+    prompt = assemble_phase2_prompt(
+        people_count=1, title="This Must Not Render", no_title=False, look="no_text",
+    )
+
+    assert len(COVER_LOOKS) == 6
+    assert "Do not include any title" in prompt
+    assert "This Must Not Render" not in prompt
 
 
 def test_phase2_allowance_blocks_before_reference_or_api_work(monkeypatch):
@@ -325,7 +334,7 @@ def test_phase2_allowance_blocks_before_reference_or_api_work(monkeypatch):
         generate_phase2_cover(
             owner="owner", brand="brand", generated_id=1, video_pk=2,
             selected_frames=[{"clip_timestamp": 1.0}], title="Three Word Title",
-            no_title=False, title_style="minimal_clean", tone="curiosity",
+            no_title=False, look="curiosity",
         )
 
 
