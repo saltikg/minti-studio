@@ -11,6 +11,7 @@ from PIL import Image
 
 from app.video_shorts.services.ai_covers import (
     _api_request,
+    _candidate_source_path,
     _history_rows,
     _normalize_ocr,
     _prompt,
@@ -175,6 +176,34 @@ def test_phase2_candidate_cache_returns_without_downloading_source(monkeypatch):
     assert result["candidate_cache_hit"] is True
     assert result["title"] == "Clip B"
     assert result["candidates"][0]["thumbnail_url"] == "signed:one"
+
+
+def test_candidate_frames_reuse_render_source_cache(monkeypatch, tmp_path):
+    import app.video_shorts.services.ai_covers as ai_covers
+    from app.video_shorts.services import media_utils
+
+    cached_path = tmp_path / "source-cache.mp4"
+    cached_path.write_bytes(b"video")
+
+    class Storage:
+        backend_name = "s3"
+
+        def download_to_temp(self, _key):
+            raise AssertionError("render source cache should be reused")
+
+    storage = Storage()
+    monkeypatch.setattr(ai_covers, "get_media_storage", lambda: storage)
+    monkeypatch.setattr(
+        media_utils, "resolve_s3_source_video_cached",
+        lambda video_id, source_key, **kwargs: cached_path,
+    )
+
+    path, leased = _candidate_source_path({
+        "source_video_id": "source-1", "source_storage_key": "sources/source-1.mp4",
+    })
+
+    assert path == cached_path
+    assert leased is True
 
 
 def test_phase2_prompt_safe_zones_and_tone_hints_are_configured():

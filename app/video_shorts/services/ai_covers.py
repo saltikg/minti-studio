@@ -480,6 +480,33 @@ def _cover_source_target(*, owner: str, brand: str, generated_id: int, video_pk:
     return target, source_temp
 
 
+def _candidate_source_path(target: dict[str, Any]) -> tuple[Path, bool]:
+    """Resolve the same stable source-cache path used by renders when possible."""
+    from app.video_shorts.services.media_utils import resolve_s3_source_video_cached
+
+    storage = get_media_storage()
+    if getattr(storage, "backend_name", "local") == "s3":
+        cached = resolve_s3_source_video_cached(
+            str(target["source_video_id"]), str(target["source_storage_key"]),
+            storage=storage, log_missing=False,
+        )
+        if cached and Path(cached).exists():
+            return Path(cached), True
+    return storage.download_to_temp(target["source_storage_key"]), False
+
+
+def _cleanup_candidate_source(path: Path, source_cache_lease: bool) -> None:
+    if source_cache_lease:
+        from app.video_shorts.services.media_utils import _cleanup_resolved_source_video
+
+        _cleanup_resolved_source_video(path, True)
+        return
+    try:
+        path.cleanup()
+    except AttributeError:
+        Path(path).unlink(missing_ok=True)
+
+
 def _clip_duration(ranges: list[tuple[float, float]]) -> float:
     return sum(max(0.0, float(end) - float(start)) for start, end in ranges)
 
@@ -662,7 +689,7 @@ def phase2_candidate_frames(
 
     import cv2
 
-    source_temp = get_media_storage().download_to_temp(target["source_storage_key"])
+    source_temp, source_cache_lease = _candidate_source_path(target)
     cap = None
     try:
         samples: list[dict[str, Any]] = []
@@ -776,10 +803,7 @@ def phase2_candidate_frames(
     finally:
         if cap is not None:
             cap.release()
-        try:
-            source_temp.cleanup()
-        except AttributeError:
-            Path(source_temp).unlink(missing_ok=True)
+        _cleanup_candidate_source(source_temp, source_cache_lease)
 
 
 def _generous_person_crop(frame: Image.Image, face: Optional[dict[str, Any]]) -> Image.Image:
