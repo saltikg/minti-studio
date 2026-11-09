@@ -161,7 +161,7 @@ class Storage:
     def exists(self, key: str) -> bool:
         raise NotImplementedError
 
-    def public_url(self, key: str) -> str:
+    def public_url(self, key: str, *, version: Optional[str] = None) -> str:
         raise NotImplementedError
 
     def download_to_temp(self, key: str) -> Path:
@@ -248,8 +248,9 @@ class LocalStorage(Storage):
         path = self._key_path(key)
         return path.exists() and path.is_file()
 
-    def public_url(self, key: str) -> str:
-        return f"/video_shorts/static/{quote(str(key).lstrip('/'), safe='/')}"
+    def public_url(self, key: str, *, version: Optional[str] = None) -> str:
+        url = f"/video_shorts/static/{quote(str(key).lstrip('/'), safe='/')}"
+        return f"{url}?v={quote(str(version), safe='')}" if version else url
 
     def download_to_temp(self, key: str) -> Path:
         return self._key_path(key)
@@ -342,10 +343,12 @@ class S3Storage(Storage):
             ExpiresIn=max(1, int(expires_in)),
         )
 
-    def public_url(self, key: str) -> str:
+    def public_url(self, key: str, *, version: Optional[str] = None) -> str:
         domain, signer = _load_cloudfront_signer()
         expires_at = datetime.now(timezone.utc) + timedelta(seconds=3600)
         url = f"https://{domain}/{quote(str(key).lstrip('/'), safe='/')}"
+        if version:
+            url = f"{url}?v={quote(str(version), safe='')}"
         return signer.generate_presigned_url(
             url,
             date_less_than=expires_at,

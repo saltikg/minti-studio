@@ -1643,6 +1643,24 @@
     height: 100%;
     object-fit: cover;
   }
+  .clip-rail-cover-badge {
+    position: absolute;
+    top: 3px;
+    left: 3px;
+    z-index: 2;
+    padding: 1px 4px;
+    border-radius: 4px;
+    background: rgba(0, 0, 0, 0.76);
+    color: #fff;
+    font-size: 0.55rem;
+    font-weight: 700;
+    line-height: 1.25;
+    pointer-events: none;
+  }
+  #clip-workbench-shell[data-generate-v2="1"] .clip-rail-thumb.has-cover {
+    width: 54px !important;
+    height: 96px !important;
+  }
   .clip-rail-ai-badge {
     position: absolute;
     top: 6px;
@@ -7290,24 +7308,23 @@
                   {% set rail_is_rendering = generate_v2 and row.render_job_status in ['queued', 'processing', 'running'] %}
                   {% set rail_delete_locked = row.yt_video_id or row.publish_at or row.publish_at_iso or rail_publish_status in ['scheduled', 'uploaded', 'published'] or rail_db_publish_status in ['scheduled', 'uploaded', 'published'] or rail_is_rendering %}
                   {% set v2_edit_locked = row.edit_locked or rail_is_rendering %}
-                  {% set rail_render_aspect_class = ' is-landscape' if row.render_aspect == 'landscape' or (generate_v2 and not rail_has_rendered_media and (video_crop_aspect or '') == 'original') else (' is-portrait' if row.render_aspect == 'portrait' else '') %}
+                  {% set rail_render_aspect_class = '' if row.cover_url else (' is-landscape' if row.render_aspect == 'landscape' or (generate_v2 and not rail_has_rendered_media and (video_crop_aspect or '') == 'original') else (' is-portrait' if row.render_aspect == 'portrait' else '')) %}
                   <div class="clip-rail-row" data-plan-index="{{ row.plan_index }}">
-                  <button type="button" class="clip-rail-item{{ rail_render_aspect_class }}{% if row.is_ai_suggestion %} is-ai-suggestion{% endif %}{% if generate_v2 and not rail_has_rendered_media %} is-unrendered{% endif %}" title="{{ row.title or ('Manual clip #' ~ row.plan_index) }}" data-plan-index="{{ row.plan_index }}" data-origin="{{ row.origin }}" data-ai-suggestion="{{ '1' if row.is_ai_suggestion else '0' }}" data-score="{{ rail_score if rail_score is not none else '' }}" data-status="{{ row.status }}" data-render-job-status="{{ row.render_job_status or '' }}" data-filename="{{ row.video_filename or '' }}" data-media-version="{{ row.media_version or '' }}" data-render-width="{{ row.render_width or '' }}" data-render-height="{{ row.render_height or '' }}" data-render-aspect="{{ row.render_aspect or '' }}" data-outdated="{{ '1' if row.render_settings_outdated else '0' }}" data-needs-regenerate="{{ '1' if row.needs_regenerate else '0' }}" data-regenerate-reason="{{ row.regenerate_reason or '' }}" data-regenerate-locked="{{ '1' if row.regenerate_locked else '0' }}" data-regenerate-lock-reason="{{ row.regenerate_lock_reason or '' }}" data-title="{{ (row.yt_title or row.title or video.title) | e }}" data-description="{{ (row.yt_description or '') | replace('\\', '\\\\') | replace('\n', '\\n') | replace('\r', '\\r') | e }}" data-yt-video-id="{{ row.yt_video_id or '' }}" data-publish-status="{{ row.publish_status or '' }}" data-db-publish-status="{{ row.db_publish_status or '' }}" data-publish-at="{{ row.publish_at or row.publish_at_iso or '' }}" data-start="{{ row.start or 0 }}" data-end="{{ row.end or 0 }}" data-edit-url="{{ editor_url('edit_clip_title_time', video_pk=video.id, plan_index=row.plan_index) }}">
+                  <button type="button" class="clip-rail-item{{ rail_render_aspect_class }}{% if row.is_ai_suggestion %} is-ai-suggestion{% endif %}{% if generate_v2 and not rail_has_rendered_media %} is-unrendered{% endif %}" title="{{ row.title or ('Manual clip #' ~ row.plan_index) }}" data-plan-index="{{ row.plan_index }}" data-origin="{{ row.origin }}" data-ai-suggestion="{{ '1' if row.is_ai_suggestion else '0' }}" data-score="{{ rail_score if rail_score is not none else '' }}" data-status="{{ row.status }}" data-render-job-status="{{ row.render_job_status or '' }}" data-filename="{{ row.video_filename or '' }}" data-media-version="{{ row.media_version or '' }}" data-render-width="{{ row.render_width or '' }}" data-render-height="{{ row.render_height or '' }}" data-render-aspect="{{ row.render_aspect or '' }}" data-current-cover-url="{{ row.cover_url|e }}" data-frame-thumbnail="{{ (row.poster_url or '')|e }}" data-outdated="{{ '1' if row.render_settings_outdated else '0' }}" data-needs-regenerate="{{ '1' if row.needs_regenerate else '0' }}" data-regenerate-reason="{{ row.regenerate_reason or '' }}" data-regenerate-locked="{{ '1' if row.regenerate_locked else '0' }}" data-regenerate-lock-reason="{{ row.regenerate_lock_reason or '' }}" data-title="{{ (row.yt_title or row.title or video.title) | e }}" data-description="{{ (row.yt_description or '') | replace('\\', '\\\\') | replace('\n', '\\n') | replace('\r', '\\r') | e }}" data-yt-video-id="{{ row.yt_video_id or '' }}" data-publish-status="{{ row.publish_status or '' }}" data-db-publish-status="{{ row.db_publish_status or '' }}" data-publish-at="{{ row.publish_at or row.publish_at_iso or '' }}" data-start="{{ row.start or 0 }}" data-end="{{ row.end or 0 }}" data-edit-url="{{ editor_url('edit_clip_title_time', video_pk=video.id, plan_index=row.plan_index) }}">
                     {% if generate_v2 %}
                     <span class="clip-rail-number">{{ loop.index }}</span>
                     {% endif %}
-                    <span class="clip-rail-thumb{{ rail_render_aspect_class }}{% if generate_v2 and not rail_has_rendered_media %} is-placeholder{% endif %}{% if rail_is_rendering %} is-rendering{% endif %}">
+                    <span class="clip-rail-thumb{{ rail_render_aspect_class }}{% if row.cover_url %} has-cover{% endif %}{% if generate_v2 and not rail_has_rendered_media %} is-placeholder{% endif %}{% if rail_is_rendering %} is-rendering{% endif %}">
                       {% if rail_has_rendered_media %}
-                        {% if generate_v2 and row.poster_url %}
+                        {% if row.cover_url %}
+                          <img src="{{ row.cover_url }}" alt="" loading="lazy" data-cover-thumbnail>
+                          <span class="clip-rail-cover-badge">Cover</span>
+                        {% elif row.poster_url %}
                           <img src="{{ row.poster_url }}" alt="" loading="lazy">
                         {% elif generate_v2 %}
                           <span class="clip-rail-placeholder-icon" aria-hidden="true">▶</span>
                         {% else %}
-                          {% if row.poster_url %}
-                            <img src="{{ row.cover_url or row.poster_url }}" alt="" loading="lazy">
-                          {% else %}
-                            <span class="clip-rail-placeholder-icon" aria-hidden="true">▶</span>
-                          {% endif %}
+                          <span class="clip-rail-placeholder-icon" aria-hidden="true">▶</span>
                         {% endif %}
                       {% else %}
                         {% if generate_v2 %}
@@ -7614,6 +7631,7 @@
                  data-regenerate-reason="{{ row.regenerate_reason or '' }}"
                  data-regenerate-locked="{{ '1' if row.regenerate_locked else '0' }}"
                  data-regenerate-lock-reason="{{ row.regenerate_lock_reason or '' }}"
+                 data-current-cover-url="{{ row.cover_url|e }}"
                  data-regenerate-url="{{ editor_url('regenerate_clip_video', video_pk=video.id, plan_index=row.plan_index) }}"
                  {% if is_admin %}
                  data-cover-url="{{ editor_url('clip_cover', video_pk=video.id, plan_index=row.plan_index) }}"
@@ -7741,7 +7759,7 @@
                     <div class="generate-v2-media-shell">
                       <div class="generate-v2-media-column{% if row.is_original_layout %} is-original-layout{% endif %}{% if row.render_job_status in ['queued', 'processing', 'running'] %} is-rendering{% endif %}">
                     {% endif %}
-                    <video controls playsinline preload="none" src="{{ row.video_url }}" poster="{{ row.cover_url or row.poster_url or short_bg_url }}" aria-label="Play {{ row.title or 'clip' }}"></video>
+                    <video controls playsinline preload="none" src="{{ row.video_url }}"{% if row.cover_url %} poster="{{ row.cover_url }}"{% endif %} aria-label="Play {{ row.title or 'clip' }}"></video>
 	                    {% if generate_v2 %}<div class="generate-v2-design-change-note{% if not row.needs_regenerate or row.regenerate_reason == 'music' %} d-none{% endif %}">Design changed — Regenerate to apply</div>{% endif %}
 	                    {% if generate_v2 and row.regenerate_reason == 'music' %}<span class="created-music-badge is-not-applied" title="Music change has not been applied to this Short"><i class="bi bi-music-note-beamed" aria-hidden="true"></i><span>{% if row.music_audio_id %}Music changed{% else %}Music removed{% endif %} · not applied yet</span></span>{% elif row.has_music %}<span class="created-music-badge" data-music-audio-id="{{ row.rendered_music_audio_id }}" title="Background music"><i class="bi bi-music-note-beamed"></i><span class="created-music-name">Music</span><span class="created-music-level">· {{ row.rendered_music_level }}%</span></span>{% endif %}
 	                    {% if generate_v2 %}
@@ -26417,6 +26435,63 @@ document.addEventListener("DOMContentLoaded", () => {
   const isAllowanceExhausted = () => allowanceAllowed <= allowanceUsed;
   const requestIsCurrent = (token, card) => token === openToken && card === activeCard;
 
+  const applyCoverToEditor = (coverUrl, card = activeCard) => {
+    const url = String(coverUrl || "").trim();
+    const planIndex = String(card?.dataset.planIndex || "").trim();
+    if (!planIndex) return;
+    const escaped = CSS.escape(planIndex);
+    const railItem = document.querySelector(`.clip-rail-item[data-plan-index="${escaped}"]`);
+    const railThumb = railItem?.querySelector(".clip-rail-thumb");
+    if (railItem) {
+      railItem.dataset.currentCoverUrl = url;
+      railItem.classList.toggle("is-landscape", !url && railItem.dataset.renderAspect === "landscape");
+      railItem.classList.toggle("is-portrait", Boolean(url) || railItem.dataset.renderAspect === "portrait");
+    }
+    if (card) {
+      card.dataset.currentCoverUrl = url;
+    }
+    if (railThumb) {
+      railThumb.querySelectorAll(":scope > img, :scope > video, :scope > .clip-rail-placeholder-icon, :scope > .clip-rail-cover-badge").forEach((node) => node.remove());
+      railThumb.classList.toggle("has-cover", Boolean(url));
+      railThumb.classList.toggle("is-landscape", !url && railItem?.dataset.renderAspect === "landscape");
+      railThumb.classList.toggle("is-portrait", Boolean(url) || railItem?.dataset.renderAspect === "portrait");
+      const fallbackUrl = String(railItem?.dataset.frameThumbnail || "").trim();
+      if (url || fallbackUrl) {
+        const image = document.createElement("img");
+        image.src = url || fallbackUrl;
+        image.alt = "";
+        image.loading = "lazy";
+        if (url) image.dataset.coverThumbnail = "1";
+        railThumb.prepend(image);
+      } else {
+        const placeholder = document.createElement("span");
+        placeholder.className = "clip-rail-placeholder-icon";
+        placeholder.setAttribute("aria-hidden", "true");
+        placeholder.textContent = "▶";
+        railThumb.prepend(placeholder);
+      }
+      if (url) {
+        const badge = document.createElement("span");
+        badge.className = "clip-rail-cover-badge";
+        badge.textContent = "Cover";
+        railThumb.append(badge);
+      }
+    }
+    document.querySelectorAll(`.clip-card[data-plan-index="${escaped}"] .clip-card-media video`).forEach((player) => {
+      if (url) player.setAttribute("poster", url);
+      else player.removeAttribute("poster");
+      player.load?.();
+    });
+  };
+
+  const finishCoverSave = (coverUrl) => {
+    applyCoverToEditor(coverUrl);
+    if (typeof showGenerateV2TextToast === "function") {
+      showGenerateV2TextToast("Cover saved");
+    }
+    bootstrap.Modal.getOrCreateInstance(modalEl).hide();
+  };
+
   const updateLookHint = () => {
     const look = selectedLook();
     const label = aiLooks.querySelector(`[data-look="${look}"]`)?.textContent?.trim() || "";
@@ -26660,7 +26735,9 @@ document.addEventListener("DOMContentLoaded", () => {
 
   const renderCover = (payload) => {
     const cover = payload?.cover || null;
-    showCurrentCover(cover?.status === "ready" ? cover.cover_url : "");
+    const coverUrl = cover?.status === "ready" ? cover.cover_url : "";
+    showCurrentCover(coverUrl);
+    applyCoverToEditor(coverUrl);
     allowanceUsed = Number(payload?.ai_used || 0);
     allowanceAllowed = Number(payload?.ai_allowed || 0);
     allowance.textContent = `${allowanceUsed} / ${allowanceAllowed} this month`;
@@ -26670,21 +26747,23 @@ document.addEventListener("DOMContentLoaded", () => {
     feedback.textContent = "";
     if (isAllowanceExhausted()) feedback.textContent = "Monthly AI cover allowance used up.";
     updateCreateAvailability();
+    return coverUrl;
   };
 
   const loadCover = async (token = openToken, card = activeCard) => {
     if (!card?.dataset.coverUrl) return;
     try {
       const response = await fetch(card.dataset.coverUrl, {
-        headers:{"Accept":"application/json"}, signal:openController?.signal,
+        headers:{"Accept":"application/json"}, signal:openController?.signal, cache:"no-store",
       });
       const payload = await response.json();
       if (!requestIsCurrent(token, card)) return;
       if (!response.ok) throw new Error(payload.message || "Cover details could not be loaded.");
-      renderCover(payload);
+      return renderCover(payload);
     } catch (error) {
       if (error?.name === "AbortError" || !requestIsCurrent(token, card)) return;
       feedback.textContent = error.message || "Cover details could not be loaded.";
+      return "";
     }
   };
 
@@ -26818,9 +26897,10 @@ document.addEventListener("DOMContentLoaded", () => {
       const response = await fetch(activeCard.dataset.coverUploadUrl, {method:"POST", body:form, headers:{"Accept":"application/json"}});
       const payload = await response.json();
       if (!response.ok) throw new Error(payload.message || "Cover upload failed.");
-      feedback.textContent = "Cover saved.";
       resetUpload();
-      await loadCover();
+      const coverUrl = await loadCover();
+      if (!coverUrl) throw new Error("Saved cover could not be loaded.");
+      finishCoverSave(coverUrl);
     } catch (error) {
       feedback.textContent = error.message || "Cover upload failed.";
     } finally {
@@ -26838,8 +26918,9 @@ document.addEventListener("DOMContentLoaded", () => {
       });
       const payload = await response.json();
       if (!response.ok) throw new Error(payload.message || "AI cover could not be saved.");
-      feedback.textContent = "Cover saved.";
-      await loadCover();
+      const coverUrl = await loadCover();
+      if (!coverUrl) throw new Error("Saved cover could not be loaded.");
+      finishCoverSave(coverUrl);
     } catch (error) {
       feedback.textContent = error.message || "AI cover could not be saved.";
     }
@@ -27008,6 +27089,7 @@ document.addEventListener("DOMContentLoaded", () => {
       const payload = await response.json();
       if (!response.ok) throw new Error(payload.message || "Cover could not be removed.");
       showCurrentCover("");
+      applyCoverToEditor("");
       feedback.textContent = "Cover removed.";
     } catch (error) {
       feedback.textContent = error.message || "Cover could not be removed.";
@@ -27037,7 +27119,7 @@ document.addEventListener("DOMContentLoaded", () => {
 
   window.__coverModalTestHooks = {
     bestFramesByPerson, setGeneratingState, plainError, resetModalForClip,
-    requestIsCurrent, renderCandidateSkeletons,
+    requestIsCurrent, renderCandidateSkeletons, applyCoverToEditor,
   };
 });
 </script>

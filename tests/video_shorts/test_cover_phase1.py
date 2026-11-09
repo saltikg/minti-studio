@@ -131,6 +131,25 @@ def test_cover_modal_looks_use_real_images_and_no_text_disables_title():
     assert '<span class="ms-1">Suggest</span>' in template
 
 
+def test_cover_is_used_by_rail_and_player_and_updates_without_reload():
+    template = TEMPLATE.read_text(encoding="utf-8")
+    cover_js = template[template.index("const applyCoverToEditor = (coverUrl"):]
+
+    assert 'data-current-cover-url="{{ row.cover_url|e }}"' in template
+    assert 'data-frame-thumbnail="{{ (row.poster_url or \'\')|e }}"' in template
+    assert 'data-cover-thumbnail' in template
+    assert '<span class="clip-rail-cover-badge">Cover</span>' in template
+    assert 'poster="{{ row.cover_url }}"' in template
+    assert 'row.cover_url or row.poster_url or short_bg_url' not in template
+    assert 'railItem.dataset.currentCoverUrl = url;' in cover_js
+    assert 'player.setAttribute("poster", url);' in cover_js
+    assert 'player.removeAttribute("poster");' in cover_js
+    assert 'applyCoverToEditor(coverUrl);' in cover_js
+    assert 'applyCoverToEditor("");' in cover_js
+    assert 'bootstrap.Modal.getOrCreateInstance(modalEl).hide();' in cover_js
+    assert 'showGenerateV2TextToast("Cover saved")' in cover_js
+
+
 def test_cover_modal_resets_clip_state_and_ignores_late_previous_responses():
     template = TEMPLATE.read_text(encoding="utf-8")
     cover_js = template[template.index('const resetModalForClip = (card) =>'):]

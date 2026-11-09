@@ -28,6 +28,7 @@ from app.video_shorts.services.clip_covers import (
     _uploaded_cover_image,
     _thumbnail_copy_fallback,
     normalize_cover_template,
+    signed_cover_payload,
     validate_clean_cover_text,
 )
 from app.video_shorts.services.clip_title import generate_clip_cover_copy
@@ -296,6 +297,26 @@ def test_manual_upload_rejects_spoofed_content():
     with pytest.raises(ValueError):
         _uploaded_cover_image(b"not-a-png", fit_mode="fill", add_text=False,
                               kicker="", main="", highlight="")
+
+
+def test_active_cover_url_version_changes_with_each_save(monkeypatch):
+    import app.video_shorts.services.clip_covers as covers
+
+    class Storage:
+        def public_url(self, key, *, version=None):
+            return f"https://media.example/{key}?v={version}"
+
+    monkeypatch.setattr(covers, "get_media_storage", lambda: Storage())
+    first = signed_cover_payload({
+        "storage_key": "cover.jpg", "updated_at": "2026-11-09 05:06:10.100001",
+    })
+    second = signed_cover_payload({
+        "storage_key": "cover.jpg", "updated_at": "2026-11-09 05:06:11.200002",
+    })
+
+    assert first["cover_version"] != second["cover_version"]
+    assert first["cover_url"] != second["cover_url"]
+    assert first["cover_url"].endswith("v=2026-11-09 05:06:10.100001")
 
 
 def test_upload_revalidates_video_tenant_before_storage(monkeypatch):

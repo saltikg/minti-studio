@@ -409,7 +409,8 @@ def get_cover_for_generated(
                    cover_text, highlight_phrase, cover_template, kicker_text, main_text, bold_highlight_text,
                    candidate_frames_json, selected_timestamp, used_face_crop, status, error,
                    generation_ms, segmentation_ms, segmentation_confidence, peak_memory_mb,
-                   size_bytes, generated_at, source, generated_storage_key, generated_source, ai_notice, ai_path
+                   size_bytes, generated_at, source, generated_storage_key, generated_source, ai_notice, ai_path,
+                   updated_at
               FROM shorts_clip_covers
              WHERE generated_video_id = ? AND owner_user_id = ? AND brand_id = ?
         """
@@ -433,6 +434,7 @@ def get_cover_for_generated(
             "peak_memory_mb": row[20], "size_bytes": row[21], "generated_at": row[22],
             "source": row[23] or row[8] or "clean", "generated_storage_key": row[24],
             "generated_source": row[25], "ai_notice": row[26] or "", "ai_path": row[27] or "",
+            "updated_at": row[28],
         }
     finally:
         conn.close()
@@ -447,7 +449,8 @@ def list_covers_for_video(*, owner_user_id: str, brand_id: str, video_pk: int) -
                    cover_text, highlight_phrase, cover_template, kicker_text, main_text, bold_highlight_text,
                    candidate_frames_json, selected_timestamp, used_face_crop, status, error,
                    generation_ms, segmentation_ms, segmentation_confidence, peak_memory_mb,
-                   size_bytes, generated_at, source, generated_storage_key, generated_source, ai_notice, ai_path
+                   size_bytes, generated_at, source, generated_storage_key, generated_source, ai_notice, ai_path,
+                   updated_at
               FROM shorts_clip_covers
              WHERE owner_user_id = ? AND brand_id = ? AND video_pk = ?
             """, [str(owner_user_id), str(brand_id), int(video_pk)]
@@ -471,6 +474,7 @@ def list_covers_for_video(*, owner_user_id: str, brand_id: str, video_pk: int) -
             "peak_memory_mb": row[20], "size_bytes": row[21], "generated_at": row[22],
             "source": row[23] or row[8] or "clean", "generated_storage_key": row[24],
             "generated_source": row[25], "ai_notice": row[26] or "", "ai_path": row[27] or "",
+            "updated_at": row[28],
         }
         result[int(cover["plan_index"])] = cover
     return result
@@ -1817,7 +1821,10 @@ def generate_cover(payload: dict[str, Any]) -> dict[str, Any]:
 def signed_cover_payload(cover: dict[str, Any]) -> dict[str, Any]:
     storage = get_media_storage()
     result = dict(cover)
-    result["cover_url"] = storage.public_url(cover["storage_key"]) if cover.get("storage_key") else ""
+    version = str(cover.get("updated_at") or cover.get("generated_at") or "").strip()
+    cover_url = storage.public_url(cover["storage_key"], version=version) if cover.get("storage_key") else ""
+    result["cover_url"] = cover_url
+    result["cover_version"] = version
     candidates = []
     for candidate in cover.get("candidates") or []:
         item = dict(candidate)
