@@ -114,3 +114,37 @@ def test_cover_modal_no_text_style_disables_title_and_uses_no_title_prompt():
     assert 'const noTextSelected = () => selectedStyle() === "no_text";' in template
     assert 'aiTitle.disabled = isGenerating || noTextSelected();' in template
     assert 'no_title: noTextSelected(),' in template
+
+
+def test_cover_modal_resets_clip_state_and_ignores_late_previous_responses():
+    template = TEMPLATE.read_text(encoding="utf-8")
+    cover_js = template[template.index('const resetModalForClip = (card) =>'):]
+    full_cover_js = template[template.index('const requestIsCurrent = (token, card) =>'):]
+
+    assert 'openToken += 1;' in cover_js
+    assert 'openController?.abort();' in cover_js
+    assert 'aiTitle.value = card?.dataset.title || "";' in cover_js
+    assert 'selectedFrames = [];' in cover_js
+    assert 'candidateFrames = [];' in cover_js
+    assert 'aiPrompt.value = "";' in cover_js
+    assert 'renderHistory([]);' in cover_js
+    assert 'showCurrentCover("");' in cover_js
+    assert 'renderCandidateSkeletons();' in cover_js
+    assert 'Promise.allSettled([loadCover(token, card), loadAiCandidates(token, card)])' in cover_js
+    assert full_cover_js.count('if (!requestIsCurrent(token, card)) return;') >= 3
+    assert 'aiTitle.value = payload.title' not in cover_js
+
+
+def test_cover_modal_renders_four_static_visual_style_cards():
+    template = TEMPLATE.read_text(encoding="utf-8")
+    assets = ROOT / "app/video_shorts/static/img"
+
+    assert template.count('class="cover-style-card') == 4
+    for filename in (
+        "cover-style-yellow-bold.svg", "cover-style-white-box.svg",
+        "cover-style-minimal.svg", "cover-style-no-text.svg",
+    ):
+        assert filename in template
+        assert (assets / filename).is_file()
+    assert 'id="clip-cover-tone-hint"' in template
+    assert 'payload?.ai_presets?.tone_hints || {}' in template

@@ -2,6 +2,7 @@
 
 BASE_PROMPT = """Create one polished vertical 9:16 YouTube Shorts cover at 1080x1920.
 Use the supplied source-video reference image(s) as identity references. Preserve each selected person's real identity, facial features, skin tone, age, hair, glasses, and clothing cues. Keep the full head visible and leave safe margins around faces. Do not add extra people, logos, watermarks, or unrelated objects.
+Keep the title in the upper third. Keep the bottom 20% and the right edge free of text and faces (YouTube Shorts UI overlays).
 {people_instruction}
 {title_instruction}
 {style_instruction}
@@ -30,18 +31,22 @@ TITLE_STYLES = {
 TONES = {
     "dramatic": {
         "label": "Dramatic",
+        "hint": "dark, high contrast, intense",
         "prompt": "Use dramatic cinematic lighting, deep contrast, and strong visual tension without changing identity.",
     },
     "clean_professional": {
         "label": "Clean/professional",
+        "hint": "bright, simple, professional",
         "prompt": "Use polished professional lighting, balanced composition, and credible editorial restraint.",
     },
     "interview_podcast": {
         "label": "Interview/podcast",
-        "prompt": "Use an premium interview or podcast thumbnail composition with natural expressions and conversational energy.",
+        "hint": "two people, conversational",
+        "prompt": "Use a premium interview or podcast thumbnail composition with natural expressions and conversational energy.",
     },
     "curiosity": {
         "label": "Curiosity",
+        "hint": "intriguing, question-like",
         "prompt": "Create a curiosity-driven composition with an intriguing expression and visual question, avoiding clickbait distortions.",
     },
 }

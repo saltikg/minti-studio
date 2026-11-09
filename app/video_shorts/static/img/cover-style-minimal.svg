@@ -1,0 +1,7 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 90 160" role="img" aria-label="Minimal cover style">
+  <rect width="90" height="160" rx="7" fill="#e9edf1"/>
+  <circle cx="45" cy="47" r="19" fill="#aab2bd"/>
+  <path d="M18 119c4-31 18-45 27-45s23 14 27 45v41H18z" fill="#7d8794"/>
+  <text x="10" y="20" font-family="Arial,sans-serif" font-size="8" letter-spacing="1.4" fill="#20252d">MINIMAL</text>
+  <line x1="10" y1="26" x2="40" y2="26" stroke="#20252d" stroke-width="1"/>
+</svg>

@@ -19,7 +19,9 @@ from app.video_shorts.services.ai_covers import (
     ai_cover_enabled,
     assemble_phase2_prompt,
     generate_phase2_cover,
+    phase2_candidate_frames,
 )
+from app.video_shorts.services.cover_ai_config import TONES
 
 
 def test_ai_prompt_is_versioned_and_exact_copy_is_preserved():
@@ -130,7 +132,7 @@ def test_phase2_candidate_selection_supports_one_and_two_people():
         for index in range(8)
     ]
     selected_single = _select_face_candidate_records(single)
-    assert len(selected_single) == 6
+    assert len(selected_single) == 1
     assert {item["person_label"] for item in selected_single} == {"Person 1"}
 
     split = [
@@ -141,9 +143,52 @@ def test_phase2_candidate_selection_supports_one_and_two_people():
         for index in range(4)
     ]
     selected_split = _select_face_candidate_records(split)
-    assert len(selected_split) == 6
-    assert [item["person_label"] for item in selected_split].count("Person 1") == 3
-    assert [item["person_label"] for item in selected_split].count("Person 2") == 3
+    assert len(selected_split) == 2
+    assert [item["person_label"] for item in selected_split] == ["Person 1", "Person 2"]
+
+
+def test_phase2_candidate_cache_returns_without_downloading_source(monkeypatch):
+    import app.video_shorts.services.ai_covers as ai_covers
+    from app.video_shorts.routes import generation
+
+    target = {
+        "source_video_id": "source-1", "source_ranges": [(10.0, 20.0)],
+        "source_storage_key": "source-key", "title": "Clip B",
+    }
+    cached = {
+        "title": "Clip B", "duration": 10.0,
+        "candidates": [{"id": "one", "person_key": "single", "thumbnail_url": "signed:one"}],
+        "face_cache_hit": True,
+    }
+
+    monkeypatch.setattr(ai_covers, "_cover_target_metadata", lambda **_kwargs: target)
+    monkeypatch.setattr(generation, "_face_detection_settings_key", lambda: "detector-v1")
+    monkeypatch.setattr(ai_covers, "_load_candidate_cache", lambda **_kwargs: dict(cached))
+
+    class Storage:
+        def download_to_temp(self, _key):
+            raise AssertionError("cached open must not download or decode the source")
+
+    monkeypatch.setattr(ai_covers, "get_media_storage", lambda: Storage())
+    result = phase2_candidate_frames(owner="owner", brand="brand", generated_id=2, video_pk=3)
+
+    assert result["candidate_cache_hit"] is True
+    assert result["title"] == "Clip B"
+    assert result["candidates"][0]["thumbnail_url"] == "signed:one"
+
+
+def test_phase2_prompt_safe_zones_and_tone_hints_are_configured():
+    prompt = assemble_phase2_prompt(
+        people_count=1, title="Three Word Title", no_title=False,
+        title_style="minimal_clean", tone="interview_podcast",
+    )
+
+    assert "Keep the title in the upper third" in prompt
+    assert "Keep the bottom 20% and the right edge free" in prompt
+    assert "a premium interview" in prompt
+    assert "an premium" not in prompt
+    assert TONES["dramatic"]["hint"] == "dark, high contrast, intense"
+    assert TONES["clean_professional"]["hint"] == "bright, simple, professional"
 
 
 def test_phase2_prompt_uses_presets_and_advanced_override_verbatim():

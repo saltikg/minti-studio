@@ -7596,6 +7596,7 @@
               {% endif %}
             <div class="clip-card{% if row.is_ai_suggestion %} is-ai-suggestion{% endif %}{% if row.is_original_layout %} is-original-layout{% endif %}"
                  data-plan-index="{{ row.plan_index }}"
+                 data-title="{{ (row.title or ('Manual clip #' ~ row.plan_index))|e }}"
                  data-origin="{{ row.origin }}"
                  data-ai-suggestion="{{ '1' if row.is_ai_suggestion else '0' }}"
                  data-status="{{ row.status }}"
@@ -8278,19 +8279,23 @@
   .cover-person-grid { display:grid; grid-template-columns:repeat(3,minmax(0,1fr)); gap:.55rem; }
   .cover-person-card { position:relative; border:1px solid rgba(255,255,255,.18); border-radius:9px; overflow:hidden; background:#111; color:#fff; padding:0; text-align:left; }
   .cover-person-card img { width:100%; aspect-ratio:1/1; object-fit:cover; display:block; }
+  .cover-person-card.is-loading { min-height:148px; background:linear-gradient(110deg,#171b22 30%,#303641 48%,#171b22 66%); background-size:260% 100%; animation:coverShimmer 1.45s linear infinite; }
+  .cover-person-card.is-loading img { opacity:0; }
   .cover-person-card .cover-person-label { display:block; padding:.35rem .45rem; font-size:.75rem; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
   .cover-person-card.is-selected { border-color:#71a6ff; box-shadow:0 0 0 2px rgba(89,145,255,.28); }
   .cover-person-card .cover-check { position:absolute; right:.35rem; top:.35rem; display:none; width:20px; height:20px; border-radius:50%; background:#2f7df6; align-items:center; justify-content:center; }
   .cover-person-card.is-selected .cover-check { display:flex; }
+  .cover-person-skeleton { min-height:148px; border-radius:9px; background:linear-gradient(110deg,#171b22 30%,#303641 48%,#171b22 66%); background-size:260% 100%; animation:coverShimmer 1.45s linear infinite; }
   .cover-pick-card { min-height:112px; display:flex; flex-direction:column; align-items:center; justify-content:center; gap:.35rem; color:rgba(255,255,255,.72); }
   .cover-frame-picker video { width:100%; max-height:210px; border-radius:8px; background:#000; }
   .cover-chip-group { display:flex; flex-wrap:wrap; gap:.45rem; }
   .cover-chip { border:1px solid rgba(255,255,255,.18); background:#15181e; color:#e9ecef; border-radius:999px; padding:.38rem .65rem; font-size:.8rem; display:inline-flex; align-items:center; gap:.4rem; }
   .cover-chip.active { border-color:#71a6ff; background:rgba(55,116,220,.24); color:#fff; }
-  .cover-style-swatch { width:18px; height:13px; border-radius:3px; display:inline-block; background:#f6cf35; border:1px solid rgba(255,255,255,.2); }
-  .cover-style-swatch.white-box { background:#fff; box-shadow:inset 0 0 0 3px #fff; border-color:#777; }
-  .cover-style-swatch.minimal { background:linear-gradient(#fff 0 2px,transparent 2px 100%); }
-  .cover-style-swatch.no-text { background:linear-gradient(135deg,transparent 43%,#dc3545 44% 56%,transparent 57%); }
+  .cover-style-grid { display:grid; grid-template-columns:repeat(4,minmax(0,1fr)); gap:.5rem; }
+  .cover-style-card { border:1px solid rgba(255,255,255,.18); background:#15181e; color:#e9ecef; border-radius:9px; padding:.3rem; font-size:.72rem; text-align:center; }
+  .cover-style-card img { display:block; width:100%; max-width:90px; aspect-ratio:9/16; object-fit:cover; border-radius:6px; margin:0 auto .35rem; }
+  .cover-style-card.active { border-color:#71a6ff; background:rgba(55,116,220,.24); box-shadow:0 0 0 2px rgba(89,145,255,.2); }
+  .cover-tone-hint { min-height:18px; }
   #clipCoverModal .modal-footer { flex-wrap:nowrap; min-height:66px; }
   .cover-footer-main { display:flex; align-items:center; gap:.8rem; margin-left:auto; }
   @media (max-width: 767.98px) {
@@ -8362,11 +8367,11 @@
             </section>
             <section class="cover-step">
               <div class="cover-step-title"><span class="cover-step-number">3</span><span>Style</span></div>
-              <div class="cover-chip-group mb-3" id="clip-cover-ai-styles">
-                <button type="button" class="cover-chip active" data-style="big_bold_yellow"><span class="cover-style-swatch"></span>Yellow bold</button>
-                <button type="button" class="cover-chip" data-style="white_box"><span class="cover-style-swatch white-box"></span>White box</button>
-                <button type="button" class="cover-chip" data-style="minimal_clean"><span class="cover-style-swatch minimal"></span>Minimal</button>
-                <button type="button" class="cover-chip" data-style="no_text"><span class="cover-style-swatch no-text"></span>No text</button>
+              <div class="cover-style-grid mb-3" id="clip-cover-ai-styles">
+                <button type="button" class="cover-style-card active" data-style="big_bold_yellow"><img src="{{ url_for('video_shorts_bp.static', filename='img/cover-style-yellow-bold.svg') }}" alt="Yellow bold example">Yellow bold</button>
+                <button type="button" class="cover-style-card" data-style="white_box"><img src="{{ url_for('video_shorts_bp.static', filename='img/cover-style-white-box.svg') }}" alt="White box example">White box</button>
+                <button type="button" class="cover-style-card" data-style="minimal_clean"><img src="{{ url_for('video_shorts_bp.static', filename='img/cover-style-minimal.svg') }}" alt="Minimal example">Minimal</button>
+                <button type="button" class="cover-style-card" data-style="no_text"><img src="{{ url_for('video_shorts_bp.static', filename='img/cover-style-no-text.svg') }}" alt="No text example">No text</button>
               </div>
               <div class="small text-white-50 mb-2">Tone</div>
               <div class="cover-chip-group" id="clip-cover-ai-tones">
@@ -8375,6 +8380,7 @@
                 <button type="button" class="cover-chip" data-tone="interview_podcast">Interview</button>
                 <button type="button" class="cover-chip" data-tone="curiosity">Curiosity</button>
               </div>
+              <div class="cover-tone-hint small text-white-50 mt-2" id="clip-cover-tone-hint"></div>
               <details class="mt-3" id="clip-cover-ai-advanced">
                 <summary class="small">Edit prompt</summary>
                 <textarea class="form-control bg-black text-white border-secondary mt-2" id="clip-cover-ai-prompt" rows="6" aria-label="Final AI cover prompt"></textarea>
@@ -26361,6 +26367,7 @@ document.addEventListener("DOMContentLoaded", () => {
   const aiSuggestions = document.getElementById("clip-cover-ai-suggestions");
   const aiStyles = document.getElementById("clip-cover-ai-styles");
   const aiTones = document.getElementById("clip-cover-ai-tones");
+  const toneHint = document.getElementById("clip-cover-tone-hint");
   const aiPrompt = document.getElementById("clip-cover-ai-prompt");
   const aiRebuildPrompt = document.getElementById("clip-cover-ai-rebuild-prompt");
   const aiGenerate = document.getElementById("clip-cover-ai-generate");
@@ -26390,6 +26397,9 @@ document.addEventListener("DOMContentLoaded", () => {
   let elapsedTimer = null;
   let closeConfirmed = false;
   let currentCoverUrl = "";
+  let toneHints = {};
+  let openToken = 0;
+  let openController = null;
 
   const formatCoverTime = (seconds) => {
     const value = Math.max(0, Number(seconds) || 0);
@@ -26397,6 +26407,7 @@ document.addEventListener("DOMContentLoaded", () => {
   };
 
   const frameUrl = (frame) => {
+    if (frame.thumbnail_url) return String(frame.thumbnail_url);
     const url = new URL(activeCard.dataset.coverAiFrameUrl, window.location.origin);
     url.searchParams.set("t", String(frame.clip_timestamp || 0));
     if (frame.face) url.searchParams.set("face", JSON.stringify(frame.face));
@@ -26407,6 +26418,14 @@ document.addEventListener("DOMContentLoaded", () => {
   const selectedTone = () => aiTones.querySelector("[data-tone].active")?.dataset.tone || "clean_professional";
   const noTextSelected = () => selectedStyle() === "no_text";
   const isAllowanceExhausted = () => allowanceAllowed <= allowanceUsed;
+  const requestIsCurrent = (token, card) => token === openToken && card === activeCard;
+
+  const updateToneHint = () => {
+    const tone = selectedTone();
+    const label = aiTones.querySelector(`[data-tone="${tone}"]`)?.textContent?.trim() || "";
+    const hint = String(toneHints[tone] || "").trim();
+    toneHint.textContent = hint ? `${label} — ${hint}` : "";
+  };
 
   const updateCreateAvailability = () => {
     const invalidSelection = selectedFrames.length < 1 || selectedFrames.length > 2;
@@ -26430,11 +26449,16 @@ document.addEventListener("DOMContentLoaded", () => {
   const candidateNode = (frame, index) => {
     const button = document.createElement("button");
     button.type = "button";
-    button.className = `cover-person-card${isFrameSelected(frame) ? " is-selected" : ""}`;
+    button.className = `cover-person-card is-loading${isFrameSelected(frame) ? " is-selected" : ""}`;
     button.dataset.frameId = frame.id;
     const image = document.createElement("img");
-    image.src = frameUrl(frame);
     image.alt = frame.person_label || `Candidate ${index + 1}`;
+    image.addEventListener("load", () => {
+      button.classList.remove("is-loading");
+      modalEl.dataset.firstFrameReadyAt ||= String(performance.now());
+    }, {once:true});
+    image.addEventListener("error", () => button.classList.remove("is-loading"), {once:true});
+    image.src = frameUrl(frame);
     const caption = document.createElement("div");
     caption.className = "cover-person-label";
     caption.textContent = frame.person_label || "Video frame";
@@ -26454,6 +26478,16 @@ document.addEventListener("DOMContentLoaded", () => {
       void rebuildPrompt();
     });
     return button;
+  };
+
+  const renderCandidateSkeletons = () => {
+    aiCandidates.replaceChildren();
+    for (let index = 0; index < 2; index += 1) {
+      const skeleton = document.createElement("div");
+      skeleton.className = "cover-person-skeleton";
+      skeleton.setAttribute("aria-hidden", "true");
+      aiCandidates.append(skeleton);
+    }
   };
 
   const renderCandidateCards = () => {
@@ -26503,39 +26537,43 @@ document.addEventListener("DOMContentLoaded", () => {
     tone: selectedTone(),
   });
 
-  const rebuildPrompt = async () => {
-    if (!activeCard?.dataset.coverAiPromptUrl || !selectedFrames.length) return;
+  const rebuildPrompt = async (token = openToken, card = activeCard) => {
+    if (!card?.dataset.coverAiPromptUrl || !selectedFrames.length || !requestIsCurrent(token, card)) return;
+    const promptRequest = promptPayload();
     try {
-      const response = await fetch(activeCard.dataset.coverAiPromptUrl, {
+      const response = await fetch(card.dataset.coverAiPromptUrl, {
         method: "POST", headers: {"Content-Type":"application/json", "Accept":"application/json"},
-        body: JSON.stringify(promptPayload()),
+        body: JSON.stringify(promptRequest), signal: openController?.signal,
       });
       const payload = await response.json();
+      if (!requestIsCurrent(token, card)) return;
       if (!response.ok) throw new Error(payload.message || "Prompt could not be built.");
       aiPrompt.value = payload.prompt;
       promptDirty = false;
     } catch (error) {
+      if (error?.name === "AbortError" || !requestIsCurrent(token, card)) return;
       feedback.textContent = error.message || "Prompt could not be built.";
     }
   };
 
-  const loadAiCandidates = async () => {
-    if (!activeCard?.dataset.coverAiCandidatesUrl) return;
-    aiCandidates.innerHTML = '<div class="col-12 small text-white-50">Finding the best face-aware frames…</div>';
+  const loadAiCandidates = async (token, card) => {
+    if (!card?.dataset.coverAiCandidatesUrl) return;
     try {
-      const response = await fetch(activeCard.dataset.coverAiCandidatesUrl, {headers:{"Accept":"application/json"}});
+      const response = await fetch(card.dataset.coverAiCandidatesUrl, {
+        headers:{"Accept":"application/json"}, signal:openController?.signal,
+      });
       const payload = await response.json();
+      if (!requestIsCurrent(token, card)) return;
       if (!response.ok) throw new Error(payload.message || "Candidate frames could not be loaded.");
       clipDuration = Number(payload.duration || 0);
-      aiTitle.value = payload.title || activeCard.dataset.title || "";
       candidateFrames = bestFramesByPerson(payload.candidates || []);
       selectedFrames = candidateFrames.slice(0, 2);
+      modalEl.dataset.candidateCacheHit = payload.candidate_cache_hit ? "1" : "0";
+      modalEl.dataset.candidateServerMs = String(Number(payload.elapsed_ms || 0));
       renderCandidateCards();
-      const cardVideo = activeCard.querySelector("video");
-      const playerSource = cardVideo?.currentSrc || cardVideo?.getAttribute("src") || "";
-      if (playerSource) framePlayer.src = playerSource;
-      await rebuildPrompt();
+      await rebuildPrompt(token, card);
     } catch (error) {
+      if (error?.name === "AbortError" || !requestIsCurrent(token, card)) return;
       aiCandidates.replaceChildren();
       feedback.textContent = error.message || "Candidate frames could not be loaded.";
     }
@@ -26588,45 +26626,80 @@ document.addEventListener("DOMContentLoaded", () => {
     allowanceUsed = Number(payload?.ai_used || 0);
     allowanceAllowed = Number(payload?.ai_allowed || 0);
     allowance.textContent = `${allowanceUsed} / ${allowanceAllowed} this month`;
+    toneHints = payload?.ai_presets?.tone_hints || {};
+    updateToneHint();
     renderHistory(payload?.ai_history || []);
     feedback.textContent = "";
     if (isAllowanceExhausted()) feedback.textContent = "Monthly AI cover allowance used up.";
     updateCreateAvailability();
   };
 
-  const loadCover = async () => {
-    if (!activeCard?.dataset.coverUrl) return;
+  const loadCover = async (token = openToken, card = activeCard) => {
+    if (!card?.dataset.coverUrl) return;
     try {
-      const response = await fetch(activeCard.dataset.coverUrl, {headers:{"Accept":"application/json"}});
+      const response = await fetch(card.dataset.coverUrl, {
+        headers:{"Accept":"application/json"}, signal:openController?.signal,
+      });
       const payload = await response.json();
+      if (!requestIsCurrent(token, card)) return;
       if (!response.ok) throw new Error(payload.message || "Cover details could not be loaded.");
       renderCover(payload);
     } catch (error) {
+      if (error?.name === "AbortError" || !requestIsCurrent(token, card)) return;
       feedback.textContent = error.message || "Cover details could not be loaded.";
     }
   };
 
-  stableRoot.addEventListener("click", (event) => {
-    const button = event.target.closest?.(".generate-v2-cover-btn");
-    if (!button) return;
-    activeCard = button.closest(".clip-card");
-    feedback.textContent = "";
+  const resetModalForClip = (card) => {
+    openToken += 1;
+    openController?.abort();
+    openController = new AbortController();
+    activeCard = card;
     resetUpload();
     selectedFrames = [];
     candidateFrames = [];
     currentGenerationId = "";
     promptDirty = false;
+    clipDuration = Number(card?.dataset.duration || 0);
+    allowanceUsed = 0;
+    allowanceAllowed = Number.POSITIVE_INFINITY;
+    currentCoverUrl = "";
+    toneHints = {};
     closeConfirmed = false;
+    feedback.textContent = "";
+    allowance.textContent = "— / — this month";
+    aiTitle.value = card?.dataset.title || "";
+    aiPrompt.value = "";
+    aiSuggestions.replaceChildren();
+    renderHistory([]);
+    showCurrentCover("");
     framePicker.classList.add("d-none");
     framePlayer.pause();
     framePlayer.removeAttribute("src");
+    const cardVideo = card?.querySelector("video");
+    const playerSource = cardVideo?.currentSrc || cardVideo?.getAttribute("src") || "";
+    if (playerSource) framePlayer.src = playerSource;
+    aiStyles.querySelectorAll("[data-style]").forEach((item) => item.classList.toggle("active", item.dataset.style === "big_bold_yellow"));
+    aiTones.querySelectorAll("[data-tone]").forEach((item) => item.classList.toggle("active", item.dataset.tone === "clean_professional"));
+    toneHint.textContent = "";
+    document.getElementById("clip-cover-ai-advanced")?.removeAttribute("open");
     resultActions.classList.add("d-none");
-    aiSuggestions.replaceChildren();
+    renderCandidateSkeletons();
+    delete modalEl.dataset.firstFrameReadyAt;
+    delete modalEl.dataset.candidateCacheHit;
+    delete modalEl.dataset.candidateServerMs;
+    modalEl.dataset.titleReadyAt = String(performance.now());
+    updateCreateAvailability();
+    return openToken;
+  };
+
+  stableRoot.addEventListener("click", (event) => {
+    const button = event.target.closest?.(".generate-v2-cover-btn");
+    if (!button) return;
+    const card = button.closest(".clip-card");
+    const token = resetModalForClip(card);
     bootstrap.Modal.getOrCreateInstance(modalEl).show();
-    void (async () => {
-      await loadCover();
-      await loadAiCandidates();
-    })();
+    void Promise.allSettled([loadCover(token, card), loadAiCandidates(token, card)]);
   });
 
   uploadFile.addEventListener("change", () => {
@@ -26882,6 +26955,7 @@ document.addEventListener("DOMContentLoaded", () => {
     const chip = event.target.closest?.("[data-tone]");
     if (!chip || isGenerating) return;
     aiTones.querySelectorAll("[data-tone]").forEach((item) => item.classList.toggle("active", item === chip));
+    updateToneHint();
     promptDirty = false;
     void rebuildPrompt();
   });
@@ -26917,13 +26991,20 @@ document.addEventListener("DOMContentLoaded", () => {
     }
   });
   modalEl.addEventListener("hidden.bs.modal", () => {
+    openToken += 1;
+    openController?.abort();
+    openController = null;
+    activeCard = null;
     resetUpload();
     framePlayer.pause();
     framePlayer.removeAttribute("src");
     closeConfirmed = false;
   });
 
-  window.__coverModalTestHooks = { bestFramesByPerson, setGeneratingState, plainError };
+  window.__coverModalTestHooks = {
+    bestFramesByPerson, setGeneratingState, plainError, resetModalForClip,
+    requestIsCurrent, renderCandidateSkeletons,
+  };
 });
 </script>
 {% endif %}

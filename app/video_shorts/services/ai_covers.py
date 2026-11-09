@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import base64
+import hashlib
 import io
 import json
 import logging
@@ -114,6 +115,27 @@ def ensure_ai_cover_schema(conn) -> None:
     conn.execute(
         "CREATE INDEX IF NOT EXISTS idx_cover_ai_history "
         "ON shorts_cover_ai_generations(owner_user_id, brand_id, generated_video_id, created_at)"
+    )
+    conn.execute(f"""
+        CREATE TABLE IF NOT EXISTS shorts_cover_ai_candidate_cache (
+          cache_key VARCHAR PRIMARY KEY,
+          owner_user_id VARCHAR NOT NULL,
+          brand_id VARCHAR NOT NULL,
+          generated_video_id BIGINT NOT NULL,
+          source_video_id VARCHAR NOT NULL,
+          source_ranges_json {json_type} NOT NULL,
+          detector_key VARCHAR NOT NULL,
+          title_text TEXT,
+          duration_seconds DOUBLE PRECISION NOT NULL,
+          candidates_json {json_type} NOT NULL,
+          face_cache_hit BOOLEAN NOT NULL DEFAULT FALSE,
+          created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+          updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP
+        )
+    """)
+    conn.execute(
+        "CREATE INDEX IF NOT EXISTS idx_cover_ai_candidate_owner "
+        "ON shorts_cover_ai_candidate_cache(owner_user_id, brand_id, generated_video_id)"
     )
 
 
@@ -395,6 +417,7 @@ def cover_ai_presets() -> dict[str, Any]:
     return {
         "title_styles": {key: value["label"] for key, value in TITLE_STYLES.items()},
         "tones": {key: value["label"] for key, value in TONES.items()},
+        "tone_hints": {key: value["hint"] for key, value in TONES.items()},
     }
 
 
@@ -437,16 +460,22 @@ def assemble_phase2_prompt(
     ).strip()
 
 
-def _cover_source_target(*, owner: str, brand: str, generated_id: int, video_pk: int) -> tuple[dict, Any]:
+def _cover_target_metadata(*, owner: str, brand: str, generated_id: int, video_pk: int) -> dict[str, Any]:
     from app.video_shorts.services.clip_covers import _cover_target
 
     conn = get_db_readonly()
     try:
-        target = _cover_target(
+        return _cover_target(
             conn, generated_id, owner_user_id=owner, brand_id=brand, video_pk=video_pk,
         )
     finally:
         conn.close()
+
+
+def _cover_source_target(*, owner: str, brand: str, generated_id: int, video_pk: int) -> tuple[dict, Any]:
+    target = _cover_target_metadata(
+        owner=owner, brand=brand, generated_id=generated_id, video_pk=video_pk,
+    )
     source_temp = get_media_storage().download_to_temp(target["source_storage_key"])
     return target, source_temp
 
@@ -486,30 +515,155 @@ def _select_face_candidate_records(ranked: list[dict[str, Any]]) -> list[dict[st
             options = sorted(
                 (item for item in split_faces if item["person_key"] == person_key),
                 key=lambda item: item["score"], reverse=True,
-            )[:3]
+            )[:1]
             for option in options:
                 option = dict(option)
                 option["person_label"] = label
                 chosen.append(option)
     else:
-        options = sorted(ranked, key=lambda item: item["score"], reverse=True)[:6]
+        options = sorted(ranked, key=lambda item: item["score"], reverse=True)[:1]
         for option in options:
             option = dict(option)
             option["person_label"] = "Person 1"
             chosen.append(option)
-    return sorted(chosen, key=lambda item: (item["person_label"], -item["score"]))[:6]
+    return sorted(chosen, key=lambda item: (item["person_label"], -item["score"]))[:2]
+
+
+def _candidate_cache_key(target: dict[str, Any], detector_key: str, *, owner: str, brand: str) -> str:
+    identity = {
+        "owner_user_id": str(owner),
+        "brand_id": str(brand),
+        "source_video_id": str(target["source_video_id"]),
+        "source_ranges": [
+            [round(float(start), 6), round(float(end), 6)]
+            for start, end in target["source_ranges"]
+        ],
+        "detector_key": str(detector_key),
+    }
+    return hashlib.sha256(json.dumps(identity, sort_keys=True).encode("utf-8")).hexdigest()
+
+
+def _parse_cached_json(value: Any, fallback: Any) -> Any:
+    if isinstance(value, (dict, list)):
+        return value
+    try:
+        return json.loads(value or "")
+    except (TypeError, ValueError, json.JSONDecodeError):
+        return fallback
+
+
+def _candidate_urls(candidates: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    storage = get_media_storage()
+    result = []
+    for candidate in candidates:
+        item = dict(candidate)
+        thumbnail_key = str(item.pop("thumbnail_key", "") or "")
+        if thumbnail_key:
+            item["thumbnail_url"] = storage.public_url(thumbnail_key)
+        result.append(item)
+    return result
+
+
+def _load_candidate_cache(
+    *, cache_key: str, owner: str, brand: str,
+) -> Optional[dict[str, Any]]:
+    conn = get_db()
+    try:
+        ensure_ai_cover_schema(conn)
+        row = conn.execute(
+            """
+            SELECT title_text, duration_seconds, candidates_json, face_cache_hit
+              FROM shorts_cover_ai_candidate_cache
+             WHERE cache_key=? AND owner_user_id=? AND brand_id=?
+            """,
+            [cache_key, owner, brand],
+        ).fetchone()
+        conn.commit()
+    finally:
+        conn.close()
+    if not row:
+        return None
+    candidates = _parse_cached_json(row[2], [])
+    if not isinstance(candidates, list) or not candidates:
+        return None
+    return {
+        "title": str(row[0] or ""),
+        "duration": round(float(row[1] or 0.0), 3),
+        "candidates": _candidate_urls(candidates),
+        "face_cache_hit": bool(row[3]),
+    }
+
+
+def _save_candidate_cache(
+    *, cache_key: str, owner: str, brand: str, generated_id: int,
+    target: dict[str, Any], detector_key: str, duration: float,
+    candidates: list[dict[str, Any]], face_cache_hit: bool,
+) -> None:
+    conn = get_db()
+    try:
+        ensure_ai_cover_schema(conn)
+        conn.execute(
+            """
+            INSERT INTO shorts_cover_ai_candidate_cache
+              (cache_key, owner_user_id, brand_id, generated_video_id, source_video_id,
+               source_ranges_json, detector_key, title_text, duration_seconds,
+               candidates_json, face_cache_hit, created_at, updated_at)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
+            ON CONFLICT(cache_key) DO UPDATE SET
+              owner_user_id=excluded.owner_user_id,
+              brand_id=excluded.brand_id,
+              generated_video_id=excluded.generated_video_id,
+              source_video_id=excluded.source_video_id,
+              source_ranges_json=excluded.source_ranges_json,
+              detector_key=excluded.detector_key,
+              title_text=excluded.title_text,
+              duration_seconds=excluded.duration_seconds,
+              candidates_json=excluded.candidates_json,
+              face_cache_hit=excluded.face_cache_hit,
+              updated_at=CURRENT_TIMESTAMP
+            """,
+            [
+                cache_key, owner, brand, int(generated_id), str(target["source_video_id"]),
+                json.dumps(target["source_ranges"]), detector_key, target["title"], float(duration),
+                json.dumps(candidates, ensure_ascii=False), bool(face_cache_hit),
+            ],
+        )
+        conn.commit()
+    finally:
+        conn.close()
 
 
 def phase2_candidate_frames(
     *, owner: str, brand: str, generated_id: int, video_pk: int,
 ) -> dict[str, Any]:
-    """Rank face-aware samples into 4–6 person-reference choices."""
-    import cv2
+    """Return one best reference per person, cached with its thumbnail."""
     from app.video_shorts.routes import generation
 
-    target, source_temp = _cover_source_target(
+    started = time.monotonic()
+    target = _cover_target_metadata(
         owner=owner, brand=brand, generated_id=generated_id, video_pk=video_pk,
     )
+    detector_key = generation._face_detection_settings_key()
+    cache_key = _candidate_cache_key(target, detector_key, owner=owner, brand=brand)
+    cached = _load_candidate_cache(cache_key=cache_key, owner=owner, brand=brand)
+    if cached:
+        elapsed_ms = round((time.monotonic() - started) * 1000)
+        cached.update({
+            "candidate_cache_hit": True,
+            "candidate_cache_key": cache_key,
+            "elapsed_ms": elapsed_ms,
+        })
+        log.info(
+            "AI cover candidate cache brand=%s clip=%s hit=true face_cache_hit=%s elapsed_ms=%s candidates=%s",
+            brand, generated_id, bool(cached.get("face_cache_hit")), elapsed_ms,
+            len(cached.get("candidates") or []),
+        )
+        return cached
+
+    import cv2
+
+    source_temp = get_media_storage().download_to_temp(target["source_storage_key"])
+    cap = None
     try:
         samples: list[dict[str, Any]] = []
         clip_base = 0.0
@@ -567,7 +721,6 @@ def phase2_candidate_frames(
                     "face_sharpness": round(sharpness, 2),
                     "face_count": len(ordered),
                 })
-        cap.release()
         chosen = _select_face_candidate_records(ranked)
         if not chosen:
             midpoint = _clip_duration(target["source_ranges"]) / 2.0
@@ -578,13 +731,51 @@ def phase2_candidate_frames(
                 "clip_timestamp": round(midpoint, 3), "face": None, "score": 0.0,
                 "face_sharpness": 0.0, "face_count": 0,
             }]
+        cache_candidates: list[dict[str, Any]] = []
+        with tempfile.TemporaryDirectory(prefix="cover_ai_candidates_") as directory:
+            directory_path = Path(directory)
+            for index, candidate in enumerate(chosen):
+                cap.set(cv2.CAP_PROP_POS_MSEC, float(candidate["source_timestamp"]) * 1000.0)
+                ok, raw = cap.read()
+                if not ok or raw is None:
+                    continue
+                image = Image.fromarray(cv2.cvtColor(raw, cv2.COLOR_BGR2RGB))
+                thumbnail = _generous_person_crop(image, candidate.get("face"))
+                thumbnail.thumbnail((480, 480), Image.Resampling.LANCZOS)
+                thumbnail_path = directory_path / f"candidate_{index + 1}.jpg"
+                thumbnail.save(thumbnail_path, "JPEG", quality=86, optimize=True)
+                thumbnail_key = (
+                    f"brands/{brand}/private/short-covers/{generated_id}/candidate-cache/"
+                    f"{cache_key}-{index + 1}.jpg"
+                )
+                put_file_for_owner(thumbnail_path, thumbnail_key, owner_user_id=owner)
+                cache_candidates.append({**candidate, "thumbnail_key": thumbnail_key})
+        if not cache_candidates:
+            raise RuntimeError("Candidate reference frames could not be decoded.")
+        face_cache_hit = bool(cache_info.get("hit"))
+        duration = round(_clip_duration(target["source_ranges"]), 3)
+        _save_candidate_cache(
+            cache_key=cache_key, owner=owner, brand=brand, generated_id=generated_id,
+            target=target, detector_key=detector_key, duration=duration,
+            candidates=cache_candidates, face_cache_hit=face_cache_hit,
+        )
+        elapsed_ms = round((time.monotonic() - started) * 1000)
+        log.info(
+            "AI cover candidate cache brand=%s clip=%s hit=false face_cache_hit=%s elapsed_ms=%s candidates=%s",
+            brand, generated_id, face_cache_hit, elapsed_ms, len(cache_candidates),
+        )
         return {
             "title": target["title"],
-            "duration": round(_clip_duration(target["source_ranges"]), 3),
-            "candidates": chosen,
-            "face_cache_hit": bool(cache_info.get("hit")),
+            "duration": duration,
+            "candidates": _candidate_urls(cache_candidates),
+            "face_cache_hit": face_cache_hit,
+            "candidate_cache_hit": False,
+            "candidate_cache_key": cache_key,
+            "elapsed_ms": elapsed_ms,
         }
     finally:
+        if cap is not None:
+            cap.release()
         try:
             source_temp.cleanup()
         except AttributeError:

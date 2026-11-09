@@ -1,0 +1,9 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 90 160" role="img" aria-label="White box cover style">
+  <defs><linearGradient id="bg" x2="0" y2="1"><stop stop-color="#465260"/><stop offset="1" stop-color="#161a21"/></linearGradient></defs>
+  <rect width="90" height="160" rx="7" fill="url(#bg)"/>
+  <circle cx="45" cy="44" r="19" fill="#939dac"/>
+  <path d="M17 116c4-31 19-45 28-45s24 14 28 45v44H17z" fill="#697584"/>
+  <rect x="8" y="98" width="74" height="31" rx="2" fill="#fff"/>
+  <text x="45" y="112" text-anchor="middle" font-family="Arial,sans-serif" font-size="10" font-weight="800" fill="#171b22">WHITE</text>
+  <text x="45" y="123" text-anchor="middle" font-family="Arial,sans-serif" font-size="9" font-weight="800" fill="#171b22">BOX</text>
+</svg>
