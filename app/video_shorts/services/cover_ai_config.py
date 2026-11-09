@@ -6,7 +6,7 @@ BASE_PROMPT = """Edit this photo into a YouTube Shorts cover. Do NOT redraw, rep
 {look_instruction}
 All visible title text must be spelled exactly as supplied. Turkish characters must render correctly, including ı, ş, ğ, ç, ö, ü, and İ. Produce a single finished vertical 9:16 cover at 1080x1920, not a collage or mockup."""
 
-FACE_IDENTITY_COSINE_THRESHOLD = 0.40
+FACE_IDENTITY_COSINE_THRESHOLD = 0.80
 FACE_IDENTITY_MAX_ATTEMPTS = 3
 
 COVER_LOOKS = {

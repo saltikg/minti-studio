@@ -348,7 +348,7 @@ def test_identity_check_retries_twice_and_retries_do_not_count_as_allowance(monk
     import app.video_shorts.services.ai_covers as ai_covers
 
     api_calls = []
-    score_values = iter([[0.20], [0.32], [0.51]])
+    score_values = iter([[0.20], [0.62], [0.91]])
     colors = iter(["red", "green", "blue"])
     monkeypatch.setattr(
         ai_covers, "_phase2_api_request",
@@ -366,7 +366,7 @@ def test_identity_check_retries_twice_and_retries_do_not_count_as_allowance(monk
     )
 
     assert image.getpixel((0, 0)) == (0, 0, 255)
-    assert scores == [0.51] and passed is True and len(attempts) == 3
+    assert scores == [0.91] and passed is True and len(attempts) == 3
     assert [entry["request_kind"] for entry in recorded] == [
         "phase2_image", "phase2_image_retry", "phase2_image_retry",
     ]
@@ -378,7 +378,7 @@ def test_identity_check_returns_best_attempt_with_warning_state_after_three_fail
     import app.video_shorts.services.ai_covers as ai_covers
 
     colors = iter(["red", "green", "blue"])
-    scores = iter([[0.21], [0.36], [0.28]])
+    scores = iter([[0.21], [0.76], [0.68]])
     monkeypatch.setattr(
         ai_covers, "_phase2_api_request",
         lambda *_args: (Image.new("RGB", (1080, 1920), next(colors)), {}),
@@ -391,7 +391,7 @@ def test_identity_check_returns_best_attempt_with_warning_state_after_three_fail
     )
 
     assert image.getpixel((0, 0)) == (0, 128, 0)
-    assert best_scores == [0.36] and passed is False and len(attempts) == 3
+    assert best_scores == [0.76] and passed is False and len(attempts) == 3
 
 
 def test_phase2_prompt_uses_presets_and_advanced_override_verbatim():
