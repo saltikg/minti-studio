@@ -31,6 +31,7 @@ from app.video_shorts.services.cover_ai_config import BASE_PROMPT, TITLE_STYLES,
 log = logging.getLogger(__name__)
 PROMPT_VERSION = "cover-ai-v1"
 DEFAULT_MODEL = "gemini-3.1-flash-image"
+CANDIDATE_ALGORITHM_VERSION = "render-layout-v1"
 _AI_LOCK = threading.Lock()
 _ADVISORY_LOCK_ID = 843715902
 _STYLE_REFERENCE = Path(__file__).resolve().parents[1] / "static" / "img" / "cover-ai-style-v1.svg"
@@ -556,6 +557,151 @@ def _select_face_candidate_records(ranked: list[dict[str, Any]]) -> list[dict[st
     return sorted(chosen, key=lambda item: (item["person_label"], -item["score"]))[:2]
 
 
+def _load_render_face_track(target: dict[str, Any]) -> list[dict[str, Any]]:
+    """Read an existing render track only; never create or detect one here."""
+    if len(target.get("source_ranges") or []) != 1:
+        return []
+    try:
+        from app.video_shorts.routes import generation
+
+        start, end = target["source_ranges"][0]
+        path = generation._preview_face_track_smooth_path(
+            str(target["source_video_id"]), float(start), float(end),
+        )
+        if not path.exists():
+            return []
+        rows = json.loads(path.read_text(encoding="utf-8"))
+        return [row for row in rows if isinstance(row, dict)] if isinstance(rows, list) else []
+    except Exception:
+        log.warning(
+            "AI cover existing face track unavailable video=%s",
+            target.get("source_video_id"), exc_info=True,
+        )
+        return []
+
+
+def _candidate_face_from_split_crop(crop: dict[str, Any]) -> dict[str, float]:
+    width = max(0.01, float(crop.get("w") or 0.25))
+    height = max(0.01, float(crop.get("h") or 0.35))
+    return {
+        "cx_ratio": float(crop.get("cx") or (float(crop.get("x") or 0.0) + width / 2.0)),
+        "cy_ratio": float(crop.get("cy") or (float(crop.get("y") or 0.0) + height / 2.0)),
+        "w_ratio": min(0.25, width * 0.34),
+        "h_ratio": min(0.32, height * 0.38),
+    }
+
+
+def _candidate_records_from_render_data(
+    target: dict[str, Any], track_rows: list[dict[str, Any]],
+) -> tuple[list[dict[str, Any]], bool]:
+    """Choose 2–3 timestamps from saved render layout/track without detection."""
+    duration = _clip_duration(target["source_ranges"])
+    segments = [
+        segment for segment in (target.get("auto_layout_segments") or [])
+        if isinstance(segment, dict)
+    ]
+    split_segments = [
+        segment for segment in segments
+        if str(segment.get("mode") or "").lower() == "split"
+        and isinstance(segment.get("split_crops"), dict)
+    ]
+    if split_segments:
+        segment = max(
+            split_segments,
+            key=lambda item: float(item.get("end") or 0.0) - float(item.get("start") or 0.0),
+        )
+        clip_t = max(0.0, min(duration, (
+            float(segment.get("start") or 0.0) + float(segment.get("end") or 0.0)
+        ) / 2.0))
+        source_t = _source_time_for_offset(target["source_ranges"], clip_t)
+        chosen = []
+        for key, person_key, label in (
+            ("top", "left", "Person 1"), ("bottom", "right", "Person 2"),
+        ):
+            crop = (segment.get("split_crops") or {}).get(key)
+            if not isinstance(crop, dict):
+                continue
+            chosen.append({
+                "id": f"{source_t:.3f}:{person_key}",
+                "person_key": person_key,
+                "person_label": label,
+                "source_timestamp": round(source_t, 3),
+                "clip_timestamp": round(clip_t, 3),
+                "face": _candidate_face_from_split_crop(crop),
+                "render_crop": crop,
+                "score": 0.0,
+                "face_sharpness": 0.0,
+                "face_count": 2,
+            })
+        if chosen:
+            return chosen, True
+
+    fill_segments = [
+        segment for segment in segments
+        if str(segment.get("mode") or "").lower() == "fill"
+    ]
+    if fill_segments:
+        segment = max(
+            fill_segments,
+            key=lambda item: float(item.get("end") or 0.0) - float(item.get("start") or 0.0),
+        )
+        start = max(0.0, float(segment.get("start") or 0.0))
+        end = min(duration, float(segment.get("end") or duration))
+        usable_track = []
+        for row in track_rows:
+            if not row.get("found"):
+                continue
+            source_t = float(row.get("t") or 0.0)
+            clip_t = _offset_for_source_time(target["source_ranges"], source_t)
+            if start <= clip_t <= end:
+                usable_track.append((clip_t, source_t, row))
+        if usable_track:
+            clip_t, source_t, row = max(
+                usable_track,
+                key=lambda item: float(item[2].get("w_ratio") or 0.0) * float(item[2].get("h_ratio") or 0.0),
+            )
+            face = {
+                key: row.get(key)
+                for key in ("cx_ratio", "cy_ratio", "w_ratio", "h_ratio")
+            }
+        else:
+            clip_t = (start + end) / 2.0
+            source_t = _source_time_for_offset(target["source_ranges"], clip_t)
+            face = None
+        return [{
+            "id": f"{source_t:.3f}:single",
+            "person_key": "single",
+            "person_label": "Person 1",
+            "source_timestamp": round(source_t, 3),
+            "clip_timestamp": round(clip_t, 3),
+            "face": face,
+            "score": 0.0,
+            "face_sharpness": 0.0,
+            "face_count": 1,
+        }], True
+
+    offsets = [duration * ratio for ratio in (0.25, 0.5, 0.75)]
+    return ([{
+        "id": f"{_source_time_for_offset(target['source_ranges'], offset):.3f}:frame-{index}",
+        "person_key": f"frame_{index}",
+        "person_label": f"Frame {index}",
+        "source_timestamp": round(_source_time_for_offset(target["source_ranges"], offset), 3),
+        "clip_timestamp": round(offset, 3),
+        "face": None,
+        "score": 0.0,
+        "face_sharpness": 0.0,
+        "face_count": 0,
+    } for index, offset in enumerate(offsets, start=1)], False)
+
+
+def _candidate_render_key(target: dict[str, Any]) -> str:
+    snapshot = {
+        "version": CANDIDATE_ALGORITHM_VERSION,
+        "layout": target.get("auto_layout_segments") or [],
+    }
+    return hashlib.sha256(json.dumps(snapshot, sort_keys=True).encode("utf-8")).hexdigest()
+
+
 def _candidate_cache_key(target: dict[str, Any], detector_key: str, *, owner: str, brand: str) -> str:
     identity = {
         "owner_user_id": str(owner),
@@ -663,15 +809,13 @@ def _save_candidate_cache(
 def phase2_candidate_frames(
     *, owner: str, brand: str, generated_id: int, video_pk: int,
 ) -> dict[str, Any]:
-    """Return one best reference per person, cached with its thumbnail."""
-    from app.video_shorts.routes import generation
-
+    """Return render-derived references without face detection on this path."""
     started = time.monotonic()
     target = _cover_target_metadata(
         owner=owner, brand=brand, generated_id=generated_id, video_pk=video_pk,
     )
-    detector_key = generation._face_detection_settings_key()
-    cache_key = _candidate_cache_key(target, detector_key, owner=owner, brand=brand)
+    render_key = _candidate_render_key(target)
+    cache_key = _candidate_cache_key(target, render_key, owner=owner, brand=brand)
     cached = _load_candidate_cache(cache_key=cache_key, owner=owner, brand=brand)
     if cached:
         elapsed_ms = round((time.monotonic() - started) * 1000)
@@ -689,75 +833,17 @@ def phase2_candidate_frames(
 
     import cv2
 
+    plan_started = time.monotonic()
+    track_rows = _load_render_face_track(target)
+    chosen, render_data_used = _candidate_records_from_render_data(target, track_rows)
+    plan_ms = round((time.monotonic() - plan_started) * 1000)
+    source_started = time.monotonic()
     source_temp, source_cache_lease = _candidate_source_path(target)
+    source_ms = round((time.monotonic() - source_started) * 1000)
     cap = None
     try:
-        samples: list[dict[str, Any]] = []
-        clip_base = 0.0
-        cache_info: dict[str, Any] = {"hit": True, "analyzed_spans": []}
-        for start, end in target["source_ranges"]:
-            part = generation._sample_face_presence_for_layout(
-                video_id=target["source_video_id"], source_path=Path(source_temp),
-                start_seconds=float(start), end_seconds=float(end), cache_info=cache_info,
-            )
-            for sample in part:
-                item = dict(sample)
-                item["clip_t"] = clip_base + float(sample.get("t") or 0.0)
-                item["source_t"] = float(start) + float(sample.get("t") or 0.0)
-                samples.append(item)
-            clip_base += max(0.0, float(end) - float(start))
-
         cap = cv2.VideoCapture(str(source_temp))
-        ranked: list[dict[str, Any]] = []
-        for sample in samples:
-            faces = [face for face in (sample.get("faces") or []) if isinstance(face, dict)]
-            if not faces:
-                continue
-            frame = None
-            cap.set(cv2.CAP_PROP_POS_MSEC, float(sample["source_t"]) * 1000.0)
-            ok, frame = cap.read()
-            if not ok or frame is None:
-                continue
-            height, width = frame.shape[:2]
-            ordered = sorted(faces, key=lambda face: float(face.get("cx_ratio") or 0.0))
-            for index, face in enumerate(ordered):
-                cx = float(face.get("cx_ratio") or 0.5)
-                cy = float(face.get("cy_ratio") or 0.5)
-                fw = max(0.01, float(face.get("w_ratio") or 0.0))
-                fh = max(0.01, float(face.get("h_ratio") or 0.0))
-                x0 = max(0, int(round((cx - fw / 2.0) * width)))
-                y0 = max(0, int(round((cy - fh / 2.0) * height)))
-                x1 = min(width, int(round((cx + fw / 2.0) * width)))
-                y1 = min(height, int(round((cy + fh / 2.0) * height)))
-                roi = frame[y0:y1, x0:x1]
-                sharpness = float(cv2.Laplacian(cv2.cvtColor(roi, cv2.COLOR_BGR2GRAY), cv2.CV_64F).var()) if roi.size else 0.0
-                area = fw * fh
-                aspect = fw / max(fh, 0.001)
-                frontal = max(0.0, 1.0 - abs(aspect - 0.78))
-                if len(ordered) >= 2:
-                    person_key = "left" if index == 0 else "right" if index == len(ordered) - 1 else f"person_{index + 1}"
-                else:
-                    person_key = "single"
-                ranked.append({
-                    "id": f"{float(sample['source_t']):.3f}:{person_key}",
-                    "person_key": person_key,
-                    "source_timestamp": round(float(sample["source_t"]), 3),
-                    "clip_timestamp": round(float(sample["clip_t"]), 3),
-                    "face": {"cx_ratio": cx, "cy_ratio": cy, "w_ratio": fw, "h_ratio": fh},
-                    "score": round(area * 10000.0 + min(sharpness, 1500.0) / 6.0 + frontal * 30.0, 3),
-                    "face_sharpness": round(sharpness, 2),
-                    "face_count": len(ordered),
-                })
-        chosen = _select_face_candidate_records(ranked)
-        if not chosen:
-            midpoint = _clip_duration(target["source_ranges"]) / 2.0
-            chosen = [{
-                "id": f"{_source_time_for_offset(target['source_ranges'], midpoint):.3f}:frame",
-                "person_key": "frame", "person_label": "Frame",
-                "source_timestamp": round(_source_time_for_offset(target["source_ranges"], midpoint), 3),
-                "clip_timestamp": round(midpoint, 3), "face": None, "score": 0.0,
-                "face_sharpness": 0.0, "face_count": 0,
-            }]
+        extract_started = time.monotonic()
         cache_candidates: list[dict[str, Any]] = []
         with tempfile.TemporaryDirectory(prefix="cover_ai_candidates_") as directory:
             directory_path = Path(directory)
@@ -777,28 +863,32 @@ def phase2_candidate_frames(
                 )
                 put_file_for_owner(thumbnail_path, thumbnail_key, owner_user_id=owner)
                 cache_candidates.append({**candidate, "thumbnail_key": thumbnail_key})
+        extract_ms = round((time.monotonic() - extract_started) * 1000)
         if not cache_candidates:
             raise RuntimeError("Candidate reference frames could not be decoded.")
-        face_cache_hit = bool(cache_info.get("hit"))
         duration = round(_clip_duration(target["source_ranges"]), 3)
         _save_candidate_cache(
             cache_key=cache_key, owner=owner, brand=brand, generated_id=generated_id,
-            target=target, detector_key=detector_key, duration=duration,
-            candidates=cache_candidates, face_cache_hit=face_cache_hit,
+            target=target, detector_key=render_key, duration=duration,
+            candidates=cache_candidates, face_cache_hit=render_data_used,
         )
         elapsed_ms = round((time.monotonic() - started) * 1000)
         log.info(
-            "AI cover candidate cache brand=%s clip=%s hit=false face_cache_hit=%s elapsed_ms=%s candidates=%s",
-            brand, generated_id, face_cache_hit, elapsed_ms, len(cache_candidates),
+            "AI cover candidate cache brand=%s clip=%s hit=false render_data=%s "
+            "elapsed_ms=%s plan_ms=%s source_ms=%s extract_ms=%s candidates=%s",
+            brand, generated_id, render_data_used, elapsed_ms, plan_ms, source_ms,
+            extract_ms, len(cache_candidates),
         )
         return {
             "title": target["title"],
             "duration": duration,
             "candidates": _candidate_urls(cache_candidates),
-            "face_cache_hit": face_cache_hit,
+            "face_cache_hit": render_data_used,
+            "render_data_used": render_data_used,
             "candidate_cache_hit": False,
             "candidate_cache_key": cache_key,
             "elapsed_ms": elapsed_ms,
+            "timing": {"plan_ms": plan_ms, "source_ms": source_ms, "extract_ms": extract_ms},
         }
     finally:
         if cap is not None:

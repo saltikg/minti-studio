@@ -84,6 +84,7 @@ from app.video_shorts.services.render_jobs import (
     JOB_TYPE_INSTAGRAM_COMMENT_WEBHOOK,
     JOB_TYPE_NORMALIZE_UPLOAD,
     JOB_TYPE_PREVIEW_FRAME,
+    JOB_TYPE_PREPARE_COVER_CANDIDATES,
     JOB_TYPE_PUBLISH_SHORT,
     JOB_TYPE_PURGE_VIDEO,
     JOB_TYPE_RENDER_SHORT,
@@ -1927,6 +1928,56 @@ def _execute_render_job(app, job: Dict[str, Any]) -> Dict[str, Any]:
     return response_payload
 
 
+def _enqueue_cover_candidate_precompute(job: Dict[str, Any], result: Dict[str, Any]) -> None:
+    payload = job.get("payload") or {}
+    if str(payload.get("job_origin") or "").strip() == GUEST_JOB_ORIGIN:
+        return
+    clip_filename = str(result.get("clip_filename") or "").strip()
+    source_video_id = str(payload.get("source_video_id") or "").strip()
+    brand_id = str(payload.get("brand_id") or "").strip()
+    if not clip_filename or not source_video_id or not brand_id:
+        return
+    from app.video_shorts.services.clip_covers import find_generated_video_id
+
+    generated_id = find_generated_video_id(
+        owner_user_id=str(job["user_id"]), brand_id=brand_id,
+        video_pk=int(payload["video_pk"]), source_video_id=source_video_id,
+        clip_filename=clip_filename,
+    )
+    if not generated_id:
+        logger.warning("Cover candidate precompute target missing render_job=%s", job.get("id"))
+        return
+    render_jobs.enqueue_worker_job(
+        user_id=str(job["user_id"]),
+        job_type=JOB_TYPE_PREPARE_COVER_CANDIDATES,
+        payload={
+            "generated_video_id": int(generated_id),
+            "video_pk": int(payload["video_pk"]),
+            "brand_id": brand_id,
+            "job_origin": render_jobs.AUTO_RENDER_JOB_ORIGIN,
+        },
+        input_hash=f"cover-candidates:{job.get('id')}:{generated_id}",
+        max_attempts=2,
+        priority=-100,
+    )
+
+
+def _execute_cover_candidate_precompute_job(job: Dict[str, Any]) -> Dict[str, Any]:
+    payload = job.get("payload") or {}
+    from app.video_shorts.services.ai_covers import phase2_candidate_frames
+
+    result = phase2_candidate_frames(
+        owner=str(job["user_id"]), brand=str(payload["brand_id"]),
+        generated_id=int(payload["generated_video_id"]), video_pk=int(payload["video_pk"]),
+    )
+    return {
+        "generated_video_id": int(payload["generated_video_id"]),
+        "candidate_cache_hit": bool(result.get("candidate_cache_hit")),
+        "elapsed_ms": int(result.get("elapsed_ms") or 0),
+        "candidate_count": len(result.get("candidates") or []),
+    }
+
+
 def _execute_publish_job(app, job: Dict[str, Any]) -> Dict[str, Any]:
     payload = job.get("payload") or {}
     if payload.get("youtube_schedule_id"):
@@ -2107,6 +2158,8 @@ def _process_next_job(
             from app.video_shorts.services.clip_covers import generate_cover
 
             result = generate_cover(job.get("payload") or {})
+        elif job.get("type") == JOB_TYPE_PREPARE_COVER_CANDIDATES:
+            result = _execute_cover_candidate_precompute_job(job)
         else:
             with render_job_heartbeat(job["id"], worker_id):
                 result = _execute_render_job(app, job)
@@ -2123,6 +2176,13 @@ def _process_next_job(
                 finalize_job_success(job["id"])
             except Exception:
                 app.logger.exception("Render job finalize failed after done job_id=%s", job.get("id"))
+            try:
+                _enqueue_cover_candidate_precompute(job, result)
+            except Exception:
+                app.logger.warning(
+                    "Cover candidate precompute enqueue failed render_job=%s",
+                    job.get("id"), exc_info=True,
+                )
             payload = job.get("payload") or {}
             if str(payload.get("job_origin") or "").strip() == GUEST_JOB_ORIGIN:
                 source_video_id = str(payload.get("source_video_id") or "").strip()

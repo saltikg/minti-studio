@@ -28,6 +28,7 @@ from app.video_shorts.services.email_verification import send_resend_email
 JOBS_TABLE = "shorts_render_jobs"
 JOB_TYPE_RENDER_SHORT = "render_short"
 JOB_TYPE_GENERATE_COVER = "generate_cover"
+JOB_TYPE_PREPARE_COVER_CANDIDATES = "prepare_cover_candidates"
 JOB_TYPE_INGEST_YOUTUBE = "ingest_youtube"
 JOB_TYPE_NORMALIZE_UPLOAD = "normalize_upload"
 JOB_TYPE_PREVIEW_FRAME = "preview_frame"

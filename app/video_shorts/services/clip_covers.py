@@ -366,6 +366,11 @@ def _cover_target(
         "clip_storage_key": clip_location["storage_key"],
         "clip_local_path": clip_location["local_path"],
         "source_ranges": source_ranges,
+        "auto_layout_segments": (
+            raw.get("auto_layout_segments")
+            if isinstance(raw.get("auto_layout_segments"), list)
+            else []
+        ),
     }
 
 

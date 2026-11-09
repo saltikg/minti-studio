@@ -8286,6 +8286,8 @@
   .cover-person-card .cover-check { position:absolute; right:.35rem; top:.35rem; display:none; width:20px; height:20px; border-radius:50%; background:#2f7df6; align-items:center; justify-content:center; }
   .cover-person-card.is-selected .cover-check { display:flex; }
   .cover-person-skeleton { min-height:148px; border-radius:9px; background:linear-gradient(110deg,#171b22 30%,#303641 48%,#171b22 66%); background-size:260% 100%; animation:coverShimmer 1.45s linear infinite; }
+  .cover-candidate-message { grid-column:1/-1; display:flex; align-items:center; gap:.45rem; min-height:42px; color:rgba(255,255,255,.7); font-size:.78rem; }
+  .cover-candidate-retry { border:0; padding:0; background:transparent; color:#8db9ff; text-decoration:underline; }
   .cover-pick-card { min-height:112px; display:flex; flex-direction:column; align-items:center; justify-content:center; gap:.35rem; color:rgba(255,255,255,.72); }
   .cover-frame-picker video { width:100%; max-height:210px; border-radius:8px; background:#000; }
   .cover-chip-group { display:flex; flex-wrap:wrap; gap:.45rem; }
@@ -26441,7 +26443,7 @@ document.addEventListener("DOMContentLoaded", () => {
       const key = frame.person_key || frame.person_label || "person-1";
       if (!best.has(key)) best.set(key, frame);
     });
-    return [...best.values()].slice(0, 2);
+    return [...best.values()].slice(0, 3);
   };
 
   const isFrameSelected = (frame) => selectedFrames.some((item) => item.id === frame.id);
@@ -26480,19 +26482,7 @@ document.addEventListener("DOMContentLoaded", () => {
     return button;
   };
 
-  const renderCandidateSkeletons = () => {
-    aiCandidates.replaceChildren();
-    for (let index = 0; index < 2; index += 1) {
-      const skeleton = document.createElement("div");
-      skeleton.className = "cover-person-skeleton";
-      skeleton.setAttribute("aria-hidden", "true");
-      aiCandidates.append(skeleton);
-    }
-  };
-
-  const renderCandidateCards = () => {
-    aiCandidates.replaceChildren();
-    candidateFrames.forEach((frame, index) => aiCandidates.append(candidateNode(frame, index)));
+  const pickFrameNode = () => {
     const pick = document.createElement("button");
     pick.type = "button";
     pick.className = "cover-person-card cover-pick-card";
@@ -26505,7 +26495,43 @@ document.addEventListener("DOMContentLoaded", () => {
         aiTime.textContent = formatCoverTime(framePlayer.currentTime);
       }
     });
-    aiCandidates.append(pick);
+    return pick;
+  };
+
+  const renderCandidateSkeletons = () => {
+    aiCandidates.replaceChildren();
+    for (let index = 0; index < 2; index += 1) {
+      const skeleton = document.createElement("div");
+      skeleton.className = "cover-person-skeleton";
+      skeleton.setAttribute("aria-hidden", "true");
+      aiCandidates.append(skeleton);
+    }
+    aiCandidates.append(pickFrameNode());
+  };
+
+  const renderCandidateFailure = (token, card) => {
+    if (!requestIsCurrent(token, card)) return;
+    aiCandidates.replaceChildren();
+    const message = document.createElement("div");
+    message.className = "cover-candidate-message";
+    message.append(document.createTextNode("Couldn't load frames — "));
+    const retry = document.createElement("button");
+    retry.type = "button";
+    retry.className = "cover-candidate-retry";
+    retry.textContent = "Retry";
+    retry.addEventListener("click", () => {
+      renderCandidateSkeletons();
+      void loadAiCandidates(token, card);
+    });
+    message.append(retry);
+    aiCandidates.append(message, pickFrameNode());
+    updateCreateAvailability();
+  };
+
+  const renderCandidateCards = () => {
+    aiCandidates.replaceChildren();
+    candidateFrames.forEach((frame, index) => aiCandidates.append(candidateNode(frame, index)));
+    aiCandidates.append(pickFrameNode());
     updateCreateAvailability();
   };
 
@@ -26558,24 +26584,37 @@ document.addEventListener("DOMContentLoaded", () => {
 
   const loadAiCandidates = async (token, card) => {
     if (!card?.dataset.coverAiCandidatesUrl) return;
+    const candidateController = new AbortController();
+    let timedOut = false;
+    const abortForClose = () => candidateController.abort();
+    openController?.signal.addEventListener("abort", abortForClose, {once:true});
+    const timeout = window.setTimeout(() => {
+      timedOut = true;
+      candidateController.abort();
+    }, 8000);
     try {
       const response = await fetch(card.dataset.coverAiCandidatesUrl, {
-        headers:{"Accept":"application/json"}, signal:openController?.signal,
+        headers:{"Accept":"application/json"}, signal:candidateController.signal,
       });
       const payload = await response.json();
       if (!requestIsCurrent(token, card)) return;
       if (!response.ok) throw new Error(payload.message || "Candidate frames could not be loaded.");
       clipDuration = Number(payload.duration || 0);
-      candidateFrames = bestFramesByPerson(payload.candidates || []);
-      selectedFrames = candidateFrames.slice(0, 2);
+      const grabbedFrames = candidateFrames.filter((frame) => String(frame.id || "").startsWith("custom:"));
+      const grabbedSelected = selectedFrames.filter((frame) => String(frame.id || "").startsWith("custom:"));
+      candidateFrames = [...bestFramesByPerson(payload.candidates || []), ...grabbedFrames];
+      selectedFrames = grabbedSelected.length ? grabbedSelected.slice(0, 2) : candidateFrames.slice(0, 2);
       modalEl.dataset.candidateCacheHit = payload.candidate_cache_hit ? "1" : "0";
       modalEl.dataset.candidateServerMs = String(Number(payload.elapsed_ms || 0));
       renderCandidateCards();
       await rebuildPrompt(token, card);
     } catch (error) {
-      if (error?.name === "AbortError" || !requestIsCurrent(token, card)) return;
-      aiCandidates.replaceChildren();
-      feedback.textContent = error.message || "Candidate frames could not be loaded.";
+      if (!requestIsCurrent(token, card)) return;
+      if (error?.name === "AbortError" && !timedOut) return;
+      renderCandidateFailure(token, card);
+    } finally {
+      window.clearTimeout(timeout);
+      openController?.signal.removeEventListener("abort", abortForClose);
     }
   };
 

@@ -63,6 +63,16 @@ def test_successful_render_no_longer_enqueues_an_automatic_cover():
     assert "auto_cover_followup" not in source
 
 
+def test_successful_render_enqueues_low_priority_candidate_precompute():
+    enqueue_source = inspect.getsource(worker._enqueue_cover_candidate_precompute)
+    process_source = inspect.getsource(worker._process_next_job)
+
+    assert 'job_type=JOB_TYPE_PREPARE_COVER_CANDIDATES' in enqueue_source
+    assert '"job_origin": render_jobs.AUTO_RENDER_JOB_ORIGIN' in enqueue_source
+    assert 'priority=-100' in enqueue_source
+    assert '_enqueue_cover_candidate_precompute(job, result)' in process_source
+
+
 def test_uploaded_cover_output_is_exactly_1080_by_1920_jpeg():
     original = io.BytesIO()
     Image.new("RGB", (1600, 900), "#336699").save(original, "PNG")
@@ -87,7 +97,7 @@ def test_cover_modal_uses_one_best_card_per_person_and_inline_frame_picker():
     assert 'id="clip-cover-ai-scrubber"' not in template
     assert 'const bestFramesByPerson = (frames) =>' in template
     assert 'if (!best.has(key)) best.set(key, frame);' in template
-    assert 'return [...best.values()].slice(0, 2);' in template
+    assert 'return [...best.values()].slice(0, 3);' in template
     assert 'candidateFrames.push(frame);' in template
     assert 'framePicker.classList.add("d-none");' in template
     assert 'aiGrab.addEventListener("click"' in template
@@ -148,3 +158,20 @@ def test_cover_modal_renders_four_static_visual_style_cards():
         assert (assets / filename).is_file()
     assert 'id="clip-cover-tone-hint"' in template
     assert 'payload?.ai_presets?.tone_hints || {}' in template
+
+
+def test_cover_candidates_keep_picker_visible_and_fail_to_retry():
+    template = TEMPLATE.read_text(encoding="utf-8")
+    skeleton_js = template[
+        template.index('const renderCandidateSkeletons = () =>'):
+        template.index('const renderCandidateCards = () =>')
+    ]
+
+    assert 'aiCandidates.append(pickFrameNode());' in skeleton_js
+    assert 'window.setTimeout(() =>' in template
+    assert '}, 8000);' in template
+    assert 'Couldn\'t load frames — ' in template
+    assert 'retry.textContent = "Retry";' in template
+    assert 'renderCandidateFailure(token, card);' in template
+    assert 'const grabbedSelected = selectedFrames.filter' in template
+    assert 'selectedFrames = grabbedSelected.length ? grabbedSelected.slice(0, 2)' in template
