@@ -46,8 +46,9 @@ def test_cover_ui_is_admin_only_and_uses_one_stable_delegated_listener():
     template = TEMPLATE.read_text(encoding="utf-8")
 
     assert '{% if is_admin %}<button\n                          type="button"\n                          class="btn btn-sm generate-v2-tile generate-v2-cover-btn"' in template
-    assert '{% if is_admin %}\n<div class="modal fade" id="clipCoverModal"' in template
-    cover_js = template[template.index('const stableRoot = document.body;'):template.index('modalEl.addEventListener("hidden.bs.modal", resetUpload);')]
+    assert '{% if is_admin %}\n<style>' in template
+    assert '<div class="modal fade" id="clipCoverModal"' in template
+    cover_js = template[template.index('const stableRoot = document.body;'):template.index('window.__coverModalTestHooks =')]
     assert 'stableRoot.dataset.clipCoverDelegated === "1"' in cover_js
     assert cover_js.count('stableRoot.addEventListener("click"') == 1
     assert 'event.target.closest?.(".generate-v2-cover-btn")' in cover_js
@@ -77,3 +78,39 @@ def test_uploaded_cover_output_is_exactly_1080_by_1920_jpeg():
     with Image.open(encoded) as saved:
         assert saved.format == "JPEG"
         assert saved.size == (1080, 1920)
+
+
+def test_cover_modal_uses_one_best_card_per_person_and_inline_frame_picker():
+    template = TEMPLATE.read_text(encoding="utf-8")
+
+    assert 'id="clip-cover-frame-player" controls playsinline' in template
+    assert 'id="clip-cover-ai-scrubber"' not in template
+    assert 'const bestFramesByPerson = (frames) =>' in template
+    assert 'if (!best.has(key)) best.set(key, frame);' in template
+    assert 'return [...best.values()].slice(0, 2);' in template
+    assert 'candidateFrames.push(frame);' in template
+    assert 'framePicker.classList.add("d-none");' in template
+    assert 'aiGrab.addEventListener("click"' in template
+
+
+def test_cover_modal_generation_state_disables_controls_and_prevents_double_submit():
+    template = TEMPLATE.read_text(encoding="utf-8")
+    cover_js = template[template.index('const setGeneratingState = (busy) =>'):]
+
+    assert 'modalEl.querySelectorAll("button, input, textarea, video")' in cover_js
+    assert 'control.disabled = true;' in cover_js
+    assert 'control.disabled = false;' in cover_js
+    assert 'if (isGenerating) return;' in cover_js
+    assert 'setGeneratingState(true);' in cover_js
+    assert 'finally {\n      setGeneratingState(false);' in cover_js
+    assert 'id="clip-cover-generating"' in template
+    assert 'id="clip-cover-elapsed"' in template
+
+
+def test_cover_modal_no_text_style_disables_title_and_uses_no_title_prompt():
+    template = TEMPLATE.read_text(encoding="utf-8")
+
+    assert 'data-style="no_text"' in template
+    assert 'const noTextSelected = () => selectedStyle() === "no_text";' in template
+    assert 'aiTitle.disabled = isGenerating || noTextSelected();' in template
+    assert 'no_title: noTextSelected(),' in template

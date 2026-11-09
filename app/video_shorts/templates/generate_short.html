@@ -8251,89 +8251,147 @@
   </div>
 </div>
 {% if is_admin %}
+<style>
+  #clipCoverModal .modal-dialog { max-width: 1080px; }
+  #clipCoverModal .modal-content { height: min(840px, calc(100vh - 40px)); overflow: hidden; }
+  #clipCoverModal .modal-body { min-height: 0; overflow: hidden; padding: 1rem 1.25rem; }
+  .cover-workspace { display:grid; grid-template-columns:minmax(290px,.92fr) minmax(390px,1.08fr); gap:1.25rem; height:100%; min-height:0; }
+  .cover-preview-column { min-height:0; display:flex; flex-direction:column; align-items:center; }
+  .cover-preview-stage { width:min(100%,293px); aspect-ratio:9/16; max-height:520px; border:1px solid rgba(255,255,255,.14); border-radius:14px; overflow:hidden; position:relative; background:linear-gradient(145deg,#252932,#181b21); }
+  .cover-preview-stage img, .cover-preview-stage canvas { width:100%; height:100%; object-fit:cover; display:block; }
+  .cover-empty { height:100%; display:flex; flex-direction:column; align-items:center; justify-content:center; color:rgba(255,255,255,.48); gap:.5rem; }
+  .cover-empty i { font-size:2rem; opacity:.6; }
+  .cover-generating { position:absolute; inset:0; z-index:5; display:flex; flex-direction:column; align-items:center; justify-content:center; gap:.7rem; background:linear-gradient(110deg,rgba(22,25,31,.96) 30%,rgba(52,57,68,.96) 48%,rgba(22,25,31,.96) 66%); background-size:260% 100%; animation:coverShimmer 1.45s linear infinite; }
+  @keyframes coverShimmer { to { background-position:-260% 0; } }
+  .cover-preview-actions { min-height:38px; width:min(100%,326px); }
+  .cover-feedback { width:min(100%,326px); min-height:20px; }
+  .cover-history { width:min(100%,326px); }
+  .cover-history .col-4 { width:auto; }
+  .cover-history button { width:46px; height:72px; border:0; padding:0; border-radius:7px; overflow:hidden; background:#111; }
+  .cover-history button.active { outline:2px solid var(--bs-primary); outline-offset:2px; }
+  .cover-history img { width:100%; height:100%; object-fit:cover; }
+  .cover-options { min-height:0; overflow-y:auto; padding-right:.35rem; }
+  #clipCoverModal.is-generating .cover-options { pointer-events:none; opacity:.62; }
+  .cover-step { border:1px solid rgba(255,255,255,.14); border-radius:12px; padding:.85rem; margin-bottom:.75rem; }
+  .cover-step-title { display:flex; align-items:center; gap:.55rem; font-weight:600; margin-bottom:.7rem; }
+  .cover-step-number { width:23px; height:23px; display:inline-flex; align-items:center; justify-content:center; border-radius:50%; background:rgba(var(--bs-primary-rgb),.22); color:#a9c8ff; font-size:.78rem; }
+  .cover-person-grid { display:grid; grid-template-columns:repeat(3,minmax(0,1fr)); gap:.55rem; }
+  .cover-person-card { position:relative; border:1px solid rgba(255,255,255,.18); border-radius:9px; overflow:hidden; background:#111; color:#fff; padding:0; text-align:left; }
+  .cover-person-card img { width:100%; aspect-ratio:1/1; object-fit:cover; display:block; }
+  .cover-person-card .cover-person-label { display:block; padding:.35rem .45rem; font-size:.75rem; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
+  .cover-person-card.is-selected { border-color:#71a6ff; box-shadow:0 0 0 2px rgba(89,145,255,.28); }
+  .cover-person-card .cover-check { position:absolute; right:.35rem; top:.35rem; display:none; width:20px; height:20px; border-radius:50%; background:#2f7df6; align-items:center; justify-content:center; }
+  .cover-person-card.is-selected .cover-check { display:flex; }
+  .cover-pick-card { min-height:112px; display:flex; flex-direction:column; align-items:center; justify-content:center; gap:.35rem; color:rgba(255,255,255,.72); }
+  .cover-frame-picker video { width:100%; max-height:210px; border-radius:8px; background:#000; }
+  .cover-chip-group { display:flex; flex-wrap:wrap; gap:.45rem; }
+  .cover-chip { border:1px solid rgba(255,255,255,.18); background:#15181e; color:#e9ecef; border-radius:999px; padding:.38rem .65rem; font-size:.8rem; display:inline-flex; align-items:center; gap:.4rem; }
+  .cover-chip.active { border-color:#71a6ff; background:rgba(55,116,220,.24); color:#fff; }
+  .cover-style-swatch { width:18px; height:13px; border-radius:3px; display:inline-block; background:#f6cf35; border:1px solid rgba(255,255,255,.2); }
+  .cover-style-swatch.white-box { background:#fff; box-shadow:inset 0 0 0 3px #fff; border-color:#777; }
+  .cover-style-swatch.minimal { background:linear-gradient(#fff 0 2px,transparent 2px 100%); }
+  .cover-style-swatch.no-text { background:linear-gradient(135deg,transparent 43%,#dc3545 44% 56%,transparent 57%); }
+  #clipCoverModal .modal-footer { flex-wrap:nowrap; min-height:66px; }
+  .cover-footer-main { display:flex; align-items:center; gap:.8rem; margin-left:auto; }
+  @media (max-width: 767.98px) {
+    #clipCoverModal .modal-dialog { margin:.5rem; }
+    #clipCoverModal .modal-content { height:calc(100vh - 1rem); }
+    #clipCoverModal .modal-body { overflow-y:auto; }
+    .cover-workspace { display:block; height:auto; }
+    .cover-preview-stage { max-height:58vh; }
+    .cover-options { overflow:visible; margin-top:1rem; }
+    #clipCoverModal .modal-footer { flex-wrap:wrap; }
+    .cover-footer-main { width:100%; justify-content:flex-end; }
+  }
+</style>
 <div class="modal fade" id="clipCoverModal" tabindex="-1" aria-labelledby="clipCoverModalLabel" aria-hidden="true">
-  <div class="modal-dialog modal-lg modal-dialog-centered modal-dialog-scrollable">
+  <div class="modal-dialog modal-xl modal-dialog-centered">
     <div class="modal-content bg-dark text-white border-secondary">
       <div class="modal-header border-secondary">
-        <div>
-          <h5 class="modal-title" id="clipCoverModalLabel">Cover</h5>
-          <div class="small text-white-50" id="clip-cover-allowance">AI covers: 0 / 0 this month</div>
-        </div>
+        <h5 class="modal-title" id="clipCoverModalLabel">Cover</h5>
         <button type="button" class="btn-close btn-close-white" data-bs-dismiss="modal" aria-label="Close"></button>
       </div>
       <div class="modal-body">
-        <div class="row g-4">
-          <div class="col-md-5">
-            <h6>Current cover</h6>
-            <div class="rounded overflow-hidden bg-black mx-auto position-relative" style="width:min(100%,293px);aspect-ratio:9/16">
-              <img id="clip-cover-current-preview" alt="Current cover preview" class="w-100 h-100 object-fit-cover d-none">
-              <div id="clip-cover-current-empty" class="d-flex h-100 align-items-center justify-content-center text-white-50 p-4 text-center">No cover</div>
-            </div>
-            <button type="button" class="btn btn-sm btn-outline-danger mt-3 d-none" id="clip-cover-remove">Remove cover</button>
-          </div>
-          <div class="col-md-7">
-            <section class="border border-secondary rounded p-3 mb-3">
-              <h6>Upload your own</h6>
-              <label class="form-label" for="clip-cover-file">JPG, PNG or WebP · max 10 MB</label>
-              <input class="form-control bg-black text-white border-secondary" type="file" id="clip-cover-file" accept="image/jpeg,image/png,image/webp">
-              <div class="small text-white-50 mt-2">The image is center-cropped to 9:16. Drag the preview to adjust the crop.</div>
-              <div class="rounded overflow-hidden bg-black mx-auto mt-3 d-none" id="clip-cover-crop-wrap" style="width:min(100%,270px);aspect-ratio:9/16;touch-action:none;cursor:grab">
-                <canvas id="clip-cover-crop-canvas" width="1080" height="1920" class="w-100 h-100 d-block" aria-label="Drag to adjust cover crop"></canvas>
+        <div class="cover-workspace">
+          <div class="cover-preview-column">
+            <div class="cover-preview-stage">
+              <img id="clip-cover-current-preview" alt="Cover preview" class="d-none">
+              <div id="clip-cover-current-empty" class="cover-empty"><i class="bi bi-image" aria-hidden="true"></i><span>No cover yet</span></div>
+              <div class="d-none" id="clip-cover-crop-wrap" style="position:absolute;inset:0;touch-action:none;cursor:grab">
+                <canvas id="clip-cover-crop-canvas" width="1080" height="1920" aria-label="Drag to adjust cover crop"></canvas>
               </div>
-              <button type="button" class="btn btn-primary mt-3" id="clip-cover-use-upload" disabled>Use this cover</button>
-            </section>
-            <section class="border border-secondary rounded p-3" id="clip-cover-ai-section">
-              <h6>Generate with AI</h6>
-              <div class="small text-white-50 mb-2">Select one or two people</div>
-              <div class="row g-2 mb-3" id="clip-cover-ai-candidates"></div>
-              <div class="border border-secondary rounded p-2 mb-3">
-                <label class="form-label small" for="clip-cover-ai-scrubber">Pick from video</label>
-                <input class="form-range" id="clip-cover-ai-scrubber" type="range" min="0" max="1" step="0.1" value="0">
-                <div class="d-flex align-items-center justify-content-between gap-2">
+              <div class="cover-generating d-none" id="clip-cover-generating" aria-live="polite">
+                <span class="spinner-border text-light" role="status" aria-hidden="true"></span>
+                <strong>Creating cover… ~20s</strong>
+                <span class="small text-white-50"><span id="clip-cover-elapsed">0</span>s</span>
+              </div>
+            </div>
+            <div class="cover-preview-actions d-flex align-items-center justify-content-center gap-2 mt-2">
+              <div class="d-none d-flex gap-2" id="clip-cover-ai-result-actions">
+                <button type="button" class="btn btn-primary btn-sm" id="clip-cover-ai-use">Use this cover</button>
+                <button type="button" class="btn btn-outline-light btn-sm" id="clip-cover-ai-try-again">Try again</button>
+              </div>
+              <button type="button" class="btn btn-primary btn-sm d-none" id="clip-cover-use-upload">Use this cover</button>
+              <button type="button" class="btn btn-link btn-sm text-danger text-decoration-none d-none" id="clip-cover-remove">Remove cover</button>
+            </div>
+            <div id="clip-cover-feedback" class="cover-feedback small text-center text-white-50" aria-live="polite"></div>
+            <div class="cover-history mt-2 d-none" id="clip-cover-history-wrap">
+              <div class="small text-white-50 mb-1">Recent</div>
+              <div class="row g-2" id="clip-cover-ai-history"></div>
+            </div>
+          </div>
+          <div class="cover-options" id="clip-cover-options">
+            <section class="cover-step">
+              <div class="cover-step-title"><span class="cover-step-number">1</span><span>Who's on the cover</span></div>
+              <div class="cover-person-grid" id="clip-cover-ai-candidates"></div>
+              <div class="cover-frame-picker border border-secondary rounded p-2 mt-2 d-none" id="clip-cover-frame-picker">
+                <video id="clip-cover-frame-player" controls playsinline preload="metadata"></video>
+                <div class="d-flex justify-content-between align-items-center mt-2">
                   <span class="small text-white-50" id="clip-cover-ai-time">0:00</span>
-                  <button type="button" class="btn btn-sm btn-outline-light" id="clip-cover-ai-grab">Grab frame</button>
+                  <button type="button" class="btn btn-sm btn-outline-light" id="clip-cover-ai-grab">Use this frame</button>
                 </div>
               </div>
-              <label class="form-label" for="clip-cover-ai-title">Cover title</label>
+            </section>
+            <section class="cover-step">
+              <div class="cover-step-title"><span class="cover-step-number">2</span><span>Title</span></div>
               <div class="input-group mb-2">
                 <input class="form-control bg-black text-white border-secondary" id="clip-cover-ai-title" maxlength="120">
-                <button type="button" class="btn btn-outline-light" id="clip-cover-ai-suggest">Suggest</button>
+                <button type="button" class="btn btn-outline-light" id="clip-cover-ai-suggest" title="Suggest titles" aria-label="Suggest titles"><i class="bi bi-stars" aria-hidden="true"></i></button>
               </div>
-              <div class="form-check mb-2">
-                <input class="form-check-input" type="checkbox" id="clip-cover-ai-no-title">
-                <label class="form-check-label" for="clip-cover-ai-no-title">No title</label>
-              </div>
-              <div class="d-flex flex-wrap gap-2 mb-3" id="clip-cover-ai-suggestions"></div>
-              <div class="row g-2 mb-3">
-                <div class="col-6">
-                  <label class="form-label small" for="clip-cover-ai-style">Title style</label>
-                  <select class="form-select bg-black text-white border-secondary" id="clip-cover-ai-style"></select>
-                </div>
-                <div class="col-6">
-                  <label class="form-label small" for="clip-cover-ai-tone">Tone</label>
-                  <select class="form-select bg-black text-white border-secondary" id="clip-cover-ai-tone"></select>
-                </div>
-              </div>
-              <details class="mb-3" id="clip-cover-ai-advanced">
-                <summary>Advanced</summary>
-                <textarea class="form-control bg-black text-white border-secondary mt-2" id="clip-cover-ai-prompt" rows="9" aria-label="Final AI cover prompt"></textarea>
-                <button type="button" class="btn btn-sm btn-outline-light mt-2" id="clip-cover-ai-rebuild-prompt">Rebuild prompt</button>
-              </details>
-              <button type="button" class="btn btn-primary" id="clip-cover-ai-generate">Generate 1 cover</button>
-              <div class="mt-3 d-none" id="clip-cover-ai-result">
-                <img class="w-100 rounded" id="clip-cover-ai-result-image" alt="Generated AI cover">
-                <div class="d-flex gap-2 mt-2">
-                  <button type="button" class="btn btn-success" id="clip-cover-ai-use">Use this cover</button>
-                  <button type="button" class="btn btn-outline-light" id="clip-cover-ai-try-again">Try again</button>
-                </div>
-              </div>
-              <div class="mt-3">
-                <div class="small text-white-50 mb-2">Last 3 generations</div>
-                <div class="row g-2" id="clip-cover-ai-history"></div>
-              </div>
+              <div class="cover-chip-group" id="clip-cover-ai-suggestions"></div>
             </section>
-            <div id="clip-cover-feedback" class="small mt-3 text-white-50" aria-live="polite"></div>
+            <section class="cover-step">
+              <div class="cover-step-title"><span class="cover-step-number">3</span><span>Style</span></div>
+              <div class="cover-chip-group mb-3" id="clip-cover-ai-styles">
+                <button type="button" class="cover-chip active" data-style="big_bold_yellow"><span class="cover-style-swatch"></span>Yellow bold</button>
+                <button type="button" class="cover-chip" data-style="white_box"><span class="cover-style-swatch white-box"></span>White box</button>
+                <button type="button" class="cover-chip" data-style="minimal_clean"><span class="cover-style-swatch minimal"></span>Minimal</button>
+                <button type="button" class="cover-chip" data-style="no_text"><span class="cover-style-swatch no-text"></span>No text</button>
+              </div>
+              <div class="small text-white-50 mb-2">Tone</div>
+              <div class="cover-chip-group" id="clip-cover-ai-tones">
+                <button type="button" class="cover-chip" data-tone="dramatic">Dramatic</button>
+                <button type="button" class="cover-chip active" data-tone="clean_professional">Clean</button>
+                <button type="button" class="cover-chip" data-tone="interview_podcast">Interview</button>
+                <button type="button" class="cover-chip" data-tone="curiosity">Curiosity</button>
+              </div>
+              <details class="mt-3" id="clip-cover-ai-advanced">
+                <summary class="small">Edit prompt</summary>
+                <textarea class="form-control bg-black text-white border-secondary mt-2" id="clip-cover-ai-prompt" rows="6" aria-label="Final AI cover prompt"></textarea>
+                <button type="button" class="btn btn-sm btn-link text-white-50 px-0" id="clip-cover-ai-rebuild-prompt">Reset prompt</button>
+              </details>
+            </section>
           </div>
+        </div>
+      </div>
+      <div class="modal-footer border-secondary justify-content-between">
+        <div>
+          <label for="clip-cover-file" class="btn btn-link btn-sm text-white-50 text-decoration-none px-0">or upload your own image</label>
+          <input class="visually-hidden" type="file" id="clip-cover-file" accept="image/jpeg,image/png,image/webp">
+        </div>
+        <div class="cover-footer-main">
+          <span class="small text-white-50" id="clip-cover-allowance">0 / 0 this month</span>
+          <button type="button" class="btn btn-primary" id="clip-cover-ai-generate"><span class="spinner-border spinner-border-sm me-1 d-none" id="clip-cover-generate-spinner" aria-hidden="true"></span><span id="clip-cover-generate-label">Create cover</span></button>
         </div>
       </div>
     </div>
@@ -26294,23 +26352,27 @@ document.addEventListener("DOMContentLoaded", () => {
   const useUploadButton = document.getElementById("clip-cover-use-upload");
   const feedback = document.getElementById("clip-cover-feedback");
   const aiCandidates = document.getElementById("clip-cover-ai-candidates");
-  const aiScrubber = document.getElementById("clip-cover-ai-scrubber");
+  const framePicker = document.getElementById("clip-cover-frame-picker");
+  const framePlayer = document.getElementById("clip-cover-frame-player");
   const aiTime = document.getElementById("clip-cover-ai-time");
   const aiGrab = document.getElementById("clip-cover-ai-grab");
   const aiTitle = document.getElementById("clip-cover-ai-title");
-  const aiNoTitle = document.getElementById("clip-cover-ai-no-title");
   const aiSuggest = document.getElementById("clip-cover-ai-suggest");
   const aiSuggestions = document.getElementById("clip-cover-ai-suggestions");
-  const aiStyle = document.getElementById("clip-cover-ai-style");
-  const aiTone = document.getElementById("clip-cover-ai-tone");
+  const aiStyles = document.getElementById("clip-cover-ai-styles");
+  const aiTones = document.getElementById("clip-cover-ai-tones");
   const aiPrompt = document.getElementById("clip-cover-ai-prompt");
   const aiRebuildPrompt = document.getElementById("clip-cover-ai-rebuild-prompt");
   const aiGenerate = document.getElementById("clip-cover-ai-generate");
-  const aiResult = document.getElementById("clip-cover-ai-result");
-  const aiResultImage = document.getElementById("clip-cover-ai-result-image");
+  const generateSpinner = document.getElementById("clip-cover-generate-spinner");
+  const generateLabel = document.getElementById("clip-cover-generate-label");
+  const generatingOverlay = document.getElementById("clip-cover-generating");
+  const elapsedLabel = document.getElementById("clip-cover-elapsed");
+  const resultActions = document.getElementById("clip-cover-ai-result-actions");
   const aiUse = document.getElementById("clip-cover-ai-use");
   const aiTryAgain = document.getElementById("clip-cover-ai-try-again");
   const aiHistory = document.getElementById("clip-cover-ai-history");
+  const historyWrap = document.getElementById("clip-cover-history-wrap");
   const cropContext = cropCanvas?.getContext("2d");
   let activeCard = null;
   let uploadImage = null;
@@ -26318,9 +26380,16 @@ document.addEventListener("DOMContentLoaded", () => {
   let crop = { x: 0, y: 0, width: 0, height: 0 };
   let drag = null;
   let selectedFrames = [];
+  let candidateFrames = [];
   let currentGenerationId = "";
   let promptDirty = false;
   let clipDuration = 0;
+  let allowanceUsed = 0;
+  let allowanceAllowed = 0;
+  let isGenerating = false;
+  let elapsedTimer = null;
+  let closeConfirmed = false;
+  let currentCoverUrl = "";
 
   const formatCoverTime = (seconds) => {
     const value = Math.max(0, Number(seconds) || 0);
@@ -26334,93 +26403,104 @@ document.addEventListener("DOMContentLoaded", () => {
     return url.toString();
   };
 
-  const updateSelectedFrames = () => {
-    selectedFrames = [...aiCandidates.querySelectorAll('input[type="checkbox"]:checked')]
-      .map((input) => JSON.parse(input.dataset.frame || "{}"));
-    aiGenerate.disabled = selectedFrames.length < 1 || selectedFrames.length > 2;
+  const selectedStyle = () => aiStyles.querySelector("[data-style].active")?.dataset.style || "big_bold_yellow";
+  const selectedTone = () => aiTones.querySelector("[data-tone].active")?.dataset.tone || "clean_professional";
+  const noTextSelected = () => selectedStyle() === "no_text";
+  const isAllowanceExhausted = () => allowanceAllowed <= allowanceUsed;
+
+  const updateCreateAvailability = () => {
+    const invalidSelection = selectedFrames.length < 1 || selectedFrames.length > 2;
+    aiGenerate.disabled = isGenerating || isAllowanceExhausted() || invalidSelection;
+    aiGenerate.title = isAllowanceExhausted() ? "Monthly AI cover allowance used up" : "";
+    aiTitle.disabled = isGenerating || noTextSelected();
+    aiSuggest.disabled = isGenerating || noTextSelected();
   };
 
-  const candidateNode = (frame, index, checked = false) => {
-    const column = document.createElement("div");
-    column.className = "col-4";
-    const label = document.createElement("label");
-    label.className = "d-block border border-secondary rounded p-1 h-100 position-relative";
-    const input = document.createElement("input");
-    input.type = "checkbox";
-    input.className = "form-check-input position-absolute m-2";
-    input.style.zIndex = "2";
-    input.checked = checked;
-    input.dataset.frame = JSON.stringify(frame);
-    input.addEventListener("change", () => {
-      if (input.checked) {
-        const checkedInputs = [...aiCandidates.querySelectorAll('input[type="checkbox"]:checked')];
-        checkedInputs.forEach((other) => {
-          if (other === input) return;
-          const otherFrame = JSON.parse(other.dataset.frame || "{}");
-          if (frame.person_label && otherFrame.person_label === frame.person_label) other.checked = false;
-        });
-        const remaining = [...aiCandidates.querySelectorAll('input[type="checkbox"]:checked')];
-        if (remaining.length > 2) remaining[0].checked = false;
-      }
-      updateSelectedFrames();
-      promptDirty = false;
-      void rebuildPrompt();
+  const bestFramesByPerson = (frames) => {
+    const best = new Map();
+    (frames || []).forEach((frame) => {
+      const key = frame.person_key || frame.person_label || "person-1";
+      if (!best.has(key)) best.set(key, frame);
     });
+    return [...best.values()].slice(0, 2);
+  };
+
+  const isFrameSelected = (frame) => selectedFrames.some((item) => item.id === frame.id);
+
+  const candidateNode = (frame, index) => {
+    const button = document.createElement("button");
+    button.type = "button";
+    button.className = `cover-person-card${isFrameSelected(frame) ? " is-selected" : ""}`;
+    button.dataset.frameId = frame.id;
     const image = document.createElement("img");
-    image.className = "w-100 rounded object-fit-cover";
-    image.style.aspectRatio = "1/1";
     image.src = frameUrl(frame);
     image.alt = frame.person_label || `Candidate ${index + 1}`;
     const caption = document.createElement("div");
-    caption.className = "small mt-1 text-center";
-    caption.textContent = `${frame.person_label || "Frame"} · ${formatCoverTime(frame.clip_timestamp)}`;
-    label.append(input, image, caption);
-    column.append(label);
-    return column;
+    caption.className = "cover-person-label";
+    caption.textContent = frame.person_label || "Video frame";
+    const check = document.createElement("span");
+    check.className = "cover-check";
+    check.innerHTML = '<i class="bi bi-check" aria-hidden="true"></i>';
+    button.append(image, caption, check);
+    button.addEventListener("click", () => {
+      if (isFrameSelected(frame)) selectedFrames = selectedFrames.filter((item) => item.id !== frame.id);
+      else {
+        selectedFrames = selectedFrames.filter((item) => (item.person_key || item.person_label) !== (frame.person_key || frame.person_label));
+        selectedFrames.push(frame);
+        if (selectedFrames.length > 2) selectedFrames.shift();
+      }
+      renderCandidateCards();
+      promptDirty = false;
+      void rebuildPrompt();
+    });
+    return button;
   };
 
-  const renderCandidates = (frames) => {
+  const renderCandidateCards = () => {
     aiCandidates.replaceChildren();
-    frames.forEach((frame, index) => aiCandidates.append(candidateNode(frame, index, index === 0)));
-    updateSelectedFrames();
+    candidateFrames.forEach((frame, index) => aiCandidates.append(candidateNode(frame, index)));
+    const pick = document.createElement("button");
+    pick.type = "button";
+    pick.className = "cover-person-card cover-pick-card";
+    pick.id = "clip-cover-pick-frame";
+    pick.innerHTML = '<i class="bi bi-plus-lg" aria-hidden="true"></i><span>Pick from video</span>';
+    pick.addEventListener("click", () => {
+      framePicker.classList.toggle("d-none");
+      if (!framePicker.classList.contains("d-none")) {
+        framePlayer.currentTime = Math.min(Number(framePlayer.duration) || clipDuration || 0, clipDuration / 2);
+        aiTime.textContent = formatCoverTime(framePlayer.currentTime);
+      }
+    });
+    aiCandidates.append(pick);
+    updateCreateAvailability();
   };
 
   const renderHistory = (history = []) => {
     aiHistory.replaceChildren();
-    history.forEach((item) => {
+    history.slice(0, 3).forEach((item) => {
       const column = document.createElement("div");
       column.className = "col-4";
-      const image = document.createElement("img");
-      image.className = "w-100 rounded";
-      image.src = item.url;
-      image.alt = "Earlier AI cover";
       const button = document.createElement("button");
       button.type = "button";
-      button.className = "btn btn-sm btn-outline-light w-100 mt-1";
-      button.textContent = "Use";
-      button.addEventListener("click", () => useGeneration(item.id));
-      column.append(image, button);
+      button.className = currentGenerationId === item.id ? "active" : "";
+      button.title = "Preview this cover";
+      const image = document.createElement("img");
+      image.src = item.url;
+      image.alt = "Earlier AI cover";
+      button.append(image);
+      button.addEventListener("click", () => previewGeneration(item));
+      column.append(button);
       aiHistory.append(column);
     });
-  };
-
-  const populateSelect = (select, values, preferred) => {
-    select.replaceChildren();
-    Object.entries(values || {}).forEach(([value, label]) => {
-      const option = document.createElement("option");
-      option.value = value;
-      option.textContent = label;
-      option.selected = value === preferred;
-      select.append(option);
-    });
+    historyWrap.classList.toggle("d-none", !history.length);
   };
 
   const promptPayload = () => ({
     people_count: selectedFrames.length,
     title: aiTitle.value,
-    no_title: aiNoTitle.checked,
-    title_style: aiStyle.value,
-    tone: aiTone.value,
+    no_title: noTextSelected(),
+    title_style: selectedStyle(),
+    tone: selectedTone(),
   });
 
   const rebuildPrompt = async () => {
@@ -26447,11 +26527,13 @@ document.addEventListener("DOMContentLoaded", () => {
       const payload = await response.json();
       if (!response.ok) throw new Error(payload.message || "Candidate frames could not be loaded.");
       clipDuration = Number(payload.duration || 0);
-      aiScrubber.max = String(Math.max(0.1, clipDuration));
-      aiScrubber.value = String(Math.min(clipDuration, clipDuration / 2));
-      aiTime.textContent = formatCoverTime(aiScrubber.value);
       aiTitle.value = payload.title || activeCard.dataset.title || "";
-      renderCandidates(payload.candidates || []);
+      candidateFrames = bestFramesByPerson(payload.candidates || []);
+      selectedFrames = candidateFrames.slice(0, 2);
+      renderCandidateCards();
+      const cardVideo = activeCard.querySelector("video");
+      const playerSource = cardVideo?.currentSrc || cardVideo?.getAttribute("src") || "";
+      if (playerSource) framePlayer.src = playerSource;
       await rebuildPrompt();
     } catch (error) {
       aiCandidates.replaceChildren();
@@ -26468,7 +26550,7 @@ document.addEventListener("DOMContentLoaded", () => {
     uploadFile.value = "";
     cropContext?.clearRect(0, 0, 1080, 1920);
     cropWrap.classList.add("d-none");
-    useUploadButton.disabled = true;
+    useUploadButton.classList.add("d-none");
   };
 
   const clampCrop = () => {
@@ -26483,26 +26565,33 @@ document.addEventListener("DOMContentLoaded", () => {
     cropContext.drawImage(uploadImage, crop.x, crop.y, crop.width, crop.height);
   };
 
-  const showCurrentCover = (url) => {
+  const showPreview = (url, mode = "current") => {
     const hasCover = Boolean(url);
+    cropWrap.classList.add("d-none");
     currentPreview.classList.toggle("d-none", !hasCover);
     currentEmpty.classList.toggle("d-none", hasCover);
-    removeButton.classList.toggle("d-none", !hasCover);
     if (hasCover) currentPreview.src = url;
     else currentPreview.removeAttribute("src");
+    resultActions.classList.toggle("d-none", mode !== "result");
+    useUploadButton.classList.add("d-none");
+    removeButton.classList.toggle("d-none", mode !== "current" || !hasCover);
+  };
+
+  const showCurrentCover = (url) => {
+    currentCoverUrl = url || "";
+    showPreview(currentCoverUrl, "current");
   };
 
   const renderCover = (payload) => {
     const cover = payload?.cover || null;
     showCurrentCover(cover?.status === "ready" ? cover.cover_url : "");
-    allowance.textContent = `AI covers: ${Number(payload?.ai_used || 0)} / ${Number(payload?.ai_allowed || 0)} this month`;
-    populateSelect(aiStyle, payload?.ai_presets?.title_styles, "big_bold_yellow");
-    populateSelect(aiTone, payload?.ai_presets?.tones, "clean_professional");
+    allowanceUsed = Number(payload?.ai_used || 0);
+    allowanceAllowed = Number(payload?.ai_allowed || 0);
+    allowance.textContent = `${allowanceUsed} / ${allowanceAllowed} this month`;
     renderHistory(payload?.ai_history || []);
-    const exhausted = Number(payload?.ai_allowed || 0) <= Number(payload?.ai_used || 0);
-    aiGenerate.disabled = exhausted || selectedFrames.length === 0;
-    feedback.textContent = cover?.error || "";
-    if (exhausted) feedback.textContent = `AI cover allowance used up (${Number(payload?.ai_used || 0)} / ${Number(payload?.ai_allowed || 0)} this month).`;
+    feedback.textContent = "";
+    if (isAllowanceExhausted()) feedback.textContent = "Monthly AI cover allowance used up.";
+    updateCreateAvailability();
   };
 
   const loadCover = async () => {
@@ -26524,9 +26613,14 @@ document.addEventListener("DOMContentLoaded", () => {
     feedback.textContent = "";
     resetUpload();
     selectedFrames = [];
+    candidateFrames = [];
     currentGenerationId = "";
     promptDirty = false;
-    aiResult.classList.add("d-none");
+    closeConfirmed = false;
+    framePicker.classList.add("d-none");
+    framePlayer.pause();
+    framePlayer.removeAttribute("src");
+    resultActions.classList.add("d-none");
     aiSuggestions.replaceChildren();
     bootstrap.Modal.getOrCreateInstance(modalEl).show();
     void (async () => {
@@ -26560,6 +26654,11 @@ document.addEventListener("DOMContentLoaded", () => {
       clampCrop();
       renderCrop();
       cropWrap.classList.remove("d-none");
+      currentPreview.classList.add("d-none");
+      currentEmpty.classList.add("d-none");
+      removeButton.classList.add("d-none");
+      resultActions.classList.add("d-none");
+      useUploadButton.classList.remove("d-none");
       useUploadButton.disabled = false;
     };
     image.onerror = () => {
@@ -26635,14 +26734,61 @@ document.addEventListener("DOMContentLoaded", () => {
     }
   };
 
+  const previewGeneration = (generation) => {
+    currentGenerationId = generation.id;
+    showPreview(generation.url, "result");
+    [...aiHistory.querySelectorAll("button")].forEach((button) => button.classList.toggle("active", button.querySelector("img")?.src === currentPreview.src));
+    feedback.textContent = "";
+  };
+
+  const plainError = (error, status = 0) => {
+    const message = String(error?.message || error || "");
+    const lower = message.toLowerCase();
+    if (status === 429 || lower.includes("quota") || lower.includes("allowance")) return "Monthly AI cover allowance used up.";
+    if (lower.includes("safety") || lower.includes("blocked")) return "The image was blocked by the safety filter.";
+    if (lower.includes("timeout") || lower.includes("timed out")) return "The request timed out. Try again.";
+    return message || "Cover could not be created. Try again.";
+  };
+
+  const setGeneratingState = (busy) => {
+    if (isGenerating === busy) return;
+    isGenerating = busy;
+    modalEl.classList.toggle("is-generating", busy);
+    generatingOverlay.classList.toggle("d-none", !busy);
+    generateSpinner.classList.toggle("d-none", !busy);
+    generateLabel.textContent = busy ? "Creating…" : "Create cover";
+    resultActions.classList.add("d-none");
+    modalEl.querySelectorAll("button, input, textarea, video").forEach((control) => {
+      if (control.matches('[data-bs-dismiss="modal"]')) return;
+      if (busy) {
+        control.dataset.coverWasDisabled = control.disabled ? "1" : "0";
+        control.disabled = true;
+      } else if (control.dataset.coverWasDisabled !== "1") control.disabled = false;
+      if (!busy) delete control.dataset.coverWasDisabled;
+    });
+    window.clearInterval(elapsedTimer);
+    elapsedTimer = null;
+    if (busy) {
+      let seconds = 0;
+      elapsedLabel.textContent = "0";
+      elapsedTimer = window.setInterval(() => { seconds += 1; elapsedLabel.textContent = String(seconds); }, 1000);
+    }
+    updateCreateAvailability();
+  };
+
   const generateAiCover = async () => {
+    if (isGenerating) return;
     if (!activeCard?.dataset.coverAiGenerateUrl || selectedFrames.length < 1 || selectedFrames.length > 2) {
       feedback.textContent = "Select one or two people.";
       return;
     }
-    aiGenerate.disabled = true;
-    aiTryAgain.disabled = true;
-    feedback.textContent = "Generating one AI cover…";
+    if (isAllowanceExhausted()) {
+      feedback.textContent = "Monthly AI cover allowance used up.";
+      return;
+    }
+    feedback.textContent = "";
+    setGeneratingState(true);
+    let responseStatus = 0;
     try {
       const response = await fetch(activeCard.dataset.coverAiGenerateUrl, {
         method: "POST", headers: {"Content-Type":"application/json", "Accept":"application/json"},
@@ -26651,32 +26797,39 @@ document.addEventListener("DOMContentLoaded", () => {
           advanced_prompt: aiPrompt.value,
         }),
       });
+      responseStatus = response.status;
       const payload = await response.json();
       if (!response.ok) throw new Error(payload.message || "AI cover generation failed.");
+      setGeneratingState(false);
       currentGenerationId = payload.generation.id;
-      aiResultImage.src = payload.generation.url;
-      aiResult.classList.remove("d-none");
+      showPreview(payload.generation.url, "result");
       renderHistory(payload.history || []);
-      allowance.textContent = `AI covers: ${Number(payload.ai_used || 0)} / ${Number(payload.ai_allowed || 0)} this month`;
-      feedback.textContent = "AI cover generated. Choose Use this cover or Try again.";
+      allowanceUsed = Number(payload.ai_used || 0);
+      allowanceAllowed = Number(payload.ai_allowed || 0);
+      allowance.textContent = `${allowanceUsed} / ${allowanceAllowed} this month`;
+      feedback.textContent = "";
     } catch (error) {
-      feedback.textContent = error.message || "AI cover generation failed.";
+      feedback.textContent = plainError(error, responseStatus);
     } finally {
-      aiGenerate.disabled = selectedFrames.length < 1 || selectedFrames.length > 2;
-      aiTryAgain.disabled = false;
+      setGeneratingState(false);
     }
   };
 
-  aiScrubber.addEventListener("input", () => { aiTime.textContent = formatCoverTime(aiScrubber.value); });
+  framePlayer.addEventListener("timeupdate", () => { aiTime.textContent = formatCoverTime(framePlayer.currentTime); });
+  framePlayer.addEventListener("seeked", () => { aiTime.textContent = formatCoverTime(framePlayer.currentTime); });
   aiGrab.addEventListener("click", () => {
+    const timestamp = Number(framePlayer.currentTime || 0);
     const frame = {
-      id: `custom:${Number(aiScrubber.value).toFixed(3)}`,
-      person_key: "custom", person_label: "Custom frame",
-      clip_timestamp: Number(aiScrubber.value), face: null,
+      id: `custom:${timestamp.toFixed(3)}`,
+      person_key: `custom:${timestamp.toFixed(3)}`, person_label: "Video frame",
+      clip_timestamp: timestamp, face: null,
     };
-    aiCandidates.querySelectorAll('input[type="checkbox"]').forEach((input) => { input.checked = false; });
-    aiCandidates.append(candidateNode(frame, aiCandidates.children.length, true));
-    updateSelectedFrames();
+    candidateFrames.push(frame);
+    selectedFrames.push(frame);
+    if (selectedFrames.length > 2) selectedFrames.shift();
+    framePicker.classList.add("d-none");
+    framePlayer.pause();
+    renderCandidateCards();
     promptDirty = false;
     void rebuildPrompt();
   });
@@ -26700,7 +26853,6 @@ document.addEventListener("DOMContentLoaded", () => {
         button.textContent = suggestion;
         button.addEventListener("click", () => {
           aiTitle.value = suggestion;
-          aiNoTitle.checked = false;
           promptDirty = false;
           void rebuildPrompt();
         });
@@ -26714,11 +26866,25 @@ document.addEventListener("DOMContentLoaded", () => {
     }
   });
 
-  [aiTitle, aiNoTitle, aiStyle, aiTone].forEach((control) => control.addEventListener("change", () => {
-    aiTitle.disabled = aiNoTitle.checked;
+  aiTitle.addEventListener("change", () => {
     promptDirty = false;
     void rebuildPrompt();
-  }));
+  });
+  aiStyles.addEventListener("click", (event) => {
+    const chip = event.target.closest?.("[data-style]");
+    if (!chip || isGenerating) return;
+    aiStyles.querySelectorAll("[data-style]").forEach((item) => item.classList.toggle("active", item === chip));
+    updateCreateAvailability();
+    promptDirty = false;
+    void rebuildPrompt();
+  });
+  aiTones.addEventListener("click", (event) => {
+    const chip = event.target.closest?.("[data-tone]");
+    if (!chip || isGenerating) return;
+    aiTones.querySelectorAll("[data-tone]").forEach((item) => item.classList.toggle("active", item === chip));
+    promptDirty = false;
+    void rebuildPrompt();
+  });
   aiPrompt.addEventListener("input", () => { promptDirty = true; });
   aiRebuildPrompt.addEventListener("click", () => { promptDirty = false; void rebuildPrompt(); });
   aiGenerate.addEventListener("click", generateAiCover);
@@ -26742,7 +26908,22 @@ document.addEventListener("DOMContentLoaded", () => {
     }
   });
 
-  modalEl.addEventListener("hidden.bs.modal", resetUpload);
+  modalEl.addEventListener("hide.bs.modal", (event) => {
+    if (!isGenerating || closeConfirmed) return;
+    event.preventDefault();
+    if (window.confirm("A cover is still being created. Close anyway?")) {
+      closeConfirmed = true;
+      bootstrap.Modal.getOrCreateInstance(modalEl).hide();
+    }
+  });
+  modalEl.addEventListener("hidden.bs.modal", () => {
+    resetUpload();
+    framePlayer.pause();
+    framePlayer.removeAttribute("src");
+    closeConfirmed = false;
+  });
+
+  window.__coverModalTestHooks = { bestFramesByPerson, setGeneratingState, plainError };
 });
 </script>
 {% endif %}
