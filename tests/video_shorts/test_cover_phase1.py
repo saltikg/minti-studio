@@ -48,6 +48,7 @@ def test_cover_ui_is_admin_only_and_uses_one_stable_delegated_listener():
     assert '{% if is_admin %}<button\n                          type="button"\n                          class="btn btn-sm generate-v2-tile generate-v2-cover-btn"' in template
     assert '{% if is_admin %}\n<style>' in template
     assert '<div class="modal fade" id="clipCoverModal"' in template
+    assert '<span class="badge rounded-pill bg-warning text-dark fs-6">BETA</span>' in template
     cover_js = template[template.index('const stableRoot = document.body;'):template.index('window.__coverModalTestHooks =')]
     assert 'stableRoot.dataset.clipCoverDelegated === "1"' in cover_js
     assert cover_js.count('stableRoot.addEventListener("click"') == 1
