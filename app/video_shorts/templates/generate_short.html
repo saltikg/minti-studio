@@ -7344,13 +7344,13 @@
                       <span class="generate-v2-needs-regenerate-dot" role="img" aria-label="Needs regenerate" title="Needs regenerate"></span>
                       {% endif %}
                       {% if generate_v2 %}
-                      <span class="clip-rail-duration">{{ rail_duration_label }}</span>
+                      <span class="clip-rail-duration" data-clip-duration-label>{{ rail_duration_label }}</span>
                       {% endif %}
                     </span>
                     <span class="clip-rail-copy">
                       <span class="clip-rail-title">{{ row.title or ('Manual clip #' ~ row.plan_index) }}</span>
                       <span class="clip-rail-meta">
-                        <span>{{ clip_start_label }} – {{ clip_end_label }} · {{ rail_duration_label }}</span>
+                        <span data-clip-timing-label>{{ clip_start_label }} – {{ clip_end_label }} · {{ rail_duration_label }}</span>
                         {% if generate_v2 %}
                         <span class="clip-rail-platforms">
                           {% for post in row.schedule_posts or [] %}
@@ -7487,7 +7487,7 @@
                       </div>
                     </div>
                     <div class="generate-v2-editor-meta-line" data-edit-schedule-platforms>
-                      <span class="generate-v2-editor-time">{{ clip_start_label }} – {{ clip_end_label }} · {{ rail_duration_label }}</span>
+                      <span class="generate-v2-editor-time" data-clip-timing-label>{{ clip_start_label }} – {{ clip_end_label }} · {{ rail_duration_label }}</span>
                       {% for post in row.schedule_posts or [] %}
                       <button
                         type="button"
@@ -7669,7 +7669,7 @@
                 <div class="clip-card-meta-time">
                   {% if generate_v2 %}
                     <div class="generate-v2-preview-title">{{ row.title or ('Manual clip #' ~ row.plan_index) }}</div>
-                    <div class="generate-v2-preview-time">{{ clip_start_label }} – {{ clip_end_label }} · {{ clip_duration_label }}</div>
+                    <div class="generate-v2-preview-time" data-clip-timing-label>{{ clip_start_label }} – {{ clip_end_label }} · {{ clip_duration_label }}</div>
                   {% else %}
                     {{ clip_start_label }} – {{ clip_end_label }} ({{ clip_duration_label }})
                   {% endif %}
@@ -14420,8 +14420,41 @@ const rangesFromWordIndexes = (words, indexes) => {
   return normalizeClipKeepRanges(ranges);
 };
 
-const clipKeepRangesDuration = (ranges) => normalizeClipKeepRanges(ranges)
-  .reduce((total, range) => total + Math.max(0, range.end - range.start), 0);
+const clipKeepRangesTiming = (ranges) => {
+  const normalized = normalizeClipKeepRanges(ranges);
+  if (!normalized.length) return null;
+  return {
+    start: normalized[0].start,
+    end: normalized[normalized.length - 1].end,
+    duration: normalized.reduce((total, range) => total + Math.max(0, range.end - range.start), 0),
+  };
+};
+
+const clipKeepRangesDuration = (ranges) => clipKeepRangesTiming(ranges)?.duration || 0;
+
+const syncClipTimingLabels = (form, ranges) => {
+  const timing = clipKeepRangesTiming(ranges);
+  if (!form || !timing) return;
+  const planIndex = String(form.dataset.planIndex || "").trim();
+  if (!planIndex) return;
+  const escaped = cssEscapeValue(planIndex);
+  const startLabel = formatClipDurationLabel(Math.floor(timing.start));
+  const endLabel = formatClipDurationLabel(Math.ceil(timing.end));
+  const durationLabel = formatClipDurationLabel(Math.ceil(timing.duration));
+  const timingLabel = `${startLabel} – ${endLabel} · ${durationLabel}`;
+  document.querySelectorAll(`[data-plan-index='${escaped}'] [data-clip-timing-label]`)
+    .forEach((element) => { element.textContent = timingLabel; });
+  document.querySelectorAll(`[data-plan-index='${escaped}'] [data-clip-duration-label]`)
+    .forEach((element) => { element.textContent = durationLabel; });
+  document.querySelectorAll(`.clip-card[data-plan-index='${escaped}']`).forEach((card) => {
+    card.dataset.start = String(timing.start);
+    card.dataset.duration = String(timing.duration);
+  });
+  document.querySelectorAll(`.clip-rail-item[data-plan-index='${escaped}']`).forEach((item) => {
+    item.dataset.start = String(timing.start);
+    item.dataset.end = String(timing.end);
+  });
+};
 
 const normalizeWordSelectionFromEditor = (editor) => {
   const selection = window.getSelection?.();
@@ -15512,13 +15545,6 @@ const selectionToClipKeepRanges = (words, currentRanges, selectedIndexes, action
   let nextIndexes = new Set(selectedSet);
   if (action === "restore") {
     nextIndexes = new Set([...currentKept, ...selectedSet]);
-    const bounds = Array.from(nextIndexes).sort((a, b) => a - b);
-    if (bounds.length) {
-      nextIndexes = new Set();
-      for (let index = bounds[0]; index <= bounds[bounds.length - 1]; index += 1) {
-        nextIndexes.add(index);
-      }
-    }
   } else if (action === "remove") {
     nextIndexes = new Set([...currentKept].filter((index) => !selectedSet.has(index)));
   } else if (action !== "keep-only") {
@@ -15694,6 +15720,7 @@ const renderClipTextTrimEditor = (form, options = {}) => {
   if (durationLabel) {
     durationLabel.textContent = `Duration ${formatClipDurationLabel(duration)}${cuts > 0 ? ` · ${cuts} cut${cuts === 1 ? "" : "s"}` : ""}`;
   }
+  syncClipTimingLabels(form, keepRanges);
   const invalidMessage = duration < CLIP_MIN_DURATION_SECONDS
     ? `Clip must be at least ${CLIP_MIN_DURATION_SECONDS} seconds.`
     : (duration > CLIP_MAX_DURATION_SECONDS ? `Clip must be ${CLIP_MAX_DURATION_SECONDS} seconds or shorter.` : "");

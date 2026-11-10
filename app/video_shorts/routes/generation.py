@@ -162,7 +162,7 @@ from app.video_shorts.services.clip_planner_v10 import propose_clips_v10
 from app.video_shorts.services.clip_planning import _fallback_clip_plan
 from app.video_shorts.services.clip_title import generate_clip_title
 from app.video_shorts.services.clip_title import _detect_title_language
-from app.video_shorts.services.clip_ranges import ClipRangeResolution, resolve_clip_ranges
+from app.video_shorts.services.clip_ranges import ClipRangeResolution, clip_timing, resolve_clip_ranges
 from app.video_shorts.services.feature_flags import tiktok_enabled
 from app.video_shorts.services.media_duration import get_or_backfill_media_duration_seconds
 from app.video_shorts.services import render_timing
@@ -7559,9 +7559,8 @@ def _segments_for_indexed_keep_ranges(
 
 def _edit_keep_ranges_duration(ranges: Any) -> Optional[float]:
     normalized = _normalize_edit_keep_ranges(ranges)
-    if not normalized:
-        return None
-    return round(sum(max(0.0, item["end"] - item["start"]) for item in normalized), 3)
+    timing = clip_timing(keep_ranges=normalized)
+    return round(timing.duration, 3) if timing else None
 
 
 def _range_word_indexes(words: List[Dict[str, Any]], ranges: List[Dict[str, float]]) -> set[int]:
@@ -7616,8 +7615,6 @@ def derive_clip_keep_ranges_from_word_selection(
         all_indexes = kept_indexes | selected_indexes
         if not all_indexes:
             all_indexes = selected_indexes
-        else:
-            all_indexes = set(range(min(all_indexes), max(all_indexes) + 1))
         selected_ranges = _ranges_from_word_index_set(words, all_indexes, start_padding=start_padding, end_padding=end_padding)
     elif normalized_action == "remove":
         selected_indexes = set(range(first_selection, last_selection + 1))
@@ -13828,14 +13825,13 @@ def process_due_youtube_publish_reconcile(*, force: bool = False) -> bool:
     )
 
 
-def _build_display_timing(start: Any, end: Any, plan_start: Any = None, plan_end: Any = None) -> Dict[str, Optional[str]]:
-    display_start = _to_float(plan_start if plan_start is not None else start)
-    display_end = _to_float(plan_end if plan_end is not None else end)
+def _build_display_timing(start: Any, end: Any, keep_ranges: Any = None) -> Dict[str, Optional[str]]:
+    timing = clip_timing(start=start, end=end, keep_ranges=_normalize_edit_keep_ranges(keep_ranges))
+    display_start = timing.start if timing else None
+    display_end = timing.end if timing else None
     start_label = _format_editor_time_label(display_start, rounding="floor") if display_start is not None else None
     end_label = _format_editor_time_label(display_end, rounding="ceil") if display_end is not None else None
-    duration = None
-    if display_start is not None and display_end is not None:
-        duration = max(0.0, display_end - display_start)
+    duration = timing.duration if timing else None
     duration_label = _format_editor_time_label(duration, rounding="ceil") if duration is not None else None
     return {
         "display_start_label": start_label,
@@ -15329,7 +15325,16 @@ def generate_short(video_pk):
         edit_keep_duration = _edit_keep_ranges_duration(entry.get("edit_keep_ranges"))
         if edit_keep_duration is not None:
             duration_val = edit_keep_duration
-        display_timings = _build_display_timing(start, end, entry.get("start"), entry.get("end"))
+        timing = clip_timing(
+            start=start,
+            end=end,
+            keep_ranges=_normalize_edit_keep_ranges(entry.get("edit_keep_ranges")),
+        )
+        if timing is not None:
+            start = timing.start
+            end = timing.end
+            duration_val = timing.duration
+        display_timings = _build_display_timing(start, end, entry.get("edit_keep_ranges"))
         custom_transcript = entry.get("transcript_full_custom")
         transcript_full = custom_transcript or entry.get("transcript_full") or build_transcript_for_range(segments, start, end, prefer_tr=True)
         subtitle_source = entry.get("excerpt") or ""
@@ -28667,6 +28672,7 @@ def edit_clip_title_time(video_pk: int, plan_index: int):
     elif keep_ranges_raw:
         plan_entry.pop("edit_keep_ranges", None)
         plan_entry.pop("edit_cut_count", None)
+    plan_entry["duration"] = round(float(cleaned["duration"]), 3)
     plan_entry.pop("render_error", None)
     should_regenerate = (request.form.get("regenerate") or "").strip().lower() in {"1", "true", "yes", "on"}
     if clip_exists and not should_regenerate:

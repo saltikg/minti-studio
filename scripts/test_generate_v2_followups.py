@@ -147,6 +147,18 @@ def test_text_trim_selection_ranges() -> None:
     )
     result = generation.derive_clip_keep_ranges_from_word_selection(words, result["ranges"], 4, 4, "restore")
     _check("text_trim_restore_removed", result["ok"] and len(result["ranges"]) == 1, str(result))
+    middle_removed = generation.derive_clip_keep_ranges_from_word_selection(
+        words, [{"start": 0.0, "end": 3.78}], 2, 5, "remove"
+    )
+    middle_restored = generation.derive_clip_keep_ranges_from_word_selection(
+        words, middle_removed["ranges"], 3, 4, "restore"
+    )
+    restored_indexes = generation._range_word_indexes(words, middle_restored["ranges"])
+    _check(
+        "text_trim_restore_middle_selection_only",
+        middle_restored["ok"] and restored_indexes == {0, 1, 3, 4, 6, 7},
+        str(middle_restored),
+    )
     normalized = generation._normalize_edit_keep_ranges([
         {"start": 0.0, "end": 0.2},
         {"start": 1.0, "end": 1.5},

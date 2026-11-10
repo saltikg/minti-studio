@@ -205,6 +205,76 @@ def _assert_trim_selection_keeps_exact_first_word(page: Page, variant: str) -> N
     _print_pass(variant, "trim-view selection starts at the exact selected word")
 
 
+def _assert_trim_restore_keeps_only_selected_words(page: Page, variant: str) -> None:
+    result = page.evaluate(
+        """() => {
+          const words = typeof getGenerateV2WordTimestamps === 'function'
+            ? getGenerateV2WordTimestamps() : [];
+          if (words.length < 10) return {skipped: 'not enough transcript words'};
+          const removedFirst = 4;
+          const removedLast = 7;
+          const initiallyKept = new Set(words.map((_, index) => index)
+            .filter(index => index < removedFirst || index > removedLast));
+          const initialRanges = rangesFromWordIndexes(words, initiallyKept);
+
+          const editor = document.createElement('div');
+          for (let index = removedFirst; index <= removedLast; index += 1) {
+            const span = document.createElement('span');
+            span.dataset.wordIndex = String(index);
+            span.textContent = String(words[index].text || `word-${index}`);
+            editor.appendChild(span);
+          }
+          document.body.appendChild(editor);
+          const selectedFirst = editor.querySelector(`[data-word-index='${removedFirst + 1}']`);
+          const selectedLast = editor.querySelector(`[data-word-index='${removedFirst + 2}']`);
+          const selection = window.getSelection();
+          const domRange = document.createRange();
+          domRange.setStart(selectedFirst.firstChild, Math.min(1, selectedFirst.textContent.length));
+          domRange.setEnd(selectedLast.firstChild, Math.max(1, selectedLast.textContent.length - 1));
+          selection.removeAllRanges();
+          selection.addRange(domRange);
+          const selected = normalizeWordSelectionFromEditor(editor);
+          const restored = selectionToClipKeepRanges(words, initialRanges, selected, 'restore');
+          const restoredIndexes = Array.from(rangesToWordIndexSet(words, restored?.ranges || []));
+          const mixed = selectionToClipKeepRanges(
+            words, initialRanges, [removedFirst - 1, removedFirst, removedFirst + 1], 'restore');
+          const mixedIndexes = Array.from(rangesToWordIndexSet(words, mixed?.ranges || []));
+          const savedJson = JSON.stringify(restored?.ranges || []);
+          const reloadedIndexes = Array.from(rangesToWordIndexSet(
+            words, normalizeClipKeepRanges(JSON.parse(savedJson))));
+          const removeSelected = [removedFirst - 2, removedFirst - 1];
+          const removed = selectionToClipKeepRanges(words, initialRanges, removeSelected, 'remove');
+          const removedIndexes = Array.from(rangesToWordIndexSet(words, removed?.ranges || []));
+          editor.remove();
+          selection.removeAllRanges();
+          return {selected, restoredIndexes, mixedIndexes, reloadedIndexes, removedIndexes, removeSelected,
+            removedFirst, removedLast, wordCount: words.length};
+        }"""
+    )
+    assert not result.get("skipped"), result
+    expected_selected = [result["removedFirst"] + 1, result["removedFirst"] + 2]
+    expected_restored = [
+        index for index in range(result["wordCount"])
+        if index < result["removedFirst"] or index > result["removedLast"]
+        or index in expected_selected
+    ]
+    expected_initial = [
+        index for index in range(result["wordCount"])
+        if index < result["removedFirst"] or index > result["removedLast"]
+    ]
+    expected_mixed = sorted(set(expected_initial + [result["removedFirst"], result["removedFirst"] + 1]))
+    expected_after_remove = [index for index in expected_initial if index not in result["removeSelected"]]
+    assert result["selected"] == expected_selected, result
+    assert result["restoredIndexes"] == expected_restored, result
+    assert result["mixedIndexes"] == expected_mixed, result
+    assert result["reloadedIndexes"] == expected_restored, result
+    assert result["removedIndexes"] == expected_after_remove, result
+    _print_pass(variant, "trim Restore snaps partial words and restores only selected removed words")
+    _print_pass(variant, "trim Restore exact kept ranges survive save/reload serialization")
+    _print_pass(variant, "trim Restore in mixed selection changes only removed words")
+    _print_pass(variant, "trim Remove changes only selected kept words")
+
+
 def _assert_stubbed_regenerate(page: Page, variant: str) -> None:
     card = page.locator(".clip-card:has(video):has(.generate-v2-regenerate-btn)").first
     if card.count() == 0:
@@ -593,6 +663,7 @@ def _run_variant(browser: Browser, *, base_url: str, cookie_name: str,
         _print_pass(variant, "browser DPR")
         _assert_make_clip_add_keeps_exact_word_indexes(page, variant)
         _assert_trim_selection_keeps_exact_first_word(page, variant)
+        _assert_trim_restore_keeps_only_selected_words(page, variant)
 
         aspect = page.evaluate(
             """() => {

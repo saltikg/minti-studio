@@ -40,6 +40,43 @@ class ClipRangeResolution:
     clamped: bool = False
 
 
+@dataclass(frozen=True)
+class ClipTiming:
+    start: float
+    end: float
+    duration: float
+
+
+def clip_timing(
+    *,
+    start: Any = None,
+    end: Any = None,
+    keep_ranges: Optional[Iterable[dict[str, Any]]] = None,
+) -> Optional[ClipTiming]:
+    """Return the displayed/rendered timing contract for a clip."""
+    parsed_ranges: list[tuple[float, float]] = []
+    for item in keep_ranges or []:
+        if not isinstance(item, dict):
+            continue
+        range_start = _as_float(item.get("start"))
+        range_end = _as_float(item.get("end"))
+        if range_start is None or range_end is None or range_end <= range_start:
+            continue
+        parsed_ranges.append((max(0.0, range_start), max(0.0, range_end)))
+    if parsed_ranges:
+        parsed_ranges.sort(key=lambda item: (item[0], item[1]))
+        return ClipTiming(
+            start=parsed_ranges[0][0],
+            end=parsed_ranges[-1][1],
+            duration=sum(range_end - range_start for range_start, range_end in parsed_ranges),
+        )
+    parsed_start = _as_float(start)
+    parsed_end = _as_float(end)
+    if parsed_start is None or parsed_end is None or parsed_end <= parsed_start:
+        return None
+    return ClipTiming(parsed_start, parsed_end, parsed_end - parsed_start)
+
+
 def resolve_clip_ranges(
     *,
     start: Any,
