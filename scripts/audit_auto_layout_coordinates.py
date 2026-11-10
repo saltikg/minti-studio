@@ -96,16 +96,14 @@ def _asset_height(reference: str) -> int | None:
     if not reference:
         return None
     storage = get_media_storage()
-    managed = None
     try:
         location = tenant_media.storage_location(reference)
         local_path = Path(location["local_path"])
-        managed = local_path if local_path.is_file() else storage.download_to_temp(location["storage_key"])
-        path = Path(managed)
+        source = str(local_path) if local_path.is_file() else storage.public_url(location["storage_key"])
         result = subprocess.run(
             [
                 "ffprobe", "-v", "error", "-select_streams", "v:0",
-                "-show_entries", "stream=height", "-of", "csv=p=0", str(path),
+                "-show_entries", "stream=height", "-of", "csv=p=0", source,
             ],
             check=True,
             capture_output=True,
@@ -116,10 +114,6 @@ def _asset_height(reference: str) -> int | None:
         return height if height in VALID_COORDINATE_HEIGHTS else None
     except Exception:
         return None
-    finally:
-        cleanup = getattr(managed, "cleanup", None)
-        if callable(cleanup):
-            cleanup()
 
 
 def _resolve_height(
