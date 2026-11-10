@@ -5,11 +5,17 @@ from __future__ import annotations
 
 import argparse
 import os
+import sys
 import threading
 from contextlib import contextmanager
+from pathlib import Path
 from urllib.parse import parse_qs
 
 os.environ.setdefault("GENERATE_V2_ALL", "true")
+
+ROOT = Path(__file__).resolve().parents[1]
+if str(ROOT) not in sys.path:
+    sys.path.insert(0, str(ROOT))
 
 from playwright.sync_api import Browser, Page, sync_playwright
 from werkzeug.serving import make_server
