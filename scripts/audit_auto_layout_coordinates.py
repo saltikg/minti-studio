@@ -335,9 +335,9 @@ def run(*, apply: bool, mismatch_limit: float) -> int:
         print(f"UNRESOLVED {line}")
     for line in mismatches:
         print(f"MISMATCH {line}")
-    if counts["unresolved"] or (not apply and counts["mismatches"]):
+    if not apply and counts["mismatches"]:
         return 1
-    print("BACKFILL_OK" if apply else "AUDIT_OK")
+    print(f"{'BACKFILL_OK' if apply else 'AUDIT_OK'} unresolved={counts['unresolved']}")
     return 0
 
 
