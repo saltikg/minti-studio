@@ -60,14 +60,47 @@ def _job_payload(conn, job_id: str, cache: dict[str, dict[str, Any]]) -> dict[st
     return cache[job_id]
 
 
-def _asset_height(filename: str) -> int | None:
-    if not filename:
+def _generated_record(
+    conn,
+    *,
+    filename: str,
+    source_video_id: str,
+    owner_user_id: str,
+    brand_id: str | None,
+    cache: dict[tuple[str, str, str, str | None], dict[str, Any]],
+) -> dict[str, Any]:
+    key = (filename, source_video_id, owner_user_id, brand_id)
+    if key not in cache:
+        row = conn.execute(
+            """
+            SELECT gv.raw_plan_entry_json, sa.file_path
+            FROM shorts_generated_videos gv
+            LEFT JOIN shorts_storage_assets sa ON sa.file_key = gv.storage_file_key
+            WHERE (gv.clip_filename = ? OR gv.output_filename = ?)
+              AND CAST(gv.source_video_id AS VARCHAR) = ?
+              AND CAST(gv.user_id AS VARCHAR) = ?
+              AND gv.brand_id IS NOT DISTINCT FROM ?
+            ORDER BY gv.updated_at DESC
+            LIMIT 1
+            """,
+            [filename, filename, source_video_id, owner_user_id, brand_id],
+        ).fetchone()
+        cache[key] = {
+            "snapshot": _json_object(row[0]) if row else {},
+            "asset_reference": str(row[1] or "").strip() if row else "",
+        }
+    return cache[key]
+
+
+def _asset_height(reference: str) -> int | None:
+    if not reference:
         return None
     storage = get_media_storage()
-    key = tenant_media.asset_key(filename)
     managed = None
     try:
-        managed = storage.download_to_temp(key)
+        location = tenant_media.storage_location(reference)
+        local_path = Path(location["local_path"])
+        managed = local_path if local_path.is_file() else storage.download_to_temp(location["storage_key"])
         path = Path(managed)
         result = subprocess.run(
             [
@@ -89,17 +122,37 @@ def _asset_height(filename: str) -> int | None:
             cleanup()
 
 
-def _resolve_height(entry: dict[str, Any], conn, job_cache: dict[str, dict[str, Any]]) -> tuple[int | None, str]:
+def _resolve_height(
+    entry: dict[str, Any],
+    conn,
+    job_cache: dict[str, dict[str, Any]],
+    generated_cache: dict[tuple[str, str, str, str | None], dict[str, Any]],
+    *,
+    source_video_id: str,
+    owner_user_id: str,
+    brand_id: str | None,
+) -> tuple[int | None, str]:
     snapshot_height = _height_from_options(entry.get("render_settings_snapshot"))
     if snapshot_height:
         return snapshot_height, "render_settings_snapshot"
+    filename = str(entry.get("output_filename") or entry.get("clip_filename") or "").strip()
+    generated = _generated_record(
+        conn,
+        filename=filename,
+        source_video_id=source_video_id,
+        owner_user_id=owner_user_id,
+        brand_id=brand_id,
+        cache=generated_cache,
+    )
+    generated_height = _height_from_options(generated["snapshot"].get("render_settings_snapshot"))
+    if generated_height:
+        return generated_height, "generated_snapshot"
     job_id = str(entry.get("render_job_id") or "").strip()
     payload = _job_payload(conn, job_id, job_cache)
     job_height = _height_from_options(payload.get("options"))
     if job_height:
         return job_height, "producing_job"
-    filename = str(entry.get("output_filename") or entry.get("clip_filename") or "").strip()
-    asset_height = _asset_height(filename)
+    asset_height = _asset_height(generated["asset_reference"])
     if asset_height:
         return asset_height, "rendered_asset"
     return None, "unresolved"
@@ -173,6 +226,7 @@ def run(*, apply: bool, mismatch_limit: float) -> int:
     read_conn = get_db_readonly()
     write_conn = get_db() if apply else None
     job_cache: dict[str, dict[str, Any]] = {}
+    generated_cache: dict[tuple[str, str, str, str | None], dict[str, Any]] = {}
     counts = {
         "plans": 0, "clips": 0, "segments": 0, "720": 0, "1080": 0,
         "backfilled_clips": 0, "generated_rows": 0, "unresolved": 0, "mismatches": 0,
@@ -203,7 +257,15 @@ def run(*, apply: bool, mismatch_limit: float) -> int:
                 plan_has_auto = True
                 counts["clips"] += 1
                 counts["segments"] += len(segments)
-                height, source = _resolve_height(entry, read_conn, job_cache)
+                height, source = _resolve_height(
+                    entry,
+                    read_conn,
+                    job_cache,
+                    generated_cache,
+                    source_video_id=video.youtube_id,
+                    owner_user_id=video.owner_user_id,
+                    brand_id=video.brand_id,
+                )
                 sources[source] = sources.get(source, 0) + 1
                 clip_label = str(entry.get("output_filename") or entry.get("clip_filename") or entry.get("plan_index"))
                 if not height:
