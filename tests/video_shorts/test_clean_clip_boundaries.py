@@ -97,6 +97,51 @@ def test_end_cut_stays_in_pause_before_next_removed_word(monkeypatch, tmp_path):
     assert snapped[0]["audio_fade_out_seconds"] <= snapped[0]["end"] - 1.0 + 1e-9
 
 
+def test_back_to_back_word_timings_use_real_audio_pause(monkeypatch, tmp_path):
+    words = [
+        {"index": 0, "start": 0.5, "end": 1.0, "text": "cancer."},
+        {"index": 1, "start": 1.0, "end": 1.4, "text": "Work"},
+    ]
+    ranges = [{
+        "start": 0.5,
+        "end": 1.0,
+        "start_word_index": 0,
+        "end_word_index": 0,
+    }]
+    sample_rate = 1000
+
+    def synthetic_pause(*args, **kwargs):
+        window_start = kwargs["window_start"]
+        duration = kwargs["duration"]
+        times = window_start + np.arange(int(duration * sample_rate)) / sample_rate
+        # The transcript says the words touch at 1.0s, but the waveform has a
+        # real pause from 0.96s through 1.12s.
+        return np.where((times >= 0.96) & (times < 1.12), 0.0, 0.6).astype(np.float32)
+
+    monkeypatch.setattr(compositor, "_extract_mono_pcm_window", synthetic_pause)
+
+    snapped = compositor._snap_keep_range_boundaries_to_audio(
+        tmp_path / "source.mp4",
+        ranges,
+        transcript_words=words,
+        sample_rate=sample_rate,
+    )
+
+    assert 0.96 < snapped[0]["end"] <= 1.12
+    assert snapped[0]["audio_verified_pause_end"] is True
+    fade_start = snapped[0]["end"] - snapped[0]["audio_fade_out_seconds"]
+    assert 0.96 <= fade_start < snapped[0]["end"] <= 1.12
+    guarded = compositor._guard_keep_ranges_from_unselected_words(snapped, words)
+    assert guarded[0]["end"] == snapped[0]["end"]
+    resolved = compositor.resolve_clip_ranges(
+        start=guarded[0]["start"],
+        end=guarded[0]["end"],
+        keep_ranges=guarded,
+    )
+    assert resolved.ranges[0]["audio_verified_pause_end"] is True
+    assert resolved.ranges[0]["end"] == snapped[0]["end"]
+
+
 def test_new_word_selection_ranges_never_pad_into_neighbors():
     words = [
         {"start": 0.0, "end": 1.0},

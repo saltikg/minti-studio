@@ -84,6 +84,7 @@ CLIP_AUDIO_FADE_OUT_SECONDS = 0.080
 CLIP_EDGE_ENERGY_FRAME_SECONDS = 0.010
 CLIP_EDGE_SILENCE_HOLD_SECONDS = 0.040
 CLIP_EDGE_SILENCE_RATIO = 0.25
+CLIP_EDGE_SHORT_TRANSCRIPT_GAP_SECONDS = 0.040
 CLIP_EDGE_OUTER_RMS_SILENCE_RATIO = 0.60
 CLIP_EDGE_HIGH_FREQUENCY_RATIO = 0.20
 CLIP_EDGE_ANALYSIS_SAMPLE_RATE = 32000
@@ -327,6 +328,8 @@ def _normalize_keep_ranges_for_trim(keep_ranges: Optional[list[Dict[str, Any]]])
                 normalized[key] = max(0.0, float(item[key]))
             except (KeyError, TypeError, ValueError):
                 pass
+        if item.get("audio_verified_pause_end") is True:
+            normalized["audio_verified_pause_end"] = True
         ranges.append(normalized)
     ranges.sort(key=lambda item: (item["start"], item["end"]))
     return ranges
@@ -584,6 +587,59 @@ def _lowest_energy_frame_time(frames: list[tuple[float, float]], *, prefer_after
     return frame_start + (CLIP_EDGE_ENERGY_FRAME_SECONDS / 2.0)
 
 
+def _cut_inside_short_gap_audio_pause(
+    pcm: np.ndarray,
+    *,
+    window_start: float,
+    search_start: float,
+    search_end: float,
+    transcript_boundary: float,
+    sample_rate: int,
+) -> Optional[tuple[float, float]]:
+    """Return an end cut and fade wholly inside a real pause between speech."""
+    frames = _rms_energy_frames(
+        pcm,
+        window_start=window_start,
+        search_start=search_start,
+        search_end=search_end,
+        sample_rate=sample_rate,
+    )
+    if not frames:
+        return None
+    threshold = _relative_silence_threshold(frames)
+    quiet_runs = _sustained_silence_runs(frames, threshold=threshold)
+    if not quiet_runs:
+        return None
+
+    # A real inter-word pause has audible material on both sides. This avoids
+    # treating a quiet phoneme or the edge of the analysis window as a pause.
+    internal_runs: list[tuple[float, float]] = []
+    for run_start, run_end in quiet_runs:
+        has_speech_before = any(time_value < run_start and rms > threshold for time_value, rms in frames)
+        has_speech_after = any(time_value >= run_end and rms > threshold for time_value, rms in frames)
+        if has_speech_before and has_speech_after:
+            internal_runs.append((run_start, min(run_end, search_end)))
+    if not internal_runs:
+        return None
+
+    def run_score(run: tuple[float, float]) -> tuple[float, float, float]:
+        values = [rms for time_value, rms in frames if run[0] <= time_value < run[1]]
+        distance = (
+            run[0] - transcript_boundary
+            if transcript_boundary < run[0]
+            else transcript_boundary - run[1]
+            if transcript_boundary > run[1]
+            else 0.0
+        )
+        return (distance, (sum(values) / len(values)) if values else float("inf"), run[0])
+
+    pause_start, pause_end = min(internal_runs, key=run_score)
+    fade_duration = min(CLIP_AUDIO_FADE_OUT_SECONDS, max(0.0, pause_end - pause_start))
+    if fade_duration <= 0:
+        return None
+    return pause_start + fade_duration, fade_duration
+
+
 def _snap_keep_range_boundaries_to_audio(
     src_path: Path,
     ranges: list[dict[str, float]],
@@ -596,6 +652,7 @@ def _snap_keep_range_boundaries_to_audio(
         return ranges
     contexts = transcript_word_gap_contexts(ranges, transcript_words)
     windows: list[Tuple[str, int, float, float]] = []
+    short_gap_searches: dict[int, tuple[float, float]] = {}
     for index in range(len(ranges)):
         context = contexts[index] if index < len(contexts) else {}
         if index > 0 or context:
@@ -620,10 +677,27 @@ def _snap_keep_range_boundaries_to_audio(
             if upper < lower:
                 lower = upper
             windows.append(("end", index, lower, upper))
+            last_start = context.get("last_start")
+            last_end = context.get("last_end")
+            next_start = context.get("next_start")
+            next_end = context.get("next_end")
+            if None not in (last_start, last_end, next_start, next_end):
+                transcript_gap = float(next_start) - float(last_end)
+                if transcript_gap <= CLIP_EDGE_SHORT_TRANSCRIPT_GAP_SECONDS:
+                    short_gap_searches[index] = (
+                        (float(last_start) + float(last_end)) / 2.0,
+                        float(next_end),
+                    )
     if not windows:
         return ranges
-    window_start = min(item[2] for item in windows)
-    window_end = max(item[3] for item in windows)
+    window_start = min(
+        [item[2] for item in windows]
+        + [search[0] for search in short_gap_searches.values()]
+    )
+    window_end = max(
+        [item[3] for item in windows]
+        + [search[1] for search in short_gap_searches.values()]
+    )
     try:
         pcm = _extract_mono_pcm_window(
             src_path,
@@ -643,6 +717,17 @@ def _snap_keep_range_boundaries_to_audio(
     adjustments: list[dict[str, Any]] = []
     for kind, index, search_start, search_end in windows:
         original = float(ranges[index][kind])
+        verified_pause: Optional[tuple[float, float]] = None
+        if kind == "end" and index in short_gap_searches:
+            pause_search_start, pause_search_end = short_gap_searches[index]
+            verified_pause = _cut_inside_short_gap_audio_pause(
+                pcm,
+                window_start=window_start,
+                search_start=pause_search_start,
+                search_end=pause_search_end,
+                transcript_boundary=float(contexts[index]["next_start"]),
+                sample_rate=sample_rate,
+            )
         if kind == "end":
             lower = max(float(ranges[index]["start"]) + 0.001, search_start)
             upper = search_end
@@ -653,7 +738,15 @@ def _snap_keep_range_boundaries_to_audio(
             if index > 0:
                 lower = max(lower, float(adjusted[index - 1]["end"]) + 0.001)
             upper = min(float(ranges[index]["end"]) - 0.001, search_end)
-        if upper <= lower:
+        if verified_pause is not None:
+            candidate, pause_fade = verified_pause
+            if index < len(ranges) - 1:
+                candidate = min(candidate, float(ranges[index + 1]["start"]) - 0.001)
+            lower = float(ranges[index]["start"]) + 0.001
+            upper = max(lower, short_gap_searches[index][1])
+            adjusted[index]["audio_verified_pause_end"] = True
+            adjusted[index]["audio_fade_out_seconds"] = round(pause_fade, 6)
+        elif upper <= lower:
             candidate = lower
         else:
             candidate = _lowest_energy_time_in_pcm_window(
@@ -672,7 +765,7 @@ def _snap_keep_range_boundaries_to_audio(
                 min(CLIP_AUDIO_FADE_IN_SECONDS, max(0.0, float(context["first_start"]) - snapped)),
                 6,
             )
-        elif kind == "end" and context.get("last_end") is not None:
+        elif kind == "end" and context.get("last_end") is not None and verified_pause is None:
             adjusted[index]["audio_fade_out_seconds"] = round(
                 min(CLIP_AUDIO_FADE_OUT_SECONDS, max(0.0, snapped - float(context["last_end"]))),
                 6,
@@ -757,8 +850,14 @@ def transcript_word_gap_contexts(
                 "previous_end": words[first_position - 1]["end"] if first_position is not None and first_position > 0 else None,
                 "first_start": words[first_position]["start"] if first_position is not None else None,
                 "last_end": words[last_position]["end"] if last_position is not None else None,
+                "last_start": words[last_position]["start"] if last_position is not None else None,
                 "next_start": (
                     words[last_position + 1]["start"]
+                    if last_position is not None and last_position < len(words) - 1
+                    else None
+                ),
+                "next_end": (
+                    words[last_position + 1]["end"]
                     if last_position is not None and last_position < len(words) - 1
                     else None
                 ),
@@ -820,7 +919,7 @@ def _guard_keep_ranges_from_unselected_words(
         end_upper = context.get("next_start")
         if end_lower is not None:
             item["end"] = max(float(item["end"]), float(end_lower))
-        if end_upper is not None:
+        if end_upper is not None and item.get("audio_verified_pause_end") is not True:
             item["end"] = min(float(item["end"]), float(end_upper))
         item["start"] = round(max(0.0, min(float(item["start"]), float(item["end"]) - 0.001)), 6)
         item["end"] = round(max(float(item["end"]), float(item["start"]) + 0.001), 6)

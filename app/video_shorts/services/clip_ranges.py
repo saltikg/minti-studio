@@ -120,6 +120,8 @@ def resolve_clip_ranges(
                 parsed[key] = max(0.0, float(item[key]))
             except (KeyError, TypeError, ValueError):
                 pass
+        if item.get("audio_verified_pause_end") is True:
+            parsed["audio_verified_pause_end"] = True
         raw_ranges.append(parsed)
     if not raw_ranges:
         raw_ranges = [{"start": parsed_start, "end": parsed_end}]
@@ -153,6 +155,8 @@ def resolve_clip_ranges(
         for key in ("audio_fade_in_seconds", "audio_fade_out_seconds"):
             if key in item:
                 parsed[key] = item[key]
+        if item.get("audio_verified_pause_end") is True:
+            parsed["audio_verified_pause_end"] = True
         resolved.append(parsed)
 
     if not resolved:
