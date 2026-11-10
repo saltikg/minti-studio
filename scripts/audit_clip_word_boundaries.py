@@ -20,7 +20,10 @@ from app.video_shorts.services.compositor import (
     transcript_word_gap_contexts,
 )
 from app.video_shorts.services.db import get_db_readonly
-from app.video_shorts.services.transcript_service import _fetch_transcript
+from app.video_shorts.services.transcript_service import (
+    _decode_transcript_segments,
+    _normalize_segments_for_use,
+)
 
 
 EPSILON = 0.001
@@ -46,6 +49,22 @@ def _ranges(entry: dict[str, Any]) -> list[dict[str, Any]]:
         return [{"start": float(entry["start"]), "end": float(entry["end"])}]
     except (KeyError, TypeError, ValueError):
         return []
+
+
+def _stored_segments(conn, video_id: str, video_pk: int) -> list[dict[str, Any]]:
+    """Read stored timing JSON without invoking lazy transcript mutations."""
+    override = conn.execute(
+        "SELECT segments_json FROM shorts_transcript_overrides WHERE video_pk = ?",
+        [video_pk],
+    ).fetchone()
+    raw = override[0] if override else None
+    if not raw:
+        row = conn.execute(
+            "SELECT segments_json, whisper_segments_json FROM youtube_transcripts WHERE video_id = ?",
+            [video_id],
+        ).fetchone()
+        raw = (row[1] or row[0]) if row else None
+    return _normalize_segments_for_use(_decode_transcript_segments(raw))
 
 
 def _violations(ranges: list[dict[str, Any]], contexts: list[dict[str, Any]]) -> list[dict[str, Any]]:
@@ -101,14 +120,19 @@ def main() -> int:
         inspected = mapped = 0
         existing_affected: list[dict[str, Any]] = []
         new_logic_mismatches: list[dict[str, Any]] = []
+        words_by_video: dict[int, list[dict[str, Any]]] = {}
         for generated_id, video_id, title, raw_entry, video_pk in rows:
             inspected += 1
             entry = _decode(raw_entry)
             ranges = _ranges(entry)
             if not ranges or video_pk is None:
                 continue
-            _, segments = _fetch_transcript(conn, str(video_id), video_pk=video_pk)
-            words = _transcript_words_with_sentence_indexes(segments)
+            video_pk = int(video_pk)
+            if video_pk not in words_by_video:
+                words_by_video[video_pk] = _transcript_words_with_sentence_indexes(
+                    _stored_segments(conn, str(video_id), video_pk)
+                )
+            words = words_by_video[video_pk]
             contexts = transcript_word_gap_contexts(ranges, words)
             if len(contexts) != len(ranges):
                 continue
