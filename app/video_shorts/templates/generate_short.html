@@ -21669,16 +21669,37 @@ document.addEventListener("DOMContentLoaded", () => {
     }
     if (!Array.isArray(segments) || !segments.length) return null;
     const playhead = getAutoLayoutPreviewTime();
-    return segments.find((segment, index) => {
+    const segment = segments.find((segment, index) => {
       const start = Number(segment?.start || 0);
       const end = Number(segment?.end || 0);
       return playhead >= start && (playhead < end || (index === segments.length - 1 && playhead <= end));
     }) || segments[0];
+    const coordinateHeight = Number(segment?.coordinate_height);
+    const activeRenderHeight = Number(getActiveRenderFrameHeight());
+    if (!Number.isFinite(coordinateHeight) || coordinateHeight <= 0
+        || !Number.isFinite(activeRenderHeight) || activeRenderHeight <= 0) {
+      console.warn("Auto-layout placement skipped: segment coordinate_height is missing", {
+        planIndex: card?.dataset.planIndex || "",
+        segment,
+      });
+      return {...segment, caption_top: null, caption_block_height: null, subscribe_top: null};
+    }
+    const coordinateScale = activeRenderHeight / coordinateHeight;
+    const scaled = {...segment};
+    ["caption_top", "caption_block_height", "subscribe_top"].forEach((field) => {
+      const rawValue = segment?.[field];
+      const value = Number(rawValue);
+      scaled[field] = rawValue !== null && rawValue !== "" && Number.isFinite(value)
+        ? value * coordinateScale
+        : null;
+    });
+    return scaled;
   };
   const getAutoLayoutPreviewPlacement = () => {
     const segment = getAutoLayoutPreviewSegment();
     if (!segment) return null;
-    return segment;
+    const customPosition = initialSubtitleMarginCustom || dirtyOverlayFields.has("sub_margin");
+    return customPosition ? null : segment;
   };
   const getAutoFitPreviewDims = () => {
     if (getAutoLayoutPreviewSegment()?.mode !== "fit") return null;

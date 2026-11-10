@@ -7,6 +7,7 @@ import argparse
 import os
 import threading
 from contextlib import contextmanager
+from urllib.parse import parse_qs
 
 os.environ.setdefault("GENERATE_V2_ALL", "true")
 
@@ -417,6 +418,114 @@ def _assert_server_geometry_round_trip(page: Page, variant: str, kind: str) -> N
     _print_pass(variant, f"{kind} band render-coordinate round trip")
 
 
+def _assert_auto_layout_caption_drag_persists(
+    page: Page, variant: str, coordinate_height: int
+) -> None:
+    export_label = "1080" if coordinate_height == 1920 else "720"
+    prepared = page.evaluate(
+        """coordinateHeight => {
+          const panel = document.getElementById('clip-management-panel');
+          const active = panel?.dataset.activePlanIndex;
+          const card = (active && document.querySelector(`.clip-card[data-plan-index="${CSS.escape(active)}"]`))
+            || document.querySelector('.clip-card[data-plan-index]');
+          if (!card) return {error: 'no active clip card'};
+          card.dataset.autoLayoutSegments = JSON.stringify([{
+            start: 0, end: 9999, mode: 'fill', caption_top: coordinateHeight * 0.55,
+            caption_block_height: coordinateHeight * 0.08, subscribe_top: null,
+            coordinate_height: coordinateHeight,
+          }]);
+          const auto = document.querySelector('[data-layout-mode="auto"]');
+          auto?.click();
+          return {planIndex: card.dataset.planIndex, hasAutoControl: !!auto};
+        }""",
+        coordinate_height,
+    )
+    assert not prepared.get("error"), prepared
+    page.wait_for_timeout(300)
+    caption = page.locator("#shorts-preview-subtitle-band:visible, #orig-preview-caption:visible").first
+    box = caption.bounding_box()
+    assert box, {"variant": variant, "export": export_label, "error": "caption not visible"}
+    page.mouse.move(box["x"] + box["width"] / 2, box["y"] + box["height"] / 2)
+    page.mouse.down()
+    page.mouse.move(box["x"] + box["width"] / 2, box["y"] + box["height"] / 2 - 36, steps=6)
+    page.mouse.up()
+
+    samples = []
+    for _ in range(30):
+        samples.append(caption.bounding_box()["y"])
+        page.wait_for_timeout(100)
+    assert max(samples) - min(samples) <= 2.5, {
+        "variant": variant, "export": export_label, "caption_top_samples": samples
+    }
+    dropped_top = samples[-1]
+    _print_pass(variant, f"auto-layout {export_label} caption drag stays dropped for 3s")
+
+    settings = page.locator(".short-video-body").first
+    save_url = str(settings.get_attribute("data-save-url") or "")
+    assert save_url, {"variant": variant, "error": "missing design save URL"}
+    captured: dict[str, str] = {}
+
+    def fulfill_save(route, request) -> None:
+        values = {key: items[-1] for key, items in parse_qs(request.post_data or "").items()}
+        captured.update(values)
+        layout = {
+            "layout_mode": values.get("layout_mode", "auto"),
+            "split_enabled": values.get("split_enabled") == "1",
+            "crop_aspect": values.get("crop_aspect", "portrait"),
+            "crop_locked": values.get("crop_locked") == "1",
+        }
+        for name in (
+            "crop_x_ratio", "crop_y_ratio", "crop_w_ratio", "crop_h_ratio",
+            "crop2_x_ratio", "crop2_y_ratio", "crop2_w_ratio", "crop2_h_ratio",
+        ):
+            layout[name] = float(values.get(name, "0" if name.endswith(("x_ratio", "y_ratio")) else "1"))
+        route.fulfill(status=200, content_type="application/json", json={
+            "success": True, "layout": layout, "music": {}
+        })
+
+    page.route(f"**{save_url}", fulfill_save)
+    try:
+        page.evaluate("() => window.cropEditorSave()")
+        page.wait_for_function(
+            "() => document.getElementById('crop-save-status')?.textContent === 'Saved'",
+            timeout=10_000,
+        )
+    finally:
+        page.unroute(f"**{save_url}", fulfill_save)
+    assert captured.get("subtitle_margin_custom") == "1", captured
+    assert "sub_margin" in captured, captured
+    _print_pass(variant, f"auto-layout {export_label} save marks subtitle_margin_custom")
+
+    page.evaluate(
+        """() => {
+          const field = document.querySelector('[name="sub_margin"]');
+          if (field) field.setAttribute('value', field.value);
+        }"""
+    )
+    reload_html = page.content().replace(
+        'data-subtitle-margin-custom="0"', 'data-subtitle-margin-custom="1"'
+    )
+    current_url = page.url
+
+    def fulfill_reload(route) -> None:
+        route.fulfill(status=200, content_type="text/html", body=reload_html)
+
+    page.route(current_url, fulfill_reload)
+    try:
+        page.reload(wait_until="domcontentloaded")
+        page.wait_for_function("() => window.__generateV2EditModeActive === true", timeout=10_000)
+        reloaded = page.locator("#shorts-preview-subtitle-band:visible, #orig-preview-caption:visible").first
+        page.wait_for_timeout(3000)
+        reloaded_top = reloaded.bounding_box()["y"]
+    finally:
+        page.unroute(current_url, fulfill_reload)
+    assert abs(reloaded_top - dropped_top) <= 3.0, {
+        "variant": variant, "export": export_label,
+        "dropped_top": dropped_top, "reloaded_top": reloaded_top,
+    }
+    _print_pass(variant, f"auto-layout {export_label} caption stays dropped after save/reload for 3s")
+
+
 def _run_variant(browser: Browser, *, base_url: str, cookie_name: str,
                  cookie_value: str, selected_video: int, width: int,
                  height: int, dpr: int) -> None:
@@ -543,6 +652,9 @@ def _run_variant(browser: Browser, *, base_url: str, cookie_name: str,
         _print_pass(variant, "page contains one clip-card node per plan")
         if width == 1280 and height == 720 and dpr == 1:
             _assert_stubbed_regenerate(page, variant)
+            _assert_auto_layout_caption_drag_persists(page, variant, 1280)
+        if width == 1920 and height == 1080 and dpr == 1:
+            _assert_auto_layout_caption_drag_persists(page, variant, 1920)
         print(f"VARIANT_OK {variant}")
     finally:
         context.close()

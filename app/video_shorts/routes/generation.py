@@ -35575,6 +35575,11 @@ def autoclip_video(video_pk):
                         "end": round(float(segment.get("end") or 0.0), 6),
                         "mode": str(segment.get("mode") or ""),
                         "zoom": round(float(segment.get("zoom") or 1.0), 6),
+                        # Placement coordinates are produced in the render canvas,
+                        # not the fixed 720p preview canvas.  Persist that contract
+                        # with every segment so consumers never infer it from mutable
+                        # account settings or a later render job.
+                        "coordinate_height": int(render_target_height),
                         "split_crops": segment.get("split_crops") if segment.get("mode") == "split" else None,
                         "caption_top": (
                             placement_by_window.get((

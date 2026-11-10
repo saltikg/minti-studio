@@ -487,12 +487,16 @@ def test_editor_template_exposes_reset_and_visible_design_changed_state():
     assert "{% if has_short_editor_default %}" in template
 
 
-def test_auto_layout_preview_ignores_manual_caption_position():
+def test_auto_layout_preview_preserves_manual_caption_position_and_scales_segments():
     template = (ROOT / "app/video_shorts/templates/generate_short.html").read_text(encoding="utf-8")
+    generation_source = (ROOT / "app/video_shorts/routes/generation.py").read_text(encoding="utf-8")
 
     assert "const getAutoLayoutPreviewPlacement = () =>" in template
-    assert "return segment;" in template
-    assert "return customPosition ? null : segment;" not in template
+    assert 'dirtyOverlayFields.has("sub_margin")' in template
+    assert "return customPosition ? null : segment;" in template
+    assert 'const coordinateScale = activeRenderHeight / coordinateHeight;' in template
+    assert '["caption_top", "caption_block_height", "subscribe_top"]' in template
+    assert '"coordinate_height": int(render_target_height)' in generation_source
 
 
 def test_background_resolver_prefers_video_design_then_brand_default():
