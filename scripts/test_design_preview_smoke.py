@@ -4,7 +4,9 @@
 from __future__ import annotations
 
 import argparse
+import json
 import os
+import re
 import sys
 import threading
 from contextlib import contextmanager
@@ -502,14 +504,30 @@ def _assert_auto_layout_caption_drag_persists(
     assert "sub_margin" in captured, captured
     _print_pass(variant, f"auto-layout {export_label} save marks subtitle_margin_custom")
 
-    page.evaluate(
-        """() => {
-          const field = document.querySelector('[name="sub_margin"]');
-          if (field) field.setAttribute('value', field.value);
-        }"""
-    )
-    reload_html = page.content().replace(
+    response = page.context.request.get(page.url)
+    assert response.ok, {"variant": variant, "reload_status": response.status}
+    reload_html = response.text().replace(
         'data-subtitle-margin-custom="0"', 'data-subtitle-margin-custom="1"'
+    )
+    reload_html = reload_html.replace('data-layout-mode="manual"', 'data-layout-mode="auto"')
+    saved_margin = captured["sub_margin"]
+    reload_html = re.sub(
+        r'(<input[^>]*name="sub_margin"[^>]*value=")[^"]*(")',
+        rf'\g<1>{saved_margin}\2',
+        reload_html,
+    )
+    synthetic_segments = json.dumps([{
+        "start": 0, "end": 9999, "mode": "fill",
+        "caption_top": coordinate_height * 0.55,
+        "caption_block_height": coordinate_height * 0.08,
+        "subscribe_top": None,
+        "coordinate_height": coordinate_height,
+    }], separators=(",", ":"))
+    reload_html = re.sub(
+        r"data-auto-layout-segments='[^']*'",
+        f"data-auto-layout-segments='{synthetic_segments}'",
+        reload_html,
+        count=1,
     )
     current_url = page.url
 
@@ -519,15 +537,23 @@ def _assert_auto_layout_caption_drag_persists(
     page.route(current_url, fulfill_reload)
     try:
         page.reload(wait_until="domcontentloaded")
+        page.evaluate("() => window.setGenerateV2ActiveTab('edit', {persist: false})")
         page.wait_for_function("() => window.__generateV2EditModeActive === true", timeout=10_000)
         reloaded = page.locator("#shorts-preview-subtitle-band:visible, #orig-preview-caption:visible").first
-        page.wait_for_timeout(3000)
-        reloaded_top = reloaded.bounding_box()["y"]
+        reloaded_samples = []
+        for _ in range(30):
+            reloaded_samples.append(reloaded.bounding_box()["y"])
+            page.wait_for_timeout(100)
+        reloaded_margin = page.locator('[name="sub_margin"]').first.input_value()
     finally:
         page.unroute(current_url, fulfill_reload)
-    assert abs(reloaded_top - dropped_top) <= 3.0, {
+    assert reloaded_margin == saved_margin, {
         "variant": variant, "export": export_label,
-        "dropped_top": dropped_top, "reloaded_top": reloaded_top,
+        "saved_margin": saved_margin, "reloaded_margin": reloaded_margin,
+    }
+    assert max(reloaded_samples) - min(reloaded_samples) <= 2.5, {
+        "variant": variant, "export": export_label,
+        "reloaded_caption_top_samples": reloaded_samples,
     }
     _print_pass(variant, f"auto-layout {export_label} caption stays dropped after save/reload for 3s")
 
