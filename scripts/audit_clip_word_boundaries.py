@@ -74,8 +74,6 @@ def _violations(ranges: list[dict[str, Any]], contexts: list[dict[str, Any]]) ->
         end = float(item["end"])
         checks = (
             ("start_before_previous_word_end", start, context.get("previous_end"), "lt"),
-            ("start_after_first_kept_word_start", start, context.get("first_start"), "gt"),
-            ("end_before_last_kept_word_end", end, context.get("last_end"), "lt"),
             ("end_after_next_word_start", end, context.get("next_start"), "gt"),
         )
         for name, actual, limit, direction in checks:

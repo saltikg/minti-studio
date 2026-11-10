@@ -618,7 +618,7 @@ def _snap_keep_range_boundaries_to_audio(
             if context.get("next_start") is not None:
                 upper = min(upper, float(context["next_start"]))
             if upper < lower:
-                upper = lower
+                lower = upper
             windows.append(("end", index, lower, upper))
     if not windows:
         return ranges
@@ -814,7 +814,7 @@ def _guard_keep_ranges_from_unselected_words(
         start_upper = context.get("first_start")
         if start_lower is not None:
             item["start"] = max(float(item["start"]), float(start_lower))
-        if start_upper is not None:
+        if start_upper is not None and (start_lower is None or float(start_lower) <= float(start_upper)):
             item["start"] = min(float(item["start"]), float(start_upper))
         end_lower = context.get("last_end")
         end_upper = context.get("next_start")
