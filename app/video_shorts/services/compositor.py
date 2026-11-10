@@ -322,6 +322,11 @@ def _normalize_keep_ranges_for_trim(keep_ranges: Optional[list[Dict[str, Any]]])
         if first_index >= 0 and last_index >= first_index:
             normalized["start_word_index"] = first_index
             normalized["end_word_index"] = last_index
+        for key in ("audio_fade_in_seconds", "audio_fade_out_seconds"):
+            try:
+                normalized[key] = max(0.0, float(item[key]))
+            except (KeyError, TypeError, ValueError):
+                pass
         ranges.append(normalized)
     ranges.sort(key=lambda item: (item["start"], item["end"]))
     return ranges
@@ -583,24 +588,38 @@ def _snap_keep_range_boundaries_to_audio(
     src_path: Path,
     ranges: list[dict[str, float]],
     *,
+    transcript_words: Optional[list[Dict[str, Any]]] = None,
     sample_rate: int = 16000,
 ) -> list[dict[str, float]]:
-    """Move internal multi-range cut points to nearby low-energy audio frames.
-
-    Whisper word end times can be early. For internal joins, this gives the last
-    kept word a little breathing room by choosing the quietest 10ms audio frame
-    within the allowed 200ms adjustment window. Failures return the original ranges.
-    """
-    if len(ranges) <= 1:
+    """Snap every cut to low energy without leaving its transcript-word gap."""
+    if not ranges:
         return ranges
+    contexts = transcript_word_gap_contexts(ranges, transcript_words)
     windows: list[Tuple[str, int, float, float]] = []
     for index in range(len(ranges)):
-        if index > 0:
+        context = contexts[index] if index < len(contexts) else {}
+        if index > 0 or context:
             boundary = float(ranges[index]["start"])
-            windows.append(("start", index, max(0.0, boundary - 0.20), boundary + 0.05))
-        if index < len(ranges) - 1:
+            lower = max(0.0, boundary - 0.20)
+            upper = boundary + 0.05
+            if context.get("previous_end") is not None:
+                lower = max(lower, float(context["previous_end"]))
+            if context.get("first_start") is not None:
+                upper = min(upper, float(context["first_start"]))
+            if upper < lower:
+                upper = lower
+            windows.append(("start", index, lower, upper))
+        if index < len(ranges) - 1 or context:
             boundary = float(ranges[index]["end"])
-            windows.append(("end", index, max(0.0, boundary - 0.05), boundary + 0.20))
+            lower = max(0.0, boundary - 0.05)
+            upper = boundary + 0.20
+            if context.get("last_end") is not None:
+                lower = max(lower, float(context["last_end"]))
+            if context.get("next_start") is not None:
+                upper = min(upper, float(context["next_start"]))
+            if upper < lower:
+                upper = lower
+            windows.append(("end", index, lower, upper))
     if not windows:
         return ranges
     window_start = min(item[2] for item in windows)
@@ -625,21 +644,39 @@ def _snap_keep_range_boundaries_to_audio(
     for kind, index, search_start, search_end in windows:
         original = float(ranges[index][kind])
         if kind == "end":
-            lower = max(float(ranges[index]["start"]) + 0.001, original - 0.20, search_start)
-            upper = min(float(ranges[index + 1]["start"]) - 0.001, original + 0.20, search_end)
+            lower = max(float(ranges[index]["start"]) + 0.001, search_start)
+            upper = search_end
+            if index < len(ranges) - 1:
+                upper = min(upper, float(ranges[index + 1]["start"]) - 0.001)
         else:
-            lower = max(float(adjusted[index - 1]["end"]) + 0.001, original - 0.20, search_start)
-            upper = min(float(ranges[index]["end"]) - 0.001, original + 0.20, search_end)
-        candidate = _lowest_energy_time_in_pcm_window(
-            pcm,
-            window_start=window_start,
-            search_start=lower,
-            search_end=upper,
-            sample_rate=sample_rate,
-        )
-        if candidate is None:
-            continue
+            lower = search_start
+            if index > 0:
+                lower = max(lower, float(adjusted[index - 1]["end"]) + 0.001)
+            upper = min(float(ranges[index]["end"]) - 0.001, search_end)
+        if upper <= lower:
+            candidate = lower
+        else:
+            candidate = _lowest_energy_time_in_pcm_window(
+                pcm,
+                window_start=window_start,
+                search_start=lower,
+                search_end=upper,
+                sample_rate=sample_rate,
+            )
+            if candidate is None:
+                candidate = min(max(original, lower), upper)
         snapped = round(min(max(candidate, lower), upper), 6)
+        context = contexts[index] if index < len(contexts) else {}
+        if kind == "start" and context.get("first_start") is not None:
+            adjusted[index]["audio_fade_in_seconds"] = round(
+                min(CLIP_AUDIO_FADE_IN_SECONDS, max(0.0, float(context["first_start"]) - snapped)),
+                6,
+            )
+        elif kind == "end" and context.get("last_end") is not None:
+            adjusted[index]["audio_fade_out_seconds"] = round(
+                min(CLIP_AUDIO_FADE_OUT_SECONDS, max(0.0, snapped - float(context["last_end"]))),
+                6,
+            )
         if abs(snapped - original) > 0.0005:
             adjusted[index][kind] = snapped
             adjustments.append({"range": index, "boundary": kind, "from": round(original, 6), "to": snapped})
@@ -675,6 +712,59 @@ def _normalize_transcript_words_for_boundary_snap(
             word_index = len(words)
         words.append({"start": start, "end": end, "index": word_index})
     return sorted(words, key=lambda item: (item["start"], item["end"]))
+
+
+def transcript_word_gap_contexts(
+    ranges: list[dict[str, Any]],
+    transcript_words: Optional[list[Dict[str, Any]]],
+) -> list[dict[str, Optional[float]]]:
+    """Return the transcript gap surrounding every kept range boundary.
+
+    Explicit word indexes are authoritative. Legacy ranges fall back to the
+    closest word edge within the normal snap window so older auto clips use
+    the same boundary contract without guessing across a distant word.
+    """
+    words = _normalize_transcript_words_for_boundary_snap(transcript_words)
+    if not ranges or not words:
+        return []
+    index_positions = {int(word["index"]): position for position, word in enumerate(words)}
+    contexts: list[dict[str, Optional[float]]] = []
+    for item in ranges:
+        current_start = float(item["start"])
+        current_end = float(item["end"])
+        explicit_first = item.get("start_word_index")
+        explicit_last = item.get("end_word_index")
+        first_position = None
+        last_position = None
+        try:
+            first_position = index_positions.get(int(explicit_first))
+        except (TypeError, ValueError):
+            pass
+        try:
+            last_position = index_positions.get(int(explicit_last))
+        except (TypeError, ValueError):
+            pass
+        if first_position is None:
+            candidate = min(range(len(words)), key=lambda index: abs(words[index]["start"] - current_start))
+            if abs(words[candidate]["start"] - current_start) <= CLIP_EDGE_SNAP_WINDOW_SECONDS:
+                first_position = candidate
+        if last_position is None:
+            candidate = min(range(len(words)), key=lambda index: abs(words[index]["end"] - current_end))
+            if abs(words[candidate]["end"] - current_end) <= CLIP_EDGE_SNAP_WINDOW_SECONDS:
+                last_position = candidate
+        contexts.append(
+            {
+                "previous_end": words[first_position - 1]["end"] if first_position is not None and first_position > 0 else None,
+                "first_start": words[first_position]["start"] if first_position is not None else None,
+                "last_end": words[last_position]["end"] if last_position is not None else None,
+                "next_start": (
+                    words[last_position + 1]["start"]
+                    if last_position is not None and last_position < len(words) - 1
+                    else None
+                ),
+            }
+        )
+    return contexts
 
 
 def _outer_word_boundary_context(
@@ -714,99 +804,26 @@ def _guard_keep_ranges_from_unselected_words(
     *,
     margin_seconds: float = CLIP_EDGE_UNSELECTED_WORD_MARGIN_SECONDS,
 ) -> list[dict[str, float]]:
-    """Keep media ranges out of transcript words that were not selected.
-
-    Audio-based snapping is allowed to find a cleaner edge only inside these
-    hard word guards.  Explicit word indexes cover every edge of a multi-range
-    edit; legacy ranges without indexes still get outer-edge protection.
-    """
+    """Clamp every cut to the gap between its neighbouring transcript words."""
     adjusted = [dict(item) for item in ranges]
-    words = _normalize_transcript_words_for_boundary_snap(transcript_words)
-    if not adjusted or not words:
+    contexts = transcript_word_gap_contexts(adjusted, transcript_words)
+    if not adjusted or not contexts:
         return adjusted
-
-    by_index = {int(word["index"]): word for word in words}
-    selected_indexes: set[int] = set()
-    for item in adjusted:
-        first = item.get("start_word_index")
-        last = item.get("end_word_index")
-        if isinstance(first, int) and isinstance(last, int) and last >= first:
-            selected_indexes.update(range(first, last + 1))
-
-    has_explicit_indexes = bool(selected_indexes)
-    if has_explicit_indexes:
-        for item in adjusted:
-            first = item.get("start_word_index")
-            last = item.get("end_word_index")
-            if not isinstance(first, int) or not isinstance(last, int):
-                continue
-            first_word = by_index.get(first)
-            last_word = by_index.get(last)
-            previous_word = by_index.get(first - 1)
-            next_word = by_index.get(last + 1)
-            if first_word is not None:
-                item["start"] = round(
-                    max(
-                        float(item["start"]),
-                        float(first_word["start"]) - CLIP_AUDIO_FADE_IN_SECONDS,
-                    ),
-                    6,
-                )
-            if previous_word is not None and first - 1 not in selected_indexes:
-                hard_start = float(previous_word["end"]) + float(margin_seconds)
-                item["start"] = round(
-                    min(max(float(item["start"]), hard_start), float(item["end"]) - 0.001),
-                    6,
-                )
-            if last_word is not None:
-                item["end"] = round(
-                    min(
-                        float(item["end"]),
-                        float(last_word["end"]) + CLIP_AUDIO_FADE_OUT_SECONDS,
-                    ),
-                    6,
-                )
-            if next_word is not None and last + 1 not in selected_indexes:
-                hard_end = float(next_word["start"]) - float(margin_seconds)
-                item["end"] = round(
-                    max(min(float(item["end"]), hard_end), float(item["start"]) + 0.001),
-                    6,
-                )
-        return adjusted
-
-    context = _outer_word_boundary_context(adjusted, words)
-    previous_end = context.get("previous_end")
-    first_start = context.get("first_start")
-    last_end = context.get("last_end")
-    next_start = context.get("next_start")
-    if first_start is not None:
-        adjusted[0]["start"] = round(
-            max(
-                float(adjusted[0]["start"]),
-                float(first_start) - CLIP_AUDIO_FADE_IN_SECONDS,
-            ),
-            6,
-        )
-    if previous_end is not None:
-        hard_start = float(previous_end) + float(margin_seconds)
-        adjusted[0]["start"] = round(
-            min(max(float(adjusted[0]["start"]), hard_start), float(adjusted[0]["end"]) - 0.001),
-            6,
-        )
-    if last_end is not None:
-        adjusted[-1]["end"] = round(
-            min(
-                float(adjusted[-1]["end"]),
-                float(last_end) + CLIP_AUDIO_FADE_OUT_SECONDS,
-            ),
-            6,
-        )
-    if next_start is not None:
-        hard_end = float(next_start) - float(margin_seconds)
-        adjusted[-1]["end"] = round(
-            max(min(float(adjusted[-1]["end"]), hard_end), float(adjusted[-1]["start"]) + 0.001),
-            6,
-        )
+    for item, context in zip(adjusted, contexts):
+        start_lower = context.get("previous_end")
+        start_upper = context.get("first_start")
+        if start_lower is not None:
+            item["start"] = max(float(item["start"]), float(start_lower))
+        if start_upper is not None:
+            item["start"] = min(float(item["start"]), float(start_upper))
+        end_lower = context.get("last_end")
+        end_upper = context.get("next_start")
+        if end_lower is not None:
+            item["end"] = max(float(item["end"]), float(end_lower))
+        if end_upper is not None:
+            item["end"] = min(float(item["end"]), float(end_upper))
+        item["start"] = round(max(0.0, min(float(item["start"]), float(item["end"]) - 0.001)), 6)
+        item["end"] = round(max(float(item["end"]), float(item["start"]) + 0.001), 6)
     return adjusted
 
 
@@ -964,10 +981,21 @@ def _snap_outer_keep_range_boundaries_to_audio(
     return adjusted, context
 
 
-def _audio_edge_fade_filter(duration: float) -> str:
+def _audio_edge_fade_filter(
+    duration: float,
+    *,
+    fade_in_seconds: Optional[float] = None,
+    fade_out_seconds: Optional[float] = None,
+) -> str:
     safe_duration = max(0.001, float(duration))
-    fade_in = min(CLIP_AUDIO_FADE_IN_SECONDS, safe_duration / 2.0)
-    fade_out = min(CLIP_AUDIO_FADE_OUT_SECONDS, safe_duration / 2.0)
+    fade_in = min(
+        CLIP_AUDIO_FADE_IN_SECONDS if fade_in_seconds is None else max(0.0, float(fade_in_seconds)),
+        safe_duration / 2.0,
+    )
+    fade_out = min(
+        CLIP_AUDIO_FADE_OUT_SECONDS if fade_out_seconds is None else max(0.0, float(fade_out_seconds)),
+        safe_duration / 2.0,
+    )
     fade_out_start = max(fade_in, safe_duration - fade_out)
     return f"afade=t=in:st=0:d={fade_in:.3f},afade=t=out:st={fade_out_start:.6f}:d={fade_out:.3f}"
 
@@ -1096,17 +1124,18 @@ def resolve_keep_ranges_for_trim(
         raise FileNotFoundError(f"Source video not found: {src_path}")
     normalized_src_path = _normalize_source_cache_container(src_path)
     has_audio = _has_audio_stream(normalized_src_path)
-    if len(ranges) > 1 and has_audio:
-        ranges = _snap_keep_range_boundaries_to_audio(normalized_src_path, ranges)
-    if ranges and has_audio and transcript_word_selection and transcript_words:
-        ranges, _ = _snap_outer_keep_range_boundaries_to_audio(
+    if ranges and has_audio and transcript_words:
+        ranges = _snap_keep_range_boundaries_to_audio(
             normalized_src_path,
             ranges,
-            transcript_words,
+            transcript_words=transcript_words,
+            sample_rate=CLIP_EDGE_ANALYSIS_SAMPLE_RATE,
         )
-    elif ranges and transcript_word_selection and transcript_words:
+    elif len(ranges) > 1 and has_audio:
+        ranges = _snap_keep_range_boundaries_to_audio(normalized_src_path, ranges)
+    elif ranges and transcript_words:
         ranges = _guard_keep_ranges_from_unselected_words(ranges, transcript_words)
-    if ranges and transcript_word_selection and transcript_words:
+    if ranges and transcript_words:
         # Multi-range snapping can move inner edges too.  Re-apply the hard
         # guard last so no audio heuristic can cross into an unselected word.
         ranges = _guard_keep_ranges_from_unselected_words(ranges, transcript_words)
@@ -3659,7 +3688,6 @@ def _compose_trimmed_with_background(
             1.0,
         )
     else:
-        direct_keep_ranges = []
         duration = max(end - start, 1.0)
     try:
         normalized_title_display_seconds = max(1.0, min(30.0, float(title_display_seconds)))
@@ -4650,6 +4678,11 @@ def _compose_trimmed_with_background(
             {
                 "start": max(0.0, float(item["start"]) - direct_source_seek),
                 "end": max(0.0, float(item["end"]) - direct_source_seek),
+                **{
+                    key: item[key]
+                    for key in ("audio_fade_in_seconds", "audio_fade_out_seconds")
+                    if key in item
+                },
             }
             for item in direct_source_ranges
         ]
@@ -4687,9 +4720,17 @@ def _compose_trimmed_with_background(
                     )
                     video_concat_inputs.append(f"[clip_range_v_{index}]")
                 if timeline_source_has_audio:
+                    range_duration = max(0.001, float(item["end"]) - float(item["start"]))
+                    join_fades = ""
+                    if index > 0 and item.get("audio_fade_in_seconds") is not None:
+                        fade_in = min(float(item["audio_fade_in_seconds"]), range_duration / 2.0)
+                        join_fades += f",afade=t=in:st=0:d={fade_in:.6f}"
+                    if index < len(relative_ranges) - 1 and item.get("audio_fade_out_seconds") is not None:
+                        fade_out = min(float(item["audio_fade_out_seconds"]), range_duration / 2.0)
+                        join_fades += f",afade=t=out:st={max(0.0, range_duration - fade_out):.6f}:d={fade_out:.6f}"
                     filter_parts.append(
                         f"[clip_range_a_src_{index}]atrim=start={item['start']:.6f}:end={item['end']:.6f},"
-                        f"asetpts=PTS-STARTPTS,aresample=async=1:first_pts=0[clip_range_a_{index}]"
+                        f"asetpts=PTS-STARTPTS,aresample=async=1:first_pts=0{join_fades}[clip_range_a_{index}]"
                     )
                     audio_concat_inputs.append(f"[clip_range_a_{index}]")
             if not direct_visual_override and timeline_source_has_audio:
@@ -5724,8 +5765,10 @@ def _compose_trimmed_with_background(
         if not edge_audio_source and clip_video_source and _has_audio_stream(clip_video_source):
             edge_audio_source = "[1:a]"
         if edge_audio_source:
+            edge_fade_in = direct_source_ranges[0].get("audio_fade_in_seconds") if direct_source_ranges else None
+            edge_fade_out = direct_source_ranges[-1].get("audio_fade_out_seconds") if direct_source_ranges else None
             filter_parts.append(
-                f"{edge_audio_source}{_audio_edge_fade_filter(duration)}[clip_edge_faded_a]"
+                f"{edge_audio_source}{_audio_edge_fade_filter(duration, fade_in_seconds=edge_fade_in, fade_out_seconds=edge_fade_out)}[clip_edge_faded_a]"
             )
             edge_audio_map = "[clip_edge_faded_a]"
     filter_complex = ";".join(filter_parts)

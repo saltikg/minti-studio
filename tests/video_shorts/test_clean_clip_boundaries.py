@@ -1,3 +1,5 @@
+import numpy as np
+
 from app.video_shorts.routes import generation
 from app.video_shorts.services import compositor
 
@@ -20,8 +22,8 @@ def test_unselected_word_guards_clamp_shelley_cut_on_both_edges():
     guarded = compositor._guard_keep_ranges_from_unselected_words(ranges, words)
 
     assert guarded == [{
-        "start": 661.591,
-        "end": 686.485,
+        "start": 661.511,
+        "end": 686.565,
         "start_word_index": 1696,
         "end_word_index": 1765,
     }]
@@ -43,10 +45,10 @@ def test_unselected_word_guards_cover_every_multi_range_edge():
 
     guarded = compositor._guard_keep_ranges_from_unselected_words(ranges, words)
 
-    assert guarded[0]["start"] == 0.48
-    assert guarded[0]["end"] == 0.72
-    assert guarded[1]["start"] == 1.28
-    assert guarded[1]["end"] == 1.92
+    assert guarded[0]["start"] == 0.4
+    assert guarded[0]["end"] == 0.8
+    assert guarded[1]["start"] == 1.2
+    assert guarded[1]["end"] == 2.0
 
 
 def test_audio_snap_cannot_exceed_selected_word_padding_without_neighbors():
@@ -63,8 +65,36 @@ def test_audio_snap_cannot_exceed_selected_word_padding_without_neighbors():
 
     guarded = compositor._guard_keep_ranges_from_unselected_words(ranges, words)
 
-    assert guarded[0]["start"] == 1.95
-    assert guarded[0]["end"] == 2.88
+    assert guarded[0]["start"] == 1.5
+    assert guarded[0]["end"] == 3.4
+
+
+def test_end_cut_stays_in_pause_before_next_removed_word(monkeypatch, tmp_path):
+    words = [
+        {"index": 0, "start": 0.5, "end": 1.0, "text": "cancer."},
+        {"index": 1, "start": 1.3, "end": 1.6, "text": "Work"},
+    ]
+    ranges = [{
+        "start": 0.5,
+        "end": 1.0,
+        "start_word_index": 0,
+        "end_word_index": 0,
+    }]
+    monkeypatch.setattr(
+        compositor,
+        "_extract_mono_pcm_window",
+        lambda *args, **kwargs: np.zeros(int(kwargs["duration"] * kwargs["sample_rate"]), dtype=np.float32),
+    )
+
+    snapped = compositor._snap_keep_range_boundaries_to_audio(
+        tmp_path / "source.mp4",
+        ranges,
+        transcript_words=words,
+        sample_rate=1000,
+    )
+
+    assert 1.0 <= snapped[0]["end"] < 1.3
+    assert snapped[0]["audio_fade_out_seconds"] <= snapped[0]["end"] - 1.0 + 1e-9
 
 
 def test_new_word_selection_ranges_never_pad_into_neighbors():

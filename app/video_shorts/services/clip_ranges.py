@@ -115,6 +115,11 @@ def resolve_clip_ranges(
         if first_index >= 0 and last_index >= first_index:
             parsed["start_word_index"] = first_index
             parsed["end_word_index"] = last_index
+        for key in ("audio_fade_in_seconds", "audio_fade_out_seconds"):
+            try:
+                parsed[key] = max(0.0, float(item[key]))
+            except (KeyError, TypeError, ValueError):
+                pass
         raw_ranges.append(parsed)
     if not raw_ranges:
         raw_ranges = [{"start": parsed_start, "end": parsed_end}]
@@ -145,6 +150,9 @@ def resolve_clip_ranges(
         if "start_word_index" in item and "end_word_index" in item:
             parsed["start_word_index"] = item["start_word_index"]
             parsed["end_word_index"] = item["end_word_index"]
+        for key in ("audio_fade_in_seconds", "audio_fade_out_seconds"):
+            if key in item:
+                parsed[key] = item[key]
         resolved.append(parsed)
 
     if not resolved:

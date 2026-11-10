@@ -27956,17 +27956,16 @@ def _resolve_video_clip_ranges(
     resolved_source_is_temp = False
     try:
         transcript_words: List[Dict[str, Any]] = []
-        if transcript_word_selection:
-            transcript_conn = get_db_readonly()
-            try:
-                _, transcript_segments = _fetch_transcript(
-                    transcript_conn,
-                    video_id,
-                    video_pk=video_pk,
-                )
-            finally:
-                transcript_conn.close()
-            transcript_words = _transcript_words_with_sentence_indexes(transcript_segments)
+        transcript_conn = get_db_readonly()
+        try:
+            _, transcript_segments = _fetch_transcript(
+                transcript_conn,
+                video_id,
+                video_pk=video_pk,
+            )
+        finally:
+            transcript_conn.close()
+        transcript_words = _transcript_words_with_sentence_indexes(transcript_segments)
         ranges_to_resolve = keep_ranges or [{"start": start, "end": end}]
         if transcript_word_selection and transcript_words:
             ranges_to_resolve = _canonicalize_indexed_keep_ranges(ranges_to_resolve, transcript_words)
@@ -27974,14 +27973,14 @@ def _resolve_video_clip_ranges(
                 keep_ranges = ranges_to_resolve
             start = ranges_to_resolve[0]["start"]
             end = ranges_to_resolve[-1]["end"]
-        if (len(keep_ranges) > 1 or (transcript_word_selection and transcript_words)) and resolved_source is None:
+        if (len(keep_ranges) > 1 or transcript_words) and resolved_source is None:
             resolved_source, resolved_source_is_temp = _resolve_source_video(video_id, video_pk=video_pk)
         media_duration = get_or_backfill_media_duration_seconds(
             video_pk,
             video_id,
             source_path=resolved_source,
         )
-        if resolved_source is not None and (len(keep_ranges) > 1 or (transcript_word_selection and transcript_words)):
+        if resolved_source is not None and (len(keep_ranges) > 1 or transcript_words):
             try:
                 _, snapped_ranges, _ = resolve_keep_ranges_for_trim(
                     resolved_source,
@@ -34845,10 +34844,8 @@ def autoclip_video(video_pk):
             str(plan_entry.get("selection_source") or "").strip().lower() == "transcript_words"
             or str(plan_entry.get("origin") or "").strip().lower() == "ai"
         )
-        START_PAD = 0.25
-        END_PAD = 0.5
-        adj_start = start if transcript_word_selection else max(0.0, start - START_PAD)
-        adj_end = end if transcript_word_selection else end + END_PAD
+        adj_start = start
+        adj_end = end
         if duration_seconds and not podcast_audio_path:
             adj_end = min(adj_end, float(duration_seconds))
         edit_keep_ranges = _normalize_edit_keep_ranges(plan_entry.get("edit_keep_ranges"))
@@ -34866,10 +34863,7 @@ def autoclip_video(video_pk):
                     str(plan_entry.get("selection_source") or "").strip().lower() == "transcript_words"
                     or str(plan_entry.get("origin") or "").strip().lower() == "ai"
                 ),
-                transcript_words=(
-                    _transcript_words_with_sentence_indexes(segments or [])
-                    if indexed_keep_ranges else None
-                ),
+                transcript_words=_transcript_words_with_sentence_indexes(segments or []),
             )
             multi_range_duration = sum(
                 max(0.0, float(item["end"]) - float(item["start"]))
@@ -34905,6 +34899,22 @@ def autoclip_video(video_pk):
                     multi_range_duration,
                     src_path,
                 )
+        elif not podcast_audio_path:
+            normalized_source_path, resolved_keep_ranges, _ = resolve_keep_ranges_for_trim(
+                src_path,
+                edit_keep_ranges or [{"start": start, "end": end}],
+                media_duration_seconds=media_duration_seconds,
+                fallback_duration_seconds=_to_float(duration_seconds),
+                transcript_word_selection=transcript_word_selection,
+                transcript_words=_transcript_words_with_sentence_indexes(segments or []),
+            )
+            src_path = normalized_source_path
+            edit_keep_ranges = resolved_keep_ranges
+            compose_keep_ranges = [dict(item) for item in resolved_keep_ranges]
+            start = float(resolved_keep_ranges[0]["start"])
+            end = float(resolved_keep_ranges[-1]["end"])
+            adj_start = start
+            adj_end = end
         if indexed_keep_ranges and len(edit_keep_ranges) <= 1:
             segments = _segments_for_indexed_keep_ranges(segments or [], edit_keep_ranges)
         if music_speech_ranges is None:

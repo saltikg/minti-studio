@@ -718,35 +718,34 @@ def main() -> None:
             {"index": 1, "start": 0.80, "end": 1.40},
             {"index": 2, "start": 1.75, "end": 2.10},
         ]
-        outer_adjusted, _ = compositor._snap_outer_keep_range_boundaries_to_audio(
+        outer_adjusted = compositor._snap_keep_range_boundaries_to_audio(
             outer_edges,
             outer_ranges,
-            outer_words,
+            transcript_words=outer_words,
         )
         _check(
             "outer_edges_preserve_spoken_word_and_fade_in_silence",
-            0.74 <= outer_adjusted[0]["start"] <= 0.76
-            and 1.59 <= outer_adjusted[0]["end"] <= 1.61
-            and "d=0.080" in compositor._audio_edge_fade_filter(
-                outer_adjusted[0]["end"] - outer_adjusted[0]["start"]
-            ),
+            0.60 <= outer_adjusted[0]["start"] <= 0.80
+            and 1.40 <= outer_adjusted[0]["end"] < 1.75
+            and outer_adjusted[0]["audio_fade_out_seconds"]
+            <= outer_adjusted[0]["end"] - 1.40 + 1e-9,
             str(outer_adjusted),
         )
 
         continuous_edges = tmp / "continuous_edges.wav"
         _write_wav(continuous_edges, _tone(2.0))
-        continuous_adjusted, _ = compositor._snap_outer_keep_range_boundaries_to_audio(
+        continuous_adjusted = compositor._snap_keep_range_boundaries_to_audio(
             continuous_edges,
             outer_ranges,
-            [
+            transcript_words=[
                 {"index": 0, "start": 0.0, "end": 0.80},
                 {"index": 1, "start": 0.80, "end": 1.40},
                 {"index": 2, "start": 1.40, "end": 2.0},
             ],
         )
         _check(
-            "continuous_speech_keeps_selected_word_tail",
-            continuous_adjusted[0]["end"] >= 1.60,
+            "continuous_speech_stops_at_next_word",
+            abs(continuous_adjusted[0]["end"] - 1.40) <= 0.001,
             str(continuous_adjusted),
         )
 
@@ -760,19 +759,19 @@ def main() -> None:
                 _tone(0.40),
             ]),
         )
-        fricative_adjusted, _ = compositor._snap_outer_keep_range_boundaries_to_audio(
+        fricative_adjusted = compositor._snap_keep_range_boundaries_to_audio(
             fricative_tail,
             outer_ranges,
-            [
+            transcript_words=[
                 {"index": 0, "start": 0.0, "end": 0.80},
                 {"index": 1, "start": 0.80, "end": 1.40},
                 {"index": 2, "start": 1.40, "end": 2.10},
             ],
         )
-        fricative_fade_start = fricative_adjusted[0]["end"] - compositor.CLIP_AUDIO_FADE_OUT_SECONDS
         _check(
-            "outer_edge_preserves_quiet_high_frequency_fricative",
-            fricative_adjusted[0]["end"] >= 1.659 and fricative_fade_start >= 1.579,
+            "outer_edge_never_crosses_adjacent_fricative_word",
+            abs(fricative_adjusted[0]["end"] - 1.40) <= 0.001
+            and fricative_adjusted[0]["audio_fade_out_seconds"] == 0.0,
             str(fricative_adjusted),
         )
         _check_multi_range_av_sync(tmp)
