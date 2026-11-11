@@ -634,6 +634,18 @@ def _cut_inside_short_gap_audio_pause(
         return (distance, (sum(values) / len(values)) if values else float("inf"), run[0])
 
     pause_start, pause_end = min(internal_runs, key=run_score)
+    pause_distance = (
+        pause_start - transcript_boundary
+        if transcript_boundary < pause_start
+        else transcript_boundary - pause_end
+        if transcript_boundary > pause_end
+        else 0.0
+    )
+    # True Whisper word times may meet at a boundary even when the waveform
+    # contains a tiny adjacent pause. Do not cross into a removed word to
+    # chase a later pause; wide corrections are reserved for synthetic times.
+    if pause_distance > CLIP_AUDIO_FADE_OUT_SECONDS:
+        return None
     fade_duration = min(CLIP_AUDIO_FADE_OUT_SECONDS, max(0.0, pause_end - pause_start))
     if fade_duration <= 0:
         return None
