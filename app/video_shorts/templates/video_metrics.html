@@ -201,8 +201,18 @@
     }
     .youtube-insights-grid {
       display: grid;
-      grid-template-columns: minmax(0, 1.6fr) repeat(2, minmax(180px, 0.7fr));
-      gap: 1rem;
+      grid-template-columns: minmax(0, 3fr) minmax(240px, 2fr);
+      align-items: start;
+      gap: 1.25rem;
+    }
+    .youtube-insights-note,
+    .youtube-insight-subline {
+      color: rgba(226, 232, 240, 0.72) !important;
+    }
+    .youtube-insight-tiles {
+      display: grid;
+      align-content: start;
+      gap: 0.75rem;
     }
     .youtube-traffic-row + .youtube-traffic-row { margin-top: 0.75rem; }
     .youtube-traffic-meta {
@@ -225,10 +235,26 @@
       background: #2dd4bf;
     }
     .youtube-insight-stat {
-      padding: 1rem;
+      padding: 0.9rem 1rem;
       border: 1px solid rgba(148, 163, 184, 0.14);
       border-radius: 10px;
       background: rgba(15, 23, 42, 0.34);
+    }
+    .youtube-insight-label {
+      margin-bottom: 0.35rem;
+      color: rgba(226, 232, 240, 0.72);
+      font-size: 0.72rem;
+      font-weight: 700;
+      letter-spacing: 0.08em;
+      line-height: 1.25;
+      text-transform: uppercase;
+    }
+    .youtube-insight-value {
+      margin-bottom: 0.2rem;
+      color: #f8fafc;
+      font-size: 2rem;
+      font-weight: 700;
+      line-height: 1.05;
     }
     .youtube-highlight {
       border-left: 3px solid #2dd4bf;
@@ -483,7 +509,7 @@
     <div class="card-header d-flex justify-content-between align-items-center gap-3">
       <span>YouTube insights</span>
       {% if youtube_insights.latest_date %}
-        <span class="small text-muted">YouTube only · data through {{ youtube_insights.latest_date.strftime('%b %-d, %Y') }}</span>
+        <span class="small youtube-insights-note">YouTube only · data through {{ youtube_insights.latest_date.strftime('%b %-d, %Y') }}</span>
       {% endif %}
     </div>
     <div class="card-body">
@@ -495,7 +521,9 @@
         <div class="youtube-insights-grid">
           <div>
             <p class="vs-card-title mb-3">How viewers found your Shorts</p>
-            {% for source in youtube_insights.traffic_sources %}
+            {% set sources_by_percent = youtube_insights.traffic_sources|sort(attribute='percent', reverse=true) %}
+            {% set traffic_sources = (sources_by_percent|rejectattr('key', 'equalto', 'other_views')|list) + (sources_by_percent|selectattr('key', 'equalto', 'other_views')|list) %}
+            {% for source in traffic_sources %}
               <div class="youtube-traffic-row">
                 <div class="youtube-traffic-meta">
                   <span>{{ source.label }}</span>
@@ -512,31 +540,35 @@
               <p class="small text-warning mt-3 mb-0">{{ youtube_insights.coverage_note }}</p>
             {% endif %}
           </div>
-          <div class="youtube-insight-stat">
-            <p class="vs-card-title mb-2">Average watched</p>
-            <div class="h4 mb-1">
-              {% if youtube_insights.average_view_percentage is not none %}
-                {{ '%.1f'|format(youtube_insights.average_view_percentage) }}%
-              {% else %}Pending{% endif %}
-            </div>
-            <div class="text-muted">
-              {% if youtube_insights.average_view_duration_seconds is not none %}
-                {{ '%.1f'|format(youtube_insights.average_view_duration_seconds) }} seconds
-              {% else %}Duration pending{% endif %}
-            </div>
-          </div>
-          {% if youtube_insights.subscribers_gained %}
+          <div class="youtube-insight-tiles">
             <div class="youtube-insight-stat">
-              <p class="vs-card-title mb-2">Subscribers from Shorts</p>
-              <div class="h4 mb-1">+{{ "{:,}".format(youtube_insights.subscribers_gained) }}</div>
-              {% if youtube_insights.top_subscriber_short %}
-                <div class="text-muted">Top: {{ youtube_insights.top_subscriber_short.title }} · +{{ youtube_insights.top_subscriber_short.subscribers }}</div>
+              <div class="youtube-insight-label">Average watched</div>
+              <div class="youtube-insight-value">
+                {% if youtube_insights.average_view_percentage is not none %}
+                  {{ '%.1f'|format(youtube_insights.average_view_percentage) }}%
+                {% else %}Pending{% endif %}
+              </div>
+              <div class="youtube-insight-subline">
+                {% if youtube_insights.average_view_duration_seconds is not none %}
+                  {{ '%.1f'|format(youtube_insights.average_view_duration_seconds) }} seconds
+                {% else %}Duration pending{% endif %}
+              </div>
+            </div>
+            {% if youtube_insights.subscribers_gained is not none %}
+            <div class="youtube-insight-stat">
+              <div class="youtube-insight-label">Subscribers from Shorts</div>
+              <div class="youtube-insight-value">+{{ "{:,}".format(youtube_insights.subscribers_gained) }}</div>
+              {% if youtube_insights.top_subscriber_short and youtube_insights.subscribers_gained %}
+                <div class="youtube-insight-subline">Top: {{ youtube_insights.top_subscriber_short.title }} · +{{ youtube_insights.top_subscriber_short.subscribers }}</div>
+              {% else %}
+                <div class="youtube-insight-subline">During this period</div>
               {% endif %}
             </div>
-          {% endif %}
+            {% endif %}
+          </div>
         </div>
         {% if youtube_insights.highlight %}
-          <div class="youtube-highlight mt-3 py-2 px-3">{{ youtube_insights.highlight }}</div>
+          <div class="youtube-highlight mt-3 py-2 px-3">{{ youtube_insights.highlight|replace('Youtube', 'YouTube') }}</div>
         {% endif %}
       {% endif %}
     </div>
