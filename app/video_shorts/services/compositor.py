@@ -3366,6 +3366,32 @@ def _piecewise_constant_overlay_y_expr(
     return _piecewise_constant_expr(intervals, duration=duration, default_expr=default_y)
 
 
+def _overlay_position_enable_expr(
+    intervals: list[tuple[float, float, Any]],
+    *,
+    duration: float,
+) -> str:
+    """Enable a raster caption only while its position timeline is valid."""
+    cleaned: list[tuple[float, float]] = []
+    for raw_start, raw_end, _raw_value in sorted(intervals, key=lambda item: (item[0], item[1])):
+        try:
+            start = max(0.0, float(raw_start))
+            end = min(float(duration), float(raw_end))
+        except (TypeError, ValueError):
+            continue
+        if end <= start:
+            continue
+        if cleaned and start <= cleaned[-1][1] + 1e-6:
+            cleaned[-1] = (cleaned[-1][0], max(cleaned[-1][1], end))
+        else:
+            cleaned.append((start, end))
+    if not cleaned:
+        return "0"
+    if len(cleaned) == 1 and cleaned[0][0] <= 1e-6 and cleaned[0][1] >= float(duration) - 1e-6:
+        return "1"
+    return "+".join(f"between(t,{start:.6f},{end:.6f})" for start, end in cleaned)
+
+
 def _face_aware_subtitle_overlay_specs(
     overlay_specs: list[Dict[str, Any]],
     *,
@@ -5670,6 +5696,7 @@ def _compose_trimmed_with_background(
     elif effective_subtitle_overlay_path:
         filter_parts.append(f"[{next_video_input_index}:v]format=yuva420p[caption_src]")
         caption_overlay_y_expr = "0"
+        caption_overlay_enable_expr: Optional[str] = None
         if face_aware_segment_caption_placement:
             caption_overlay_y_expr = "0"
             if effective_subtitle_overlay_events:
@@ -5724,11 +5751,21 @@ def _compose_trimmed_with_background(
                     segment_caption_y = desired_top - base_caption_top
                     caption_y_intervals.append((seg_start, seg_end, segment_caption_y))
                 caption_overlay_y_expr = _piecewise_constant_overlay_y_expr(caption_y_intervals, duration=duration)
+            caption_overlay_enable_expr = _overlay_position_enable_expr(
+                caption_y_intervals,
+                duration=duration,
+            )
             caption_overlay_y_expr = caption_overlay_y_expr.replace(",", r"\,")
         caption_x, caption_y = subtitle_overlay_origin
         caption_position_y = f"{caption_y}+({caption_overlay_y_expr})" if caption_overlay_y_expr != "0" else str(caption_y)
+        if caption_overlay_enable_expr is not None:
+            escaped_caption_enable_expr = caption_overlay_enable_expr.replace(",", r"\,")
+            caption_enable_filter = f":enable='{escaped_caption_enable_expr}'"
+        else:
+            caption_enable_filter = ""
         filter_parts.append(
-            f"{final_label}[caption_src]overlay={caption_x}:{caption_position_y}:format=yuv420:shortest=1[caption_out]"
+            f"{final_label}[caption_src]overlay={caption_x}:{caption_position_y}:format=yuv420:shortest=1"
+            f"{caption_enable_filter}[caption_out]"
         )
         final_label = "[caption_out]"
         next_video_input_index += 1

@@ -1,3 +1,7 @@
+import shutil
+
+from app.video_shorts.services.compositor import _overlay_position_enable_expr
+from app.video_shorts.services import transcript_service
 from app.video_shorts.services.transcript_service import _normalize_word_highlight_overlay_specs
 
 
@@ -32,3 +36,65 @@ def test_caption_overlay_timeline_orders_events_and_removes_overlaps():
         for left, right in zip(normalized, normalized[1:])
     )
     assert normalized[-1]["end"] == 2.1
+
+
+def test_caption_position_enable_timeline_hides_real_gaps_and_covers_layout_slices():
+    expression = _overlay_position_enable_expr(
+        [
+            (0.0, 1.0, 400.0),
+            (1.0, 2.0, 600.0),
+            (2.68, 3.5, 600.0),
+        ],
+        duration=3.5,
+    )
+
+    assert expression == "between(t,0.000000,2.000000)+between(t,2.680000,3.500000)"
+    assert "2.000000,2.680000" not in expression
+
+
+def test_caption_position_enable_timeline_hides_overlay_without_a_position():
+    assert _overlay_position_enable_expr([], duration=2.0) == "0"
+
+
+def test_caption_builder_leaves_a_long_word_gap_blank(monkeypatch):
+    monkeypatch.setattr(
+        transcript_service,
+        "_render_word_highlight_caption_frame",
+        lambda *args, **kwargs: {"block_bbox": [0, 0, 100, 50]},
+    )
+    monkeypatch.setattr(
+        transcript_service,
+        "_build_word_highlight_overlay_video",
+        lambda *, temp_dir, **kwargs: (temp_dir / "overlay.mov", (0, 0)),
+    )
+
+    _overlay, cleanup, meta = transcript_service._build_word_highlight_caption_overlay(
+        [
+            {
+                "start": 0.0,
+                "end": 1.0,
+                "text": "training sleep",
+                "words": [
+                    {"word": "training", "start": 0.0, "end": 0.2},
+                    {"word": "sleep", "start": 0.88, "end": 1.0},
+                ],
+            }
+        ],
+        0.0,
+        1.2,
+        subtitle_font_size=40,
+        subtitle_margin=200,
+        subtitle_preset="podcast",
+        subtitle_font_key="montserrat_black_italic",
+        target_width=1080,
+        target_height=1920,
+    )
+    try:
+        assert [(event["start"], event["end"]) for event in meta["timing_events"]] == [
+            (0.0, 0.2),
+            (0.88, 1.2),
+        ]
+    finally:
+        for path in cleanup:
+            if path.is_dir():
+                shutil.rmtree(path, ignore_errors=True)

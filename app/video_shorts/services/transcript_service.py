@@ -2562,11 +2562,7 @@ def _build_word_highlight_caption_overlay(
                     shadow_region = shadow_cache[chunk_key]
             for index, item in enumerate(chunk_words):
                 item_start = max(0.0, float(item["start"]) - clip_start)
-                next_start = (
-                    max(0.0, float(chunk_words[index + 1]["start"]) - clip_start)
-                    if index + 1 < len(chunk_words)
-                    else max(item_start + 0.01, float(chunk_words[-1]["end"]) - clip_start)
-                )
+                item_end = max(item_start + 0.01, float(item["end"]) - clip_start)
                 frame_path = temp_dir / f"caption_{len(overlay_specs):04d}.png"
                 metrics = _render_word_highlight_caption_frame(
                     word_tokens,
@@ -2600,7 +2596,7 @@ def _build_word_highlight_caption_overlay(
                     {
                         "path": frame_path,
                         "start": item_start,
-                        "end": max(item_start + 0.01, next_start),
+                        "end": item_end,
                         "metrics": metrics,
                     }
                 )
