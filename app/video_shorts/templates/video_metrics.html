@@ -554,7 +554,7 @@
                 {% else %}Duration pending{% endif %}
               </div>
             </div>
-            {% if youtube_insights.subscribers_gained is not none %}
+            {% if youtube_insights.subscribers_gained is number and youtube_insights.subscribers_gained > 0 %}
             <div class="youtube-insight-stat">
               <div class="youtube-insight-label">Subscribers from Shorts</div>
               <div class="youtube-insight-value">+{{ "{:,}".format(youtube_insights.subscribers_gained) }}</div>
