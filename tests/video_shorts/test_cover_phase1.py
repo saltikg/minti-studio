@@ -5,7 +5,7 @@ import io
 from pathlib import Path
 
 import pytest
-from flask import Flask, g
+from flask import Flask, g, render_template_string
 from PIL import Image
 from werkzeug.exceptions import Forbidden
 
@@ -40,6 +40,20 @@ def test_non_admin_cover_access_is_forbidden_and_routes_check_first():
     ):
         source = inspect.getsource(view)
         assert source.index("_require_cover_admin()") < source.index("_scoped_generated_clip_for_cover")
+        with app.test_request_context("/", method="POST"):
+            g.vs_current_user = {"role": "customer"}
+            with pytest.raises(Forbidden):
+                view(1, 1)
+
+
+def test_editor_loads_signed_cover_data_only_for_admins():
+    source = inspect.getsource(generation.generate_short)
+    cover_load = source[source.index("cover_map: Dict[int, Dict[str, Any]] = {}"):
+                        source.index("render_jobs_by_id: Dict[str, Dict[str, Any]] = {}")]
+
+    assert "if is_admin:" in cover_load
+    assert cover_load.index("if is_admin:") < cover_load.index("list_covers_for_video")
+    assert cover_load.index("if is_admin:") < cover_load.index("signed_cover_payload")
 
 
 def test_cover_ui_is_admin_only_and_uses_one_stable_delegated_listener():
@@ -55,6 +69,44 @@ def test_cover_ui_is_admin_only_and_uses_one_stable_delegated_listener():
     assert 'event.target.closest?.(".generate-v2-cover-btn")' in cover_js
     assert 'document.querySelectorAll(".generate-v2-cover-btn")' not in cover_js
     assert "clipPanel.replaceWith(newClipPanel)" in template
+
+
+def test_cover_markup_and_urls_render_only_for_admins():
+    app = Flask(__name__)
+    row = {
+        "cover_url": "https://storage.example/private-cover.jpg?signature=secret",
+        "poster_url": "https://storage.example/frame.jpg",
+    }
+    fragment = """
+    {% set rail_has_cover = is_admin and row.cover_url %}
+    <button{% if is_admin %} data-current-cover-url="{{ row.cover_url|e }}"{% endif %}></button>
+    <span class="rail{% if rail_has_cover %} has-cover{% endif %}">
+      {% if rail_has_cover %}<img src="{{ row.cover_url }}" data-cover-thumbnail><b>Cover</b>
+      {% elif row.poster_url %}<img src="{{ row.poster_url }}" data-frame-thumbnail>{% endif %}
+    </span>
+    <video{% if is_admin and row.cover_url %} poster="{{ row.cover_url }}"{% endif %}></video>
+    {% if is_admin %}<button class="generate-v2-cover-btn">Cover</button><div id="clipCoverModal"></div>{% endif %}
+    """
+    with app.app_context():
+        customer_html = render_template_string(fragment, is_admin=False, row=row)
+        admin_html = render_template_string(fragment, is_admin=True, row=row)
+
+    assert "private-cover.jpg" not in customer_html
+    assert "data-current-cover-url" not in customer_html
+    assert "data-cover-thumbnail" not in customer_html
+    assert "has-cover" not in customer_html
+    assert 'poster="' not in customer_html
+    assert "generate-v2-cover-btn" not in customer_html
+    assert "clipCoverModal" not in customer_html
+    assert "frame.jpg" in customer_html
+
+    assert "private-cover.jpg" in admin_html
+    assert "data-current-cover-url" in admin_html
+    assert "data-cover-thumbnail" in admin_html
+    assert "has-cover" in admin_html
+    assert 'poster="https://storage.example/private-cover.jpg' in admin_html
+    assert "generate-v2-cover-btn" in admin_html
+    assert "clipCoverModal" in admin_html
 
 
 def test_successful_render_no_longer_enqueues_an_automatic_cover():
@@ -136,11 +188,13 @@ def test_cover_is_used_by_rail_and_player_and_updates_without_reload():
     template = TEMPLATE.read_text(encoding="utf-8")
     cover_js = template[template.index("const applyCoverToEditor = (coverUrl"):]
 
-    assert 'data-current-cover-url="{{ row.cover_url|e }}"' in template
+    assert template.count('data-current-cover-url="{{ row.cover_url|e }}"') == 2
+    assert '{% if is_admin %} data-current-cover-url="{{ row.cover_url|e }}"{% endif %}' in template
+    assert '{% if is_admin %}data-current-cover-url="{{ row.cover_url|e }}"{% endif %}' in template
     assert 'data-frame-thumbnail="{{ (row.poster_url or \'\')|e }}"' in template
     assert 'data-cover-thumbnail' in template
     assert '<span class="clip-rail-cover-badge">Cover</span>' in template
-    assert 'poster="{{ row.cover_url }}"' in template
+    assert '{% if is_admin and row.cover_url %} poster="{{ row.cover_url }}"{% endif %}' in template
     assert 'row.cover_url or row.poster_url or short_bg_url' not in template
     assert 'railItem.dataset.currentCoverUrl = url;' in cover_js
     assert 'player.setAttribute("poster", url);' in cover_js

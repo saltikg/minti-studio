@@ -15267,19 +15267,20 @@ def generate_short(video_pk):
         except Exception:
             current_app.logger.exception("Failed to load generated short rows for video %s", source_video_id)
     cover_map: Dict[int, Dict[str, Any]] = {}
-    try:
-        from app.video_shorts.services.clip_covers import list_covers_for_video, signed_cover_payload
+    if is_admin:
+        try:
+            from app.video_shorts.services.clip_covers import list_covers_for_video, signed_cover_payload
 
-        cover_map = {
-            plan_index: signed_cover_payload(cover)
-            for plan_index, cover in list_covers_for_video(
-                owner_user_id=str(editor_owner_user_id), brand_id=str(brand_id or ""), video_pk=video_pk,
-            ).items()
-        }
-    except Exception:
-        # The migration is deployed before the app restart. Keeping this
-        # read fail-soft makes rolling deploys safe while the DDL is applied.
-        current_app.logger.debug("Clip covers unavailable during page load", exc_info=True)
+            cover_map = {
+                plan_index: signed_cover_payload(cover)
+                for plan_index, cover in list_covers_for_video(
+                    owner_user_id=str(editor_owner_user_id), brand_id=str(brand_id or ""), video_pk=video_pk,
+                ).items()
+            }
+        except Exception:
+            # The migration is deployed before the app restart. Keeping this
+            # read fail-soft makes rolling deploys safe while the DDL is applied.
+            current_app.logger.debug("Clip covers unavailable during page load", exc_info=True)
     render_jobs_by_id: Dict[str, Dict[str, Any]] = {}
     active_render_jobs_by_plan: Dict[int, Dict[str, Any]] = {}
     render_job_ids = [
