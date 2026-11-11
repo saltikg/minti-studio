@@ -1,4 +1,4 @@
-from scripts.backfill_word_timestamps import align_word_timings
+from scripts.backfill_word_timestamps import _generated_snapshot_entries, align_word_timings
 
 
 def test_alignment_preserves_words_and_interpolates_unmatched_word():
@@ -54,3 +54,22 @@ def test_unmatched_edge_word_remains_unresolved():
 
     assert report["match_rate"] == 0.5
     assert report["unresolved_indexes"] == [0]
+
+
+def test_generated_snapshots_are_available_for_boundary_reporting():
+    entries = _generated_snapshot_entries(
+        [
+            (
+                5459,
+                '{"plan_index": 5, "edit_keep_ranges": [{"start_word_index": 10, "end_word_index": 20}]}',
+                "Why Do Your Joints Suddenly Feel Stiff?",
+                "5_video.mp4",
+                None,
+            )
+        ]
+    )
+
+    assert entries[0][0] == "generated_snapshot"
+    assert entries[0][1]["saved_clip_id"] == 5459
+    assert entries[0][1]["title"] == "Why Do Your Joints Suddenly Feel Stiff?"
+    assert entries[0][1]["clip_filename"] == "5_video.mp4"

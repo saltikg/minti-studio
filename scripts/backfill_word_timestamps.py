@@ -338,6 +338,27 @@ def _load_plan_entries(video_pk: int) -> tuple[list[tuple[str, dict[str, Any]]],
     return entries, counts
 
 
+def _generated_snapshot_entries(rows: list[tuple[Any, ...]]) -> list[tuple[str, dict[str, Any]]]:
+    entries: list[tuple[str, dict[str, Any]]] = []
+    for generated_id, raw_entry, generated_title, clip_filename, output_filename in rows:
+        value = raw_entry
+        if isinstance(value, str):
+            try:
+                value = json.loads(value)
+            except json.JSONDecodeError:
+                value = None
+        if not isinstance(value, dict):
+            continue
+        entry = dict(value)
+        if not entry.get("title") and not entry.get("generated_title"):
+            entry["title"] = generated_title
+        if not entry.get("clip_filename"):
+            entry["clip_filename"] = clip_filename or output_filename
+        entry["saved_clip_id"] = generated_id
+        entries.append(("generated_snapshot", entry))
+    return entries
+
+
 def _clip_boundary_report(
     entries: list[tuple[str, dict[str, Any]]],
     changes: list[dict[str, Any]],
@@ -352,7 +373,9 @@ def _clip_boundary_report(
         result.append(
             {
                 "plan_kind": kind,
+                "saved_clip_id": entry.get("saved_clip_id"),
                 "plan_index": entry.get("plan_index"),
+                "clip_filename": entry.get("clip_filename") or entry.get("output_filename"),
                 "title": entry.get("title") or entry.get("generated_title"),
                 "first_word": {
                     "index": first,
@@ -440,12 +463,15 @@ def main() -> int:
         plan_entries, plan_counts = _load_plan_entries(args.video_id)
         cur.execute(
             """
-            SELECT count(*) FROM shorts_generated_videos
+            SELECT id, raw_plan_entry_json, generated_title, clip_filename, output_filename
+            FROM shorts_generated_videos
             WHERE source_video_id=%s AND user_id=%s AND brand_id IS NOT DISTINCT FROM %s
+            ORDER BY created_at, id
             """,
             [target["video_id"], target["owner_user_id"], target["brand_id"]],
         )
-        generated_snapshots = int(cur.fetchone()[0])
+        generated_rows = cur.fetchall()
+        generated_entries = _generated_snapshot_entries(generated_rows)
         conn.rollback()
 
         whisper_words = _transcribe_stored_audio(target)
@@ -463,11 +489,12 @@ def main() -> int:
             "unresolved_indexes": alignment["unresolved_indexes"],
             "median_abs_shift_ms": alignment["median_abs_shift_ms"],
             "max_abs_shift_ms": alignment["max_abs_shift_ms"],
-            "plan_references": sum(plan_counts.values()),
+            "plan_references": len(plan_entries) + len(generated_entries),
+            "current_plan_state_references": sum(plan_counts.values()),
             "plan_references_by_kind": plan_counts,
-            "generated_clip_snapshots": generated_snapshots,
+            "generated_clip_snapshots": len(generated_rows),
             "clip_boundaries": (
-                _clip_boundary_report(plan_entries, alignment["word_changes"])
+                _clip_boundary_report(plan_entries + generated_entries, alignment["word_changes"])
                 if alignment["word_changes"]
                 else []
             ),
