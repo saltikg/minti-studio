@@ -20252,6 +20252,124 @@ def _load_monthly_autopilot_short_actor_counts(conn, user_ids: List[str]) -> Dic
     return counts
 
 
+def _pacific_calendar_month_bounds_utc(
+    now: Optional[datetime] = None,
+) -> Tuple[datetime, datetime]:
+    """Return the current Pacific calendar month's half-open UTC bounds."""
+    moment = now or datetime.now(timezone.utc)
+    if moment.tzinfo is None:
+        moment = moment.replace(tzinfo=timezone.utc)
+    moment_pt = moment.astimezone(PST_ZONE)
+    start_pt = datetime(moment_pt.year, moment_pt.month, 1, tzinfo=PST_ZONE)
+    if moment_pt.month == 12:
+        end_pt = datetime(moment_pt.year + 1, 1, 1, tzinfo=PST_ZONE)
+    else:
+        end_pt = datetime(moment_pt.year, moment_pt.month + 1, 1, tzinfo=PST_ZONE)
+    return (
+        start_pt.astimezone(timezone.utc).replace(tzinfo=None),
+        end_pt.astimezone(timezone.utc).replace(tzinfo=None),
+    )
+
+
+def _load_monthly_autopilot_published_clips(
+    conn,
+    user_id: str,
+    *,
+    now: Optional[datetime] = None,
+) -> List[Dict[str, Any]]:
+    """Load distinct clips successfully published during the current PT month."""
+    normalized_user_id = str(user_id or "").strip()
+    if not normalized_user_id:
+        return []
+    month_start_utc, month_end_utc = _pacific_calendar_month_bounds_utc(now)
+    rows = conn.execute(
+        """
+        SELECT
+            id,
+            source_channel_type,
+            source_video_id,
+            clip_filename,
+            output_filename,
+            generated_title,
+            youtube_video_id,
+            youtube_published_at,
+            instagram_media_id,
+            instagram_published_at,
+            facebook_video_id,
+            facebook_published_at,
+            tiktok_video_id,
+            tiktok_published_at
+        FROM shorts_generated_videos
+        WHERE CAST(user_id AS VARCHAR) = ?
+          AND (
+                (COALESCE(CAST(youtube_video_id AS VARCHAR), '') <> ''
+                 AND youtube_published_at >= ? AND youtube_published_at < ?)
+             OR (COALESCE(CAST(instagram_media_id AS VARCHAR), '') <> ''
+                 AND instagram_published_at >= ? AND instagram_published_at < ?)
+             OR (COALESCE(CAST(facebook_video_id AS VARCHAR), '') <> ''
+                 AND facebook_published_at >= ? AND facebook_published_at < ?)
+             OR (COALESCE(CAST(tiktok_video_id AS VARCHAR), '') <> ''
+                 AND tiktok_published_at >= ? AND tiktok_published_at < ?)
+          )
+        ORDER BY id ASC
+        """,
+        [
+            normalized_user_id,
+            month_start_utc,
+            month_end_utc,
+            month_start_utc,
+            month_end_utc,
+            month_start_utc,
+            month_end_utc,
+            month_start_utc,
+            month_end_utc,
+        ],
+    ).fetchall()
+
+    published_clips: List[Dict[str, Any]] = []
+    seen_clips: set[Tuple[str, str, str]] = set()
+    for row in rows:
+        clip_filename = str(row[4] or row[3] or "").strip()
+        clip_key = (
+            str(row[1] or "youtube").strip(),
+            str(row[2] or "").strip(),
+            clip_filename or f"generated-video:{row[0]}",
+        )
+        if clip_key in seen_clips:
+            continue
+        seen_clips.add(clip_key)
+        platforms: List[Dict[str, Any]] = []
+        for platform, provider_id, published_at in (
+            ("youtube", row[6], row[7]),
+            ("instagram", row[8], row[9]),
+            ("facebook", row[10], row[11]),
+            ("tiktok", row[12], row[13]),
+        ):
+            if (
+                provider_id
+                and published_at is not None
+                and month_start_utc <= published_at < month_end_utc
+            ):
+                platforms.append(
+                    {
+                        "platform": platform,
+                        "provider_id": str(provider_id),
+                        "published_at": published_at,
+                    }
+                )
+        if not platforms:
+            continue
+        published_clips.append(
+            {
+                "id": row[0],
+                "clip_filename": clip_filename,
+                "title": str(row[5] or "").strip(),
+                "platforms": platforms,
+            }
+        )
+    return published_clips
+
+
 def _load_admin_error_events(
     conn,
     *,
@@ -24029,8 +24147,12 @@ def shorts_storage_plans():
         conn.close()
         return redirect(url_for("video_shorts_bp.shorts_storage_plans"))
     plans = _load_storage_plan_catalog(conn)
-    autopilot_counts = _load_monthly_autopilot_short_actor_counts(conn, [str(current_user["id"])]) if is_autopilot else {}
-    autopilot_shorts_prepared = int((autopilot_counts.get(str(current_user["id"])) or {}).get("total") or 0)
+    autopilot_published_clips = (
+        _load_monthly_autopilot_published_clips(conn, str(current_user["id"]))
+        if is_autopilot
+        else []
+    )
+    autopilot_shorts_published = len(autopilot_published_clips)
     conn.close()
     current_plan = next((plan for plan in plans if plan["plan_id"] == effective_plan_id), None)
     if billing_user and billing_user.get("subscription_cancel_at_period_end"):
@@ -24042,7 +24164,7 @@ def shorts_storage_plans():
         autopilot_plans=autopilot_plans,
         autopilot_tier=autopilot_tier,
         autopilot_monthly_price=autopilot_monthly_price,
-        autopilot_shorts_prepared=autopilot_shorts_prepared,
+        autopilot_shorts_published=autopilot_shorts_published,
         autopilot_trial_end_label=autopilot_trial_end_label,
         autopilot_checkout_terms=autopilot_checkout_terms,
         autopilot_free_until_label=autopilot_free_until_label,

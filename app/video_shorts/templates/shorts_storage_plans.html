@@ -364,12 +364,12 @@
       </div>
     </div>
     <div class="usage-meter usage-state-ok">
-      <div class="usage-meter-label mb-2">Shorts prepared this month</div>
+      <div class="usage-meter-label mb-2">Shorts published this month</div>
       <div class="d-flex align-items-end justify-content-between gap-3">
-        <div class="usage-meter-value">{{ autopilot_shorts_prepared }} / {{ autopilot_tier }}</div>
-        <div class="vs-text-muted vs-text-small">prepared by Minti</div>
+        <div class="usage-meter-value">{{ autopilot_shorts_published }} / {{ autopilot_tier }}</div>
       </div>
-      <div class="progress mt-2"><div class="progress-bar" style="width: {{ [100, (autopilot_shorts_prepared * 100 / autopilot_tier)]|min }}%"></div></div>
+      <div class="progress mt-2"><div class="progress-bar" style="width: {{ [100, (autopilot_shorts_published * 100 / autopilot_tier)]|min }}%"></div></div>
+      <div class="vs-text-muted vs-text-small mt-2">We prepare extra clips for you to choose from — only published Shorts count.</div>
     </div>
   </div>
 </div>
