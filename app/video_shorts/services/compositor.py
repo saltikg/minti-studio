@@ -597,7 +597,7 @@ def _cut_inside_short_gap_audio_pause(
     sample_rate: int,
 ) -> Optional[tuple[float, float]]:
     """Return an end cut and fade wholly inside a real pause between speech."""
-    frames = _rms_energy_frames(
+    frames = _audio_energy_frames(
         pcm,
         window_start=window_start,
         search_start=search_start,
@@ -606,8 +606,12 @@ def _cut_inside_short_gap_audio_pause(
     )
     if not frames:
         return None
-    threshold = _relative_silence_threshold(frames)
-    quiet_runs = _sustained_silence_runs(frames, threshold=threshold)
+    rms_threshold, high_frequency_threshold = _relative_silence_thresholds(frames)
+    quiet_runs = _sustained_combined_silence_runs(
+        frames,
+        rms_threshold=rms_threshold,
+        high_frequency_threshold=high_frequency_threshold,
+    )
     if not quiet_runs:
         return None
 
@@ -615,15 +619,30 @@ def _cut_inside_short_gap_audio_pause(
     # treating a quiet phoneme or the edge of the analysis window as a pause.
     internal_runs: list[tuple[float, float]] = []
     for run_start, run_end in quiet_runs:
-        has_speech_before = any(time_value < run_start and rms > threshold for time_value, rms in frames)
-        has_speech_after = any(time_value >= run_end and rms > threshold for time_value, rms in frames)
+        has_speech_before = any(
+            time_value < run_start
+            and (rms > rms_threshold or high > high_frequency_threshold)
+            for time_value, rms, high in frames
+        )
+        has_speech_after = any(
+            time_value >= run_end
+            and (rms > rms_threshold or high > high_frequency_threshold)
+            for time_value, rms, high in frames
+        )
         if has_speech_before and has_speech_after:
             internal_runs.append((run_start, min(run_end, search_end)))
     if not internal_runs:
         return None
 
     def run_score(run: tuple[float, float]) -> tuple[float, float, float]:
-        values = [rms for time_value, rms in frames if run[0] <= time_value < run[1]]
+        values = [
+            max(
+                rms / max(rms_threshold, 1e-12),
+                high / max(high_frequency_threshold, 1e-12),
+            )
+            for time_value, rms, high in frames
+            if run[0] <= time_value < run[1]
+        ]
         distance = (
             run[0] - transcript_boundary
             if transcript_boundary < run[0]
