@@ -774,6 +774,44 @@ def main() -> None:
             and fricative_adjusted[0]["audio_fade_out_seconds"] == 0.0,
             str(fricative_adjusted),
         )
+
+        synthetic_late_words = tmp / "synthetic_late_words.wav"
+        _write_wav(
+            synthetic_late_words,
+            _join_arrays([
+                _tone(0.60, frequency=330.0),
+                _silence(0.25),
+                _tone(0.65, frequency=550.0),
+                _silence(0.30),
+                _tone(0.60, frequency=770.0),
+            ]),
+        )
+        synthetic_ranges = [
+            {"start": 1.10, "end": 1.75, "start_word_index": 1, "end_word_index": 1}
+        ]
+        synthetic_words = [
+            {"index": 0, "start": 0.45, "end": 1.10, "timing_source": "synthetic"},
+            {"index": 1, "start": 1.10, "end": 1.75, "timing_source": "synthetic"},
+            {"index": 2, "start": 1.75, "end": 2.40, "timing_source": "synthetic"},
+        ]
+        synthetic_adjusted = compositor._snap_keep_range_boundaries_to_audio(
+            synthetic_late_words,
+            synthetic_ranges,
+            transcript_words=synthetic_words,
+        )
+        synthetic_adjusted_again = compositor._snap_keep_range_boundaries_to_audio(
+            synthetic_late_words,
+            synthetic_adjusted,
+            transcript_words=synthetic_words,
+        )
+        _check(
+            "synthetic_word_timing_uses_real_audio_pauses",
+            0.58 <= synthetic_adjusted[0]["start"] <= 0.63
+            and 1.77 <= synthetic_adjusted[0]["end"] <= 1.82
+            and abs(synthetic_adjusted_again[0]["start"] - synthetic_adjusted[0]["start"]) <= 0.001
+            and abs(synthetic_adjusted_again[0]["end"] - synthetic_adjusted[0]["end"]) <= 0.001,
+            str(synthetic_adjusted),
+        )
         _check_multi_range_av_sync(tmp)
         _check_long_gop_mid_seek_av_sync(tmp)
         _check_mpegts_mid_seek_av_sync(tmp)

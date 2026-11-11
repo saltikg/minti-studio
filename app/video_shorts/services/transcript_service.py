@@ -3455,18 +3455,59 @@ def _whisper_response_to_segments(resp: Any) -> Tuple[str, List[Dict[str, Any]]]
         except Exception:
             return {"word": None, "start": None, "end": None}
 
+    top_level_words: List[Dict[str, Any]] = []
+    try:
+        response_words = getattr(resp, "words", None) or []
+    except Exception:
+        response_words = []
+    if isinstance(response_words, (list, tuple)):
+        for response_word in response_words:
+            word_dict = _word_to_dict(response_word)
+            try:
+                word_start = float(word_dict.get("start"))
+                word_end = float(word_dict.get("end"))
+            except (TypeError, ValueError):
+                continue
+            if not str(word_dict.get("word") or "").strip() or word_end < word_start:
+                continue
+            word_dict["start"] = word_start
+            word_dict["end"] = word_end
+            word_dict["timing_source"] = "whisper_word"
+            top_level_words.append(word_dict)
+
     def _segment_to_dict(seg: Any) -> Dict[str, Any]:
         words_raw = _seg_val(seg, "words") or []
         words_list = []
-        if isinstance(words_raw, list):
+        if isinstance(words_raw, (list, tuple)):
             for w in words_raw:
                 wd = _word_to_dict(w)
-                if wd:
+                if wd and wd.get("start") is not None and wd.get("end") is not None:
+                    wd["timing_source"] = "whisper_word"
                     words_list.append(wd)
         start_val = _seg_val(seg, "start", 0.0) or 0.0
         end_val = _seg_val(seg, "end")
         dur_val = _seg_val(seg, "duration")
         text_val = _seg_val(seg, "text") or ""
+        if not words_list and top_level_words:
+            try:
+                segment_start = float(start_val)
+                segment_end = float(end_val) if end_val is not None else None
+            except (TypeError, ValueError):
+                segment_start, segment_end = 0.0, None
+            if segment_end is None:
+                try:
+                    segment_end = segment_start + max(0.0, float(dur_val))
+                except (TypeError, ValueError):
+                    segment_end = segment_start
+            # verbose_json exposes word timestamps on the response, not on each
+            # segment. Assign every word exactly once by its midpoint.
+            words_list = [
+                dict(word)
+                for word in top_level_words
+                if segment_start - 0.001
+                <= (float(word["start"]) + float(word["end"])) / 2.0
+                < segment_end + 0.001
+            ]
         # Synthesize word timings if missing but text exists
         if (not words_list) and text_val:
             tokens = [t for t in text_val.strip().split() if t]
@@ -3493,7 +3534,14 @@ def _whisper_response_to_segments(resp: Any) -> Tuple[str, List[Dict[str, Any]]]
             for tok in tokens:
                 w_start = cur
                 w_end = cur + step if step > 0 else cur
-                words_list.append({"word": tok, "start": w_start, "end": w_end})
+                words_list.append(
+                    {
+                        "word": tok,
+                        "start": w_start,
+                        "end": w_end,
+                        "timing_source": "synthetic",
+                    }
+                )
                 cur = w_end
         return {
             "start": start_val,
@@ -3501,6 +3549,13 @@ def _whisper_response_to_segments(resp: Any) -> Tuple[str, List[Dict[str, Any]]]
             "duration": dur_val,
             "text": text_val,
             "words": words_list,
+            "word_timing_source": (
+                "synthetic"
+                if words_list and all(word.get("timing_source") == "synthetic" for word in words_list)
+                else "whisper_word"
+                if words_list
+                else "missing"
+            ),
         }
 
     segments = []

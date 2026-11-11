@@ -657,22 +657,28 @@ def _snap_keep_range_boundaries_to_audio(
         context = contexts[index] if index < len(contexts) else {}
         if index > 0 or context:
             boundary = float(ranges[index]["start"])
-            lower = max(0.0, boundary - 0.20)
-            upper = boundary + 0.05
-            if context.get("previous_end") is not None:
+            synthetic_boundary = context.get("first_timing_source") == "synthetic"
+            if synthetic_boundary and context.get("first_start") is not None:
+                boundary = float(context["first_start"])
+            lower = max(0.0, boundary - (0.75 if synthetic_boundary else 0.20))
+            upper = boundary + (0.15 if synthetic_boundary else 0.05)
+            if context.get("previous_end") is not None and not synthetic_boundary:
                 lower = max(lower, float(context["previous_end"]))
-            if context.get("first_start") is not None:
+            if context.get("first_start") is not None and not synthetic_boundary:
                 upper = min(upper, float(context["first_start"]))
             if upper < lower:
                 upper = lower
             windows.append(("start", index, lower, upper))
         if index < len(ranges) - 1 or context:
             boundary = float(ranges[index]["end"])
-            lower = max(0.0, boundary - 0.05)
-            upper = boundary + 0.20
-            if context.get("last_end") is not None:
+            synthetic_boundary = context.get("last_timing_source") == "synthetic"
+            if synthetic_boundary and context.get("last_end") is not None:
+                boundary = float(context["last_end"])
+            lower = max(0.0, boundary - (0.75 if synthetic_boundary else 0.05))
+            upper = boundary + (0.15 if synthetic_boundary else 0.20)
+            if context.get("last_end") is not None and not synthetic_boundary:
                 lower = max(lower, float(context["last_end"]))
-            if context.get("next_start") is not None:
+            if context.get("next_start") is not None and not synthetic_boundary:
                 upper = min(upper, float(context["next_start"]))
             if upper < lower:
                 lower = upper
@@ -717,8 +723,42 @@ def _snap_keep_range_boundaries_to_audio(
     adjustments: list[dict[str, Any]] = []
     for kind, index, search_start, search_end in windows:
         original = float(ranges[index][kind])
+        context = contexts[index] if index < len(contexts) else {}
+        synthetic_boundary = context.get(
+            "first_timing_source" if kind == "start" else "last_timing_source"
+        ) == "synthetic"
+        synthetic_pause: Optional[tuple[float, float, float]] = None
+        if synthetic_boundary:
+            frames = _audio_energy_frames(
+                pcm,
+                window_start=window_start,
+                search_start=search_start,
+                search_end=search_end,
+                sample_rate=sample_rate,
+            )
+            rms_threshold, high_frequency_threshold = _relative_silence_thresholds(frames)
+            quiet_runs = _sustained_combined_silence_runs(
+                frames,
+                rms_threshold=rms_threshold,
+                high_frequency_threshold=high_frequency_threshold,
+            )
+            if quiet_runs:
+                substantial = [run for run in quiet_runs if run[1] - run[0] >= 0.080]
+                candidates = substantial or quiet_runs
+                boundary_value = float(
+                    context.get("first_start" if kind == "start" else "last_end")
+                    or original
+                )
+                pause_start, pause_end = min(
+                    candidates,
+                    key=lambda run: (
+                        abs(run[1] - boundary_value),
+                        -(run[1] - run[0]),
+                    ),
+                )
+                synthetic_pause = (pause_start, pause_end, pause_end - pause_start)
         verified_pause: Optional[tuple[float, float]] = None
-        if kind == "end" and index in short_gap_searches:
+        if not synthetic_boundary and kind == "end" and index in short_gap_searches:
             pause_search_start, pause_search_end = short_gap_searches[index]
             verified_pause = _cut_inside_short_gap_audio_pause(
                 pcm,
@@ -728,7 +768,21 @@ def _snap_keep_range_boundaries_to_audio(
                 transcript_boundary=float(contexts[index]["next_start"]),
                 sample_rate=sample_rate,
             )
-        if kind == "end":
+        if synthetic_pause is not None:
+            pause_start, pause_end, pause_duration = synthetic_pause
+            candidate = pause_start if kind == "start" else pause_end
+            lower = search_start
+            upper = search_end
+            if kind == "start":
+                adjusted[index]["audio_fade_in_seconds"] = round(
+                    min(CLIP_AUDIO_FADE_IN_SECONDS, pause_duration), 6
+                )
+            else:
+                adjusted[index]["audio_verified_pause_end"] = True
+                adjusted[index]["audio_fade_out_seconds"] = round(
+                    min(CLIP_AUDIO_FADE_OUT_SECONDS, pause_duration), 6
+                )
+        elif kind == "end":
             lower = max(float(ranges[index]["start"]) + 0.001, search_start)
             upper = search_end
             if index < len(ranges) - 1:
@@ -759,13 +813,17 @@ def _snap_keep_range_boundaries_to_audio(
             if candidate is None:
                 candidate = min(max(original, lower), upper)
         snapped = round(min(max(candidate, lower), upper), 6)
-        context = contexts[index] if index < len(contexts) else {}
-        if kind == "start" and context.get("first_start") is not None:
+        if synthetic_pause is None and kind == "start" and context.get("first_start") is not None:
             adjusted[index]["audio_fade_in_seconds"] = round(
                 min(CLIP_AUDIO_FADE_IN_SECONDS, max(0.0, float(context["first_start"]) - snapped)),
                 6,
             )
-        elif kind == "end" and context.get("last_end") is not None and verified_pause is None:
+        elif (
+            synthetic_pause is None
+            and kind == "end"
+            and context.get("last_end") is not None
+            and verified_pause is None
+        ):
             adjusted[index]["audio_fade_out_seconds"] = round(
                 min(CLIP_AUDIO_FADE_OUT_SECONDS, max(0.0, snapped - float(context["last_end"]))),
                 6,
@@ -803,7 +861,15 @@ def _normalize_transcript_words_for_boundary_snap(
             word_index = int(item.get("index"))
         except (TypeError, ValueError):
             word_index = len(words)
-        words.append({"start": start, "end": end, "index": word_index})
+        timing_source = str(item.get("timing_source") or "whisper_word").strip().lower()
+        words.append(
+            {
+                "start": start,
+                "end": end,
+                "index": word_index,
+                "timing_source": timing_source if timing_source in {"whisper_word", "synthetic"} else "whisper_word",
+            }
+        )
     return sorted(words, key=lambda item: (item["start"], item["end"]))
 
 
@@ -848,11 +914,19 @@ def transcript_word_gap_contexts(
         contexts.append(
             {
                 "previous_end": words[first_position - 1]["end"] if first_position is not None and first_position > 0 else None,
+                "previous_timing_source": words[first_position - 1]["timing_source"] if first_position is not None and first_position > 0 else None,
                 "first_start": words[first_position]["start"] if first_position is not None else None,
+                "first_timing_source": words[first_position]["timing_source"] if first_position is not None else None,
                 "last_end": words[last_position]["end"] if last_position is not None else None,
                 "last_start": words[last_position]["start"] if last_position is not None else None,
+                "last_timing_source": words[last_position]["timing_source"] if last_position is not None else None,
                 "next_start": (
                     words[last_position + 1]["start"]
+                    if last_position is not None and last_position < len(words) - 1
+                    else None
+                ),
+                "next_timing_source": (
+                    words[last_position + 1]["timing_source"]
                     if last_position is not None and last_position < len(words) - 1
                     else None
                 ),
@@ -909,17 +983,19 @@ def _guard_keep_ranges_from_unselected_words(
     if not adjusted or not contexts:
         return adjusted
     for item, context in zip(adjusted, contexts):
+        synthetic_start = context.get("first_timing_source") == "synthetic"
+        synthetic_end = context.get("last_timing_source") == "synthetic"
         start_lower = context.get("previous_end")
         start_upper = context.get("first_start")
-        if start_lower is not None:
+        if start_lower is not None and not synthetic_start:
             item["start"] = max(float(item["start"]), float(start_lower))
-        if start_upper is not None and (start_lower is None or float(start_lower) <= float(start_upper)):
+        if start_upper is not None and not synthetic_start and (start_lower is None or float(start_lower) <= float(start_upper)):
             item["start"] = min(float(item["start"]), float(start_upper))
         end_lower = context.get("last_end")
         end_upper = context.get("next_start")
-        if end_lower is not None:
+        if end_lower is not None and not synthetic_end:
             item["end"] = max(float(item["end"]), float(end_lower))
-        if end_upper is not None and item.get("audio_verified_pause_end") is not True:
+        if end_upper is not None and not synthetic_end and item.get("audio_verified_pause_end") is not True:
             item["end"] = min(float(item["end"]), float(end_upper))
         item["start"] = round(max(0.0, min(float(item["start"]), float(item["end"]) - 0.001)), 6)
         item["end"] = round(max(float(item["end"]), float(item["start"]) + 0.001), 6)

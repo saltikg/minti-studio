@@ -7382,7 +7382,24 @@ def _flatten_transcript_words_for_snapping(segments: List[Dict[str, Any]]) -> Li
     words: List[Dict[str, Any]] = []
     for segment in segments or []:
         segment_start = _to_float(segment.get("start")) or 0.0
-        for word in segment.get("words") or []:
+        segment_words = [word for word in (segment.get("words") or []) if isinstance(word, dict)]
+        explicit_timing_source = str(segment.get("word_timing_source") or "").strip().lower()
+        synthetic_timing = explicit_timing_source == "synthetic"
+        if not explicit_timing_source and len(segment_words) >= 3:
+            spans: List[Tuple[float, float]] = []
+            for word in segment_words:
+                start_value = _to_float(word.get("start"))
+                end_value = _to_float(word.get("end"))
+                if start_value is None or end_value is None or end_value < start_value:
+                    spans = []
+                    break
+                spans.append((float(start_value), float(end_value)))
+            if len(spans) >= 3:
+                durations = [end_value - start_value for start_value, end_value in spans]
+                contiguous = all(abs(spans[index][1] - spans[index + 1][0]) <= 0.002 for index in range(len(spans) - 1))
+                uniform = max(durations) - min(durations) <= 0.002
+                synthetic_timing = contiguous and uniform
+        for word in segment_words:
             if not isinstance(word, dict):
                 continue
             start = _to_float(word.get("start"))
@@ -7395,7 +7412,17 @@ def _flatten_transcript_words_for_snapping(segments: List[Dict[str, Any]]) -> Li
             if start < segment_start - 0.25 and segment_start > 0:
                 start += segment_start
                 end += segment_start
-            words.append({"start": float(start), "end": float(end), "text": str(word.get("word") or word.get("text") or "")})
+            timing_source = str(word.get("timing_source") or "").strip().lower()
+            if timing_source not in {"whisper_word", "synthetic"}:
+                timing_source = "synthetic" if synthetic_timing else "whisper_word"
+            words.append(
+                {
+                    "start": float(start),
+                    "end": float(end),
+                    "text": str(word.get("word") or word.get("text") or ""),
+                    "timing_source": timing_source,
+                }
+            )
     return sorted(words, key=lambda item: (item["start"], item["end"]))
 
 
@@ -7438,6 +7465,7 @@ def _transcript_words_with_sentence_indexes(segments: List[Dict[str, Any]]) -> L
                 "start": round(float(start), 3),
                 "end": round(float(end), 3),
                 "text": clean_text,
+                "timing_source": str(word.get("timing_source") or "whisper_word"),
             }
         )
         next_word = flattened[idx + 1] if idx + 1 < len(flattened) else None
