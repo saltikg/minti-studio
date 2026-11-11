@@ -118,10 +118,12 @@ def _social_blocker(conn, item):
 
 
 def _youtube_token_blocker(conn, item):
+    from app.video_shorts.services.youtube_token_store import TOKEN_TABLE
+
     token_owner = f"{item.get('user_id')}::{item.get('brand_id')}"
     try:
         row = conn.execute(
-            "SELECT youtube_channel_id,COALESCE(reauth_required,0) FROM youtube_oauth_tokens WHERE user_id=? LIMIT 1",
+            f"SELECT youtube_channel_id,COALESCE(reauth_required,0) FROM {TOKEN_TABLE} WHERE user_id=? LIMIT 1",
             [token_owner],
         ).fetchone()
     except Exception:

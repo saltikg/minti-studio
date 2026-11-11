@@ -13,7 +13,7 @@ def _db():
         id VARCHAR, user_id VARCHAR, brand_id VARCHAR, expected_youtube_channel_id VARCHAR,
         asset_key VARCHAR, payload_json TEXT, status VARCHAR, publish_at TIMESTAMP,
         upload_due_at TIMESTAMP, youtube_video_id VARCHAR)""")
-    conn.execute("CREATE TABLE youtube_oauth_tokens(user_id VARCHAR, youtube_channel_id VARCHAR, reauth_required INTEGER)")
+    conn.execute("CREATE TABLE youtube_oauth_tokens_v2(user_id VARCHAR, youtube_channel_id VARCHAR, reauth_required INTEGER)")
     conn.execute("CREATE TABLE instagram_oauth_tokens(user_id VARCHAR, page_access_token VARCHAR, instagram_business_account_id VARCHAR)")
     conn.execute("CREATE TABLE facebook_page_tokens(user_id VARCHAR, page_access_token VARCHAR, page_id VARCHAR)")
     conn.execute("CREATE TABLE tiktok_oauth_tokens(user_id VARCHAR, access_token VARCHAR, open_id VARCHAR)")
@@ -111,3 +111,13 @@ def test_youtube_query_filtered_row_is_unreachable(monkeypatch):
     )
 
     assert reason == "scheduler query filtered schedule"
+
+
+def test_youtube_token_check_uses_canonical_v2_store():
+    conn = _db()
+    conn.execute("INSERT INTO youtube_oauth_tokens_v2 VALUES ('owner-1::brand-1','channel-1',0)")
+
+    assert reachability._youtube_token_blocker(conn, {
+        "user_id": "owner-1", "brand_id": "brand-1",
+        "expected_youtube_channel_id": "channel-1",
+    }) is None
