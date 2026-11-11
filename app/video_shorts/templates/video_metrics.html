@@ -864,7 +864,7 @@
         if (!response.ok) throw new Error(`Dashboard widgets returned ${response.status}`);
         const payload = await response.json();
         const parsed = new DOMParser().parseFromString(payload.html, "text/html");
-        const widgetNames = ["header", "filters", "summary", "performance", "audience-summary", "audience-chart", "details-toggle", "details"];
+        const widgetNames = ["header", "filters", "summary", "performance", "youtube-insights", "audience-summary", "audience-chart", "details-toggle", "details"];
         const results = await Promise.allSettled(widgetNames.map(async (name) => {
           const target = document.querySelector(`[data-dashboard-widget="${name}"]`);
           const source = parsed.querySelector(`[data-dashboard-widget="${name}"]`);

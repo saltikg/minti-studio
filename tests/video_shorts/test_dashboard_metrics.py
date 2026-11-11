@@ -1,6 +1,9 @@
 from __future__ import annotations
 
+import json
+import re
 from datetime import date
+from pathlib import Path
 
 from app.video_shorts.services.dashboard_metrics import (
     _audience_net_by_date,
@@ -18,6 +21,28 @@ class _Result:
 
     def fetchone(self):
         return self.row
+
+
+def test_dashboard_bootstrap_replaces_every_loading_skeleton():
+    template_path = (
+        Path(__file__).resolve().parents[2]
+        / "app"
+        / "video_shorts"
+        / "templates"
+        / "video_metrics.html"
+    )
+    template = template_path.read_text(encoding="utf-8")
+    skeleton_widgets = set(
+        re.findall(
+            r'stats-widget-skeleton[^>]+data-dashboard-widget="([^"]+)"',
+            template,
+        )
+    )
+    widget_list_match = re.search(r"const widgetNames = (\[[^;]+\]);", template)
+
+    assert widget_list_match is not None
+    loaded_widgets = set(json.loads(widget_list_match.group(1)))
+    assert skeleton_widgets <= loaded_widgets
 
 
 def test_facebook_reconnect_state_stays_connected_but_is_excluded_from_metrics():
