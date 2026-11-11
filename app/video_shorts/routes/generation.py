@@ -11433,6 +11433,177 @@ def _compute_render_settings_hash_aliases_for_plan_entry(
     return aliases
 
 
+_SCHEDULE_CONTENT_OPTION_FIELDS = {
+    "title",
+    "edit_keep_ranges",
+    "subtitle_text",
+}
+_SCHEDULE_NON_VISUAL_OPTION_FIELDS = {
+    "brand_id",
+    "media_duration_seconds",
+    "plan_index",
+}
+
+
+def _schedule_render_difference_classification(
+    *, rendered_options: Dict[str, Any], current_options: Dict[str, Any],
+    rendered_entry: Dict[str, Any], current_entry: Dict[str, Any],
+) -> Dict[str, Dict[str, Any]]:
+    """Split post-render differences into upload-blocking content vs design."""
+    content: Dict[str, Any] = {}
+    design: Dict[str, Any] = {}
+
+    def _record(target: Dict[str, Any], field: str, old: Any, new: Any) -> None:
+        if _normalize_render_hash_numbers(old) != _normalize_render_hash_numbers(new):
+            target[field] = {"rendered": old, "current": new}
+
+    for field in ("start", "end"):
+        old = _to_float(rendered_entry.get(field))
+        new = _to_float(current_entry.get(field))
+        if old is not None and new is not None and abs(old - new) <= 0.001:
+            continue
+        _record(content, field, old, new)
+    _record(
+        content, "title",
+        str(rendered_options.get("title") or rendered_entry.get("title") or "").strip(),
+        str(current_options.get("title") or current_entry.get("title") or "").strip(),
+    )
+    _record(
+        content, "edit_keep_ranges",
+        _normalize_edit_keep_ranges(rendered_options.get("edit_keep_ranges")),
+        _normalize_edit_keep_ranges(current_options.get("edit_keep_ranges")),
+    )
+    _record(
+        content, "subtitle_text",
+        " ".join(str(rendered_options.get("subtitle_text") or "").split()),
+        " ".join(str(current_options.get("subtitle_text") or "").split()),
+    )
+    if bool(current_entry.get("edit_requires_regenerate")):
+        content["edit_requires_regenerate"] = {"rendered": False, "current": True}
+
+    for field in sorted(set(rendered_options) | set(current_options)):
+        if field in _SCHEDULE_CONTENT_OPTION_FIELDS or field in _SCHEDULE_NON_VISUAL_OPTION_FIELDS:
+            continue
+        _record(design, field, rendered_options.get(field), current_options.get(field))
+    return {"content": content, "design": design}
+
+
+def _scheduled_clip_render_freshness(
+    *, owner_user_id: str, brand_id: Optional[str], video_pk: Any,
+    plan_index: Any, filename: Optional[str],
+) -> Dict[str, Any]:
+    """Compare a scheduled clip's rendered hash with its current saved plan."""
+    try:
+        clean_video_pk = int(video_pk)
+    except (TypeError, ValueError):
+        return {"ready": False, "reason": "render freshness cannot be verified"}
+    identity = tenant_media.resolve_video(
+        video_pk=clean_video_pk,
+        owner_user_id=str(owner_user_id),
+        brand_id=brand_id,
+    )
+    plan = tenant_media.load_state(identity, "plan", video_pk=clean_video_pk, migrate=False)
+    entries = plan.get("plan") or plan.get("clips") or []
+    entry = next(
+        (
+            item for item in entries if isinstance(item, dict)
+            and str(item.get("plan_index")) == str(plan_index)
+        ),
+        None,
+    )
+    if not entry:
+        return {"ready": False, "reason": "plan entry is missing; needs regenerate"}
+    clean_filename = str(
+        filename or entry.get("clip_filename") or entry.get("output_filename") or ""
+    ).strip()
+    if not clean_filename:
+        return {"ready": False, "reason": "generated clip record is missing; needs regenerate"}
+    conn = get_db_readonly()
+    try:
+        row = conn.execute(
+            """SELECT render_settings_hash
+               FROM shorts_generated_videos
+               WHERE user_id=? AND brand_id=?
+                 AND (clip_filename=? OR output_filename=?)
+               ORDER BY updated_at DESC
+               LIMIT 1""",
+            [str(owner_user_id), brand_id, clean_filename, clean_filename],
+        ).fetchone()
+        stored_hash = str(row[0] or "").strip() if row else ""
+        rendered_payload = None
+        rendered_job_rows = conn.execute(
+            """SELECT payload_json
+               FROM shorts_render_jobs
+               WHERE user_id=? AND type='render_short' AND status='done'
+               ORDER BY finished_at DESC
+               LIMIT 200""",
+            [str(owner_user_id)],
+        ).fetchall()
+        for (raw_payload,) in rendered_job_rows:
+            job_payload = raw_payload if isinstance(raw_payload, dict) else json.loads(raw_payload or "{}")
+            job_plan_index = job_payload.get("plan_index") or (job_payload.get("options") or {}).get("plan_index")
+            if (
+                str(job_payload.get("video_pk")) == str(clean_video_pk)
+                and str(job_plan_index) == str(plan_index)
+                and str(job_payload.get("render_settings_hash") or "") == stored_hash
+            ):
+                rendered_payload = job_payload
+                break
+        result = conn.execute(
+            """SELECT * FROM youtube_videos
+               WHERE id=? AND owner_user_id=? AND brand_id IS NOT DISTINCT FROM ?
+                 AND deleted_at IS NULL""",
+            [clean_video_pk, str(owner_user_id), brand_id],
+        )
+        video_row = result.fetchone()
+        if not video_row:
+            return {"ready": False, "reason": "source video is missing; needs regenerate"}
+        video = dict(zip([str(item[0]) for item in (result.description or [])], video_row))
+        video["layout_mode"] = _effective_layout_mode_for_owner(
+            video.get("owner_user_id"), video.get("layout_mode")
+        )
+        _, segments = _fetch_transcript(conn, identity.youtube_id, video_pk=clean_video_pk)
+    finally:
+        conn.close()
+    if not stored_hash:
+        return {"ready": False, "reason": "generated render hash is missing; needs regenerate"}
+    if not rendered_payload or not isinstance(rendered_payload.get("options"), dict):
+        return {"ready": False, "reason": "render settings snapshot is missing; needs regenerate"}
+    current_options = _render_settings_options_for_plan_entry(
+        video_pk=clean_video_pk,
+        video=video,
+        plan_entry=entry,
+        segments=segments or [],
+        brand_id=brand_id,
+        fallback_title=video.get("title") or "",
+    )
+    current_hash = _render_settings_hash_from_options(current_options)
+    differences = _schedule_render_difference_classification(
+        rendered_options=rendered_payload["options"],
+        current_options=current_options,
+        rendered_entry=rendered_payload,
+        current_entry=entry,
+    )
+    if differences["content"]:
+        fields = ", ".join(sorted(differences["content"]))
+        return {
+            "ready": False,
+            "reason": f"customer edited clip, needs regenerate (content changed: {fields})",
+            "stored_hash": stored_hash,
+            "current_hash": current_hash,
+            "content_differences": differences["content"],
+            "design_differences": differences["design"],
+        }
+    return {
+        "ready": True,
+        "reason": None,
+        "stored_hash": stored_hash,
+        "current_hash": current_hash,
+        "content_differences": {},
+        "design_differences": differences["design"],
+    }
+
+
 def _compute_render_freshness_state(
     *,
     video_pk: int,

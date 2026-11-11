@@ -39,6 +39,10 @@ def db(monkeypatch, tmp_path):
     monkeypatch.setattr(scheduling, 'send_pending_notifications', lambda: None)
     monkeypatch.setattr(scheduling, 'scheduler_health_check', lambda **kw: None)
     monkeypatch.setattr(scheduling, '_file_exists', lambda payload: True)
+    monkeypatch.setattr(
+        scheduling, '_render_freshness',
+        lambda candidate, payload: {'ready': True, 'reason': None},
+    )
     monkeypatch.setattr(scheduling, '_alert', lambda *a, **kw: False)
     monkeypatch.setattr(scheduling, '_project_upload', lambda *a: None)
     monkeypatch.setattr(scheduling, '_existing_remote_id', lambda **kw: None)
@@ -327,13 +331,58 @@ def test_stale_render_pending_clears_only_without_active_render(db):
     assert json.loads(row(db)['payload_json'])['render_pending'] is False
 
 
-def test_legacy_and_already_posted_rows_are_never_enqueued(db, monkeypatch, tmp_path):
+def test_legacy_future_row_enqueues_on_time_and_legacy_past_only_alerts(db, monkeypatch, tmp_path):
+    alerts = []
+    monkeypatch.setattr(scheduling, '_alert', lambda sid, kind, message: alerts.append(kind))
     schedule()
     due = row(db)['upload_due_at']
     with duckdb.connect(db) as conn:
         conn.execute('UPDATE shorts_youtube_schedules SET created_at=NULL')
-    assert scheduling.scheduler_tick(now=due + timedelta(hours=1)) is False
+    assert scheduling.scheduler_tick(now=due) is True
+    assert row(db)['status'] == 'queued'
+    with duckdb.connect(db) as conn:
+        conn.execute("DELETE FROM shorts_render_jobs WHERE type='publish_short'")
+        conn.execute("UPDATE shorts_youtube_schedules SET status='pending',job_id=NULL,publish_at=?", [due - timedelta(minutes=1)])
+    assert scheduling.scheduler_tick(now=due) is False
     assert row(db)['status'] == 'pending'
+    assert 'legacy_past_no_catchup' in alerts
+
+
+def test_legacy_future_row_executes_existing_render_exactly_once(db, monkeypatch, tmp_path):
+    media = tmp_path / 'clip.mp4'; media.write_bytes(b'fake')
+    calls = []
+    monkeypatch.setattr(oauth, 'upload_video_with_refresh_token', lambda **kw: calls.append(kw) or {'id': 'legacy-on-time'})
+    first = schedule(video_path=str(media))
+    due = row(db)['upload_due_at']
+    with duckdb.connect(db) as conn:
+        conn.execute('UPDATE shorts_youtube_schedules SET created_at=NULL')
+    assert scheduling.scheduler_tick(now=due) is True
+    assert scheduling.execute_scheduled_upload(first['schedule_id'], video_path=media)['id'] == 'legacy-on-time'
+    assert scheduling.execute_scheduled_upload(first['schedule_id'], video_path=media)['id'] == 'legacy-on-time'
+    assert len(calls) == 1
+
+
+def test_legacy_past_queued_job_alerts_without_upload(db, monkeypatch, tmp_path):
+    media = tmp_path / 'clip.mp4'; media.write_bytes(b'fake')
+    calls = []
+    alerts = []
+    monkeypatch.setattr(oauth, 'upload_video_with_refresh_token', lambda **kw: calls.append(kw))
+    monkeypatch.setattr(scheduling, '_alert', lambda sid, kind, message: alerts.append(kind))
+    first = schedule(video_path=str(media))
+    with duckdb.connect(db) as conn:
+        conn.execute(
+            "UPDATE shorts_youtube_schedules SET status='queued',created_at=NULL,publish_at=?",
+            [scheduling.utc() - timedelta(minutes=1)],
+        )
+    scheduling.execute_scheduled_upload(first['schedule_id'], video_path=media)
+    assert calls == []
+    assert row(db)['status'] == 'queued'
+    assert 'legacy_past_no_catchup' in alerts
+
+
+def test_already_posted_row_is_never_enqueued(db):
+    schedule()
+    due = row(db)['upload_due_at']
     with duckdb.connect(db) as conn:
         conn.execute(
             "UPDATE shorts_youtube_schedules SET created_at=?,youtube_video_id='existing'",
@@ -344,15 +393,133 @@ def test_legacy_and_already_posted_rows_are_never_enqueued(db, monkeypatch, tmp_
         assert conn.execute(
             "SELECT count(*) FROM shorts_render_jobs WHERE type='publish_short'"
         ).fetchone()[0] == 0
+
+
+def test_new_past_row_within_catchup_enqueues(db):
+    schedule()
+    now = scheduling.utc()
+    with duckdb.connect(db) as conn:
         conn.execute(
-            "UPDATE shorts_youtube_schedules SET status='queued',youtube_video_id=NULL,created_at=NULL"
+            'UPDATE shorts_youtube_schedules SET publish_at=?,upload_due_at=?,created_at=?',
+            [now - timedelta(hours=1), now - timedelta(hours=3), now - timedelta(days=1)],
         )
-    media = tmp_path / 'clip.mp4'; media.write_bytes(b'fake')
-    calls = []
-    monkeypatch.setattr(oauth, 'upload_video_with_refresh_token', lambda **kw: calls.append(kw))
-    scheduling.execute_scheduled_upload(row(db)['id'], video_path=media)
-    assert calls == []
+    assert scheduling.scheduler_tick(now=now) is True
     assert row(db)['status'] == 'queued'
+
+
+def test_edited_clip_does_not_clear_render_pending_and_alerts(db, monkeypatch):
+    alerts = []
+    monkeypatch.setattr(scheduling, '_alert', lambda sid, kind, message: alerts.append((kind, message)))
+    monkeypatch.setattr(
+        scheduling, '_render_freshness',
+        lambda candidate, payload: {
+            'ready': False,
+            'reason': 'customer edited clip, needs regenerate (content changed: title)',
+        },
+    )
+    schedule()
+    due = row(db)['upload_due_at']
+    with duckdb.connect(db) as conn:
+        payload = json.loads(conn.execute('SELECT payload_json FROM shorts_youtube_schedules').fetchone()[0])
+        payload['render_pending'] = True
+        conn.execute('UPDATE shorts_youtube_schedules SET payload_json=?', [json.dumps(payload)])
+    assert scheduling.scheduler_tick(now=due + timedelta(minutes=16)) is False
+    assert json.loads(row(db)['payload_json'])['render_pending'] is True
+    assert any('customer edited clip' in message for _, message in alerts)
+
+
+def test_content_vs_design_render_difference_classification():
+    from app.video_shorts.routes import generation
+
+    rendered = {
+        'title': 'Original title',
+        'edit_keep_ranges': [{'start': 10.0, 'end': 20.0}],
+        'subtitle_text': 'same words',
+        'caption_anchor': 'bottom',
+        'subtitle_font_key': 'font-a',
+        'title_text_color': '#000000',
+        'layout_mode': 'fill',
+        'background_visual_key': 'bg-a',
+        'overlay_shapes': [{'id': 'one', 'x': 1}],
+    }
+    current = {
+        **rendered,
+        'caption_anchor': 'top',
+        'subtitle_font_key': 'font-b',
+        'title_text_color': '#ffffff',
+        'layout_mode': 'auto',
+        'background_visual_key': 'bg-b',
+        'overlay_shapes': [{'id': 'one', 'x': 2}],
+    }
+    design_only = generation._schedule_render_difference_classification(
+        rendered_options=rendered,
+        current_options=current,
+        rendered_entry={'start': 10.0, 'end': 20.0},
+        current_entry={'start': 10.0, 'end': 20.0},
+    )
+    assert design_only['content'] == {}
+    assert set(design_only['design']) == {
+        'caption_anchor', 'subtitle_font_key', 'title_text_color',
+        'layout_mode', 'background_visual_key', 'overlay_shapes',
+    }
+
+    current['title'] = 'Edited title'
+    current['subtitle_text'] = 'different words'
+    content_change = generation._schedule_render_difference_classification(
+        rendered_options=rendered,
+        current_options=current,
+        rendered_entry={'start': 10.0, 'end': 20.0},
+        current_entry={
+            'start': 11.0,
+            'end': 20.0,
+            'edit_requires_regenerate': True,
+        },
+    )
+    assert {'start', 'title', 'subtitle_text', 'edit_requires_regenerate'} <= set(content_change['content'])
+
+
+def test_design_only_difference_allows_enqueue_and_sends_info_alert(db, monkeypatch):
+    alerts = []
+    monkeypatch.setattr(scheduling, '_alert', lambda sid, kind, message: alerts.append((kind, message)))
+    monkeypatch.setattr(
+        scheduling, '_render_freshness',
+        lambda candidate, payload: {
+            'ready': True,
+            'reason': None,
+            'content_differences': {},
+            'design_differences': {
+                'caption_anchor': {'rendered': 'bottom', 'current': 'top'},
+            },
+        },
+    )
+    schedule()
+    due = row(db)['upload_due_at']
+    assert scheduling.scheduler_tick(now=due) is True
+    assert row(db)['status'] == 'queued'
+    assert any(kind == 'design_only_render_difference' and 'caption_anchor' in message for kind, message in alerts)
+
+
+def test_legacy_warnings_apply_and_warning_scan_does_not_mutate(db, monkeypatch):
+    alerts = []
+    monkeypatch.setattr(scheduling, '_alert', lambda sid, kind, message: alerts.append(kind))
+    first = schedule(publish_at=scheduling.iso(scheduling.utc() + timedelta(hours=5)))
+    stored = row(db)
+    with duckdb.connect(db) as conn:
+        payload = json.loads(stored['payload_json'])
+        payload['render_pending'] = True
+        conn.execute(
+            'UPDATE shorts_youtube_schedules SET created_at=NULL,payload_json=?',
+            [json.dumps(payload)],
+        )
+    scheduling.scheduler_tick(now=stored['upload_due_at'] - timedelta(hours=2, minutes=59))
+    assert 'preflight_failed' in alerts
+    assert json.loads(row(db)['payload_json'])['render_pending'] is True
+    scheduling._alert_due_not_enqueued(
+        duckdb.connect(db), stored['upload_due_at'] + timedelta(minutes=16)
+    )
+    assert 'enqueue_late' in alerts
+    assert json.loads(row(db)['payload_json'])['render_pending'] is True
+    assert first['schedule_id'] == row(db)['id']
 
 
 def test_duplicate_title_blocks_before_upload(db, monkeypatch, tmp_path):

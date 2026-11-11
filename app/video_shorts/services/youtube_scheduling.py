@@ -255,7 +255,7 @@ def current_mutation_lease_token(*, user_id, brand_id, key):
     return None
 
 
-def _active_mutation_lease(conn, *, user_id, brand_id, key, now):
+def _active_mutation_lease(conn, *, user_id, brand_id, key, now, clear_expired=True):
     row = conn.execute(
         f"""
         SELECT state, lease_token, lease_until
@@ -267,10 +267,11 @@ def _active_mutation_lease(conn, *, user_id, brand_id, key, now):
     if not row:
         return None
     if utc(row[2]) <= utc(now):
-        conn.execute(
-            f"DELETE FROM {MUTATION_LEASE_TABLE} WHERE user_id=? AND brand_id=? AND asset_key=? AND lease_until<=?",
-            [str(user_id), str(brand_id), key, utc(now)],
-        )
+        if clear_expired:
+            conn.execute(
+                f"DELETE FROM {MUTATION_LEASE_TABLE} WHERE user_id=? AND brand_id=? AND asset_key=? AND lease_until<=?",
+                [str(user_id), str(brand_id), key, utc(now)],
+            )
         return None
     return {"state": row[0], "lease_token": row[1], "lease_until": row[2]}
 
@@ -599,6 +600,29 @@ def _file_exists(payload):
         return False
 
 
+def _render_freshness(candidate, payload):
+    """Return the authoritative current-plan/render comparison for a clip."""
+    if str(payload.get("kind") or "clip") != "clip":
+        return {"ready": True, "reason": None}
+    if not payload.get("video_pk") or not payload.get("plan_index"):
+        return {"ready": False, "reason": "render freshness cannot be verified"}
+    try:
+        from app.video_shorts.routes import generation
+        return generation._scheduled_clip_render_freshness(
+            owner_user_id=candidate["user_id"],
+            brand_id=candidate["brand_id"],
+            video_pk=payload["video_pk"],
+            plan_index=payload["plan_index"],
+            filename=payload.get("filename"),
+        )
+    except Exception as exc:
+        logger.warning(
+            "Could not verify scheduled clip freshness schedule_id=%s error=%s",
+            candidate.get("id"), _sanitize_error(exc),
+        )
+        return {"ready": False, "reason": "render freshness check failed"}
+
+
 def _billing_paused(conn, user_id):
     row = conn.execute(
         "SELECT autopilot_billing_paused_at FROM shorts_users WHERE CAST(id AS VARCHAR)=?",
@@ -607,13 +631,17 @@ def _billing_paused(conn, user_id):
     return bool(row and row[0])
 
 
-def _blocking_reason(conn, candidate, payload, now, *, include_live_token=False):
+def _blocking_reason(
+    conn, candidate, payload, now, *, include_live_token=False,
+    repair_stale_render_pending=False,
+):
     lease = _active_mutation_lease(
         conn,
         user_id=candidate["user_id"],
         brand_id=candidate["brand_id"],
         key=candidate["asset_key"],
         now=now,
+        clear_expired=repair_stale_render_pending,
     )
     if lease:
         return f"lease:{lease['state']}"
@@ -624,7 +652,21 @@ def _blocking_reason(conn, candidate, payload, now, *, include_live_token=False)
         return "active_render"
     if not _file_exists(payload):
         return "missing_file"
+    freshness = _render_freshness(candidate, payload)
+    if not freshness.get("ready"):
+        return str(freshness.get("reason") or "render is outdated")
+    design_differences = freshness.get("design_differences") or {}
+    if design_differences:
+        fields = ", ".join(sorted(str(field) for field in design_differences))
+        _alert(
+            candidate["id"],
+            "design_only_render_difference",
+            f"YouTube schedule {candidate['id']} will use its existing render; "
+            f"design-only fields changed after render: {fields}.",
+        )
     if payload.get("render_pending"):
+        if not repair_stale_render_pending:
+            return "render_pending (fresh render verified; scheduler can clear at upload_due_at)"
         payload["render_pending"] = False
         conn.execute(
             f"UPDATE {TABLE} SET payload_json=?,updated_at=CURRENT_TIMESTAMP WHERE id=? AND status='pending'",
@@ -652,8 +694,6 @@ def _enqueue(conn, schedule_id, now):
     candidate = _row(conn, schedule_id)
     if not candidate:
         return False
-    if not _new_rules_apply(candidate):
-        return False
     if candidate.get("youtube_video_id") or candidate["status"] != "pending":
         return False
     candidate_payload = json.loads(candidate["payload_json"])
@@ -664,6 +704,13 @@ def _enqueue(conn, schedule_id, now):
         key=candidate["asset_key"],
     )
     publish_dt = utc(candidate["publish_at"]) if candidate and candidate["publish_at"] else None
+    if publish_dt and publish_dt <= now and not _new_rules_apply(candidate):
+        reason = "legacy schedule is past publish_at; catch-up is disabled"
+        _alert(
+            schedule_id, "legacy_past_no_catchup",
+            f"YouTube schedule {schedule_id} is past publish_at; blocker={reason}.",
+        )
+        return False
     if publish_dt and now - publish_dt > timedelta(hours=catchup_hours()):
         reason = _blocking_reason(conn, candidate, candidate_payload, now) or "catchup_window_expired"
         message = f"Missed after {catchup_hours()}h catch-up window; blocker={reason}."
@@ -674,7 +721,10 @@ def _enqueue(conn, schedule_id, now):
         _history_once(conn, schedule_id, "missed", reason=reason, error=message)
         _alert(schedule_id, "missed", f"YouTube schedule {schedule_id} missed. {message}")
         return False
-    reason = _blocking_reason(conn, candidate, candidate_payload, now)
+    reason = _blocking_reason(
+        conn, candidate, candidate_payload, now,
+        repair_stale_render_pending=True,
+    )
     if reason:
         _history_once(conn, schedule_id, "blocked", reason=reason)
         if utc(now) >= utc(candidate["upload_due_at"]) + timedelta(minutes=15):
@@ -722,8 +772,8 @@ def _run_preflights(conn, now):
     rows = conn.execute(
         f"""SELECT schedule.id FROM {TABLE} schedule
             WHERE schedule.status='pending'
-              AND schedule.created_at IS NOT NULL
-              AND schedule.publish_at>schedule.created_at
+              AND schedule.youtube_video_id IS NULL
+              AND schedule.publish_at>?
               AND schedule.upload_due_at>?
               AND schedule.upload_due_at<=?
               AND NOT EXISTS (
@@ -732,7 +782,7 @@ def _run_preflights(conn, now):
                     AND history.status IN ('preflight_ok','preflight_failed')
               )
             ORDER BY schedule.upload_due_at""",
-        [now, now + timedelta(hours=3)],
+        [now, now, now + timedelta(hours=3)],
     ).fetchall()
     for (schedule_id,) in rows:
         candidate = _row(conn, schedule_id)
@@ -744,12 +794,29 @@ def _run_preflights(conn, now):
             _alert(schedule_id, "preflight_failed", f"YouTube schedule {schedule_id} pre-flight failed; blocker={reason}.")
 
 
+def _alert_due_not_enqueued(conn, now):
+    rows = conn.execute(
+        f"""SELECT id FROM {TABLE}
+            WHERE status='pending'
+              AND youtube_video_id IS NULL
+              AND publish_at>?
+              AND upload_due_at<=?""",
+        [now, now - timedelta(minutes=15)],
+    ).fetchall()
+    for (schedule_id,) in rows:
+        candidate = _row(conn, schedule_id)
+        payload = json.loads(candidate["payload_json"])
+        reason = _blocking_reason(conn, candidate, payload, now) or "scheduler did not enqueue a ready schedule"
+        _alert(
+            schedule_id, "enqueue_late",
+            f"YouTube schedule {schedule_id} was not enqueued 15m after upload_due_at; blocker={reason}.",
+        )
+
+
 def _alert_due_not_uploaded(conn, now):
     rows = conn.execute(
         f"""SELECT id FROM {TABLE}
-            WHERE created_at IS NOT NULL
-              AND publish_at>created_at
-              AND publish_at IS NOT NULL AND publish_at<=?
+            WHERE publish_at IS NOT NULL AND publish_at<=?
               AND youtube_video_id IS NULL
               AND status NOT IN ('uploaded','published','cancelled','missed','failed','blocked_duplicate','blocked_target_mismatch')""",
         [now],
@@ -772,8 +839,6 @@ def scheduler_tick(*, now=None):
             SELECT schedule.id
             FROM {TABLE} schedule
             WHERE schedule.status='pending'
-              AND schedule.created_at IS NOT NULL
-              AND (schedule.publish_at IS NULL OR schedule.publish_at>schedule.created_at)
               AND schedule.upload_due_at<=?
               AND schedule.youtube_video_id IS NULL
             ORDER BY schedule.upload_due_at
@@ -784,6 +849,7 @@ def scheduler_tick(*, now=None):
         claimed = False
         for row in rows:
             claimed = _enqueue(conn, row[0], now) or claimed
+        _alert_due_not_enqueued(conn, now)
         _alert_due_not_uploaded(conn, now)
     send_pending_notifications()
     return claimed
@@ -827,11 +893,15 @@ def execute_scheduled_upload(schedule_id, *, video_path=None):
                 if row["status"] == "uploaded":
                     _project_upload(row, json.loads(row["payload_json"]))
                 return _result(row)
-            if not _new_rules_apply(row):
-                logger.warning("Legacy YouTube schedule blocked from automatic upload schedule_id=%s", schedule_id)
-                return _result(row)
             now = utc()
             publish_dt = utc(row["publish_at"]) if row["publish_at"] else None
+            if publish_dt and publish_dt <= now and not _new_rules_apply(row):
+                _alert(
+                    schedule_id, "legacy_past_no_catchup",
+                    f"YouTube schedule {schedule_id} is past publish_at; blocker=legacy schedule catch-up is disabled.",
+                )
+                logger.warning("Legacy YouTube schedule blocked from late automatic upload schedule_id=%s", schedule_id)
+                return _result(row)
             missed = bool(publish_dt and now - publish_dt > timedelta(hours=catchup_hours()))
             if missed:
                 payload = json.loads(row["payload_json"])
