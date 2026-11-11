@@ -2198,6 +2198,47 @@ def _build_word_highlight_overlay_video(
     return overlay_path, (left, top)
 
 
+def _normalize_word_highlight_overlay_specs(
+    overlay_specs: List[Dict[str, Any]],
+    *,
+    clip_duration: float,
+    bridge_gap_seconds: float = 0.3,
+) -> List[Dict[str, Any]]:
+    """Build one ordered, gap-safe caption timeline for the overlay renderer."""
+    duration = max(0.0, float(clip_duration or 0.0))
+    ordered: List[Dict[str, Any]] = []
+    for raw in overlay_specs:
+        try:
+            start = max(0.0, min(duration, float(raw["start"])))
+            end = max(start, min(duration, float(raw["end"])))
+        except (KeyError, TypeError, ValueError):
+            continue
+        if start >= duration or end <= start:
+            continue
+        ordered.append({**raw, "start": start, "end": end})
+    ordered.sort(key=lambda item: (float(item["start"]), float(item["end"])))
+
+    normalized: List[Dict[str, Any]] = []
+    for current in ordered:
+        start = float(current["start"])
+        while normalized and float(normalized[-1]["end"]) > start:
+            normalized[-1]["end"] = start
+            if float(normalized[-1]["end"]) > float(normalized[-1]["start"]):
+                break
+            normalized.pop()
+        if normalized:
+            gap = start - float(normalized[-1]["end"])
+            if 0.0 < gap < float(bridge_gap_seconds):
+                normalized[-1]["end"] = start
+        normalized.append(current)
+
+    if normalized:
+        # The final raster frame otherwise survives the concat/fps conversion
+        # after its positioning event expires, producing a one-frame jump.
+        normalized[-1]["end"] = duration
+    return normalized
+
+
 def _build_word_highlight_caption_overlay(
     segments: List[Dict[str, Any]],
     clip_start: float,
@@ -2564,6 +2605,10 @@ def _build_word_highlight_caption_overlay(
                     }
                 )
 
+    overlay_specs = _normalize_word_highlight_overlay_specs(
+        overlay_specs,
+        clip_duration=clip_duration,
+    )
     if not overlay_specs:
         shutil.rmtree(temp_dir, ignore_errors=True)
         return None, [], {"reason": "no_specs"}
