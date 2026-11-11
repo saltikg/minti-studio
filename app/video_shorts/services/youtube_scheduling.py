@@ -634,6 +634,7 @@ def _billing_paused(conn, user_id):
 def _blocking_reason(
     conn, candidate, payload, now, *, include_live_token=False,
     repair_stale_render_pending=False,
+    use_last_finished_during_render=False,
 ):
     lease = _active_mutation_lease(
         conn,
@@ -643,27 +644,43 @@ def _blocking_reason(
         now=now,
         clear_expired=repair_stale_render_pending,
     )
-    if lease:
+    rendering_fallback = bool(
+        use_last_finished_during_render
+        and lease
+        and str(lease.get("state") or "").strip().lower() == "rendering"
+        and _file_exists(payload)
+    )
+    if lease and not rendering_fallback:
         return f"lease:{lease['state']}"
     if _billing_paused(conn, candidate["user_id"]):
         return "billing_pause"
     active_render = _active_render_job(conn, candidate, payload)
-    if active_render:
+    if active_render and not (use_last_finished_during_render and _file_exists(payload)):
         return "active_render"
+    if active_render or rendering_fallback:
+        _alert(
+            candidate["id"],
+            "rendering_at_upload_due",
+            f"YouTube schedule {candidate['id']} reached upload_due_at while regeneration was still running; "
+            "uploading the last finished render.",
+        )
     if not _file_exists(payload):
         return "missing_file"
     freshness = _render_freshness(candidate, payload)
-    if not freshness.get("ready"):
-        return str(freshness.get("reason") or "render is outdated")
+    content_differences = freshness.get("content_differences") or {}
     design_differences = freshness.get("design_differences") or {}
-    if design_differences:
-        fields = ", ".join(sorted(str(field) for field in design_differences))
-        _alert(
-            candidate["id"],
-            "design_only_render_difference",
-            f"YouTube schedule {candidate['id']} will use its existing render; "
-            f"design-only fields changed after render: {fields}.",
+    if repair_stale_render_pending and (content_differences or design_differences):
+        fields = ", ".join(sorted(str(field) for field in set(content_differences) | set(design_differences)))
+        logger.info(
+            "Scheduled post uses last generated render schedule_id=%s unapplied_fields=%s",
+            candidate["id"], fields,
         )
+        if design_differences and not content_differences:
+            _alert(
+                candidate["id"], "design_only_render_difference",
+                f"YouTube schedule {candidate['id']} will use its last generated video; "
+                f"saved design changes not in that render: {fields}.",
+            )
     if payload.get("render_pending"):
         if not repair_stale_render_pending:
             return "render_pending (fresh render verified; scheduler can clear at upload_due_at)"
@@ -724,6 +741,7 @@ def _enqueue(conn, schedule_id, now):
     reason = _blocking_reason(
         conn, candidate, candidate_payload, now,
         repair_stale_render_pending=True,
+        use_last_finished_during_render=True,
     )
     if reason:
         _history_once(conn, schedule_id, "blocked", reason=reason)
@@ -1145,11 +1163,39 @@ def sync_plan_metadata(entries, *, user_id, brand_id, video_pk):
             if not row:
                 continue
             payload = json.loads(row[1])
-            payload.update(title=entry.get("yt_title") or entry.get("title") or payload["title"],
-                           description=entry.get("yt_description",entry.get("description",payload["description"])),
-                           filename=entry.get("clip_filename") or entry.get("output_filename") or payload["filename"])
+            # Saving editor fields must never rewrite a scheduled post. The
+            # frozen payload is refreshed only after a successful render.
             payload["render_pending"] = bool(entry.get("edit_requires_regenerate") or str(entry.get("status") or "").lower() in {"queued","processing","rendering"})
             conn.execute(f"UPDATE {TABLE} SET payload_json=?,updated_at=now() WHERE id=? AND status='pending' AND resumable_uri IS NULL", [json.dumps(payload),row[0]])
+
+
+def sync_completed_render(*, user_id, brand_id, video_pk, plan_index, rendered_entry):
+    """Refresh a pending schedule only after Generate produced a finished file."""
+    if not user_id or not brand_id or not video_pk or not plan_index:
+        return False
+    key = asset_key(video_pk=video_pk, plan_index=plan_index)
+    with connection() as conn:
+        row = conn.execute(
+            f"""SELECT id,payload_json FROM {TABLE}
+                WHERE user_id=? AND brand_id=? AND asset_key=?
+                  AND status='pending' AND resumable_uri IS NULL""",
+            [str(user_id), str(brand_id), key],
+        ).fetchone()
+        if not row:
+            return False
+        payload = json.loads(row[1])
+        payload.update(
+            title=rendered_entry.get("yt_title") or rendered_entry.get("title") or payload.get("title") or "",
+            description=rendered_entry.get("yt_description", rendered_entry.get("description", payload.get("description") or "")),
+            filename=rendered_entry.get("clip_filename") or rendered_entry.get("output_filename") or payload.get("filename") or "",
+            render_pending=False,
+        )
+        conn.execute(
+            f"UPDATE {TABLE} SET payload_json=?,updated_at=now() WHERE id=? AND status='pending' AND resumable_uri IS NULL",
+            [json.dumps(payload), row[0]],
+        )
+        _history_once(conn, row[0], "render_applied", reason="completed_render_refreshed_schedule")
+        return True
 
 
 def file_schedule_state(*, user_id, brand_id, filename):

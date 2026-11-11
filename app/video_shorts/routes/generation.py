@@ -11478,14 +11478,222 @@ def _schedule_render_difference_classification(
         " ".join(str(rendered_options.get("subtitle_text") or "").split()),
         " ".join(str(current_options.get("subtitle_text") or "").split()),
     )
-    if bool(current_entry.get("edit_requires_regenerate")):
-        content["edit_requires_regenerate"] = {"rendered": False, "current": True}
-
     for field in sorted(set(rendered_options) | set(current_options)):
         if field in _SCHEDULE_CONTENT_OPTION_FIELDS or field in _SCHEDULE_NON_VISUAL_OPTION_FIELDS:
             continue
         _record(design, field, rendered_options.get(field), current_options.get(field))
     return {"content": content, "design": design}
+
+
+def _dict_from_json(value: Any) -> Dict[str, Any]:
+    if isinstance(value, dict):
+        return dict(value)
+    try:
+        parsed = json.loads(value or "{}")
+    except (TypeError, ValueError):
+        return {}
+    return dict(parsed) if isinstance(parsed, dict) else {}
+
+
+def _render_snapshot_from_generated_record(record: Dict[str, Any]) -> Tuple[Dict[str, Any], Dict[str, Any]]:
+    rendered_entry = _dict_from_json((record or {}).get("raw_plan_entry_json"))
+    rendered_options = _dict_from_json(rendered_entry.get("render_settings_snapshot"))
+    return canonical_render_settings(rendered_options) if rendered_options else {}, rendered_entry
+
+
+def _saved_clip_settings_snapshot(
+    *, plan_entry: Dict[str, Any], current_options: Dict[str, Any],
+) -> Tuple[Dict[str, Any], Dict[str, Any]]:
+    saved_options = _dict_from_json(plan_entry.get("saved_render_settings_snapshot"))
+    saved_entry = _dict_from_json(plan_entry.get("saved_render_entry_snapshot"))
+    return (
+        canonical_render_settings(saved_options or current_options),
+        saved_entry or plan_entry,
+    )
+
+
+def _persist_clip_saved_settings_snapshot(
+    plan_entry: Dict[str, Any],
+    *,
+    options: Dict[str, Any],
+    entry_snapshot: Optional[Dict[str, Any]] = None,
+    source: str,
+    actor: Optional[str] = None,
+    saved_at: Optional[datetime] = None,
+) -> None:
+    snapshot_entry = entry_snapshot or plan_entry
+    plan_entry["saved_render_settings_snapshot"] = canonical_render_settings(options)
+    plan_entry["saved_render_entry_snapshot"] = {
+        "start": snapshot_entry.get("start"),
+        "end": snapshot_entry.get("end"),
+        "title": snapshot_entry.get("title"),
+        "edit_keep_ranges": _normalize_edit_keep_ranges(snapshot_entry.get("edit_keep_ranges")),
+    }
+    timestamp = saved_at or datetime.now(timezone.utc)
+    if timestamp.tzinfo is None:
+        timestamp = timestamp.replace(tzinfo=timezone.utc)
+    plan_entry["saved_settings_at"] = timestamp.astimezone(timezone.utc).isoformat().replace("+00:00", "Z")
+    plan_entry["saved_settings_source"] = str(source or "save")
+    if actor:
+        plan_entry["saved_settings_actor"] = str(actor)
+
+
+def _clip_unapplied_changes(
+    *,
+    plan_entry: Dict[str, Any],
+    current_options: Dict[str, Any],
+    generated_record: Dict[str, Any],
+) -> Dict[str, Dict[str, Any]]:
+    rendered_options, rendered_entry = _render_snapshot_from_generated_record(generated_record)
+    if not rendered_options:
+        return {"content": {}, "design": {}}
+    saved_options, saved_entry = _saved_clip_settings_snapshot(
+        plan_entry=plan_entry,
+        current_options=current_options,
+    )
+    return _schedule_render_difference_classification(
+        rendered_options=rendered_options,
+        current_options=saved_options,
+        rendered_entry=rendered_entry,
+        current_entry=saved_entry,
+    )
+
+
+def _persist_current_clip_saved_settings(
+    *,
+    video_pk: int,
+    source_video_id: str,
+    owner_user_id: str,
+    brand_id: Optional[str],
+    plan_indexes: Optional[set[int]] = None,
+    source: str = "save",
+    actor: Optional[str] = None,
+) -> List[int]:
+    """Persist actual saved fields so later policy/default changes cannot create a false diff."""
+    conn = get_db_readonly()
+    try:
+        result = conn.execute(
+            """SELECT * FROM youtube_videos
+               WHERE id=? AND owner_user_id=? AND brand_id IS NOT DISTINCT FROM ?
+                 AND deleted_at IS NULL""",
+            [int(video_pk), str(owner_user_id), brand_id],
+        )
+        row = result.fetchone()
+        if not row:
+            return []
+        video = dict(zip([str(item[0]) for item in (result.description or [])], row))
+        video["layout_mode"] = _effective_layout_mode_for_owner(
+            video.get("owner_user_id"), video.get("layout_mode")
+        )
+        identity = tenant_media.resolve_video(
+            video_pk=int(video_pk), owner_user_id=str(owner_user_id), brand_id=brand_id
+        )
+        _, segments = _fetch_transcript(conn, identity.youtube_id, video_pk=int(video_pk))
+    finally:
+        conn.close()
+    entries = _load_plan_entries(
+        source_video_id,
+        video_pk=video_pk,
+        owner_user_id=owner_user_id,
+        brand_id=brand_id,
+    )
+    changed: List[int] = []
+    for entry in entries:
+        try:
+            plan_index = int(entry.get("plan_index") or 0)
+        except (TypeError, ValueError):
+            continue
+        if not plan_index or (plan_indexes is not None and plan_index not in plan_indexes):
+            continue
+        options = _render_settings_options_for_plan_entry(
+            video_pk=video_pk,
+            video=video,
+            plan_entry=entry,
+            segments=segments or [],
+            brand_id=brand_id,
+            fallback_title=video.get("title") or "",
+        )
+        _persist_clip_saved_settings_snapshot(
+            entry,
+            options=options,
+            entry_snapshot=entry,
+            source=source,
+            actor=actor,
+        )
+        changed.append(plan_index)
+    if changed:
+        _write_plan_entries(
+            source_video_id,
+            entries,
+            video_pk=video_pk,
+            owner_user_id=owner_user_id,
+            brand_id=brand_id,
+        )
+    return changed
+
+
+def _pending_schedule_contexts(
+    *, owner_user_id: str, brand_id: Optional[str], video_pk: int,
+    source_video_id: str, plan_index: int,
+) -> List[Dict[str, Any]]:
+    """Read pending schedule times before a customer mutation changes them."""
+    contexts: List[Dict[str, Any]] = []
+    conn = get_db_readonly()
+    try:
+        for row in conn.execute(
+            """SELECT publish_at FROM shorts_youtube_schedules
+               WHERE user_id=? AND brand_id=? AND asset_key=?
+                 AND lower(status) IN ('pending','queued','uploading')""",
+            [str(owner_user_id), str(brand_id), youtube_scheduling.asset_key(video_pk=video_pk, plan_index=plan_index)],
+        ).fetchall():
+            contexts.append({"platform": "youtube", "publish_at": str(row[0])})
+        for platform in ("instagram", "facebook", "tiktok"):
+            table = f"shorts_{platform}_queue"
+            for row in conn.execute(
+                f"""SELECT publish_at FROM {table}
+                    WHERE user_id=? AND brand_id IS NOT DISTINCT FROM ? AND video_id=?
+                      AND CAST(plan_index AS VARCHAR)=? AND lower(status) IN ('pending','queued','retry','uploading')""",
+                [str(owner_user_id), brand_id, str(source_video_id), str(plan_index)],
+            ).fetchall():
+                contexts.append({"platform": platform, "publish_at": str(row[0])})
+    finally:
+        conn.close()
+    return contexts
+
+
+def _record_scheduled_customer_action(
+    *, editor_context: Dict[str, Any], current_user: Dict[str, Any], video_pk: int,
+    source_video_id: str, plan_index: int, clip_title: str, action: str,
+    changed_fields: List[str], schedules: Optional[List[Dict[str, Any]]] = None,
+) -> None:
+    if str((current_user or {}).get("role") or "").strip().lower() == "admin":
+        return
+    owner_user_id = str(editor_context.get("owner_user_id") or "")
+    if not owner_user_id or str((current_user or {}).get("id") or "") != owner_user_id:
+        return
+    brand_id = str(editor_context.get("brand_id") or "")
+    pending = schedules if schedules is not None else _pending_schedule_contexts(
+        owner_user_id=owner_user_id, brand_id=brand_id, video_pk=video_pk,
+        source_video_id=source_video_id, plan_index=plan_index,
+    )
+    if not pending:
+        return
+    brand_name = brand_id
+    conn = get_db_readonly()
+    try:
+        row = conn.execute("SELECT name FROM shorts_brands WHERE id=? LIMIT 1", [brand_id]).fetchone()
+        if row and row[0]:
+            brand_name = str(row[0])
+    finally:
+        conn.close()
+    from app.video_shorts.services.scheduled_clip_customer_actions import record_customer_action
+    record_customer_action(
+        owner_user_id=owner_user_id, brand_id=brand_id, video_pk=video_pk,
+        plan_index=plan_index, brand_name=brand_name, clip_title=clip_title,
+        action=action, changed_fields=changed_fields, schedules=pending,
+        clip_url=f"{request.url_root.rstrip('/')}{url_for('video_shorts_bp.generate_short', video_pk=video_pk)}#clip-{plan_index}",
+        actor_user_id=str((current_user or {}).get("id") or ""),
+    )
 
 
 def _scheduled_clip_render_freshness(
@@ -11521,7 +11729,7 @@ def _scheduled_clip_render_freshness(
     conn = get_db_readonly()
     try:
         row = conn.execute(
-            """SELECT render_settings_hash
+            """SELECT render_settings_hash, raw_plan_entry_json
                FROM shorts_generated_videos
                WHERE user_id=? AND brand_id=?
                  AND (clip_filename=? OR output_filename=?)
@@ -11530,6 +11738,7 @@ def _scheduled_clip_render_freshness(
             [str(owner_user_id), brand_id, clean_filename, clean_filename],
         ).fetchone()
         stored_hash = str(row[0] or "").strip() if row else ""
+        generated_snapshot = row[1] if row else None
         rendered_payload = None
         rendered_job_rows = conn.execute(
             """SELECT payload_json
@@ -11578,11 +11787,10 @@ def _scheduled_clip_render_freshness(
         fallback_title=video.get("title") or "",
     )
     current_hash = _render_settings_hash_from_options(current_options)
-    differences = _schedule_render_difference_classification(
-        rendered_options=rendered_payload["options"],
+    differences = _clip_unapplied_changes(
+        plan_entry=entry,
         current_options=current_options,
-        rendered_entry=rendered_payload,
-        current_entry=entry,
+        generated_record={"raw_plan_entry_json": generated_snapshot},
     )
     if differences["content"]:
         fields = ", ".join(sorted(differences["content"]))
@@ -11593,6 +11801,9 @@ def _scheduled_clip_render_freshness(
             "current_hash": current_hash,
             "content_differences": differences["content"],
             "design_differences": differences["design"],
+            "source_video_id": identity.youtube_id,
+            "plan_entry": entry,
+            "generated_record": {"raw_plan_entry_json": generated_snapshot},
         }
     return {
         "ready": True,
@@ -11601,6 +11812,9 @@ def _scheduled_clip_render_freshness(
         "current_hash": current_hash,
         "content_differences": {},
         "design_differences": differences["design"],
+        "source_video_id": identity.youtube_id,
+        "plan_entry": entry,
+        "generated_record": {"raw_plan_entry_json": generated_snapshot},
     }
 
 
@@ -11624,6 +11838,9 @@ def _compute_render_freshness_state(
         "regenerate_reason": "",
         "render_settings_hash": stored_hash,
         "current_render_settings_hash": "",
+        "unapplied_changes": False,
+        "unapplied_content_fields": [],
+        "unapplied_design_fields": [],
     }
     if not has_rendered_media or not stored_hash:
         return state
@@ -11638,49 +11855,30 @@ def _compute_render_freshness_state(
             fallback_title=fallback_title,
         )
         state["current_render_settings_hash"] = current_hashes[0] if current_hashes else ""
-        is_outdated = stored_hash not in current_hashes
+        current_options = _render_settings_options_for_plan_entry(
+            video_pk=int(video.get("id") or video_pk),
+            video=video,
+            plan_entry=plan_entry,
+            segments=segments,
+            brand_id=brand_id,
+            fallback_title=fallback_title,
+        )
+        differences = _clip_unapplied_changes(
+            plan_entry=plan_entry,
+            current_options=current_options,
+            generated_record=record,
+        )
+        content_fields = sorted(differences["content"])
+        design_fields = sorted(differences["design"])
+        is_outdated = bool(content_fields or design_fields)
         state["needs_regenerate"] = is_outdated
         state["render_settings_outdated"] = is_outdated
+        state["unapplied_changes"] = is_outdated
+        state["unapplied_content_fields"] = content_fields
+        state["unapplied_design_fields"] = design_fields
         if not is_outdated:
             return state
-
-        raw_snapshot = record.get("raw_plan_entry_json")
-        rendered_snapshot = raw_snapshot if isinstance(raw_snapshot, dict) else json.loads(raw_snapshot or "null")
-        if isinstance(rendered_snapshot, dict):
-            music_fields = ("music_audio_id", "music_level", "music_start_seconds", "music_duck", "music_fade_out")
-            current_music = (
-                _normalize_music_audio_id(video.get("music_audio_id")),
-                normalize_music_level(video.get("music_level")),
-                normalize_music_start_seconds(video.get("music_start_seconds")),
-                _normalize_optional_bool(video.get("music_duck"), default=True),
-                _normalize_optional_bool(video.get("music_fade_out"), default=True),
-            )
-            rendered_music = (
-                _normalize_music_audio_id(rendered_snapshot.get("music_audio_id")),
-                normalize_music_level(rendered_snapshot.get("music_level")),
-                normalize_music_start_seconds(rendered_snapshot.get("music_start_seconds")),
-                _normalize_optional_bool(rendered_snapshot.get("music_duck"), default=True),
-                _normalize_optional_bool(rendered_snapshot.get("music_fade_out"), default=True),
-            )
-            if current_music != rendered_music:
-                previous_music_video = dict(video)
-                for field in music_fields:
-                    if field in rendered_snapshot:
-                        previous_music_video[field] = rendered_snapshot[field]
-                    else:
-                        previous_music_video.pop(field, None)
-                previous_music_hashes = _compute_render_settings_hash_aliases_for_plan_entry(
-                    video_pk=int(video.get("id") or video_pk),
-                    video=previous_music_video,
-                    plan_entry=plan_entry,
-                    segments=segments,
-                    brand_id=brand_id,
-                    fallback_title=fallback_title,
-                )
-                if stored_hash in previous_music_hashes:
-                    state["regenerate_reason"] = "music"
-        if not state["regenerate_reason"]:
-            state["regenerate_reason"] = "design"
+        state["regenerate_reason"] = "content" if content_fields else "design"
     except Exception as exc:
         current_app.logger.warning(
             "Failed to compute render freshness video_pk=%s plan_index=%s: %s",
@@ -15885,6 +16083,9 @@ def generate_short(video_pk):
         current_render_settings_hash = render_freshness["current_render_settings_hash"]
         render_settings_outdated = bool(render_freshness["needs_regenerate"])
         regenerate_reason = str(render_freshness["regenerate_reason"] or "")
+        unapplied_content_fields = list(render_freshness.get("unapplied_content_fields") or [])
+        unapplied_design_fields = list(render_freshness.get("unapplied_design_fields") or [])
+        scheduled_unapplied_changes = bool(any_platform_pending and render_settings_outdated)
 
         updated_at_dt = _as_utc_datetime(generated_record.get("updated_at"))
         media_version = ""
@@ -15997,6 +16198,9 @@ def generate_short(video_pk):
             "render_settings_outdated": render_settings_outdated,
             "needs_regenerate": render_settings_outdated,
             "regenerate_reason": regenerate_reason,
+            "unapplied_content_fields": unapplied_content_fields,
+            "unapplied_design_fields": unapplied_design_fields,
+            "scheduled_unapplied_changes": scheduled_unapplied_changes,
             "regenerate_locked": bool(yt_id) or any_platform_published or publishing_soon,
             "regenerate_lock_reason": youtube_scheduling.studio_message(yt_id) if yt_id else "Already published" if any_platform_published else ("Publishing soon — editing is locked." if publishing_soon else ""),
             "edit_locked": bool(yt_id) or any_platform_published or publishing_soon,
@@ -28149,6 +28353,8 @@ def _remove_plan_entry_and_media(
 
 @video_shorts_bp.route("/generate/<int:video_pk>/clip/<int:plan_index>/delete", methods=["POST"])
 def delete_clip_plan_entry(video_pk, plan_index):
+    current_user = getattr(g, "vs_current_user", None) or {}
+    editor_context = _active_editor_context()
     video_id = _resolve_video_id_from_pk(video_pk)
     if not video_id:
         return jsonify(success=False, message="Video not found."), 404
@@ -28177,6 +28383,11 @@ def delete_clip_plan_entry(video_pk, plan_index):
             message="Scheduled/published clips cannot be deleted here. Remove it on YouTube first.",
         ), 409
 
+    delete_schedules = _pending_schedule_contexts(
+        owner_user_id=str(editor_context["owner_user_id"]), brand_id=editor_context["brand_id"],
+        video_pk=video_pk, source_video_id=str(video_id), plan_index=plan_index,
+    )
+
     try:
         removed_entry = _remove_plan_entry_and_media(video_id, plan_entries, target_entry, video_pk=video_pk)
     except tenant_media.TenantMediaConflict as exc:
@@ -28185,6 +28396,12 @@ def delete_clip_plan_entry(video_pk, plan_index):
         current_app.logger.warning("Failed to delete clip plan entry for %s plan %s: %s", video_id, plan_index, exc)
         return jsonify(success=False, message="Unable to delete the clip."), 500
 
+    _record_scheduled_customer_action(
+        editor_context=editor_context, current_user=current_user, video_pk=video_pk,
+        source_video_id=str(video_id), plan_index=plan_index,
+        clip_title=str(removed_entry.get("title") or f"Clip {plan_index}"), action="delete",
+        changed_fields=[], schedules=delete_schedules,
+    )
     return jsonify(success=True, plan_index=removed_entry.get("plan_index"), message="Clip deleted.")
 
 
@@ -28842,6 +29059,12 @@ def edit_clip_title_time(video_pk: int, plan_index: int):
     if not plan_entry:
         return jsonify(success=False, message="Selected clip was not found."), 404
 
+    before_saved_entry = {
+        "title": plan_entry.get("title"), "start": plan_entry.get("start"),
+        "end": plan_entry.get("end"),
+        "edit_keep_ranges": _normalize_edit_keep_ranges(plan_entry.get("edit_keep_ranges")),
+    }
+
     clip_filename = str(plan_entry.get("clip_filename") or plan_entry.get("output_filename") or "").strip()
     clip_exists = bool(clip_filename and _short_exists(clip_filename))
     editor_context = _active_editor_context()
@@ -28989,6 +29212,28 @@ def edit_clip_title_time(video_pk: int, plan_index: int):
     except Exception as exc:
         current_app.logger.warning("Failed to rebuild transcript for edited clip video_pk=%s plan_index=%s: %s", video_pk, plan_index, exc)
     _write_plan_entries(video_id, plan_entries, video_pk=video_pk)
+    _persist_current_clip_saved_settings(
+        video_pk=video_pk,
+        source_video_id=str(video_id),
+        owner_user_id=str(editor_context["owner_user_id"]),
+        brand_id=brand_id,
+        plan_indexes={int(plan_index)},
+        source="clip_save",
+        actor=str((current_user or {}).get("id") or ""),
+    )
+    changed_content_fields = [
+        field for field, value in {
+            "title": cleaned["title"], "start": cleaned["start"], "end": cleaned["end"],
+            "edit_keep_ranges": _normalize_edit_keep_ranges(plan_entry.get("edit_keep_ranges")),
+        }.items()
+        if _normalize_render_hash_numbers(before_saved_entry.get(field)) != _normalize_render_hash_numbers(value)
+    ]
+    if changed_content_fields:
+        _record_scheduled_customer_action(
+            editor_context=editor_context, current_user=current_user, video_pk=video_pk,
+            source_video_id=str(video_id), plan_index=plan_index,
+            clip_title=cleaned["title"], action="edit+save", changed_fields=changed_content_fields,
+        )
 
     response_payload = {
         "success": True,
@@ -30716,6 +30961,11 @@ def unschedule_clip_posts(video_pk: int, plan_index: int):
     if not target_entry:
         return jsonify(success=False, message="Selected clip was not found."), 404
 
+    unschedule_contexts = _pending_schedule_contexts(
+        owner_user_id=str(editor_context["owner_user_id"]), brand_id=brand_id,
+        video_pk=video_pk, source_video_id=source_video_id, plan_index=plan_index,
+    )
+
     clip_filename = str(target_entry.get("clip_filename") or target_entry.get("output_filename") or "").strip()
     generated_guard_row = None
     if clip_filename and brand_id:
@@ -30817,6 +31067,12 @@ def unschedule_clip_posts(video_pk: int, plan_index: int):
     finally:
         conn.close()
 
+    _record_scheduled_customer_action(
+        editor_context=editor_context, current_user=current_user, video_pk=video_pk,
+        source_video_id=source_video_id, plan_index=plan_index,
+        clip_title=str(target_entry.get("title") or video_title), action="unschedule",
+        changed_fields=[requested_platform or "all platforms"], schedules=unschedule_contexts,
+    )
     return jsonify(
         success=True,
         platform=requested_platform or "all",
@@ -33466,6 +33722,23 @@ def save_short_settings(video_pk):
             for column, value in update_values.items()
             if source_fields_by_column.get(column) in form_fields
         }
+        changed_update_fields: List[str] = []
+        if update_values:
+            compare_columns = [column for column in update_values if column in video_columns]
+            compare_sql = f"SELECT {', '.join(compare_columns)} FROM youtube_videos WHERE id=? AND owner_user_id=?"
+            compare_params: List[Any] = [video_pk, editor_owner_user_id]
+            if "brand_id" in video_columns:
+                if brand_id is None:
+                    compare_sql += " AND brand_id IS NULL"
+                else:
+                    compare_sql += " AND brand_id=?"
+                    compare_params.append(brand_id)
+            before_update_row = conn.execute(compare_sql, compare_params).fetchone()
+            if before_update_row:
+                changed_update_fields = [
+                    column for column, old_value in zip(compare_columns, before_update_row)
+                    if _normalize_render_hash_numbers(old_value) != _normalize_render_hash_numbers(update_values[column])
+                ]
         assignments = []
         params: List[Any] = []
         for column, value in update_values.items():
@@ -33567,6 +33840,29 @@ def save_short_settings(video_pk):
         ),
     }
     conn.close()
+
+    persisted_plan_indexes = _persist_current_clip_saved_settings(
+        video_pk=video_pk,
+        source_video_id=str(row[0]),
+        owner_user_id=str(editor_owner_user_id),
+        brand_id=brand_id,
+        source="design_save",
+        actor=str((current_user or {}).get("id") or ""),
+    )
+    if str((current_user or {}).get("role") or "").strip().lower() != "admin":
+        saved_entries = _load_plan_entries(str(row[0]), video_pk=video_pk) or []
+        entry_by_index = {
+            int(item.get("plan_index")): item for item in saved_entries
+            if isinstance(item, dict) and str(item.get("plan_index") or "").isdigit()
+        }
+        for saved_plan_index in persisted_plan_indexes if changed_update_fields else []:
+            saved_entry = entry_by_index.get(int(saved_plan_index), {})
+            _record_scheduled_customer_action(
+                editor_context=editor_context, current_user=current_user, video_pk=video_pk,
+                source_video_id=str(row[0]), plan_index=int(saved_plan_index),
+                clip_title=str(saved_entry.get("title") or f"Clip {saved_plan_index}"),
+                action="edit+save", changed_fields=sorted(changed_update_fields),
+            )
 
     session["vs_font"] = font_key
     session["vs_title_font_size"] = title_font_size
@@ -36073,6 +36369,22 @@ def autoclip_video(video_pk):
                     exc,
                 )
             plan_entry.setdefault("publish_status", "ready" if plan_entry.get("yt_description") else "not_ready")
+            if queued_render_settings_options:
+                completed_payload = dict((render_worker_job or {}).get("payload") or {})
+                rendered_entry_values = dict(plan_entry)
+                for field in ("start", "end", "title", "edit_keep_ranges"):
+                    if completed_payload.get(field) is not None:
+                        rendered_entry_values[field] = completed_payload[field]
+                if queued_render_settings_options.get("title") is not None:
+                    rendered_entry_values["title"] = queued_render_settings_options.get("title")
+                _persist_clip_saved_settings_snapshot(
+                    plan_entry,
+                    options=queued_render_settings_options,
+                    entry_snapshot=rendered_entry_values,
+                    source="render",
+                    actor=str(completed_payload.get("acting_admin_id") or target_owner_user_id or ""),
+                )
+                plan_entry.pop("edit_requires_regenerate", None)
             try:
                 current_app.logger.info(
                     "short plan update begin clip_filename=%s video_id=%s",
@@ -36127,6 +36439,13 @@ def autoclip_video(video_pk):
                 brand_id=brand_id,
                 plan_entry=rendered_plan_snapshot,
                 render_settings_hash=queued_render_settings_hash,
+            )
+            youtube_scheduling.sync_completed_render(
+                user_id=target_owner_user_id,
+                brand_id=brand_id,
+                video_pk=video_pk,
+                plan_index=plan_index,
+                rendered_entry=rendered_plan_snapshot,
             )
             owner_event_user_id = str(video_owner_user_id or (current_user or {}).get("id") or "").strip()
             if owner_event_user_id:
@@ -36473,6 +36792,10 @@ def regenerate_clip_video(video_pk: int, plan_index: int):
             break
     if not plan_entry:
         return jsonify(success=False, message="Selected clip was not found."), 404
+    regenerate_schedules = _pending_schedule_contexts(
+        owner_user_id=str(target_owner_user_id), brand_id=brand_id, video_pk=video_pk,
+        source_video_id=str(source_video_id), plan_index=plan_index,
+    )
     clip_filename = str(plan_entry.get("clip_filename") or plan_entry.get("output_filename") or "").strip()
     if not clip_filename or not _short_exists(clip_filename):
         return jsonify(success=False, message="Render this Short before regenerating it."), 409
@@ -36649,6 +36972,12 @@ def regenerate_clip_video(video_pk: int, plan_index: int):
         _write_plan_entries(source_video_id, plan_entries, video_pk=video_pk)
     # Avoid racing the worker against the request lease after enqueue.
     _release_youtube_clip_mutation_lease()
+    _record_scheduled_customer_action(
+        editor_context=editor_context, current_user=current_user, video_pk=video_pk,
+        source_video_id=str(source_video_id), plan_index=plan_index,
+        clip_title=str(plan_entry.get("title") or video_title), action="regenerate",
+        changed_fields=[], schedules=regenerate_schedules,
+    )
     return jsonify(
         success=True,
         message="Regenerate job queued.",

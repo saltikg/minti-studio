@@ -123,6 +123,7 @@ from app.video_shorts.services.storage import (
 from app.video_shorts.services.transcript_service import _transcribe_with_whisper
 from app.video_shorts.services.usage_metering import add_transcription_minutes
 from app.video_shorts.services.billing import process_autopilot_billing_deadlines
+from app.video_shorts.services.scheduled_clip_customer_actions import process_due_batches as process_due_scheduled_clip_customer_actions
 from app.video_shorts.services.usage_metering import (
     check_source_video_quota,
     is_transcription_quota_exempt_user,
@@ -2623,6 +2624,11 @@ def run_worker_loop() -> None:
                         processed_any = True
                 except Exception:
                     app.logger.exception("Deferred YouTube scheduler tick failed")
+                try:
+                    if process_due_scheduled_clip_customer_actions():
+                        processed_any = True
+                except Exception:
+                    app.logger.exception("Scheduled clip customer-action email processing failed")
                 try:
                     if process_due_scheduled_outreach_email():
                         processed_any = True

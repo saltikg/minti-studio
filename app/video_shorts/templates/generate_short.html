@@ -1984,14 +1984,20 @@
     right: 5px;
     z-index: 2;
   }
-  .generate-v2-regenerate-btn .generate-v2-needs-regenerate-dot { margin-left: 2px; }
-  .generate-v2-design-change-note {
+  .generate-v2-scheduled-change-warning {
     color: #fbbf24;
     font-size: .72rem;
     font-weight: 700;
     line-height: 1.25;
   }
-  .created-music-badge.is-not-applied { color: #fbbf24; }
+  .generate-v2-scheduled-change-warning button {
+    color: inherit;
+    font: inherit;
+    padding: 0;
+    border: 0;
+    background: transparent;
+    text-decoration: underline;
+  }
   .generate-v2-panel,
   .generate-v2-right-panel {
     display: none;
@@ -7311,7 +7317,7 @@
                   {% set rail_has_cover = is_admin and row.cover_url %}
                   {% set rail_render_aspect_class = '' if rail_has_cover else (' is-landscape' if row.render_aspect == 'landscape' or (generate_v2 and not rail_has_rendered_media and (video_crop_aspect or '') == 'original') else (' is-portrait' if row.render_aspect == 'portrait' else '')) %}
                   <div class="clip-rail-row" data-plan-index="{{ row.plan_index }}">
-                  <button type="button" class="clip-rail-item{{ rail_render_aspect_class }}{% if row.is_ai_suggestion %} is-ai-suggestion{% endif %}{% if generate_v2 and not rail_has_rendered_media %} is-unrendered{% endif %}" title="{{ row.title or ('Manual clip #' ~ row.plan_index) }}" data-plan-index="{{ row.plan_index }}" data-origin="{{ row.origin }}" data-ai-suggestion="{{ '1' if row.is_ai_suggestion else '0' }}" data-score="{{ rail_score if rail_score is not none else '' }}" data-status="{{ row.status }}" data-render-job-status="{{ row.render_job_status or '' }}" data-filename="{{ row.video_filename or '' }}" data-media-version="{{ row.media_version or '' }}" data-render-width="{{ row.render_width or '' }}" data-render-height="{{ row.render_height or '' }}" data-render-aspect="{{ row.render_aspect or '' }}"{% if is_admin %} data-current-cover-url="{{ row.cover_url|e }}"{% endif %} data-frame-thumbnail="{{ (row.poster_url or '')|e }}" data-outdated="{{ '1' if row.render_settings_outdated else '0' }}" data-needs-regenerate="{{ '1' if row.needs_regenerate else '0' }}" data-regenerate-reason="{{ row.regenerate_reason or '' }}" data-regenerate-locked="{{ '1' if row.regenerate_locked else '0' }}" data-regenerate-lock-reason="{{ row.regenerate_lock_reason or '' }}" data-title="{{ (row.yt_title or row.title or video.title) | e }}" data-description="{{ (row.yt_description or '') | replace('\\', '\\\\') | replace('\n', '\\n') | replace('\r', '\\r') | e }}" data-yt-video-id="{{ row.yt_video_id or '' }}" data-publish-status="{{ row.publish_status or '' }}" data-db-publish-status="{{ row.db_publish_status or '' }}" data-publish-at="{{ row.publish_at or row.publish_at_iso or '' }}" data-start="{{ row.start or 0 }}" data-end="{{ row.end or 0 }}" data-edit-url="{{ editor_url('edit_clip_title_time', video_pk=video.id, plan_index=row.plan_index) }}">
+                  <button type="button" class="clip-rail-item{{ rail_render_aspect_class }}{% if row.is_ai_suggestion %} is-ai-suggestion{% endif %}{% if generate_v2 and not rail_has_rendered_media %} is-unrendered{% endif %}" title="{{ row.title or ('Manual clip #' ~ row.plan_index) }}" data-plan-index="{{ row.plan_index }}" data-origin="{{ row.origin }}" data-ai-suggestion="{{ '1' if row.is_ai_suggestion else '0' }}" data-score="{{ rail_score if rail_score is not none else '' }}" data-status="{{ row.status }}" data-render-job-status="{{ row.render_job_status or '' }}" data-filename="{{ row.video_filename or '' }}" data-media-version="{{ row.media_version or '' }}" data-render-width="{{ row.render_width or '' }}" data-render-height="{{ row.render_height or '' }}" data-render-aspect="{{ row.render_aspect or '' }}"{% if is_admin %} data-current-cover-url="{{ row.cover_url|e }}"{% endif %} data-frame-thumbnail="{{ (row.poster_url or '')|e }}" data-outdated="{{ '1' if row.render_settings_outdated else '0' }}" data-needs-regenerate="{{ '1' if row.needs_regenerate else '0' }}" data-scheduled-unapplied="{{ '1' if row.scheduled_unapplied_changes else '0' }}" data-regenerate-reason="{{ row.regenerate_reason or '' }}" data-regenerate-locked="{{ '1' if row.regenerate_locked else '0' }}" data-regenerate-lock-reason="{{ row.regenerate_lock_reason or '' }}" data-title="{{ (row.yt_title or row.title or video.title) | e }}" data-description="{{ (row.yt_description or '') | replace('\\', '\\\\') | replace('\n', '\\n') | replace('\r', '\\r') | e }}" data-yt-video-id="{{ row.yt_video_id or '' }}" data-publish-status="{{ row.publish_status or '' }}" data-db-publish-status="{{ row.db_publish_status or '' }}" data-publish-at="{{ row.publish_at or row.publish_at_iso or '' }}" data-start="{{ row.start or 0 }}" data-end="{{ row.end or 0 }}" data-edit-url="{{ editor_url('edit_clip_title_time', video_pk=video.id, plan_index=row.plan_index) }}">
                     {% if generate_v2 %}
                     <span class="clip-rail-number">{{ loop.index }}</span>
                     {% endif %}
@@ -7341,8 +7347,8 @@
                           <span class="material-symbols-outlined" aria-hidden="true">movie</span>
                         {% endif %}
                       {% endif %}
-                      {% if generate_v2 and row.needs_regenerate %}
-                      <span class="generate-v2-needs-regenerate-dot" role="img" aria-label="Needs regenerate" title="Needs regenerate"></span>
+                      {% if generate_v2 and row.scheduled_unapplied_changes %}
+                      <span class="generate-v2-needs-regenerate-dot" role="img" aria-label="Changes not in scheduled post" title="The scheduled post uses the last generated video."></span>
                       {% endif %}
                       {% if generate_v2 %}
                       <span class="clip-rail-duration" data-clip-duration-label>{{ rail_duration_label }}</span>
@@ -7529,7 +7535,6 @@
                       <button type="submit" class="btn btn-outline-light btn-sm" data-edit-title-time-save{% if v2_edit_locked %} disabled{% endif %}>Save</button>
                       <button type="submit" class="btn btn-primary btn-sm" data-edit-title-time-regenerate{% if v2_edit_locked %} disabled{% endif %}>GENERATE</button>
                     </div>
-                    <div class="clip-rail-edit-hint{% if not row.edit_requires_regenerate %} d-none{% endif %}" data-edit-title-time-hint>Edited — regenerate to apply</div>
                   </form>
                   {% endif %}
                   </div>
@@ -7629,6 +7634,7 @@
                  data-auto-layout-segments='{{ (row.auto_layout_segments or [])|tojson|safe }}'
                  data-outdated="{{ '1' if row.render_settings_outdated else '0' }}"
                  data-needs-regenerate="{{ '1' if row.needs_regenerate else '0' }}"
+                 data-scheduled-unapplied="{{ '1' if row.scheduled_unapplied_changes else '0' }}"
                  data-regenerate-reason="{{ row.regenerate_reason or '' }}"
                  data-regenerate-locked="{{ '1' if row.regenerate_locked else '0' }}"
                  data-regenerate-lock-reason="{{ row.regenerate_lock_reason or '' }}"
@@ -7761,15 +7767,18 @@
                       <div class="generate-v2-media-column{% if row.is_original_layout %} is-original-layout{% endif %}{% if row.render_job_status in ['queued', 'processing', 'running'] %} is-rendering{% endif %}">
                     {% endif %}
                     <video controls playsinline preload="none" src="{{ row.video_url }}"{% if is_admin and row.cover_url %} poster="{{ row.cover_url }}"{% endif %} aria-label="Play {{ row.title or 'clip' }}"></video>
-	                    {% if generate_v2 %}<div class="generate-v2-design-change-note{% if not row.needs_regenerate or row.regenerate_reason == 'music' %} d-none{% endif %}">Design changed — Regenerate to apply</div>{% endif %}
-	                    {% if generate_v2 and row.regenerate_reason == 'music' %}<span class="created-music-badge is-not-applied" title="Music change has not been applied to this Short"><i class="bi bi-music-note-beamed" aria-hidden="true"></i><span>{% if row.music_audio_id %}Music changed{% else %}Music removed{% endif %} · not applied yet</span></span>{% elif row.has_music %}<span class="created-music-badge" data-music-audio-id="{{ row.rendered_music_audio_id }}" title="Background music"><i class="bi bi-music-note-beamed"></i><span class="created-music-name">Music</span><span class="created-music-level">· {{ row.rendered_music_level }}%</span></span>{% endif %}
+	                    {% if row.has_music %}<span class="created-music-badge" data-music-audio-id="{{ row.rendered_music_audio_id }}" title="Background music"><i class="bi bi-music-note-beamed"></i><span class="created-music-name">Music</span><span class="created-music-level">· {{ row.rendered_music_level }}%</span></span>{% endif %}
 	                    {% if generate_v2 %}
 	                      <div class="generate-v2-render-overlay{% if row.render_job_status not in ['queued', 'processing', 'running'] %} d-none{% endif %}" aria-live="polite">
 	                        <span class="spinner-border spinner-border-sm" role="status" aria-hidden="true"></span>
 	                        <span class="generate-v2-render-overlay-label">{% if row.render_job_status in ['queued', 'processing', 'running'] %}Generating{% else %}Update failed{% endif %}</span>
 	                        <button type="button" class="btn btn-sm btn-outline-light generate-v2-render-retry d-none">Retry</button>
 	                      </div>
-                      <div class="generate-v2-schedule-row"></div>
+                      <div class="generate-v2-schedule-row">
+                        <div class="generate-v2-scheduled-change-warning{% if not row.scheduled_unapplied_changes %} d-none{% endif %}" title="The scheduled post uses the last generated video.">
+                          Changes not in scheduled post · <button type="button" data-scheduled-regenerate-link>Regenerate</button>
+                        </div>
+                      </div>
                       <div class="clip-card-media-actions generate-v2-primary-actions">
                         <a
                           class="btn btn-sm generate-v2-tile generate-v2-open-btn"
@@ -7796,11 +7805,10 @@
                           data-plan-index="{{ row.plan_index }}"
                           data-regenerate-url="{{ editor_url('regenerate_clip_video', video_pk=video.id, plan_index=row.plan_index) }}"
                           {% if row.regenerate_locked %}hidden{% endif %}
-                          title="{% if row.regenerate_reason == 'music' %}Music changed — regenerate to apply{% elif row.needs_regenerate %}Design changed — regenerate to apply{% else %}Regenerate{% endif %}"
-                          aria-label="{% if row.regenerate_reason == 'music' %}Music changed — regenerate to apply{% elif row.needs_regenerate %}Design changed — regenerate to apply{% else %}Regenerate{% endif %}">
+                          title="Regenerate"
+                          aria-label="Regenerate">
                           <i class="bi bi-arrow-clockwise" aria-hidden="true"></i>
                           <span>Regenerate</span>
-                          {% if row.needs_regenerate %}<span class="generate-v2-needs-regenerate-dot" aria-hidden="true"></span>{% endif %}
                         </button>
                         {% if is_admin %}<button
                           type="button"
@@ -15965,6 +15973,10 @@ const initGenerateV2ClipTitleTimeEditors = () => {
             hint.classList.remove("d-none");
           }
           await refreshClipList(planIndex, "list");
+          const refreshedCard = getClipCardByPlanIndex(planIndex);
+          if (refreshedCard?.dataset.scheduledUnapplied === "1") {
+            showGenerateV2TextToast("Saved · regenerate to update the post");
+          }
         }
       } catch (error) {
         setClipEditError(form, "Could not save this clip.");
@@ -16928,6 +16940,8 @@ const applyServerClipFreshness = (planIndex, freshness) => {
   }
   const needsRegenerate = freshness.needs_regenerate;
   const reason = String(freshness.regenerate_reason || "").trim();
+  const scheduledUnapplied = freshness.scheduled_unapplied_changes === true;
+  const showScheduledWarning = needsRegenerate && scheduledUnapplied;
   const value = needsRegenerate ? "1" : "0";
   const card = getClipCardByPlanIndex(planIndex);
   const railItem = document.querySelector(
@@ -16938,23 +16952,21 @@ const applyServerClipFreshness = (planIndex, freshness) => {
     element.dataset.outdated = value;
     element.dataset.needsRegenerate = value;
     element.dataset.regenerateReason = reason;
+    element.dataset.scheduledUnapplied = showScheduledWarning ? "1" : "0";
   });
 
   card?.querySelectorAll(".generate-v2-needs-regenerate-dot").forEach((dot) => dot.remove());
   railItem?.querySelectorAll(".generate-v2-needs-regenerate-dot").forEach((dot) => dot.remove());
   const regenerateButton = card?.querySelector(".generate-v2-regenerate-btn");
-  const regenerateLabel = needsRegenerate
-    ? (reason === "music" ? "Music changed — regenerate to apply" : "Design changed — regenerate to apply")
-    : "Regenerate";
   if (regenerateButton) {
-    regenerateButton.title = regenerateLabel;
-    regenerateButton.setAttribute("aria-label", regenerateLabel);
+    regenerateButton.title = "Regenerate";
+    regenerateButton.setAttribute("aria-label", "Regenerate");
   }
-  const designChangeNote = card?.querySelector(".generate-v2-design-change-note");
-  if (designChangeNote) {
-    designChangeNote.classList.toggle("d-none", !needsRegenerate || reason === "music");
+  const scheduledChangeWarning = card?.querySelector(".generate-v2-scheduled-change-warning");
+  if (scheduledChangeWarning) {
+    scheduledChangeWarning.classList.toggle("d-none", !showScheduledWarning);
   }
-  if (!needsRegenerate) {
+  if (!showScheduledWarning) {
     return;
   }
   const railThumb = railItem?.querySelector(".clip-rail-thumb");
@@ -16962,15 +16974,9 @@ const applyServerClipFreshness = (planIndex, freshness) => {
     const dot = document.createElement("span");
     dot.className = "generate-v2-needs-regenerate-dot";
     dot.setAttribute("role", "img");
-    dot.setAttribute("aria-label", "Needs regenerate");
-    dot.title = "Needs regenerate";
+    dot.setAttribute("aria-label", "The scheduled post uses the last generated video.");
+    dot.title = "The scheduled post uses the last generated video.";
     railThumb.appendChild(dot);
-  }
-  if (regenerateButton) {
-    const dot = document.createElement("span");
-    dot.className = "generate-v2-needs-regenerate-dot";
-    dot.setAttribute("aria-hidden", "true");
-    regenerateButton.appendChild(dot);
   }
 };
 
@@ -16989,6 +16995,7 @@ const refreshServerClipFreshness = async () => {
       applyServerClipFreshness(planIndex, {
         needs_regenerate: serverCard.dataset.needsRegenerate === "1",
         regenerate_reason: serverCard.dataset.regenerateReason || "",
+        scheduled_unapplied_changes: serverCard.dataset.scheduledUnapplied === "1",
       });
     });
     return true;
@@ -17410,6 +17417,13 @@ const initGenerateV2RegenerateControls = () => {
         }
       }
       void enqueueRegenerateClip(card, { force: card.dataset.outdated !== "1" });
+    });
+  });
+  document.querySelectorAll("[data-scheduled-regenerate-link]").forEach((link) => {
+    if (link.dataset.regenerateBound === "1") return;
+    link.dataset.regenerateBound = "1";
+    link.addEventListener("click", () => {
+      link.closest(".clip-card")?.querySelector(".generate-v2-regenerate-btn")?.click?.();
     });
   });
 };
@@ -23749,6 +23763,9 @@ document.addEventListener("DOMContentLoaded", () => {
       userEditedCropBoxes.clear();
       window.rememberCropEditorSavedDesignState?.();
       await refreshServerClipFreshness();
+      if (document.querySelector(".generate-v2-scheduled-change-warning:not(.d-none)")) {
+        showGenerateV2TextToast("Saved · regenerate to update the post");
+      }
       if (statusText) {
         if (cropStatusTimer) {
           window.clearTimeout(cropStatusTimer);

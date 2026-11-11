@@ -262,6 +262,12 @@ def test_metadata_regenerate_sync_only_pending(db):
     schedule()
     scheduling.sync_plan_metadata([dict(plan_index=2,yt_title='edited',yt_description='new',clip_filename='new.mp4')],user_id='owner',brand_id='brand',video_pk=1)
     payload=json.loads(row(db)['payload_json'])
+    assert (payload['title'],payload['description'],payload['filename'])==('title','description','clip.mp4')
+    scheduling.sync_completed_render(
+        user_id='owner', brand_id='brand', video_pk=1, plan_index=2,
+        rendered_entry=dict(yt_title='edited',yt_description='new',clip_filename='new.mp4'),
+    )
+    payload=json.loads(row(db)['payload_json'])
     assert (payload['title'],payload['description'],payload['filename'])==('edited','new','new.mp4')
     entries=scheduling.overlay_plan([{'plan_index':2}],user_id='owner',brand_id='brand',video_pk=1)
     assert entries[0]['publish_status']=='pending' and entries[0]['upload_due_at']
@@ -298,18 +304,18 @@ def test_shared_upload_persists_session_before_media_and_resumes_without_new_ins
     assert calls[0][2]['Content-Range'].startswith('bytes */')
 
 
-def test_queued_render_blocks_due_upload_until_finished(db):
+def test_queued_render_at_due_uses_last_finished_render(db, monkeypatch):
+    alerts=[]
+    monkeypatch.setattr(scheduling, '_alert', lambda sid, kind, message: alerts.append(kind))
     first=schedule()
     due=row(db)['upload_due_at']
     with duckdb.connect(db) as conn:
         conn.execute("INSERT INTO shorts_render_jobs(id,user_id,type,status,payload_json) VALUES ('render','owner','render_short','queued',?)",[json.dumps({'video_pk':1,'plan_index':2})])
-    assert not scheduling.scheduler_tick(now=due)
-    with duckdb.connect(db) as conn:
-        conn.execute("UPDATE shorts_render_jobs SET status='done' WHERE id='render'")
     assert scheduling.scheduler_tick(now=due)
+    assert 'rendering_at_upload_due' in alerts
 
 
-def test_stale_render_pending_clears_only_without_active_render(db):
+def test_stale_render_pending_clears_while_active_render_uses_last_finished(db):
     first = schedule()
     due = row(db)['upload_due_at']
     with duckdb.connect(db) as conn:
@@ -323,11 +329,7 @@ def test_stale_render_pending_clears_only_without_active_render(db):
             "VALUES ('render','owner','render_short','processing',?)",
             [json.dumps({'video_pk': 1, 'plan_index': '2'})],
         )
-    assert scheduling.scheduler_tick(now=due + timedelta(minutes=16)) is False
-    assert json.loads(row(db)['payload_json'])['render_pending'] is True
-    with duckdb.connect(db) as conn:
-        conn.execute("UPDATE shorts_render_jobs SET status='done' WHERE id='render'")
-    assert scheduling.scheduler_tick(now=due + timedelta(minutes=17)) is True
+    assert scheduling.scheduler_tick(now=due + timedelta(minutes=16)) is True
     assert json.loads(row(db)['payload_json'])['render_pending'] is False
 
 
@@ -407,7 +409,7 @@ def test_new_past_row_within_catchup_enqueues(db):
     assert row(db)['status'] == 'queued'
 
 
-def test_edited_clip_does_not_clear_render_pending_and_alerts(db, monkeypatch):
+def test_saved_content_change_still_uploads_frozen_render(db, monkeypatch):
     alerts = []
     monkeypatch.setattr(scheduling, '_alert', lambda sid, kind, message: alerts.append((kind, message)))
     monkeypatch.setattr(
@@ -423,9 +425,8 @@ def test_edited_clip_does_not_clear_render_pending_and_alerts(db, monkeypatch):
         payload = json.loads(conn.execute('SELECT payload_json FROM shorts_youtube_schedules').fetchone()[0])
         payload['render_pending'] = True
         conn.execute('UPDATE shorts_youtube_schedules SET payload_json=?', [json.dumps(payload)])
-    assert scheduling.scheduler_tick(now=due + timedelta(minutes=16)) is False
-    assert json.loads(row(db)['payload_json'])['render_pending'] is True
-    assert any('customer edited clip' in message for _, message in alerts)
+    assert scheduling.scheduler_tick(now=due + timedelta(minutes=16)) is True
+    assert json.loads(row(db)['payload_json'])['render_pending'] is False
 
 
 def test_content_vs_design_render_difference_classification():
@@ -475,7 +476,8 @@ def test_content_vs_design_render_difference_classification():
             'edit_requires_regenerate': True,
         },
     )
-    assert {'start', 'title', 'subtitle_text', 'edit_requires_regenerate'} <= set(content_change['content'])
+    assert {'start', 'title', 'subtitle_text'} <= set(content_change['content'])
+    assert 'edit_requires_regenerate' not in content_change['content']
 
 
 def test_design_only_difference_allows_enqueue_and_sends_info_alert(db, monkeypatch):
