@@ -95,6 +95,7 @@ def _new_words(response: Any) -> list[dict[str, Any]]:
 def align_word_timings(
     segments: list[dict[str, Any]],
     whisper_words: list[dict[str, Any]],
+    media_duration: float,
 ) -> tuple[list[dict[str, Any]], dict[str, Any]]:
     """Return copied segments with only timing metadata changed."""
     old_words = _flatten_words(segments)
@@ -131,7 +132,29 @@ def align_word_timings(
         run_end = cursor - 1
         unmatched_runs.append((run_start, run_end))
         left_index, right_index = run_start - 1, run_end + 1
-        if left_index < 0 or right_index >= len(assigned):
+        if left_index < 0:
+            right = assigned[right_index] if right_index < len(assigned) else None
+            if right is None:
+                continue
+            cursor_time = min(float(media_duration), max(0.0, float(right[0])))
+            for old_index in range(run_end, run_start - 1, -1):
+                duration = old_words[old_index]["end"] - old_words[old_index]["start"]
+                end = cursor_time
+                start = max(0.0, end - duration)
+                assigned[old_index] = (start, end)
+                cursor_time = start
+            continue
+        if right_index >= len(assigned):
+            left = assigned[left_index]
+            if left is None:
+                continue
+            cursor_time = min(float(media_duration), max(0.0, float(left[1])))
+            for old_index in range(run_start, run_end + 1):
+                duration = old_words[old_index]["end"] - old_words[old_index]["start"]
+                start = cursor_time
+                end = min(float(media_duration), start + duration)
+                assigned[old_index] = (start, end)
+                cursor_time = end
             continue
         left, right = assigned[left_index], assigned[right_index]
         if left is None or right is None:
@@ -203,6 +226,7 @@ def _load_target(cur: Any, video_pk: int) -> dict[str, Any]:
     cur.execute(
         """
         SELECT v.id, v.video_id, v.title, v.video_url, v.owner_user_id, v.brand_id,
+               v.duration_seconds,
                b.name, u.name, u.email
         FROM youtube_videos v
         JOIN shorts_brands b ON b.id::text = v.brand_id::text
@@ -214,7 +238,10 @@ def _load_target(cur: Any, video_pk: int) -> dict[str, Any]:
     row = cur.fetchone()
     if not row:
         raise ValueError(f"Video id {video_pk} was not found")
-    keys = ("id", "video_id", "title", "video_url", "owner_user_id", "brand_id", "brand_name", "user_name", "email")
+    keys = (
+        "id", "video_id", "title", "video_url", "owner_user_id", "brand_id",
+        "duration_seconds", "brand_name", "user_name", "email",
+    )
     target = dict(zip(keys, row))
 
     cur.execute(
@@ -475,7 +502,12 @@ def main() -> int:
         conn.rollback()
 
         whisper_words = _transcribe_stored_audio(target)
-        updated_segments, alignment = align_word_timings(target["segments"], whisper_words)
+        media_duration = float(target.get("duration_seconds") or 0)
+        if media_duration <= 0:
+            raise ValueError("Video has no positive media duration for edge timestamp clamping")
+        updated_segments, alignment = align_word_timings(
+            target["segments"], whisper_words, media_duration
+        )
         report = {
             "mode": "DRY_RUN" if args.dry_run else "APPLY",
             "video": {key: target.get(key) for key in ("id", "video_id", "title", "owner_user_id", "brand_id", "brand_name", "user_name")},

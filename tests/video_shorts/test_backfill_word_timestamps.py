@@ -21,7 +21,7 @@ def test_alignment_preserves_words_and_interpolates_unmatched_word():
         {"text": "changes.", "normalized": "changes", "start": 2.4, "end": 3.2},
     ]
 
-    updated, report = align_word_timings(segments, whisper_words)
+    updated, report = align_word_timings(segments, whisper_words, media_duration=4.0)
 
     assert [word["word"] for word in updated[0]["words"]] == [
         "Well",
@@ -37,23 +37,30 @@ def test_alignment_preserves_words_and_interpolates_unmatched_word():
     assert report["match_rate"] == 0.75
 
 
-def test_unmatched_edge_word_remains_unresolved():
+def test_unmatched_edge_words_are_extrapolated_and_clamped():
     segments = [
         {
             "words": [
-                {"word": "extra", "start": 0.0, "end": 0.3},
+                {"word": "first", "start": 0.0, "end": 0.3},
+                {"word": "second", "start": 0.3, "end": 0.8},
                 {"word": "matched", "start": 0.3, "end": 1.0},
+                {"word": "last", "start": 1.0, "end": 1.4},
             ]
         }
     ]
     whisper_words = [
-        {"text": "matched", "normalized": "matched", "start": 0.4, "end": 0.9},
+        {"text": "matched", "normalized": "matched", "start": 1.0, "end": 1.5},
     ]
 
-    _, report = align_word_timings(segments, whisper_words)
+    updated, report = align_word_timings(segments, whisper_words, media_duration=1.75)
 
-    assert report["match_rate"] == 0.5
-    assert report["unresolved_indexes"] == [0]
+    words = updated[0]["words"]
+    assert (words[0]["start"], words[0]["end"]) == (0.2, 0.5)
+    assert (words[1]["start"], words[1]["end"]) == (0.5, 1.0)
+    assert (words[2]["start"], words[2]["end"]) == (1.0, 1.5)
+    assert (words[3]["start"], words[3]["end"]) == (1.5, 1.75)
+    assert report["match_rate"] == 0.25
+    assert report["unresolved_indexes"] == []
 
 
 def test_generated_snapshots_are_available_for_boundary_reporting():
