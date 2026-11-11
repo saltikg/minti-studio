@@ -431,6 +431,81 @@ def fetch_video_statuses(
     return statuses
 
 
+def find_exact_title_video(
+    title: str,
+    *,
+    channel_id: str,
+    user_id: Optional[str] = None,
+    brand_id: Optional[str] = None,
+) -> Optional[Dict[str, Any]]:
+    """Read-only duplicate guard for the shared uploader."""
+    clean_title = str(title or "").strip()
+    clean_channel_id = str(channel_id or "").strip()
+    if not clean_title or not clean_channel_id:
+        return None
+    youtube = build_authenticated_youtube(user_id=user_id, brand_id=brand_id)
+    if not youtube:
+        raise ValueError("No refresh token is available for YouTube duplicate check.")
+    response = youtube.search().list(
+        part="snippet",
+        channelId=clean_channel_id,
+        q=clean_title,
+        type="video",
+        maxResults=50,
+    ).execute()
+    record_youtube_data_api_call(feature="publish", method="search.list")
+    expected = clean_title.casefold()
+    for item in response.get("items", []):
+        snippet = item.get("snippet") or {}
+        if str(snippet.get("title") or "").strip().casefold() != expected:
+            continue
+        video_id = str((item.get("id") or {}).get("videoId") or "").strip()
+        if video_id:
+            return {"id": video_id, "title": snippet.get("title")}
+    return None
+
+
+def verify_uploaded_video(
+    video_id: str,
+    *,
+    expected_channel_id: str,
+    expected_title: str,
+    user_id: Optional[str] = None,
+    brand_id: Optional[str] = None,
+) -> Dict[str, Any]:
+    """Read-only post-upload identity check."""
+    youtube = build_authenticated_youtube(user_id=user_id, brand_id=brand_id)
+    if not youtube:
+        return {"ok": False, "reason": "token_missing"}
+    response = youtube.videos().list(
+        part="snippet,status",
+        id=str(video_id or "").strip(),
+        maxResults=1,
+    ).execute()
+    record_youtube_data_api_call(feature="publish", method="videos.list")
+    items = response.get("items", [])
+    if not items:
+        return {"ok": False, "reason": "video_not_found"}
+    item = items[0]
+    snippet = item.get("snippet") or {}
+    status = item.get("status") or {}
+    actual_channel = str(snippet.get("channelId") or "").strip()
+    actual_title = str(snippet.get("title") or "").strip()
+    ok = (
+        actual_channel == str(expected_channel_id or "").strip()
+        and actual_title == str(expected_title or "").strip()
+    )
+    return {
+        "ok": ok,
+        "reason": "ok" if ok else "identity_mismatch",
+        "id": item.get("id"),
+        "channel_id": actual_channel,
+        "title": actual_title,
+        "privacy_status": status.get("privacyStatus"),
+        "upload_status": status.get("uploadStatus"),
+    }
+
+
 def youtube_reconciliation_state(status: Optional[Dict[str, Any]]) -> str:
     """Classify a read-only videos.list result for every reconciliation caller."""
     value = status or {}

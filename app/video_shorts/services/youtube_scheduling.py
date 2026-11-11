@@ -10,13 +10,15 @@ import html
 import json
 import logging
 import os
+import re
+import socket
 from pathlib import Path
 from uuid import uuid4
 
 from flask import g, has_app_context
 from httplib2 import HttpLib2Error
 
-from app.video_shorts.services.db import autopilot_billing_paused_sql, get_db, get_db_readonly
+from app.video_shorts.services.db import get_db, get_db_readonly
 from app.video_shorts.services.publish_target_guard import (
     PublishTargetMismatch,
     require_target_match,
@@ -27,6 +29,9 @@ logger = logging.getLogger(__name__)
 TABLE = "shorts_youtube_schedules"
 MUTATION_LEASE_TABLE = "shorts_clip_mutation_leases"
 MUTATION_LEASE_MINUTES = 30
+HISTORY_TABLE = "shorts_schedule_status_history"
+ALERTS_TABLE = "shorts_schedule_alerts"
+SCHEDULER_STATE_TABLE = "shorts_scheduler_state"
 SCHEMA_SQL = """
 CREATE TABLE IF NOT EXISTS shorts_youtube_schedules (
     id VARCHAR PRIMARY KEY,
@@ -45,8 +50,23 @@ CREATE TABLE IF NOT EXISTS shorts_youtube_schedules (
     error TEXT,
     notification TEXT,
     notified_at TIMESTAMP,
+    created_at TIMESTAMP,
+    created_by VARCHAR,
     updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
     UNIQUE(user_id, brand_id, asset_key)
+)
+"""
+HISTORY_SCHEMA_SQL = f"""
+CREATE TABLE IF NOT EXISTS {HISTORY_TABLE} (
+    id BIGINT PRIMARY KEY,
+    schedule_id VARCHAR NOT NULL,
+    platform VARCHAR NOT NULL,
+    status VARCHAR NOT NULL,
+    reason TEXT,
+    error_sanitized TEXT,
+    actor VARCHAR,
+    metadata_json TEXT,
+    created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP
 )
 """
 MUTATION_LEASE_SCHEMA_SQL = """
@@ -85,6 +105,103 @@ def iso(value):
 
 def lead_minutes():
     return max(0, int(os.environ.get("YOUTUBE_UPLOAD_LEAD_MINUTES", "120")))
+
+
+def catchup_hours():
+    return max(1, int(os.environ.get("YOUTUBE_CATCHUP_HOURS", "24")))
+
+
+def _actor(user_id=None):
+    if has_app_context():
+        current = getattr(g, "vs_current_user", None) or {}
+        if current.get("id"):
+            return str(current["id"])
+    return f"system:{str(user_id or 'unknown')}"
+
+
+def _new_rules_apply(row):
+    if not row or not row.get("created_at"):
+        return False
+    # Immediate publishes remain an explicit user action. Automated scheduled
+    # behavior is limited to rows created before their future publish time, so
+    # a post-deploy edit cannot turn an already-past timestamp into catch-up.
+    return not row.get("publish_at") or utc(row["publish_at"]) > utc(row["created_at"])
+
+
+def _sanitize_error(exc):
+    status = getattr(getattr(exc, "resp", None), "status", None)
+    # HttpError.__str__ can contain the complete provider response body. Keep
+    # the actionable status without persisting customer/provider payloads.
+    if status is not None:
+        return f"YouTube API HTTP {status}"
+    message = str(exc or "").replace("\n", " ")
+    message = re.sub(r"https?://\S+", "[url]", message)
+    message = re.sub(r"(?i)(token|authorization|bearer|session)[=: ]+\S+", r"\1=[redacted]", message)
+    message = " ".join(message.split())[:500]
+    return f"HTTP {status}: {message}" if status else message or exc.__class__.__name__
+
+
+def _history(conn, schedule_id, status, *, reason=None, error=None, actor=None, metadata=None):
+    value_sql = "CAST(? AS JSONB)" if getattr(conn, "backend_name", "") == "postgres" else "?"
+    conn.execute(
+        f"""INSERT INTO {HISTORY_TABLE}
+            (id,schedule_id,platform,status,reason,error_sanitized,actor,metadata_json,created_at)
+            VALUES (?,?,?,?,?,?,?,{value_sql},?)""",
+        [int.from_bytes(uuid4().bytes[:8], "big", signed=False) & ((1 << 63) - 1), schedule_id, "youtube", status,
+         reason, error, actor or "scheduler", json.dumps(metadata or {}), utc()],
+    )
+
+
+def _history_once(conn, schedule_id, status, *, reason=None, error=None, actor=None, metadata=None):
+    latest = conn.execute(
+        f"SELECT status,reason FROM {HISTORY_TABLE} WHERE schedule_id=? ORDER BY created_at DESC,id DESC LIMIT 1",
+        [schedule_id],
+    ).fetchone()
+    if latest and str(latest[0] or "") == str(status) and str(latest[1] or "") == str(reason or ""):
+        return False
+    _history(conn, schedule_id, status, reason=reason, error=error, actor=actor, metadata=metadata)
+    return True
+
+
+def _admin_recipients():
+    conn = get_db_readonly()
+    try:
+        rows = conn.execute("SELECT email FROM shorts_users WHERE lower(COALESCE(role,''))='admin'").fetchall()
+    finally:
+        conn.close()
+    values = [str(row[0] or "").strip() for row in rows if row and "@" in str(row[0] or "")]
+    fallback = (os.getenv("ADMIN_NOTIFICATION_EMAIL") or "info@mintistudio.com").strip()
+    if "@" in fallback:
+        values.append(fallback)
+    return list(dict.fromkeys(values))
+
+
+def _alert(schedule_id, alert_type, message):
+    """Persist one admin alert and email it once."""
+    claimed = False
+    with connection() as conn:
+        row = conn.execute(
+            f"""INSERT INTO {ALERTS_TABLE}(alert_key,schedule_id,platform,alert_type,message,created_at)
+                VALUES (?,?,?,?,?,CURRENT_TIMESTAMP)
+                ON CONFLICT(alert_key) DO NOTHING RETURNING alert_key""",
+            [f"youtube:{schedule_id}:{alert_type}", schedule_id, "youtube", alert_type, str(message)[:2000]],
+        ).fetchone()
+        claimed = bool(row)
+    if not claimed:
+        return False
+    from app.video_shorts.services.email_verification import send_resend_email
+    for recipient in _admin_recipients():
+        try:
+            send_resend_email(
+                to_email=recipient,
+                subject=f"Minti YouTube schedule alert: {alert_type}",
+                html=f"<p>{html.escape(str(message))}</p>",
+                text=str(message),
+                error_message="Schedule alert could not be sent.",
+            )
+        except Exception:
+            logger.warning("YouTube schedule alert email failed schedule_id=%s type=%s", schedule_id, alert_type)
+    return True
 
 
 def pending_label():
@@ -349,22 +466,25 @@ def schedule_youtube_upload(*, video_path, title, description, publish_at=None,
         if active_lease and active_lease["lease_token"] != request_lease_token:
             raise YouTubeScheduleLocked("This clip is being edited; schedule it when rendering finishes.")
         schedule_id = str(uuid4())
+        created_by = _actor(user_id)
         row = conn.execute(f"""
-            INSERT INTO {TABLE} (id,user_id,brand_id,expected_youtube_channel_id,asset_key,payload_json,status,publish_at,upload_due_at)
-            VALUES (?,?,?,?,?,?,'pending',?,?)
+            INSERT INTO {TABLE} (id,user_id,brand_id,expected_youtube_channel_id,asset_key,payload_json,status,publish_at,upload_due_at,created_at,created_by)
+            VALUES (?,?,?,?,?,?,'pending',?,?,?,?)
             ON CONFLICT (user_id,brand_id,asset_key) DO UPDATE SET
                 payload_json=excluded.payload_json, status='pending', publish_at=excluded.publish_at,
                 expected_youtube_channel_id=excluded.expected_youtube_channel_id,
                 upload_due_at=excluded.upload_due_at, attempts=0, error=NULL,
-                notification=NULL, notified_at=NULL, updated_at=now()
+                notification=NULL, notified_at=NULL, created_at=excluded.created_at,
+                created_by=excluded.created_by, updated_at=now()
             WHERE {TABLE}.status IN ('pending','cancelled','missed','failed')
               AND {TABLE}.youtube_video_id IS NULL AND {TABLE}.resumable_uri IS NULL
             RETURNING id
-        """, [schedule_id,str(user_id),brand_id,expected_channel_id,key,json.dumps(payload),publish_dt,due]).fetchone()
+        """, [schedule_id,str(user_id),brand_id,expected_channel_id,key,json.dumps(payload),publish_dt,due,now,created_by]).fetchone()
         if not row:
             old = conn.execute(f"SELECT youtube_video_id FROM {TABLE} WHERE user_id=? AND brand_id=? AND asset_key=?", [str(user_id),brand_id,key]).fetchone()
             raise YouTubeScheduleLocked(studio_message(old[0]) if old and old[0] else "YouTube upload is in progress; editing is locked.")
         schedule_id = row[0]
+        _history(conn, schedule_id, "created", actor=created_by, metadata={"publish_at": iso(publish_dt)})
         if not deferred:
             _enqueue(conn, schedule_id, now)
         result = _result(_row(conn, schedule_id))
@@ -418,6 +538,7 @@ def publish_pending_now(*, video_path, title, description, user_id, brand_id,
         ).fetchone()
         if not changed:
             raise YouTubeScheduleLocked("YouTube upload is already queued or in progress.")
+        _history(conn, row[0], "cancelled", reason="publish_now_reset", actor=_actor(user_id))
     return schedule_youtube_upload(
         video_path=video_path,
         title=title,
@@ -452,12 +573,88 @@ def cancel_schedule(*, user_id, brand_id, video_pk, plan_index):
         changed = conn.execute(f"UPDATE {TABLE} SET status='cancelled',updated_at=now() WHERE id=? AND status=? AND resumable_uri IS NULL RETURNING id", [row[0],row[1]]).fetchone()
         if not changed:
             raise YouTubeScheduleLocked("YouTube upload is in progress; editing is locked.")
+        _history(conn, row[0], "cancelled", reason="user_cancelled", actor=_actor(user_id))
+
+
+def _active_render_job(conn, candidate, payload):
+    if not payload.get("video_pk") or not payload.get("plan_index"):
+        return False
+    rows = conn.execute(
+        "SELECT payload_json FROM shorts_render_jobs WHERE user_id=? AND type='render_short' AND status IN ('queued','processing')",
+        [candidate["user_id"]],
+    ).fetchall()
+    for (raw,) in rows:
+        render = json.loads(raw) if isinstance(raw, str) else raw
+        render_plan = render.get("plan_index") or (render.get("options") or {}).get("plan_index")
+        if str(render.get("video_pk")) == str(payload["video_pk"]) and str(render_plan) == str(payload["plan_index"]):
+            return True
+    return False
+
+
+def _file_exists(payload):
+    from app.video_shorts.services import tenant_media
+    try:
+        return bool(tenant_media.clip_exists(payload.get("filename")))
+    except Exception:
+        return False
+
+
+def _billing_paused(conn, user_id):
+    row = conn.execute(
+        "SELECT autopilot_billing_paused_at FROM shorts_users WHERE CAST(id AS VARCHAR)=?",
+        [str(user_id)],
+    ).fetchone()
+    return bool(row and row[0])
+
+
+def _blocking_reason(conn, candidate, payload, now, *, include_live_token=False):
+    lease = _active_mutation_lease(
+        conn,
+        user_id=candidate["user_id"],
+        brand_id=candidate["brand_id"],
+        key=candidate["asset_key"],
+        now=now,
+    )
+    if lease:
+        return f"lease:{lease['state']}"
+    if _billing_paused(conn, candidate["user_id"]):
+        return "billing_pause"
+    active_render = _active_render_job(conn, candidate, payload)
+    if active_render:
+        return "active_render"
+    if not _file_exists(payload):
+        return "missing_file"
+    if payload.get("render_pending"):
+        payload["render_pending"] = False
+        conn.execute(
+            f"UPDATE {TABLE} SET payload_json=?,updated_at=CURRENT_TIMESTAMP WHERE id=? AND status='pending'",
+            [json.dumps(payload), candidate["id"]],
+        )
+        _history_once(conn, candidate["id"], "ready", reason="stale_render_pending_cleared")
+        logger.warning(
+            "Cleared stale YouTube render_pending schedule_id=%s brand_id=%s",
+            candidate["id"], candidate["brand_id"],
+        )
+    if include_live_token:
+        from app.video_shorts.services.youtube_oauth import get_connected_channel_info
+        info, error = get_connected_channel_info(candidate["user_id"], candidate["brand_id"])
+        if error:
+            return f"token:{error}"
+        if not info:
+            return "token:missing"
+        if str(info.get("id") or "") != str(candidate.get("expected_youtube_channel_id") or ""):
+            return "channel_mismatch"
+    return None
 
 
 def _enqueue(conn, schedule_id, now):
     """Claim and enqueue in ONE transaction; no crash gap between claim and job creation."""
     candidate = _row(conn, schedule_id)
     if not candidate:
+        return False
+    if not _new_rules_apply(candidate):
+        return False
+    if candidate.get("youtube_video_id") or candidate["status"] != "pending":
         return False
     candidate_payload = json.loads(candidate["payload_json"])
     _lock_mutation_key(
@@ -466,32 +663,25 @@ def _enqueue(conn, schedule_id, now):
         brand_id=candidate["brand_id"],
         key=candidate["asset_key"],
     )
-    active_lease = _active_mutation_lease(
-        conn,
-        user_id=candidate["user_id"],
-        brand_id=candidate["brand_id"],
-        key=candidate["asset_key"],
-        now=now,
-    )
-    request_lease_token = current_mutation_lease_token(
-        user_id=candidate["user_id"],
-        brand_id=candidate["brand_id"],
-        key=candidate["asset_key"],
-    )
-    if active_lease and active_lease["lease_token"] != request_lease_token:
-        return False
     publish_dt = utc(candidate["publish_at"]) if candidate and candidate["publish_at"] else None
-    expired = bool(publish_dt and now - publish_dt > timedelta(hours=6))
-    if not expired and candidate_payload.get("render_pending"):
+    if publish_dt and now - publish_dt > timedelta(hours=catchup_hours()):
+        reason = _blocking_reason(conn, candidate, candidate_payload, now) or "catchup_window_expired"
+        message = f"Missed after {catchup_hours()}h catch-up window; blocker={reason}."
+        conn.execute(
+            f"UPDATE {TABLE} SET status='missed',error=?,notification='missed',notified_at=NULL,updated_at=CURRENT_TIMESTAMP WHERE id=? AND status='pending'",
+            [message, schedule_id],
+        )
+        _history_once(conn, schedule_id, "missed", reason=reason, error=message)
+        _alert(schedule_id, "missed", f"YouTube schedule {schedule_id} missed. {message}")
         return False
-    if not expired and candidate_payload.get("video_pk") and candidate_payload.get("plan_index"):
-        active = conn.execute("SELECT payload_json FROM shorts_render_jobs WHERE user_id=? AND type='render_short' AND status IN ('queued','processing')", [candidate["user_id"]]).fetchall()
-        for (raw,) in active:
-            render = json.loads(raw) if isinstance(raw,str) else raw
-            if str(render.get("video_pk")) == str(candidate_payload["video_pk"]) and str(render.get("plan_index")) == str(candidate_payload["plan_index"]):
-                return False
+    reason = _blocking_reason(conn, candidate, candidate_payload, now)
+    if reason:
+        _history_once(conn, schedule_id, "blocked", reason=reason)
+        if utc(now) >= utc(candidate["upload_due_at"]) + timedelta(minutes=15):
+            _alert(schedule_id, "enqueue_late", f"YouTube schedule {schedule_id} was not enqueued 15m after upload_due_at; blocker={reason}.")
+        return False
     job_id = str(uuid4())
-    row = conn.execute(f"UPDATE {TABLE} SET status='queued',job_id=?,updated_at=now() WHERE id=? AND status='pending' AND upload_due_at<=? RETURNING user_id,brand_id,payload_json", [job_id,schedule_id,now]).fetchone()
+    row = conn.execute(f"UPDATE {TABLE} SET status='queued',job_id=?,updated_at=now() WHERE id=? AND status='pending' AND youtube_video_id IS NULL AND upload_due_at<=? RETURNING user_id,brand_id,payload_json", [job_id,schedule_id,now]).fetchone()
     if not row:
         return False
     payload = json.loads(row[2])
@@ -499,28 +689,102 @@ def _enqueue(conn, schedule_id, now):
                               "quick_session_id": payload.get("quick_session_id"), "target": "youtube"})
     value_sql = "CAST(? AS JSONB)" if getattr(conn, "backend_name", "") == "postgres" else "?"
     conn.execute(f"INSERT INTO shorts_render_jobs (id,user_id,type,status,priority,payload_json,attempts,max_attempts) VALUES (?,?,'publish_short','queued',10,{value_sql},0,1000000)", [job_id,row[0],job_payload])
+    _history(conn, schedule_id, "enqueued", actor="scheduler", metadata={"job_id": job_id})
     return True
+
+
+def scheduler_health_check(*, now=None):
+    now = utc(now)
+    worker = f"{socket.gethostname()}:{os.getpid()}"
+    with connection() as conn:
+        row = conn.execute(
+            f"SELECT last_tick_at,last_gap_alerted_at FROM {SCHEDULER_STATE_TABLE} WHERE name='youtube'"
+        ).fetchone()
+        if row and row[0] and now - utc(row[0]) > timedelta(minutes=10):
+            last_alert = utc(row[1]) if row[1] else None
+            if not last_alert or last_alert < utc(row[0]):
+                gap = int((now - utc(row[0])).total_seconds())
+                conn.execute(
+                    f"UPDATE {SCHEDULER_STATE_TABLE} SET last_gap_alerted_at=?,updated_at=CURRENT_TIMESTAMP WHERE name='youtube'",
+                    [now],
+                )
+                _alert("scheduler", f"heartbeat_gap:{iso(row[0])}", f"YouTube scheduler had no tick for {gap}s while worker {worker} is running.")
+        conn.execute(
+            f"""INSERT INTO {SCHEDULER_STATE_TABLE}(name,last_tick_at,last_worker_id,updated_at)
+                VALUES ('youtube',?,?,?)
+                ON CONFLICT(name) DO UPDATE SET last_tick_at=excluded.last_tick_at,
+                    last_worker_id=excluded.last_worker_id,updated_at=excluded.updated_at""",
+            [now, worker, now],
+        )
+
+
+def _run_preflights(conn, now):
+    rows = conn.execute(
+        f"""SELECT schedule.id FROM {TABLE} schedule
+            WHERE schedule.status='pending'
+              AND schedule.created_at IS NOT NULL
+              AND schedule.publish_at>schedule.created_at
+              AND schedule.upload_due_at>?
+              AND schedule.upload_due_at<=?
+              AND NOT EXISTS (
+                  SELECT 1 FROM {HISTORY_TABLE} history
+                  WHERE history.schedule_id=schedule.id
+                    AND history.status IN ('preflight_ok','preflight_failed')
+              )
+            ORDER BY schedule.upload_due_at""",
+        [now, now + timedelta(hours=3)],
+    ).fetchall()
+    for (schedule_id,) in rows:
+        candidate = _row(conn, schedule_id)
+        payload = json.loads(candidate["payload_json"])
+        reason = _blocking_reason(conn, candidate, payload, now, include_live_token=True)
+        status = "preflight_failed" if reason else "preflight_ok"
+        _history(conn, schedule_id, status, reason=reason)
+        if reason:
+            _alert(schedule_id, "preflight_failed", f"YouTube schedule {schedule_id} pre-flight failed; blocker={reason}.")
+
+
+def _alert_due_not_uploaded(conn, now):
+    rows = conn.execute(
+        f"""SELECT id FROM {TABLE}
+            WHERE created_at IS NOT NULL
+              AND publish_at>created_at
+              AND publish_at IS NOT NULL AND publish_at<=?
+              AND youtube_video_id IS NULL
+              AND status NOT IN ('uploaded','published','cancelled','missed','failed','blocked_duplicate','blocked_target_mismatch')""",
+        [now],
+    ).fetchall()
+    for (schedule_id,) in rows:
+        candidate = _row(conn, schedule_id)
+        payload = json.loads(candidate["payload_json"])
+        reason = _blocking_reason(conn, candidate, payload, now) or f"status:{candidate['status']}"
+        _alert(schedule_id, "publish_time_not_uploaded", f"YouTube schedule {schedule_id} was not uploaded at publish time; blocker={reason}.")
 
 
 def scheduler_tick(*, now=None):
     now = utc(now)
+    scheduler_health_check(now=now)
     with connection() as conn:
-        conn.execute(f"UPDATE {TABLE} SET status='missed',notification='missed',notified_at=NULL,error='Missed — more than 6 hours late; no upload will be attempted.' WHERE status='failed' AND youtube_video_id IS NULL AND resumable_uri IS NULL AND publish_at<?", [now-timedelta(hours=6)])
+        _run_preflights(conn, now)
         lock = " FOR UPDATE SKIP LOCKED" if getattr(conn, "backend_name", "") == "postgres" else ""
-        billing_paused_expr = autopilot_billing_paused_sql(conn, "schedule.user_id")
         rows = conn.execute(
             f"""
             SELECT schedule.id
             FROM {TABLE} schedule
             WHERE schedule.status='pending'
+              AND schedule.created_at IS NOT NULL
+              AND (schedule.publish_at IS NULL OR schedule.publish_at>schedule.created_at)
               AND schedule.upload_due_at<=?
-              AND NOT ({billing_paused_expr})
+              AND schedule.youtube_video_id IS NULL
             ORDER BY schedule.upload_due_at
             LIMIT 100{lock}
             """,
             [now],
         ).fetchall()
-        claimed = any(_enqueue(conn, row[0], now) for row in rows)
+        claimed = False
+        for row in rows:
+            claimed = _enqueue(conn, row[0], now) or claimed
+        _alert_due_not_uploaded(conn, now)
     send_pending_notifications()
     return claimed
 
@@ -538,8 +802,10 @@ def execute_scheduled_upload(schedule_id, *, video_path=None):
     A requeued job can resume a dead worker's session, but never run concurrently.
     """
     from app.video_shorts.services.youtube_oauth import (
+        find_exact_title_video,
         get_connected_channel_info,
         upload_video_with_refresh_token,
+        verify_uploaded_video,
         YouTubeTransientError,
     )
     from app.video_shorts.services.youtube_token_store import get_youtube_connection
@@ -561,17 +827,46 @@ def execute_scheduled_upload(schedule_id, *, video_path=None):
                 if row["status"] == "uploaded":
                     _project_upload(row, json.loads(row["payload_json"]))
                 return _result(row)
+            if not _new_rules_apply(row):
+                logger.warning("Legacy YouTube schedule blocked from automatic upload schedule_id=%s", schedule_id)
+                return _result(row)
             now = utc()
             publish_dt = utc(row["publish_at"]) if row["publish_at"] else None
-            missed = bool(publish_dt and now - publish_dt > timedelta(hours=6))
+            missed = bool(publish_dt and now - publish_dt > timedelta(hours=catchup_hours()))
             if missed:
-                conn.execute(f"UPDATE {TABLE} SET status='missed',error=?,notification='missed',updated_at=now() WHERE id=?", ["Missed — more than 6 hours late; no upload will be attempted.",schedule_id])
+                payload = json.loads(row["payload_json"])
+                reason = _blocking_reason(conn, row, payload, now) or "catchup_window_expired"
+                message = f"Missed after {catchup_hours()}h catch-up window; blocker={reason}."
+                conn.execute(f"UPDATE {TABLE} SET status='missed',error=?,notification='missed',updated_at=now() WHERE id=?", [message,schedule_id])
+                _history_once(conn, schedule_id, "missed", reason=reason, error=message)
                 row = _row(conn, schedule_id)
             else:
-                conn.execute(f"UPDATE {TABLE} SET status='uploading',attempts=attempts+1,updated_at=now() WHERE id=?", [schedule_id])
+                payload = json.loads(row["payload_json"])
+                duplicate = find_exact_title_video(
+                    payload.get("title"),
+                    channel_id=row.get("expected_youtube_channel_id"),
+                    user_id=row["user_id"],
+                    brand_id=row["brand_id"],
+                )
+                if duplicate:
+                    reason = f"duplicate_title:{duplicate['id']}"
+                    conn.execute(
+                        f"UPDATE {TABLE} SET status='blocked_duplicate',error=?,notification='failed',updated_at=now() WHERE id=?",
+                        [f"Upload blocked; a video with the same title already exists ({duplicate['id']}).", schedule_id],
+                    )
+                    _history(conn, schedule_id, "blocked", reason=reason)
+                    row = _row(conn, schedule_id)
+                else:
+                    conn.execute(f"UPDATE {TABLE} SET status='uploading',attempts=attempts+1,updated_at=now() WHERE id=?", [schedule_id])
+                    _history(conn, schedule_id, "uploading", actor="worker")
         payload = json.loads(row["payload_json"])
         if missed:
+            _alert(schedule_id, "missed", f"YouTube schedule {schedule_id} missed. {row['error']}")
             _project_upload(row,payload)
+            return _result(row)
+        if row["status"] == "blocked_duplicate":
+            _alert(schedule_id, "duplicate_title", f"YouTube schedule {schedule_id} blocked: {row['error']}")
+            _project_upload(row, payload)
             return _result(row)
         late = bool(publish_dt and publish_dt <= now)
         temporary_path = None
@@ -621,7 +916,20 @@ def execute_scheduled_upload(schedule_id, *, video_path=None):
             # Persist the id before touching any UI projection.
             with connection() as conn:
                 conn.execute(f"UPDATE {TABLE} SET status='uploaded',youtube_video_id=?,error=NULL,notification=?,updated_at=now() WHERE id=?", [youtube_id,"late" if late else None,schedule_id])
+                _history(conn, schedule_id, "uploaded", actor="worker", metadata={"youtube_video_id": youtube_id})
                 row = _row(conn, schedule_id)
+            try:
+                verification = verify_uploaded_video(
+                    youtube_id,
+                    expected_channel_id=row.get("expected_youtube_channel_id"),
+                    expected_title=payload["title"],
+                    user_id=row["user_id"],
+                    brand_id=row["brand_id"],
+                )
+            except Exception as exc:
+                verification = {"ok": False, "reason": _sanitize_error(exc)}
+            if not verification.get("ok"):
+                _alert(schedule_id, "post_upload_verification_failed", f"YouTube schedule {schedule_id} uploaded id={youtube_id}, but videos.list verification failed: {verification.get('reason')}.")
         except PublishTargetMismatch as exc:
             with connection() as conn:
                 conn.execute(
@@ -643,14 +951,18 @@ def execute_scheduled_upload(schedule_id, *, video_path=None):
         except Exception as exc:
             code = getattr(getattr(exc, "resp", None), "status", None)
             transient = code in {429,500,502,503,504} or isinstance(exc, (TimeoutError, ConnectionError, OSError, HttpLib2Error, YouTubeTransientError)) and not isinstance(exc, FileNotFoundError)
-            # No raw provider exception is persisted/logged (it can include a session URI).
+            clean_error = _sanitize_error(exc)
             with connection() as conn:
                 latest = _row(conn, schedule_id)
                 status = "pending" if transient else ("uncertain" if latest.get("resumable_uri") else "failed")
                 delay = min(1800, 30 * 2 ** min(int(latest["attempts"]), 6))
-                conn.execute(f"UPDATE {TABLE} SET status=?,upload_due_at=?,error=?,notification=?,updated_at=now() WHERE id=?", [status,utc()+timedelta(seconds=delay),"Upload interrupted; retry scheduled." if transient else "Upload needs attention. Check YouTube Studio before retrying.",None if transient else "failed",schedule_id])
+                stored_error = f"Upload interrupted; retry scheduled. {clean_error}" if transient else f"Upload needs attention. {clean_error}"
+                conn.execute(f"UPDATE {TABLE} SET status=?,upload_due_at=?,error=?,notification=?,updated_at=now() WHERE id=?", [status,utc()+timedelta(seconds=delay),stored_error,None if transient else "failed",schedule_id])
+                _history(conn, schedule_id, "failed", reason="transient" if transient else "permanent", error=clean_error)
                 row = _row(conn, schedule_id)
-            logger.warning("YouTube schedule upload interrupted schedule_id=%s status=%s", schedule_id, row["status"])
+            logger.warning("YouTube schedule upload interrupted schedule_id=%s status=%s error=%s", schedule_id, row["status"], clean_error)
+            if not transient:
+                _alert(schedule_id, "upload_failed", f"YouTube schedule {schedule_id} failed: {clean_error}")
         finally:
             if temporary_path is not None:
                 temporary_path.unlink(missing_ok=True)
@@ -699,7 +1011,7 @@ def send_pending_notifications():
     from app.video_shorts.services.email_verification import send_resend_email
     conn = get_db_readonly()
     try:
-        rows = conn.execute(f"SELECT id,user_id,brand_id,notification FROM {TABLE} WHERE notification IS NOT NULL AND notified_at IS NULL LIMIT 10").fetchall()
+        rows = conn.execute(f"SELECT id,user_id,brand_id,notification FROM {TABLE} WHERE created_at IS NOT NULL AND notification IS NOT NULL AND notified_at IS NULL LIMIT 10").fetchall()
         admins = conn.execute("SELECT email FROM shorts_users WHERE lower(role)='admin'").fetchall() if rows else []
     finally:
         conn.close()

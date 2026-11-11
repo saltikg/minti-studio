@@ -12,6 +12,8 @@ from app.video_shorts.services import youtube_scheduling as scheduling
 from app.video_shorts.services import youtube_oauth as oauth
 from app.video_shorts.services import youtube_token_store
 
+REAL_SCHEDULER_HEALTH_CHECK = scheduling.scheduler_health_check
+
 
 @pytest.fixture
 def db(monkeypatch, tmp_path):
@@ -19,18 +21,33 @@ def db(monkeypatch, tmp_path):
     with duckdb.connect(path) as conn:
         conn.execute(scheduling.SCHEMA_SQL)
         conn.execute(scheduling.MUTATION_LEASE_SCHEMA_SQL)
+        conn.execute(scheduling.HISTORY_SCHEMA_SQL)
+        conn.execute('''CREATE TABLE shorts_schedule_alerts (
+            alert_key VARCHAR PRIMARY KEY,schedule_id VARCHAR,platform VARCHAR,
+            alert_type VARCHAR,message VARCHAR,created_at TIMESTAMP)''')
+        conn.execute('''CREATE TABLE shorts_scheduler_state (
+            name VARCHAR PRIMARY KEY,last_tick_at TIMESTAMP,last_worker_id VARCHAR,
+            last_gap_alerted_at TIMESTAMP,updated_at TIMESTAMP)''')
+        conn.execute('''CREATE TABLE shorts_users (
+            id VARCHAR PRIMARY KEY,autopilot_billing_paused_at TIMESTAMP,email VARCHAR,role VARCHAR)''')
+        conn.execute("INSERT INTO shorts_users VALUES ('owner',NULL,'admin@example.com','admin')")
         conn.execute('''CREATE TABLE shorts_render_jobs (
             id VARCHAR,user_id VARCHAR,type VARCHAR,status VARCHAR,priority INTEGER,
             payload_json TEXT,attempts INTEGER,max_attempts INTEGER)''')
     monkeypatch.setattr(scheduling, 'get_db', lambda: duckdb.connect(path))
     monkeypatch.setattr(scheduling, 'get_db_readonly', lambda: duckdb.connect(path))
     monkeypatch.setattr(scheduling, 'send_pending_notifications', lambda: None)
+    monkeypatch.setattr(scheduling, 'scheduler_health_check', lambda **kw: None)
+    monkeypatch.setattr(scheduling, '_file_exists', lambda payload: True)
+    monkeypatch.setattr(scheduling, '_alert', lambda *a, **kw: False)
     monkeypatch.setattr(scheduling, '_project_upload', lambda *a: None)
     monkeypatch.setattr(scheduling, '_existing_remote_id', lambda **kw: None)
     from app.video_shorts.services import media_access
     monkeypatch.setattr(media_access,'authorize_file',lambda *a,**kw: None)
     monkeypatch.setenv('YOUTUBE_UPLOAD_LEAD_MINUTES', '120')
     monkeypatch.setattr(oauth, 'upload_video_with_refresh_token', lambda **k: pytest.fail('unexpected upload'))
+    monkeypatch.setattr(oauth, 'find_exact_title_video', lambda *a, **kw: None)
+    monkeypatch.setattr(oauth, 'verify_uploaded_video', lambda *a, **kw: {'ok': True})
     monkeypatch.setattr(
         youtube_token_store,
         'get_youtube_connection',
@@ -182,12 +199,18 @@ def test_pending_publish_now_refuses_started_upload_states(db, monkeypatch, tmp_
     assert calls == []
 
 
-@pytest.mark.parametrize('hours,status',[(1,'uploaded'),(7,'missed')])
+@pytest.mark.parametrize('hours,status',[(1,'uploaded'),(25,'missed')])
 def test_lateness_boundary_and_notification(db,monkeypatch,tmp_path,hours,status):
     media = tmp_path / 'clip.mp4'; media.write_bytes(b'fake')
     calls=[]
     monkeypatch.setattr(oauth,'upload_video_with_refresh_token',lambda **kw: calls.append(kw) or {'id':'late'})
-    first=schedule(video_path=str(media),publish_at=scheduling.iso(scheduling.utc()-timedelta(hours=hours)),async_immediate=True)
+    first=schedule(video_path=str(media),publish_at=scheduling.iso(scheduling.utc()+timedelta(hours=1)),async_immediate=True)
+    late_publish = scheduling.utc()-timedelta(hours=hours)
+    with duckdb.connect(db) as conn:
+        conn.execute(
+            'UPDATE shorts_youtube_schedules SET publish_at=?,created_at=?',
+            [late_publish, late_publish-timedelta(hours=1)],
+        )
     scheduling.execute_scheduled_upload(first['schedule_id'],video_path=media)
     assert row(db)['status'] == status
     assert row(db)['notification'] == ('late' if hours==1 else 'missed')
@@ -280,6 +303,139 @@ def test_queued_render_blocks_due_upload_until_finished(db):
     with duckdb.connect(db) as conn:
         conn.execute("UPDATE shorts_render_jobs SET status='done' WHERE id='render'")
     assert scheduling.scheduler_tick(now=due)
+
+
+def test_stale_render_pending_clears_only_without_active_render(db):
+    first = schedule()
+    due = row(db)['upload_due_at']
+    with duckdb.connect(db) as conn:
+        payload = json.loads(conn.execute(
+            'SELECT payload_json FROM shorts_youtube_schedules'
+        ).fetchone()[0])
+        payload['render_pending'] = True
+        conn.execute('UPDATE shorts_youtube_schedules SET payload_json=?', [json.dumps(payload)])
+        conn.execute(
+            "INSERT INTO shorts_render_jobs(id,user_id,type,status,payload_json) "
+            "VALUES ('render','owner','render_short','processing',?)",
+            [json.dumps({'video_pk': 1, 'plan_index': '2'})],
+        )
+    assert scheduling.scheduler_tick(now=due + timedelta(minutes=16)) is False
+    assert json.loads(row(db)['payload_json'])['render_pending'] is True
+    with duckdb.connect(db) as conn:
+        conn.execute("UPDATE shorts_render_jobs SET status='done' WHERE id='render'")
+    assert scheduling.scheduler_tick(now=due + timedelta(minutes=17)) is True
+    assert json.loads(row(db)['payload_json'])['render_pending'] is False
+
+
+def test_legacy_and_already_posted_rows_are_never_enqueued(db, monkeypatch, tmp_path):
+    schedule()
+    due = row(db)['upload_due_at']
+    with duckdb.connect(db) as conn:
+        conn.execute('UPDATE shorts_youtube_schedules SET created_at=NULL')
+    assert scheduling.scheduler_tick(now=due + timedelta(hours=1)) is False
+    assert row(db)['status'] == 'pending'
+    with duckdb.connect(db) as conn:
+        conn.execute(
+            "UPDATE shorts_youtube_schedules SET created_at=?,youtube_video_id='existing'",
+            [due - timedelta(days=1)],
+        )
+    assert scheduling.scheduler_tick(now=due + timedelta(hours=1)) is False
+    with duckdb.connect(db) as conn:
+        assert conn.execute(
+            "SELECT count(*) FROM shorts_render_jobs WHERE type='publish_short'"
+        ).fetchone()[0] == 0
+        conn.execute(
+            "UPDATE shorts_youtube_schedules SET status='queued',youtube_video_id=NULL,created_at=NULL"
+        )
+    media = tmp_path / 'clip.mp4'; media.write_bytes(b'fake')
+    calls = []
+    monkeypatch.setattr(oauth, 'upload_video_with_refresh_token', lambda **kw: calls.append(kw))
+    scheduling.execute_scheduled_upload(row(db)['id'], video_path=media)
+    assert calls == []
+    assert row(db)['status'] == 'queued'
+
+
+def test_duplicate_title_blocks_before_upload(db, monkeypatch, tmp_path):
+    media = tmp_path / 'clip.mp4'; media.write_bytes(b'fake')
+    calls = []
+    alerts = []
+    monkeypatch.setattr(scheduling, '_alert', lambda sid, kind, message: alerts.append(kind))
+    monkeypatch.setattr(oauth, 'find_exact_title_video', lambda *a, **kw: {'id': 'duplicate'})
+    monkeypatch.setattr(oauth, 'upload_video_with_refresh_token', lambda **kw: calls.append(kw))
+    first = schedule(video_path=str(media), publish_at=None, async_immediate=True)
+    result = scheduling.execute_scheduled_upload(first['schedule_id'], video_path=media)
+    assert result['status'] == 'blocked_duplicate'
+    assert calls == []
+    assert alerts == ['duplicate_title']
+
+
+def test_scheduler_alerts_preflight_enqueue_due_and_missed(db, monkeypatch):
+    alerts = []
+    monkeypatch.setattr(scheduling, '_alert', lambda sid, kind, message: alerts.append((sid, kind, message)))
+    first = schedule(publish_at=scheduling.iso(scheduling.utc() + timedelta(hours=5)))
+    stored = row(db)
+    monkeypatch.setattr(scheduling, '_file_exists', lambda payload: False)
+    preflight_at = stored['upload_due_at'] - timedelta(hours=2, minutes=59)
+    scheduling.scheduler_tick(now=preflight_at)
+    scheduling.scheduler_tick(now=stored['upload_due_at'] + timedelta(minutes=16))
+    scheduling.scheduler_tick(now=stored['publish_at'])
+    scheduling.scheduler_tick(now=stored['publish_at'] + timedelta(hours=25))
+    kinds = {kind for _, kind, _ in alerts}
+    assert {'preflight_failed', 'enqueue_late', 'publish_time_not_uploaded', 'missed'} <= kinds
+    assert first['schedule_id'] == row(db)['id']
+
+
+def test_post_upload_verification_alerts(db, monkeypatch, tmp_path):
+    media = tmp_path / 'clip.mp4'; media.write_bytes(b'fake')
+    alerts = []
+    monkeypatch.setattr(scheduling, '_alert', lambda sid, kind, message: alerts.append(kind))
+    monkeypatch.setattr(oauth, 'upload_video_with_refresh_token', lambda **kw: {'id': 'remote'})
+    monkeypatch.setattr(oauth, 'verify_uploaded_video', lambda *a, **kw: {'ok': False, 'reason': 'not visible'})
+    first = schedule(video_path=str(media), publish_at=None, async_immediate=True)
+    scheduling.execute_scheduled_upload(first['schedule_id'], video_path=media)
+    assert 'post_upload_verification_failed' in alerts
+
+
+def test_permanent_upload_failure_alerts_with_sanitized_error(db, monkeypatch, tmp_path):
+    media = tmp_path / 'clip.mp4'; media.write_bytes(b'fake')
+    alerts = []
+    monkeypatch.setattr(scheduling, '_alert', lambda sid, kind, message: alerts.append((kind, message)))
+    monkeypatch.setattr(
+        oauth,
+        'upload_video_with_refresh_token',
+        lambda **kw: (_ for _ in ()).throw(ValueError('token=secret https://private.example/path')),
+    )
+    first = schedule(video_path=str(media), publish_at=None, async_immediate=True)
+    scheduling.execute_scheduled_upload(first['schedule_id'], video_path=media)
+    assert row(db)['status'] == 'failed'
+    assert alerts[0][0] == 'upload_failed'
+    assert 'secret' not in alerts[0][1]
+    assert 'private.example' not in alerts[0][1]
+
+
+def test_scheduler_heartbeat_gap_alert(db, monkeypatch):
+    alerts = []
+    monkeypatch.setattr(scheduling, '_alert', lambda sid, kind, message: alerts.append((kind, message)))
+    now = scheduling.utc()
+    with duckdb.connect(db) as conn:
+        conn.execute(
+            "INSERT INTO shorts_scheduler_state(name,last_tick_at,last_worker_id,updated_at) VALUES ('youtube',?,'old',?)",
+            [now - timedelta(minutes=11), now - timedelta(minutes=11)],
+        )
+    REAL_SCHEDULER_HEALTH_CHECK(now=now)
+    assert alerts and alerts[0][0].startswith('heartbeat_gap:')
+
+
+def test_status_history_records_created_enqueued_uploading_uploaded(db, monkeypatch, tmp_path):
+    media = tmp_path / 'clip.mp4'; media.write_bytes(b'fake')
+    monkeypatch.setattr(oauth, 'upload_video_with_refresh_token', lambda **kw: {'id': 'remote'})
+    first = schedule(video_path=str(media), publish_at=None, async_immediate=True)
+    scheduling.execute_scheduled_upload(first['schedule_id'], video_path=media)
+    with duckdb.connect(db) as conn:
+        statuses = [r[0] for r in conn.execute(
+            'SELECT status FROM shorts_schedule_status_history ORDER BY created_at,id'
+        ).fetchall()]
+    assert statuses == ['created', 'enqueued', 'uploading', 'uploaded']
 
 
 def test_generated_video_guard_uses_authenticated_owner_and_returns_record(monkeypatch):

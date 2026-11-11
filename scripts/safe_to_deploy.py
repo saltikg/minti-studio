@@ -24,6 +24,7 @@ PROD_ENV_PATH = Path("/home/ubuntu/apps/minti_studio/.env")
 DEFAULT_ENV_PATH = ROOT / ".env"
 ACCESS_LOG_PATH = Path("/home/ubuntu/apps/minti_studio/logs/gunicorn-access.log")
 RECENT_WEB_WINDOW = timedelta(minutes=5)
+UPCOMING_PUBLISH_WINDOW = timedelta(minutes=20)
 ACCESS_LOG_TIME_RE = re.compile(r"\[(?P<ts>[^\]]+)\]")
 ACCESS_LOG_REQUEST_RE = re.compile(r'"(?:GET|POST|HEAD|OPTIONS)\s+(?P<target>\S+)')
 BOT_UA_RE = re.compile(r"(bot|crawl|spider|slurp|facebookexternalhit|preview|uptime|monitor|health)", re.I)
@@ -36,6 +37,16 @@ class ProcessingJob:
     user_email: str
     started_at: datetime
     origin: str = ""
+
+
+@dataclass
+class ScheduledPublish:
+    platform: str
+    schedule_id: str
+    brand_id: str
+    status: str
+    due_at: datetime
+    due_kind: str
 
 
 def _load_env_file() -> Path:
@@ -127,6 +138,61 @@ def _fetch_processing_jobs() -> list[ProcessingJob]:
                         )
                     )
     return jobs
+
+
+def _fetch_imminent_schedules(now: datetime) -> list[ScheduledPublish]:
+    cutoff = now + UPCOMING_PUBLISH_WINDOW
+    query = """
+        WITH candidates AS (
+            SELECT 'youtube' AS platform, id::text, brand_id::text, status,
+                   upload_due_at AS due_at, 'upload_due_at' AS due_kind
+              FROM shorts_youtube_schedules
+             WHERE lower(status) IN ('pending','queued','uploading')
+               AND (lower(status) = 'uploading'
+                    OR upload_due_at BETWEEN %s AND %s
+                    OR publish_at BETWEEN %s AND %s)
+            UNION ALL
+            SELECT 'instagram', id::text, brand_id::text, status,
+                   COALESCE(publish_at::timestamp, CURRENT_TIMESTAMP), 'publish_at'
+              FROM shorts_instagram_queue
+             WHERE lower(status) IN ('pending','queued','uploading','processing','retry')
+               AND (lower(status) IN ('uploading','processing')
+                    OR publish_at::timestamp BETWEEN %s AND %s)
+            UNION ALL
+            SELECT 'facebook', id::text, brand_id::text, status,
+                   COALESCE(publish_at::timestamp, CURRENT_TIMESTAMP), 'publish_at'
+              FROM shorts_facebook_queue
+             WHERE lower(status) IN ('pending','queued','uploading','processing','retry')
+               AND (lower(status) IN ('uploading','processing')
+                    OR publish_at::timestamp BETWEEN %s AND %s)
+            UNION ALL
+            SELECT 'tiktok', id::text, brand_id::text, status,
+                   COALESCE(publish_at::timestamp, CURRENT_TIMESTAMP), 'publish_at'
+              FROM shorts_tiktok_queue
+             WHERE lower(status) IN ('pending','queued','uploading','processing','retry')
+               AND (lower(status) IN ('uploading','processing')
+                    OR publish_at::timestamp BETWEEN %s AND %s)
+        )
+        SELECT platform,id,brand_id,status,due_at,due_kind
+          FROM candidates
+         ORDER BY due_at,platform,id
+    """
+    values = [now, cutoff, now, cutoff, now, cutoff, now, cutoff, now, cutoff]
+    schedules: list[ScheduledPublish] = []
+    with _connect() as conn:
+        with conn.cursor() as cur:
+            cur.execute(query, values)
+            for platform, schedule_id, brand_id, status, due_at, due_kind in cur.fetchall():
+                if due_at.tzinfo is None:
+                    due_at = due_at.replace(tzinfo=timezone.utc)
+                else:
+                    due_at = due_at.astimezone(timezone.utc)
+                schedules.append(ScheduledPublish(
+                    platform=str(platform), schedule_id=str(schedule_id),
+                    brand_id=str(brand_id or ""), status=str(status or ""),
+                    due_at=due_at, due_kind=str(due_kind),
+                ))
+    return schedules
 
 
 def _tail_lines(path: Path, *, max_lines: int = 2000, chunk_size: int = 8192) -> list[str]:
@@ -251,9 +317,22 @@ def main() -> int:
 
     try:
         jobs = _fetch_processing_jobs()
+        schedules = _fetch_imminent_schedules(now)
     except Exception as exc:
         print(f"ERROR — could not check processing jobs: {exc}", file=sys.stderr)
         return 2
+
+    if schedules:
+        print(f"WAIT — {len(schedules)} schedule(s) are uploading or due within 20 minutes:")
+        for item in schedules:
+            print(
+                f"  - {item.platform} | {item.schedule_id} | brand {item.brand_id or 'unknown'} | "
+                f"status {item.status} | {item.due_kind} {item.due_at.isoformat()}"
+            )
+        if jobs:
+            print(f"  Processing job(s) also active: {len(jobs)}")
+            _print_processing_jobs(jobs, now)
+        return 1
 
     if jobs:
         customer_jobs = [job for job in jobs if not _is_discovery_job(job)]
