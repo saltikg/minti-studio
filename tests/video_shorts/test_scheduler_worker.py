@@ -3,7 +3,6 @@ from threading import Event, Thread
 from flask import Flask
 
 from app.video_shorts import scheduler_worker
-from app.video_shorts.services.render_jobs import JOB_TYPE_PUBLISH_SHORT
 
 
 def test_tick_thread_keeps_running_while_customer_ingest_is_busy(monkeypatch):
@@ -41,13 +40,20 @@ def test_publish_loop_claims_only_publish_short(monkeypatch):
     calls = []
 
     monkeypatch.setattr(scheduler_worker, "_mem_available_mb", lambda: 4096)
+    monkeypatch.setattr(scheduler_worker, "_publish_job_waiting", lambda: True)
 
-    def process(_app, worker_id, *, job_type):
-        calls.append((worker_id, job_type))
+    def run(command, *, env, check):
+        calls.append((command, env["MINTI_SCHEDULER_WORKER_ID"], check))
         stop.set()
-        return True
+        return type("Result", (), {"returncode": 0})()
 
-    monkeypatch.setattr(scheduler_worker, "process_next_job", process)
+    monkeypatch.setattr(scheduler_worker.subprocess, "run", run)
     scheduler_worker._publish_loop(app, stop, "scheduler:test:1")
 
-    assert calls == [("scheduler:test:1", JOB_TYPE_PUBLISH_SHORT)]
+    assert calls == [
+        (
+            [scheduler_worker.sys.executable, "-m", "app.video_shorts.publish_worker_once"],
+            "scheduler:test:1",
+            False,
+        )
+    ]

@@ -5,20 +5,21 @@ import logging
 import os
 import signal
 import socket
+import subprocess
+import sys
 import threading
 import time
 from pathlib import Path
+from types import SimpleNamespace
 from typing import Optional
 
-from app import create_app
 from app.video_shorts.config import (
     DISCOVERY_IDLE_MEM_AVAILABLE_MB_MIN,
     JOB_POLL_INTERVAL_SECONDS,
 )
 from app.video_shorts.services import scheduler_reachability, youtube_scheduling
-from app.video_shorts.services.db import get_db
+from app.video_shorts.services.db import get_db, get_db_readonly
 from app.video_shorts.services.render_jobs import JOB_TYPE_PUBLISH_SHORT
-from app.video_shorts.worker import process_next_job
 
 
 logger = logging.getLogger(__name__)
@@ -50,6 +51,18 @@ def _worker_id() -> str:
     return f"scheduler:{socket.gethostname()}:{os.getpid()}"
 
 
+def _publish_job_waiting() -> bool:
+    conn = get_db_readonly()
+    try:
+        row = conn.execute(
+            "SELECT 1 FROM shorts_render_jobs WHERE status = 'queued' AND type = ? LIMIT 1",
+            [JOB_TYPE_PUBLISH_SHORT],
+        ).fetchone()
+        return bool(row)
+    finally:
+        conn.close()
+
+
 def _acquire_singleton_lock():
     conn = get_db()
     try:
@@ -79,15 +92,22 @@ def _publish_loop(app, stop_event: threading.Event, worker_id: str) -> None:
             stop_event.wait(JOB_POLL_INTERVAL_SECONDS)
             continue
         try:
-            processed = process_next_job(
-                app,
-                worker_id,
-                job_type=JOB_TYPE_PUBLISH_SHORT,
-            )
+            waiting = _publish_job_waiting()
         except Exception:
-            app.logger.exception("Scheduler publish loop failed")
-            processed = False
-        if not processed:
+            app.logger.exception("Scheduler publish queue check failed")
+            waiting = False
+        if not waiting:
+            stop_event.wait(JOB_POLL_INTERVAL_SECONDS)
+            continue
+        env = os.environ.copy()
+        env["MINTI_SCHEDULER_WORKER_ID"] = worker_id
+        result = subprocess.run(
+            [sys.executable, "-m", "app.video_shorts.publish_worker_once"],
+            env=env,
+            check=False,
+        )
+        if result.returncode != 0:
+            app.logger.error("Scheduler publish child exited code=%s", result.returncode)
             stop_event.wait(JOB_POLL_INTERVAL_SECONDS)
 
 
@@ -106,9 +126,8 @@ def run_tick_loop(
             singleton_conn.execute("SELECT 1").fetchone()
             singleton_conn.commit()
         try:
-            with app.app_context():
-                youtube_scheduling.scheduler_tick()
-                scheduler_reachability.process_monitors()
+            youtube_scheduling.scheduler_tick()
+            scheduler_reachability.process_monitors()
         except Exception:
             app.logger.exception("Dedicated scheduler tick failed")
         next_tick += interval_seconds
@@ -119,7 +138,8 @@ def run_tick_loop(
 
 
 def run_scheduler_service(*, stop_event: Optional[threading.Event] = None) -> None:
-    app = create_app()
+    logging.basicConfig(level=logging.INFO)
+    app = SimpleNamespace(logger=logger)
     stop_event = stop_event or threading.Event()
     lock_conn = _acquire_singleton_lock()
     worker_id = _worker_id()
@@ -141,8 +161,7 @@ def run_scheduler_service(*, stop_event: Optional[threading.Event] = None) -> No
     publish_thread = None
     try:
         try:
-            with app.app_context():
-                scheduler_reachability.run_startup_check(trigger="scheduler_start")
+            scheduler_reachability.run_startup_check(trigger="scheduler_start")
         except Exception:
             app.logger.exception("Scheduler reachability startup check failed")
         publish_thread = threading.Thread(
