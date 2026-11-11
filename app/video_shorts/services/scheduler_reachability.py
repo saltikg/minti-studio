@@ -273,10 +273,10 @@ def run_reachability_check(*, trigger, now=None):
     return results
 
 
-def run_startup_check(*, now=None):
+def run_startup_check(*, now=None, trigger="worker_start"):
     global _last_daily_date
     current = _utc(now)
-    results = run_reachability_check(trigger="worker_start", now=current)
+    results = run_reachability_check(trigger=trigger, now=current)
     local = current.replace(tzinfo=timezone.utc).astimezone(PT)
     if local.hour >= 5:
         _last_daily_date = local.date()

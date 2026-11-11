@@ -49,7 +49,6 @@ from app.video_shorts.config import (
 from app.video_shorts.routes import generation
 from app.video_shorts.routes import quick_short as quick_short_routes
 from app.video_shorts.services.db import get_db_readonly
-from app.video_shorts.services import scheduler_reachability
 from app.video_shorts.services.media_utils import (
     _cleanup_resolved_source_video,
     _probe_video_stream_info,
@@ -2111,6 +2110,7 @@ def _process_next_job(
     job_type: Optional[str] = None,
     customer_only: bool = False,
     discovery_only: bool = False,
+    exclude_job_types: Optional[Tuple[str, ...]] = None,
 ) -> bool:
     if _worker_should_wait_before_claim(app):
         return False
@@ -2119,6 +2119,7 @@ def _process_next_job(
         job_type=job_type,
         customer_only=customer_only,
         discovery_only=discovery_only,
+        exclude_job_types=exclude_job_types,
     )
     if not job:
         return False
@@ -2289,6 +2290,7 @@ def process_next_job(
     job_type: Optional[str] = None,
     customer_only: bool = False,
     discovery_only: bool = False,
+    exclude_job_types: Optional[Tuple[str, ...]] = None,
 ) -> bool:
     with clean_job_context(app):
         return _process_next_job(
@@ -2297,6 +2299,7 @@ def process_next_job(
             job_type=job_type,
             customer_only=customer_only,
             discovery_only=discovery_only,
+            exclude_job_types=exclude_job_types,
         )
 
 
@@ -2579,11 +2582,6 @@ def run_worker_loop() -> None:
     context_active = True
     try:
         app.logger.info("Minti worker starting worker_id=%s mode=%s", worker_id, mode)
-        if mode in {"all", "customer"}:
-            try:
-                scheduler_reachability.run_startup_check()
-            except Exception:
-                app.logger.exception("Scheduler reachability startup check failed")
         if mode in {"all", "discovery"}:
             try:
                 recovered = recover_processing_discovery_jobs_on_startup()
@@ -2621,20 +2619,10 @@ def run_worker_loop() -> None:
             processed_any = False
             if mode in {"all", "customer"}:
                 try:
-                    if scheduler_reachability.process_monitors():
-                        processed_any = True
-                except Exception:
-                    app.logger.exception("Scheduler reachability monitor failed")
-                try:
                     if process_autopilot_billing_deadlines():
                         processed_any = True
                 except Exception:
                     app.logger.exception("Autopilot billing deadline processing failed")
-                try:
-                    if youtube_scheduling.scheduler_tick():
-                        processed_any = True
-                except Exception:
-                    app.logger.exception("Deferred YouTube scheduler tick failed")
                 try:
                     if process_due_scheduled_clip_customer_actions():
                         processed_any = True
@@ -2705,6 +2693,7 @@ def run_worker_loop() -> None:
                     worker_id,
                     customer_only=(mode == "customer"),
                     discovery_only=(mode == "discovery"),
+                    exclude_job_types=(JOB_TYPE_PUBLISH_SHORT,),
                 ):
                     processed_any = True
                 else:

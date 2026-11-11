@@ -735,6 +735,37 @@ def test_discovery_render_waits_behind_customer_job(monkeypatch, tmp_path):
     assert second["id"] == discovery_job["job"]["id"]
 
 
+def test_regular_worker_excludes_publish_jobs_and_scheduler_can_claim_them(monkeypatch, tmp_path):
+    _configure_duckdb(monkeypatch, tmp_path, "publish_worker_ownership.duckdb")
+    user_id = str(uuid4())
+    _insert_user(user_id, "plan_10gb")
+    publish = render_jobs.enqueue_worker_job(
+        user_id=user_id,
+        job_type=render_jobs.JOB_TYPE_PUBLISH_SHORT,
+        payload={"youtube_schedule_id": "schedule-test"},
+        input_hash="publish-owner-test",
+    )
+    ingest = render_jobs.enqueue_worker_job(
+        user_id=user_id,
+        job_type=render_jobs.JOB_TYPE_INGEST_YOUTUBE,
+        payload={"video_id": "test-only"},
+        input_hash="ingest-owner-test",
+    )
+
+    regular_claim = render_jobs.claim_next_job(
+        "customer-worker",
+        exclude_job_types=(render_jobs.JOB_TYPE_PUBLISH_SHORT,),
+    )
+    render_jobs.mark_job_done(regular_claim["id"], {"status": "test"})
+    scheduler_claim = render_jobs.claim_next_job(
+        "scheduler-worker",
+        job_type=render_jobs.JOB_TYPE_PUBLISH_SHORT,
+    )
+
+    assert regular_claim["id"] == ingest["job"]["id"]
+    assert scheduler_claim["id"] == publish["job"]["id"]
+
+
 def test_discovery_render_not_claimed_while_customer_processing(monkeypatch, tmp_path):
     _configure_duckdb(monkeypatch, tmp_path, "discovery_waits_while_customer_processing.duckdb")
     discovery_user = str(uuid4())
@@ -879,8 +910,8 @@ def test_worker_loop_uses_stale_job_timeout_config(monkeypatch):
         monkeypatch.setattr(generation, name, lambda: False)
     processed_scopes = []
 
-    def fake_process(app, worker_id, *, customer_only, discovery_only):
-        processed_scopes.append((customer_only, discovery_only))
+    def fake_process(app, worker_id, *, customer_only, discovery_only, exclude_job_types):
+        processed_scopes.append((customer_only, discovery_only, exclude_job_types))
         return False
 
     monkeypatch.setattr(worker_module, "create_app", lambda: create_app())
@@ -902,7 +933,7 @@ def test_worker_loop_uses_stale_job_timeout_config(monkeypatch):
         assert str(exc) == "stop-loop"
 
     assert calls == [5400]
-    assert processed_scopes == [(True, False)]
+    assert processed_scopes == [(True, False, (render_jobs.JOB_TYPE_PUBLISH_SHORT,))]
 
 
 class _AutopilotTestResult:

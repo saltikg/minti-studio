@@ -1,0 +1,18 @@
+[Unit]
+Description=Minti Studio scheduler and publish worker
+After=network.target
+
+[Service]
+Type=simple
+User=ubuntu
+WorkingDirectory=/home/ubuntu/apps/minti_studio
+EnvironmentFile=/home/ubuntu/apps/minti_studio/.env
+Environment=SCHEDULER_TICK_SECONDS=3
+ExecStart=/home/ubuntu/apps/minti_studio/.venv/bin/python -m app.video_shorts.scheduler_worker
+Restart=always
+RestartSec=5
+MemoryMax=512M
+TimeoutStopSec=10min
+
+[Install]
+WantedBy=multi-user.target

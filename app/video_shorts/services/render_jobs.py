@@ -9,7 +9,7 @@ import socket
 import threading
 from contextlib import contextmanager
 from datetime import datetime, timedelta
-from typing import Any, Dict, Optional
+from typing import Any, Dict, Optional, Sequence
 from uuid import uuid4
 
 from app.video_shorts.config import (
@@ -1173,6 +1173,7 @@ def claim_next_job(
     job_type: Optional[str] = None,
     customer_only: bool = False,
     discovery_only: bool = False,
+    exclude_job_types: Optional[Sequence[str]] = None,
 ) -> Optional[Dict[str, Any]]:
     if customer_only and discovery_only:
         raise ValueError("claim_next_job cannot be both customer_only and discovery_only")
@@ -1185,6 +1186,11 @@ def claim_next_job(
         if job_type:
             job_type_clause = "AND candidate.type = ?"
             params.append(job_type)
+        excluded_types = tuple(dict.fromkeys(str(item) for item in (exclude_job_types or ()) if item))
+        excluded_type_clause = ""
+        if excluded_types:
+            excluded_type_clause = f"AND candidate.type NOT IN ({', '.join('?' for _ in excluded_types)})"
+            params.extend(excluded_types)
         if backend_name == "postgres":
             conn.execute("SELECT pg_advisory_xact_lock(746192441)")
             discovery_clause = _discovery_job_clause(conn, "candidate")
@@ -1204,6 +1210,7 @@ def claim_next_job(
                 FROM {JOBS_TABLE} candidate
                 WHERE candidate.status = ?
                   {job_type_clause}
+                  {excluded_type_clause}
                   {origin_clause}
                   AND NOT (
                     {discovery_clause}
@@ -1294,6 +1301,7 @@ def claim_next_job(
                 FROM {JOBS_TABLE} candidate
                 WHERE candidate.status = ?
                   {job_type_clause}
+                  {excluded_type_clause}
                   {origin_clause}
                   AND NOT (
                     {discovery_clause}
