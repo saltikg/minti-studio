@@ -139,6 +139,54 @@ def _print_pass(variant: str, label: str) -> None:
     print(f"PASS [{variant}] {label}")
 
 
+def _ensure_smoke_active_clip(page: Page) -> str:
+    plan_index = page.evaluate(
+        """async () => {
+          const panel = document.getElementById('clip-management-panel');
+          const repository = document.getElementById('clip-card-repository') || panel;
+          const rail = document.getElementById('clip-rail-list');
+          if (!panel || !repository) throw new Error('Smoke page has no clip panel');
+          let card = document.querySelector('.clip-card.is-active[data-plan-index]')
+            || document.querySelector('.clip-card[data-plan-index]');
+          if (!card) {
+            card = document.createElement('div');
+            card.className = 'clip-card';
+            card.dataset.planIndex = 'smoke-preview';
+            card.dataset.status = 'created';
+            card.innerHTML = `
+              <input type="hidden" name="plan_index" value="smoke-preview">
+              <div class="clip-card-media"><div class="generate-v2-media-column">
+                <video src="/smoke-preview.mp4" muted></video>
+              </div></div>`;
+            repository.appendChild(card);
+            if (rail && !rail.querySelector("[data-plan-index='smoke-preview']")) {
+              const item = document.createElement('div');
+              item.className = 'clip-rail-item';
+              item.dataset.planIndex = 'smoke-preview';
+              rail.appendChild(item);
+            }
+          }
+          const plan = String(card.dataset.planIndex || '').trim();
+          await window.setGenerateV2ActiveTab('shorts', {
+            persist: false,
+            selectedPlanIndex: plan,
+          });
+          return plan;
+        }"""
+    )
+    page.wait_for_function(
+        """plan => {
+          const panel = document.getElementById('clip-management-panel');
+          const selected = Array.from(document.querySelectorAll('.clip-card.is-active[data-plan-index]'))
+            .filter(card => String(card.dataset.planIndex || '').trim() === plan);
+          return panel?.dataset.activePlanIndex === plan && selected.length === 1;
+        }""",
+        arg=plan_index,
+        timeout=10_000,
+    )
+    return str(plan_index)
+
+
 def _assert_make_clip_add_keeps_exact_word_indexes(page: Page, variant: str) -> None:
     page.evaluate("() => window.setGenerateV2ActiveTab('transcript', {persist: false})")
     page.wait_for_selector("[data-generate-v2-text-document] .generate-v2-text-word")
@@ -500,13 +548,43 @@ def _assert_auto_layout_caption_drag_persists(
     page: Page, variant: str, coordinate_height: int
 ) -> None:
     export_label = "1080" if coordinate_height == 1920 else "720"
+    page.wait_for_function(
+        """() => {
+          const panel = document.getElementById('clip-management-panel');
+          const active = String(panel?.dataset.activePlanIndex || '').trim();
+          if (!active) return false;
+          const cards = Array.from(document.querySelectorAll('.clip-card[data-plan-index]'));
+          const selected = cards.filter(card => String(card.dataset.planIndex || '').trim() === active);
+          return selected.length === 1 && selected[0].classList.contains('is-active');
+        }""",
+        timeout=10_000,
+    )
+    continuity = page.evaluate(
+        """() => ({
+          expected: window.__previewSmokeExpectedPlanIndex || '',
+          active: document.getElementById('clip-management-panel')?.dataset.activePlanIndex || '',
+          gaps: window.__previewSmokeSelectionGaps || [],
+        })"""
+    )
+    assert continuity["active"] == continuity["expected"], continuity
+    assert not continuity["gaps"], continuity
     prepared = page.evaluate(
         """coordinateHeight => {
           const panel = document.getElementById('clip-management-panel');
           const active = panel?.dataset.activePlanIndex;
-          const card = (active && document.querySelector(`.clip-card[data-plan-index="${CSS.escape(active)}"]`))
-            || document.querySelector('.clip-card[data-plan-index]');
-          if (!card) return {error: 'no active clip card'};
+          const card = active
+            ? document.querySelector(`.clip-card.is-active[data-plan-index="${CSS.escape(active)}"]`)
+            : null;
+          if (!card) return {
+            error: 'no active clip card',
+            panelPresent: !!panel,
+            activePlanIndex: active || '',
+            mountCards: document.querySelectorAll('#generate-v2-selected-clip-mount .clip-card').length,
+            repositoryCards: document.querySelectorAll('#clip-card-repository .clip-card').length,
+            allCards: document.querySelectorAll('.clip-card[data-plan-index]').length,
+            railItems: document.querySelectorAll('#clip-rail-list .clip-rail-item').length,
+            autoSuggestActive: document.querySelector("#clip-workbench-shell[data-generate-v2='1']")?.dataset.autoSuggestActive || '',
+          };
           card.dataset.autoLayoutSegments = JSON.stringify([{
             start: 0, end: 9999, mode: 'fill', caption_top: coordinateHeight * 0.55,
             caption_block_height: coordinateHeight * 0.08, subscribe_top: null,
@@ -645,8 +723,37 @@ def _run_variant(browser: Browser, *, base_url: str, cookie_name: str,
         )
         page.goto(f"{base_url}/video_shorts/generate/{selected_video}", wait_until="domcontentloaded")
         page.wait_for_selector("#clip-workbench-shell[data-generate-v2='1']", timeout=15_000)
+        smoke_plan_index = _ensure_smoke_active_clip(page)
         page.evaluate("() => window.setGenerateV2ActiveTab('edit', {persist: false})")
         page.wait_for_function("() => window.__generateV2EditModeActive === true")
+        page.evaluate(
+            """() => {
+              const panel = document.getElementById('clip-management-panel');
+              window.__previewSmokeExpectedPlanIndex = String(panel?.dataset.activePlanIndex || '').trim();
+              window.__previewSmokeSelectionGaps = [];
+              let pending = false;
+              const verify = () => {
+                pending = false;
+                const expected = window.__previewSmokeExpectedPlanIndex;
+                if (!expected) return;
+                const active = String(
+                  document.getElementById('clip-management-panel')?.dataset.activePlanIndex || ''
+                ).trim();
+                const matches = Array.from(document.querySelectorAll('.clip-card.is-active[data-plan-index]'))
+                  .filter(card => String(card.dataset.planIndex || '').trim() === expected);
+                if (active !== expected || matches.length !== 1) {
+                  window.__previewSmokeSelectionGaps.push({active, matches: matches.length});
+                }
+              };
+              new MutationObserver(() => {
+                if (pending) return;
+                pending = true;
+                window.requestAnimationFrame(verify);
+              }).observe(document.body, {childList: true, subtree: true, attributes: true,
+                attributeFilter: ['class', 'data-active-plan-index']});
+            }"""
+        )
+        assert page.evaluate("() => window.__previewSmokeExpectedPlanIndex") == smoke_plan_index
         page.wait_for_function(
             """() => ['shorts-preview-title-band', 'orig-preview-title']
               .some(id => document.getElementById(id)?.dataset.captionDomOwner === 'measured-svg')""",

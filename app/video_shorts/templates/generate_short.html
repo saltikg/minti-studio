@@ -16158,6 +16158,7 @@ const refreshClipList = async (preferredPlanIndex = null, preferredViewMode = nu
     : "";
   const selectedEditorDirty = isGenerateV2 && isGenerateV2ClipEditDirty();
   const forceReplaceSelected = options.forceReplaceSelected === true;
+  const allowSelectedRemoval = options.allowSelectedRemoval === true;
   if (!isGenerateV2) {
     pauseGenerateV2WorkbenchVideos({ pauseSourcePlayer: true });
     restoreGenerateV2ClipEditForm();
@@ -16189,17 +16190,26 @@ const refreshClipList = async (preferredPlanIndex = null, preferredViewMode = nu
     const parser = new DOMParser();
     const doc = parser.parseFromString(html, "text/html");
     const newClipPanel = doc.getElementById("clip-management-panel");
+    const currentSelectedCard = isGenerateV2 && activePlanIndex
+      ? getClipCardByPlanIndex(activePlanIndex)
+      : null;
+    const newSelectedCard = isGenerateV2 && activePlanIndex && newClipPanel
+      ? Array.from(newClipPanel.querySelectorAll(".clip-card")).find(
+        (card) => clipCardPlanIndex(card) === String(activePlanIndex),
+      ) || null
+      : null;
     const selectedSignatureAfter = isGenerateV2
       ? getGenerateV2ClipRefreshSignature(doc, activePlanIndex)
       : "";
     const preserveMusicPreview = isGenerateV2 && window.__musicPreviewPlaybackIntent?.(activePlanIndex);
     const preserveSelectedPanel = Boolean(
       isGenerateV2 && activePlanIndex && !forceReplaceSelected &&
-      (preserveMusicPreview || (
-        selectedSignatureBefore &&
-        (selectedEditorDirty || selectedSignatureBefore === selectedSignatureAfter) &&
-        !window.__generateV2EditModeActive
-      ))
+      (
+        window.__generateV2EditModeActive ||
+        preserveMusicPreview ||
+        selectedEditorDirty ||
+        (selectedSignatureBefore && selectedSignatureBefore === selectedSignatureAfter)
+      )
     );
     window.__generateV2PreserveSelectedPlanIndex = preserveSelectedPanel ? String(activePlanIndex) : "";
     if (getGenerateV2Root()) {
@@ -16229,8 +16239,44 @@ const refreshClipList = async (preferredPlanIndex = null, preferredViewMode = nu
         currentAiButton.disabled = newAiButton.disabled;
       }
     }
+    if (
+      isGenerateV2 && activePlanIndex && currentSelectedCard &&
+      !newSelectedCard && !allowSelectedRemoval
+    ) {
+      currentSelectedCard.classList.add("is-active");
+      clipPanel.dataset.activePlanIndex = String(activePlanIndex);
+      window.__generateV2PreserveSelectedPlanIndex = "";
+      return true;
+    }
     if (newClipPanel) {
-      if (!preserveSelectedPanel) {
+      let selectedCardHandled = false;
+      if (isGenerateV2 && activePlanIndex && newSelectedCard) {
+        const selectedMount = document.getElementById("generate-v2-selected-clip-mount");
+        newClipPanel.dataset.activePlanIndex = String(activePlanIndex);
+        newClipPanel.querySelectorAll("#clip-rail-list .clip-rail-item").forEach((item) => {
+          item.classList.toggle(
+            "is-active",
+            String(item.dataset.planIndex || "").trim() === String(activePlanIndex),
+          );
+        });
+        if (preserveSelectedPanel && currentSelectedCard) {
+          currentSelectedCard.classList.add("is-active");
+          if (selectedMount && currentSelectedCard.parentElement !== selectedMount) {
+            selectedMount.appendChild(currentSelectedCard);
+          }
+          newSelectedCard.remove();
+        } else if (selectedMount) {
+          newSelectedCard.classList.add("is-active");
+          if (currentSelectedCard?.parentElement === selectedMount) {
+            currentSelectedCard.replaceWith(newSelectedCard);
+          } else {
+            selectedMount.appendChild(newSelectedCard);
+          }
+        }
+        window.__generateV2PreserveSelectedPlanIndex = String(activePlanIndex);
+        selectedCardHandled = true;
+      }
+      if (!preserveSelectedPanel && !selectedCardHandled) {
         if (!window.__musicPreviewPlaybackIntent?.(activePlanIndex)) {
           pauseGenerateV2WorkbenchVideos({ pauseSourcePlayer: true });
         }
@@ -16238,7 +16284,7 @@ const refreshClipList = async (preferredPlanIndex = null, preferredViewMode = nu
         restoreGenerateV2MountedClip();
       }
       clipPanel.replaceWith(newClipPanel);
-      if (window.__generateV2EditModeActive) {
+      if (isGenerateV2 && activePlanIndex) {
         newClipPanel.dataset.activePlanIndex = activePlanIndex;
       }
       loadGenerateUsageSummary();
@@ -18506,7 +18552,7 @@ const initClipDeleteButtons = () => {
           }
           throw new Error(payload.message || "Clip could not be deleted.");
         }
-        const refreshed = await refreshClipList("", "list");
+        const refreshed = await refreshClipList("", "list", { allowSelectedRemoval: true });
         if (!refreshed) {
           const row = button.closest(".clip-rail-row");
           row?.remove();
