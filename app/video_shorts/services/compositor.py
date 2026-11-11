@@ -823,7 +823,10 @@ def _snap_keep_range_boundaries_to_audio(
             if index > 0:
                 lower = max(lower, float(adjusted[index - 1]["end"]) + 0.001)
             upper = min(float(ranges[index]["end"]) - 0.001, search_end)
-        if verified_pause is not None:
+        if synthetic_pause is not None:
+            # The sustained pause already supplied the boundary candidate.
+            pass
+        elif verified_pause is not None:
             candidate, pause_fade = verified_pause
             if index < len(ranges) - 1:
                 candidate = min(candidate, float(ranges[index + 1]["start"]) - 0.001)
