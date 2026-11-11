@@ -635,6 +635,8 @@ def _blocking_reason(
     conn, candidate, payload, now, *, include_live_token=False,
     repair_stale_render_pending=False,
     use_last_finished_during_render=False,
+    simulate_due=False,
+    emit_alerts=True,
 ):
     lease = _active_mutation_lease(
         conn,
@@ -657,7 +659,7 @@ def _blocking_reason(
     active_render = _active_render_job(conn, candidate, payload)
     if active_render and not (use_last_finished_during_render and _file_exists(payload)):
         return "active_render"
-    if active_render or rendering_fallback:
+    if emit_alerts and (active_render or rendering_fallback):
         _alert(
             candidate["id"],
             "rendering_at_upload_due",
@@ -682,18 +684,19 @@ def _blocking_reason(
                 f"saved design changes not in that render: {fields}.",
             )
     if payload.get("render_pending"):
-        if not repair_stale_render_pending:
+        if not repair_stale_render_pending and not simulate_due:
             return "render_pending (fresh render verified; scheduler can clear at upload_due_at)"
-        payload["render_pending"] = False
-        conn.execute(
-            f"UPDATE {TABLE} SET payload_json=?,updated_at=CURRENT_TIMESTAMP WHERE id=? AND status='pending'",
-            [json.dumps(payload), candidate["id"]],
-        )
-        _history_once(conn, candidate["id"], "ready", reason="stale_render_pending_cleared")
-        logger.warning(
-            "Cleared stale YouTube render_pending schedule_id=%s brand_id=%s",
-            candidate["id"], candidate["brand_id"],
-        )
+        if repair_stale_render_pending:
+            payload["render_pending"] = False
+            conn.execute(
+                f"UPDATE {TABLE} SET payload_json=?,updated_at=CURRENT_TIMESTAMP WHERE id=? AND status='pending'",
+                [json.dumps(payload), candidate["id"]],
+            )
+            _history_once(conn, candidate["id"], "ready", reason="stale_render_pending_cleared")
+            logger.warning(
+                "Cleared stale YouTube render_pending schedule_id=%s brand_id=%s",
+                candidate["id"], candidate["brand_id"],
+            )
     if include_live_token:
         from app.video_shorts.services.youtube_oauth import get_connected_channel_info
         info, error = get_connected_channel_info(candidate["user_id"], candidate["brand_id"])
@@ -704,6 +707,59 @@ def _blocking_reason(
         if str(info.get("id") or "") != str(candidate.get("expected_youtube_channel_id") or ""):
             return "channel_mismatch"
     return None
+
+
+def evaluate_enqueue_reachability(conn, candidate, *, at_time=None):
+    """Simulate the scheduler's due-time path without changing or alerting anything."""
+    due = utc(at_time or candidate.get("upload_due_at"))
+    if str(candidate.get("status") or "") != "pending":
+        return f"status:{candidate.get('status')}"
+    if candidate.get("youtube_video_id"):
+        return "already_uploaded"
+    if not candidate.get("upload_due_at"):
+        return "missing_upload_due_at"
+    if utc(candidate["upload_due_at"]) > due:
+        return "scheduler query filters upload_due_at"
+    if str(candidate.get("id") or "") not in _due_candidate_ids(
+        conn, due, schedule_id=candidate.get("id"), limit=1,
+    ):
+        return "scheduler query filtered schedule"
+    try:
+        payload = json.loads(candidate.get("payload_json") or "{}")
+    except (TypeError, ValueError):
+        return "invalid_payload_json"
+    return _blocking_reason(
+        conn,
+        candidate,
+        payload,
+        due,
+        repair_stale_render_pending=False,
+        use_last_finished_during_render=True,
+        simulate_due=True,
+        emit_alerts=False,
+    )
+
+
+def _due_candidate_ids(conn, now, *, limit=100, schedule_id=None, lock=False):
+    """The one eligibility query used by both the scheduler and its audit."""
+    id_filter = " AND schedule.id=?" if schedule_id else ""
+    lock_sql = " FOR UPDATE SKIP LOCKED" if lock and getattr(conn, "backend_name", "") == "postgres" else ""
+    params = [utc(now)]
+    if schedule_id:
+        params.append(str(schedule_id))
+    params.append(int(limit))
+    rows = conn.execute(
+        f"""SELECT schedule.id
+            FROM {TABLE} schedule
+            WHERE schedule.status='pending'
+              AND schedule.upload_due_at<=?
+              AND schedule.youtube_video_id IS NULL
+              {id_filter}
+            ORDER BY schedule.upload_due_at
+            LIMIT ?{lock_sql}""",
+        params,
+    ).fetchall()
+    return [str(row[0]) for row in rows]
 
 
 def _enqueue(conn, schedule_id, now):
@@ -851,19 +907,7 @@ def scheduler_tick(*, now=None):
     scheduler_health_check(now=now)
     with connection() as conn:
         _run_preflights(conn, now)
-        lock = " FOR UPDATE SKIP LOCKED" if getattr(conn, "backend_name", "") == "postgres" else ""
-        rows = conn.execute(
-            f"""
-            SELECT schedule.id
-            FROM {TABLE} schedule
-            WHERE schedule.status='pending'
-              AND schedule.upload_due_at<=?
-              AND schedule.youtube_video_id IS NULL
-            ORDER BY schedule.upload_due_at
-            LIMIT 100{lock}
-            """,
-            [now],
-        ).fetchall()
+        rows = [(schedule_id,) for schedule_id in _due_candidate_ids(conn, now, lock=True)]
         claimed = False
         for row in rows:
             claimed = _enqueue(conn, row[0], now) or claimed

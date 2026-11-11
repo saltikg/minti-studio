@@ -49,6 +49,7 @@ from app.video_shorts.config import (
 from app.video_shorts.routes import generation
 from app.video_shorts.routes import quick_short as quick_short_routes
 from app.video_shorts.services.db import get_db_readonly
+from app.video_shorts.services import scheduler_reachability
 from app.video_shorts.services.media_utils import (
     _cleanup_resolved_source_video,
     _probe_video_stream_info,
@@ -2578,6 +2579,11 @@ def run_worker_loop() -> None:
     context_active = True
     try:
         app.logger.info("Minti worker starting worker_id=%s mode=%s", worker_id, mode)
+        if mode in {"all", "customer"}:
+            try:
+                scheduler_reachability.run_startup_check()
+            except Exception:
+                app.logger.exception("Scheduler reachability startup check failed")
         if mode in {"all", "discovery"}:
             try:
                 recovered = recover_processing_discovery_jobs_on_startup()
@@ -2614,6 +2620,11 @@ def run_worker_loop() -> None:
             requeue_timed_out_jobs(timeout_seconds=STALE_JOB_TIMEOUT_SECONDS)
             processed_any = False
             if mode in {"all", "customer"}:
+                try:
+                    if scheduler_reachability.process_monitors():
+                        processed_any = True
+                except Exception:
+                    app.logger.exception("Scheduler reachability monitor failed")
                 try:
                     if process_autopilot_billing_deadlines():
                         processed_any = True
