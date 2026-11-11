@@ -11740,6 +11740,17 @@ def _scheduled_clip_render_freshness(
         stored_hash = str(row[0] or "").strip() if row else ""
         generated_snapshot = row[1] if row else None
         rendered_payload = None
+        generated_entry = _dict_from_json(generated_snapshot)
+        render_job_id = str(generated_entry.get("render_job_id") or "").strip()
+        if render_job_id:
+            exact_job = conn.execute(
+                """SELECT payload_json FROM shorts_render_jobs
+                   WHERE id=? AND user_id=? AND type='render_short' AND status='done'
+                   LIMIT 1""",
+                [render_job_id, str(owner_user_id)],
+            ).fetchone()
+            if exact_job:
+                rendered_payload = _dict_from_json(exact_job[0])
         rendered_job_rows = conn.execute(
             """SELECT payload_json
                FROM shorts_render_jobs
@@ -11748,7 +11759,7 @@ def _scheduled_clip_render_freshness(
                LIMIT 200""",
             [str(owner_user_id)],
         ).fetchall()
-        for (raw_payload,) in rendered_job_rows:
+        for (raw_payload,) in rendered_job_rows if not rendered_payload else []:
             job_payload = raw_payload if isinstance(raw_payload, dict) else json.loads(raw_payload or "{}")
             job_plan_index = job_payload.get("plan_index") or (job_payload.get("options") or {}).get("plan_index")
             if (
@@ -11776,7 +11787,12 @@ def _scheduled_clip_render_freshness(
         conn.close()
     if not stored_hash:
         return {"ready": False, "reason": "generated render hash is missing; needs regenerate"}
-    if not rendered_payload or not isinstance(rendered_payload.get("options"), dict):
+    snapshot_options, _ = _render_snapshot_from_generated_record(
+        {"raw_plan_entry_json": generated_snapshot}
+    )
+    if not snapshot_options and (
+        not rendered_payload or not isinstance(rendered_payload.get("options"), dict)
+    ):
         return {"ready": False, "reason": "render settings snapshot is missing; needs regenerate"}
     current_options = _render_settings_options_for_plan_entry(
         video_pk=clean_video_pk,
@@ -11787,10 +11803,19 @@ def _scheduled_clip_render_freshness(
         fallback_title=video.get("title") or "",
     )
     current_hash = _render_settings_hash_from_options(current_options)
+    generated_record = {"raw_plan_entry_json": generated_snapshot}
+    rendered_options, _ = _render_snapshot_from_generated_record(generated_record)
+    if not rendered_options and rendered_payload:
+        generated_record = {
+            "raw_plan_entry_json": {
+                **_dict_from_json(generated_snapshot),
+                "render_settings_snapshot": rendered_payload.get("options") or {},
+            }
+        }
     differences = _clip_unapplied_changes(
         plan_entry=entry,
         current_options=current_options,
-        generated_record={"raw_plan_entry_json": generated_snapshot},
+        generated_record=generated_record,
     )
     if differences["content"]:
         fields = ", ".join(sorted(differences["content"]))
@@ -11803,7 +11828,7 @@ def _scheduled_clip_render_freshness(
             "design_differences": differences["design"],
             "source_video_id": identity.youtube_id,
             "plan_entry": entry,
-            "generated_record": {"raw_plan_entry_json": generated_snapshot},
+            "generated_record": generated_record,
         }
     return {
         "ready": True,
@@ -11814,7 +11839,7 @@ def _scheduled_clip_render_freshness(
         "design_differences": differences["design"],
         "source_video_id": identity.youtube_id,
         "plan_entry": entry,
-        "generated_record": {"raw_plan_entry_json": generated_snapshot},
+        "generated_record": generated_record,
     }
 
 
