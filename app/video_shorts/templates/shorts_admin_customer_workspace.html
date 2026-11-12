@@ -55,6 +55,7 @@
         <div class="customer-workspace-target-actions">
           {% if customer.youtube_url %}<a class="btn btn-sm btn-outline-light" href="{{ customer.youtube_url }}" target="_blank" rel="noopener noreferrer">Open YouTube</a>{% endif %}
           <button class="btn btn-sm btn-outline-light" type="button" data-bs-toggle="modal" data-bs-target="#descriptionPromptModal">Description prompt</button>
+          <button class="btn btn-sm btn-outline-light" type="button" data-bs-toggle="modal" data-bs-target="#languageSettingsModal">Languages</button>
           <a class="btn btn-sm btn-outline-light" href="{{ url_for('video_shorts_bp.video_stats_page', admin_operation_brand=customer.brand_id, admin_operation_kind='customer') }}" target="_blank" rel="noopener noreferrer">Dashboard</a>
           <a class="btn btn-sm btn-outline-light" href="{{ url_for('video_shorts_bp.admin_scheduled_shorts', brand=customer.brand_id) }}" target="_blank" rel="noopener noreferrer">Scheduled</a>
         </div>
@@ -99,6 +100,38 @@
   </div>
 </div>
 
+<div class="modal fade" id="languageSettingsModal" tabindex="-1" aria-labelledby="languageSettingsModalLabel" aria-hidden="true">
+  <div class="modal-dialog vs-app">
+    <div class="modal-content vs-card">
+      <div class="modal-header">
+        <h5 class="modal-title" id="languageSettingsModalLabel">Languages — {{ customer.brand_name }}</h5>
+        <button type="button" class="btn-close btn-close-white" data-bs-dismiss="modal" aria-label="Close"></button>
+      </div>
+      <form id="brandLanguageSettingsForm" data-endpoint="{{ language_settings_endpoint }}">
+        <div class="modal-body">
+          <label class="form-label" for="brandSpokenLanguage">Spoken language</label>
+          <select class="form-select" id="brandSpokenLanguage" name="spoken_language">
+            <option value="auto" {% if language_settings.spoken_language == 'auto' %}selected{% endif %}>Auto-detect</option>
+            <option value="en" {% if language_settings.spoken_language == 'en' %}selected{% endif %}>English</option>
+            <option value="tr" {% if language_settings.spoken_language == 'tr' %}selected{% endif %}>Turkish</option>
+            <option value="hi" {% if language_settings.spoken_language == 'hi' %}selected{% endif %}>Hindi</option>
+          </select>
+          <label class="form-label mt-3" for="brandCaptionLanguage">Caption language</label>
+          <select class="form-select" id="brandCaptionLanguage" name="caption_language">
+            <option value="same" {% if language_settings.caption_language == 'same' %}selected{% endif %}>Same as spoken</option>
+            <option value="en" {% if language_settings.caption_language == 'en' %}selected{% endif %}>English</option>
+          </select>
+          <div class="small mt-3" id="brandLanguageSettingsStatus" aria-live="polite"></div>
+        </div>
+        <div class="modal-footer">
+          <button type="button" class="btn btn-outline-secondary" data-bs-dismiss="modal">Cancel</button>
+          <button type="submit" class="btn btn-primary">Save</button>
+        </div>
+      </form>
+    </div>
+  </div>
+</div>
+
 <div class="modal fade" id="customerNotifyModal" tabindex="-1" aria-labelledby="customerNotifyModalLabel" aria-hidden="true">
   <div class="modal-dialog modal-xl modal-dialog-scrollable vs-app">
     <div class="modal-content vs-card">
@@ -135,6 +168,36 @@
 {{ super() }}
 <script>
 (() => {
+  const languageForm = document.getElementById('brandLanguageSettingsForm');
+  if (languageForm) {
+    languageForm.addEventListener('submit', async (event) => {
+      event.preventDefault();
+      const status = document.getElementById('brandLanguageSettingsStatus');
+      const submit = languageForm.querySelector('button[type="submit"]');
+      submit.disabled = true;
+      status.className = 'small mt-3 text-muted';
+      status.textContent = 'Saving…';
+      try {
+        const response = await fetch(languageForm.dataset.endpoint, {
+          method: 'POST',
+          headers: {'Content-Type': 'application/json'},
+          body: JSON.stringify({
+            spoken_language: document.getElementById('brandSpokenLanguage').value,
+            caption_language: document.getElementById('brandCaptionLanguage').value,
+          }),
+        });
+        const payload = await response.json();
+        if (!response.ok || !payload.ok) throw new Error(payload.message || 'Save failed.');
+        status.className = 'small mt-3 text-success';
+        status.textContent = 'Language settings saved.';
+      } catch (error) {
+        status.className = 'small mt-3 text-danger';
+        status.textContent = error.message || 'Language settings could not be saved.';
+      } finally {
+        submit.disabled = false;
+      }
+    });
+  }
   const modalElement = document.getElementById('customerNotifyModal');
   const recipient = document.getElementById('customerNotifyRecipient');
   const note = document.getElementById('customerNotifyNote');

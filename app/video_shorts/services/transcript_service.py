@@ -39,7 +39,7 @@ from app.video_shorts.services.arabic_text import (
     find_arabic_runs,
     replace_arabic_runs,
 )
-from app.video_shorts.services.db import _ensure_transcript_schema, get_db
+from app.video_shorts.services.db import _ensure_transcript_schema, get_db, get_db_readonly, table_columns
 from app.video_shorts.services.media_utils import _extract_audio_segment, _resolve_ffmpeg, run_media_subprocess
 from app.video_shorts.services.transcript_lang_tagging import infer_lang_from_text, tag_segments_with_language
 from app.video_shorts.services.text_case import uppercase_text
@@ -68,17 +68,47 @@ _WORD_HIGHLIGHT_OVERLAY_FPS = 30
 _ARABIC_TRANSLITERATION_VERSION = 1
 _PILLOW_RAQM_AVAILABLE = bool(features.check("raqm"))
 
+_WHISPER_LANGUAGE_CODES = {
+    "afrikaans": "af", "albanian": "sq", "amharic": "am", "arabic": "ar",
+    "armenian": "hy", "assamese": "as", "azerbaijani": "az", "bashkir": "ba",
+    "basque": "eu", "belarusian": "be", "bengali": "bn", "bosnian": "bs",
+    "breton": "br", "bulgarian": "bg", "burmese": "my", "catalan": "ca",
+    "chinese": "zh", "croatian": "hr", "czech": "cs", "danish": "da",
+    "dutch": "nl", "english": "en", "estonian": "et", "faroese": "fo",
+    "finnish": "fi", "french": "fr", "galician": "gl", "georgian": "ka",
+    "german": "de", "greek": "el", "gujarati": "gu", "haitian creole": "ht",
+    "hausa": "ha", "hawaiian": "haw", "hebrew": "he", "hindi": "hi",
+    "hungarian": "hu", "icelandic": "is", "indonesian": "id", "italian": "it",
+    "japanese": "ja", "javanese": "jw", "kannada": "kn", "kazakh": "kk",
+    "khmer": "km", "korean": "ko", "lao": "lo", "latin": "la",
+    "latvian": "lv", "lingala": "ln", "lithuanian": "lt", "luxembourgish": "lb",
+    "macedonian": "mk", "malagasy": "mg", "malay": "ms", "malayalam": "ml",
+    "maltese": "mt", "maori": "mi", "marathi": "mr", "mongolian": "mn",
+    "nepali": "ne", "norwegian": "no", "nynorsk": "nn", "occitan": "oc",
+    "pashto": "ps", "persian": "fa", "polish": "pl", "portuguese": "pt",
+    "punjabi": "pa", "romanian": "ro", "russian": "ru", "sanskrit": "sa",
+    "serbian": "sr", "shona": "sn", "sindhi": "sd", "sinhala": "si",
+    "slovak": "sk", "slovenian": "sl", "somali": "so", "spanish": "es",
+    "sundanese": "su", "swahili": "sw", "swedish": "sv", "tagalog": "tl",
+    "tajik": "tg", "tamil": "ta", "tatar": "tt", "telugu": "te", "thai": "th",
+    "tibetan": "bo", "turkish": "tr", "turkmen": "tk", "ukrainian": "uk",
+    "urdu": "ur", "uzbek": "uz", "vietnamese": "vi", "welsh": "cy",
+    "yiddish": "yi", "yoruba": "yo",
+}
+
 
 def _normalize_whisper_language(raw: Any) -> str:
     val = str(raw or "").strip().lower()
     if not val:
         return ""
-    if val.startswith("en") or val in {"english"}:
-        return "en"
-    if val.startswith("tr") or val in {"turkish", "turkce"}:
+    val = val.replace("_", "-")
+    if val in {"turkce", "türkçe"}:
         return "tr"
-    if val.startswith("ar") or val in {"arabic"}:
-        return "ar"
+    if val in _WHISPER_LANGUAGE_CODES:
+        return _WHISPER_LANGUAGE_CODES[val]
+    primary = val.split("-", 1)[0]
+    if 2 <= len(primary) <= 3 and primary.isalpha():
+        return primary
     return val
 
 
@@ -319,7 +349,8 @@ def transliterate_turkish_arabic_transcript(
 def _detect_primary_audio_language(video_path: Path) -> str:
     """
     Fast language gate before heavy transcript logic.
-    Returns 'en', 'tr', or '' (unknown/auto).
+    Return Whisper's ISO language code only when sampled windows agree.
+    An empty result deliberately means full-file auto detection.
     """
     if not _openai_client or not video_path.exists():
         return ""
@@ -348,14 +379,8 @@ def _detect_primary_audio_language(video_path: Path) -> str:
                         response_format="verbose_json",
                     )
                 lang = _extract_transcription_language(resp)
-                probe_text, _ = _whisper_response_to_segments(resp)
-                if lang in {"en", "tr"}:
+                if lang:
                     return lang
-                if _looks_english_text(probe_text):
-                    return "en"
-                inferred = infer_lang_from_text(probe_text or "")
-                if inferred == "tr":
-                    return "tr"
             except Exception as exc:
                 try:
                     current_app.logger.warning(
@@ -447,17 +472,12 @@ def _detect_primary_audio_language(video_path: Path) -> str:
         for fraction in (0.20, 0.50, 0.80):
             start_seconds = min(max(duration_seconds * fraction, 0.0), max_start)
             lang = _probe_window_language(start_seconds, window_duration)
-            if lang in {"en", "tr"}:
+            if lang:
                 votes.append(lang)
-
-        en_votes = sum(1 for lang in votes if lang == "en")
-        tr_votes = sum(1 for lang in votes if lang == "tr")
-        if en_votes > tr_votes:
-            _log_probe_result("en", "multi_window", votes, duration_seconds)
-            return "en"
-        if tr_votes > en_votes:
-            _log_probe_result("tr", "multi_window", votes, duration_seconds)
-            return "tr"
+        if len(votes) == 3 and len(set(votes)) == 1:
+            result = votes[0]
+            _log_probe_result(result, "multi_window", votes, duration_seconds)
+            return result
     except Exception as exc:
         try:
             current_app.logger.warning("Language probe failed; fallback to auto mode: %s", exc)
@@ -3379,6 +3399,168 @@ def _decode_transcript_segments(raw: Any) -> List[Dict[str, Any]]:
     return [dict(item) for item in parsed if isinstance(item, dict)] if isinstance(parsed, list) else []
 
 
+def _translated_word_timings(text: str, start: Any, end: Any) -> List[Dict[str, Any]]:
+    tokens = re.findall(r"\S+", str(text or "").strip())
+    if not tokens:
+        return []
+    try:
+        segment_start = float(start or 0.0)
+        segment_end = float(end if end is not None else segment_start)
+    except (TypeError, ValueError):
+        segment_start, segment_end = 0.0, 0.0
+    duration = max(segment_end - segment_start, 0.001)
+    weights = [max(1, len(re.sub(r"\W+", "", token, flags=re.UNICODE))) for token in tokens]
+    total_weight = float(sum(weights))
+    elapsed = 0.0
+    words: List[Dict[str, Any]] = []
+    for index, (token, weight) in enumerate(zip(tokens, weights)):
+        word_start = segment_start + duration * (elapsed / total_weight)
+        elapsed += weight
+        word_end = segment_end if index == len(tokens) - 1 else segment_start + duration * (elapsed / total_weight)
+        words.append({"word": token, "start": round(word_start, 3), "end": round(word_end, 3)})
+    return words
+
+
+def _translate_segment_batch(batch: List[Dict[str, Any]], before: str, after: str) -> Dict[str, str]:
+    if not _openai_client:
+        raise RuntimeError("OPENAI_API_KEY is missing; cannot translate captions.")
+    items = [{"id": str(index), "text": str(segment.get("text") or segment.get("tr_text") or "").strip()} for index, segment in enumerate(batch)]
+    response = _openai_client.chat.completions.create(
+        model=OPENAI_MODEL,
+        temperature=0,
+        response_format={"type": "json_object"},
+        messages=[
+            {
+                "role": "system",
+                "content": (
+                    "Translate caption segments faithfully and naturally into English. Preserve every input id, "
+                    "do not merge or split segments, do not add facts, and return JSON only as "
+                    "{\"segments\":[{\"id\":\"0\",\"text\":\"...\"}]}. Neighboring context is for phrasing only."
+                ),
+            },
+            {
+                "role": "user",
+                "content": json.dumps({"context_before": before, "segments": items, "context_after": after}, ensure_ascii=False),
+            },
+        ],
+    )
+    raw = response.choices[0].message.content if response.choices else ""
+    parsed = json.loads(raw or "{}")
+    translated = parsed.get("segments") if isinstance(parsed, dict) else None
+    if not isinstance(translated, list):
+        raise RuntimeError("Caption translation returned an invalid payload.")
+    result = {
+        str(item.get("id")): " ".join(str(item.get("text") or "").strip().split())
+        for item in translated
+        if isinstance(item, dict) and str(item.get("text") or "").strip()
+    }
+    missing = [item["id"] for item in items if item["text"] and not result.get(item["id"])]
+    if missing:
+        raise RuntimeError(f"Caption translation omitted segment ids: {', '.join(missing)}")
+    return result
+
+
+def translate_segments_to_english(segments: List[Dict[str, Any]], *, batch_size: int = 40) -> Tuple[str, List[Dict[str, Any]]]:
+    source = [dict(segment) for segment in segments or []]
+    translated_segments: List[Dict[str, Any]] = []
+    for batch_start in range(0, len(source), max(1, int(batch_size))):
+        batch = source[batch_start:batch_start + max(1, int(batch_size))]
+        before = " ".join(str(item.get("text") or item.get("tr_text") or "").strip() for item in source[max(0, batch_start - 2):batch_start])
+        after_index = batch_start + len(batch)
+        after = " ".join(str(item.get("text") or item.get("tr_text") or "").strip() for item in source[after_index:after_index + 2])
+        translations = _translate_segment_batch(batch, before, after)
+        for local_index, segment in enumerate(batch):
+            english_text = translations.get(str(local_index), "")
+            translated = dict(segment)
+            translated["lang"] = "en"
+            translated["text"] = english_text
+            translated["en_text"] = english_text
+            translated["tr_text"] = None
+            translated["ar_text"] = None
+            translated["words"] = _translated_word_timings(english_text, segment.get("start"), segment.get("end"))
+            translated["word_tags"] = None
+            translated_segments.append(translated)
+    full_text = " ".join(str(segment.get("text") or "").strip() for segment in translated_segments if segment.get("text")).strip()
+    return full_text, translated_segments
+
+
+def load_cached_english_track(video_id: str) -> Tuple[str, List[Dict[str, Any]]]:
+    conn = get_db_readonly()
+    try:
+        cols = table_columns(conn, "youtube_transcripts")
+        if not {"segments_en_json", "full_text_en", "translated_to"}.issubset(cols):
+            return "", []
+        row = conn.execute(
+            "SELECT full_text_en, segments_en_json FROM youtube_transcripts WHERE video_id = ? AND translated_to = 'en'",
+            [video_id],
+        ).fetchone()
+        return ((row[0] or ""), _decode_transcript_segments(row[1])) if row else ("", [])
+    finally:
+        conn.close()
+
+
+def transcribe_for_brand(
+    video_path: Path,
+    *,
+    video_id: str,
+    brand_id: Optional[str],
+    progress_cb: Optional[Callable[[str, str, Dict[str, Any]], None]] = None,
+) -> Dict[str, Any]:
+    from app.video_shorts.services.brands import get_brand_language_settings
+
+    conn = get_db_readonly()
+    try:
+        settings = get_brand_language_settings(conn, brand_id)
+    finally:
+        conn.close()
+    full_text, segments = _transcribe_with_whisper(
+        video_path,
+        progress_cb=progress_cb,
+        spoken_language=settings["spoken_language"],
+    )
+    detected_language = next(
+        (str(segment.get("lang") or "").strip().lower() for segment in segments if segment.get("lang")),
+        "",
+    )
+    full_text_en = ""
+    segments_en: List[Dict[str, Any]] = []
+    if settings["caption_language"] == "en" and detected_language != "en":
+        full_text_en, segments_en = load_cached_english_track(video_id)
+        if not segments_en:
+            full_text_en, segments_en = translate_segments_to_english(segments)
+    return {
+        "full_text": full_text,
+        "segments": segments,
+        "detected_language": detected_language,
+        "full_text_en": full_text_en,
+        "segments_en": segments_en,
+        **settings,
+    }
+
+
+def _caption_language_for_transcript(conn, video_id: str, video_pk: Optional[int]) -> str:
+    if "caption_language" not in table_columns(conn, "shorts_brands"):
+        return "same"
+    params: List[Any] = []
+    if video_pk is not None:
+        where = "v.id = ?"
+        params.append(int(video_pk))
+    else:
+        where = "v.video_id = ?"
+        params.append(video_id)
+    row = conn.execute(
+        f"""
+        SELECT COALESCE(b.caption_language, 'same')
+        FROM youtube_videos v
+        LEFT JOIN shorts_brands b ON CAST(b.id AS VARCHAR) = CAST(v.brand_id AS VARCHAR)
+        WHERE {where} AND v.deleted_at IS NULL
+        ORDER BY v.id DESC LIMIT 1
+        """,
+        params,
+    ).fetchone()
+    return str(row[0] or "same").strip().lower() if row else "same"
+
+
 def _persist_lazy_arabic_transliteration(
     *,
     video_id: str,
@@ -3448,18 +3630,27 @@ def _fetch_transcript(conn, video_id: str, *, video_pk=None) -> Tuple[str, List[
                     segments=raw_segments,
                 )
             return full_text, _normalize_segments_for_use(raw_segments)
-    cols = _ensure_transcript_schema(conn)
+    cols = table_columns(conn, "youtube_transcripts")
     has_whisper_col = "whisper_segments_json" in cols
-    select_sql = (
-        "SELECT full_text, segments_json, whisper_segments_json FROM youtube_transcripts WHERE video_id = ?"
-        if has_whisper_col
-        else "SELECT full_text, segments_json, NULL as whisper_segments_json FROM youtube_transcripts WHERE video_id = ?"
-    )
+    has_english_track = {"segments_en_json", "full_text_en", "translated_to"}.issubset(cols)
+    select_sql = f"""
+        SELECT full_text, segments_json,
+               {"whisper_segments_json" if has_whisper_col else "NULL"} AS whisper_segments_json,
+               {"full_text_en" if has_english_track else "NULL"} AS full_text_en,
+               {"segments_en_json" if has_english_track else "NULL"} AS segments_en_json,
+               {"translated_to" if has_english_track else "NULL"} AS translated_to
+        FROM youtube_transcripts WHERE video_id = ?
+    """
     row = conn.execute(select_sql, [video_id]).fetchone()
     if not row:
         return "", []
-    full_text = row[0] or ""
-    segments_raw_json = row[2] if has_whisper_col and row[2] else row[1]
+    use_english_track = (
+        _caption_language_for_transcript(conn, video_id, pk) == "en"
+        and str(row[5] or "").strip().lower() == "en"
+        and bool(row[4])
+    )
+    full_text = (row[3] if use_english_track else row[0]) or ""
+    segments_raw_json = row[4] if use_english_track else (row[2] if has_whisper_col and row[2] else row[1])
     segments = _decode_transcript_segments(segments_raw_json)
     full_text, segments, changed = transliterate_turkish_arabic_transcript(full_text, segments)
     if changed:
@@ -3638,6 +3829,8 @@ def _offset_segments(segments: List[Dict[str, Any]], offset: float) -> None:
 def _transcribe_with_whisper(
     video_path: Path,
     progress_cb: Optional[Callable[[str, str, Dict[str, Any]], None]] = None,
+    *,
+    spoken_language: str = "auto",
 ) -> Tuple[str, List[Dict[str, Any]]]:
     def _emit(stage: str, message: str, **extra: Any) -> None:
         if not progress_cb:
@@ -3653,14 +3846,17 @@ def _transcribe_with_whisper(
     if not video_path.exists():
         raise FileNotFoundError(f"Video not found at {video_path}")
 
-    _emit("language_probe", "Detecting primary audio language.")
-    transcription_mode = _detect_primary_audio_language(video_path)
-    if transcription_mode == "en":
-        _emit("language_mode", "Language detected: English. Running English flow.")
-    elif transcription_mode == "tr":
-        _emit("language_mode", "Language detected: Turkish. Running Turkish flow.")
+    requested_language = _normalize_whisper_language(spoken_language)
+    if requested_language and requested_language != "auto":
+        transcription_mode = requested_language
+        _emit("language_mode", f"Language configured: {transcription_mode}.")
     else:
-        _emit("language_mode", "Language uncertain. Running auto mode.")
+        _emit("language_probe", "Detecting primary audio language.")
+        transcription_mode = _detect_primary_audio_language(video_path)
+        if transcription_mode:
+            _emit("language_mode", f"Language detected: {transcription_mode}.")
+        else:
+            _emit("language_mode", "Language uncertain. Running auto mode.")
 
     audio_jobs: List[Tuple[Path, float]] = []
     cleanup_paths: List[Path] = []
@@ -3705,7 +3901,7 @@ def _transcribe_with_whisper(
                 "response_format": "verbose_json",
                 "timestamp_granularities": ["segment", "word"],  # ensure segment + word timings
             }
-            if transcription_mode in {"en", "tr"}:
+            if transcription_mode:
                 request_payload["language"] = transcription_mode
             resp = _openai_client.audio.transcriptions.create(
                 **request_payload,
@@ -3786,20 +3982,11 @@ def _transcribe_with_whisper(
     # Keep Whisper transcripts exactly as produced for every language.
     # Downstream subtitle and clip flows expect normalized segments, but they do
     # not require the slower language-classification or Arabic refinement passes.
-    en_chunks = sum(1 for lang in chunk_languages if lang == "en")
-    looks_english = _looks_english_text(full_text)
-    english_mode = (
-        transcription_mode == "en"
-        or (
-            transcription_mode != "tr"
-            and ((en_chunks and en_chunks >= max(1, len(chunk_languages) // 2)) or looks_english)
-        )
-    )
-    detected_lang = "en" if english_mode else (transcription_mode if transcription_mode in {"en", "tr"} else "")
-    if not detected_lang:
-        inferred_lang = infer_lang_from_text(full_text or "")
-        detected_lang = "en" if inferred_lang == "en" else "tr"
-
+    detected_lang = transcription_mode
+    if not detected_lang and chunk_languages:
+        language_counts = {lang: chunk_languages.count(lang) for lang in set(chunk_languages) if lang}
+        if language_counts:
+            detected_lang = max(language_counts.items(), key=lambda item: item[1])[0]
     _emit("language_passthrough", "Preserving Whisper output.")
     segments: List[Dict[str, Any]] = []
     for seg in normalized:
@@ -3811,7 +3998,7 @@ def _transcribe_with_whisper(
                 "duration": seg.get("duration"),
                 "lang": detected_lang,
                 "label": "speech",
-                "tr_text": seg_text,
+                "tr_text": seg_text if detected_lang == "tr" else None,
                 "ar_text": None,
                 "text": seg_text,
                 "words": seg.get("words"),

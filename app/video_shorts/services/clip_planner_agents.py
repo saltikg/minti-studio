@@ -364,16 +364,19 @@ _SELECTOR_SYSTEM_PROMPTS = {
 
 
 def _build_fix_clip_system_prompt(language: str) -> str:
-    return _FIX_CLIP_SYSTEM_PROMPTS[normalize_planning_language(language)]
+    resolved = normalize_planning_language(language)
+    return _FIX_CLIP_SYSTEM_PROMPTS["tr" if resolved == "tr" else "en"]
 
 
 def _build_window_agent_system_prompt(language: str, focus_block: str) -> str:
-    prompt = _WINDOW_AGENT_SYSTEM_PROMPTS[normalize_planning_language(language)]
+    resolved = normalize_planning_language(language)
+    prompt = _WINDOW_AGENT_SYSTEM_PROMPTS["tr" if resolved == "tr" else "en"]
     return prompt.replace("{focus_block}", focus_block)
 
 
 def _build_selector_system_prompt(language: str, focus_block: str) -> str:
-    prompt = _SELECTOR_SYSTEM_PROMPTS[normalize_planning_language(language)]
+    resolved = normalize_planning_language(language)
+    prompt = _SELECTOR_SYSTEM_PROMPTS["tr" if resolved == "tr" else "en"]
     return prompt.replace("{focus_block}", focus_block)
 
 
@@ -582,7 +585,7 @@ def _call_agent2_fix_clip(
     segments: List[Dict[str, Any]],
     candidate_clip: Dict[str, Any],
     *,
-    language: str = "tr",
+    language: str = "",
 ) -> Optional[Dict[str, Any]]:
     if not _openai_client:
         return None
@@ -648,7 +651,7 @@ def run_window_agent(
     transcript_excerpt: str = "",
     plan_focus: str = "",
     focus_categories: Optional[List[str]] = None,
-    language: str = "tr",
+    language: str = "",
 ) -> Tuple[List[Dict[str, Any]], str, str]:
     resolved_language = normalize_planning_language(language)
     excerpt_text = transcript_excerpt
@@ -950,7 +953,7 @@ def _select_clips_globally_with_llm(
     duration_seconds: float,
     target_clip_count: int,
     focus_categories: Optional[List[str]] = None,
-    language: str = "tr",
+    language: str = "",
 ) -> Tuple[List[Dict[str, Any]], str]:
     if not client or not candidates:
         return [], ""
@@ -1024,7 +1027,7 @@ def propose_clips_with_agents(
     target_clip_count: int | None = None,
     plan_focus: str = "",
     focus_categories: Optional[List[str]] = None,
-    language: str = "tr",
+    language: str = "",
 ):
     """
     Returns (final_plan, debug_info)

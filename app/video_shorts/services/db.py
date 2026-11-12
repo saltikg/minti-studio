@@ -540,13 +540,21 @@ def _ensure_transcript_schema(conn) -> set:
         }
     except Exception:
         return set()
-    if "whisper_segments_json" not in cols:
+    for column_name, definition in (
+        ("whisper_segments_json", "TEXT"),
+        ("detected_language", "VARCHAR"),
+        ("segments_en_json", "TEXT"),
+        ("full_text_en", "TEXT"),
+        ("translated_to", "VARCHAR"),
+    ):
+        if column_name in cols:
+            continue
         try:
-            conn.execute("ALTER TABLE youtube_transcripts ADD COLUMN whisper_segments_json TEXT")
+            conn.execute(f"ALTER TABLE youtube_transcripts ADD COLUMN {column_name} {definition}")
             conn.commit()
         except Exception:
             pass
-        cols.add("whisper_segments_json")
+        cols.add(column_name)
     return cols
 
 

@@ -14,6 +14,8 @@ from app.video_shorts.services.video_metrics import ANALYTICS_ARCHIVE_TABLE, SNA
 
 BRAND_TABLE = "shorts_brands"
 FACE_AWARE_DEFAULT_PREFERENCE_KEY = "face_aware_layout_default"
+DEFAULT_SPOKEN_LANGUAGE = "auto"
+DEFAULT_CAPTION_LANGUAGE = "same"
 BRAND_AWARE_TABLES: Tuple[Tuple[str, str], ...] = (
     ("youtube_channels", "owner_user_id"),
     ("youtube_videos", "owner_user_id"),
@@ -50,6 +52,16 @@ def ensure_brand_schema(conn) -> None:
         """
     )
     user_cols = table_columns(conn, "shorts_users")
+    brand_cols = table_columns(conn, BRAND_TABLE)
+    for column_name, definition in (
+        ("spoken_language", "VARCHAR DEFAULT 'auto'"),
+        ("caption_language", "VARCHAR DEFAULT 'same'"),
+    ):
+        if column_name not in brand_cols:
+            try:
+                conn.execute(f"ALTER TABLE {BRAND_TABLE} ADD COLUMN {column_name} {definition}")
+            except Exception:
+                pass
     if "last_brand_id" not in user_cols:
         try:
             conn.execute("ALTER TABLE shorts_users ADD COLUMN last_brand_id VARCHAR")
@@ -132,6 +144,64 @@ def get_brand_for_user(conn, user_id: str, brand_id: Optional[str]) -> Optional[
         "created_at": row[4],
         "updated_at": row[5],
     }
+
+
+def normalize_spoken_language(value: object) -> str:
+    normalized = str(value or "").strip().lower().replace("_", "-")
+    if not normalized or normalized == "auto":
+        return DEFAULT_SPOKEN_LANGUAGE
+    return normalized.split("-", 1)[0]
+
+
+def normalize_caption_language(value: object) -> str:
+    return "en" if str(value or "").strip().lower() == "en" else DEFAULT_CAPTION_LANGUAGE
+
+
+def get_brand_language_settings(conn, brand_id: Optional[str]) -> Dict[str, str]:
+    if not brand_id:
+        return {
+            "spoken_language": DEFAULT_SPOKEN_LANGUAGE,
+            "caption_language": DEFAULT_CAPTION_LANGUAGE,
+        }
+    cols = table_columns(conn, BRAND_TABLE)
+    if not {"spoken_language", "caption_language"}.issubset(cols):
+        return {
+            "spoken_language": DEFAULT_SPOKEN_LANGUAGE,
+            "caption_language": DEFAULT_CAPTION_LANGUAGE,
+        }
+    row = conn.execute(
+        f"SELECT spoken_language, caption_language FROM {BRAND_TABLE} WHERE id = ? LIMIT 1",
+        [str(brand_id)],
+    ).fetchone()
+    return {
+        "spoken_language": normalize_spoken_language(row[0] if row else None),
+        "caption_language": normalize_caption_language(row[1] if row else None),
+    }
+
+
+def save_brand_language_settings(
+    conn,
+    *,
+    owner_user_id: str,
+    brand_id: str,
+    spoken_language: object,
+    caption_language: object,
+) -> Dict[str, str]:
+    settings = {
+        "spoken_language": normalize_spoken_language(spoken_language),
+        "caption_language": normalize_caption_language(caption_language),
+    }
+    updated = conn.execute(
+        f"""
+        UPDATE {BRAND_TABLE}
+        SET spoken_language = ?, caption_language = ?, updated_at = now()
+        WHERE id = ? AND CAST(owner_user_id AS VARCHAR) = CAST(? AS VARCHAR)
+        """,
+        [settings["spoken_language"], settings["caption_language"], brand_id, owner_user_id],
+    )
+    if getattr(updated, "rowcount", 1) == 0:
+        raise ValueError("Brand not found.")
+    return settings
 
 
 def _clear_default_brand_for_user(conn, user_id: str) -> None:

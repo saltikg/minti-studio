@@ -1044,7 +1044,7 @@ def propose_clips_v10(
     debug: bool = False,
     plan_focus: str = "",
     focus_categories: Optional[List[str]] = None,
-    language: str = "tr",
+    language: str = "",
     video_title: str = "",
     target_clip_count: Optional[int] = None,
     existing_ranges: Optional[List[Tuple[float, float]]] = None,

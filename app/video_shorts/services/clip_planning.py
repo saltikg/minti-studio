@@ -58,7 +58,7 @@ def _propose_clips_with_llm(
     segments: List[Dict[str, Any]],
     transcript: str,
     duration_seconds: int,
-    language: str = "tr",
+    language: str = "",
     plan_focus: str = "",
 ) -> Tuple[List[Dict[str, Any]], str]:
     """
@@ -68,9 +68,9 @@ def _propose_clips_with_llm(
         return [], ""
     # Trim segments to keep prompt small
     trimmed_segments = segments[:200] if segments else []
-    lang = (language or "tr").strip().lower()
+    lang = (language or "").strip().lower()
     focus_block = get_llm_focus_block(plan_focus)
-    if lang == "en":
+    if lang != "tr":
         system_prompt = (
             "You are an expert short form video editor. Your job is to extract YouTube Shorts "
             "clips from a single long English lecture.\n\n"

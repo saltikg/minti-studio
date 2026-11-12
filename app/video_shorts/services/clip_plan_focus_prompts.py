@@ -71,16 +71,19 @@ _FOCUS_CATEGORY_I18N: Dict[str, Dict[str, Dict[str, str]]] = {
 }
 
 
-def normalize_planning_language(raw_language: Optional[str], *, fallback: str = "tr") -> str:
+def normalize_planning_language(raw_language: Optional[str], *, fallback: str = "") -> str:
     value = str(raw_language or "").strip().lower()
     if value in _SUPPORTED_PLANNING_LANGUAGES:
         return value
+    primary = value.replace("_", "-").split("-", 1)[0]
+    if 2 <= len(primary) <= 3 and primary.isalpha():
+        return primary
     return fallback
 
 
 def get_focus_category_options(language: Optional[str] = None) -> List[Dict[str, str]]:
     resolved_language = normalize_planning_language(language)
-    category_map = _FOCUS_CATEGORY_I18N.get(resolved_language) or _FOCUS_CATEGORY_I18N["tr"]
+    category_map = _FOCUS_CATEGORY_I18N.get(resolved_language) or _FOCUS_CATEGORY_I18N["en"]
     return [
         {
             "key": key,
@@ -167,7 +170,7 @@ def get_focus_categories_agent_block(raw_categories, language: Optional[str] = N
         for item in localized_options
         if item["key"] not in categories
     ]
-    if resolved_language == "en":
+    if resolved_language != "tr":
         return (
             "\n"
             "FOCUS CATEGORIES:\n"
@@ -197,7 +200,7 @@ def get_focus_categories_selector_block(raw_categories, language: Optional[str] 
         for item in localized_options
         if item["key"] not in categories
     ]
-    if resolved_language == "en":
+    if resolved_language != "tr":
         return (
             "FOCUS CATEGORIES:\n"
             f"- In this selection pass, reward only these density types: {', '.join(categories)}.\n"

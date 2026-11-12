@@ -41,7 +41,9 @@ from app.video_shorts.services.brands import (
     create_brand as create_brand_record,
     current_brand_id,
     ensure_brand_schema,
+    get_brand_language_settings,
     load_brand_context,
+    save_brand_language_settings,
 )
 from app.video_shorts.config import (
     ARABIC_FALLBACK_FONT_PATH,
@@ -369,7 +371,7 @@ from app.video_shorts.services.transcript_service import (
     _fetch_transcript,
     save_transcript_override,
     _normalize_segments_for_use,
-    _transcribe_with_whisper,
+    transcribe_for_brand,
     build_transcript_for_range,
 )
 from app.video_shorts.routes.auth import require_admin
@@ -6660,7 +6662,10 @@ def _load_plan_entries(
     )
     data = tenant_media.load_state(video_id, "plan", video_pk=video_pk)
     entries = data.get("plan") or data.get("clips") or []
-    entries = [dict(entry) for entry in entries if isinstance(entry, dict)] if isinstance(entries, list) else []
+    entries = [
+        dict(entry) for entry in entries
+        if isinstance(entry, dict) and str(entry.get("status") or "").strip().lower() != "hidden"
+    ] if isinstance(entries, list) else []
     return youtube_scheduling.overlay_plan(
         entries,
         user_id=clean_owner_user_id,
@@ -12092,6 +12097,9 @@ def _normalize_title_prompt_language(raw: Any) -> Optional[str]:
         return "tr"
     if value.startswith("ar") or value == "arabic":
         return "ar"
+    primary = value.replace("_", "-").split("-", 1)[0]
+    if 2 <= len(primary) <= 3 and primary.isalpha():
+        return primary
     return None
 
 
@@ -12099,7 +12107,7 @@ def _resolve_transcript_language(segments: List[Dict[str, Any]]) -> Optional[str
     language_counts: Dict[str, int] = {}
     for seg in segments or []:
         lang = _normalize_title_prompt_language(seg.get("lang") or seg.get("language"))
-        if lang not in {"tr", "en"}:
+        if not lang:
             continue
         language_counts[lang] = language_counts.get(lang, 0) + 1
     if not language_counts:
@@ -12109,16 +12117,14 @@ def _resolve_transcript_language(segments: List[Dict[str, Any]]) -> Optional[str
 
 def _resolve_video_language(segments: List[Dict[str, Any]], transcript_text: str = "") -> Optional[str]:
     segment_language = _resolve_transcript_language(segments)
+    if segment_language:
+        return segment_language
     text_language = _detect_title_language((transcript_text or "")[:2000])
-    if segment_language == "en":
-        return "en"
     if text_language == "en":
         return "en"
-    if segment_language == "tr":
-        return "tr"
     if text_language == "tr":
         return "tr"
-    return segment_language or text_language
+    return text_language
 
 
 def _infer_clip_language_from_segments(
@@ -16641,7 +16647,7 @@ def generate_short(video_pk):
         plan_generation_block_message=plan_generation_block_message,
         plan_generation_run_count=plan_generation_run_count,
         auto_suggest_render_state=auto_suggest_render_state,
-        focus_category_options=get_focus_category_options(transcript_language or "tr"),
+        focus_category_options=get_focus_category_options(transcript_language or ""),
         selected_focus_categories=selected_focus_categories,
         transcript_player_source=transcript_player_source,
         youtube_connected=youtube_connected,
@@ -27476,8 +27482,13 @@ def admin_operation_customer_workspace(brand_id: str):
     from app.video_shorts.services.customer_short_notifications import format_pt_date, latest_successful_notifications
 
     notification_history = {}
+    language_settings = {
+        "spoken_language": "auto",
+        "caption_language": "same",
+    }
     notification_conn = get_db_readonly()
     try:
+        language_settings = get_brand_language_settings(notification_conn, scope["brand_id"])
         notification_history = latest_successful_notifications(
             notification_conn,
             owner_user_id=scope["owner_user_id"],
@@ -27522,6 +27533,11 @@ def admin_operation_customer_workspace(brand_id: str):
                 admin_operation_brand=scope["brand_id"],
                 admin_operation_kind="customer",
             ),
+            "language_settings": language_settings,
+            "language_settings_endpoint": url_for(
+                "video_shorts_bp.admin_operation_customer_language_settings",
+                brand_id=scope["brand_id"],
+            ),
             "my_videos_status_url": url_for("video_shorts_bp.admin_operation_customer_processing_status", brand_id=brand_id),
             "my_videos_ingest_url": url_for("video_shorts_bp.admin_operation_ingest_customer_video", brand_id=brand_id),
             "my_videos_counts_url": url_for("video_shorts_bp.admin_operation_customer_short_counts", brand_id=brand_id),
@@ -27533,6 +27549,32 @@ def admin_operation_customer_workspace(brand_id: str):
             "delete_video_fallback_url": url_for("video_shorts_bp.admin_operation_customer_workspace", brand_id=brand_id),
         },
     )
+
+
+@video_shorts_bp.route("/admin/operation/customer/<brand_id>/language-settings", methods=["POST"])
+@require_admin
+def admin_operation_customer_language_settings(brand_id: str):
+    scope = _require_admin_operation_scope(brand_id=brand_id, workspace_kind="customer")
+    _require_active_customer_workspace(scope)
+    payload = request.get_json(silent=True) if request.is_json else request.form
+    conn = get_db()
+    try:
+        ensure_brand_schema(conn)
+        settings = save_brand_language_settings(
+            conn,
+            owner_user_id=scope["owner_user_id"],
+            brand_id=scope["brand_id"],
+            spoken_language=(payload or {}).get("spoken_language"),
+            caption_language=(payload or {}).get("caption_language"),
+        )
+        conn.commit()
+    except Exception:
+        conn.rollback()
+        current_app.logger.exception("Failed to save brand language settings brand_id=%s", brand_id)
+        return jsonify({"ok": False, "message": "Language settings could not be saved."}), 400
+    finally:
+        conn.close()
+    return jsonify({"ok": True, **settings})
 
 
 def _require_customer_notification_scope(brand_id: str, video_pk: int) -> Dict[str, str]:
@@ -31731,7 +31773,18 @@ def _run_transcribe_job(video_pk: int, video_id: str, source_path: Path, source_
                 error=None,
                 elapsed_seconds=0.0,
             )
-            full_text, segments = _transcribe_with_whisper(source_path, progress_cb=_progress)
+            scope_conn = get_db_readonly()
+            try:
+                brand_row = scope_conn.execute("SELECT brand_id FROM youtube_videos WHERE id = ?", [video_pk]).fetchone()
+            finally:
+                scope_conn.close()
+            tracks = transcribe_for_brand(
+                source_path,
+                video_id=video_id,
+                brand_id=brand_row[0] if brand_row else None,
+                progress_cb=_progress,
+            )
+            full_text, segments = tracks["full_text"], tracks["segments"]
             if not segments:
                 raise RuntimeError("Whisper did not return any segments.")
 
@@ -31752,19 +31805,25 @@ def _run_transcribe_job(video_pk: int, video_id: str, source_path: Path, source_
             )
             segments_json = json.dumps(segments, ensure_ascii=False)
             whisper_segments_json = segments_json
+            segments_en_json = json.dumps(tracks["segments_en"], ensure_ascii=False) if tracks["segments_en"] else None
             exists = conn.execute(
                 "SELECT 1 FROM youtube_transcripts WHERE video_id = ?",
                 [video_id],
             ).fetchone()
             if exists:
                 conn.execute(
-                    "UPDATE youtube_transcripts SET full_text = ?, segments_json = ?, whisper_segments_json = ? WHERE video_id = ?",
-                    [full_text, segments_json, whisper_segments_json, video_id],
+                    """UPDATE youtube_transcripts SET full_text=?, segments_json=?, whisper_segments_json=?,
+                       detected_language=?, segments_en_json=?, full_text_en=?, translated_to=? WHERE video_id=?""",
+                    [full_text, segments_json, whisper_segments_json, tracks["detected_language"], segments_en_json,
+                     tracks["full_text_en"] or None, "en" if segments_en_json else None, video_id],
                 )
             else:
                 conn.execute(
-                    "INSERT INTO youtube_transcripts (video_id, full_text, segments_json, whisper_segments_json) VALUES (?, ?, ?, ?)",
-                    [video_id, full_text, segments_json, whisper_segments_json],
+                    """INSERT INTO youtube_transcripts
+                       (video_id,full_text,segments_json,whisper_segments_json,detected_language,segments_en_json,full_text_en,translated_to)
+                       VALUES (?,?,?,?,?,?,?,?)""",
+                    [video_id, full_text, segments_json, whisper_segments_json, tracks["detected_language"],
+                     segments_en_json, tracks["full_text_en"] or None, "en" if segments_en_json else None],
                 )
 
             conn.execute(
@@ -32045,7 +32104,8 @@ def transcribe_video(video_pk):
         return _generate_redirect()
 
     try:
-        full_text, segments = _transcribe_with_whisper(source_path)
+        tracks = transcribe_for_brand(source_path, video_id=vid, brand_id=target_brand_id)
+        full_text, segments = tracks["full_text"], tracks["segments"]
         if not segments:
             flash("Whisper did not return any segments.", "warning")
             return _generate_redirect()
@@ -32058,19 +32118,25 @@ def transcribe_video(video_pk):
         )
         segments_json = json.dumps(segments, ensure_ascii=False)
         whisper_segments_json = segments_json
+        segments_en_json = json.dumps(tracks["segments_en"], ensure_ascii=False) if tracks["segments_en"] else None
         exists = conn.execute(
             "SELECT 1 FROM youtube_transcripts WHERE video_id = ?",
             [vid],
         ).fetchone()
         if exists:
             conn.execute(
-                "UPDATE youtube_transcripts SET full_text = ?, segments_json = ?, whisper_segments_json = ? WHERE video_id = ?",
-                [full_text, segments_json, whisper_segments_json, vid],
+                """UPDATE youtube_transcripts SET full_text=?, segments_json=?, whisper_segments_json=?,
+                   detected_language=?, segments_en_json=?, full_text_en=?, translated_to=? WHERE video_id=?""",
+                [full_text, segments_json, whisper_segments_json, tracks["detected_language"], segments_en_json,
+                 tracks["full_text_en"] or None, "en" if segments_en_json else None, vid],
             )
         else:
             conn.execute(
-                "INSERT INTO youtube_transcripts (video_id, full_text, segments_json, whisper_segments_json) VALUES (?, ?, ?, ?)",
-                [vid, full_text, segments_json, whisper_segments_json],
+                """INSERT INTO youtube_transcripts
+                   (video_id,full_text,segments_json,whisper_segments_json,detected_language,segments_en_json,full_text_en,translated_to)
+                   VALUES (?,?,?,?,?,?,?,?)""",
+                [vid, full_text, segments_json, whisper_segments_json, tracks["detected_language"],
+                 segments_en_json, tracks["full_text_en"] or None, "en" if segments_en_json else None],
             )
 
         conn.execute(
@@ -32417,7 +32483,7 @@ def _generate_clip_plan_for_video(
 
     transcript_language = _resolve_video_language(segments, transcript_text or "")
     requested_language = _normalize_title_prompt_language(form_data.get("language"))
-    plan_language = transcript_language or requested_language or "tr"
+    plan_language = transcript_language or requested_language or ""
     plan_focus = normalize_plan_focus(form_data.get("plan_focus") or "")
     focus_categories = normalize_focus_categories(form_data.get("focus_categories"), default_to_all=True)
     clip_plan: List[Dict[str, Any]] = []

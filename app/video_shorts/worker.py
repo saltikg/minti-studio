@@ -120,7 +120,13 @@ from app.video_shorts.services.storage import (
     is_storage_reference,
     storage_reference_key,
 )
-from app.video_shorts.services.transcript_service import _transcribe_with_whisper
+from app.video_shorts.services.transcript_service import (
+    _transcribe_with_whisper,  # compatibility hook for worker tests and diagnostics
+    load_cached_english_track,
+    transcribe_for_brand,
+    translate_segments_to_english,
+)
+from app.video_shorts.services.brands import get_brand_language_settings
 from app.video_shorts.services.usage_metering import add_transcription_minutes
 from app.video_shorts.services.billing import process_autopilot_billing_deadlines
 from app.video_shorts.services.scheduled_clip_customer_actions import process_due_batches as process_due_scheduled_clip_customer_actions
@@ -138,6 +144,7 @@ from app.video_shorts.services.db import (
     _ensure_video_crop_schema,
     ensure_postgres_youtube_transcripts_id_default,
     get_db,
+    get_db_readonly,
 )
 from src.trends.instagram_tokens import InstagramTokenStoreError, get_instagram_credentials
 
@@ -1083,11 +1090,15 @@ def _save_transcript(
     *,
     full_text: str,
     segments: list[dict],
+    detected_language: str = "",
+    full_text_en: str = "",
+    segments_en: Optional[list[dict]] = None,
     owner_user_id: Optional[str],
     duration_seconds: Any,
     bill_usage: bool = True,
 ) -> None:
     segments_json = generation.json.dumps(segments, ensure_ascii=False)
+    segments_en_json = generation.json.dumps(segments_en, ensure_ascii=False) if segments_en else None
     conn = get_db()
     try:
         _ensure_video_crop_schema(conn)
@@ -1100,13 +1111,21 @@ def _save_transcript(
         existing = conn.execute("SELECT 1 FROM youtube_transcripts WHERE video_id = ?", [video_id]).fetchone()
         if existing:
             conn.execute(
-                "UPDATE youtube_transcripts SET full_text = ?, segments_json = ?, whisper_segments_json = ? WHERE video_id = ?",
-                [full_text, segments_json, segments_json, video_id],
+                """UPDATE youtube_transcripts
+                   SET full_text = ?, segments_json = ?, whisper_segments_json = ?, detected_language = ?,
+                       segments_en_json = ?, full_text_en = ?, translated_to = ?
+                   WHERE video_id = ?""",
+                [full_text, segments_json, segments_json, detected_language or None,
+                 segments_en_json, full_text_en or None, "en" if segments_en_json else None, video_id],
             )
         else:
             conn.execute(
-                "INSERT INTO youtube_transcripts (video_id, full_text, segments_json, whisper_segments_json) VALUES (?, ?, ?, ?)",
-                [video_id, full_text, segments_json, segments_json],
+                """INSERT INTO youtube_transcripts
+                   (video_id, full_text, segments_json, whisper_segments_json, detected_language,
+                    segments_en_json, full_text_en, translated_to)
+                   VALUES (?, ?, ?, ?, ?, ?, ?, ?)""",
+                [video_id, full_text, segments_json, segments_json, detected_language or None,
+                 segments_en_json, full_text_en or None, "en" if segments_en_json else None],
             )
         conn.execute(
             """
@@ -1157,6 +1176,41 @@ def _save_transcript(
             )
 
 
+def _brand_transcript_tracks(
+    source_path: Path,
+    *,
+    video_id: str,
+    brand_id: str,
+    progress_cb=None,
+) -> tuple[str, list[dict], str, str, list[dict]]:
+    tracks = transcribe_for_brand(
+        source_path,
+        video_id=video_id,
+        brand_id=brand_id,
+        progress_cb=progress_cb,
+    )
+    return (
+        tracks["full_text"], tracks["segments"], tracks["detected_language"],
+        tracks["full_text_en"], tracks["segments_en"],
+    )
+
+
+def _english_track_for_brand(
+    *,
+    video_id: str,
+    caption_language: str,
+    detected_language: str,
+    segments: list[dict],
+) -> tuple[str, list[dict]]:
+    full_text_en = ""
+    segments_en: list[dict] = []
+    if caption_language == "en" and detected_language != "en":
+        full_text_en, segments_en = load_cached_english_track(video_id)
+        if not segments_en:
+            full_text_en, segments_en = translate_segments_to_english(segments)
+    return full_text_en, segments_en
+
+
 def _execute_admin_proxy_transcript_job(app, job: Dict[str, Any]) -> Dict[str, Any]:
     """Transcribe a lead source through yt-dlp audio only; never write source video to S3."""
     payload = job.get("payload") or {}
@@ -1186,7 +1240,9 @@ def _execute_admin_proxy_transcript_job(app, job: Dict[str, Any]) -> Dict[str, A
         result["cookies_configured"] = cookies_configured
         result["audio_size_mb"] = round(audio_path.stat().st_size / (1024 * 1024), 2)
         _set_job_progress(job["id"], stage="transcribing", message="Transcribing source audio.", status="processing", extra=result)
-        transcript_text, segments = _transcribe_with_whisper(audio_path)
+        transcript_text, segments, detected_language, transcript_text_en, segments_en = _brand_transcript_tracks(
+            audio_path, video_id=video_id, brand_id=brand_id
+        )
         bill_usage = not _is_unconverted_discovery_demo_transcription(
             owner_user_id=owner_user_id,
             brand_id=brand_id,
@@ -1197,6 +1253,9 @@ def _execute_admin_proxy_transcript_job(app, job: Dict[str, Any]) -> Dict[str, A
             video_id,
             full_text=transcript_text,
             segments=segments,
+            detected_language=detected_language,
+            full_text_en=transcript_text_en,
+            segments_en=segments_en,
             owner_user_id=owner_user_id,
             duration_seconds=payload.get("duration_seconds"),
             bill_usage=bill_usage,
@@ -1390,11 +1449,29 @@ def _execute_ingest_youtube_job(app, job: Dict[str, Any]) -> Dict[str, Any]:
         if text_cache and text_cache.get("full_text") and text_cache.get("segments"):
             transcript_text = str(text_cache.get("full_text") or "")
             segments = list(text_cache.get("segments") or [])
+            detected_language = next(
+                (str(segment.get("lang") or "").strip().lower() for segment in segments if segment.get("lang")),
+                "",
+            )
+            settings_conn = get_db_readonly()
+            try:
+                caption_language = get_brand_language_settings(settings_conn, brand_id)["caption_language"]
+            finally:
+                settings_conn.close()
+            transcript_text_en, segments_en = _english_track_for_brand(
+                video_id=video_id,
+                caption_language=caption_language,
+                detected_language=detected_language,
+                segments=segments,
+            )
             _set_job_progress(job["id"], stage="transcribing", message="Transcript cache hit.", status="processing")
             _save_transcript(
                 video_id,
                 full_text=transcript_text,
                 segments=segments,
+                detected_language=detected_language,
+                full_text_en=transcript_text_en,
+                segments_en=segments_en,
                 owner_user_id=owner_user_id,
                 duration_seconds=effective_duration_seconds,
                 bill_usage=False,
@@ -1402,8 +1479,10 @@ def _execute_ingest_youtube_job(app, job: Dict[str, Any]) -> Dict[str, Any]:
             app.logger.info("free_tool_text_cache transcript HIT video_id=%s video_pk=%s", video_id, video_pk)
         else:
             _set_job_progress(job["id"], stage="transcribing", message="Transcribing with Whisper.", status="processing")
-            transcript_text, segments = _transcribe_with_whisper(
+            transcript_text, segments, detected_language, transcript_text_en, segments_en = _brand_transcript_tracks(
                 local_path,
+                video_id=video_id,
+                brand_id=brand_id,
                 progress_cb=_transcription_progress_callback(
                     job["id"],
                     session_id=session_id,
@@ -1414,6 +1493,9 @@ def _execute_ingest_youtube_job(app, job: Dict[str, Any]) -> Dict[str, Any]:
                 video_id,
                 full_text=transcript_text,
                 segments=segments,
+                detected_language=detected_language,
+                full_text_en=transcript_text_en,
+                segments_en=segments_en,
                 owner_user_id=owner_user_id,
                 duration_seconds=effective_duration_seconds,
                 bill_usage=bill_usage,
@@ -1535,8 +1617,10 @@ def _execute_transcribe_upload_job(app, job: Dict[str, Any]) -> Dict[str, Any]:
     try:
         get_or_backfill_media_duration_seconds(video_pk, video_id, source_path=source_path)
         _set_job_progress(job["id"], stage="transcribing", message="Preparing your transcript.", status="processing")
-        transcript_text, segments = _transcribe_with_whisper(
+        transcript_text, segments, detected_language, transcript_text_en, segments_en = _brand_transcript_tracks(
             source_path,
+            video_id=video_id,
+            brand_id=brand_id,
             progress_cb=_transcription_progress_callback(
                 job["id"],
                 session_id=session_id,
@@ -1547,6 +1631,9 @@ def _execute_transcribe_upload_job(app, job: Dict[str, Any]) -> Dict[str, Any]:
             video_id,
             full_text=transcript_text,
             segments=segments,
+            detected_language=detected_language,
+            full_text_en=transcript_text_en,
+            segments_en=segments_en,
             owner_user_id=owner_user_id,
             duration_seconds=duration_seconds,
             bill_usage=bill_usage,
