@@ -149,6 +149,12 @@ def create_app():
 
         return render_short_form_video_editing_service()
 
+    @app.get("/autopilot")
+    def autopilot_landing():
+        from app.video_shorts.routes.home import render_autopilot_landing
+
+        return render_autopilot_landing()
+
     @app.get("/tools/youtube-to-shorts/status/<int:video_pk>")
     def free_tool_youtube_to_shorts_status(video_pk):
         from app.video_shorts.routes.free_tool import free_tool_processing_status

@@ -69,6 +69,18 @@ def home():
     )
 
 
+def render_autopilot_landing():
+    return render_template(
+        "vs_autopilot_landing.html",
+        autopilot_register_url=url_for(
+            "video_shorts_bp.register",
+            intent="autopilot",
+            tier=15,
+        ),
+        canonical_url=f"{(current_app.config.get('BASE_URL') or request.url_root).rstrip('/')}{url_for('autopilot_landing')}",
+    )
+
+
 def render_short_form_video_editing_service():
     return render_template(
         "short_form_video_editing_service.html",
