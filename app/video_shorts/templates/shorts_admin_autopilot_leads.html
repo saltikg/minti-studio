@@ -119,6 +119,19 @@
       color: #fca5a5;
       background: rgba(239, 68, 68, 0.14);
     }
+    .admin-autopilot-video-list {
+      min-width: 420px;
+      white-space: normal;
+    }
+    .admin-autopilot-video-item {
+      padding: 10px 0;
+      border-top: 1px solid rgba(255,255,255,.08);
+    }
+    .admin-autopilot-video-actions {
+      display: flex;
+      gap: 6px;
+      margin-top: 8px;
+    }
     .admin-autopilot-health-error,
     .admin-autopilot-runway-low { color: #fca5a5; font-weight: 700; }
     .admin-autopilot-no-channel {
@@ -242,13 +255,28 @@
               </td>
               <td>
                 {% if customer.new_video_count %}
-                  {% if customer.has_customer_workspace %}
-                    <a class="admin-autopilot-video-badge text-decoration-none{% if customer.overdue %} is-overdue{% endif %}" href="{{ url_for('video_shorts_bp.admin_operation_customer_workspace', brand_id=customer.customer_brand_id) }}#new-channel-videos">
+                  <details class="admin-autopilot-video-list">
+                    <summary class="admin-autopilot-video-badge{% if customer.overdue %} is-overdue{% endif %}">
                       New video ({{ customer.new_video_count }})
-                    </a>
-                  {% else %}
-                    <span class="admin-autopilot-video-badge{% if customer.overdue %} is-overdue{% endif %}">New video ({{ customer.new_video_count }})</span>
-                  {% endif %}
+                    </summary>
+                    {% for video in customer.new_videos %}
+                      <div class="admin-autopilot-video-item">
+                        <a href="{{ video.youtube_url }}" target="_blank" rel="noopener" class="text-white">{{ video.title }}</a>
+                        <div class="small text-white-50">{{ video.duration_label }} · detected {{ video.detected_at_pst }}</div>
+                        <div class="admin-autopilot-video-actions">
+                          <form method="post" action="{{ url_for('video_shorts_bp.admin_autopilot_channel_video_action', channel_video_id=video.id, action='process') }}">
+                            <button class="btn btn-sm btn-primary" type="submit">Process</button>
+                          </form>
+                          <form method="post" action="{{ url_for('video_shorts_bp.admin_autopilot_channel_video_action', channel_video_id=video.id, action='skip') }}">
+                            <button class="btn btn-sm btn-outline-light" type="submit">Skip</button>
+                          </form>
+                          <form method="post" action="{{ url_for('video_shorts_bp.admin_autopilot_channel_video_action', channel_video_id=video.id, action='seen') }}">
+                            <button class="btn btn-sm btn-outline-light" type="submit">Mark seen</button>
+                          </form>
+                        </div>
+                      </div>
+                    {% endfor %}
+                  </details>
                 {% else %}
                   <span class="text-muted">—</span>
                 {% endif %}

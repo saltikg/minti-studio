@@ -29,18 +29,11 @@
   .customer-workspace-videos .mv-notify-state { display:block; min-height:1.9em; margin-top:3px; overflow:hidden; color:rgba(148,163,184,.62); font-size:.64rem; line-height:.95em; text-align:center; white-space:nowrap; }
   .customer-workspace-videos .mv-notify-state > span { display:block; overflow:hidden; text-overflow:ellipsis; }
   .customer-workspace-videos .mv-row-menu-toggle { white-space:nowrap; }
-  .customer-workspace-videos .mv-row--new-channel-video { background:rgba(14,165,233,.055); }
-  .customer-workspace-videos .mv-new-video-decision { grid-column:1 / -1; width:100%; margin:0; }
-  .customer-workspace-videos .mv-new-video-decision .form-select { width:100%; min-width:180px; color:#fff; border-color:rgba(56,189,248,.35); background-color:rgba(15,23,42,.92); }
-  .customer-workspace-videos .mv-new-video-save-state { display:block; min-height:1.2em; margin-top:4px; color:#86efac; font-size:.72rem; text-align:right; }
-  .customer-workspace-videos .mv-new-video-save-state.is-error { color:#fca5a5; }
   @media (max-width:1100px) {
     .customer-workspace-videos .mv-row { grid-template-columns:minmax(0,1fr) auto; }
     .customer-workspace-videos .mv-row-actions { width:260px; grid-column:1 / 3; justify-self:start; }
   }
-  @media (max-width:767.98px) {
-    .customer-workspace-header { align-items:flex-start; flex-direction:column; }
-  }
+  @media (max-width:767.98px) { .customer-workspace-header { align-items:flex-start; flex-direction:column; } }
 </style>
 {% endblock %}
 
@@ -84,7 +77,7 @@
 
   <h2 class="mv-source-heading">Customer videos</h2>
   <div class="customer-workspace-videos">
-    {{ mv_components.video_list(videos, allow_video_management, false, allow_video_title_edit, show_customer_notify, new_channel_videos) }}
+    {{ mv_components.video_list(videos, allow_video_management, false, allow_video_title_edit, show_customer_notify) }}
   </div>
 </div>
 
@@ -141,38 +134,6 @@
 {% block scripts %}
 {{ super() }}
 <script>
-document.querySelectorAll('[data-new-video-decision]').forEach((select) => {
-  select.addEventListener('change', async () => {
-    const form = select.closest('[data-new-video-decision-form]');
-    if (!form || !select.value) return;
-    const row = select.closest('.mv-row');
-    const status = row?.querySelector('[data-channel-video-status]');
-    const saveState = form.querySelector('[data-new-video-save-state]');
-    const previousUrl = select.dataset.savedUrl || '';
-    select.disabled = true;
-    saveState.classList.remove('is-error');
-    saveState.textContent = 'Saving…';
-    try {
-      const response = await fetch(select.value, {
-        method: 'POST',
-        credentials: 'same-origin',
-        headers: { 'Accept': 'application/json', 'X-Requested-With': 'XMLHttpRequest' },
-      });
-      const payload = await response.json().catch(() => null);
-      if (!response.ok || !payload?.ok) throw new Error(payload?.message || 'Could not save.');
-      select.dataset.savedUrl = select.value;
-      if (status) status.textContent = payload.status_label;
-      saveState.textContent = 'Saved';
-    } catch (requestError) {
-      select.value = previousUrl;
-      saveState.classList.add('is-error');
-      saveState.textContent = requestError.message;
-    } finally {
-      select.disabled = false;
-    }
-  });
-});
-
 (() => {
   const modalElement = document.getElementById('customerNotifyModal');
   const recipient = document.getElementById('customerNotifyRecipient');

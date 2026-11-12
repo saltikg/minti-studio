@@ -45,44 +45,13 @@
   </div>
 {%- endmacro %}
 
-{% macro video_list(videos, allow_management=True, retry_failed=False, allow_title_edit=True, show_customer_notify=False, pending_videos=None) -%}
-  {% set pending_videos = pending_videos or [] %}
+{% macro video_list(videos, allow_management=True, retry_failed=False, allow_title_edit=True, show_customer_notify=False) -%}
   <section class="mv-list">
     <div class="mv-list-head">
       <div>Video</div><div class="text-center">Length</div><div>Added</div>
       <div class="text-center">Shorts</div><div class="text-center">Published</div><div>Status</div><div>{% if show_customer_notify %}Actions{% endif %}</div>
     </div>
-    {% if videos or pending_videos %}
-      {% for item in pending_videos %}
-        <div class="mv-row mv-row--new-channel-video" {% if loop.first %}id="new-channel-videos"{% endif %}>
-          <div class="mv-video-cell">
-            <div class="mv-thumb">
-              {% if item.thumbnail_url %}<img src="{{ item.thumbnail_url }}" alt="{{ item.title }}">{% else %}<span>YT</span>{% endif %}
-            </div>
-            <div class="mv-title-cell">
-              <div class="mv-title-edit">
-                <a class="mv-video-title mv-video-title-link" href="{{ item.youtube_url }}" target="_blank" rel="noopener noreferrer" title="{{ item.title|e }}">{{ item.title }}</a>
-              </div>
-              <span class="mv-source-badge mv-source-badge--url"><i class="bi bi-youtube" aria-hidden="true"></i>New upload</span>
-            </div>
-          </div>
-          <div class="mv-table-muted text-center">{{ item.duration_label or "—" }}</div>
-          <div class="mv-table-muted">{{ item.published_at_pst or item.detected_at_pst or "—" }}</div>
-          <div class="mv-count-cell"><div class="mv-table-number is-zero">—</div></div>
-          <div class="mv-count-cell"><div class="mv-table-number is-zero">—</div></div>
-          <div class="mv-status-cell"><span class="mv-status-pill mv-status-pill--processing" data-channel-video-status>{{ item.status_label }}</span></div>
-          <div class="mv-row-actions">
-            <form method="post" class="mv-new-video-decision" data-new-video-decision-form>
-              <label class="visually-hidden" for="new-video-action-{{ item.id }}">Choose an action for {{ item.title }}</label>
-              <select class="form-select form-select-sm" id="new-video-action-{{ item.id }}" data-new-video-decision data-saved-url="{{ item.selected_url }}" required>
-                <option value="" {% if not item.selected_action %}selected{% endif %} disabled>Choose action…</option>
-                {% for action in item.action_options %}<option value="{{ action.url }}" {% if action.value == item.selected_action %}selected{% endif %}>{{ action.label }}</option>{% endfor %}
-              </select>
-              <span class="mv-new-video-save-state" data-new-video-save-state aria-live="polite"></span>
-            </form>
-          </div>
-        </div>
-      {% endfor %}
+    {% if videos %}
       {% for item in videos %}
         <div class="mv-row mv-coachmark-anchor" data-video-row data-video-id="{{ item.id }}" data-status="{{ item.status_filter }}" data-added-at="{{ item.added_at_iso }}" {% if loop.first %}id="mv-first-video-row" data-first-video-row="true"{% endif %}>
           <div class="mv-video-cell">
