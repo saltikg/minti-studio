@@ -27341,6 +27341,7 @@ def _load_new_autopilot_channel_videos(
             "duration_label": _format_time_label(int(row[4] or 0)),
             "detected_at_pst": _format_datetime_pst(row[5]),
             "youtube_url": f"https://www.youtube.com/watch?v={str(row[1] or '').strip()}",
+            "thumbnail_url": f"https://i.ytimg.com/vi/{str(row[1] or '').strip()}/hqdefault.jpg",
         }
         for row in rows
     ]
@@ -27516,6 +27517,33 @@ def admin_operation_customer_workspace(brand_id: str):
         )
     finally:
         channel_video_conn.close()
+    for channel_video in new_channel_videos:
+        channel_video["action_options"] = [
+            {
+                "label": "Process",
+                "url": url_for(
+                    "video_shorts_bp.admin_autopilot_channel_video_action",
+                    channel_video_id=channel_video["id"],
+                    action="process",
+                ),
+            },
+            {
+                "label": "Skip",
+                "url": url_for(
+                    "video_shorts_bp.admin_autopilot_channel_video_action",
+                    channel_video_id=channel_video["id"],
+                    action="skip",
+                ),
+            },
+            {
+                "label": "Dismiss",
+                "url": url_for(
+                    "video_shorts_bp.admin_autopilot_channel_video_action",
+                    channel_video_id=channel_video["id"],
+                    action="seen",
+                ),
+            },
+        ]
     description_prompt, description_languages = load_description_settings(scope["owner_user_id"], scope["brand_id"])
     from app.video_shorts.routes.channels import render_my_videos_page_for_user
     from app.video_shorts.services.customer_short_notifications import format_pt_date, latest_successful_notifications
