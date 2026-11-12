@@ -36789,6 +36789,9 @@ def regenerate_clip_video(video_pk: int, plan_index: int):
             video_sql += ", title_uppercase"
         if "subtitle_uppercase" in video_columns:
             video_sql += ", subtitle_uppercase"
+        for caption_column in ("subtitle_highlight_color", "subtitle_effect"):
+            if caption_column in video_columns:
+                video_sql += f", {caption_column}"
         for music_column in ("music_audio_id", "music_level", "music_start_seconds", "music_duck", "music_fade_out"):
             if music_column in video_columns:
                 video_sql += f", {music_column}"
@@ -36826,6 +36829,9 @@ def regenerate_clip_video(video_pk: int, plan_index: int):
         video_cols.append("title_uppercase")
     if "subtitle_uppercase" in video_columns:
         video_cols.append("subtitle_uppercase")
+    for caption_column in ("subtitle_highlight_color", "subtitle_effect"):
+        if caption_column in video_columns:
+            video_cols.append(caption_column)
     for music_column in ("music_audio_id", "music_level", "music_start_seconds", "music_duck", "music_fade_out"):
         if music_column in video_columns:
             video_cols.append(music_column)

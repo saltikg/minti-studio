@@ -457,6 +457,8 @@ def test_save_top_then_render_builder_immediately_uses_persisted_top(monkeypatch
         "subtitle_margin_custom": True,
         "subtitle_preset": "podcast",
         "subtitle_style": "plain",
+        "subtitle_highlight_color": "#3B82F6",
+        "subtitle_effect": "outline_shadow",
         "layout_mode": "manual",
         "show_title": True,
         "show_subtitle": True,
@@ -474,6 +476,8 @@ def test_save_top_then_render_builder_immediately_uses_persisted_top(monkeypatch
 
     assert options["caption_anchor"] == "top"
     assert options["subtitle_margin"] == 520
+    assert options["subtitle_highlight_color"] == "#3B82F6"
+    assert options["subtitle_effect"] == "outline_shadow"
     assert options["export_resolution"] == "1080"
 
 

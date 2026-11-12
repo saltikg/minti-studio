@@ -1382,6 +1382,16 @@ def test_regenerate_route_and_ui_wire_force_and_cached_semantics():
     assert enqueue_source.index("if (payload.cached)") < enqueue_source.index("pollClipJobUntilDone")
 
 
+def test_regenerate_loads_custom_caption_render_fields():
+    route_source = inspect.getsource(generation.regenerate_clip_video)
+
+    assert route_source.count(
+        'for caption_column in ("subtitle_highlight_color", "subtitle_effect")'
+    ) == 2
+    assert 'video_sql += f", {caption_column}"' in route_source
+    assert "video_cols.append(caption_column)" in route_source
+
+
 def test_job_status_endpoint_is_owner_scoped(monkeypatch, tmp_path):
     _configure_duckdb(monkeypatch, tmp_path, "job_status_api.duckdb")
     owner_id = str(uuid4())
