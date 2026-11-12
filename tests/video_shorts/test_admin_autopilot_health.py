@@ -34,6 +34,7 @@ def _database():
             service_mode_chosen_at TIMESTAMP, password_hash VARCHAR, google_sub VARCHAR,
             updated_at TIMESTAMP, created_at TIMESTAMP)""",
         "CREATE TABLE shorts_brands (id VARCHAR, name VARCHAR, owner_user_id VARCHAR)",
+        "CREATE TABLE shorts_user_preferences (user_id VARCHAR, preference_key VARCHAR)",
         """CREATE TABLE autopilot_leads (
             id VARCHAR, user_id VARCHAR, brand_id VARCHAR, creator_name VARCHAR,
             youtube_channel_id VARCHAR, converted_at TIMESTAMP)""",
@@ -94,6 +95,22 @@ def test_customer_delivery_health_is_loaded_in_one_query(monkeypatch):
     assert customers[0]["overdue"] is True
 
 
+def test_customer_workspace_channel_videos_only_loads_new_items():
+    conn = _database()
+    conn.execute(
+        "INSERT INTO autopilot_channel_videos VALUES (2, 'u1', 'b1', 'UC1234567890123456789012', 'v2', 'Handled upload', CURRENT_TIMESTAMP, 500, CURRENT_TIMESTAMP, 'seen')"
+    )
+
+    videos = generation._load_new_autopilot_channel_videos(
+        conn,
+        owner_user_id="u1",
+        brand_id="b1",
+    )
+
+    assert [video["id"] for video in videos] == [1]
+    assert videos[0]["title"] == "New upload"
+
+
 def test_process_revalidates_customer_scope_and_uses_shared_ingest(monkeypatch):
     from app.video_shorts.routes import quick_short
 
@@ -116,6 +133,7 @@ def test_process_revalidates_customer_scope_and_uses_shared_ingest(monkeypatch):
         response = generation.admin_autopilot_channel_video_action(1, "process")
 
     assert response.status_code == 302
+    assert response.location.endswith("/video_shorts/admin/operation/customer/b1/workspace")
     assert ingest_calls[0]["user_id"] == "u1"
     assert ingest_calls[0]["brand_id"] == "b1"
     assert ingest_calls[0]["source"] == "autopilot_channel_watcher"

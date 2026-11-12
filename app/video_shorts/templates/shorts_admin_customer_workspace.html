@@ -11,6 +11,15 @@
   .customer-workspace-header { display:flex; justify-content:space-between; align-items:center; gap:16px; margin-bottom:20px; padding:16px; border:1px solid rgba(45,212,191,.22); border-radius:12px; background:rgba(45,212,191,.05); }
   .customer-workspace-target-line { color:#fff; display:flex; flex-wrap:wrap; gap:6px; align-items:center; }
   .customer-workspace-target-actions { display:flex; flex-wrap:wrap; gap:8px; margin-top:8px; }
+  .customer-channel-videos { margin-bottom:20px; padding:18px; border:1px solid rgba(56,189,248,.26); border-radius:12px; background:rgba(14,165,233,.07); }
+  .customer-channel-videos-head { display:flex; justify-content:space-between; align-items:flex-start; gap:12px; margin-bottom:12px; }
+  .customer-channel-videos-count { display:inline-flex; padding:4px 9px; border:1px solid rgba(56,189,248,.4); border-radius:999px; color:#7dd3fc; background:rgba(14,165,233,.12); font-size:.78rem; font-weight:700; white-space:nowrap; }
+  .customer-channel-video { display:grid; grid-template-columns:minmax(0,1fr) auto; gap:16px; align-items:center; padding:14px 0; border-top:1px solid rgba(255,255,255,.09); }
+  .customer-channel-video-title { color:#fff; font-weight:700; text-decoration:none; }
+  .customer-channel-video-title:hover { color:#7dd3fc; }
+  .customer-channel-video-meta { margin-top:4px; color:rgba(255,255,255,.58); font-size:.82rem; }
+  .customer-channel-video-actions { display:flex; flex-wrap:wrap; justify-content:flex-end; gap:8px; }
+  .customer-channel-video-actions form { margin:0; }
   .customer-notify-preview { width:100%; min-height:390px; border:1px solid rgba(148,163,184,.25); border-radius:10px; background:#fff; }
   .customer-notify-error { color:#fca5a5; min-height:1.4em; }
   .customer-workspace-videos { min-width:0; }
@@ -33,7 +42,11 @@
     .customer-workspace-videos .mv-row { grid-template-columns:minmax(0,1fr) auto; }
     .customer-workspace-videos .mv-row-actions { width:260px; grid-column:1 / 3; justify-self:start; }
   }
-  @media (max-width:767.98px) { .customer-workspace-header { align-items:flex-start; flex-direction:column; } }
+  @media (max-width:767.98px) {
+    .customer-workspace-header { align-items:flex-start; flex-direction:column; }
+    .customer-channel-video { grid-template-columns:1fr; }
+    .customer-channel-video-actions { justify-content:flex-start; }
+  }
 </style>
 {% endblock %}
 
@@ -63,6 +76,39 @@
         <button type="submit" class="btn btn-outline-secondary">Exit workspace</button>
       </form>
     </div>
+
+    {% if new_channel_videos %}
+      <section class="customer-channel-videos" id="new-channel-videos" aria-labelledby="new-channel-videos-title">
+        <div class="customer-channel-videos-head">
+          <div>
+            <h2 class="h5 mb-1" id="new-channel-videos-title">New channel videos</h2>
+            <div class="small text-white-50">Choose what to do with each newly detected upload.</div>
+          </div>
+          <span class="customer-channel-videos-count">{{ new_channel_videos|length }} new</span>
+        </div>
+        {% for video in new_channel_videos %}
+          <div class="customer-channel-video">
+            <div>
+              <a class="customer-channel-video-title" href="{{ video.youtube_url }}" target="_blank" rel="noopener noreferrer">{{ video.title }}</a>
+              <div class="customer-channel-video-meta">
+                {{ video.duration_label or 'Duration unavailable' }} · detected {{ video.detected_at_pst or 'recently' }}
+              </div>
+            </div>
+            <div class="customer-channel-video-actions">
+              <form method="post" action="{{ url_for('video_shorts_bp.admin_autopilot_channel_video_action', channel_video_id=video.id, action='process') }}">
+                <button class="btn btn-sm btn-primary" type="submit">Process</button>
+              </form>
+              <form method="post" action="{{ url_for('video_shorts_bp.admin_autopilot_channel_video_action', channel_video_id=video.id, action='skip') }}">
+                <button class="btn btn-sm btn-outline-light" type="submit">Skip</button>
+              </form>
+              <form method="post" action="{{ url_for('video_shorts_bp.admin_autopilot_channel_video_action', channel_video_id=video.id, action='seen') }}">
+                <button class="btn btn-sm btn-outline-light" type="submit">Dismiss</button>
+              </form>
+            </div>
+          </div>
+        {% endfor %}
+      </section>
+    {% endif %}
 
     <div class="mv-add-panel">
       <div class="mv-tabs" role="tablist" aria-label="Add video"><button type="button" class="mv-tab is-active" role="tab" aria-selected="true">Video from URL<span class="mv-beta-tag">BETA</span></button></div>

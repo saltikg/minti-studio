@@ -25128,9 +25128,13 @@ def admin_autopilot_channel_video_action(channel_video_id: int, action: str):
         conn.close()
     if not row:
         abort(404)
+    redirect_target = url_for(
+        "video_shorts_bp.admin_operation_customer_workspace",
+        brand_id=str(row[2]),
+    )
     if str(row[7] or "").strip().lower() != "new":
         flash("That channel video has already been handled.", "info")
-        return redirect(url_for("video_shorts_bp.admin_autopilot_leads"))
+        return redirect(redirect_target)
 
     if normalized_action == "process":
         from app.video_shorts.routes.quick_short import create_youtube_ingest_session_for_user
@@ -25183,7 +25187,7 @@ def admin_autopilot_channel_video_action(channel_video_id: int, action: str):
         flash("Video queued through the My Videos ingest pipeline.", "success")
     else:
         flash(f"Video marked {next_status}.", "success")
-    return redirect(url_for("video_shorts_bp.admin_autopilot_leads"))
+    return redirect(redirect_target)
 
 
 @video_shorts_bp.route("/admin/scheduled-shorts", methods=["GET"])
@@ -27310,6 +27314,38 @@ def _require_active_customer_workspace(scope: Dict[str, str]) -> Dict[str, str]:
     }
 
 
+def _load_new_autopilot_channel_videos(
+    conn,
+    *,
+    owner_user_id: str,
+    brand_id: str,
+) -> List[Dict[str, Any]]:
+    """Load channel uploads that still need an admin decision."""
+    rows = conn.execute(
+        """
+        SELECT id, youtube_video_id, title, published_at, duration_s, detected_at
+        FROM autopilot_channel_videos
+        WHERE CAST(user_id AS VARCHAR) = CAST(? AS VARCHAR)
+          AND CAST(brand_id AS VARCHAR) = CAST(? AS VARCHAR)
+          AND status = 'new'
+        ORDER BY published_at DESC NULLS LAST, detected_at DESC, id DESC
+        """,
+        [owner_user_id, brand_id],
+    ).fetchall()
+    return [
+        {
+            "id": int(row[0]),
+            "youtube_video_id": str(row[1] or "").strip(),
+            "title": str(row[2] or "").strip() or "Untitled video",
+            "published_at_pst": _format_datetime_pst(row[3]),
+            "duration_label": _format_time_label(int(row[4] or 0)),
+            "detected_at_pst": _format_datetime_pst(row[5]),
+            "youtube_url": f"https://www.youtube.com/watch?v={str(row[1] or '').strip()}",
+        }
+        for row in rows
+    ]
+
+
 def _rehome_plan_files_to_local_video_id(source_video_id: str, local_video_id: str) -> None:
     """Copy durable-on-disk plan files so existing generated clips stay editable after re-home."""
     for plan_path_builder in (_plan_path, _plan_path_v2, _plan_path_v3, _plan_path_v4):
@@ -27471,6 +27507,15 @@ def admin_operation_customer_workspace(brand_id: str):
     """Admin-only workspace for a revalidated converted autopilot customer."""
     scope = _require_admin_operation_scope(brand_id=brand_id, workspace_kind="customer")
     customer = _require_active_customer_workspace(scope)
+    channel_video_conn = get_db_readonly()
+    try:
+        new_channel_videos = _load_new_autopilot_channel_videos(
+            channel_video_conn,
+            owner_user_id=scope["owner_user_id"],
+            brand_id=scope["brand_id"],
+        )
+    finally:
+        channel_video_conn.close()
     description_prompt, description_languages = load_description_settings(scope["owner_user_id"], scope["brand_id"])
     from app.video_shorts.routes.channels import render_my_videos_page_for_user
     from app.video_shorts.services.customer_short_notifications import format_pt_date, latest_successful_notifications
@@ -27530,6 +27575,7 @@ def admin_operation_customer_workspace(brand_id: str):
             "allow_video_management": True,
             "allow_video_title_edit": False,
             "show_customer_notify": True,
+            "new_channel_videos": new_channel_videos,
             "delete_video_fallback_url": url_for("video_shorts_bp.admin_operation_customer_workspace", brand_id=brand_id),
         },
     )
