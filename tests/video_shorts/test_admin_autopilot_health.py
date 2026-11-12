@@ -97,8 +97,14 @@ def test_customer_delivery_health_is_loaded_in_one_query(monkeypatch):
 
 def test_customer_workspace_channel_videos_keep_saved_decisions():
     conn = _database()
+    converted_at = conn.execute("SELECT converted_at FROM autopilot_leads WHERE id='l1'").fetchone()[0]
     conn.execute(
-        "INSERT INTO autopilot_channel_videos VALUES (2, 'u1', 'b1', 'UC1234567890123456789012', 'v2', 'Handled upload', CURRENT_TIMESTAMP, 500, CURRENT_TIMESTAMP, 'seen')"
+        "INSERT INTO autopilot_channel_videos VALUES (2, 'u1', 'b1', 'UC1234567890123456789012', 'v2', 'Handled upload', ?, 500, CURRENT_TIMESTAMP, 'seen')",
+        [converted_at + timedelta(minutes=1)],
+    )
+    conn.execute(
+        "INSERT INTO autopilot_channel_videos VALUES (3, 'u1', 'b1', 'UC1234567890123456789012', 'v3', 'Pre-customer upload', ?, 500, CURRENT_TIMESTAMP, 'seen')",
+        [converted_at - timedelta(days=30)],
     )
 
     videos = generation._load_autopilot_channel_videos(
@@ -109,6 +115,7 @@ def test_customer_workspace_channel_videos_keep_saved_decisions():
 
     assert {video["id"] for video in videos} == {1, 2}
     assert {video["status"] for video in videos} == {"new", "seen"}
+    assert all(video["title"] != "Pre-customer upload" for video in videos)
 
 
 def test_process_revalidates_customer_scope_and_uses_shared_ingest(monkeypatch):

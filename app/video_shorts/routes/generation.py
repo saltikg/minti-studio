@@ -27341,9 +27341,16 @@ def _load_autopilot_channel_videos(
         FROM autopilot_channel_videos
         WHERE CAST(user_id AS VARCHAR) = CAST(? AS VARCHAR)
           AND CAST(brand_id AS VARCHAR) = CAST(? AS VARCHAR)
+          AND COALESCE(published_at, detected_at) >= (
+              SELECT MIN(converted_at)
+              FROM autopilot_leads
+              WHERE CAST(user_id AS VARCHAR) = CAST(? AS VARCHAR)
+                AND CAST(brand_id AS VARCHAR) = CAST(? AS VARCHAR)
+                AND converted_at IS NOT NULL
+          )
         ORDER BY published_at DESC NULLS LAST, detected_at DESC, id DESC
         """,
-        [owner_user_id, brand_id],
+        [owner_user_id, brand_id, owner_user_id, brand_id],
     ).fetchall()
     return [
         {
