@@ -67,17 +67,18 @@
             </div>
           </div>
           <div class="mv-table-muted text-center">{{ item.duration_label or "—" }}</div>
-          <div class="mv-table-muted">{{ item.detected_at_pst or "—" }}</div>
+          <div class="mv-table-muted">{{ item.published_at_pst or item.detected_at_pst or "—" }}</div>
           <div class="mv-count-cell"><div class="mv-table-number is-zero">—</div></div>
           <div class="mv-count-cell"><div class="mv-table-number is-zero">—</div></div>
-          <div class="mv-status-cell"><span class="mv-status-pill mv-status-pill--processing">New</span></div>
+          <div class="mv-status-cell"><span class="mv-status-pill mv-status-pill--processing" data-channel-video-status>{{ item.status_label }}</span></div>
           <div class="mv-row-actions">
             <form method="post" class="mv-new-video-decision" data-new-video-decision-form>
               <label class="visually-hidden" for="new-video-action-{{ item.id }}">Choose an action for {{ item.title }}</label>
-              <select class="form-select form-select-sm" id="new-video-action-{{ item.id }}" data-new-video-decision required>
-                <option value="" selected disabled>Choose action…</option>
-                {% for action in item.action_options %}<option value="{{ action.url }}">{{ action.label }}</option>{% endfor %}
+              <select class="form-select form-select-sm" id="new-video-action-{{ item.id }}" data-new-video-decision data-saved-url="{{ item.selected_url }}" required>
+                <option value="" {% if not item.selected_action %}selected{% endif %} disabled>Choose action…</option>
+                {% for action in item.action_options %}<option value="{{ action.url }}" {% if action.value == item.selected_action %}selected{% endif %}>{{ action.label }}</option>{% endfor %}
               </select>
+              <span class="mv-new-video-save-state" data-new-video-save-state aria-live="polite"></span>
             </form>
           </div>
         </div>

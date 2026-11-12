@@ -95,20 +95,20 @@ def test_customer_delivery_health_is_loaded_in_one_query(monkeypatch):
     assert customers[0]["overdue"] is True
 
 
-def test_customer_workspace_channel_videos_only_loads_new_items():
+def test_customer_workspace_channel_videos_keep_saved_decisions():
     conn = _database()
     conn.execute(
         "INSERT INTO autopilot_channel_videos VALUES (2, 'u1', 'b1', 'UC1234567890123456789012', 'v2', 'Handled upload', CURRENT_TIMESTAMP, 500, CURRENT_TIMESTAMP, 'seen')"
     )
 
-    videos = generation._load_new_autopilot_channel_videos(
+    videos = generation._load_autopilot_channel_videos(
         conn,
         owner_user_id="u1",
         brand_id="b1",
     )
 
-    assert [video["id"] for video in videos] == [1]
-    assert videos[0]["title"] == "New upload"
+    assert {video["id"] for video in videos} == {1, 2}
+    assert {video["status"] for video in videos} == {"new", "seen"}
 
 
 def test_process_revalidates_customer_scope_and_uses_shared_ingest(monkeypatch):
@@ -138,6 +138,28 @@ def test_process_revalidates_customer_scope_and_uses_shared_ingest(monkeypatch):
     assert ingest_calls[0]["brand_id"] == "b1"
     assert ingest_calls[0]["source"] == "autopilot_channel_watcher"
     assert raw_conn.execute("SELECT status FROM autopilot_channel_videos WHERE id=1").fetchone()[0] == "processed"
+
+
+def test_ajax_decision_saves_without_redirect_and_keeps_history(monkeypatch):
+    app = Flask(__name__)
+    app.secret_key = "test"
+    app.register_blueprint(video_shorts_bp)
+    raw_conn = _database()
+    conn = CountingConnection(raw_conn)
+    monkeypatch.setattr(generation, "get_db_readonly", lambda: conn)
+    monkeypatch.setattr(generation, "get_db", lambda: conn)
+
+    with app.test_request_context(
+        "/video_shorts/admin/autopilot-channel-videos/1/skip",
+        method="POST",
+        headers={"X-Requested-With": "XMLHttpRequest"},
+    ):
+        g.vs_current_user = {"id": "admin", "role": "admin"}
+        response = generation.admin_autopilot_channel_video_action(1, "skip")
+
+    assert response.status_code == 200
+    assert response.get_json() == {"ok": True, "status": "skipped", "status_label": "Skipped"}
+    assert raw_conn.execute("SELECT status FROM autopilot_channel_videos WHERE id=1").fetchone()[0] == "skipped"
 
 
 def test_set_channel_updates_only_empty_lead_record(monkeypatch):

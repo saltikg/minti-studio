@@ -25100,6 +25100,7 @@ def admin_autopilot_set_channel(lead_id: str):
 @require_admin
 def admin_autopilot_channel_video_action(channel_video_id: int, action: str):
     normalized_action = str(action or "").strip().lower()
+    wants_json = request.is_json or request.headers.get("X-Requested-With") == "XMLHttpRequest"
     if normalized_action not in {"process", "skip", "seen"}:
         abort(404)
     conn = get_db_readonly()
@@ -25132,8 +25133,21 @@ def admin_autopilot_channel_video_action(channel_video_id: int, action: str):
         "video_shorts_bp.admin_operation_customer_workspace",
         brand_id=str(row[2]),
     )
-    if str(row[7] or "").strip().lower() != "new":
-        flash("That channel video has already been handled.", "info")
+    current_status = str(row[7] or "").strip().lower() or "new"
+    next_status = {
+        "process": "processed",
+        "skip": "skipped",
+        "seen": "seen",
+    }[normalized_action]
+    status_label = {
+        "processed": "Processed",
+        "skipped": "Skipped",
+        "seen": "Dismissed",
+    }[next_status]
+    if current_status == next_status:
+        if wants_json:
+            return jsonify(ok=True, status=next_status, status_label=status_label)
+        flash(f"Video is already marked {status_label.lower()}.", "info")
         return redirect(redirect_target)
 
     if normalized_action == "process":
@@ -25157,10 +25171,6 @@ def admin_autopilot_channel_video_action(channel_video_id: int, action: str):
                 "autopilot_channel_video_id": int(row[0]),
             },
         )
-        next_status = "processed"
-    else:
-        next_status = "skipped" if normalized_action == "skip" else "seen"
-
     conn = get_db()
     try:
         updated = conn.execute(
@@ -25170,10 +25180,10 @@ def admin_autopilot_channel_video_action(channel_video_id: int, action: str):
             WHERE id = ?
               AND CAST(user_id AS VARCHAR) = CAST(? AS VARCHAR)
               AND CAST(brand_id AS VARCHAR) = CAST(? AS VARCHAR)
-              AND status = 'new'
+              AND status = ?
             RETURNING id
             """,
-            [next_status, int(row[0]), str(row[1]), str(row[2])],
+            [next_status, int(row[0]), str(row[1]), str(row[2]), current_status],
         ).fetchone()
         conn.commit()
     except Exception:
@@ -25182,7 +25192,11 @@ def admin_autopilot_channel_video_action(channel_video_id: int, action: str):
     finally:
         conn.close()
     if not updated:
+        if wants_json:
+            return jsonify(ok=False, message="This video was updated in another request."), 409
         flash("That channel video was handled in another request.", "info")
+    elif wants_json:
+        return jsonify(ok=True, status=next_status, status_label=status_label)
     elif next_status == "processed":
         flash("Video queued through the My Videos ingest pipeline.", "success")
     else:
@@ -27314,20 +27328,19 @@ def _require_active_customer_workspace(scope: Dict[str, str]) -> Dict[str, str]:
     }
 
 
-def _load_new_autopilot_channel_videos(
+def _load_autopilot_channel_videos(
     conn,
     *,
     owner_user_id: str,
     brand_id: str,
 ) -> List[Dict[str, Any]]:
-    """Load channel uploads that still need an admin decision."""
+    """Load the customer's detected channel uploads and saved decisions."""
     rows = conn.execute(
         """
-        SELECT id, youtube_video_id, title, published_at, duration_s, detected_at
+        SELECT id, youtube_video_id, title, published_at, duration_s, detected_at, status
         FROM autopilot_channel_videos
         WHERE CAST(user_id AS VARCHAR) = CAST(? AS VARCHAR)
           AND CAST(brand_id AS VARCHAR) = CAST(? AS VARCHAR)
-          AND status = 'new'
         ORDER BY published_at DESC NULLS LAST, detected_at DESC, id DESC
         """,
         [owner_user_id, brand_id],
@@ -27342,6 +27355,7 @@ def _load_new_autopilot_channel_videos(
             "detected_at_pst": _format_datetime_pst(row[5]),
             "youtube_url": f"https://www.youtube.com/watch?v={str(row[1] or '').strip()}",
             "thumbnail_url": f"https://i.ytimg.com/vi/{str(row[1] or '').strip()}/hqdefault.jpg",
+            "status": str(row[6] or "new").strip().lower() or "new",
         }
         for row in rows
     ]
@@ -27510,17 +27524,18 @@ def admin_operation_customer_workspace(brand_id: str):
     customer = _require_active_customer_workspace(scope)
     channel_video_conn = get_db_readonly()
     try:
-        new_channel_videos = _load_new_autopilot_channel_videos(
+        channel_videos = _load_autopilot_channel_videos(
             channel_video_conn,
             owner_user_id=scope["owner_user_id"],
             brand_id=scope["brand_id"],
         )
     finally:
         channel_video_conn.close()
-    for channel_video in new_channel_videos:
+    for channel_video in channel_videos:
         channel_video["action_options"] = [
             {
                 "label": "Process",
+                "value": "process",
                 "url": url_for(
                     "video_shorts_bp.admin_autopilot_channel_video_action",
                     channel_video_id=channel_video["id"],
@@ -27529,6 +27544,7 @@ def admin_operation_customer_workspace(brand_id: str):
             },
             {
                 "label": "Skip",
+                "value": "skip",
                 "url": url_for(
                     "video_shorts_bp.admin_autopilot_channel_video_action",
                     channel_video_id=channel_video["id"],
@@ -27537,6 +27553,7 @@ def admin_operation_customer_workspace(brand_id: str):
             },
             {
                 "label": "Dismiss",
+                "value": "seen",
                 "url": url_for(
                     "video_shorts_bp.admin_autopilot_channel_video_action",
                     channel_video_id=channel_video["id"],
@@ -27544,6 +27561,25 @@ def admin_operation_customer_workspace(brand_id: str):
                 ),
             },
         ]
+        channel_video["selected_action"] = {
+            "processed": "process",
+            "skipped": "skip",
+            "seen": "seen",
+        }.get(channel_video["status"], "")
+        channel_video["status_label"] = {
+            "new": "New",
+            "processed": "Processed",
+            "skipped": "Skipped",
+            "seen": "Dismissed",
+        }.get(channel_video["status"], channel_video["status"].title())
+        channel_video["selected_url"] = next(
+            (
+                option["url"]
+                for option in channel_video["action_options"]
+                if option["value"] == channel_video["selected_action"]
+            ),
+            "",
+        )
     description_prompt, description_languages = load_description_settings(scope["owner_user_id"], scope["brand_id"])
     from app.video_shorts.routes.channels import render_my_videos_page_for_user
     from app.video_shorts.services.customer_short_notifications import format_pt_date, latest_successful_notifications
@@ -27603,7 +27639,7 @@ def admin_operation_customer_workspace(brand_id: str):
             "allow_video_management": True,
             "allow_video_title_edit": False,
             "show_customer_notify": True,
-            "new_channel_videos": new_channel_videos,
+            "new_channel_videos": channel_videos,
             "delete_video_fallback_url": url_for("video_shorts_bp.admin_operation_customer_workspace", brand_id=brand_id),
         },
     )
