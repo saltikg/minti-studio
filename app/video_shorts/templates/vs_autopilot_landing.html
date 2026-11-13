@@ -417,6 +417,68 @@
     color: var(--ap-mint);
   }
 
+  .ap-video-card {
+    position: relative;
+    overflow: hidden;
+    width: 100%;
+    aspect-ratio: 16 / 9;
+    border: 1px solid var(--ap-line);
+    border-radius: 32px;
+    background: #05090d;
+    box-shadow: 0 40px 100px rgba(0, 0, 0, 0.34), inset 0 1px 0 rgba(255, 255, 255, 0.04);
+  }
+
+  .ap-video-card video {
+    width: 100%;
+    height: 100%;
+    display: block;
+    object-fit: cover;
+  }
+
+  .ap-video-overlay {
+    position: absolute;
+    inset: 0;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    gap: 0.8rem;
+    border: 0;
+    background: linear-gradient(180deg, rgba(4, 8, 12, 0.08), rgba(4, 8, 12, 0.28));
+    color: var(--ap-ink);
+    cursor: pointer;
+    transition: opacity 180ms ease, visibility 180ms ease;
+  }
+
+  .ap-video-overlay.is-hidden {
+    opacity: 0;
+    visibility: hidden;
+    pointer-events: none;
+  }
+
+  .ap-video-play-icon {
+    width: clamp(64px, 8vw, 82px);
+    height: clamp(64px, 8vw, 82px);
+    display: grid;
+    place-items: center;
+    border: 1px solid rgba(101, 234, 212, 0.55);
+    border-radius: 50%;
+    background: rgba(6, 20, 18, 0.88);
+    color: var(--ap-mint);
+    font-size: clamp(1.55rem, 3vw, 2rem);
+    box-shadow: 0 18px 46px rgba(0, 0, 0, 0.4), 0 0 0 9px rgba(101, 234, 212, 0.08);
+  }
+
+  .ap-video-label {
+    padding: 0.45rem 0.72rem;
+    border: 1px solid rgba(255, 255, 255, 0.12);
+    border-radius: 999px;
+    background: rgba(4, 9, 13, 0.76);
+    font-size: 0.78rem;
+    font-weight: 700;
+    letter-spacing: 0.015em;
+  }
+
   .ap-process-section {
     border-top: 1px solid rgba(255, 255, 255, 0.055);
   }
@@ -827,7 +889,8 @@
       justify-content: center;
     }
 
-    .ap-flow-visual {
+    .ap-flow-visual,
+    .ap-video-card {
       max-width: 800px;
       width: 100%;
       margin-inline: auto;
@@ -842,6 +905,24 @@
       width: calc(50% - 0.5rem);
       margin-inline: auto;
     }
+  }
+
+  @media (max-width: 900px) {
+    .ap-hero-grid {
+      display: flex;
+      flex-direction: column;
+    }
+
+    .ap-hero-copy {
+      display: contents;
+    }
+
+    .ap-hero-copy .ap-kicker { order: 1; align-self: center; }
+    .ap-hero-copy h1 { order: 2; text-align: center; }
+    .ap-hero-subtitle { order: 3; text-align: center; }
+    .ap-video-card { order: 4; max-width: none; }
+    .ap-hero-copy .ap-actions { order: 5; justify-content: center; }
+    .ap-support-line { order: 6; justify-content: center; }
   }
 
   @media (max-width: 820px) {
@@ -1031,33 +1112,23 @@
             data-minti-cta
             data-cta-location="autopilot_hero"
           >Start Autopilot <i class="bi bi-arrow-up-right" aria-hidden="true"></i></a>
-          <a class="ap-button ap-button-secondary" href="#how-it-works">See how it works <i class="bi bi-arrow-down" aria-hidden="true"></i></a>
+          <a class="ap-button ap-button-secondary" href="#how-it-works" data-ap-video-trigger>See how it works <i class="bi bi-arrow-down" aria-hidden="true"></i></a>
         </div>
         <p class="ap-support-line"><i class="bi bi-person-check" aria-hidden="true"></i> Human-guided, AI-assisted. No editing required.</p>
       </div>
 
-      <div class="ap-flow-visual" aria-label="One long video becomes multiple ready-to-review Shorts">
-        <span class="ap-flow-label">One long video. Multiple Shorts.</span>
-        <div class="ap-source-video">
-          <picture>
-            <source srcset="{{ url_for('video_shorts_bp.static', filename='img/long_video_1.webp') }}" type="image/webp">
-            <img src="{{ url_for('video_shorts_bp.static', filename='img/long_video_1.jpeg') }}" alt="A long-form source video" width="640" height="331">
-          </picture>
-          <div class="ap-source-meta"><span>Weekly long-form video</span><span>24:03</span></div>
-        </div>
-        <div class="ap-flow-arrow" aria-hidden="true"><i class="bi bi-chevron-right"></i></div>
-        <div class="ap-short-stack">
-          <div class="ap-short-card">
-            <img src="{{ url_for('video_shorts_bp.static', filename='img/long_video_short_1.webp') }}" alt="First vertical Short created from the source video" width="360" height="563">
-          </div>
-          <div class="ap-short-card">
-            <img src="{{ url_for('video_shorts_bp.static', filename='img/long_video_short_2.webp') }}" alt="Second vertical Short created from the source video" width="360" height="568">
-          </div>
-          <div class="ap-short-card">
-            <img src="{{ url_for('video_shorts_bp.static', filename='img/long_video_short_3.webp') }}" alt="Third vertical Short created from the source video" width="360" height="593">
-          </div>
-        </div>
-        <span class="ap-ready-badge"><i class="bi bi-check-circle-fill" aria-hidden="true"></i> Ready for review</span>
+      <div class="ap-video-card" id="autopilot-video" aria-label="MintiStudio Autopilot explainer video">
+        <video
+          preload="metadata"
+          playsinline
+          poster="{{ url_for('video_shorts_bp.static', filename='motion/autopilot.jpg') }}"
+        >
+          <source src="{{ url_for('video_shorts_bp.static', filename='motion/autopilot.mp4') }}" type="video/mp4">
+        </video>
+        <button class="ap-video-overlay" type="button" data-ap-video-play aria-label="Play the 2 minute 30 second Autopilot explainer video">
+          <span class="ap-video-play-icon"><i class="bi bi-play-fill" aria-hidden="true"></i></span>
+          <span class="ap-video-label">Watch how it works · 2:30</span>
+        </button>
       </div>
     </div>
   </section>
@@ -1249,6 +1320,41 @@
 {% block scripts %}
 {{ super() }}
 <script>
+  const autopilotVideoCard = document.getElementById("autopilot-video");
+  const autopilotVideo = autopilotVideoCard?.querySelector("video");
+  const autopilotVideoOverlay = autopilotVideoCard?.querySelector("[data-ap-video-play]");
+  let autopilotVideoPlayTracked = false;
+
+  function playAutopilotVideo({ scroll = false } = {}) {
+    if (!autopilotVideo) return;
+    if (scroll) autopilotVideoCard.scrollIntoView({ behavior: "smooth", block: "center" });
+    autopilotVideo.play().catch(function () {
+      autopilotVideoOverlay?.classList.remove("is-hidden");
+    });
+  }
+
+  autopilotVideoOverlay?.addEventListener("click", function () {
+    playAutopilotVideo();
+  });
+
+  document.querySelector("[data-ap-video-trigger]")?.addEventListener("click", function (event) {
+    event.preventDefault();
+    playAutopilotVideo({ scroll: true });
+  });
+
+  autopilotVideo?.addEventListener("play", function () {
+    autopilotVideo.controls = true;
+    autopilotVideoOverlay?.classList.add("is-hidden");
+    if (!autopilotVideoPlayTracked && typeof trackMintiEvent === "function") {
+      autopilotVideoPlayTracked = true;
+      trackMintiEvent("autopilot_video_play");
+    }
+  });
+
+  autopilotVideo?.addEventListener("ended", function () {
+    if (typeof trackMintiEvent === "function") trackMintiEvent("autopilot_video_complete");
+  });
+
   document.querySelectorAll("[data-ap-tier]").forEach(function (button) {
     button.addEventListener("click", function () {
       document.querySelectorAll("[data-ap-tier]").forEach(function (item) {
