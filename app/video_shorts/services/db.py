@@ -784,6 +784,7 @@ def ensure_storage_user_schema(conn):
         ("guest_resume_next", "TEXT"),
         ("guest_resume_action", "VARCHAR"),
         ("guest_resume_clip", "VARCHAR"),
+        ("pricing_offer", "TEXT"),
     ]
     for col_name, definition in column_defs:
         if col_name not in user_columns:
@@ -924,6 +925,7 @@ def ensure_auth_user_schema(conn) -> None:
         ("service_mode_chosen_at", "TIMESTAMP"),
         ("pending_service_intent", "VARCHAR"),
         ("pending_service_tier", "INTEGER"),
+        ("pricing_offer", "TEXT"),
         ("autopilot_billing_reminder_sent_at", "TIMESTAMP"),
         ("autopilot_billing_paused_at", "TIMESTAMP"),
         ("is_guest", "BOOLEAN DEFAULT FALSE"),

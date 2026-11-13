@@ -45,11 +45,25 @@ AUTOPILOT_TIER_MONTHLY_PRICES: Dict[int, int] = {
     60: 80,
 }
 
+AUTOPILOT_PRICING_OFFERS = {"autopilot_lp_v1"}
+AUTOPILOT_OFFER_TIER_MONTHLY_PRICES: Dict[str, Dict[int, int]] = {
+    "autopilot_lp_v1": {15: 49, 30: 89, 45: 129, 60: 169},
+}
+
 _AUTOPILOT_PRICE_ID_ENV_OVERRIDES: Dict[int, str] = {
     15: "STRIPE_PRICE_AUTOPILOT_15_MONTH",
     30: "STRIPE_PRICE_AUTOPILOT_30_MONTH",
     45: "STRIPE_PRICE_AUTOPILOT_45_MONTH",
     60: "STRIPE_PRICE_AUTOPILOT_60_MONTH",
+}
+
+_AUTOPILOT_OFFER_PRICE_ID_ENV_OVERRIDES: Dict[str, Dict[int, str]] = {
+    "autopilot_lp_v1": {
+        15: "AUTOPILOT_LP_V1_PRICE_15",
+        30: "AUTOPILOT_LP_V1_PRICE_30",
+        45: "AUTOPILOT_LP_V1_PRICE_45",
+        60: "AUTOPILOT_LP_V1_PRICE_60",
+    },
 }
 
 
@@ -78,8 +92,21 @@ def _build_autopilot_price_map() -> Dict[int, str]:
 
 
 AUTOPILOT_TIER_TO_PRICE_ID: Dict[int, str] = _build_autopilot_price_map()
+
+
+def _build_autopilot_offer_price_map() -> Dict[Tuple[str, int], str]:
+    return {
+        (offer, tier): value
+        for offer, tier_envs in _AUTOPILOT_OFFER_PRICE_ID_ENV_OVERRIDES.items()
+        for tier, env_name in tier_envs.items()
+        if (value := (os.getenv(env_name) or "").strip())
+    }
+
+
+AUTOPILOT_OFFER_TIER_TO_PRICE_ID = _build_autopilot_offer_price_map()
 PRICE_ID_TO_AUTOPILOT_TIER: Dict[str, int] = {
-    price_id: tier for tier, price_id in AUTOPILOT_TIER_TO_PRICE_ID.items()
+    **{price_id: tier for tier, price_id in AUTOPILOT_TIER_TO_PRICE_ID.items()},
+    **{price_id: tier for (_offer, tier), price_id in AUTOPILOT_OFFER_TIER_TO_PRICE_ID.items()},
 }
 
 
@@ -100,11 +127,24 @@ def get_plan_for_price_id(price_id: str) -> Optional[Tuple[str, str]]:
     return PRICE_ID_TO_PLAN_INTERVAL.get(normalized_price_id)
 
 
-def get_price_id_for_autopilot_tier(tier: int) -> Optional[str]:
+def normalize_pricing_offer(value: object) -> str:
+    normalized = str(value or "").strip().lower()
+    return normalized if normalized in AUTOPILOT_PRICING_OFFERS else ""
+
+
+def get_autopilot_monthly_prices(pricing_offer: object = "") -> Dict[int, int]:
+    offer = normalize_pricing_offer(pricing_offer)
+    return AUTOPILOT_OFFER_TIER_MONTHLY_PRICES.get(offer, AUTOPILOT_TIER_MONTHLY_PRICES)
+
+
+def get_price_id_for_autopilot_tier(tier: int, pricing_offer: object = "") -> Optional[str]:
     try:
         normalized_tier = int(tier)
     except (TypeError, ValueError):
         return None
+    offer = normalize_pricing_offer(pricing_offer)
+    if offer:
+        return AUTOPILOT_OFFER_TIER_TO_PRICE_ID.get((offer, normalized_tier))
     return AUTOPILOT_TIER_TO_PRICE_ID.get(normalized_tier)
 
 
@@ -498,7 +538,8 @@ def load_billing_user_state(user_id: str, *, refresh_live: bool = False) -> Opti
                     service_tier,
                     service_mode_chosen_at,
                     autopilot_billing_reminder_sent_at,
-                    autopilot_billing_paused_at
+                    autopilot_billing_paused_at,
+                    pricing_offer
                 FROM shorts_users
                 WHERE id = ?
                 """,
@@ -523,6 +564,7 @@ def load_billing_user_state(user_id: str, *, refresh_live: bool = False) -> Opti
             "service_mode_chosen_at": row[11],
             "autopilot_billing_reminder_sent_at": row[12],
             "autopilot_billing_paused_at": row[13],
+            "pricing_offer": str(row[14] or "").strip().lower(),
             "free_period_active": False,
             "free_months": 0,
         }
@@ -634,7 +676,8 @@ def process_autopilot_billing_deadlines(*, now: Optional[datetime] = None) -> bo
 
         reminder = conn.execute(
             """
-            SELECT CAST(id AS VARCHAR), email, name, service_mode_chosen_at
+            SELECT CAST(id AS VARCHAR), email, name, service_mode_chosen_at,
+                   service_tier, pricing_offer
             FROM shorts_users
             WHERE lower(COALESCE(service_mode, '')) = 'autopilot'
               AND service_mode_chosen_at IS NOT NULL
@@ -680,6 +723,7 @@ def process_autopilot_billing_deadlines(*, now: Optional[datetime] = None) -> bo
             recipient_name=str(reminder[2] or "").strip(),
             billing_url=billing_url,
             trial_end_label=trial_end_label,
+            monthly_price=get_autopilot_monthly_prices(reminder[5]).get(int(reminder[4] or 15), 20),
         )
     except Exception:
         reset_conn = get_db()

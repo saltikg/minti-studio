@@ -657,6 +657,20 @@
     line-height: 1.55;
   }
 
+  .ap-pricing-section { border-block: 1px solid rgba(255,255,255,.055); background: linear-gradient(180deg, rgba(101,234,212,.025), transparent); }
+  .ap-pricing-card { max-width: 760px; margin-inline: auto; padding: clamp(1.5rem,5vw,3.25rem); border: 1px solid rgba(101,234,212,.2); border-radius: 28px; background: linear-gradient(145deg,rgba(16,26,36,.94),rgba(8,14,20,.98)); box-shadow: 0 30px 80px rgba(0,0,0,.24); }
+  .ap-tier-selector { display: grid; grid-template-columns: repeat(4,1fr); gap: .55rem; }
+  .ap-tier-button { padding: .8rem .4rem; border: 1px solid rgba(255,255,255,.12); border-radius: 14px; background: rgba(255,255,255,.035); color: #aab9bf; font-weight: 700; }
+  .ap-tier-button.is-active { border-color: var(--ap-mint); background: rgba(101,234,212,.12); color: var(--ap-ink); }
+  .ap-pricing-price { margin: 1.6rem 0 .15rem; font-size: clamp(3rem,8vw,5rem); font-weight: 680; letter-spacing: -.06em; }
+  .ap-pricing-price small { color: var(--ap-muted); font-size: 1rem; font-weight: 600; letter-spacing: 0; }
+  .ap-pricing-terms { color: var(--ap-mint); font-weight: 650; }
+  .ap-pricing-list { display: grid; gap: .75rem; margin: 1.6rem 0; padding: 0; list-style: none; color: #c3d0d4; }
+  .ap-pricing-list li { display: flex; gap: .7rem; }
+  .ap-pricing-list i { color: var(--ap-mint); }
+  .ap-pricing-value { color: var(--ap-muted); font-size: .87rem; }
+  .ap-pricing-card .ap-button { width: 100%; margin-top: 1.2rem; }
+
   .ap-product-section {
     border-top: 1px solid rgba(255, 255, 255, 0.055);
   }
@@ -903,6 +917,7 @@
     .ap-button {
       width: 100%;
     }
+    .ap-tier-selector { grid-template-columns: repeat(2, 1fr); }
 
     .ap-flow-visual {
       min-height: 640px;
@@ -1142,6 +1157,39 @@
     </div>
   </section>
 
+  <section class="ap-section ap-pricing-section" id="pricing" aria-labelledby="pricing-title">
+    <div class="ap-container">
+      <div class="ap-section-head is-centered">
+        <p class="ap-kicker">Simple monthly pricing</p>
+        <h2 id="pricing-title">Choose your Shorts rhythm.</h2>
+      </div>
+      {% set initial_plan = autopilot_pricing[0] %}
+      <div class="ap-pricing-card">
+        <div class="ap-tier-selector" role="group" aria-label="Shorts per month">
+          {% for plan in autopilot_pricing %}
+          <button type="button" class="ap-tier-button{% if loop.first %} is-active{% endif %}"
+                  data-ap-tier="{{ plan.tier }}" data-ap-price="{{ plan.price }}"
+                  aria-pressed="{{ 'true' if loop.first else 'false' }}">{{ plan.tier }} Shorts / month</button>
+          {% endfor %}
+        </div>
+        <div class="ap-pricing-price"><span data-ap-price-display>${{ initial_plan.price }}</span> <small>per month</small></div>
+        <p class="ap-pricing-terms">First month free · No card required · Cancel anytime</p>
+        <ul class="ap-pricing-list">
+          <li><i class="bi bi-check-lg"></i><span>Your new long videos are picked up automatically</span></li>
+          <li><i class="bi bi-check-lg"></i><span>An editor turns them into ready-to-post Shorts</span></li>
+          <li><i class="bi bi-check-lg"></i><span>Captions, titles and your branding</span></li>
+          <li><i class="bi bi-check-lg"></i><span>You approve before anything goes live</span></li>
+          <li><i class="bi bi-check-lg"></i><span>Scheduled &amp; published to YouTube and Instagram</span></li>
+          <li><i class="bi bi-check-lg"></i><span>Monthly performance report</span></li>
+        </ul>
+        <p class="ap-pricing-value">About $3 per Short. Editors typically charge $50+ per Short.</p>
+        <a class="ap-button ap-button-primary" data-ap-pricing-cta data-minti-cta
+           data-cta-location="autopilot_pricing_{{ initial_plan.tier }}"
+           href="{{ autopilot_register_url }}">Start your free month <i class="bi bi-arrow-up-right"></i></a>
+      </div>
+    </div>
+  </section>
+
   <section class="ap-section ap-product-section" id="product" aria-labelledby="product-title">
     <div class="ap-container">
       <div class="ap-section-head is-centered">
@@ -1196,4 +1244,24 @@
     </div>
   </section>
 </div>
+{% endblock %}
+
+{% block scripts %}
+{{ super() }}
+<script>
+  document.querySelectorAll("[data-ap-tier]").forEach(function (button) {
+    button.addEventListener("click", function () {
+      document.querySelectorAll("[data-ap-tier]").forEach(function (item) {
+        const active = item === button;
+        item.classList.toggle("is-active", active);
+        item.setAttribute("aria-pressed", active ? "true" : "false");
+      });
+      const tier = button.dataset.apTier;
+      document.querySelector("[data-ap-price-display]").textContent = "$" + button.dataset.apPrice;
+      const cta = document.querySelector("[data-ap-pricing-cta]");
+      cta.href = {{ url_for('video_shorts_bp.register')|tojson }} + "?intent=autopilot&tier=" + tier + "&offer=" + {{ autopilot_offer|tojson }};
+      cta.dataset.ctaLocation = "autopilot_pricing_" + tier;
+    });
+  });
+</script>
 {% endblock %}

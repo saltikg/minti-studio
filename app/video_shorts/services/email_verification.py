@@ -640,6 +640,7 @@ def send_autopilot_billing_reminder_email(
     recipient_name: str = "",
     billing_url: str,
     trial_end_label: str,
+    monthly_price: int,
 ) -> dict[str, object]:
     greeting = html.escape((recipient_name or "").strip() or "there")
     safe_url = html.escape((billing_url or "").strip())
@@ -652,7 +653,7 @@ def send_autopilot_billing_reminder_email(
         <p style="margin:0 0 12px;">Hi {greeting},</p>
         <p style="margin:0 0 16px;">Your free Autopilot period ends on {safe_trial_end}. Add a card now to keep Short creation and publishing running without interruption.</p>
         <p style="margin:0 0 20px;"><a href="{safe_url}" style="display:inline-block;padding:12px 18px;border-radius:999px;background:#5df0d2;color:#07161d;text-decoration:none;font-weight:700;">Add billing details</a></p>
-        <p style="margin:0;">No charge is due before {safe_trial_end}.</p>
+        <p style="margin:0;">No charge is due before {safe_trial_end}. After that, your plan is ${int(monthly_price)}/month.</p>
       </div>
     </div>
     """.strip()
@@ -660,7 +661,7 @@ def send_autopilot_billing_reminder_email(
         f"Hi {(recipient_name or '').strip() or 'there'},\n\n"
         f"Your free Autopilot period ends on {trial_end_label}. Add a card now to keep Short creation and publishing running without interruption.\n\n"
         f"Add billing details: {billing_url}\n\n"
-        f"No charge is due before {trial_end_label}."
+        f"No charge is due before {trial_end_label}. After that, your plan is ${int(monthly_price)}/month."
     )
     return send_resend_email(
         to_email=to_email,

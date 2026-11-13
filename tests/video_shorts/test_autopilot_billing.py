@@ -148,7 +148,11 @@ def test_autopilot_checkout_route_anchors_trial_and_leaves_diy_unchanged(monkeyp
     }
     monkeypatch.setattr(billing_routes, "stripe_is_configured", lambda: True)
     monkeypatch.setattr(billing_routes, "_load_billing_user", lambda _user_id: dict(user))
-    monkeypatch.setattr(billing_routes, "get_price_id_for_autopilot_tier", lambda tier: f"price_auto_{tier}")
+    monkeypatch.setattr(
+        billing_routes,
+        "get_price_id_for_autopilot_tier",
+        lambda tier, pricing_offer="": f"price_auto_{tier}",
+    )
     monkeypatch.setattr(
         billing_routes,
         "create_embedded_checkout_session",
@@ -221,6 +225,21 @@ def test_autopilot_price_normalizes_without_changing_diy_mapping(monkeypatch) ->
     assert diy["billing_mode"] == "self"
     assert diy["plan_id"] == "plan_10gb"
     assert diy["service_tier"] is None
+
+
+def test_offer_price_mapping_never_falls_back_to_legacy(monkeypatch) -> None:
+    monkeypatch.setattr(billing, "AUTOPILOT_TIER_TO_PRICE_ID", {30: "price_legacy_30"})
+    monkeypatch.setattr(
+        billing,
+        "AUTOPILOT_OFFER_TIER_TO_PRICE_ID",
+        {("autopilot_lp_v1", 15): "price_offer_15"},
+    )
+
+    assert billing.get_price_id_for_autopilot_tier(15, "autopilot_lp_v1") == "price_offer_15"
+    assert billing.get_price_id_for_autopilot_tier(30, "autopilot_lp_v1") is None
+    assert billing.get_price_id_for_autopilot_tier(30, "unknown") == "price_legacy_30"
+    assert billing.get_autopilot_monthly_prices("autopilot_lp_v1")[30] == 89
+    assert billing.get_autopilot_monthly_prices("")[30] == 40
 
 
 def test_diy_checkout_keeps_existing_payment_collection_behavior(monkeypatch) -> None:

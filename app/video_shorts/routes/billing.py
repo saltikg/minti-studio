@@ -98,7 +98,8 @@ def _load_billing_user(user_id: str) -> Optional[Dict[str, Any]]:
                 service_tier,
                 service_mode_chosen_at,
                 autopilot_billing_reminder_sent_at,
-                autopilot_billing_paused_at
+                autopilot_billing_paused_at,
+                pricing_offer
             FROM shorts_users
             WHERE id = ?
             """,
@@ -123,6 +124,7 @@ def _load_billing_user(user_id: str) -> Optional[Dict[str, Any]]:
         "service_mode_chosen_at": row[11],
         "autopilot_billing_reminder_sent_at": row[12],
         "autopilot_billing_paused_at": row[13],
+        "pricing_offer": str(row[14] or "").strip().lower(),
     }
 
 
@@ -381,9 +383,13 @@ def create_checkout_session_route():
             return _billing_error("invalid_autopilot_tier", 400)
         interval = "month"
         plan_id = ""
-        price_id = get_price_id_for_autopilot_tier(requested_service_tier)
+        price_id = get_price_id_for_autopilot_tier(requested_service_tier, user.get("pricing_offer"))
         if not price_id:
-            return _billing_error("invalid_price_mapping", 400)
+            logger.error(
+                "Missing Autopilot price mapping user_id=%s pricing_offer=%s tier=%s",
+                current_user["id"], user.get("pricing_offer") or "legacy", requested_service_tier,
+            )
+            return _billing_error("Autopilot checkout is temporarily unavailable for this offer. Please contact support.", 503)
         trial_end = autopilot_checkout_trial_end(user.get("service_mode_chosen_at"))
     else:
         if is_autopilot:

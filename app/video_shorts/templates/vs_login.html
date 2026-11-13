@@ -35,6 +35,9 @@
         {% if auth_plan %}
           <input type="hidden" name="plan" value="{{ auth_plan }}">
         {% endif %}
+        {% if auth_offer %}
+          <input type="hidden" name="offer" value="{{ auth_offer }}">
+        {% endif %}
         {% if auth_next %}
           <input type="hidden" name="next" value="{{ auth_next }}">
         {% endif %}

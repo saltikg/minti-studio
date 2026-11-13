@@ -300,10 +300,10 @@ NOISE_404_PATH_LIKE_PATTERNS = [
 ]
 from app.video_shorts.services.user_events import prepare_transcript_completed_transition, track_event
 from app.video_shorts.services.billing import (
-    AUTOPILOT_TIER_MONTHLY_PRICES,
     STRIPE_PUBLISHABLE_KEY,
     autopilot_checkout_display_terms,
     autopilot_trial_end,
+    get_autopilot_monthly_prices,
     load_billing_user_state,
     stripe_is_configured,
     user_has_managed_subscription,
@@ -24313,7 +24313,8 @@ def shorts_storage_plans():
     )
     has_managed_subscription = user_has_managed_subscription(billing_user)
     autopilot_tier = int((billing_user or {}).get("service_tier") or current_user.get("service_tier") or 15)
-    autopilot_monthly_price = AUTOPILOT_TIER_MONTHLY_PRICES.get(autopilot_tier, 20)
+    autopilot_prices = get_autopilot_monthly_prices((billing_user or {}).get("pricing_offer") or current_user.get("pricing_offer"))
+    autopilot_monthly_price = autopilot_prices.get(autopilot_tier, 20)
     autopilot_plans = [
         {
             "plan_id": f"autopilot_{tier}",
@@ -24327,7 +24328,7 @@ def shorts_storage_plans():
             "transcription_limit_label": "",
             "service_tier": tier,
         }
-        for tier, price in AUTOPILOT_TIER_MONTHLY_PRICES.items()
+        for tier, price in autopilot_prices.items()
     ]
     autopilot_trial_end_at = autopilot_trial_end((billing_user or {}).get("service_mode_chosen_at"))
     now_utc = datetime.now(timezone.utc)
@@ -24338,7 +24339,7 @@ def shorts_storage_plans():
             monthly_price=price,
             trial_end_label=autopilot_trial_end_label,
         )
-        for tier, price in AUTOPILOT_TIER_MONTHLY_PRICES.items()
+        for tier, price in autopilot_prices.items()
     } if is_autopilot else {}
     autopilot_free_until_label = ""
     if autopilot_trial_end_at and autopilot_trial_end_at > now_utc:

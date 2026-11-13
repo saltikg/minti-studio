@@ -76,7 +76,15 @@ def render_autopilot_landing():
             "video_shorts_bp.register",
             intent="autopilot",
             tier=15,
+            offer="autopilot_lp_v1",
         ),
+        autopilot_offer="autopilot_lp_v1",
+        autopilot_pricing=[
+            {"tier": 15, "price": 49},
+            {"tier": 30, "price": 89},
+            {"tier": 45, "price": 129},
+            {"tier": 60, "price": 169},
+        ],
         canonical_url=f"{(current_app.config.get('BASE_URL') or request.url_root).rstrip('/')}{url_for('autopilot_landing')}",
     )
 

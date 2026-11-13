@@ -85,6 +85,7 @@ from app.video_shorts.services.auth_protection import (
 )
 from app.video_shorts.services.billing import (
     load_billing_user_state,
+    normalize_pricing_offer,
     user_has_managed_subscription,
 )
 from app.video_shorts.services.onboarding_magic_links import (
@@ -207,7 +208,8 @@ def _current_user():
           guest_created_at,
           guest_ip_hash,
           COALESCE(guest_render_count, 0),
-          COALESCE(guest_video_count, 0)
+          COALESCE(guest_video_count, 0),
+          pricing_offer
         FROM shorts_users
         WHERE id = ?
         """
@@ -251,6 +253,7 @@ def _current_user():
         "guest_ip_hash": guest_values[2],
         "guest_render_count": int(guest_values[3] or 0),
         "guest_video_count": int(guest_values[4] or 0),
+        "pricing_offer": str(row[19] or "").strip().lower() if len(row) > 19 else "",
     }
     return g.vs_current_user
 
@@ -289,10 +292,11 @@ def _normalize_self_serve_plan(value: str | None) -> str:
     return normalized if normalized in SELF_SERVE_PLAN_IDS else ""
 
 
-def _stash_auth_choice(*, intent: str = "", tier: Optional[int] = None, plan_id: str = "") -> None:
+def _stash_auth_choice(*, intent: str = "", tier: Optional[int] = None, plan_id: str = "", offer: str = "") -> None:
     normalized_intent = _normalize_service_intent(intent)
     normalized_tier = _normalize_service_tier(tier) if normalized_intent == "autopilot" else None
     normalized_plan = _normalize_self_serve_plan(plan_id)
+    normalized_offer = normalize_pricing_offer(offer) if normalized_intent == "autopilot" else ""
     if normalized_intent:
         session["vs_pending_service_intent"] = normalized_intent
     else:
@@ -305,6 +309,10 @@ def _stash_auth_choice(*, intent: str = "", tier: Optional[int] = None, plan_id:
         session["vs_pending_plan_id"] = normalized_plan
     else:
         session.pop("vs_pending_plan_id", None)
+    if normalized_offer:
+        session["vs_pending_pricing_offer"] = normalized_offer
+    else:
+        session.pop("vs_pending_pricing_offer", None)
 
 
 def _current_auth_choice(*, include_request_values: bool = False) -> dict[str, object]:
@@ -320,10 +328,16 @@ def _current_auth_choice(*, include_request_values: bool = False) -> dict[str, o
         plan_id = _normalize_self_serve_plan(session.get("vs_pending_plan_id"))
     if intent != "autopilot":
         tier = None
+    offer = normalize_pricing_offer(request_values.get("offer"))
+    if not offer:
+        offer = normalize_pricing_offer(session.get("vs_pending_pricing_offer"))
+    if intent != "autopilot":
+        offer = ""
     return {
         "intent": intent,
         "tier": tier,
         "plan_id": plan_id,
+        "offer": offer,
     }
 
 
@@ -336,6 +350,8 @@ def _build_auth_route_kwargs(*, include_next: bool = False) -> dict[str, object]
         route_kwargs["tier"] = choice["tier"]
     if choice["plan_id"]:
         route_kwargs["plan"] = choice["plan_id"]
+    if choice["offer"]:
+        route_kwargs["offer"] = choice["offer"]
     if include_next:
         route_kwargs.update(_guest_resume_route_kwargs(request.args, include_next=True))
     return route_kwargs
@@ -369,6 +385,7 @@ def _clear_pending_service_choice() -> None:
     session.pop("vs_pending_service_intent", None)
     session.pop("vs_pending_service_tier", None)
     session.pop("vs_pending_plan_id", None)
+    session.pop("vs_pending_pricing_offer", None)
 
 
 def apply_service_mode(
@@ -389,7 +406,7 @@ def apply_service_mode(
     if not clean_user_id:
         raise ValueError("target_user_id_required")
 
-    service_tier = 15 if normalized_mode == "autopilot" else None
+    service_tier = None
     clean_onboarding_lead_id = str(onboarding_autopilot_lead_id or "").strip()
     clean_activation_source = str(activation_source or "").strip().lower()
     conn = get_db()
@@ -407,7 +424,8 @@ def apply_service_mode(
               password_hash,
               COALESCE(oml.language, 'EN') AS onboarding_language,
               COALESCE(NULLIF(u.email, ''), NULLIF(u.username, ''), '') AS user_email,
-              COALESCE(NULLIF(u.name, ''), NULLIF(u.username, ''), '') AS user_name
+              COALESCE(NULLIF(u.name, ''), NULLIF(u.username, ''), '') AS user_name,
+              u.pending_service_tier
             FROM shorts_users u
             LEFT JOIN LATERAL (
                 SELECT language
@@ -427,6 +445,8 @@ def apply_service_mode(
         confirmation_language = normalize_outreach_language(account_row[1], default="EN")
         user_email = str(account_row[2] or "").strip()
         user_name = str(account_row[3] or "").strip()
+        pending_service_tier = _normalize_service_tier(account_row[4])
+        service_tier = (pending_service_tier or 15) if normalized_mode == "autopilot" else None
         conn.execute(
             """
             UPDATE shorts_users
@@ -965,6 +985,7 @@ def _render_login_page(*, resend_email: str = "", prefill_email: str = "", statu
             auth_intent=route_kwargs.get("intent", ""),
             auth_tier=route_kwargs.get("tier"),
             auth_plan=route_kwargs.get("plan", ""),
+            auth_offer=route_kwargs.get("offer", ""),
             auth_next=route_kwargs.get("next", ""),
             auth_action=route_kwargs.get("action", ""),
             auth_clip=route_kwargs.get("clip", ""),
@@ -987,6 +1008,7 @@ def _render_register_page(*, pending_email: str = "", status_code: int = 200):
             auth_intent=route_kwargs.get("intent", ""),
             auth_tier=route_kwargs.get("tier"),
             auth_plan=route_kwargs.get("plan", ""),
+            auth_offer=route_kwargs.get("offer", ""),
             auth_next=route_kwargs.get("next", ""),
             auth_action=route_kwargs.get("action", ""),
             auth_clip=route_kwargs.get("clip", ""),
@@ -1864,6 +1886,7 @@ def login():
                 intent=str(choice["intent"] or ""),
                 tier=choice["tier"],
                 plan_id=str(choice["plan_id"] or ""),
+                offer=str(choice["offer"] or ""),
             )
     if _is_authenticated() and not _is_guest_user():
         nxt = _normalize_next_url(request.args.get("next")) or url_for("video_shorts_bp.my_videos_page")
@@ -1878,11 +1901,13 @@ def login():
             "intent": _normalize_service_intent(request.form.get("intent")),
             "tier": _normalize_service_tier(request.form.get("tier")),
             "plan_id": _normalize_self_serve_plan(request.form.get("plan")),
+            "offer": normalize_pricing_offer(request.form.get("offer")),
         }
         _stash_auth_choice(
             intent=post_choice["intent"],
             tier=post_choice["tier"],
             plan_id=post_choice["plan_id"],
+            offer=post_choice["offer"],
         )
         username = _normalize_auth_email(request.form.get("username") or "")
         password = request.form.get("password") or ""
@@ -1991,6 +2016,7 @@ def register():
                 intent=str(choice["intent"] or ""),
                 tier=choice["tier"],
                 plan_id=str(choice["plan_id"] or ""),
+                offer=str(choice["offer"] or ""),
             )
     if _is_authenticated() and not _is_guest_user():
         return redirect(url_for("video_shorts_bp.my_videos_page"))
@@ -2004,11 +2030,13 @@ def register():
             "intent": _normalize_service_intent(request.form.get("intent")),
             "tier": _normalize_service_tier(request.form.get("tier")),
             "plan_id": _normalize_self_serve_plan(request.form.get("plan")),
+            "offer": normalize_pricing_offer(request.form.get("offer")),
         }
         _stash_auth_choice(
             intent=post_choice["intent"],
             tier=post_choice["tier"],
             plan_id=post_choice["plan_id"],
+            offer=post_choice["offer"],
         )
         email = _normalize_auth_email(request.form.get("email") or "")
         password = request.form.get("password") or ""
@@ -2075,6 +2103,11 @@ def register():
                             email_verification_sent_at = now(),
                             pending_service_intent = ?,
                             pending_service_tier = ?,
+                            pricing_offer = CASE
+                                WHEN pricing_offer IS NULL
+                                 AND COALESCE(service_mode, '') = ''
+                                 AND NULLIF(trim(COALESCE(stripe_subscription_id, '')), '') IS NULL
+                                THEN ? ELSE pricing_offer END,
                             service_mode = COALESCE(NULLIF(service_mode, ''), 'self'),
                             service_mode_chosen_at = COALESCE(service_mode_chosen_at, now()),
                             onboarding_dismissed = TRUE,
@@ -2097,6 +2130,7 @@ def register():
                             verify_expires_at,
                             post_choice["intent"] or None,
                             post_choice["tier"],
+                            post_choice["offer"] or None,
                             resume["next"],
                             resume["action"] or None,
                             resume["clip"] or None,
@@ -2124,10 +2158,10 @@ def register():
                             id, username, password_hash, name, email, email_normalized,
                             registration_ip_hash, role, plan_id,
                             email_verified, email_verification_token_hash, email_verification_expires_at,
-                            email_verification_sent_at, pending_service_intent, pending_service_tier,
+                            email_verification_sent_at, pending_service_intent, pending_service_tier, pricing_offer,
                             guest_resume_next, guest_resume_action, guest_resume_clip
                         )
-                        VALUES (?, ?, ?, ?, ?, ?, ?, 'member', ?, FALSE, ?, ?, now(), ?, ?, ?, ?, ?)
+                        VALUES (?, ?, ?, ?, ?, ?, ?, 'member', ?, FALSE, ?, ?, now(), ?, ?, ?, ?, ?, ?)
                         """,
                         [
                             user_id,
@@ -2142,6 +2176,7 @@ def register():
                             verify_expires_at,
                             post_choice["intent"] or None,
                             post_choice["tier"],
+                            post_choice["offer"] or None,
                             resume["next"],
                             resume["action"] or None,
                             resume["clip"] or None,
@@ -2833,6 +2868,7 @@ def google_login():
             intent=str(choice["intent"] or ""),
             tier=choice["tier"],
             plan_id=str(choice["plan_id"] or ""),
+            offer=str(choice["offer"] or ""),
         )
     flow = _build_google_flow()
     authorization_url, state = flow.authorization_url(prompt="consent")
@@ -3025,6 +3061,11 @@ def google_oauth_callback():
                     email_verification_expires_at = NULL,
                     pending_service_intent = ?,
                     pending_service_tier = ?,
+                    pricing_offer = CASE
+                        WHEN pricing_offer IS NULL
+                         AND COALESCE(service_mode, '') = ''
+                         AND NULLIF(trim(COALESCE(stripe_subscription_id, '')), '') IS NULL
+                        THEN ? ELSE pricing_offer END,
                     service_mode = COALESCE(NULLIF(service_mode, ''), 'self'),
                     service_mode_chosen_at = COALESCE(service_mode_chosen_at, now()),
                     onboarding_dismissed = TRUE,
@@ -3040,6 +3081,7 @@ def google_oauth_callback():
                     DEFAULT_USER_PLAN_ID,
                     session.get("vs_pending_service_intent") or None,
                     _normalize_service_tier(session.get("vs_pending_service_tier")),
+                    normalize_pricing_offer(session.get("vs_pending_pricing_offer")) or None,
                     user_id,
                 ],
             )
@@ -3048,9 +3090,9 @@ def google_oauth_callback():
                 """
                 INSERT INTO shorts_users (
                     id, username, name, email, google_sub, role, plan_id, email_verified, email_verified_at,
-                    pending_service_intent, pending_service_tier
+                    pending_service_intent, pending_service_tier, pricing_offer
                 )
-                VALUES (?, ?, ?, ?, ?, 'member', ?, TRUE, now(), ?, ?)
+                VALUES (?, ?, ?, ?, ?, 'member', ?, TRUE, now(), ?, ?, ?)
                 """,
                 [
                     user_id,
@@ -3061,6 +3103,7 @@ def google_oauth_callback():
                     DEFAULT_USER_PLAN_ID,
                     session.get("vs_pending_service_intent") or None,
                     _normalize_service_tier(session.get("vs_pending_service_tier")),
+                    normalize_pricing_offer(session.get("vs_pending_pricing_offer")) or None,
                 ],
             )
         conn.commit()

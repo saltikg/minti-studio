@@ -2508,27 +2508,7 @@
         <div class="pricing-badge">Most Popular</div>
         <h3 class="pricing-plan-name">Do it for me</h3>
         <p class="pricing-card-tagline">You post long videos. We turn them into Shorts — automatically, every month.</p>
-        <div class="pricing-price">
-          <span class="pricing-price-old" data-autopilot-old>${{ autopilot_initial.compare_price }}</span>
-          <span class="pricing-price-amount" data-autopilot-price>${{ autopilot_initial.price }}</span>
-          <span class="pricing-price-suffix">/mo</span>
-        </div>
-        <p class="pricing-price-free">First month free</p>
-        <div class="pricing-selector" id="autopilotPricingSelector" role="group" aria-label="Autopilot short volume">
-          {% for tier in autopilot_tiers %}
-            <button
-              type="button"
-              class="pricing-segment{% if loop.first %} is-active{% endif %}"
-              data-autopilot-segment
-              data-monthly-shorts="{{ tier.shorts }}"
-              data-monthly-price="{{ tier.price }}"
-              data-compare-price="{{ tier.compare_price }}"
-              aria-pressed="{% if loop.first %}true{% else %}false{% endif %}">
-              <span class="pricing-segment-big">{{ tier.shorts }}</span>
-              <span class="pricing-segment-small">Shorts/mo</span>
-            </button>
-          {% endfor %}
-        </div>
+        <a class="pricing-learn-link" href="{{ url_for('autopilot_landing') }}">See Autopilot →</a>
         <ul class="pricing-lines">
           <li class="pricing-line"><i class="bi bi-check-lg" aria-hidden="true"></i><span>We take your latest long videos automatically</span></li>
           <li class="pricing-line"><i class="bi bi-check-lg" aria-hidden="true"></i><span>Captioned, vertical, ready to post</span></li>
@@ -2537,16 +2517,6 @@
           <li class="pricing-line"><i class="bi bi-check-lg" aria-hidden="true"></i><span>Monthly performance report</span></li>
         </ul>
         <div class="pricing-actions">
-          <a
-            class="pricing-btn pricing-btn-solid"
-            href="{{ register_base_url }}?intent=autopilot&tier={{ autopilot_initial.shorts }}"
-            id="autopilotPricingCta"
-            data-minti-cta
-            data-cta-location="pricing_autopilot_{{ autopilot_initial.shorts }}"
-            data-cta-text="Put my Shorts on autopilot">
-            <span>Put my Shorts on autopilot</span>
-            <span class="pricing-btn-subcopy">First month free · no card</span>
-          </a>
           <a class="pricing-learn-link" href="{{ url_for('short_form_video_editing_service') }}">Learn about done-for-you short-form video editing</a>
         </div>
       </article>
@@ -2769,11 +2739,6 @@
       }
     });
 
-    const autopilotSelector = document.getElementById("autopilotPricingSelector");
-    const autopilotPrice = document.querySelector("[data-autopilot-price]");
-    const autopilotOld = document.querySelector("[data-autopilot-old]");
-    const autopilotCta = document.getElementById("autopilotPricingCta");
-    const registerBaseUrl = {{ register_base_url|tojson }};
     const selfServeSelector = document.getElementById("selfServePricingSelector");
     const selfServePrice = document.querySelector("[data-self-serve-price]");
     const selfServeSuffix = document.querySelector("[data-self-serve-suffix]");
@@ -2787,21 +2752,6 @@
         segment.setAttribute("aria-pressed", isActive ? "true" : "false");
       });
     }
-
-    autopilotSelector?.addEventListener("click", function (event) {
-      const segment = event.target.closest("[data-autopilot-segment]");
-      if (!segment) return;
-      activateSegment(autopilotSelector, segment);
-      const monthlyPrice = Number(segment.getAttribute("data-monthly-price") || "0");
-      const comparePrice = Number(segment.getAttribute("data-compare-price") || "0");
-      const monthlyShorts = Number(segment.getAttribute("data-monthly-shorts") || "0");
-      if (autopilotPrice) autopilotPrice.textContent = "$" + monthlyPrice;
-      if (autopilotOld) autopilotOld.textContent = "$" + comparePrice;
-      if (autopilotCta) {
-        autopilotCta.setAttribute("href", registerBaseUrl + "?intent=autopilot&tier=" + monthlyShorts);
-        autopilotCta.setAttribute("data-cta-location", "pricing_autopilot_" + monthlyShorts);
-      }
-    });
 
     selfServeSelector?.addEventListener("click", function (event) {
       const segment = event.target.closest("[data-self-serve-segment]");
