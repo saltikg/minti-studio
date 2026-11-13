@@ -119,7 +119,7 @@ def load_video_short_delivery_items(
           AND gv.brand_id IS NOT DISTINCT FROM ?
           AND NULLIF(trim(coalesce(gv.clip_filename, '')), '') IS NOT NULL
           AND NULLIF(trim(coalesce(gv.storage_file_key, '')), '') IS NOT NULL
-          AND lower(coalesce(gv.generation_status, '')) NOT IN ('pending', 'queued', 'processing', 'rendering')
+          AND lower(coalesce(gv.generation_status, '')) NOT IN ('pending', 'queued', 'processing', 'rendering', 'hidden')
         ORDER BY gv.created_at, gv.id
         """,
         [video_pk, owner_user_id, brand_id],

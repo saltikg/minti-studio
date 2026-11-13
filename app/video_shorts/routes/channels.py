@@ -331,7 +331,13 @@ def _visible_short_rows(conn, user_id, brand_id):
         scoped = re.search(r"_v(\d+)\.mp4$", str(row[0]))
         if scoped and (row[10] is None or int(scoped[1]) != int(row[10])):
             continue
-        if str(row[2] or "").lower() in {"pending", "queued", "processing", "rendering"}:
+        if str(row[2] or "").lower() in {
+            "pending",
+            "queued",
+            "processing",
+            "rendering",
+            "hidden",
+        }:
             continue
         # The active asset row and positive recorded size are the durable media
         # inventory. Request paths must not verify that inventory over S3.
@@ -370,7 +376,7 @@ def _short_counts_by_video(conn, user_id, brand_id):
           AND NULLIF(trim(coalesce(gv.clip_filename, '')), '') IS NOT NULL
           AND NULLIF(trim(coalesce(gv.storage_file_key, '')), '') IS NOT NULL
           AND lower(coalesce(gv.generation_status, '')) NOT IN
-              ('pending', 'queued', 'processing', 'rendering')
+              ('pending', 'queued', 'processing', 'rendering', 'hidden')
         GROUP BY source_video.id
         """,
         [user_id, brand_id],

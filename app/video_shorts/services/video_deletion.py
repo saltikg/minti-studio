@@ -292,7 +292,7 @@ def _rendered_clip_rows(
           AND NULLIF(trim(coalesce(gv.clip_filename, '')), '') IS NOT NULL
           AND NULLIF(trim(coalesce(gv.storage_file_key, '')), '') IS NOT NULL
           AND lower(coalesce(gv.generation_status, '')) NOT IN
-              ('pending', 'queued', 'processing', 'rendering')
+              ('pending', 'queued', 'processing', 'rendering', 'hidden')
         """,
         [int(video_pk), source_video_id, owner_user_id, brand_id],
     ).fetchall()
