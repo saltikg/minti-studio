@@ -2740,8 +2740,10 @@ def _generate_seed_search_keyword_items(
         "Strongly favor doctors, physical therapists, therapists, menopause, men's health, neurology, midlife/retirement lifestyle "
         "stories, and broadly useful coaching. Keep financial advisors at normal weight. Reduce crafts/textile/DIY, narrow medical "
         "subspecialties, and business/marketing coaching. Cover health specialties, menopause, men's health, mental health, "
-        "midlife/retirement life, and coaching in every response. Use stable category names from the supplied metrics/reference "
-        "and return at most ONE keyword per category in this response, so the three daily lanes cannot exceed three per category. "
+        "midlife/retirement life, and coaching in every response. NON-NEGOTIABLE OUTPUT CONTRACT: return exactly 20 objects with "
+        "20 DISTINCT category values—never use the same category twice in one response. Use stable, specific category names from "
+        "the supplied metrics/reference; do not invent synonym category names to evade this rule. One category per response means "
+        "the three daily lanes cannot exceed three keywords per category. A response containing a duplicate category is invalid. "
         "Never repeat an existing keyword or produce a meaning-level near-duplicate: treat synonyms, reordered words, singular/plural "
         "changes, and lightly rephrased search intent as duplicates, not merely exact-string matches. "
         "Return STRICT JSON only: {\"keywords\":[{\"keyword\":\"query\", \"category\":\"category name\"}, ...]}.\n\n"
@@ -2759,7 +2761,14 @@ def _generate_seed_search_keyword_items(
     response = _openai_client.chat.completions.create(
         model=OPENAI_MODEL,
         messages=[
-            {"role": "system", "content": "You create concise YouTube search queries for individual creator outreach."},
+            {
+                "role": "system",
+                "content": (
+                    "You create realistic viewer-typed YouTube searches for individual creator outreach. Return exactly 20 JSON "
+                    "items with 20 distinct category values. Never repeat a category, never use templated presenter phrasing, and "
+                    "follow every lexical and duplicate constraint in the user prompt."
+                ),
+            },
             {"role": "user", "content": prompt},
         ],
         temperature=0.35,
@@ -2803,8 +2812,10 @@ def _generate_icp_definition_keyword_items(discovery_context: Dict[str, Any], *,
         "Strongly favor doctors, physical therapists, therapists, menopause, men's health, neurology, midlife/retirement lifestyle "
         "stories, and broadly useful coaching. Keep financial advisors at normal weight. Reduce crafts/textile/DIY, narrow medical "
         "subspecialties, and business/marketing coaching. Cover health specialties, menopause, men's health, mental health, "
-        "midlife/retirement life, and coaching in every response. Use stable category names from the supplied metrics/reference "
-        "and return at most ONE keyword per category in this response, so the three daily lanes cannot exceed three per category. "
+        "midlife/retirement life, and coaching in every response. NON-NEGOTIABLE OUTPUT CONTRACT: return exactly 20 objects with "
+        "20 DISTINCT category values—never use the same category twice in one response. Use stable, specific category names from "
+        "the supplied metrics/reference; do not invent synonym category names to evade this rule. One category per response means "
+        "the three daily lanes cannot exceed three keywords per category. A response containing a duplicate category is invalid. "
         "Avoid popular/generic head terms and meaning-level near-duplicates of exhausted or prior keywords; synonyms, word-order "
         "changes, singular/plural changes, and lightly rephrased search intent still count as duplicates. Return STRICT JSON only: "
         "{\"keywords\":[{\"keyword\":\"query\", \"category\":\"category name\"}, ...]}.\n\n"
@@ -2817,7 +2828,14 @@ def _generate_icp_definition_keyword_items(discovery_context: Dict[str, Any], *,
     response = _openai_client.chat.completions.create(
         model=OPENAI_MODEL,
         messages=[
-            {"role": "system", "content": "You create concise YouTube search queries for individual creator outreach. Return JSON only."},
+            {
+                "role": "system",
+                "content": (
+                    "You create realistic viewer-typed YouTube searches for individual creator outreach. Return exactly 20 JSON "
+                    "items with 20 distinct category values. Never repeat a category, never use templated presenter phrasing, and "
+                    "follow every lexical and duplicate constraint in the user prompt. Return JSON only."
+                ),
+            },
             {"role": "user", "content": prompt},
         ],
         temperature=0.45 if lane == "icp_exploration" else 0.35,
@@ -2846,11 +2864,12 @@ def _filter_seed_keywords_against_profile(keywords: List[str], profile_text: str
         "Filter these YouTube search keywords for the creator discovery ICP. Keep queries that could find an individual creator "
         "talking to camera under their own name: doctors, physical therapists, therapists/LCSWs, coaches, financial advisors, or "
         "people telling their own midlife or retirement-life stories. Drop firms, clinics, hospitals, companies, multi-person brands, "
-        "faceless channels, crafts/textile/DIY, narrow procedure jargon, and business/marketing coaching. Prefer realistic viewer "
-        "searches even when they contain no profession; a profession word is not required for ICP fit. Drop wording with the verbs "
+        "faceless channels, crafts/textile/DIY, narrow procedure jargon, and business/marketing coaching. Keep every realistic viewer "
+        "search that maps to the ICP; do not drop it merely because it contains no profession, uses plain viewer language, or is a "
+        "broad life problem within the target categories. A profession word is not required for ICP fit. Drop wording with the verbs "
         "'discusses', 'shares', or 'talks about', and drop 'coach on ...'/'therapist on ...' patterns. In the kept list, profession-led "
         "queries must be no more than 30%. Also drop semantic near-duplicates, including synonyms, reordered words, singular/plural "
-        "changes, and lightly rephrased versions of the same search intent. "
+        "changes, and lightly rephrased versions of the same search intent. Return as many valid keywords as possible. "
         "Return STRICT JSON only: {\"kept\":[\"keyword\"],\"dropped\":[\"keyword\"]}.\n\n"
         f"ICP profile:\n{profile[:2500]}\n\n"
         f"Keywords:\n{json.dumps(normalized, ensure_ascii=False)}"
