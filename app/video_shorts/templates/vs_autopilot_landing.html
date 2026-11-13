@@ -22,7 +22,7 @@
     href="{{ autopilot_register_url }}"
     data-minti-cta
     data-cta-location="autopilot_topnav"
-  >Start Autopilot</a>
+  >Start your free month</a>
 {% endblock %}
 
 {% block extra_styles %}
@@ -604,7 +604,8 @@
     box-shadow: 0 30px 70px rgba(0, 0, 0, 0.42);
   }
 
-  .ap-editor-phone img {
+  .ap-editor-phone img,
+  .ap-editor-phone video {
     width: 100%;
     aspect-ratio: 9 / 16;
     display: block;
@@ -719,6 +720,36 @@
     line-height: 1.55;
   }
 
+  .ap-compare-section {
+    border-top: 1px solid rgba(255, 255, 255, 0.055);
+  }
+
+  .ap-compare-grid {
+    display: grid;
+    grid-template-columns: repeat(4, minmax(0, 1fr));
+    gap: 0.85rem;
+  }
+
+  .ap-compare-card {
+    min-height: 245px;
+    display: flex;
+    flex-direction: column;
+    padding: 1.35rem;
+    border: 1px solid rgba(255, 255, 255, 0.09);
+    border-radius: 20px;
+    background: linear-gradient(145deg, rgba(16, 26, 36, 0.8), rgba(8, 14, 20, 0.92));
+  }
+
+  .ap-compare-card.is-autopilot {
+    border-color: rgba(101, 234, 212, 0.55);
+    box-shadow: 0 18px 48px rgba(41, 185, 165, 0.12), inset 0 1px 0 rgba(101, 234, 212, 0.08);
+  }
+
+  .ap-compare-card h3 { margin: 0 0 1rem; color: var(--ap-ink); font-size: 1.05rem; }
+  .ap-compare-card strong { color: var(--ap-mint); font-size: 0.9rem; line-height: 1.45; }
+  .ap-compare-card p { margin: 0.8rem 0 1.25rem; color: #91a3ad; font-size: 0.86rem; line-height: 1.6; }
+  .ap-compare-cost { margin-top: auto; color: #dbe7e9; font-size: 0.8rem; font-weight: 700; }
+
   .ap-pricing-section { border-block: 1px solid rgba(255,255,255,.055); background: linear-gradient(180deg, rgba(101,234,212,.025), transparent); }
   .ap-pricing-card { max-width: 760px; margin-inline: auto; padding: clamp(1.5rem,5vw,3.25rem); border: 1px solid rgba(101,234,212,.2); border-radius: 28px; background: linear-gradient(145deg,rgba(16,26,36,.94),rgba(8,14,20,.98)); box-shadow: 0 30px 80px rgba(0,0,0,.24); }
   .ap-tier-selector { display: grid; grid-template-columns: repeat(4,1fr); gap: .55rem; }
@@ -759,22 +790,6 @@
     padding: 2.2rem 0.7rem 0;
     overflow: hidden;
     background: linear-gradient(145deg, #14202a, #0b1118);
-  }
-
-  .ap-window-bar {
-    position: absolute;
-    display: flex;
-    gap: 0.28rem;
-    align-self: flex-start;
-    margin-top: -1.25rem;
-    margin-left: -84%;
-  }
-
-  .ap-window-bar span {
-    width: 5px;
-    height: 5px;
-    border-radius: 50%;
-    background: rgba(255, 255, 255, 0.22);
   }
 
   .ap-screenshot-window img {
@@ -868,6 +883,43 @@
     justify-content: center;
   }
 
+  .ap-faq-section {
+    border-top: 1px solid rgba(255, 255, 255, 0.055);
+  }
+
+  .ap-faq-list {
+    max-width: 850px;
+    display: grid;
+    gap: 0.7rem;
+    margin-inline: auto;
+  }
+
+  .ap-faq-item {
+    border: 1px solid rgba(255, 255, 255, 0.09);
+    border-radius: 16px;
+    background: rgba(255, 255, 255, 0.025);
+  }
+
+  .ap-faq-item[open] { border-color: rgba(101, 234, 212, 0.24); }
+
+  .ap-faq-item summary {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 1rem;
+    padding: 1.15rem 1.25rem;
+    color: #e7f0f1;
+    font-size: 0.96rem;
+    font-weight: 680;
+    cursor: pointer;
+    list-style: none;
+  }
+
+  .ap-faq-item summary::-webkit-details-marker { display: none; }
+  .ap-faq-item summary::after { content: "+"; color: var(--ap-mint); font-size: 1.35rem; font-weight: 400; }
+  .ap-faq-item[open] summary::after { content: "−"; }
+  .ap-faq-item p { margin: 0; padding: 0 1.25rem 1.2rem; color: #91a3ad; font-size: 0.9rem; line-height: 1.7; }
+
   @media (max-width: 1050px) {
     .ap-hero-grid {
       grid-template-columns: 1fr;
@@ -926,6 +978,9 @@
   }
 
   @media (max-width: 820px) {
+    .ap-compare-grid { grid-template-columns: 1fr; }
+    .ap-compare-card { min-height: 0; }
+
     .ap-steps {
       grid-template-columns: 1fr;
       gap: 0;
@@ -1104,14 +1159,14 @@
       <div class="ap-hero-copy">
         <p class="ap-kicker">MintiStudio Autopilot</p>
         <h1 id="autopilot-hero-title">You make the long videos. <span>We handle the Shorts.</span></h1>
-        <p class="ap-hero-subtitle">Keep creating your long videos. We handle the Shorts, editing, and publishing, so you can stay consistent without the extra work.</p>
+        <p class="ap-hero-subtitle">An editor turns every long video into ready-to-post Shorts. You approve, we publish — so you stay consistent without the extra work.</p>
         <div class="ap-actions">
           <a
             class="ap-button ap-button-primary"
             href="{{ autopilot_register_url }}"
             data-minti-cta
             data-cta-location="autopilot_hero"
-          >Start Autopilot <i class="bi bi-arrow-up-right" aria-hidden="true"></i></a>
+          >Start your free month <i class="bi bi-arrow-up-right" aria-hidden="true"></i></a>
           <a class="ap-button ap-button-secondary" href="#how-it-works" data-ap-video-trigger>See how it works <i class="bi bi-arrow-down" aria-hidden="true"></i></a>
         </div>
         <p class="ap-support-line"><i class="bi bi-person-check" aria-hidden="true"></i> Human-guided, AI-assisted. No editing required.</p>
@@ -1196,7 +1251,9 @@
         <span class="ap-editor-pill is-music"><i class="bi bi-music-note-beamed"></i> Music</span>
         <span class="ap-editor-pill is-title"><i class="bi bi-type"></i> Titles</span>
         <div class="ap-editor-phone">
-          <img src="{{ url_for('video_shorts_bp.static', filename='img/sample-short-4.png') }}" alt="A finished branded Short with captions" width="941" height="1672" loading="lazy">
+          <video muted autoplay loop playsinline preload="metadata" poster="{{ url_for('video_shorts_bp.static', filename='motion/autopilot-short.jpg') }}" aria-label="A finished branded Short with captions">
+            <source src="{{ url_for('video_shorts_bp.static', filename='motion/autopilot-short.mp4') }}" type="video/mp4">
+          </video>
         </div>
       </div>
     </div>
@@ -1224,6 +1281,41 @@
             <div><h3>Your time stays yours</h3><p>Focus on the long-form work only you can make.</p></div>
           </article>
         </div>
+      </div>
+    </div>
+  </section>
+
+  <section class="ap-section ap-compare-section" aria-labelledby="compare-title">
+    <div class="ap-container">
+      <div class="ap-section-head is-centered">
+        <p class="ap-kicker">The options</p>
+        <h2 id="compare-title">Shorts get made one of four ways.</h2>
+      </div>
+      <div class="ap-compare-grid">
+        <article class="ap-compare-card">
+          <h3>AI clip tool</h3>
+          <strong>You run it yourself</strong>
+          <p>You pick, fix and publish every clip</p>
+          <span class="ap-compare-cost">Low cost, your time</span>
+        </article>
+        <article class="ap-compare-card">
+          <h3>Freelancer</h3>
+          <strong>You manage someone</strong>
+          <p>Briefs, feedback, deadlines</p>
+          <span class="ap-compare-cost">$50+ per Short</span>
+        </article>
+        <article class="ap-compare-card">
+          <h3>Agency</h3>
+          <strong>Fully handled</strong>
+          <p>Least work for you</p>
+          <span class="ap-compare-cost">Highest monthly cost</span>
+        </article>
+        <article class="ap-compare-card is-autopilot">
+          <h3>Autopilot</h3>
+          <strong>Fully handled, at a fair price</strong>
+          <p>An editor does the work, you approve</p>
+          <span class="ap-compare-cost">From $49/mo</span>
+        </article>
       </div>
     </div>
   </section>
@@ -1266,13 +1358,12 @@
       <div class="ap-section-head is-centered">
         <p class="ap-kicker">One clear workspace</p>
         <h2 id="product-title">See what is ready, what is next, and what is working.</h2>
-        <p class="ap-section-lede">Review Shorts, check the creative, and follow your publishing schedule without getting buried in production.</p>
+        <p class="ap-section-lede">Everything is visible. You can fine-tune anything — but you never have to.</p>
       </div>
 
       <div class="ap-screenshot-grid">
         <article class="ap-screenshot-card">
           <div class="ap-screenshot-window">
-            <span class="ap-window-bar" aria-hidden="true"><span></span><span></span><span></span></span>
             <img src="{{ url_for('video_shorts_bp.static', filename='img/blog/library/1-minti-dashboard.png') }}" alt="MintiStudio Shorts dashboard" loading="lazy">
           </div>
           <div class="ap-screenshot-copy"><span>Dashboard</span><h3>Your Shorts at a glance</h3><p>See what is in progress, ready to review, and performing.</p></div>
@@ -1280,7 +1371,6 @@
 
         <article class="ap-screenshot-card">
           <div class="ap-screenshot-window is-editor">
-            <span class="ap-window-bar" aria-hidden="true"><span></span><span></span><span></span></span>
             <img src="{{ url_for('video_shorts_bp.static', filename='img/blog/done-for-you-vs-diy-video-clipping/5-manual-video-creation.png') }}" alt="MintiStudio design and editor preview" loading="lazy">
           </div>
           <div class="ap-screenshot-copy"><span>Creative preview</span><h3>Review every detail</h3><p>Check the clip, captions, framing, and finish before it goes out.</p></div>
@@ -1288,7 +1378,6 @@
 
         <article class="ap-screenshot-card">
           <div class="ap-screenshot-window">
-            <span class="ap-window-bar" aria-hidden="true"><span></span><span></span><span></span></span>
             <img src="{{ url_for('video_shorts_bp.static', filename='img/blog/getting-started/09-schedule-publish.png') }}" alt="MintiStudio scheduling and publishing screen" loading="lazy">
           </div>
           <div class="ap-screenshot-copy"><span>Publishing</span><h3>A schedule you can see</h3><p>Know what is planned and keep your channels moving consistently.</p></div>
@@ -1297,19 +1386,37 @@
     </div>
   </section>
 
+  <section class="ap-section ap-faq-section" aria-labelledby="faq-title">
+    <div class="ap-container">
+      <div class="ap-section-head is-centered">
+        <p class="ap-kicker">FAQ</p>
+        <h2 id="faq-title">Questions, answered.</h2>
+      </div>
+      <div class="ap-faq-list">
+        <details class="ap-faq-item"><summary>Do I need to edit anything?</summary><p>No. An editor prepares every Short: clip, captions, title and branding. You can tweak anything if you want, but you don't have to.</p></details>
+        <details class="ap-faq-item"><summary>Do I have to connect my YouTube channel?</summary><p>Connecting lets us publish approved Shorts on schedule. Nothing is posted without your approval, and you can disconnect anytime. Prefer to post yourself? You can download every Short.</p></details>
+        <details class="ap-faq-item"><summary>What if I don't like a Short?</summary><p>Skip it. Only the Shorts you approve go out, and we prepare extra options so you have a choice.</p></details>
+        <details class="ap-faq-item"><summary>Who actually makes my Shorts?</summary><p>A real video editor, using AI to find candidate moments faster. Every Short is reviewed by a person before you see it.</p></details>
+        <details class="ap-faq-item"><summary>Which platforms do you publish to?</summary><p>YouTube Shorts and Instagram Reels.</p></details>
+        <details class="ap-faq-item"><summary>What happens after the free month?</summary><p>Your plan continues at the monthly price. Cancel anytime before it renews and you won't be charged.</p></details>
+        <details class="ap-faq-item"><summary>Is my content a good fit?</summary><p>If you talk to camera — coaching, teaching, podcasts, medical or expert content — it's a great fit.</p></details>
+      </div>
+    </div>
+  </section>
+
   <section class="ap-section ap-final-section" aria-labelledby="final-title">
     <div class="ap-container">
       <div class="ap-final-card">
         <p class="ap-kicker">Ready when you are</p>
-        <h2 id="final-title">Keep making your long videos. We’ll handle the Shorts.</h2>
-        <p>Give your best ideas a consistent short-form life—without adding another job to your week.</p>
+        <h2 id="final-title">Your next upload is all we need.</h2>
+        <p>First month free · No card required · Cancel anytime</p>
         <div class="ap-actions">
           <a
             class="ap-button ap-button-primary"
             href="{{ autopilot_register_url }}"
             data-minti-cta
             data-cta-location="autopilot_final"
-          >Start Autopilot <i class="bi bi-arrow-up-right" aria-hidden="true"></i></a>
+          >Start your free month <i class="bi bi-arrow-up-right" aria-hidden="true"></i></a>
         </div>
       </div>
     </div>
