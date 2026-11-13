@@ -335,7 +335,9 @@
       <div>
         <div class="vs-card-title mb-1">Current plan: Autopilot — {{ autopilot_tier }} Shorts/month</div>
         {% if autopilot_free_until_label %}
-          <div class="usage-reset">Free until {{ autopilot_free_until_label }}</div>
+          <div class="usage-reset">Free until {{ autopilot_free_until_label }} · then ${{ autopilot_monthly_price }}/month</div>
+        {% else %}
+          <div class="usage-reset">${{ autopilot_monthly_price }}/month</div>
         {% endif %}
         {% if autopilot_card_notice %}
           <div class="usage-reset">{{ autopilot_card_notice }}</div>
