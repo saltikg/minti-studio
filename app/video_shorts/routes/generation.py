@@ -33,7 +33,6 @@ from flask import abort, current_app, flash, g, has_request_context, jsonify, re
 from markupsafe import Markup, escape
 import requests
 from werkzeug.exceptions import HTTPException
-from app.utils.datetime_format import format_admin_datetime
 from werkzeug.utils import secure_filename
 
 from app.video_shorts import video_shorts_bp
@@ -6041,8 +6040,19 @@ def _format_long_created_at_pst(created_at_iso: Optional[str], fallback_ts: Opti
 def _format_datetime_pst(value: Any) -> str:
     if value in (None, ""):
         return ""
-    formatted = format_admin_datetime(value)
-    return str(value) if formatted == "—" else formatted
+    if isinstance(value, datetime):
+        moment = value
+    else:
+        try:
+            moment = datetime.fromisoformat(str(value).replace("Z", "+00:00"))
+        except (TypeError, ValueError):
+            return str(value)
+    # Production outreach timestamps are stored as UTC in TIMESTAMP columns,
+    # so psycopg returns them without tzinfo. Attach UTC before converting once.
+    if moment.tzinfo is None:
+        moment = moment.replace(tzinfo=timezone.utc)
+    localized = moment.astimezone(ZoneInfo("America/Los_Angeles"))
+    return f"{localized:%b} {localized.day}, {localized.year} · {localized:%H:%M} {localized:%Z}"
 
 
 def _trial_duration_label(days: Any, language: str = "EN") -> str:
