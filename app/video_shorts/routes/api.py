@@ -104,10 +104,12 @@ DISCOVERY_STARTING_CATEGORIES = [
 DISCOVERY_CATEGORY_ACTIVE_STATUSES = {"active", "testing", "kept"}
 DISCOVERY_CATEGORY_BLOCKED_STATUSES = {"dropped", "saturated"}
 DISCOVERY_KEYWORD_LANE_TARGETS = {
-    "seed": 8,
-    "icp_exploration": 8,
-    "category_deepening": 4,
+    "seed": 10,
+    "icp_exploration": 5,
+    "category_deepening": 10,
 }
+DISCOVERY_KEYWORD_MIN_WORDS = 2
+DISCOVERY_KEYWORD_MAX_WORDS = 6
 DISCOVERY_PROMOTION_OWNER_USER_ID = "f97df4cb-93de-4761-9c39-62d303261b0a"
 DISCOVERY_PROMOTION_BRAND_ID = "63f772f8-2d31-4416-9239-c546949bfa98"
 MEDICAL_DISCOVERY_SPECIALTIES = [
@@ -1133,7 +1135,7 @@ def _medical_discovery_rejection_reason(
     if category_text and category_text in blocked_names:
         return "blocked_category_status"
     word_count = len(re.findall(r"[A-Za-z0-9]+(?:[-'][A-Za-z0-9]+)?", str(keyword or "")))
-    if keyword and not 3 <= word_count <= 6:
+    if keyword and not DISCOVERY_KEYWORD_MIN_WORDS <= word_count <= DISCOVERY_KEYWORD_MAX_WORDS:
         return f"keyword_word_count:{word_count}"
     return ""
 
@@ -2726,14 +2728,16 @@ def _generate_seed_search_keyword_items(
         except Exception:
             _log_discovery_exception("Could not load discovery category metrics for seed keyword generation")
     prompt = (
-        "These are real clinician channels we target. Produce 20 YouTube search queries that find MORE individual physicians "
-        "or credentialed clinicians teaching patients on camera. Stay within the medical taxonomy. Each category must be one "
-        "medical specialty or a condition-level subtopic that names its parent specialty. Each query must be 3-6 words and use "
-        "patient problem/symptom phrasing (for example 'knee pain after running' or 'AFib symptoms and treatment') or "
-        "specialist-explains phrasing (for example 'orthopedic surgeon explains'). Do not write long video titles. "
-        "Exclude hobbies, crafts, cooking/food, gardening, product reviews, AI/business topics, hospitals, and multi-doctor clinics. "
+        "These are real creator channels we target. Produce 20 YouTube search queries that find MORE individual creators who "
+        "talk to camera under their own name. Target doctors, physical therapists, therapists/LCSWs, coaches, and people telling "
+        "their own midlife or retirement-life stories. Exclude firms, clinics, hospitals, companies, multi-person brands, and "
+        "faceless channels. Each query must be 2-6 words in natural patient/viewer language, ideally in patterns such as "
+        "'[profession] explains [common problem]'. Do not use rare disease names, procedure jargon, or long title-style phrases. "
+        "Strongly favor doctors, physical therapists, therapists, menopause, men's health, neurology, midlife/retirement lifestyle "
+        "stories, and broadly useful coaching. Keep financial advisors at normal weight. Reduce crafts/textile/DIY, narrow medical "
+        "subspecialties, and business/marketing coaching. Never repeat or closely paraphrase an existing keyword. "
         "Return STRICT JSON only: {\"keywords\":[{\"keyword\":\"query\", \"category\":\"category name\"}, ...]}.\n\n"
-        "Medical taxonomy:\n"
+        "Useful health category reference (not an exhaustive category restriction):\n"
         + json.dumps(MEDICAL_DISCOVERY_SPECIALTIES, ensure_ascii=False)
         + "\n\n"
         "Seed channel signals:\n"
@@ -2747,7 +2751,7 @@ def _generate_seed_search_keyword_items(
     response = _openai_client.chat.completions.create(
         model=OPENAI_MODEL,
         messages=[
-            {"role": "system", "content": "You create concise medical YouTube search queries for clinician outreach."},
+            {"role": "system", "content": "You create concise YouTube search queries for individual creator outreach."},
             {"role": "user", "content": prompt},
         ],
         temperature=0.35,
@@ -2778,17 +2782,18 @@ def _generate_icp_definition_keyword_items(discovery_context: Dict[str, Any], *,
     prompt = (
         f"You are generating YouTube discovery keywords for Minti's {lane_name} lane. "
         "Do NOT use seed channel examples. Use only the ICP definition and performance signals below.\n\n"
-        "ICP definition: an individual physician or credentialed clinician who talks to camera in long-form YouTube videos and "
-        "teaches patients or parents. This includes doctors, nurses, physical therapists, dietitians, therapists, pharmacists, "
-        "and similar clinical experts. A single doctor who is the face of a practice is allowed; exclude hospitals, multi-doctor "
-        "clinics, faceless channels, news, product reviews, hobbies, crafts, cooking/food, gardening, and AI/business topics.\n\n"
+        "ICP definition: an individual creator who talks to camera in long-form YouTube videos under their own name. Target "
+        "doctors, physical therapists, therapists/LCSWs, coaches, and people telling their own midlife or retirement-life stories. "
+        "Exclude firms, clinics, hospitals, companies, multi-person brands, and faceless channels.\n\n"
         f"{lane_instruction}\n"
-        "Return 20 YouTube search queries within the medical taxonomy below. Each category must be a specialty or a "
-        "condition-level subtopic that names its parent specialty. Each query must be 3-6 words, use patient problem/symptom "
-        "phrasing or specialist-explains phrasing, and not be a long video title. Avoid "
-        "popular/generic head terms and close variants of exhausted keywords/categories. Return STRICT JSON only: "
+        "Return 20 YouTube search queries. Each query must be 2-6 words in natural patient/viewer language, ideally "
+        "'[profession] explains [common problem]'. Do not use rare disease names, procedure jargon, or long title-style phrases. "
+        "Strongly favor doctors, physical therapists, therapists, menopause, men's health, neurology, midlife/retirement lifestyle "
+        "stories, and broadly useful coaching. Keep financial advisors at normal weight. Reduce crafts/textile/DIY, narrow medical "
+        "subspecialties, and business/marketing coaching. Avoid popular/generic head terms, repeats, and close variants of "
+        "exhausted keywords/categories. Return STRICT JSON only: "
         "{\"keywords\":[{\"keyword\":\"query\", \"category\":\"category name\"}, ...]}.\n\n"
-        f"Medical taxonomy: {json.dumps(MEDICAL_DISCOVERY_SPECIALTIES, ensure_ascii=False)}\n\n"
+        f"Useful health category reference (not an exhaustive category restriction): {json.dumps(MEDICAL_DISCOVERY_SPECIALTIES, ensure_ascii=False)}\n\n"
         f"Active/kept/testing category metrics: {json.dumps(metrics, ensure_ascii=False)}\n\n"
         f"Dropped/saturated categories to avoid: {json.dumps(blocked, ensure_ascii=False)}\n\n"
         f"Exhausted or low-yield keywords/categories to avoid or move beyond: {json.dumps(exhaustion, ensure_ascii=False)}"
@@ -2797,7 +2802,7 @@ def _generate_icp_definition_keyword_items(discovery_context: Dict[str, Any], *,
     response = _openai_client.chat.completions.create(
         model=OPENAI_MODEL,
         messages=[
-            {"role": "system", "content": "You create concise medical YouTube search queries for clinician outreach. Return JSON only."},
+            {"role": "system", "content": "You create concise YouTube search queries for individual creator outreach. Return JSON only."},
             {"role": "user", "content": prompt},
         ],
         temperature=0.45 if lane == "icp_exploration" else 0.35,
@@ -2823,9 +2828,10 @@ def _filter_seed_keywords_against_profile(keywords: List[str], profile_text: str
     if not _openai_client:
         return {"kept": normalized, "dropped": []}
     prompt = (
-        "Filter these YouTube search keywords for the medical discovery ICP. Keep only queries that could find an individual "
-        "physician or credentialed clinician teaching patients or parents on camera. Drop hobbies, crafts, cooking/food, gardening, "
-        "AI/business topics, entertainment, product reviews, hospitals, multi-doctor clinics, and non-medical queries. "
+        "Filter these YouTube search keywords for the creator discovery ICP. Keep queries that could find an individual creator "
+        "talking to camera under their own name: doctors, physical therapists, therapists/LCSWs, coaches, financial advisors, or "
+        "people telling their own midlife or retirement-life stories. Drop firms, clinics, hospitals, companies, multi-person brands, "
+        "faceless channels, crafts/textile/DIY, narrow procedure jargon, and business/marketing coaching. "
         "Return STRICT JSON only: {\"kept\":[\"keyword\"],\"dropped\":[\"keyword\"]}.\n\n"
         f"ICP profile:\n{profile[:2500]}\n\n"
         f"Keywords:\n{json.dumps(normalized, ensure_ascii=False)}"

@@ -458,6 +458,10 @@ def ensure_onboarding_magic_links_schema(conn) -> None:
                 trial_days INTEGER,
                 expires_at TIMESTAMP NOT NULL,
                 used_at TIMESTAMP,
+                clicked_at TIMESTAMP,
+                clicked_user_agent TEXT,
+                clicked_ip_hash VARCHAR,
+                engaged_at TIMESTAMP,
                 created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP
             )
             """
@@ -476,6 +480,10 @@ def ensure_onboarding_magic_links_schema(conn) -> None:
         ("trial_days", "INTEGER"),
         ("expires_at", "TIMESTAMP"),
         ("used_at", "TIMESTAMP"),
+        ("clicked_at", "TIMESTAMP"),
+        ("clicked_user_agent", "TEXT"),
+        ("clicked_ip_hash", "VARCHAR"),
+        ("engaged_at", "TIMESTAMP"),
         ("created_at", "TIMESTAMP"),
     ):
         if col_name in cols:

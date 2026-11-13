@@ -442,6 +442,7 @@
           <option value="viewed" {% if selected_engagement == 'viewed' %}selected{% endif %}>Viewed only</option>
           <option value="played" {% if selected_engagement == 'played' %}selected{% endif %}>Played only</option>
           <option value="free_tool" {% if selected_engagement == 'free_tool' %}selected{% endif %}>Free tool</option>
+          <option value="clicked_not_engaged" {% if selected_engagement == 'clicked_not_engaged' %}selected{% endif %}>Clicked, not engaged</option>
         </select>
       </div>
       <div>
@@ -549,8 +550,9 @@
             <th>Cards</th>
             <th>Trial CTA?</th>
             <th>Converted?</th>
-            <th>Redeemed?</th>
-            <th class="admin-share-links-date-col">Redeemed at</th>
+            <th class="admin-share-links-date-col">Clicked</th>
+            <th class="admin-share-links-date-col">Engaged</th>
+            <th>Likely scanner</th>
             <th>User</th>
           </tr>
         </thead>
@@ -777,8 +779,13 @@
                   <span class="admin-share-links-pill is-no">No</span>
                 {% endif %}
               </td>
-              <td><span class="admin-share-links-pill {% if link.redeemed %}is-yes{% else %}is-no{% endif %}">{{ 'Yes' if link.redeemed else 'No' }}</span></td>
-              <td class="admin-share-links-meta admin-share-links-date-col">{{ compact_datetime(link.redeemed_at_pst) }}</td>
+              <td class="admin-share-links-meta admin-share-links-date-col">{{ compact_datetime(link.clicked_at_pst) }}</td>
+              <td class="admin-share-links-meta admin-share-links-date-col">{{ compact_datetime(link.engaged_at_pst) }}</td>
+              <td>
+                <span class="admin-share-links-pill {% if link.likely_scanner %}is-no{% else %}is-yes{% endif %}">
+                  {{ 'Likely scanner' if link.likely_scanner else 'No' }}
+                </span>
+              </td>
               <td class="admin-share-links-meta">
                 {% if link.redeemed_user_detail_url %}
                   <a href="{{ link.redeemed_user_detail_url }}">Open user</a>
@@ -789,7 +796,7 @@
             </tr>
           {% else %}
             <tr>
-              <td colspan="27" class="admin-share-links-meta text-center py-4">No share links matched your filters.</td>
+              <td colspan="28" class="admin-share-links-meta text-center py-4">No share links matched your filters.</td>
             </tr>
           {% endfor %}
         </tbody>

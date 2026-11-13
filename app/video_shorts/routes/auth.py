@@ -2613,11 +2613,19 @@ def redeem_onboarding_magic_link(token: str):
             """
             UPDATE onboarding_magic_links
             SET used_at = now(),
+                clicked_at = COALESCE(clicked_at, now()),
+                clicked_user_agent = COALESCE(clicked_user_agent, ?),
+                clicked_ip_hash = COALESCE(clicked_ip_hash, ?),
                 user_id = ?
             WHERE id = ?
               AND used_at IS NULL
             """,
-            [str(user_id), row[0]],
+            [
+                str(request.headers.get("User-Agent") or "").strip()[:1000] or None,
+                _registration_ip_hash(),
+                str(user_id),
+                row[0],
+            ],
         )
         if getattr(updated, "rowcount", -1) == 0:
             conn.rollback()

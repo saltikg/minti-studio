@@ -20896,6 +20896,7 @@ def _load_admin_share_links(
     has_followup_sent = "followup_sent" in share_link_columns
     has_followup_sent_at = "followup_sent_at" in share_link_columns
     has_magic_link_user_id = "user_id" in onboarding_magic_link_columns
+    has_click_engagement_tracking = {"clicked_at", "engaged_at"}.issubset(onboarding_magic_link_columns)
     has_outreach_scheduled_emails = bool(outreach_scheduled_email_columns)
     normalized_email = (email_query or "").strip().lower()
     normalized_filter = (engagement_filter or "all").strip().lower()
@@ -20903,7 +20904,7 @@ def _load_admin_share_links(
     normalized_archive_filter = (archive_filter or "all").strip().lower()
     normalized_sort_key = (sort_key or "created").strip().lower()
     normalized_sort_dir = (sort_dir or "desc").strip().lower()
-    if normalized_filter not in {"all", "viewed", "played", "free_tool"}:
+    if normalized_filter not in {"all", "viewed", "played", "free_tool", "clicked_not_engaged"}:
         normalized_filter = "all"
     if normalized_funnel_filter not in {
         "all",
@@ -20913,6 +20914,8 @@ def _load_admin_share_links(
         "entered_feed",
         "watched_in_feed",
         "reached_trial_card",
+        "clicked",
+        "engaged",
         "converted",
     }:
         normalized_funnel_filter = "all"
@@ -20966,14 +20969,15 @@ def _load_admin_share_links(
             redeemed_user_sql = "NULLIF(CAST(oml.user_id AS VARCHAR), '')"
         redeemed_magic_cte_sql = f"""
         ,
-        redeemed_magic_links AS (
+        clicked_magic_links AS (
             SELECT
               sl.id AS share_link_id,
-              oml.used_at AS redeemed_at,
-              {redeemed_user_sql} AS redeemed_user_id,
+              {('oml.clicked_at' if has_click_engagement_tracking else 'oml.used_at')} AS clicked_at,
+              {('oml.engaged_at' if has_click_engagement_tracking else 'NULL')} AS engaged_at,
+              {redeemed_user_sql} AS clicked_user_id,
               ROW_NUMBER() OVER (
                 PARTITION BY sl.id
-                ORDER BY oml.used_at DESC, oml.id DESC
+                ORDER BY {('oml.clicked_at' if has_click_engagement_tracking else 'oml.used_at')} DESC, oml.id DESC
               ) AS rn
             FROM short_share_links sl
             JOIN onboarding_magic_links oml
@@ -20987,14 +20991,15 @@ def _load_admin_share_links(
                   AND oml.share_link_token = sl.token
                 )
               )
-            WHERE oml.used_at IS NOT NULL
+            WHERE {('oml.clicked_at' if has_click_engagement_tracking else 'oml.used_at')} IS NOT NULL
         ),
-        latest_redeemed_magic_link AS (
+        latest_clicked_magic_link AS (
             SELECT
               share_link_id,
-              redeemed_at,
-              redeemed_user_id
-            FROM redeemed_magic_links
+              clicked_at,
+              engaged_at,
+              clicked_user_id
+            FROM clicked_magic_links
             WHERE rn = 1
         ),
         latest_share_cta AS (
@@ -21046,18 +21051,18 @@ def _load_admin_share_links(
             ) ranked_share_device
             WHERE rn = 1
         ),
-        redeemed_channel_connections AS (
+        clicked_channel_connections AS (
             SELECT
               sl.id AS share_link_id,
               {channel_connected_agg_sql} AS connected_platforms,
               MAX(ue.created_at) AS connected_at
             FROM short_share_links sl
-            JOIN latest_redeemed_magic_link lr
+            JOIN latest_clicked_magic_link lr
               ON lr.share_link_id = sl.id
             JOIN user_events ue
-              ON ue.user_id = lr.redeemed_user_id
+              ON ue.user_id = lr.clicked_user_id
              AND ue.event_name = 'channel_connected'
-             AND (lr.redeemed_at IS NULL OR ue.created_at >= lr.redeemed_at)
+             AND (lr.clicked_at IS NULL OR ue.created_at >= lr.clicked_at)
             GROUP BY sl.id
         )
         """
@@ -21322,6 +21327,8 @@ def _load_admin_share_links(
         having_clauses.append("coalesce(plays_count, 0) > 0")
     elif normalized_filter == "free_tool":
         having_clauses.append("fte.created_at IS NOT NULL")
+    elif normalized_filter == "clicked_not_engaged":
+        having_clauses.append("lr.clicked_at IS NOT NULL AND lr.engaged_at IS NULL")
     summary_having_sql = " AND ".join(having_clauses)
     if normalized_funnel_filter == "sent":
         having_clauses.append(sent_condition_sql)
@@ -21337,6 +21344,10 @@ def _load_admin_share_links(
         having_clauses.append(f"{sent_condition_sql} AND COALESCE(lfe.watched_in_feed, 0) > 0")
     elif normalized_funnel_filter == "reached_trial_card":
         having_clauses.append(f"{sent_condition_sql} AND COALESCE(lfe.reached_card_b, 0) > 0")
+    elif normalized_funnel_filter == "clicked":
+        having_clauses.append(f"{sent_condition_sql} AND lr.clicked_at IS NOT NULL")
+    elif normalized_funnel_filter == "engaged":
+        having_clauses.append(f"{sent_condition_sql} AND lr.engaged_at IS NOT NULL")
     elif normalized_funnel_filter == "converted":
         having_clauses.append(f"{sent_condition_sql} AND slc.converted_at IS NOT NULL")
     having_sql = " AND ".join(having_clauses)
@@ -21357,6 +21368,7 @@ def _load_admin_share_links(
               ON lyi.share_link_id = sr.id
             LEFT JOIN free_tool_events fte
               ON fte.share_link_id = sr.id
+            {("LEFT JOIN latest_clicked_magic_link lr ON lr.share_link_id = sr.id" if onboarding_magic_link_columns else "")}
             WHERE {having_sql}
             """,
             params,
@@ -21373,6 +21385,8 @@ def _load_admin_share_links(
           SUM(CASE WHEN {sent_condition_sql} AND (lsc.cta_clicked = 'lead_feed' OR COALESCE(lfe.entered_feed, 0) > 0) THEN 1 ELSE 0 END) AS entered_feed_count,
           SUM(CASE WHEN {sent_condition_sql} AND COALESCE(lfe.watched_in_feed, 0) > 0 THEN 1 ELSE 0 END) AS watched_in_feed_count,
           SUM(CASE WHEN {sent_condition_sql} AND COALESCE(lfe.reached_card_b, 0) > 0 THEN 1 ELSE 0 END) AS reached_trial_card_count,
+          SUM(CASE WHEN {sent_condition_sql} AND lr.clicked_at IS NOT NULL THEN 1 ELSE 0 END) AS clicked_count,
+          SUM(CASE WHEN {sent_condition_sql} AND lr.engaged_at IS NOT NULL THEN 1 ELSE 0 END) AS engaged_count,
           SUM(CASE WHEN {sent_condition_sql} AND slc.converted_at IS NOT NULL THEN 1 ELSE 0 END) AS converted_count
         FROM share_rows sr
         LEFT JOIN latest_share_cta lsc
@@ -21385,6 +21399,7 @@ def _load_admin_share_links(
           ON lyi.share_link_id = sr.id
         LEFT JOIN free_tool_events fte
           ON fte.share_link_id = sr.id
+        {("LEFT JOIN latest_clicked_magic_link lr ON lr.share_link_id = sr.id" if onboarding_magic_link_columns else "")}
         WHERE {summary_having_sql}
         """,
         params,
@@ -21393,15 +21408,19 @@ def _load_admin_share_links(
         int(funnel_row[0] or 0) if funnel_row else 0,
         int(funnel_row[1] or 0) if funnel_row else 0,
         int(funnel_row[2] or 0) if funnel_row else 0,
+        int(funnel_row[6] or 0) if funnel_row else 0,
+        int(funnel_row[7] or 0) if funnel_row else 0,
         int(funnel_row[3] or 0) if funnel_row else 0,
         int(funnel_row[4] or 0) if funnel_row else 0,
         int(funnel_row[5] or 0) if funnel_row else 0,
-        int(funnel_row[6] or 0) if funnel_row else 0,
+        int(funnel_row[8] or 0) if funnel_row else 0,
     ]
     funnel_labels = [
         ("sent", "Sent"),
         ("viewed", "Viewed"),
         ("requested", "Requested"),
+        ("clicked", "Clicked"),
+        ("engaged", "Engaged"),
         ("entered_feed", "Entered feed"),
         ("watched_in_feed", "Watched in feed"),
         ("reached_trial_card", "Reached trial card"),
@@ -21449,8 +21468,8 @@ def _load_admin_share_links(
           lsc.cta_clicked,
           COALESCE(lsd.device_type, lsc.device_type) AS device_type,
           sr.max_percent_watched,
-          {("lr.redeemed_at," if onboarding_magic_link_columns else "NULL AS redeemed_at,")}
-          {("lr.redeemed_user_id," if onboarding_magic_link_columns else "NULL AS redeemed_user_id,")}
+          {("lr.clicked_at," if onboarding_magic_link_columns else "NULL AS clicked_at,")}
+          {("lr.clicked_user_id," if onboarding_magic_link_columns else "NULL AS clicked_user_id,")}
           {("rcc.connected_platforms," if onboarding_magic_link_columns else "NULL AS connected_platforms,")}
           {("rcc.connected_at" if onboarding_magic_link_columns else "NULL AS connected_at")},
           CASE WHEN lsc.cta_clicked = 'lead_feed' OR COALESCE(lfe.entered_feed, 0) > 0 THEN 1 ELSE 0 END AS entered_feed,
@@ -21474,7 +21493,8 @@ def _load_admin_share_links(
           COALESCE(sr.video_error_count, 0) AS video_error_count,
           fte.event_name AS free_tool_event_name,
           fte.video_title AS free_tool_video_title,
-          fte.created_at AS free_tool_event_at
+          fte.created_at AS free_tool_event_at,
+          {("lr.engaged_at" if onboarding_magic_link_columns else "NULL")} AS engaged_at
         FROM share_rows sr
         LEFT JOIN latest_share_cta lsc
           ON lsc.share_link_id = sr.id
@@ -21492,8 +21512,8 @@ def _load_admin_share_links(
           ON lyi.share_link_id = sr.id
         LEFT JOIN free_tool_events fte
           ON fte.share_link_id = sr.id
-        {("LEFT JOIN latest_redeemed_magic_link lr ON lr.share_link_id = sr.id" if onboarding_magic_link_columns else "")}
-        {("LEFT JOIN redeemed_channel_connections rcc ON rcc.share_link_id = sr.id" if onboarding_magic_link_columns else "")}
+        {("LEFT JOIN latest_clicked_magic_link lr ON lr.share_link_id = sr.id" if onboarding_magic_link_columns else "")}
+        {("LEFT JOIN clicked_channel_connections rcc ON rcc.share_link_id = sr.id" if onboarding_magic_link_columns else "")}
         WHERE {having_sql}
         ORDER BY {order_column} {order_direction} NULLS LAST, sr.id DESC
         LIMIT ? OFFSET ?
@@ -21534,6 +21554,16 @@ def _load_admin_share_links(
         free_tool_event_name = str(row[43] or "").strip()
         free_tool_video_title = str(row[44] or "").strip()
         free_tool_event_at = row[45]
+        clicked_at = row[20]
+        engaged_at = row[46]
+        likely_scanner = False
+        if emailed_at and clicked_at and not engaged_at:
+            try:
+                sent_utc = emailed_at if emailed_at.tzinfo else emailed_at.replace(tzinfo=timezone.utc)
+                clicked_utc = clicked_at if clicked_at.tzinfo else clicked_at.replace(tzinfo=timezone.utc)
+                likely_scanner = timedelta(0) <= (clicked_utc - sent_utc) < timedelta(minutes=3)
+            except AttributeError:
+                likely_scanner = False
         free_tool_label = "—"
         if free_tool_event_name == "free_tool_claim":
             free_tool_label = "Signed up"
@@ -21597,10 +21627,14 @@ def _load_admin_share_links(
                 "cta_clicked": str(row[17] or "").strip(),
                 "device_type": str(row[18] or "").strip(),
                 "max_percent_watched": round(float(row[19] or 0), 2) if row[19] is not None else 0.0,
-                "redeemed_at": row[20],
-                "redeemed_at_pst": _format_datetime_pst(row[20]),
-                "redeemed_user_id": str(row[21] or "").strip(),
-                "redeemed": bool(row[20]),
+                "clicked_at": clicked_at,
+                "clicked_at_pst": _format_datetime_pst(clicked_at),
+                "engaged_at": engaged_at,
+                "engaged_at_pst": _format_datetime_pst(engaged_at),
+                "clicked_user_id": str(row[21] or "").strip(),
+                "clicked": bool(clicked_at),
+                "engaged": bool(engaged_at),
+                "likely_scanner": likely_scanner,
                 "connected_platforms": str(row[22] or "").strip(),
                 "channel_connected": bool(str(row[22] or "").strip()),
                 "connected_at": row[23],
