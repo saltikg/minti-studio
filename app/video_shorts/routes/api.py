@@ -1632,7 +1632,7 @@ def _discovery_keyword_variant_tokens(value: Any) -> set[str]:
             token = token[:-3]
         elif token.endswith("tion") and len(token) > 6:
             token = token[:-4]
-        elif token.endswith("s") and len(token) > 4:
+        elif token.endswith("s") and len(token) > 3:
             token = token[:-1]
         tokens.add(token)
     return tokens
@@ -2791,19 +2791,30 @@ def _generate_icp_definition_keyword_items(discovery_context: Dict[str, Any], *,
     metrics = list(discovery_context.get("metrics") or [])
     blocked = list(discovery_context.get("blocked") or [])
     exhaustion = dict(discovery_context.get("exhaustion") or {})
+    existing_queue_categories = list(discovery_context.get("existing_queue_categories") or [])
     lane_name = "good-category deepening" if lane == "category_deepening" else "seed-independent ICP exploration"
     lane_instruction = (
         "Focus on proven categories with non-falling freshness and real ICP+email output, but go narrower into unexplored "
         "long-tail subtopics. Do not repeat the category's broad head terms."
         if lane == "category_deepening"
-        else "Propose new verticals that are not represented by the current seed pool or recent categories. Explore different "
-        "consumer-facing subject areas, not lookalikes of any seed channel."
+        else "Propose NEW creator verticals whose category does not already occur in the keyword queue. Explore different "
+        "consumer-facing subject areas, not narrower versions, aliases, or lookalikes of an existing queue category."
+    )
+    focus_instruction = (
+        "Favor genuinely new individual-expert verticals such as pharmacy education, speech-language therapy, veterinary advice, "
+        "audiology, chiropractic education, and nurse-practitioner education, but only when that vertical is absent from the "
+        "forbidden queue-category list. Spread across distinct professions and viewer problems."
+        if lane == "icp_exploration"
+        else "Favor proven health, midlife/retirement, mental-health, and broadly useful coaching categories while moving into "
+        "fresh long-tail viewer problems."
     )
     prompt = (
         f"You are generating YouTube discovery keywords for Minti's {lane_name} lane. "
         "Do NOT use seed channel examples. Use only the ICP definition and performance signals below.\n\n"
         "ICP definition: an individual creator who talks to camera in long-form YouTube videos under their own name. Target "
-        "doctors, physical therapists, therapists/LCSWs, coaches, and people telling their own midlife or retirement-life stories. "
+        "individual credentialed experts and creators such as dentists, pharmacists, speech therapists, veterinarians, "
+        "audiologists, chiropractors, nurse practitioners, doctors, physical therapists, therapists/LCSWs, coaches, and people "
+        "telling their own midlife or retirement-life stories. "
         "Exclude firms, clinics, hospitals, companies, multi-person brands, and faceless channels.\n\n"
         f"{lane_instruction}\n"
         "Return 20 YouTube search queries that look like something a VIEWER would actually type, such as 'empty nest syndrome', "
@@ -2812,10 +2823,10 @@ def _generate_icp_definition_keyword_items(discovery_context: Dict[str, Any], *,
         "6 of the 20 queries (30%); most queries must contain no profession. Never use the verbs 'discusses', 'shares', or "
         "'talks about', and never use the pattern 'coach on ...' or 'therapist on ...'. Do not use rare disease names, procedure "
         "jargon, or long title-style phrases. "
-        "Strongly favor doctors, physical therapists, therapists, menopause, men's health, neurology, midlife/retirement lifestyle "
-        "stories, and broadly useful coaching. Keep financial advisors at normal weight. Reduce crafts/textile/DIY, narrow medical "
-        "subspecialties, and business/marketing coaching. Cover health specialties, menopause, men's health, mental health, "
-        "midlife/retirement life, and coaching in every response. NON-NEGOTIABLE OUTPUT CONTRACT: return exactly 20 objects with "
+        f"{focus_instruction} Reduce crafts/textile/DIY and business/marketing coaching. "
+        "Every category must be a genuinely NEW creator vertical absent "
+        "from the forbidden queue-category list below; do not rename, narrow, or paraphrase an existing category. "
+        "NON-NEGOTIABLE OUTPUT CONTRACT: return exactly 20 objects with "
         "20 DISTINCT category values—never use the same category twice in one response. Use stable, specific category names from "
         "the supplied metrics/reference; do not invent synonym category names to evade this rule. One category per response means "
         "the three daily lanes cannot exceed three keywords per category. A response containing a duplicate category is invalid. "
@@ -2825,6 +2836,7 @@ def _generate_icp_definition_keyword_items(discovery_context: Dict[str, Any], *,
         f"Useful health category reference (not an exhaustive category restriction): {json.dumps(MEDICAL_DISCOVERY_SPECIALTIES, ensure_ascii=False)}\n\n"
         f"Active/kept/testing category metrics: {json.dumps(metrics, ensure_ascii=False)}\n\n"
         f"Dropped/saturated categories to avoid: {json.dumps(blocked, ensure_ascii=False)}\n\n"
+        f"Existing keyword-queue categories (FORBIDDEN, including aliases and narrower variants): {json.dumps(existing_queue_categories, ensure_ascii=False)}\n\n"
         f"Exhausted or low-yield keywords/categories to avoid or move beyond: {json.dumps(exhaustion, ensure_ascii=False)}"
     )
     current_app.logger.info("Discovery %s keyword generator prompt: %s", lane, prompt)
@@ -2865,7 +2877,8 @@ def _filter_seed_keywords_against_profile(keywords: List[str], profile_text: str
         return {"kept": normalized, "dropped": []}
     prompt = (
         "Filter these YouTube search keywords for the creator discovery ICP. Keep queries that could find an individual creator "
-        "talking to camera under their own name: doctors, physical therapists, therapists/LCSWs, coaches, financial advisors, or "
+        "talking to camera under their own name: dentists, pharmacists, speech therapists, veterinarians, audiologists, "
+        "chiropractors, nurse practitioners, doctors, physical therapists, therapists/LCSWs, coaches, financial advisors, or "
         "people telling their own midlife or retirement-life stories. Drop firms, clinics, hospitals, companies, multi-person brands, "
         "faceless channels, crafts/textile/DIY, narrow procedure jargon, and business/marketing coaching. Keep every realistic viewer "
         "search that maps to the ICP; do not drop it merely because it contains no profession, uses plain viewer language, or is a "
@@ -3360,6 +3373,81 @@ def _load_recent_keyword_queue_terms(conn, *, limit: int = 10_000) -> List[str]:
     return [str(row[0] or "").strip() for row in rows if str(row[0] or "").strip()]
 
 
+def _load_recent_llm_keyword_exclusions(conn, *, days: int = 14, limit: int = 10_000) -> List[str]:
+    cutoff = (datetime.now(timezone.utc) - timedelta(days=max(1, int(days)))).replace(tzinfo=None)
+    terms: List[str] = []
+    rows = conn.execute(
+        """
+        SELECT keyword
+        FROM keyword_queue
+        WHERE COALESCE(keyword, '') <> ''
+          AND COALESCE(updated_at, created_at) >= ?
+        ORDER BY COALESCE(updated_at, created_at) DESC NULLS LAST, id DESC
+        LIMIT ?
+        """,
+        [cutoff, max(1, min(int(limit or 10_000), 10_000))],
+    ).fetchall()
+    terms.extend(str(row[0] or "").strip() for row in rows if str(row[0] or "").strip())
+    if table_columns(conn, "discovery_keyword_dry_runs"):
+        rows = conn.execute(
+            """
+            SELECT keyword
+            FROM discovery_keyword_dry_runs
+            WHERE created_at >= ? AND COALESCE(keyword, '') <> ''
+            ORDER BY created_at DESC, id DESC
+            LIMIT ?
+            """,
+            [cutoff, max(1, min(int(limit or 10_000), 10_000))],
+        ).fetchall()
+        terms.extend(str(row[0] or "").strip() for row in rows if str(row[0] or "").strip())
+    return list(dict.fromkeys(terms))
+
+
+def _load_keyword_queue_category_names(conn) -> List[str]:
+    rows = conn.execute(
+        """
+        SELECT DISTINCT c.name
+        FROM keyword_queue q
+        JOIN discovery_categories c ON c.id = q.category_id
+        WHERE COALESCE(c.name, '') <> ''
+        ORDER BY c.name ASC
+        """
+    ).fetchall()
+    return [str(row[0] or "").strip() for row in rows if str(row[0] or "").strip()]
+
+
+def _filter_new_queue_category_items(
+    items: List[Dict[str, str]], existing_categories: List[str]
+) -> tuple[List[Dict[str, str]], List[str]]:
+    existing_normalized = {_normalized_discovery_name(category) for category in existing_categories if category}
+    kept: List[Dict[str, str]] = []
+    dropped: List[str] = []
+    proposed_categories: set[str] = set()
+    for item in items:
+        category = _normalized_discovery_name(item.get("category"))
+        keyword = str(item.get("keyword") or "").strip()
+        if not category or category in existing_normalized or category in proposed_categories:
+            if keyword:
+                dropped.append(keyword)
+            continue
+        proposed_categories.add(category)
+        kept.append(item)
+    return kept, dropped
+
+
+def _record_keyword_dry_run_items(conn, items: List[Dict[str, str]]) -> None:
+    if not table_columns(conn, "discovery_keyword_dry_runs"):
+        raise RuntimeError("discovery_keyword_dry_runs table is missing; run its migration first")
+    for item in items:
+        conn.execute(
+            """
+            INSERT INTO discovery_keyword_dry_runs (keyword, category, created_at)
+            VALUES (?, ?, CURRENT_TIMESTAMP)
+            """,
+            [str(item.get("keyword") or "").strip(), str(item.get("category") or "").strip()],
+        )
+
+
 def count_eligible_keyword_queue(conn) -> int:
     row = conn.execute(
         """
@@ -3372,7 +3460,12 @@ def count_eligible_keyword_queue(conn) -> int:
     return int((row[0] if row else 0) or 0)
 
 
-def generate_seed_keywords_into_queue(existing_keywords: Optional[List[str]] = None) -> Dict[str, Any]:
+def generate_seed_keywords_into_queue(
+    existing_keywords: Optional[List[str]] = None,
+    *,
+    persist: bool = True,
+    record_dry_run: bool = False,
+) -> Dict[str, Any]:
     """Generate keywords with no database connection alive during any LLM call."""
     read_conn = get_db()
     try:
@@ -3380,7 +3473,8 @@ def generate_seed_keywords_into_queue(existing_keywords: Optional[List[str]] = N
         pool = load_seed_pool(read_conn)
         existing_profile = read_conn.execute("SELECT profile_text FROM icp_profile WHERE id = 1").fetchone()
         profile_text = str((existing_profile or [None])[0] or "").strip()
-        exclusions = list(existing_keywords or []) or _load_recent_keyword_queue_terms(read_conn, limit=10_000)
+        exclusions = list(existing_keywords or []) or _load_recent_llm_keyword_exclusions(read_conn, days=14, limit=10_000)
+        existing_queue_categories = _load_keyword_queue_category_names(read_conn)
         exhaustion = _load_discovery_exhaustion_signals(read_conn, days=14, keyword_limit=60, category_limit=20)
         metrics = [
             item
@@ -3429,7 +3523,12 @@ def generate_seed_keywords_into_queue(existing_keywords: Optional[List[str]] = N
         ("icp_exploration", DISCOVERY_KEYWORD_LANE_TARGETS["icp_exploration"]),
         ("category_deepening", DISCOVERY_KEYWORD_LANE_TARGETS["category_deepening"]),
     ]
-    discovery_context = {"metrics": metrics, "blocked": blocked, "exhaustion": exhaustion}
+    discovery_context = {
+        "metrics": metrics,
+        "blocked": blocked,
+        "exhaustion": exhaustion,
+        "existing_queue_categories": existing_queue_categories,
+    }
     generated_by_lane: List[tuple[str, List[Dict[str, str]], Dict[str, Any]]] = []
 
     for lane, target in lane_sources:
@@ -3446,8 +3545,11 @@ def generate_seed_keywords_into_queue(existing_keywords: Optional[List[str]] = N
             lane_counts[lane] = {"generated_raw": 0, "kept": 0, "newly_enqueued": 0, "already_present": 0}
             dropped_keywords.append(f"{lane}: {str(exc) or 'generation_failed'}")
             continue
+        new_category_items, category_dropped = _filter_new_queue_category_items(
+            raw_items, existing_queue_categories
+        )
         filtered = _filter_generated_keyword_items(
-            raw_items,
+            new_category_items,
             blocked_keywords=blocked_keywords,
             profile_text=profile_text,
             limit=target,
@@ -3456,6 +3558,7 @@ def generate_seed_keywords_into_queue(existing_keywords: Optional[List[str]] = N
         generated_raw_count += int(filtered.get("generated_raw") or 0)
         kept_items = list(filtered.get("items") or [])
         all_kept_items.extend(kept_items)
+        dropped_keywords.extend(category_dropped)
         dropped_keywords.extend(filtered.get("dropped_keywords") or [])
         generated_by_lane.append((lane, kept_items, filtered))
         blocked_keywords.extend([item["keyword"] for item in kept_items])
@@ -3463,15 +3566,19 @@ def generate_seed_keywords_into_queue(existing_keywords: Optional[List[str]] = N
     write_conn = get_db()
     try:
         for lane, kept_items, filtered in generated_by_lane:
-            queue_counts = _insert_category_keyword_items_into_queue(
-                write_conn,
-                kept_items,
-                source="llm",
-                priority=100,
-                due_now=False,
-                blocked_categories=blocked,
-            )
-            inserted_keywords = list(queue_counts.get("keywords") or [])
+            if persist:
+                queue_counts = _insert_category_keyword_items_into_queue(
+                    write_conn,
+                    kept_items,
+                    source="llm",
+                    priority=100,
+                    due_now=False,
+                    blocked_categories=blocked,
+                )
+                inserted_keywords = list(queue_counts.get("keywords") or [])
+            else:
+                queue_counts = {"newly_enqueued": 0, "already_present": 0}
+                inserted_keywords = [str(item.get("keyword") or "").strip() for item in kept_items]
             keywords.extend(inserted_keywords)
             lane_keywords[lane] = inserted_keywords
             lane_counts[lane] = {
@@ -3481,7 +3588,14 @@ def generate_seed_keywords_into_queue(existing_keywords: Optional[List[str]] = N
             "already_present": int(queue_counts["already_present"]),
             }
 
-        if existing_profile:
+        if record_dry_run and len(all_kept_items) != DISCOVERY_LLM_DAILY_TARGET:
+            raise RuntimeError(
+                f"Expected {DISCOVERY_LLM_DAILY_TARGET} dry-run keywords, got {len(all_kept_items)}"
+            )
+        if record_dry_run:
+            _record_keyword_dry_run_items(write_conn, all_kept_items)
+
+        if persist and existing_profile:
             write_conn.execute(
             """
             UPDATE icp_profile
@@ -3490,7 +3604,7 @@ def generate_seed_keywords_into_queue(existing_keywords: Optional[List[str]] = N
             """,
             [json.dumps(keywords, ensure_ascii=False)],
         )
-        else:
+        elif persist:
             write_conn.execute(
             """
             INSERT INTO icp_profile (id, profile_text, keywords_json, updated_at)
@@ -3519,6 +3633,7 @@ def generate_seed_keywords_into_queue(existing_keywords: Optional[List[str]] = N
         "lane_keywords": lane_keywords,
         "lane_targets": DISCOVERY_KEYWORD_LANE_TARGETS,
         "errors": [],
+        "dry_run": not persist,
     }
 
 
