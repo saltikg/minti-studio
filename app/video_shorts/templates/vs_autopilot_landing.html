@@ -783,28 +783,32 @@
   }
 
   .ap-screenshot-window {
-    min-height: 255px;
-    display: flex;
-    align-items: flex-start;
-    justify-content: center;
-    padding: 2.2rem 0.7rem 0;
+    height: 255px;
     overflow: hidden;
     background: linear-gradient(145deg, #14202a, #0b1118);
   }
 
-  .ap-screenshot-window img {
+  .ap-screenshot-trigger {
     width: 100%;
-    min-height: 230px;
-    display: block;
-    object-fit: cover;
-    object-position: top center;
-    border: 1px solid rgba(255, 255, 255, 0.08);
-    border-radius: 10px 10px 0 0;
-    box-shadow: 0 18px 30px rgba(0, 0, 0, 0.34);
+    height: 100%;
+    padding: 0;
+    border: 0;
+    background: transparent;
+    cursor: zoom-in;
   }
 
-  .ap-screenshot-window.is-editor img {
-    object-position: center top;
+  .ap-screenshot-window img {
+    width: 100%;
+    height: 100%;
+    display: block;
+    object-fit: cover;
+    object-position: top left;
+    transition: transform 0.25s ease;
+  }
+
+  .ap-screenshot-trigger:hover img,
+  .ap-screenshot-trigger:focus-visible img {
+    transform: scale(1.015);
   }
 
   .ap-screenshot-copy {
@@ -830,6 +834,45 @@
     color: #7f939c;
     font-size: 0.84rem;
     line-height: 1.55;
+  }
+
+  .ap-workspace-lightbox[hidden] { display: none; }
+
+  .ap-workspace-lightbox {
+    position: fixed;
+    inset: 0;
+    z-index: 1200;
+    display: grid;
+    place-items: center;
+    padding: 4rem 1.25rem 1.25rem;
+    background: rgba(5, 10, 10, 0.92);
+    cursor: zoom-out;
+  }
+
+  .ap-workspace-lightbox img {
+    max-width: min(1400px, 96vw);
+    max-height: calc(100vh - 5.5rem);
+    object-fit: contain;
+    border: 1px solid rgba(255, 255, 255, 0.2);
+    border-radius: 14px;
+    box-shadow: 0 28px 90px rgba(0, 0, 0, 0.55);
+  }
+
+  .ap-workspace-lightbox-close {
+    position: absolute;
+    top: 1rem;
+    right: 1rem;
+    width: 42px;
+    height: 42px;
+    display: grid;
+    place-items: center;
+    border: 1px solid rgba(255, 255, 255, 0.28);
+    border-radius: 50%;
+    background: rgba(15, 25, 24, 0.85);
+    color: #fff;
+    font-size: 1.65rem;
+    line-height: 1;
+    cursor: pointer;
   }
 
   .ap-final-section {
@@ -1125,7 +1168,7 @@
     }
 
     .ap-screenshot-window {
-      min-height: 220px;
+      height: 220px;
     }
   }
 
@@ -1364,24 +1407,34 @@
       <div class="ap-screenshot-grid">
         <article class="ap-screenshot-card">
           <div class="ap-screenshot-window">
-            <img src="{{ url_for('video_shorts_bp.static', filename='img/blog/library/1-minti-dashboard.png') }}" alt="MintiStudio Shorts dashboard" loading="lazy">
+            <button class="ap-screenshot-trigger" type="button" data-ap-workspace-image aria-label="Open the Your Shorts workspace screenshot full size">
+              <img src="{{ url_for('video_shorts_bp.static', filename='img/autopilot/ws-clips.webp') }}" alt="Autopilot workspace showing Shorts titles, timing and publishing schedule" loading="lazy" width="1402" height="1144">
+            </button>
           </div>
-          <div class="ap-screenshot-copy"><span>Dashboard</span><h3>Your Shorts at a glance</h3><p>See what is in progress, ready to review, and performing.</p></div>
-        </article>
-
-        <article class="ap-screenshot-card">
-          <div class="ap-screenshot-window is-editor">
-            <img src="{{ url_for('video_shorts_bp.static', filename='img/blog/done-for-you-vs-diy-video-clipping/5-manual-video-creation.png') }}" alt="MintiStudio design and editor preview" loading="lazy">
-          </div>
-          <div class="ap-screenshot-copy"><span>Creative preview</span><h3>Review every detail</h3><p>Check the clip, captions, framing, and finish before it goes out.</p></div>
+          <div class="ap-screenshot-copy"><span>Your Shorts</span><h3>Every Short, ready to review</h3><p>Titles, timing and where each one is scheduled, all in one list.</p></div>
         </article>
 
         <article class="ap-screenshot-card">
           <div class="ap-screenshot-window">
-            <img src="{{ url_for('video_shorts_bp.static', filename='img/blog/getting-started/09-schedule-publish.png') }}" alt="MintiStudio scheduling and publishing screen" loading="lazy">
+            <button class="ap-screenshot-trigger" type="button" data-ap-workspace-image aria-label="Open the Your Look workspace screenshot full size">
+              <img src="{{ url_for('video_shorts_bp.static', filename='img/autopilot/ws-style.webp') }}" alt="Autopilot workspace showing caption and title style settings" loading="lazy" width="1403" height="1020">
+            </button>
           </div>
-          <div class="ap-screenshot-copy"><span>Publishing</span><h3>A schedule you can see</h3><p>Know what is planned and keep your channels moving consistently.</p></div>
+          <div class="ap-screenshot-copy"><span>Your Look</span><h3>Your style on every Short</h3><p>Choose a caption and title style once. Every new Short follows it.</p></div>
         </article>
+
+        <article class="ap-screenshot-card">
+          <div class="ap-screenshot-window">
+            <button class="ap-screenshot-trigger" type="button" data-ap-workspace-image aria-label="Open the Smart Framing workspace screenshot full size">
+              <img src="{{ url_for('video_shorts_bp.static', filename='img/autopilot/ws-layout.webp') }}" alt="Autopilot workspace showing face-aware vertical framing controls" loading="lazy" width="1401" height="1017">
+            </button>
+          </div>
+          <div class="ap-screenshot-copy"><span>Smart Framing</span><h3>Framed for vertical, automatically</h3><p>Face-aware layout keeps you in the shot. Adjust it only if you want to.</p></div>
+        </article>
+      </div>
+      <div class="ap-workspace-lightbox" data-ap-workspace-lightbox role="dialog" aria-modal="true" aria-label="Workspace screenshot preview" hidden>
+        <button class="ap-workspace-lightbox-close" type="button" data-ap-workspace-lightbox-close aria-label="Close screenshot preview">&times;</button>
+        <img data-ap-workspace-lightbox-image alt="">
       </div>
     </div>
   </section>
@@ -1460,6 +1513,37 @@
 
   autopilotVideo?.addEventListener("ended", function () {
     if (typeof trackMintiEvent === "function") trackMintiEvent("autopilot_video_complete");
+  });
+
+  const workspaceLightbox = document.querySelector("[data-ap-workspace-lightbox]");
+  const workspaceLightboxImage = workspaceLightbox?.querySelector("[data-ap-workspace-lightbox-image]");
+  const workspaceLightboxClose = workspaceLightbox?.querySelector("[data-ap-workspace-lightbox-close]");
+  let workspaceLightboxTrigger = null;
+
+  function closeWorkspaceLightbox() {
+    if (!workspaceLightbox || workspaceLightbox.hidden) return;
+    workspaceLightbox.hidden = true;
+    document.body.style.overflow = "";
+    workspaceLightboxImage?.removeAttribute("src");
+    workspaceLightboxTrigger?.focus();
+  }
+
+  document.querySelectorAll("[data-ap-workspace-image]").forEach(function (button) {
+    button.addEventListener("click", function () {
+      const image = button.querySelector("img");
+      if (!workspaceLightbox || !workspaceLightboxImage || !image) return;
+      workspaceLightboxTrigger = button;
+      workspaceLightboxImage.src = image.currentSrc || image.src;
+      workspaceLightboxImage.alt = image.alt;
+      workspaceLightbox.hidden = false;
+      document.body.style.overflow = "hidden";
+      workspaceLightboxClose?.focus();
+    });
+  });
+
+  workspaceLightbox?.addEventListener("click", closeWorkspaceLightbox);
+  document.addEventListener("keydown", function (event) {
+    if (event.key === "Escape") closeWorkspaceLightbox();
   });
 
   document.querySelectorAll("[data-ap-tier]").forEach(function (button) {
