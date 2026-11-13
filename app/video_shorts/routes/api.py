@@ -2926,6 +2926,7 @@ def _filter_generated_keyword_items(
     profile_text: str,
     limit: int,
     blocked_categories: Optional[List[str]] = None,
+    apply_profile_filter: bool = True,
 ) -> Dict[str, Any]:
     normalized_items = _normalize_category_keyword_items(items, limit=max(len(items), 1))
     normalized_items, medical_rejected = _filter_medical_category_keyword_items(
@@ -2933,7 +2934,11 @@ def _filter_generated_keyword_items(
     )
     filtered_items, variant_dropped_keywords = _filter_close_discovery_keyword_variants(normalized_items, blocked_keywords)
     generated_keywords = [item["keyword"] for item in filtered_items]
-    filter_result = _filter_seed_keywords_against_profile(generated_keywords, profile_text)
+    filter_result = (
+        _filter_seed_keywords_against_profile(generated_keywords, profile_text)
+        if apply_profile_filter
+        else {"kept": generated_keywords, "dropped": []}
+    )
     keywords = filter_result["kept"][: max(0, int(limit))]
     item_by_keyword = {item["keyword"].lower(): item for item in filtered_items}
     kept_items = [
@@ -3554,6 +3559,7 @@ def generate_seed_keywords_into_queue(
             profile_text=profile_text,
             limit=target,
             blocked_categories=blocked,
+            apply_profile_filter=lane != "icp_exploration",
         )
         generated_raw_count += int(filtered.get("generated_raw") or 0)
         kept_items = list(filtered.get("items") or [])
