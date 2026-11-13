@@ -1445,7 +1445,23 @@ def _execute_ingest_youtube_job(app, job: Dict[str, Any]) -> Dict[str, Any]:
             source_key=source_key,
             duration_seconds=effective_duration_seconds,
         )
-        text_cache = load_text_cache(video_id) if job_origin == GUEST_JOB_ORIGIN else None
+        brand_language_settings = {"spoken_language": "auto", "caption_language": "same"}
+        direct_english_translation = False
+        if job_origin == GUEST_JOB_ORIGIN:
+            settings_conn = get_db_readonly()
+            try:
+                brand_language_settings = get_brand_language_settings(settings_conn, brand_id)
+            finally:
+                settings_conn.close()
+            direct_english_translation = (
+                brand_language_settings["caption_language"] == "en"
+                and brand_language_settings["spoken_language"] not in {"auto", "en"}
+            )
+        text_cache = (
+            load_text_cache(video_id)
+            if job_origin == GUEST_JOB_ORIGIN and not direct_english_translation
+            else None
+        )
         if text_cache and text_cache.get("full_text") and text_cache.get("segments"):
             transcript_text = str(text_cache.get("full_text") or "")
             segments = list(text_cache.get("segments") or [])
@@ -1453,14 +1469,9 @@ def _execute_ingest_youtube_job(app, job: Dict[str, Any]) -> Dict[str, Any]:
                 (str(segment.get("lang") or "").strip().lower() for segment in segments if segment.get("lang")),
                 "",
             )
-            settings_conn = get_db_readonly()
-            try:
-                caption_language = get_brand_language_settings(settings_conn, brand_id)["caption_language"]
-            finally:
-                settings_conn.close()
             transcript_text_en, segments_en = _english_track_for_brand(
                 video_id=video_id,
-                caption_language=caption_language,
+                caption_language=brand_language_settings["caption_language"],
                 detected_language=detected_language,
                 segments=segments,
             )

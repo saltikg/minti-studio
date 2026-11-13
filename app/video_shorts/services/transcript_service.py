@@ -3499,6 +3499,94 @@ def load_cached_english_track(video_id: str) -> Tuple[str, List[Dict[str, Any]]]
         conn.close()
 
 
+def _translate_audio_with_whisper(
+    video_path: Path,
+    *,
+    progress_cb: Optional[Callable[[str, str, Dict[str, Any]], None]] = None,
+) -> Tuple[str, List[Dict[str, Any]]]:
+    """Translate speech directly to English with whisper-1, preserving segment intervals."""
+    def _emit(stage: str, message: str, **extra: Any) -> None:
+        if progress_cb:
+            try:
+                progress_cb(stage, message, extra)
+            except Exception:
+                pass
+
+    if not _openai_client:
+        raise RuntimeError("OPENAI_API_KEY is missing; cannot translate audio.")
+    if not video_path.exists():
+        raise FileNotFoundError(f"Video not found at {video_path}")
+
+    audio_jobs: List[Tuple[Path, float]] = []
+    cleanup_paths: List[Path] = []
+    cleanup_dirs = set()
+    try:
+        _emit("prepare_audio", "Preparing audio for English translation.")
+        try:
+            audio_path = _prepare_audio_for_whisper(video_path)
+            audio_jobs = [(audio_path, 0.0)]
+            cleanup_paths.append(audio_path)
+        except RuntimeError as exc:
+            if "too large" not in str(exc).lower():
+                raise
+            audio_jobs = _prepare_audio_chunks_for_whisper(video_path)
+            cleanup_paths.extend(path for path, _ in audio_jobs)
+            cleanup_dirs.update(path.parent for path in cleanup_paths if path.parent.name.startswith("whisper_chunks_"))
+
+        translated_segments: List[Dict[str, Any]] = []
+        full_text_parts: List[str] = []
+        for index, (audio_path, offset) in enumerate(audio_jobs, start=1):
+            _emit(
+                "whisper_translation_start",
+                f"Translating audio chunk {index}/{len(audio_jobs)} to English.",
+                chunk_index=index,
+                chunk_count=len(audio_jobs),
+            )
+            with audio_path.open("rb") as handle:
+                response = _openai_client.audio.translations.create(
+                    model=WHISPER_MODEL,
+                    file=handle,
+                    response_format="verbose_json",
+                )
+            chunk_text, chunk_segments = _whisper_response_to_segments(response)
+            _offset_segments(chunk_segments, offset)
+            if chunk_text:
+                full_text_parts.append(chunk_text)
+            for segment in chunk_segments:
+                start = float(_seg_val(segment, "start", 0.0) or 0.0)
+                end_value = _seg_val(segment, "end")
+                duration_value = _seg_val(segment, "duration")
+                end = float(end_value) if end_value is not None else None
+                duration = float(duration_value) if duration_value is not None else None
+                if end is None and duration is not None:
+                    end = start + max(duration, 0.0)
+                if duration is None and end is not None:
+                    duration = max(end - start, 0.0)
+                english_text = str(_seg_val(segment, "text", "") or "").strip()
+                translated_segments.append(
+                    {
+                        "start": start,
+                        "end": end,
+                        "duration": duration,
+                        "lang": "en",
+                        "label": "speech",
+                        "tr_text": None,
+                        "ar_text": None,
+                        "text": english_text,
+                        "en_text": english_text,
+                        "words": _translated_word_timings(english_text, start, end),
+                        "word_tags": None,
+                    }
+                )
+        full_text = " ".join(part.strip() for part in full_text_parts if part.strip()).strip()
+        return full_text, translated_segments
+    finally:
+        for path in cleanup_paths:
+            path.unlink(missing_ok=True)
+        for directory in cleanup_dirs:
+            shutil.rmtree(directory, ignore_errors=True)
+
+
 def transcribe_for_brand(
     video_path: Path,
     *,
@@ -3513,6 +3601,27 @@ def transcribe_for_brand(
         settings = get_brand_language_settings(conn, brand_id)
     finally:
         conn.close()
+    direct_english_translation = (
+        settings["caption_language"] == "en"
+        and settings["spoken_language"] not in {"auto", "en"}
+    )
+    if direct_english_translation:
+        full_text_en, segments_en = load_cached_english_track(video_id)
+        if not segments_en:
+            full_text_en, segments_en = _translate_audio_with_whisper(
+                video_path,
+                progress_cb=progress_cb,
+            )
+        return {
+            # Keep the established caller contract: the effective transcript is
+            # English, and persistence also receives it as the dedicated track.
+            "full_text": full_text_en,
+            "segments": segments_en,
+            "detected_language": settings["spoken_language"],
+            "full_text_en": full_text_en,
+            "segments_en": segments_en,
+            **settings,
+        }
     full_text, segments = _transcribe_with_whisper(
         video_path,
         progress_cb=progress_cb,

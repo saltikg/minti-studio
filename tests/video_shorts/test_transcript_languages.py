@@ -135,3 +135,123 @@ def test_fetch_transcript_selects_brand_english_track():
     assert full_text == "Hello"
     assert segments[0]["text"] == "Hello"
     assert segments[0]["lang"] == "en"
+
+
+def test_forced_spoken_language_with_english_captions_uses_whisper_translation(monkeypatch, tmp_path):
+    source = tmp_path / "source.mp4"
+    source.write_bytes(b"video")
+    english = [{"start": 1.0, "end": 2.0, "duration": 1.0, "lang": "en", "text": "Hello"}]
+
+    class _Conn:
+        def close(self):
+            pass
+
+    monkeypatch.setattr(transcript_service, "get_db_readonly", lambda: _Conn())
+    monkeypatch.setattr(
+        "app.video_shorts.services.brands.get_brand_language_settings",
+        lambda _conn, _brand_id: {"spoken_language": "hi", "caption_language": "en"},
+    )
+    monkeypatch.setattr(transcript_service, "load_cached_english_track", lambda _video_id: ("", []))
+    monkeypatch.setattr(
+        transcript_service,
+        "_translate_audio_with_whisper",
+        lambda *_args, **_kwargs: ("Hello", english),
+    )
+    monkeypatch.setattr(
+        transcript_service,
+        "_transcribe_with_whisper",
+        lambda *_args, **_kwargs: pytest.fail("transcription endpoint must not be called"),
+    )
+    monkeypatch.setattr(
+        transcript_service,
+        "translate_segments_to_english",
+        lambda *_args, **_kwargs: pytest.fail("LLM translation must not be called"),
+    )
+
+    tracks = transcript_service.transcribe_for_brand(
+        source,
+        video_id="video",
+        brand_id="brand",
+    )
+
+    assert tracks["detected_language"] == "hi"
+    assert tracks["segments"] == english
+    assert tracks["segments_en"] == english
+    assert tracks["full_text_en"] == "Hello"
+
+
+def test_auto_spoken_language_keeps_existing_transcription_and_llm_translation(monkeypatch, tmp_path):
+    source = tmp_path / "source.mp4"
+    source.write_bytes(b"video")
+    original = [{"start": 1.0, "end": 2.0, "duration": 1.0, "lang": "hi", "text": "नमस्ते"}]
+    english = [{"start": 1.0, "end": 2.0, "duration": 1.0, "lang": "en", "text": "Hello"}]
+
+    class _Conn:
+        def close(self):
+            pass
+
+    monkeypatch.setattr(transcript_service, "get_db_readonly", lambda: _Conn())
+    monkeypatch.setattr(
+        "app.video_shorts.services.brands.get_brand_language_settings",
+        lambda _conn, _brand_id: {"spoken_language": "auto", "caption_language": "en"},
+    )
+    monkeypatch.setattr(
+        transcript_service,
+        "_translate_audio_with_whisper",
+        lambda *_args, **_kwargs: pytest.fail("translations endpoint must not be called"),
+    )
+    monkeypatch.setattr(
+        transcript_service,
+        "_transcribe_with_whisper",
+        lambda *_args, **_kwargs: ("नमस्ते", original),
+    )
+    monkeypatch.setattr(transcript_service, "load_cached_english_track", lambda _video_id: ("", []))
+    monkeypatch.setattr(
+        transcript_service,
+        "translate_segments_to_english",
+        lambda *_args, **_kwargs: ("Hello", english),
+    )
+
+    tracks = transcript_service.transcribe_for_brand(
+        source,
+        video_id="video",
+        brand_id="brand",
+    )
+
+    assert tracks["segments"] == original
+    assert tracks["segments_en"] == english
+    assert tracks["detected_language"] == "hi"
+
+
+def test_whisper_audio_translation_builds_english_word_timings(monkeypatch, tmp_path):
+    source = tmp_path / "source.mp4"
+    source.write_bytes(b"video")
+    audio = tmp_path / "prepared.mp3"
+    audio.write_bytes(b"audio")
+    calls = []
+
+    class _Translations:
+        def create(self, **kwargs):
+            calls.append(kwargs)
+            return SimpleNamespace(
+                text="Hello world",
+                segments=[SimpleNamespace(start=10.0, end=12.0, duration=2.0, text="Hello world")],
+            )
+
+    monkeypatch.setattr(
+        transcript_service,
+        "_openai_client",
+        SimpleNamespace(audio=SimpleNamespace(translations=_Translations())),
+    )
+    monkeypatch.setattr(transcript_service, "_prepare_audio_for_whisper", lambda _source: audio)
+
+    full_text, segments = transcript_service._translate_audio_with_whisper(source)
+
+    assert full_text == "Hello world"
+    assert calls[0]["model"] == transcript_service.WHISPER_MODEL
+    assert calls[0]["response_format"] == "verbose_json"
+    assert segments[0]["lang"] == "en"
+    assert segments[0]["words"] == [
+        {"word": "Hello", "start": 10.0, "end": 11.0},
+        {"word": "world", "start": 11.0, "end": 12.0},
+    ]
