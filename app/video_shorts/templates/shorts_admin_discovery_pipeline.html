@@ -688,6 +688,9 @@
     {% if has_keywords %}
       <div data-pipeline-panel="keywords">
       <div class="discovery-muted mb-3">Keyword queue: {{ keyword_summary.total }} total · {{ keyword_summary.queued }} queued · {{ keyword_summary.searched }} searched</div>
+      {% if keyword_summary.manual_remaining|int < 40 %}
+        <div class="alert alert-warning py-2" role="alert">Manual pool running low ({{ keyword_summary.manual_remaining }} unsearched remaining).</div>
+      {% endif %}
       <div class="keyword-bulk-actions">
         <button id="deleteSelectedKeywordsButton" type="button" class="btn btn-sm btn-outline-danger">Delete selected</button>
         <button id="deleteSearchedKeywordsButton" type="button" class="btn btn-sm btn-outline-warning">Delete all searched</button>

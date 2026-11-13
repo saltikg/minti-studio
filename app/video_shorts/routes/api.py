@@ -104,10 +104,13 @@ DISCOVERY_STARTING_CATEGORIES = [
 DISCOVERY_CATEGORY_ACTIVE_STATUSES = {"active", "testing", "kept"}
 DISCOVERY_CATEGORY_BLOCKED_STATUSES = {"dropped", "saturated"}
 DISCOVERY_KEYWORD_LANE_TARGETS = {
-    "seed": 10,
+    "seed": 0,
     "icp_exploration": 5,
-    "category_deepening": 10,
+    "category_deepening": 0,
 }
+DISCOVERY_MANUAL_DAILY_TARGET = 20
+DISCOVERY_LLM_DAILY_TARGET = 5
+DISCOVERY_DAILY_CATEGORY_CAP = 3
 DISCOVERY_KEYWORD_MIN_WORDS = 2
 DISCOVERY_KEYWORD_MAX_WORDS = 6
 DISCOVERY_PROMOTION_OWNER_USER_ID = "f97df4cb-93de-4761-9c39-62d303261b0a"
@@ -1682,7 +1685,7 @@ def _insert_category_keyword_items_into_queue(conn, items: List[Dict[str, str]],
         category_id = default_category_id
         category_name = _normalize_discovery_category_name(item.get("category"))
         if category_name:
-            category_id = _get_or_create_discovery_category(conn, category_name, source="llm", status="active") or category_id
+            category_id = _get_or_create_discovery_category(conn, category_name, source=source, status="active") or category_id
         existing = conn.execute(
             f"SELECT id, {'category_id' if has_category_id else 'NULL'} AS category_id FROM keyword_queue WHERE lower(keyword) = lower(?) LIMIT 1",
             [keyword],
@@ -3341,7 +3344,7 @@ def _update_discovery_run_keyword_stats(
             conn.close()
 
 
-def _load_recent_keyword_queue_terms(conn, *, limit: int = 200) -> List[str]:
+def _load_recent_keyword_queue_terms(conn, *, limit: int = 10_000) -> List[str]:
     if not table_columns(conn, "keyword_queue"):
         return []
     rows = conn.execute(
@@ -3352,7 +3355,7 @@ def _load_recent_keyword_queue_terms(conn, *, limit: int = 200) -> List[str]:
         ORDER BY COALESCE(updated_at, created_at) DESC NULLS LAST, id DESC
         LIMIT ?
         """,
-        [max(1, min(int(limit or 200), 500))],
+        [max(1, min(int(limit or 10_000), 10_000))],
     ).fetchall()
     return [str(row[0] or "").strip() for row in rows if str(row[0] or "").strip()]
 
@@ -3377,7 +3380,7 @@ def generate_seed_keywords_into_queue(existing_keywords: Optional[List[str]] = N
         pool = load_seed_pool(read_conn)
         existing_profile = read_conn.execute("SELECT profile_text FROM icp_profile WHERE id = 1").fetchone()
         profile_text = str((existing_profile or [None])[0] or "").strip()
-        exclusions = list(existing_keywords or []) or _load_recent_keyword_queue_terms(read_conn, limit=200)
+        exclusions = list(existing_keywords or []) or _load_recent_keyword_queue_terms(read_conn, limit=10_000)
         exhaustion = _load_discovery_exhaustion_signals(read_conn, days=14, keyword_limit=60, category_limit=20)
         metrics = [
             item
@@ -3463,7 +3466,7 @@ def generate_seed_keywords_into_queue(existing_keywords: Optional[List[str]] = N
             queue_counts = _insert_category_keyword_items_into_queue(
                 write_conn,
                 kept_items,
-                source=lane,
+                source="llm",
                 priority=100,
                 due_now=False,
                 blocked_categories=blocked,

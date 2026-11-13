@@ -301,7 +301,6 @@ def _pull_forward_keyword_queue(conn, needed: int) -> Dict[str, Any]:
 
 
 def _maybe_auto_generate_seed_keywords(control: Dict[str, Any]) -> Dict[str, Any]:
-    target = _automation_daily_keyword_target(control)
     now_utc = _utc_now()
     metadata: Dict[str, Any] = {
         "eligible_before": 0,
@@ -310,7 +309,7 @@ def _maybe_auto_generate_seed_keywords(control: Dict[str, Any]) -> Dict[str, Any
         "auto_generation_attempted": False,
         "auto_generation_skipped": "",
         "date_pt": _today_pt_string(now_utc),
-        "target": target,
+        "target": 25,
         "generated_raw": 0,
         "dropped_duplicates": 0,
         "inserted": 0,
@@ -321,20 +320,6 @@ def _maybe_auto_generate_seed_keywords(control: Dict[str, Any]) -> Dict[str, Any
         "categories_proposed_detail": [],
     }
     try:
-        from app.video_shorts.routes.api import (
-            backfill_discovery_keyword_categories,
-            count_eligible_keyword_queue,
-            discover_daily_categories_into_queue,
-            generate_seed_keywords_into_queue,
-        )
-
-        def fresh_eligible_count() -> int:
-            count_conn = get_db()
-            try:
-                return count_eligible_keyword_queue(count_conn)
-            finally:
-                count_conn.close()
-
         state_conn = get_db()
         try:
             if not table_columns(state_conn, "keyword_queue"):
@@ -354,73 +339,20 @@ def _maybe_auto_generate_seed_keywords(control: Dict[str, Any]) -> Dict[str, Any
         finally:
             state_conn.close()
 
-        try:
-            backfill_discovery_keyword_categories()
-        except Exception:
-            current_app.logger.exception("Discovery category backfill failed; continuing daily generation")
-
-        eligible_before = fresh_eligible_count()
-        metadata["eligible_before"] = eligible_before
-        metadata["eligible_final"] = eligible_before
-
         if _same_pacific_day(row[0] if row else None, now_utc):
             metadata["auto_generation_skipped"] = "already_attempted_today"
-            current_app.logger.info(
-                "Discovery keyword auto-generation skipped: already attempted today (eligible=%s target=%s)",
-                eligible_before,
-                target,
-            )
             return metadata
 
         metadata["auto_generation_attempted"] = True
-        generation_errors: List[Dict[str, Any]] = []
-        try:
-            category_generation = discover_daily_categories_into_queue()
-            category_inserted = int(category_generation.get("newly_enqueued") or 0)
-            category_duplicates = int(category_generation.get("already_present") or 0)
-            metadata["categories_proposed"] = category_generation.get("categories_proposed") or []
-            metadata["categories_proposed_detail"] = category_generation.get("categories_proposed_detail") or []
-            metadata["inserted"] += category_inserted
-            metadata["auto_generated"] += category_inserted
-            metadata["generated_raw"] += len(category_generation.get("keywords") or [])
-            metadata["dropped_duplicates"] += category_duplicates
-            generation_errors.extend(category_generation.get("errors") or [])
-        except Exception:
-            current_app.logger.exception("Discovery category daily generation failed; continuing keyword top-up")
+        from app.video_shorts.services.keyword_daily_plan import plan_daily_keywords
 
-        for attempt in range(1, 4):
-            if fresh_eligible_count() >= target:
-                break
-            try:
-                generation = generate_seed_keywords_into_queue()
-            except Exception as exc:
-                current_app.logger.exception("Discovery keyword top-up attempt %s failed; retrying with fresh connections", attempt)
-                generation_errors.append({"error": "keyword_generation_failed", "message": str(exc)})
-                continue
-            metadata["attempts"] = attempt
-            metadata["generated_raw"] += int(generation.get("generated_raw") or generation.get("generated") or 0)
-            metadata["auto_generated_total"] += int(generation.get("generated") or 0)
-            inserted = int(generation.get("newly_enqueued") or 0)
-            duplicates = int(generation.get("already_present") or 0)
-            metadata["inserted"] += inserted
-            metadata["auto_generated"] += inserted
-            metadata["dropped_duplicates"] += duplicates
-            generation_errors.extend(generation.get("errors") or [])
-            metadata["auto_generation_success"] = bool(generation.get("success"))
-            if fresh_eligible_count() >= target:
-                break
+        plan = plan_daily_keywords(plan_date=now_utc.astimezone(PACIFIC_TZ).date(), generate_llm=True, apply=True)
+        metadata["eligible_final"] = len(plan.get("keywords") or [])
+        metadata["auto_generated"] = int(plan.get("llm") or 0)
+        metadata["plan"] = plan
 
         final_conn = get_db()
         try:
-            eligible_after_generation = count_eligible_keyword_queue(final_conn)
-            if eligible_after_generation < target:
-                pull_result = _pull_forward_keyword_queue(final_conn, target - eligible_after_generation)
-                metadata["pulled_forward"] = int(pull_result.get("pulled_forward") or 0)
-                metadata["pulled_forward_keywords"] = pull_result.get("keywords") or []
-
-            eligible_final = count_eligible_keyword_queue(final_conn)
-            metadata["eligible_final"] = eligible_final
-            metadata["auto_generation_errors"] = generation_errors
             _store_keyword_generation_summary(final_conn, metadata)
             _mark_keyword_auto_generated(final_conn)
             final_conn.commit()
@@ -429,28 +361,7 @@ def _maybe_auto_generate_seed_keywords(control: Dict[str, Any]) -> Dict[str, Any
             raise
         finally:
             final_conn.close()
-        current_app.logger.info(
-            "Discovery keyword daily summary date_pt=%s target=%s generated_raw=%s dropped_duplicates=%s inserted=%s pulled_forward=%s eligible_final=%s attempts=%s eligible_before=%s categories_proposed=%s categories_proposed_detail=%s",
-            metadata["date_pt"],
-            target,
-            metadata["generated_raw"],
-            metadata["dropped_duplicates"],
-            metadata["inserted"],
-            metadata["pulled_forward"],
-            eligible_final,
-            metadata["attempts"],
-            eligible_before,
-            metadata["categories_proposed"],
-            metadata["categories_proposed_detail"],
-        )
-        if metadata["inserted"] <= 0 and metadata["pulled_forward"] <= 0:
-            current_app.logger.warning(
-                "Discovery keyword auto-generation returned no usable keywords: generated=%s eligible_before=%s target=%s errors=%s",
-                metadata["auto_generated_total"],
-                eligible_before,
-                target,
-                metadata["auto_generation_errors"],
-            )
+        current_app.logger.info("Discovery daily keyword plan: %s", plan)
         return metadata
     except Exception:
         _mark_keyword_auto_generated_after_failure()

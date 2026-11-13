@@ -25970,7 +25970,7 @@ def admin_discovery_lead_pipeline():
 
         status_counts: Dict[str, int] = {}
         totals = {"total": 0, "with_email": 0, "icp_fit": 0, "pending_email_enrichment": 0}
-        keyword_summary = {"total": 0, "queued": 0, "searched": 0}
+        keyword_summary = {"total": 0, "queued": 0, "searched": 0, "manual_remaining": 0}
         leads: List[Dict[str, Any]] = []
         keyword_queue_rows: List[Dict[str, Any]] = []
         daily_discovery_rows: List[Dict[str, Any]] = []
@@ -26292,7 +26292,11 @@ def admin_discovery_lead_pipeline():
                 SELECT
                     COUNT(*),
                     COUNT(*) FILTER (WHERE COALESCE(status, 'queued') = 'queued'),
-                    COUNT(*) FILTER (WHERE times_searched > 0 OR last_searched_at IS NOT NULL)
+                    COUNT(*) FILTER (WHERE times_searched > 0 OR last_searched_at IS NOT NULL),
+                    COUNT(*) FILTER (
+                        WHERE source = 'manual' AND COALESCE(status, 'queued') = 'queued'
+                          AND COALESCE(times_searched, 0) = 0 AND last_searched_at IS NULL
+                    )
                 FROM keyword_queue
                 """
             ).fetchone()
@@ -26300,6 +26304,7 @@ def admin_discovery_lead_pipeline():
                 "total": int(keyword_row[0] or 0),
                 "queued": int(keyword_row[1] or 0),
                 "searched": int(keyword_row[2] or 0),
+                "manual_remaining": int(keyword_row[3] or 0),
             }
             keyword_rows = conn.execute(
                 f"""
