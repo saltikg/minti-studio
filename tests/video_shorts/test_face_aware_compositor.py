@@ -181,6 +181,56 @@ def test_dynamic_caption_uses_one_source_and_hard_switches_layout() -> None:
     assert graph.count("crop=") == 2
 
 
+def test_caption_and_video_switch_on_same_output_frame_mid_chunk() -> None:
+    fps = 30.0
+    segments = compositor._frame_aligned_layout_segments(
+        [
+            {"start": 0.0, "end": 1.17, "mode": "split"},
+            {"start": 1.17, "end": 2.0, "mode": "fill"},
+        ],
+        output_fps=fps,
+        duration=2.0,
+    )
+    switch_frame = segments[1]["_output_start_frame"]
+    assert switch_frame == 35
+    assert segments[0]["_output_end_frame"] == switch_frame
+    assert segments[1]["start"] == pytest.approx(switch_frame / fps)
+
+    stage = compositor._face_aware_segment_output_stage(segments[0], output_fps=fps)
+    assert f"trim=end_frame={switch_frame}" in stage
+
+    filters: list[str] = []
+    compositor._append_dynamic_caption_filters(
+        filters,
+        final_label="[base]",
+        source_label="[caption_src]",
+        overlay_events=[{
+            "start": 0.5,
+            "end": 1.5,
+            "chunk_index": 1,
+            "chunk_key": "one chunk",
+            "metrics": {
+                "block_bbox": [20, 100, 180, 160],
+                "line_glyph_boxes": [[20, 100, 180, 120], [20, 140, 180, 160]],
+            },
+        }],
+        layout_segments=segments,
+        origin=(0, 80),
+        overlay_size=(200, 100),
+        target_width=200,
+        target_height=200,
+        duration=2.0,
+        subtitle_font_size=40,
+        subtitle_margin=60,
+        subtitle_margin_custom=False,
+        caption_anchor="bottom",
+    )
+    graph = ";".join(filters)
+    switch_time = switch_frame / fps
+    assert f"lt(t\\,{switch_time:.6f})" in graph
+    assert f"gte(t\\,{switch_time:.6f})" in graph
+
+
 def test_split_caption_raster_places_two_lines_around_divider(tmp_path: Path) -> None:
     source_path = tmp_path / "caption.png"
     image = Image.new("RGBA", (200, 200), (0, 0, 0, 0))

@@ -21747,6 +21747,9 @@ document.addEventListener("DOMContentLoaded", () => {
     const card = getActiveClipCard();
     const clipStart = Number(card?.dataset.start || 0);
     const renderedVideo = card?.querySelector(".generate-v2-media-column > video, .clip-card-media video");
+    if (renderedVideo && Number.isFinite(Number(renderedVideo.__mintiPresentedMediaTime))) {
+      return Math.max(0, Number(renderedVideo.__mintiPresentedMediaTime));
+    }
     if (renderedVideo && Number.isFinite(Number(renderedVideo.currentTime)) && !renderedVideo.paused) {
       return Math.max(0, Number(renderedVideo.currentTime));
     }
@@ -22342,7 +22345,7 @@ document.addEventListener("DOMContentLoaded", () => {
   };
   window.syncCropEditorFinalPreviewLayout = applyPreviewLayout;
   let lastAutoLayoutPreviewSegmentKey = "";
-  window.setInterval(() => {
+  const syncAutoLayoutPreviewSegment = () => {
     if (!isAutoLayoutMode() || !previewCard || previewCard.offsetParent === null) return;
     const card = getActiveClipCard();
     const placement = getAutoLayoutPreviewSegment();
@@ -22353,6 +22356,23 @@ document.addEventListener("DOMContentLoaded", () => {
     lastAutoLayoutPreviewSegmentKey = segmentKey;
     applyPreviewLayout({ measure: false });
     drawPreviewFromCropper();
+  };
+  const autoLayoutFrameSyncVideos = new WeakSet();
+  const ensureAutoLayoutFrameSync = () => {
+    const card = getActiveClipCard();
+    const video = card?.querySelector(".generate-v2-media-column > video, .clip-card-media video");
+    if (!video || typeof video.requestVideoFrameCallback !== "function" || autoLayoutFrameSyncVideos.has(video)) return;
+    autoLayoutFrameSyncVideos.add(video);
+    const onFrame = (_now, metadata) => {
+      video.__mintiPresentedMediaTime = Number(metadata?.mediaTime);
+      if (getActiveClipCard() === card) syncAutoLayoutPreviewSegment();
+      video.requestVideoFrameCallback(onFrame);
+    };
+    video.requestVideoFrameCallback(onFrame);
+  };
+  window.setInterval(() => {
+    ensureAutoLayoutFrameSync();
+    syncAutoLayoutPreviewSegment();
   }, 200);
   const clearPreviewCanvas = () => {
     if (!previewCanvas || !previewCtx) {

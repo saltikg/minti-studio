@@ -2973,6 +2973,54 @@ def _face_aware_segment_for_time(layout_segments: List[Dict[str, Any]], event_st
     return {"mode": "fill", "_index": 0}
 
 
+def _frame_aligned_layout_segments(
+    layout_segments: List[Dict[str, Any]],
+    *,
+    output_fps: float,
+    duration: float,
+) -> List[Dict[str, Any]]:
+    """Give video and overlays one canonical output-frame layout timeline.
+
+    Each independently decoded layout segment is normalized to an exact frame
+    count before concat. Without this, decoder/fps rounding shortens individual
+    segments while caption expressions keep their nominal timestamps, so their
+    switch drifts later as the clip progresses.
+    """
+    fps = max(1.0, float(output_fps or 1.0))
+    duration_frame = max(1, int(round(max(0.0, float(duration)) * fps)))
+    aligned: List[Dict[str, Any]] = []
+    prior_end_frame = 0
+    for index, segment in enumerate(layout_segments or []):
+        source_start = float(segment.get("start") or 0.0)
+        source_end = float(segment.get("end") or source_start)
+        start_frame = prior_end_frame if index else max(0, int(round(source_start * fps)))
+        end_frame = (
+            duration_frame
+            if index == len(layout_segments) - 1
+            else max(start_frame + 1, int(round(source_end * fps)))
+        )
+        aligned.append({
+            **segment,
+            "start": start_frame / fps,
+            "end": end_frame / fps,
+            "_source_start": source_start,
+            "_source_end": source_end,
+            "_output_start_frame": start_frame,
+            "_output_end_frame": end_frame,
+            "_output_frame_count": end_frame - start_frame,
+        })
+        prior_end_frame = end_frame
+    return aligned
+
+
+def _face_aware_segment_output_stage(segment: Dict[str, Any], *, output_fps: float) -> str:
+    frame_count = max(1, int(segment.get("_output_frame_count") or 1))
+    return (
+        f"fps={float(output_fps):.6f},trim=end_frame={frame_count},"
+        "setpts=PTS-STARTPTS,setsar=1,format=yuv420p,settb=AVTB"
+    )
+
+
 def _face_aware_event_slices(
     layout_segments: List[Dict[str, Any]],
     start: float,
@@ -5240,6 +5288,12 @@ def _compose_trimmed_with_background(
         layout_segments = [
             {"start": 0.0, "end": float(duration), "mode": "fill", "zoom": 1.0, "auto_layout": True}
         ]
+    if layout_segments:
+        layout_segments = _frame_aligned_layout_segments(
+            layout_segments,
+            output_fps=output_fps,
+            duration=duration,
+        )
     face_aware_layout_active = len(layout_segments) >= 1
     manual_split_caption_placement = bool(split_stack_enabled)
     manual_fill_caption_placement = bool(
@@ -5341,10 +5395,6 @@ def _compose_trimmed_with_background(
         f"scale={target_width}:{target_height}:force_original_aspect_ratio=increase,"
         f"crop={target_width}:{target_height},"
     )
-    face_aware_segment_output_stage = (
-        f"fps={output_fps:.6f},setsar=1,format=yuv420p,settb=AVTB"
-    )
-
     face_aware_has_fit_segment = any(
         str(segment.get("mode") or "").strip().lower() == "fit"
         for segment in layout_segments
@@ -5671,6 +5721,13 @@ def _compose_trimmed_with_background(
                 seg_start = float(segment["start"])
                 seg_end = float(segment["end"])
                 seg_duration = max(0.001, seg_end - seg_start)
+                source_seg_start = float(segment.get("_source_start", seg_start))
+                source_seg_end = float(segment.get("_source_end", seg_end))
+                source_seg_duration = max(0.001, source_seg_end - source_seg_start)
+                face_aware_segment_output_stage = _face_aware_segment_output_stage(
+                    segment,
+                    output_fps=output_fps,
+                )
                 seg_trim = f"[layout_trim_{idx}]"
                 seg_out = f"[layout_out_{idx}]"
                 layout_src = (
@@ -5678,8 +5735,8 @@ def _compose_trimmed_with_background(
                     else f"[layout_src_{idx}]" if len(layout_segments) > 1 else clip_input_label
                 )
                 filter_parts.append(
-                    f"{layout_src}trim=start={0.0 if isolated_face_segments else seg_start:.6f}:"
-                    f"end={seg_duration if isolated_face_segments else seg_end:.6f},"
+                    f"{layout_src}trim=start={0.0 if isolated_face_segments else source_seg_start:.6f}:"
+                    f"end={source_seg_duration if isolated_face_segments else source_seg_end:.6f},"
                     f"setpts=PTS-STARTPTS,settb=AVTB{seg_trim}"
                 )
                 if segment["mode"] == "fit":
@@ -6591,8 +6648,8 @@ def _compose_trimmed_with_background(
     if isolated_face_segments:
         next_input_index = sum(argument == "-i" for argument in cmd)
         for idx, segment in enumerate(layout_segments):
-            segment_start = float(segment["start"])
-            segment_duration = float(segment["end"]) - segment_start
+            segment_start = float(segment.get("_source_start", segment["start"]))
+            segment_duration = float(segment.get("_source_end", segment["end"])) - segment_start
             source_seek = (direct_source_seek if direct_source_timeline else 0.0) + segment_start
             cmd.extend([
                 "-threads", "1", "-ss", f"{source_seek:.6f}",
