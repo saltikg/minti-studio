@@ -176,8 +176,8 @@ def test_dynamic_caption_uses_one_source_and_hard_switches_layout() -> None:
     assert output.startswith("[caption_split_out_")
     assert graph.count("[caption_src]split=") == 1
     assert "split=3" in graph  # one full-layout branch + two measured lines
-    assert "lt(t\,4.000000)" in graph
-    assert "gte(t\,4.000000)" in graph
+    assert "lt(t\,3.983333)" in graph
+    assert "gte(t\,3.983333)" in graph
     assert graph.count("crop=") == 2
 
 
@@ -227,9 +227,11 @@ def test_caption_and_video_switch_on_same_output_frame_mid_chunk() -> None:
     )
     graph = ";".join(filters)
     switch_time = switch_frame / fps
-    assert f"lt(t\\,{switch_time:.6f})" in graph
-    assert f"gte(t\\,{switch_time:.6f})" in graph
-    assert f"between(t\\,{switch_time:.6f}" not in graph
+    compare_time = switch_time - (0.5 / fps)
+    assert (switch_frame - 1) / fps < compare_time <= switch_frame / fps
+    assert f"lt(t\\,{compare_time:.6f})" in graph
+    assert f"gte(t\\,{compare_time:.6f})" in graph
+    assert f"between(t\\,{compare_time:.6f}" not in graph
     assert "overlay=0:110.00:" in graph
     assert "overlay=0:80+(" not in graph
 

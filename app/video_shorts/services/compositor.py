@@ -3485,7 +3485,12 @@ def _overlay_position_enable_expr(
     return "+".join(f"between(t,{start:.6f},{end:.6f})" for start, end in cleaned)
 
 
-def _half_open_enable_expr(intervals: list[tuple[float, float, Any]], *, duration: float) -> str:
+def _half_open_enable_expr(
+    intervals: list[tuple[float, float, Any]],
+    *,
+    duration: float,
+    frame_midpoint: float = 0.0,
+) -> str:
     """Enable the new layout on the exact switch frame (old interval is half-open)."""
     pieces: list[str] = []
     for raw_start, raw_end, _value in intervals:
@@ -3493,7 +3498,9 @@ def _half_open_enable_expr(intervals: list[tuple[float, float, Any]], *, duratio
         end = min(float(duration), float(raw_end))
         if end <= start:
             continue
-        pieces.append(f"gte(t,{start:.6f})*lt(t,{end:.6f})")
+        compare_start = max(0.0, start - max(0.0, float(frame_midpoint)))
+        compare_end = max(compare_start, end - max(0.0, float(frame_midpoint)))
+        pieces.append(f"gte(t,{compare_start:.6f})*lt(t,{compare_end:.6f})")
     return "+".join(pieces) or "0"
 
 
@@ -3530,6 +3537,7 @@ def _append_dynamic_caption_filters(
     subtitle_margin: int,
     subtitle_margin_custom: bool,
     caption_anchor: str,
+    output_fps: float = 30.0,
 ) -> str:
     """Place one neutral caption MOV by chunk/layout without re-rasterizing it."""
     chunks = _caption_event_chunks(overlay_events)
@@ -3617,7 +3625,11 @@ def _append_dynamic_caption_filters(
     for normal_index, branch in enumerate(normal_branches):
         source = labels[branch_cursor]
         branch_cursor += 1
-        enable = _half_open_enable_expr(branch["intervals"], duration=duration).replace(",", r"\,")
+        enable = _half_open_enable_expr(
+            branch["intervals"],
+            duration=duration,
+            frame_midpoint=0.5 / max(1.0, float(output_fps)),
+        ).replace(",", r"\,")
         output = f"[caption_normal_out_{normal_index}]"
         filter_parts.append(
             f"{current_label}{source}overlay={origin_x}:{origin_y + branch['y']:.2f}:format=yuv420:"
@@ -3633,7 +3645,11 @@ def _append_dynamic_caption_filters(
             f"{source}crop={overlay_width}:{branch['crop_height']}:0:{branch['crop_top']},"
             f"setpts=PTS-STARTPTS{cropped}"
         )
-        enable = _half_open_enable_expr(branch["intervals"], duration=duration).replace(",", r"\,")
+        enable = _half_open_enable_expr(
+            branch["intervals"],
+            duration=duration,
+            frame_midpoint=0.5 / max(1.0, float(output_fps)),
+        ).replace(",", r"\,")
         filter_parts.append(
             f"{current_label}{cropped}overlay={origin_x}:{branch['y']}:format=yuv420:"
             f"shortest=0:eof_action=pass:enable='{enable}'{output}"
@@ -6244,6 +6260,7 @@ def _compose_trimmed_with_background(
                     subtitle_margin=subtitle_margin,
                     subtitle_margin_custom=subtitle_margin_custom,
                     caption_anchor=caption_anchor,
+                    output_fps=output_fps,
                 )
                 next_video_input_index += 1
                 current_app.logger.info(
