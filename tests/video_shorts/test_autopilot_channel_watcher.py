@@ -26,9 +26,11 @@ class _ReusableConnection:
 def _database():
     conn = duckdb.connect(":memory:")
     statements = (
-        "CREATE TABLE shorts_users (id VARCHAR, email VARCHAR, username VARCHAR, service_mode VARCHAR)",
-        "CREATE TABLE autopilot_leads (id VARCHAR, user_id VARCHAR, brand_id VARCHAR, youtube_channel_id VARCHAR, converted_at TIMESTAMP)",
-        "CREATE TABLE youtube_oauth_tokens_v2 (user_id VARCHAR, youtube_channel_id VARCHAR)",
+        "CREATE TABLE shorts_users (id VARCHAR, email VARCHAR, username VARCHAR, service_mode VARCHAR, service_mode_chosen_at TIMESTAMP)",
+        "CREATE TABLE shorts_brands (id VARCHAR, name VARCHAR, owner_user_id VARCHAR)",
+        "CREATE TABLE autopilot_leads (id VARCHAR, user_id VARCHAR, brand_id VARCHAR, youtube_channel_id VARCHAR, converted_at TIMESTAMP, youtube_channel_connected_at TIMESTAMP)",
+        "CREATE TABLE youtube_oauth_tokens_v2 (user_id VARCHAR, youtube_channel_id VARCHAR, connected_at VARCHAR, updated_at VARCHAR)",
+        "CREATE TABLE youtube_videos (owner_user_id VARCHAR, brand_id VARCHAR, video_id VARCHAR, deleted_at TIMESTAMP)",
         "CREATE TABLE shorts_generated_videos (brand_id VARCHAR, youtube_video_id VARCHAR)",
         "CREATE TABLE shorts_youtube_schedules (brand_id VARCHAR, youtube_video_id VARCHAR)",
         "CREATE SEQUENCE autopilot_channel_videos_id_seq",
@@ -36,13 +38,15 @@ def _database():
             id BIGINT DEFAULT nextval('autopilot_channel_videos_id_seq'), user_id VARCHAR,
             brand_id VARCHAR, channel_id VARCHAR, youtube_video_id VARCHAR, title VARCHAR,
             published_at TIMESTAMP, duration_s INTEGER, detected_at TIMESTAMP, status VARCHAR,
+            decided_by VARCHAR, decided_at TIMESTAMP, decision_reason VARCHAR,
             UNIQUE(brand_id, youtube_video_id))""",
     )
     for statement in statements:
         conn.execute(statement)
-    conn.execute("INSERT INTO shorts_users VALUES ('u1', 'customer@example.com', 'customer', 'autopilot')")
-    conn.execute("INSERT INTO autopilot_leads VALUES ('l1', 'u1', 'b1', 'UC0000000000000000000000', CURRENT_TIMESTAMP)")
-    conn.execute("INSERT INTO youtube_oauth_tokens_v2 VALUES ('u1::b1', 'UC1234567890123456789012')")
+    conn.execute("INSERT INTO shorts_users VALUES ('u1', 'customer@example.com', 'customer', 'autopilot', TIMESTAMP '2026-11-02 00:00:00')")
+    conn.execute("INSERT INTO shorts_brands VALUES ('b1', 'Brand', 'u1')")
+    conn.execute("INSERT INTO autopilot_leads VALUES ('l1', 'u1', 'b1', 'UC0000000000000000000000', TIMESTAMP '2026-11-02 00:00:00', TIMESTAMP '2026-11-02 00:00:00')")
+    conn.execute("INSERT INTO youtube_oauth_tokens_v2 VALUES ('u1::b1', 'UC1234567890123456789012', '2026-11-02T00:00:00', '2026-11-02T00:00:00')")
     return conn
 
 
@@ -69,11 +73,11 @@ def test_first_run_baselines_and_second_run_sends_one_digest(monkeypatch):
     )
 
     assert first["customers"][0]["channel_id"] == "UC1234567890123456789012"
-    assert first["customers"][0]["baseline"] is True
+    assert first["customers"][0]["baseline"] is False
     assert first["new_videos"] == 0
     assert conn.execute(
         "SELECT youtube_video_id, status FROM autopilot_channel_videos ORDER BY youtube_video_id"
-    ).fetchall() == [("long-1", "seen"), ("short-1", "skipped")]
+    ).fetchall() == [("long-1", "skipped"), ("short-1", "skipped")]
 
     feed.append({"video_id": "long-2", "title": "New long", "published_at": datetime(2026, 11, 2)})
     second = watcher.run_watcher(
@@ -122,6 +126,33 @@ def test_live_and_minti_published_videos_are_skipped(monkeypatch):
     assert conn.execute("SELECT DISTINCT status FROM autopilot_channel_videos").fetchall() == [("skipped",)]
 
 
+def test_already_imported_video_is_processed_without_email(monkeypatch):
+    conn = _database()
+    conn.execute("INSERT INTO youtube_videos VALUES ('u1', 'b1', 'imported-1', NULL)")
+    monkeypatch.setattr(watcher, "get_db", lambda: _ReusableConnection(conn))
+    digests = []
+
+    result = watcher.run_watcher(
+        channel_loader=lambda channel_id: (
+            [{
+                "video_id": "imported-1",
+                "title": "Already imported",
+                "published_at": datetime(2026, 11, 3),
+                "duration_seconds": 600,
+            }],
+            "rss",
+        ),
+        email_sender=lambda rows: digests.append(rows),
+    )
+
+    row = conn.execute(
+        "SELECT status, decided_by, decision_reason FROM autopilot_channel_videos"
+    ).fetchone()
+    assert row == ("processed", "system", "already imported")
+    assert result["new_videos"] == 0
+    assert digests == []
+
+
 def test_first_successful_fetch_marks_post_deploy_upload_new(monkeypatch):
     conn = _database()
     monkeypatch.setattr(watcher, "get_db", lambda: _ReusableConnection(conn))
@@ -141,7 +172,7 @@ def test_first_successful_fetch_marks_post_deploy_upload_new(monkeypatch):
         email_sender=lambda rows: digests.append(rows),
     )
 
-    assert result["customers"][0]["baseline"] is True
+    assert result["customers"][0]["baseline"] is False
     assert result["customers"][0]["fetch_source"] == "data_api"
     assert result["customers"][0]["videos_found"] == 1
     assert result["new_videos"] == 1

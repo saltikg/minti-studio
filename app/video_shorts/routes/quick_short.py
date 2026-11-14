@@ -1102,6 +1102,8 @@ def create_youtube_ingest_session_for_user(
     existing_video_pk: Optional[int] = None,
     existing_video_id: Optional[str] = None,
     job_payload_extra: Optional[Dict[str, Any]] = None,
+    watcher_decided_by: str = "system",
+    watcher_decision_reason: str = "already imported",
 ) -> Dict[str, Any]:
     video_id = str(meta.get("video_id") or "").strip() or extract_video_id(video_url) or ""
     if not video_id:
@@ -1135,6 +1137,19 @@ def create_youtube_ingest_session_for_user(
             existing_video_id = str(existing_row[0] or existing_video_id or "").strip()
         else:
             video_pk, video_created = _upsert_video(conn, meta, None, user_id, brand_id)
+            if brand_id:
+                from app.video_shorts.services.autopilot_channel_decisions import (
+                    mark_imported_watcher_video_processed,
+                )
+
+                mark_imported_watcher_video_processed(
+                    conn,
+                    owner_user_id=str(user_id),
+                    brand_id=str(brand_id),
+                    youtube_video_id=video_id,
+                    decided_by=watcher_decided_by,
+                    reason=watcher_decision_reason,
+                )
         if existing_video_pk:
             video_created = False
         conn.commit()
@@ -1209,6 +1224,8 @@ def ingest_youtube_for_user(
     existing_video_pk: Optional[int] = None,
     existing_video_id: Optional[str] = None,
     job_payload_extra: Optional[Dict[str, Any]] = None,
+    watcher_decided_by: str = "system",
+    watcher_decision_reason: str = "already imported",
 ) -> Dict[str, Any]:
     video_id = extract_video_id(video_url)
     if not video_id:
@@ -1226,6 +1243,8 @@ def ingest_youtube_for_user(
         existing_video_pk=existing_video_pk,
         existing_video_id=existing_video_id,
         job_payload_extra=job_payload_extra,
+        watcher_decided_by=watcher_decided_by,
+        watcher_decision_reason=watcher_decision_reason,
     )
 
 

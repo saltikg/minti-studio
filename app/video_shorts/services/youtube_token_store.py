@@ -64,6 +64,7 @@ CREATE TABLE IF NOT EXISTS {TOKEN_TABLE} (
     refresh_token TEXT NOT NULL,
     scopes TEXT,
     updated_at TEXT,
+    connected_at TEXT,
     reauth_required INTEGER DEFAULT 0,
     youtube_channel_id VARCHAR,
     channel_title VARCHAR
@@ -188,6 +189,8 @@ def _ensure_token_tables(conn):
             conn.execute(f"ALTER TABLE {TOKEN_TABLE} ADD COLUMN youtube_channel_id VARCHAR")
         if "channel_title" not in columns:
             conn.execute(f"ALTER TABLE {TOKEN_TABLE} ADD COLUMN channel_title VARCHAR")
+        if "connected_at" not in columns:
+            conn.execute(f"ALTER TABLE {TOKEN_TABLE} ADD COLUMN connected_at TEXT")
         conn.execute(LEGACY_TOKEN_TABLE_SQL)
         columns = list(table_columns(conn, LEGACY_TOKEN_TABLE))
         if "reauth_required" not in columns:
@@ -268,15 +271,16 @@ def store_refresh_token(
             f"""
             INSERT INTO {TOKEN_TABLE}
                 (user_id, refresh_token, scopes, updated_at, reauth_required,
-                 youtube_channel_id, channel_title)
-            VALUES (?, ?, ?, ?, 0, ?, ?)
+                 youtube_channel_id, channel_title, connected_at)
+            VALUES (?, ?, ?, ?, 0, ?, ?, ?)
             ON CONFLICT (user_id) DO UPDATE SET
                 refresh_token = excluded.refresh_token,
                 scopes = excluded.scopes,
                 updated_at = excluded.updated_at,
                 reauth_required = 0,
                 youtube_channel_id = excluded.youtube_channel_id,
-                channel_title = excluded.channel_title
+                channel_title = excluded.channel_title,
+                connected_at = COALESCE({TOKEN_TABLE}.connected_at, excluded.connected_at)
             """,
             [
                 normalized_user_id,
@@ -285,6 +289,7 @@ def store_refresh_token(
                 datetime.datetime.utcnow().isoformat(),
                 str(youtube_channel_id or "").strip() or None,
                 str(channel_title or "").strip() or None,
+                datetime.datetime.utcnow().isoformat(),
             ],
         )
         conn.commit()

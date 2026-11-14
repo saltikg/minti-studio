@@ -23506,6 +23506,8 @@ def _load_admin_autopilot_customers(
                 CAST(l.id AS VARCHAR) AS lead_id,
                 l.creator_name,
                 l.youtube_channel_id AS lead_channel_id,
+                l.converted_at AS autopilot_started_at,
+                l.youtube_channel_connected_at,
                 COUNT(*) OVER () AS total_count
             FROM shorts_users u
             LEFT JOIN ranked_leads l
@@ -23556,6 +23558,18 @@ def _load_admin_autopilot_customers(
             WHERE lower(COALESCE(status, '')) IN (
                 'uploaded', 'failed', 'missed', 'uncertain', 'blocked_target_mismatch'
             )
+        ),
+        unimported_channel_videos AS (
+            SELECT cv.*
+            FROM autopilot_channel_videos cv
+            WHERE cv.status = 'new'
+              AND NOT EXISTS (
+                  SELECT 1 FROM youtube_videos imported
+                  WHERE CAST(imported.owner_user_id AS VARCHAR) = CAST(cv.user_id AS VARCHAR)
+                    AND CAST(imported.brand_id AS VARCHAR) = CAST(cv.brand_id AS VARCHAR)
+                    AND imported.video_id = cv.youtube_video_id
+                    AND imported.deleted_at IS NULL
+              )
         )
         SELECT
             c.user_id, c.email, c.service_tier, c.service_mode_chosen_at,
@@ -23595,8 +23609,18 @@ def _load_admin_autopilot_customers(
           ON lp.brand_id = c.brand_id
          AND lp.channel_id = ({resolved_channel_sql})
          AND lp.rn = 1
-        LEFT JOIN autopilot_channel_videos cv
-          ON cv.brand_id = c.brand_id AND cv.status = 'new'
+        LEFT JOIN unimported_channel_videos cv
+          ON CAST(cv.user_id AS VARCHAR) = c.user_id
+         AND CAST(cv.brand_id AS VARCHAR) = c.brand_id
+         AND cv.published_at >= GREATEST(
+             c.service_mode_chosen_at,
+             c.autopilot_started_at,
+             CASE
+                 WHEN t.youtube_channel_id LIKE 'UC%%' AND LENGTH(t.youtube_channel_id) = 24
+                     THEN COALESCE(NULLIF(t.connected_at, '')::timestamp, NULLIF(t.updated_at, '')::timestamp)
+                 ELSE COALESCE(c.youtube_channel_connected_at, c.autopilot_started_at)
+             END
+         )
         ORDER BY c.service_mode_chosen_at DESC NULLS LAST, c.user_id, cv.published_at DESC NULLS LAST
         """,
         [*params, limit, offset, month_start_utc, month_end_utc, now_naive],
@@ -25105,7 +25129,8 @@ def admin_autopilot_set_channel(lead_id: str):
         updated = conn.execute(
             """
             UPDATE autopilot_leads l
-            SET youtube_channel_id = ?
+            SET youtube_channel_id = ?,
+                youtube_channel_connected_at = CURRENT_TIMESTAMP
             WHERE CAST(l.id AS VARCHAR) = CAST(? AS VARCHAR)
               AND CAST(l.user_id AS VARCHAR) = CAST(? AS VARCHAR)
               AND CAST(l.brand_id AS VARCHAR) = CAST(? AS VARCHAR)
@@ -25147,12 +25172,21 @@ def admin_autopilot_set_channel(lead_id: str):
     return redirect(url_for("video_shorts_bp.admin_autopilot_leads"))
 
 
-@video_shorts_bp.route("/admin/autopilot-channel-videos/<int:channel_video_id>/<action>", methods=["POST"])
+@video_shorts_bp.route(
+    "/admin/operation/customer/<brand_id>/new-uploads/<int:channel_video_id>/<action>",
+    methods=["POST"],
+)
 @require_admin
-def admin_autopilot_channel_video_action(channel_video_id: int, action: str):
+def admin_autopilot_channel_video_action(brand_id: str, channel_video_id: int, action: str):
     normalized_action = str(action or "").strip().lower()
-    if normalized_action not in {"process", "skip", "seen"}:
+    if normalized_action not in {"process", "skip"}:
         abort(404)
+    scope = _require_admin_operation_scope(brand_id=brand_id, workspace_kind="customer")
+    _require_active_customer_workspace(scope)
+    redirect_target = url_for(
+        "video_shorts_bp.admin_operation_customer_workspace",
+        brand_id=scope["brand_id"],
+    )
     conn = get_db_readonly()
     try:
         row = conn.execute(
@@ -25160,67 +25194,55 @@ def admin_autopilot_channel_video_action(channel_video_id: int, action: str):
             SELECT cv.id, cv.user_id, cv.brand_id, cv.youtube_video_id, cv.title,
                    cv.published_at, cv.duration_s, cv.status, cv.channel_id
             FROM autopilot_channel_videos cv
-            JOIN shorts_users u
-              ON CAST(u.id AS VARCHAR) = CAST(cv.user_id AS VARCHAR)
-             AND lower(COALESCE(u.service_mode, '')) = 'autopilot'
-            JOIN shorts_brands b
-              ON CAST(b.id AS VARCHAR) = CAST(cv.brand_id AS VARCHAR)
-             AND CAST(b.owner_user_id AS VARCHAR) = CAST(cv.user_id AS VARCHAR)
-            JOIN autopilot_leads l
-              ON CAST(l.user_id AS VARCHAR) = CAST(cv.user_id AS VARCHAR)
-             AND CAST(l.brand_id AS VARCHAR) = CAST(cv.brand_id AS VARCHAR)
-             AND l.converted_at IS NOT NULL
             WHERE cv.id = ?
+              AND CAST(cv.user_id AS VARCHAR) = CAST(? AS VARCHAR)
+              AND CAST(cv.brand_id AS VARCHAR) = CAST(? AS VARCHAR)
+              AND cv.status = 'new'
             LIMIT 1
             """,
-            [channel_video_id],
+            [channel_video_id, scope["owner_user_id"], scope["brand_id"]],
         ).fetchone()
     finally:
         conn.close()
     if not row:
         abort(404)
-    if str(row[7] or "").strip().lower() != "new":
-        flash("That channel video has already been handled.", "info")
-        return redirect(url_for("video_shorts_bp.admin_autopilot_leads"))
 
     if normalized_action == "process":
-        from app.video_shorts.routes.quick_short import create_youtube_ingest_session_for_user
+        from app.video_shorts.routes.quick_short import ingest_youtube_for_user
 
         video_id = str(row[3] or "").strip()
-        create_youtube_ingest_session_for_user(
-            user_id=str(row[1]),
-            brand_id=str(row[2]),
+        ingest_youtube_for_user(
+            user_id=scope["owner_user_id"],
+            brand_id=scope["brand_id"],
             video_url=f"https://www.youtube.com/watch?v={video_id}",
-            meta={
-                "video_id": video_id,
-                "title": str(row[4] or video_id),
-                "published_at": row[5].isoformat() if isinstance(row[5], datetime) else row[5],
-                "duration_seconds": int(row[6] or 0),
-                "channel_id": str(row[8] or ""),
-            },
-            source="autopilot_channel_watcher",
+            source="admin_customer_workspace",
             job_payload_extra={
+                **admin_operation_job_metadata(scope),
                 "quota_exempt": True,
                 "autopilot_channel_video_id": int(row[0]),
             },
+            watcher_decided_by=scope["acting_admin_id"],
+            watcher_decision_reason="processed by admin",
         )
-        next_status = "processed"
-    else:
-        next_status = "skipped" if normalized_action == "skip" else "seen"
+        flash("Video queued through the My Videos ingest pipeline.", "success")
+        return redirect(redirect_target)
 
     conn = get_db()
     try:
         updated = conn.execute(
             """
             UPDATE autopilot_channel_videos
-            SET status = ?
+            SET status = 'skipped',
+                decided_by = ?,
+                decided_at = CURRENT_TIMESTAMP,
+                decision_reason = 'skipped by admin'
             WHERE id = ?
               AND CAST(user_id AS VARCHAR) = CAST(? AS VARCHAR)
               AND CAST(brand_id AS VARCHAR) = CAST(? AS VARCHAR)
               AND status = 'new'
             RETURNING id
             """,
-            [next_status, int(row[0]), str(row[1]), str(row[2])],
+            [scope["acting_admin_id"], int(row[0]), scope["owner_user_id"], scope["brand_id"]],
         ).fetchone()
         conn.commit()
     except Exception:
@@ -25228,13 +25250,8 @@ def admin_autopilot_channel_video_action(channel_video_id: int, action: str):
         raise
     finally:
         conn.close()
-    if not updated:
-        flash("That channel video was handled in another request.", "info")
-    elif next_status == "processed":
-        flash("Video queued through the My Videos ingest pipeline.", "success")
-    else:
-        flash(f"Video marked {next_status}.", "success")
-    return redirect(url_for("video_shorts_bp.admin_autopilot_leads"))
+    flash("Video skipped." if updated else "That upload was handled in another request.", "success" if updated else "info")
+    return redirect(redirect_target)
 
 
 @video_shorts_bp.route("/admin/scheduled-shorts", methods=["GET"])
@@ -27366,6 +27383,84 @@ def _require_active_customer_workspace(scope: Dict[str, str]) -> Dict[str, str]:
     }
 
 
+def _load_pending_autopilot_channel_videos(
+    conn,
+    *,
+    owner_user_id: str,
+    brand_id: str,
+) -> List[Dict[str, Any]]:
+    """Load only eligible, undecided, tenant-scoped watcher uploads."""
+    rows = conn.execute(
+        """
+        WITH latest_lead AS (
+            SELECT l.converted_at, l.youtube_channel_connected_at
+            FROM autopilot_leads l
+            WHERE CAST(l.user_id AS VARCHAR) = CAST(? AS VARCHAR)
+              AND CAST(l.brand_id AS VARCHAR) = CAST(? AS VARCHAR)
+              AND l.converted_at IS NOT NULL
+            ORDER BY l.converted_at DESC, l.id DESC
+            LIMIT 1
+        ), customer_cutoff AS (
+            SELECT GREATEST(
+                       u.service_mode_chosen_at,
+                       l.converted_at,
+                       CASE
+                           WHEN t.youtube_channel_id LIKE 'UC%%' AND LENGTH(t.youtube_channel_id) = 24
+                               THEN COALESCE(NULLIF(t.connected_at, '')::timestamp, NULLIF(t.updated_at, '')::timestamp)
+                           ELSE COALESCE(l.youtube_channel_connected_at, l.converted_at)
+                       END
+                   ) AS eligible_after
+            FROM shorts_users u
+            CROSS JOIN latest_lead l
+            LEFT JOIN youtube_oauth_tokens_v2 t
+              ON t.user_id = CAST(u.id AS VARCHAR) || '::' || CAST(? AS VARCHAR)
+            WHERE CAST(u.id AS VARCHAR) = CAST(? AS VARCHAR)
+              AND lower(COALESCE(u.service_mode, '')) = 'autopilot'
+        )
+        SELECT cv.id, cv.youtube_video_id, cv.title, cv.published_at, cv.duration_s
+        FROM autopilot_channel_videos cv
+        CROSS JOIN customer_cutoff cutoff
+        WHERE CAST(cv.user_id AS VARCHAR) = CAST(? AS VARCHAR)
+          AND CAST(cv.brand_id AS VARCHAR) = CAST(? AS VARCHAR)
+          AND cv.status = 'new'
+          AND cv.published_at >= cutoff.eligible_after
+          AND NOT EXISTS (
+              SELECT 1 FROM youtube_videos imported
+              WHERE CAST(imported.owner_user_id AS VARCHAR) = CAST(cv.user_id AS VARCHAR)
+                AND CAST(imported.brand_id AS VARCHAR) = CAST(cv.brand_id AS VARCHAR)
+                AND imported.video_id = cv.youtube_video_id
+                AND imported.deleted_at IS NULL
+          )
+        ORDER BY cv.published_at DESC, cv.id DESC
+        """,
+        [owner_user_id, brand_id, brand_id, owner_user_id, owner_user_id, brand_id],
+    ).fetchall()
+    return [
+        {
+            "id": int(row[0]),
+            "youtube_video_id": str(row[1] or "").strip(),
+            "title": str(row[2] or "").strip() or "Untitled video",
+            "published_at_pst": _format_datetime_pst(row[3]),
+            "duration_label": _format_time_label(int(row[4] or 0)),
+            "youtube_url": f"https://www.youtube.com/watch?v={str(row[1] or '').strip()}",
+            "thumbnail_url": f"https://i.ytimg.com/vi/{str(row[1] or '').strip()}/hqdefault.jpg",
+            "process_url": url_for(
+                "video_shorts_bp.admin_autopilot_channel_video_action",
+                brand_id=brand_id,
+                channel_video_id=int(row[0]),
+                action="process",
+            ),
+            "skip_url": url_for(
+                "video_shorts_bp.admin_autopilot_channel_video_action",
+                brand_id=brand_id,
+                channel_video_id=int(row[0]),
+                action="skip",
+            ),
+        }
+        for row in rows
+    ]
+
+
 def _rehome_plan_files_to_local_video_id(source_video_id: str, local_video_id: str) -> None:
     """Copy durable-on-disk plan files so existing generated clips stay editable after re-home."""
     for plan_path_builder in (_plan_path, _plan_path_v2, _plan_path_v3, _plan_path_v4):
@@ -27527,6 +27622,15 @@ def admin_operation_customer_workspace(brand_id: str):
     """Admin-only workspace for a revalidated converted autopilot customer."""
     scope = _require_admin_operation_scope(brand_id=brand_id, workspace_kind="customer")
     customer = _require_active_customer_workspace(scope)
+    channel_video_conn = get_db_readonly()
+    try:
+        new_channel_videos = _load_pending_autopilot_channel_videos(
+            channel_video_conn,
+            owner_user_id=scope["owner_user_id"],
+            brand_id=scope["brand_id"],
+        )
+    finally:
+        channel_video_conn.close()
     description_prompt, description_languages = load_description_settings(scope["owner_user_id"], scope["brand_id"])
     from app.video_shorts.routes.channels import render_my_videos_page_for_user
     from app.video_shorts.services.customer_short_notifications import format_pt_date, latest_successful_notifications
@@ -27596,6 +27700,7 @@ def admin_operation_customer_workspace(brand_id: str):
             "allow_video_management": True,
             "allow_video_title_edit": False,
             "show_customer_notify": True,
+            "new_channel_videos": new_channel_videos,
             "delete_video_fallback_url": url_for("video_shorts_bp.admin_operation_customer_workspace", brand_id=brand_id),
         },
     )

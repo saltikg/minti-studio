@@ -37,10 +37,10 @@ def _database():
         "CREATE TABLE shorts_user_preferences (user_id VARCHAR, preference_key VARCHAR)",
         """CREATE TABLE autopilot_leads (
             id VARCHAR, user_id VARCHAR, brand_id VARCHAR, creator_name VARCHAR,
-            youtube_channel_id VARCHAR, converted_at TIMESTAMP)""",
-        "CREATE TABLE youtube_videos (owner_user_id VARCHAR)",
+            youtube_channel_id VARCHAR, converted_at TIMESTAMP, youtube_channel_connected_at TIMESTAMP)""",
+        "CREATE TABLE youtube_videos (id INTEGER, owner_user_id VARCHAR, brand_id VARCHAR, video_id VARCHAR, deleted_at TIMESTAMP)",
         """CREATE TABLE youtube_oauth_tokens_v2 (
-            user_id VARCHAR, youtube_channel_id VARCHAR, reauth_required INTEGER)""",
+            user_id VARCHAR, youtube_channel_id VARCHAR, reauth_required INTEGER, connected_at VARCHAR, updated_at VARCHAR)""",
         """CREATE TABLE shorts_generated_videos (
             brand_id VARCHAR, publish_status VARCHAR, published_at TIMESTAMP, planned_publish_at TIMESTAMP)""",
         """CREATE TABLE shorts_youtube_schedules (
@@ -49,7 +49,8 @@ def _database():
         """CREATE TABLE autopilot_channel_videos (
             id BIGINT, user_id VARCHAR, brand_id VARCHAR, channel_id VARCHAR,
             youtube_video_id VARCHAR, title VARCHAR, published_at TIMESTAMP,
-            duration_s INTEGER, detected_at TIMESTAMP, status VARCHAR)""",
+            duration_s INTEGER, detected_at TIMESTAMP, status VARCHAR,
+            decided_by VARCHAR, decided_at TIMESTAMP, decision_reason VARCHAR)""",
     )
     for statement in statements:
         conn.execute(statement)
@@ -59,15 +60,15 @@ def _database():
         ["u1", "customer@example.com", "customer", "autopilot", 15, now, "hash", "", now, now],
     )
     conn.execute("INSERT INTO shorts_brands VALUES ('b1', 'Brand', 'u1')")
-    conn.execute("INSERT INTO autopilot_leads VALUES ('l1', 'u1', 'b1', 'Creator', 'UC0000000000000000000000', ?)", [now])
-    conn.execute("INSERT INTO youtube_oauth_tokens_v2 VALUES ('u1::b1', 'UC1234567890123456789012', 1)")
+    conn.execute("INSERT INTO autopilot_leads VALUES ('l1', 'u1', 'b1', 'Creator', 'UC0000000000000000000000', ?, ?)", [now, now])
+    conn.execute("INSERT INTO youtube_oauth_tokens_v2 VALUES ('u1::b1', 'UC1234567890123456789012', 1, ?, ?)", [now.isoformat(), now.isoformat()])
     conn.execute("INSERT INTO shorts_generated_videos VALUES ('b1', 'published', ?, NULL)", [now])
     conn.execute(
         "INSERT INTO shorts_youtube_schedules VALUES ('s1', 'b1', 'UC1234567890123456789012', 'pending', ?, ?)",
         [now + timedelta(days=2), now],
     )
     conn.execute(
-        "INSERT INTO autopilot_channel_videos VALUES (1, 'u1', 'b1', 'UC1234567890123456789012', 'v1', 'New upload', ?, 600, ?, 'new')",
+        "INSERT INTO autopilot_channel_videos VALUES (1, 'u1', 'b1', 'UC1234567890123456789012', 'v1', 'New upload', ?, 600, ?, 'new', NULL, NULL, NULL)",
         [now, now - timedelta(hours=49)],
     )
     return conn
@@ -108,19 +109,48 @@ def test_process_revalidates_customer_scope_and_uses_shared_ingest(monkeypatch):
     monkeypatch.setattr(generation, "get_db", lambda: conn)
     monkeypatch.setattr(
         quick_short,
-        "create_youtube_ingest_session_for_user",
+        "ingest_youtube_for_user",
         lambda **kwargs: ingest_calls.append(kwargs) or {"job_id": "job-1"},
     )
 
-    with app.test_request_context("/video_shorts/admin/autopilot-channel-videos/1/process", method="POST"):
+    monkeypatch.setattr(generation, "_require_admin_operation_scope", lambda **kwargs: {
+        "owner_user_id": "u1", "brand_id": "b1", "acting_admin_id": "admin"
+    })
+    monkeypatch.setattr(generation, "_require_active_customer_workspace", lambda scope: {"id": "l1"})
+
+    with app.test_request_context("/video_shorts/admin/operation/customer/b1/new-uploads/1/process", method="POST"):
         g.vs_current_user = {"id": "admin", "role": "admin"}
-        response = generation.admin_autopilot_channel_video_action(1, "process")
+        response = generation.admin_autopilot_channel_video_action("b1", 1, "process")
 
     assert response.status_code == 302
     assert ingest_calls[0]["user_id"] == "u1"
     assert ingest_calls[0]["brand_id"] == "b1"
-    assert ingest_calls[0]["source"] == "autopilot_channel_watcher"
-    assert raw_conn.execute("SELECT status FROM autopilot_channel_videos WHERE id=1").fetchone()[0] == "processed"
+    assert ingest_calls[0]["source"] == "admin_customer_workspace"
+    assert ingest_calls[0]["watcher_decided_by"] == "admin"
+
+
+def test_skip_records_admin_and_removes_pending_upload(monkeypatch):
+    app = Flask(__name__)
+    app.secret_key = "test"
+    app.register_blueprint(video_shorts_bp)
+    raw_conn = _database()
+    conn = CountingConnection(raw_conn)
+    monkeypatch.setattr(generation, "get_db_readonly", lambda: conn)
+    monkeypatch.setattr(generation, "get_db", lambda: conn)
+    monkeypatch.setattr(generation, "_require_admin_operation_scope", lambda **kwargs: {
+        "owner_user_id": "u1", "brand_id": "b1", "acting_admin_id": "admin"
+    })
+    monkeypatch.setattr(generation, "_require_active_customer_workspace", lambda scope: {"id": "l1"})
+
+    with app.test_request_context("/video_shorts/admin/operation/customer/b1/new-uploads/1/skip", method="POST"):
+        g.vs_current_user = {"id": "admin", "role": "admin"}
+        response = generation.admin_autopilot_channel_video_action("b1", 1, "skip")
+
+    assert response.status_code == 302
+    row = raw_conn.execute(
+        "SELECT status, decided_by, decision_reason, decided_at IS NOT NULL FROM autopilot_channel_videos WHERE id=1"
+    ).fetchone()
+    assert row == ("skipped", "admin", "skipped by admin", True)
 
 
 def test_set_channel_updates_only_empty_lead_record(monkeypatch):

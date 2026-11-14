@@ -29,11 +29,21 @@
   .customer-workspace-videos .mv-notify-state { display:block; min-height:1.9em; margin-top:3px; overflow:hidden; color:rgba(148,163,184,.62); font-size:.64rem; line-height:.95em; text-align:center; white-space:nowrap; }
   .customer-workspace-videos .mv-notify-state > span { display:block; overflow:hidden; text-overflow:ellipsis; }
   .customer-workspace-videos .mv-row-menu-toggle { white-space:nowrap; }
+  .customer-new-uploads { margin-bottom:20px; padding:18px; border:1px solid rgba(56,189,248,.28); border-radius:14px; background:rgba(14,165,233,.055); }
+  .customer-new-uploads-head { display:flex; justify-content:space-between; align-items:center; gap:12px; margin-bottom:12px; }
+  .customer-new-uploads-title { margin:0; color:#fff; font-size:1.1rem; }
+  .customer-new-upload { display:grid; grid-template-columns:120px minmax(0,1fr) auto; gap:16px; align-items:center; padding:14px 0; border-top:1px solid rgba(148,163,184,.18); }
+  .customer-new-upload:first-of-type { border-top:0; }
+  .customer-new-upload-thumb { width:120px; aspect-ratio:16/9; object-fit:cover; border-radius:9px; background:#0f172a; }
+  .customer-new-upload-name { color:#fff; font-weight:650; text-decoration:none; }
+  .customer-new-upload-meta { margin-top:5px; color:#94a3b8; font-size:.84rem; }
+  .customer-new-upload-actions { display:flex; gap:8px; }
   @media (max-width:1100px) {
     .customer-workspace-videos .mv-row { grid-template-columns:minmax(0,1fr) auto; }
     .customer-workspace-videos .mv-row-actions { width:260px; grid-column:1 / 3; justify-self:start; }
   }
   @media (max-width:767.98px) { .customer-workspace-header { align-items:flex-start; flex-direction:column; } }
+  @media (max-width:767.98px) { .customer-new-upload { grid-template-columns:88px minmax(0,1fr); } .customer-new-upload-thumb { width:88px; } .customer-new-upload-actions { grid-column:1 / -1; } }
 </style>
 {% endblock %}
 
@@ -64,6 +74,34 @@
         <button type="submit" class="btn btn-outline-secondary">Exit workspace</button>
       </form>
     </div>
+
+    {% if new_channel_videos %}
+      <section class="customer-new-uploads" id="new-uploads" aria-labelledby="new-uploads-title">
+        <div class="customer-new-uploads-head">
+          <h2 class="customer-new-uploads-title" id="new-uploads-title">New uploads</h2>
+          <span class="badge text-bg-primary">{{ new_channel_videos|length }} pending</span>
+        </div>
+        {% for upload in new_channel_videos %}
+          <article class="customer-new-upload">
+            <a href="{{ upload.youtube_url }}" target="_blank" rel="noopener noreferrer">
+              <img class="customer-new-upload-thumb" src="{{ upload.thumbnail_url }}" alt="Thumbnail for {{ upload.title|e }}">
+            </a>
+            <div>
+              <a class="customer-new-upload-name" href="{{ upload.youtube_url }}" target="_blank" rel="noopener noreferrer">{{ upload.title }}</a>
+              <div class="customer-new-upload-meta">Published {{ upload.published_at_pst or '—' }} · {{ upload.duration_label or '—' }}</div>
+            </div>
+            <div class="customer-new-upload-actions">
+              <form method="post" action="{{ upload.process_url }}">
+                <button class="btn btn-sm btn-primary" type="submit">Process</button>
+              </form>
+              <form method="post" action="{{ upload.skip_url }}">
+                <button class="btn btn-sm btn-outline-light" type="submit">Skip</button>
+              </form>
+            </div>
+          </article>
+        {% endfor %}
+      </section>
+    {% endif %}
 
     <div class="mv-add-panel">
       <div class="mv-tabs" role="tablist" aria-label="Add video"><button type="button" class="mv-tab is-active" role="tab" aria-selected="true">Video from URL<span class="mv-beta-tag">BETA</span></button></div>

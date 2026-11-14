@@ -10,20 +10,21 @@ from datetime import datetime, timezone
 from typing import Any, Callable
 from urllib import parse, request
 from xml.etree import ElementTree
-from zoneinfo import ZoneInfo
 
 from app.video_shorts.config import YT_DLP_COOKIES
 from app.video_shorts.services.db import get_db
 from app.video_shorts.services.email_verification import send_resend_email
+from app.video_shorts.services.autopilot_channel_decisions import (
+    ALREADY_IMPORTED_REASON,
+    SYSTEM_ACTOR,
+    mark_imported_watcher_video_processed,
+)
 from app.video_shorts.youtube_api import fetch_playlist_items_batch, fetch_video_stats
 
 
 logger = logging.getLogger(__name__)
 RSS_URL = "https://www.youtube.com/feeds/videos.xml?channel_id={channel_id}"
 ADMIN_PATH = "/video_shorts/admin/autopilot-leads"
-BASELINE_CUTOFF_UTC = datetime(2026, 11, 2, 22, 50, tzinfo=ZoneInfo("America/Los_Angeles")).astimezone(
-    timezone.utc
-).replace(tzinfo=None)
 
 
 def _utc_naive(value: Any) -> datetime | None:
@@ -237,10 +238,22 @@ def _load_customers(conn) -> list[dict[str, str]]:
                    WHEN l.youtube_channel_id LIKE 'UC%' AND LENGTH(l.youtube_channel_id) = 24
                        THEN 'b:lead_record'
                    ELSE 'none'
-               END
+               END,
+               GREATEST(
+                   u.service_mode_chosen_at,
+                   l.converted_at,
+                   CASE
+                       WHEN t.youtube_channel_id LIKE 'UC%' AND LENGTH(t.youtube_channel_id) = 24
+                           THEN COALESCE(NULLIF(t.connected_at, '')::timestamp, NULLIF(t.updated_at, '')::timestamp)
+                       ELSE COALESCE(l.youtube_channel_connected_at, l.converted_at)
+                   END
+               )
         FROM shorts_users u
         LEFT JOIN ranked_leads l
           ON CAST(l.user_id AS VARCHAR) = CAST(u.id AS VARCHAR) AND l.rn = 1
+        JOIN shorts_brands b
+          ON CAST(b.id AS VARCHAR) = CAST(l.brand_id AS VARCHAR)
+         AND CAST(b.owner_user_id AS VARCHAR) = CAST(u.id AS VARCHAR)
         LEFT JOIN youtube_oauth_tokens_v2 t
           ON t.user_id = CAST(u.id AS VARCHAR) || '::' || CAST(l.brand_id AS VARCHAR)
         WHERE lower(COALESCE(u.service_mode, '')) = 'autopilot'
@@ -254,6 +267,7 @@ def _load_customers(conn) -> list[dict[str, str]]:
             "brand_id": str(row[2] or "").strip(),
             "channel_id": str(row[3] or "").strip(),
             "channel_source": str(row[4] or "").strip(),
+            "eligible_after": _utc_naive(row[5]),
         }
         for row in rows
     ]
@@ -273,6 +287,21 @@ def _minti_video_ids(conn, brand_id: str) -> set[str]:
           AND COALESCE(youtube_video_id, '') <> ''
         """,
         [brand_id, brand_id],
+    ).fetchall()
+    return {str(row[0]).strip() for row in rows if row and row[0]}
+
+
+def _imported_video_ids(conn, *, user_id: str, brand_id: str) -> set[str]:
+    rows = conn.execute(
+        """
+        SELECT video_id
+        FROM youtube_videos
+        WHERE CAST(owner_user_id AS VARCHAR) = CAST(? AS VARCHAR)
+          AND CAST(brand_id AS VARCHAR) = CAST(? AS VARCHAR)
+          AND deleted_at IS NULL
+          AND COALESCE(video_id, '') <> ''
+        """,
+        [user_id, brand_id],
     ).fetchall()
     return {str(row[0]).strip() for row in rows if row and row[0]}
 
@@ -341,20 +370,19 @@ def run_watcher(
                 "inserted": 0,
                 "new": 0,
                 "seen": 0,
+                "processed": 0,
                 "skipped": 0,
             }
             reports.append(report)
             if not customer["brand_id"] or not customer["channel_id"]:
                 report["result"] = "No channel"
                 continue
-            baseline = not bool(
-                conn.execute(
-                    "SELECT 1 FROM autopilot_channel_videos WHERE brand_id = ? LIMIT 1",
-                    [customer["brand_id"]],
-                ).fetchone()
-            )
-            report["baseline"] = baseline
             minti_ids = _minti_video_ids(conn, customer["brand_id"])
+            imported_ids = _imported_video_ids(
+                conn,
+                user_id=customer["user_id"],
+                brand_id=customer["brand_id"],
+            )
             try:
                 feed_items, fetch_source = channel_loader(customer["channel_id"])
             except Exception as exc:
@@ -379,19 +407,33 @@ def run_watcher(
                 skip = duration_s <= 180 or live_state in {"live", "upcoming"} or video_id in minti_ids
                 published_at = _utc_naive(metadata.get("published_at"))
                 status = "skipped"
-                if not skip:
-                    status = (
-                        "seen"
-                        if baseline and published_at is not None and published_at < BASELINE_CUTOFF_UTC
-                        else "new"
+                decided_by = SYSTEM_ACTOR
+                decided_at_sql = "CURRENT_TIMESTAMP"
+                decision_reason = "not an eligible long-form upload"
+                if published_at is None or customer["eligible_after"] is None or published_at < customer["eligible_after"]:
+                    decision_reason = "published before autopilot eligibility start"
+                elif video_id in imported_ids:
+                    status = "processed"
+                    decision_reason = ALREADY_IMPORTED_REASON
+                    mark_imported_watcher_video_processed(
+                        conn,
+                        owner_user_id=customer["user_id"],
+                        brand_id=customer["brand_id"],
+                        youtube_video_id=video_id,
                     )
+                elif not skip:
+                    status = "new"
+                    decided_by = None
+                    decided_at_sql = "NULL"
+                    decision_reason = None
                 row = conn.execute(
-                    """
+                    f"""
                     INSERT INTO autopilot_channel_videos (
                         user_id, brand_id, channel_id, youtube_video_id, title,
-                        published_at, duration_s, detected_at, status
+                        published_at, duration_s, detected_at, status,
+                        decided_by, decided_at, decision_reason
                     )
-                    VALUES (?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP, ?)
+                    VALUES (?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP, ?, ?, {decided_at_sql}, ?)
                     ON CONFLICT (brand_id, youtube_video_id) DO NOTHING
                     RETURNING id
                     """,
@@ -404,6 +446,8 @@ def run_watcher(
                         published_at,
                         duration_s or None,
                         status,
+                        decided_by,
+                        decision_reason,
                     ],
                 ).fetchone()
                 if not row:

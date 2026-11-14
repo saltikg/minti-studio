@@ -255,28 +255,10 @@
               </td>
               <td>
                 {% if customer.new_video_count %}
-                  <details class="admin-autopilot-video-list">
-                    <summary class="admin-autopilot-video-badge{% if customer.overdue %} is-overdue{% endif %}">
-                      New video ({{ customer.new_video_count }})
-                    </summary>
-                    {% for video in customer.new_videos %}
-                      <div class="admin-autopilot-video-item">
-                        <a href="{{ video.youtube_url }}" target="_blank" rel="noopener" class="text-white">{{ video.title }}</a>
-                        <div class="small text-white-50">{{ video.duration_label }} · detected {{ video.detected_at_pst }}</div>
-                        <div class="admin-autopilot-video-actions">
-                          <form method="post" action="{{ url_for('video_shorts_bp.admin_autopilot_channel_video_action', channel_video_id=video.id, action='process') }}">
-                            <button class="btn btn-sm btn-primary" type="submit">Process</button>
-                          </form>
-                          <form method="post" action="{{ url_for('video_shorts_bp.admin_autopilot_channel_video_action', channel_video_id=video.id, action='skip') }}">
-                            <button class="btn btn-sm btn-outline-light" type="submit">Skip</button>
-                          </form>
-                          <form method="post" action="{{ url_for('video_shorts_bp.admin_autopilot_channel_video_action', channel_video_id=video.id, action='seen') }}">
-                            <button class="btn btn-sm btn-outline-light" type="submit">Mark seen</button>
-                          </form>
-                        </div>
-                      </div>
-                    {% endfor %}
-                  </details>
+                  <a class="admin-autopilot-video-badge text-decoration-none{% if customer.overdue %} is-overdue{% endif %}"
+                     href="{{ url_for('video_shorts_bp.admin_operation_customer_workspace', brand_id=customer.customer_brand_id) }}#new-uploads">
+                    New video ({{ customer.new_video_count }})
+                  </a>
                 {% else %}
                   <span class="text-muted">—</span>
                 {% endif %}
