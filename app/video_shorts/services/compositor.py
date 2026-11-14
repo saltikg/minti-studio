@@ -3593,7 +3593,18 @@ def _append_dynamic_caption_filters(
                 "intervals": split_slices,
             })
 
-    branch_count = (1 if normal_intervals else 0) + len(split_branches)
+    normal_branches: list[Dict[str, Any]] = []
+    normal_branch_by_y: dict[float, Dict[str, Any]] = {}
+    for start, end, y_offset in normal_intervals:
+        rounded_y = round(float(y_offset), 2)
+        branch = normal_branch_by_y.get(rounded_y)
+        if branch is None:
+            branch = {"y": rounded_y, "intervals": []}
+            normal_branch_by_y[rounded_y] = branch
+            normal_branches.append(branch)
+        branch["intervals"].append((start, end, rounded_y))
+
+    branch_count = len(normal_branches) + len(split_branches)
     if branch_count <= 0:
         return final_label
     labels = [f"[caption_branch_{index}]" for index in range(branch_count)]
@@ -3603,14 +3614,13 @@ def _append_dynamic_caption_filters(
         filter_parts.append(f"{source_label}split={branch_count}{''.join(labels)}")
     branch_cursor = 0
     current_label = final_label
-    if normal_intervals:
+    for normal_index, branch in enumerate(normal_branches):
         source = labels[branch_cursor]
         branch_cursor += 1
-        y_expr = _piecewise_constant_overlay_y_expr(normal_intervals, duration=duration).replace(",", r"\,")
-        enable = _half_open_enable_expr(normal_intervals, duration=duration).replace(",", r"\,")
-        output = "[caption_normal_out]"
+        enable = _half_open_enable_expr(branch["intervals"], duration=duration).replace(",", r"\,")
+        output = f"[caption_normal_out_{normal_index}]"
         filter_parts.append(
-            f"{current_label}{source}overlay={origin_x}:{origin_y}+({y_expr}):format=yuv420:"
+            f"{current_label}{source}overlay={origin_x}:{origin_y + branch['y']:.2f}:format=yuv420:"
             f"shortest=0:eof_action=pass:enable='{enable}'{output}"
         )
         current_label = output
