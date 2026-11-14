@@ -21163,9 +21163,6 @@ document.addEventListener("DOMContentLoaded", () => {
     currentPresetRatios = buildDefaultSplitPreset("left");
     currentPresetRatiosBottom = buildDefaultSplitPreset("right");
     splitDefaultsPrimed = true;
-    if (subtitleMarginInput && getCaptionAnchor() === "bottom" && !dirtyOverlayFields.has("sub_margin")) {
-      updateFieldValue(subtitleMarginInput, 600);
-    }
   };
   const syncOverlayVisibilityUi = () => {
     const titleVisible = isTitleVisible();
