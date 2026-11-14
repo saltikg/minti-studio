@@ -229,6 +229,7 @@ def test_caption_and_video_switch_on_same_output_frame_mid_chunk() -> None:
     switch_time = switch_frame / fps
     assert f"lt(t\\,{switch_time:.6f})" in graph
     assert f"gte(t\\,{switch_time:.6f})" in graph
+    assert f"between(t\\,{switch_time:.6f}" not in graph
 
 
 def test_split_caption_raster_places_two_lines_around_divider(tmp_path: Path) -> None:

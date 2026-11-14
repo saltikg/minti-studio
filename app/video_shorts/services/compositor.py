@@ -3408,10 +3408,12 @@ def _piecewise_constant_expr(
 ) -> str:
     """Build a flat ffmpeg expression for per-time constant values.
 
-    A deeply nested if(between(...), y, next) chain hits ffmpeg's expression
+    A deeply nested if(..., y, next) chain hits ffmpeg's expression
     parser limit for long karaoke overlays. A sum of non-overlapping
-    between(t,start,end)*(value-default) terms preserves the same piecewise
-    constants without parser recursion.
+    half-open gte(t,start)*lt(t,end)*(value-default) terms preserves the same
+    piecewise constants without parser recursion.  The half-open condition is
+    deliberately identical to the overlay enable expression so a layout cut
+    cannot expose the neutral raster position for one boundary frame.
     """
     def _expr(value: Any) -> str:
         try:
@@ -3441,7 +3443,10 @@ def _piecewise_constant_expr(
         return cleaned[0][2]
     parts = [default_value]
     for start, end, value_expr in cleaned:
-        parts.append(f"(between(t,{start:.6f},{end:.6f})*(({value_expr})-({default_value})))")
+        parts.append(
+            f"(gte(t,{start:.6f})*lt(t,{end:.6f})*"
+            f"(({value_expr})-({default_value})))"
+        )
     return "+".join(parts)
 
 
@@ -5747,8 +5752,9 @@ def _compose_trimmed_with_background(
                         f"{seg_trim}scale={target_width}:-2,"
                         f"setsar=1,settb=AVTB{fit_scaled}"
                     )
+                    fit_bg_duration = seg_duration + (0.100 if isolated_face_segments else 0.0)
                     filter_parts.append(
-                        f"{fit_bg_labels[idx]}trim=duration={seg_duration:.6f},"
+                        f"{fit_bg_labels[idx]}trim=duration={fit_bg_duration:.6f},"
                         f"setpts=PTS-STARTPTS,settb=AVTB{fit_bg}"
                     )
                     fit_overlay_y = (

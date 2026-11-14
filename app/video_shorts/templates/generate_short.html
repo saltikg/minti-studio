@@ -7484,10 +7484,10 @@
                   <form class="clip-rail-edit-form" data-edit-title-time-form data-plan-index="{{ row.plan_index }}" data-edit-url="{{ editor_url('edit_clip_title_time', video_pk=video.id, plan_index=row.plan_index) }}" data-unschedule-url="{{ editor_url('unschedule_clip_posts', video_pk=video.id, plan_index=row.plan_index) }}" data-youtube-id="{{ row.yt_video_id or '' }}" data-youtube-publish-now-eligible="{{ '1' if row.youtube_publish_now_eligible else '0' }}" data-base-readonly="{{ '1' if row.edit_locked else '0' }}" data-rendering-locked="{{ '1' if rail_is_rendering else '0' }}" data-readonly="{{ '1' if v2_edit_locked else '0' }}" data-initial-start="{{ row.start or 0 }}" data-initial-end="{{ row.end or 0 }}" data-initial-keep-ranges='{{ (row.edit_keep_ranges or [])|tojson }}'>
                     <div class="clip-rail-edit-grid">
                       <div class="clip-rail-edit-field">
-                        <label for="clip-edit-title-{{ row.plan_index }}">Title</label>
+                        <label for="clip-edit-title-{{ row.plan_index }}-{{ loop.index0 }}">Title</label>
                         <div class="clip-rail-edit-title-wrap" title="Edit title">
-                          <input id="clip-edit-title-{{ row.plan_index }}" name="title" type="text" value="{{ row.title or ('Manual clip #' ~ row.plan_index) }}" autocomplete="off" title="Edit title" aria-label="Edit title"{% if v2_edit_locked %} readonly{% endif %}>
-                          <label class="clip-rail-edit-title-pencil" for="clip-edit-title-{{ row.plan_index }}" title="Edit title" aria-label="Edit title">
+                          <input id="clip-edit-title-{{ row.plan_index }}-{{ loop.index0 }}" name="title" type="text" value="{{ row.title or ('Manual clip #' ~ row.plan_index) }}" autocomplete="off" title="Edit title" aria-label="Edit title"{% if v2_edit_locked %} readonly{% endif %}>
+                          <label class="clip-rail-edit-title-pencil" for="clip-edit-title-{{ row.plan_index }}-{{ loop.index0 }}" title="Edit title" aria-label="Edit title">
                             <span class="material-symbols-outlined" aria-hidden="true">edit</span>
                           </label>
                         </div>
