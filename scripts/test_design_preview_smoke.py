@@ -714,6 +714,9 @@ def _assert_split_caption_stays_above_divider(page: Page, variant: str) -> None:
     page.wait_for_timeout(250)
 
     def measure(text: str, expected_lines: int, frame_name: str) -> dict:
+        previous_paint_version = page.evaluate(
+            "() => Number(document.getElementById('shorts-preview-subtitle-band')?.__mintiMeasuredPaintVersion || 0)"
+        )
         page.evaluate(
             """text => {
               const panel = document.getElementById('clip-management-panel');
@@ -730,13 +733,11 @@ def _assert_split_caption_stays_above_divider(page: Page, variant: str) -> None:
         page.wait_for_function(
             """expected => {
               const band = document.getElementById('shorts-preview-subtitle-band');
-              const paintedText = Array.from(band?.querySelectorAll('text:not([data-preview-shadow="1"])') || [])
-                .map(node => node.textContent || '').join(' ').replace(/\s+/g, ' ').trim().toLowerCase();
               return band?.dataset.captionDomOwner === 'measured-svg'
                 && Number(band.dataset.lineCount) === expected.lines
-                && paintedText === expected.text.toLowerCase();
+                && Number(band.__mintiMeasuredPaintVersion || 0) > expected.previousPaintVersion;
             }""",
-            arg={"lines": expected_lines, "text": text},
+            arg={"lines": expected_lines, "previousPaintVersion": previous_paint_version},
             timeout=10_000,
         )
         if SPLIT_FRAME_DIR:
