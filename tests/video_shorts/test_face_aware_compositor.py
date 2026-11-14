@@ -127,6 +127,60 @@ def test_split_caption_line_offsets_use_measured_glyph_edges(boxes, expected) ->
     assert split_caption_line_offsets(boxes, frame_height=1280) == pytest.approx(expected)
 
 
+def test_dynamic_caption_uses_one_source_and_hard_switches_layout() -> None:
+    filters: list[str] = []
+    events = [
+        {
+            "start": 1.0,
+            "end": 2.0,
+            "chunk_index": 7,
+            "chunk_key": "same chunk",
+            "metrics": {
+                "block_bbox": [20, 100, 180, 160],
+                "line_glyph_boxes": [[20, 100, 180, 120], [20, 140, 180, 160]],
+            },
+        },
+        {
+            "start": 2.0,
+            "end": 5.0,
+            "chunk_index": 7,
+            "chunk_key": "same chunk",
+            "metrics": {
+                "block_bbox": [20, 100, 180, 160],
+                "line_glyph_boxes": [[20, 100, 180, 120], [20, 140, 180, 160]],
+            },
+        },
+    ]
+
+    output = compositor._append_dynamic_caption_filters(
+        filters,
+        final_label="[base]",
+        source_label="[caption_src]",
+        overlay_events=events,
+        layout_segments=[
+            {"start": 0.0, "end": 4.0, "mode": "split"},
+            {"start": 4.0, "end": 6.0, "mode": "fill", "auto_layout": True},
+        ],
+        origin=(0, 80),
+        overlay_size=(200, 100),
+        target_width=200,
+        target_height=200,
+        duration=6.0,
+        subtitle_font_size=40,
+        subtitle_margin=60,
+        subtitle_margin_custom=False,
+        caption_anchor="bottom",
+    )
+
+    graph = ";".join(filters)
+    assert output.startswith("[caption_split_out_")
+    assert graph.count("[caption_src]split=") == 1
+    assert "split=3" in graph  # one full-layout branch + two measured lines
+    assert "lt(t\,4.000000)" in graph
+    assert "gte(t\,4.000000)" in graph
+    assert graph.count("crop=") == 2
+
+
 def test_split_caption_raster_places_two_lines_around_divider(tmp_path: Path) -> None:
     source_path = tmp_path / "caption.png"
     image = Image.new("RGBA", (200, 200), (0, 0, 0, 0))

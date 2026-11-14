@@ -3341,7 +3341,13 @@ def _normalize_subtitle_overlay_events(
             end = max(start + 0.01, float(event.get("end") or 0.0))
         except Exception:
             continue
-        normalized.append({"start": start, "end": end, "metrics": event.get("metrics") or {}})
+        normalized.append({
+            "start": start,
+            "end": end,
+            "metrics": event.get("metrics") or {},
+            "chunk_index": event.get("chunk_index"),
+            "chunk_key": event.get("chunk_key"),
+        })
     normalized.sort(key=lambda item: item["start"])
     return normalized
 
@@ -3424,6 +3430,153 @@ def _overlay_position_enable_expr(
     if len(cleaned) == 1 and cleaned[0][0] <= 1e-6 and cleaned[0][1] >= float(duration) - 1e-6:
         return "1"
     return "+".join(f"between(t,{start:.6f},{end:.6f})" for start, end in cleaned)
+
+
+def _half_open_enable_expr(intervals: list[tuple[float, float, Any]], *, duration: float) -> str:
+    """Enable the new layout on the exact switch frame (old interval is half-open)."""
+    pieces: list[str] = []
+    for raw_start, raw_end, _value in intervals:
+        start = max(0.0, float(raw_start))
+        end = min(float(duration), float(raw_end))
+        if end <= start:
+            continue
+        pieces.append(f"gte(t,{start:.6f})*lt(t,{end:.6f})")
+    return "+".join(pieces) or "0"
+
+
+def _caption_event_chunks(events: list[Dict[str, Any]]) -> list[Dict[str, Any]]:
+    """Collapse word highlight events into consecutive caption chunks."""
+    chunks: list[Dict[str, Any]] = []
+    for event in events:
+        identity = (event.get("chunk_index"), event.get("chunk_key"))
+        if chunks and chunks[-1]["identity"] == identity and float(event["start"]) <= chunks[-1]["end"] + 0.35:
+            chunks[-1]["end"] = max(chunks[-1]["end"], float(event["end"]))
+            continue
+        chunks.append({
+            "identity": identity,
+            "start": float(event["start"]),
+            "end": float(event["end"]),
+            "metrics": event.get("metrics") or {},
+        })
+    return chunks
+
+
+def _append_dynamic_caption_filters(
+    filter_parts: list[str],
+    *,
+    final_label: str,
+    source_label: str,
+    overlay_events: list[Dict[str, Any]],
+    layout_segments: list[Dict[str, Any]],
+    origin: tuple[int, int],
+    overlay_size: tuple[int, int],
+    target_width: int,
+    target_height: int,
+    duration: float,
+    subtitle_font_size: int,
+    subtitle_margin: int,
+    subtitle_margin_custom: bool,
+    caption_anchor: str,
+) -> str:
+    """Place one neutral caption MOV by chunk/layout without re-rasterizing it."""
+    chunks = _caption_event_chunks(overlay_events)
+    fallback_height = _face_aware_caption_block_height(subtitle_font_size)
+    fallback_top = float(target_height) - float(_face_aware_fill_subtitle_margin(
+        subtitle_margin,
+        subtitle_margin_custom=subtitle_margin_custom,
+        target_height=target_height,
+    )) - fallback_height
+    normal_intervals: list[tuple[float, float, float]] = []
+    split_branches: list[Dict[str, Any]] = []
+    origin_x, origin_y = int(origin[0]), int(origin[1])
+    overlay_width, overlay_height = int(overlay_size[0]), int(overlay_size[1])
+
+    for chunk_index, chunk in enumerate(chunks):
+        metrics = chunk["metrics"]
+        block = _face_aware_event_caption_block(
+            metrics,
+            fallback_top=fallback_top,
+            fallback_height=fallback_height,
+        )
+        split_slices: list[tuple[float, float, Any]] = []
+        for slice_start, slice_end, segment in _face_aware_event_slices(
+            layout_segments, chunk["start"], chunk["end"],
+        ):
+            if str(segment.get("mode") or "").strip().lower() == "split":
+                split_slices.append((slice_start, slice_end, 1.0))
+            else:
+                desired_top = _face_aware_caption_top_for_block(
+                    segment,
+                    block_height=block["height"],
+                    target_width=target_width,
+                    target_height=target_height,
+                    subtitle_margin=subtitle_margin,
+                    subtitle_margin_custom=subtitle_margin_custom,
+                    caption_anchor=caption_anchor,
+                )
+                normal_intervals.append((slice_start, slice_end, desired_top - block["top"]))
+        if not split_slices:
+            continue
+        raw_boxes = metrics.get("line_glyph_boxes") if isinstance(metrics, dict) else None
+        offsets = split_caption_line_offsets(raw_boxes or [], frame_height=target_height)
+        if not offsets:
+            continue
+        boxes = [tuple(float(value) for value in box) for box in raw_boxes]
+        boundaries = [float(origin_y)]
+        for line_index in range(len(boxes) - 1):
+            boundaries.append((boxes[line_index][3] + boxes[line_index + 1][1]) / 2.0)
+        boundaries.append(float(origin_y + overlay_height))
+        for line_index, offset in enumerate(offsets):
+            crop_top = max(0, min(overlay_height, int(round(boundaries[line_index] - origin_y))))
+            crop_bottom = max(crop_top, min(overlay_height, int(round(boundaries[line_index + 1] - origin_y))))
+            if crop_bottom <= crop_top:
+                continue
+            split_branches.append({
+                "chunk_index": chunk_index,
+                "line_index": line_index,
+                "crop_top": crop_top,
+                "crop_height": crop_bottom - crop_top,
+                "y": origin_y + crop_top + int(round(offset)),
+                "intervals": split_slices,
+            })
+
+    branch_count = (1 if normal_intervals else 0) + len(split_branches)
+    if branch_count <= 0:
+        return final_label
+    labels = [f"[caption_branch_{index}]" for index in range(branch_count)]
+    if branch_count == 1:
+        labels[0] = source_label
+    else:
+        filter_parts.append(f"{source_label}split={branch_count}{''.join(labels)}")
+    branch_cursor = 0
+    current_label = final_label
+    if normal_intervals:
+        source = labels[branch_cursor]
+        branch_cursor += 1
+        y_expr = _piecewise_constant_overlay_y_expr(normal_intervals, duration=duration).replace(",", r"\,")
+        enable = _half_open_enable_expr(normal_intervals, duration=duration).replace(",", r"\,")
+        output = "[caption_normal_out]"
+        filter_parts.append(
+            f"{current_label}{source}overlay={origin_x}:{origin_y}+({y_expr}):format=yuv420:"
+            f"shortest=0:eof_action=pass:enable='{enable}'{output}"
+        )
+        current_label = output
+    for index, branch in enumerate(split_branches):
+        source = labels[branch_cursor]
+        branch_cursor += 1
+        cropped = f"[caption_line_{index}]"
+        output = f"[caption_split_out_{index}]"
+        filter_parts.append(
+            f"{source}crop={overlay_width}:{branch['crop_height']}:0:{branch['crop_top']},"
+            f"setpts=PTS-STARTPTS{cropped}"
+        )
+        enable = _half_open_enable_expr(branch["intervals"], duration=duration).replace(",", r"\,")
+        filter_parts.append(
+            f"{current_label}{cropped}overlay={origin_x}:{branch['y']}:format=yuv420:"
+            f"shortest=0:eof_action=pass:enable='{enable}'{output}"
+        )
+        current_label = output
+    return current_label
 
 
 def _face_aware_subtitle_overlay_specs(
@@ -5967,7 +6120,7 @@ def _compose_trimmed_with_background(
                 f"{final_label}subtitles='{_escape_ass_path(subtitle_path_for_filter)}':fontsdir='{_escape_ass_path(SUBTITLE_FONTS_DIR)}':force_style='{style}'[subout]"
             )
         final_label = "[subout]"
-    if effective_subtitle_overlay_specs:
+    if effective_subtitle_overlay_specs and not effective_subtitle_overlay_path:
         compact_overlay_path, compact_origin, compact_temp_dir, positioned_count = (
             _build_compact_positioned_caption_overlay(
                 effective_subtitle_overlay_specs,
@@ -5992,11 +6145,46 @@ def _compose_trimmed_with_background(
             positioned_count,
             compact_origin,
         )
+    # Specs remain useful as geometry metadata, but the final graph must receive
+    # exactly one pre-encoded caption input.
     if effective_subtitle_overlay_path:
+        effective_subtitle_overlay_specs = []
         filter_parts.append(f"[{next_video_input_index}:v]format=yuva420p[caption_src]")
         caption_overlay_y_expr = "0"
         caption_overlay_enable_expr: Optional[str] = None
         if face_aware_segment_caption_placement and not caption_overlay_position_baked:
+            overlay_dimensions = _overlay_canvas_dimensions(Path(effective_subtitle_overlay_path))
+            if effective_subtitle_overlay_events and overlay_dimensions:
+                final_label = _append_dynamic_caption_filters(
+                    filter_parts,
+                    final_label=final_label,
+                    source_label="[caption_src]",
+                    overlay_events=effective_subtitle_overlay_events,
+                    layout_segments=caption_layout_segments,
+                    origin=(int(subtitle_overlay_origin[0]), int(subtitle_overlay_origin[1])),
+                    overlay_size=overlay_dimensions,
+                    target_width=target_width,
+                    target_height=target_height,
+                    duration=duration,
+                    subtitle_font_size=subtitle_font_size,
+                    subtitle_margin=subtitle_margin,
+                    subtitle_margin_custom=subtitle_margin_custom,
+                    caption_anchor=caption_anchor,
+                )
+                next_video_input_index += 1
+                current_app.logger.info(
+                    "Dynamic caption geometry chunks=%s input_count=1",
+                    len(_caption_event_chunks(effective_subtitle_overlay_events)),
+                )
+                effective_subtitle_overlay_path = Path(effective_subtitle_overlay_path)
+                caption_overlay_y_expr = None
+            else:
+                caption_overlay_y_expr = "0"
+        else:
+            caption_overlay_y_expr = "0"
+        if caption_overlay_y_expr is None:
+            pass
+        elif face_aware_segment_caption_placement and not caption_overlay_position_baked:
             caption_overlay_y_expr = "0"
             if effective_subtitle_overlay_events:
                 fallback_height = _face_aware_caption_block_height(subtitle_font_size)
@@ -6055,28 +6243,29 @@ def _compose_trimmed_with_background(
                 duration=duration,
             )
             caption_overlay_y_expr = caption_overlay_y_expr.replace(",", r"\,")
-        caption_x, caption_y = subtitle_overlay_origin
-        caption_position_y = f"{caption_y}+({caption_overlay_y_expr})" if caption_overlay_y_expr != "0" else str(caption_y)
-        if caption_overlay_enable_expr is not None:
-            escaped_caption_enable_expr = caption_overlay_enable_expr.replace(",", r"\,")
-            caption_enable_filter = f":enable='{escaped_caption_enable_expr}'"
-        else:
-            caption_enable_filter = ""
-        if caption_overlay_position_baked:
-            filter_parts.append(
-                _compact_caption_overlay_filter(
-                    final_label,
-                    source_label="[caption_src]",
-                    origin=(int(caption_x), int(caption_y)),
+        if caption_overlay_y_expr is not None:
+            caption_x, caption_y = subtitle_overlay_origin
+            caption_position_y = f"{caption_y}+({caption_overlay_y_expr})" if caption_overlay_y_expr != "0" else str(caption_y)
+            if caption_overlay_enable_expr is not None:
+                escaped_caption_enable_expr = caption_overlay_enable_expr.replace(",", r"\,")
+                caption_enable_filter = f":enable='{escaped_caption_enable_expr}'"
+            else:
+                caption_enable_filter = ""
+            if caption_overlay_position_baked:
+                filter_parts.append(
+                    _compact_caption_overlay_filter(
+                        final_label,
+                        source_label="[caption_src]",
+                        origin=(int(caption_x), int(caption_y)),
+                    )
                 )
-            )
-        else:
-            filter_parts.append(
-                f"{final_label}[caption_src]overlay={caption_x}:{caption_position_y}:format=yuv420:shortest=1"
-                f"{caption_enable_filter}[caption_out]"
-            )
-        final_label = "[caption_out]"
-        next_video_input_index += 1
+            else:
+                filter_parts.append(
+                    f"{final_label}[caption_src]overlay={caption_x}:{caption_position_y}:format=yuv420:shortest=1"
+                    f"{caption_enable_filter}[caption_out]"
+                )
+            final_label = "[caption_out]"
+            next_video_input_index += 1
     current_app.logger.info("video_date_text=%r", video_date_text)
     if video_date_text:
         date_txt = _sanitize_text_for_overlay(video_date_text, 160)

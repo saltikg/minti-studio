@@ -1,7 +1,9 @@
 import shutil
+from pathlib import Path
 
 from app.video_shorts.services.compositor import _overlay_position_enable_expr
 from app.video_shorts.services import compositor, transcript_service
+from app.video_shorts.services.design_preview import measure_design
 from app.video_shorts.services.transcript_service import _normalize_word_highlight_overlay_specs
 
 
@@ -56,6 +58,49 @@ def test_caption_position_enable_timeline_hides_overlay_without_a_position():
     assert _overlay_position_enable_expr([], duration=2.0) == "0"
 
 
+def test_preview_chunk_geometry_is_stable_across_highlight_states():
+    font_path = Path("app/video_shorts/static/fonts/Montserrat-BlackItalic.ttf")
+    base = {
+        "width": 720,
+        "height": 1280,
+        "title": "",
+        "title_size": 40,
+        "title_top": 80,
+        "caption_size": 54,
+        "caption_margin": 320,
+        "caption_anchor": "bottom",
+        "caption_style": "karaoke",
+        "caption_source": "uygulayamıyorsanız şöyle yapın o",
+        "caption": "uygulayamıyorsanız şöyle yapın o",
+        "preset": "podcast",
+        "split_caption": True,
+    }
+    behavior = {
+        "title_uppercase": False,
+        "title_outline_color": "#000000",
+        "title_outline_width": 0,
+    }
+
+    first = measure_design(
+        {**base, "active_word": 0},
+        title_font_path=font_path,
+        caption_font_path=font_path,
+        title_behavior=behavior,
+    )["caption"]
+    third = measure_design(
+        {**base, "active_word": 2},
+        title_font_path=font_path,
+        caption_font_path=font_path,
+        title_behavior=behavior,
+    )["caption"]
+
+    assert first["lines"] == third["lines"]
+    assert first["line_glyph_boxes"] == third["line_glyph_boxes"]
+    assert [(run["x"], run["y"], run["line_index"]) for run in first["runs"]] == [
+        (run["x"], run["y"], run["line_index"]) for run in third["runs"]
+    ]
+
+
 def test_caption_builder_leaves_a_long_word_gap_blank(monkeypatch):
     monkeypatch.setattr(
         transcript_service,
@@ -100,7 +145,7 @@ def test_caption_builder_leaves_a_long_word_gap_blank(monkeypatch):
                 shutil.rmtree(path, ignore_errors=True)
 
 
-def test_deferred_caption_path_encodes_exactly_once_in_compositor(monkeypatch):
+def test_caption_path_encodes_exactly_once_before_compositor(monkeypatch):
     encode_calls = []
 
     def _fake_render(*args, **kwargs):
@@ -134,33 +179,15 @@ def test_deferred_caption_path_encodes_exactly_once_in_compositor(monkeypatch):
         subtitle_font_key="montserrat_black_italic",
         target_width=200,
         target_height=200,
-        defer_overlay_video=True,
+        defer_overlay_video=False,
     )
-    positioned_temp_dir = None
     try:
-        assert overlay is None
-        assert encode_calls == []
-        monkeypatch.setattr(compositor, "_build_word_highlight_overlay_video", _fake_encode)
-        overlay, _origin, positioned_temp_dir, _count = (
-            compositor._build_compact_positioned_caption_overlay(
-                meta["specs"],
-                overlay_events=meta["timing_events"],
-                layout_segments=[{"start": 0.0, "end": 1.0, "mode": "split"}],
-                target_width=200,
-                target_height=200,
-                duration=1.0,
-                subtitle_font_size=40,
-                subtitle_margin=60,
-                subtitle_margin_custom=False,
-                caption_anchor="bottom",
-            )
-        )
-        caption_inputs = [overlay]
+        assert overlay is not None
         assert encode_calls == [1]
+        caption_inputs = [overlay]
         assert len(caption_inputs) <= 1
+        assert meta["overlay_video_deferred"] is False
     finally:
-        if positioned_temp_dir:
-            shutil.rmtree(positioned_temp_dir, ignore_errors=True)
         for path in cleanup:
             if path.is_dir():
                 shutil.rmtree(path, ignore_errors=True)

@@ -16324,6 +16324,22 @@ def generate_short(video_pk):
             "facebook_schedule_date": fb_schedule_date,
             "any_platform_published": any_platform_published,
         })
+    # A stale plan can contain the same plan_index twice. Rendering both rows
+    # creates duplicate clip cards and duplicate label/input ids in the editor.
+    unique_clip_rows: List[Dict[str, Any]] = []
+    seen_clip_plan_indexes: set[int] = set()
+    for clip_row in clip_rows:
+        clip_plan_index = int(clip_row["plan_index"])
+        if clip_plan_index in seen_clip_plan_indexes:
+            current_app.logger.warning(
+                "Skipping duplicate clip row video_pk=%s plan_index=%s",
+                video_pk,
+                clip_plan_index,
+            )
+            continue
+        seen_clip_plan_indexes.add(clip_plan_index)
+        unique_clip_rows.append(clip_row)
+    clip_rows = unique_clip_rows
     latest_schedule_iso, latest_schedule_dt = _find_latest_publish(plan_entries)
     latest_scheduled_display = (
         _format_publish_display(latest_schedule_iso, user_tz) if latest_schedule_iso else None
@@ -36025,7 +36041,7 @@ def autoclip_video(video_pk):
                             force_uppercase=video_subtitle_uppercase,
                             target_width=render_target_width,
                             target_height=render_target_height,
-                            defer_overlay_video=True,
+                            defer_overlay_video=False,
                         )
                         subtitle_overlay_meta = overlay_meta or {}
                         subtitle_overlay_specs = list((overlay_meta or {}).get("specs") or [])
@@ -36127,7 +36143,7 @@ def autoclip_video(video_pk):
                         force_uppercase=video_subtitle_uppercase,
                         target_width=render_target_width,
                         target_height=render_target_height,
-                        defer_overlay_video=True,
+                        defer_overlay_video=False,
                     )
                     subtitle_overlay_meta = overlay_meta or {}
                     subtitle_overlay_specs = list((overlay_meta or {}).get("specs") or [])

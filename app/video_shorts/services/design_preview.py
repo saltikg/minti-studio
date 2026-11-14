@@ -68,44 +68,30 @@ def measure_design(data, *, title_font_path, caption_font_path, title_behavior):
     group_size = D['caption_words'] if karaoke else 10
     groups = [source_words[index:index+group_size] for index in range(0, len(source_words), group_size)]
     def group_score(group):
-        best = (0, 0, 0)
-        best_active = 0
-        active_indexes = range(len(group)) if karaoke else (0,)
-        for candidate_active in active_indexes:
-            candidate = _caption_frame_layout(group, active_index=candidate_active, font=font,
-                active_font=active_font, caption_language=data.get('language', ''),
-                subtitle_margin=int(data['caption_margin']), font_size=caption_size,
-                outline_width=int(effect_values.get('outline_width') or 0),
-                force_uppercase=caption_uppercase,
-                canvas_width=width, canvas_height=height, caption_anchor=data.get('caption_anchor', 'bottom'))
-            widths = [int(line.get('width') or 0) for line in candidate['lines']]
-            score = (len(candidate['lines']), max(widths or [0]), candidate['total_height'])
-            if score > best:
-                best, best_active = score, candidate_active
-        return best, best_active
+        candidate = _caption_frame_layout(group, active_index=0, font=font,
+            active_font=active_font, caption_language=data.get('language', ''),
+            subtitle_margin=int(data['caption_margin']), font_size=caption_size,
+            outline_width=int(effect_values.get('outline_width') or 0),
+            force_uppercase=caption_uppercase,
+            canvas_width=width, canvas_height=height, caption_anchor=data.get('caption_anchor', 'bottom'),
+            draw_pill=bool(preset.get('draw_pill', True)), stable_highlight_geometry=True)
+        widths = [int(line.get('width') or 0) for line in candidate['lines']]
+        return (len(candidate['lines']), max(widths or [0]), candidate['total_height']), candidate
     selected_group = max(((group_score(group), group) for group in groups), key=lambda item: item[0][0]) if groups else None
     words = selected_group[1] if selected_group else []
     if not words:
         return dict(title=title_result, caption=dict(box=[0, 0, 1, 1], runs=[],
                     lines=0, font_size=caption_size, outline=0), width=width, height=height)
-    active = selected_group[0][1] if selected_group and karaoke else min(max(0, int(data.get('active_word', 0))), max(0, len(words)-1))
+    active = min(max(0, int(data.get('active_word', 0))), max(0, len(words)-1))
     outline = int(effect_values.get('outline_width') or 0)
     draw_pill = bool(preset.get('active_pill')) and bool(preset.get('draw_pill', True))
-    precomputed = None
-    if not draw_pill and active_size == caption_size:
-        display = _caption_display_words(
-            words,
-            force_uppercase=caption_uppercase,
-            language=data.get('language', ''),
-        )
-        precomputed = _layout_wrapped_caption(display, font=font,
-            subtitle_margin=int(data['caption_margin']), max_width=width-2*D['caption_side_margin'],
-            canvas_width=width, canvas_height=height, caption_anchor=data.get('caption_anchor', 'bottom'))
+    precomputed = selected_group[0][1] if selected_group else None
     layout = _caption_frame_layout(words, active_index=active, font=font, active_font=active_font,
         caption_language=data.get('language', ''), subtitle_margin=int(data['caption_margin']),
         font_size=caption_size, outline_width=outline,
         force_uppercase=caption_uppercase, precomputed_layout=precomputed,
-        canvas_width=width, canvas_height=height, caption_anchor=data.get('caption_anchor', 'bottom'))
+        canvas_width=width, canvas_height=height, caption_anchor=data.get('caption_anchor', 'bottom'),
+        draw_pill=bool(preset.get('draw_pill', True)), stable_highlight_geometry=True)
     runs, line_boxes, glyph_boxes = [], [], []
     glyph_boxes_by_line = {}
     pill = None
@@ -114,7 +100,8 @@ def measure_design(data, *, title_font_path, caption_font_path, title_behavior):
         f = active_font if is_active else font
         x, y = word['x'], word['y']
         b = f.getbbox(word['word'], anchor='la', stroke_width=outline)
-        glyph_box = [x+b[0],y+b[1],x+b[2],y+b[3]]
+        geometry_box = active_font.getbbox(word['word'], anchor='la', stroke_width=outline)
+        glyph_box = [x+geometry_box[0],y+geometry_box[1],x+geometry_box[2],y+geometry_box[3]]
         glyph_boxes.append(glyph_box)
         line_index = int(word.get('line_index') or 0)
         glyph_boxes_by_line.setdefault(line_index, []).append(glyph_box)

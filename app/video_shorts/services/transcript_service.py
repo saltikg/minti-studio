@@ -1835,13 +1835,17 @@ def _caption_frame_layout(
     precomputed_layout=None, canvas_width=_PILLOW_CAPTION_WIDTH,
     canvas_height=_PILLOW_CAPTION_HEIGHT, caption_anchor="bottom",
     draw_pill=True,
+    stable_highlight_geometry=False,
 ):
     """Font-measured geometry shared by the renderer and live DOM preview."""
     render_scale = max(0.01, float(canvas_width) / float(DESIGN_GEOMETRY["width"]))
     active_font = active_font or font
     display_words = _caption_display_words(words, force_uppercase=force_uppercase, language=caption_language)
     word_fonts = [
-        _font_for_script(word, active_font if index == active_index else font)
+        _font_for_script(
+            word,
+            active_font if stable_highlight_geometry or index == active_index else font,
+        )
         for index, word in enumerate(display_words)
     ]
     base_pad_x = max(int(round(DESIGN_GEOMETRY["pill_padding_min_x"] * render_scale)), int(round(float(font_size) * DESIGN_GEOMETRY["pill_padding_x"])))
@@ -1874,7 +1878,12 @@ def _caption_frame_layout(
 
         slot_widths = [metric["text_w"] for metric in word_metrics]
         if draw_pill:
-            slot_widths[active_index] = max(slot_widths[active_index], word_metrics[active_index]["desired_pill_w"])
+            pill_indexes = range(len(slot_widths)) if stable_highlight_geometry else (active_index,)
+            for pill_index in pill_indexes:
+                slot_widths[pill_index] = max(
+                    slot_widths[pill_index],
+                    word_metrics[pill_index]["desired_pill_w"],
+                )
         layout = _layout_wrapped_caption(
             display_words,
             font=font,
@@ -1917,6 +1926,7 @@ def _render_word_highlight_caption_frame(
     draw_pill: bool = True,
     force_uppercase: bool = False,
     precomputed_layout: Optional[Dict[str, Any]] = None,
+    stable_highlight_geometry: bool = False,
     shadow_region: Optional[Dict[str, Any]] = None,
     fill_mode: str = "flat",
     gradient_layers: Optional[Dict[int, Dict[str, Dict[str, Any] | None]]] = None,
@@ -1934,6 +1944,7 @@ def _render_word_highlight_caption_frame(
         canvas_width=canvas_width, canvas_height=canvas_height,
         caption_anchor=caption_anchor,
         draw_pill=draw_pill,
+        stable_highlight_geometry=stable_highlight_geometry,
     )
     pad_y = max(int(round(DESIGN_GEOMETRY["pill_padding_min_y"] * render_scale)), int(round(float(font_size) * DESIGN_GEOMETRY["pill_padding_y"])))
     image = Image.new("RGBA", (int(canvas_width), int(canvas_height)), (0, 0, 0, 0))
@@ -2089,14 +2100,15 @@ def _render_word_highlight_caption_frame(
                 stroke_width=outline_width if is_active_word and active_outline else (0 if is_active_word else outline_width),
             )
 
+    # Placement metadata describes the chunk's widest highlighted styling,
+    # not the currently highlighted word. Every highlight state therefore
+    # shares one line break and one split-layout geometry.
     glyph_boxes_by_line: Dict[int, List[Tuple[int, int, int, int]]] = {}
     for word in layout["words"]:
-        is_active_word = int(word["global_index"]) == int(active_index)
-        word_font = _font_for_script(word["word"], active_font if is_active_word else font)
-        rendered_outline = (
-            outline_width if is_active_word and active_outline
-            else (0 if is_active_word else outline_width)
+        word_font = _font_for_script(
+            word["word"], active_font if stable_highlight_geometry else font,
         )
+        rendered_outline = outline_width
         glyph_bbox = draw.textbbox(
             (int(word["x"]), int(word["y"])),
             str(word["word"]),
@@ -2488,20 +2500,25 @@ def _build_word_highlight_caption_overlay(
                 force_uppercase=force_uppercase,
                 language=caption_language,
             )
-            active_font_changes_layout = active_font_size_delta != 0
-            if not draw_pill and not active_font_changes_layout:
-                precomputed_layout = layout_cache.get(chunk_key)
-                if precomputed_layout is None:
-                    precomputed_layout = _layout_wrapped_caption(
-                        display_word_tokens,
-                        font=font,
-                        subtitle_margin=subtitle_margin,
-                        max_width=safe_caption_width,
-                        canvas_width=safe_target_width,
-                        canvas_height=safe_target_height,
-                        caption_anchor=caption_anchor,
-                    )
-                    layout_cache[chunk_key] = precomputed_layout
+            precomputed_layout = layout_cache.get(chunk_key)
+            if precomputed_layout is None:
+                precomputed_layout = _caption_frame_layout(
+                    word_tokens,
+                    active_index=0,
+                    font=font,
+                    active_font=active_font,
+                    caption_language=caption_language,
+                    subtitle_margin=subtitle_margin,
+                    font_size=subtitle_font_size,
+                    outline_width=outline_width,
+                    force_uppercase=force_uppercase,
+                    canvas_width=safe_target_width,
+                    canvas_height=safe_target_height,
+                    caption_anchor=caption_anchor,
+                    draw_pill=draw_pill,
+                    stable_highlight_geometry=True,
+                )
+                layout_cache[chunk_key] = precomputed_layout
             gradient_layers = None
             if uses_gradient_layers:
                 layout_for_gradient = precomputed_layout or _layout_wrapped_caption(
@@ -2643,6 +2660,7 @@ def _build_word_highlight_caption_overlay(
                     draw_pill=draw_pill,
                     force_uppercase=force_uppercase,
                     precomputed_layout=precomputed_layout,
+                    stable_highlight_geometry=True,
                     shadow_region=shadow_region,
                     fill_mode="gradient" if uses_gradient_layers else "flat",
                     gradient_layers=gradient_layers,
@@ -2656,6 +2674,8 @@ def _build_word_highlight_caption_overlay(
                         "start": item_start,
                         "end": item_end,
                         "metrics": metrics,
+                        "chunk_index": len(layout_cache) - 1,
+                        "chunk_key": "\u241f".join(chunk_key),
                     }
                 )
 
@@ -2694,6 +2714,8 @@ def _build_word_highlight_caption_overlay(
                 "active_word": (((spec.get("metrics") or {}).get("active_word")) or {}).get("word"),
                 "line_count": len((((spec.get("metrics") or {}).get("layout")) or {}).get("lines") or []),
                 "metrics": spec.get("metrics") or {},
+                "chunk_index": spec.get("chunk_index"),
+                "chunk_key": spec.get("chunk_key"),
             }
             for spec in overlay_specs
         ],
