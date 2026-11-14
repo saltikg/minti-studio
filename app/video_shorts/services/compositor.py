@@ -3582,23 +3582,60 @@ def _build_compact_positioned_caption_overlay(
     temp_dir = Path(tempfile.mkdtemp(prefix="positioned_caption_overlay_"))
     baked_specs: list[Dict[str, Any]] = []
     try:
-        for index, spec in enumerate(positioned_specs):
-            baked_path = _bake_caption_overlay_frame(
-                Path(spec["path"]),
-                y_offset=float(spec.get("y_offset") or 0.0),
-                target_width=target_width,
-                target_height=target_height,
-                output_dir=temp_dir,
-                sequence=index,
+        positioned_bounds: Optional[tuple[int, int, int, int]] = None
+        frame_offsets: list[tuple[Dict[str, Any], int]] = []
+        for spec in positioned_specs:
+            y_offset = int(round(float(spec.get("y_offset") or 0.0)))
+            with Image.open(spec["path"]) as frame:
+                frame_bounds = frame.getchannel("A").getbbox()
+            frame_offsets.append((spec, y_offset))
+            if not frame_bounds:
+                continue
+            shifted_bounds = (
+                int(frame_bounds[0]),
+                int(frame_bounds[1]) + y_offset,
+                int(frame_bounds[2]),
+                int(frame_bounds[3]) + y_offset,
             )
+            positioned_bounds = shifted_bounds if positioned_bounds is None else (
+                min(positioned_bounds[0], shifted_bounds[0]),
+                min(positioned_bounds[1], shifted_bounds[1]),
+                max(positioned_bounds[2], shifted_bounds[2]),
+                max(positioned_bounds[3], shifted_bounds[3]),
+            )
+        if positioned_bounds:
+            band_left = max(0, ((positioned_bounds[0] - 2) // 2) * 2)
+            band_top = max(0, ((positioned_bounds[1] - 2) // 2) * 2)
+            band_right = min(int(target_width), ((positioned_bounds[2] + 3) // 2) * 2)
+            band_bottom = min(int(target_height), ((positioned_bounds[3] + 3) // 2) * 2)
+        else:
+            band_left, band_top, band_right, band_bottom = 0, 0, 2, 2
+        band_width = max(2, band_right - band_left)
+        band_height = max(2, band_bottom - band_top)
+        for index, (spec, y_offset) in enumerate(frame_offsets):
+            with Image.open(spec["path"]) as source_image:
+                source = source_image.convert("RGBA")
+            if source.size != (int(target_width), int(target_height)):
+                raise ValueError(
+                    f"caption frame must preserve the render canvas; got={source.size} "
+                    f"expected={(int(target_width), int(target_height))}"
+                )
+            compact_frame = Image.new("RGBA", (band_width, band_height), (0, 0, 0, 0))
+            compact_frame.alpha_composite(
+                source,
+                (int(-band_left), int(y_offset - band_top)),
+            )
+            baked_path = temp_dir / f"caption_positioned_{index:04d}.png"
+            compact_frame.save(baked_path)
             baked_specs.append({**spec, "path": baked_path, "y_offset": 0.0})
-        overlay_path, origin = _build_word_highlight_overlay_video(
+        overlay_path, compact_origin = _build_word_highlight_overlay_video(
             temp_dir=temp_dir,
             overlay_specs=baked_specs,
             clip_duration=duration,
-            canvas_width=target_width,
-            canvas_height=target_height,
+            canvas_width=band_width,
+            canvas_height=band_height,
         )
+        origin = (band_left + compact_origin[0], band_top + compact_origin[1])
         return overlay_path, origin, temp_dir, len(baked_specs)
     except Exception:
         shutil.rmtree(temp_dir, ignore_errors=True)

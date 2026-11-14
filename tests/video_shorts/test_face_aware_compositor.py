@@ -182,7 +182,9 @@ def test_positioned_caption_render_stays_one_input_and_constant_filter(
     caption_count: int,
 ) -> None:
     source_path = tmp_path / "caption.png"
-    Image.new("RGBA", (200, 200), (0, 0, 0, 0)).save(source_path)
+    source = Image.new("RGBA", (200, 200), (0, 0, 0, 0))
+    source.paste((255, 255, 255, 255), (20, 100, 180, 120))
+    source.save(source_path)
     specs = [
         {"path": source_path, "start": index * 0.1, "end": (index + 1) * 0.1}
         for index in range(caption_count)
@@ -199,9 +201,12 @@ def test_positioned_caption_render_stays_one_input_and_constant_filter(
         for index in range(caption_count)
     ]
     build_calls: list[int] = []
+    encoded_sizes: list[tuple[int, int]] = []
 
     def _fake_build(*, temp_dir, overlay_specs, **_kwargs):
         build_calls.append(len(overlay_specs))
+        with Image.open(overlay_specs[0]["path"]) as encoded_frame:
+            encoded_sizes.append(encoded_frame.size)
         output = temp_dir / "word_highlight_overlay.mov"
         output.touch()
         return output, (0, 0)
@@ -226,12 +231,11 @@ def test_positioned_caption_render_stays_one_input_and_constant_filter(
         )
         assert positioned_count == caption_count
         assert build_calls == [caption_count]
+        assert encoded_sizes[0][0] <= 200
+        assert encoded_sizes[0][1] < 200
         assert len(caption_inputs) <= 1
-        assert len(final_filter) == len(
-            compositor._compact_caption_overlay_filter(
-                "[base]", source_label="[caption_src]", origin=(0, 0),
-            )
-        )
+        assert len(final_filter) < 100
+        assert final_filter.count("overlay=") == 1
         assert "caption_out_" not in final_filter
     finally:
         shutil.rmtree(temp_dir, ignore_errors=True)
