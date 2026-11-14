@@ -708,7 +708,7 @@ def _assert_auto_layout_caption_drag_persists(
 
 
 def _assert_split_caption_stays_above_divider(page: Page, variant: str) -> None:
-    page.locator('[data-crop-aspect="portrait"][data-split-enabled="1"]').evaluate(
+    page.locator('#crop-aspect-selector .aspect-card[data-crop-aspect="portrait"][data-split-enabled="1"]').evaluate(
         "element => element.click()"
     )
     page.wait_for_timeout(250)
