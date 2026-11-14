@@ -81,4 +81,5 @@ def test_admin_share_links_account_filter_has_required_exclusions() -> None:
     assert "NOT IN (99, 171, 194)" in sql
     assert "mintistudio.com" in sql
     assert "example.com" in sql
-    assert "test%@%" in sql
+    assert "substr" in sql
+    assert "+test@" in sql

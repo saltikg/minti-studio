@@ -20896,16 +20896,17 @@ def _admin_share_link_account_filter_sql(alias: str = "sl") -> str:
     email_expr = f"lower(trim(coalesce({alias}.recipient_email, '')))"
     name_expr = f"lower(trim(coalesce({alias}.recipient_name, '')))"
     domain_clauses = " AND ".join(
-        f"{email_expr} NOT LIKE '%@{domain}'" for domain in _ADMIN_SHARE_LINK_TEST_DOMAINS
+        f"right({email_expr}, {len(domain) + 1}) <> '@{domain}'"
+        for domain in _ADMIN_SHARE_LINK_TEST_DOMAINS
     )
     excluded_ids = ", ".join(str(value) for value in _ADMIN_SHARE_LINK_EXCLUDED_IDS)
     return f"""
         CAST({alias}.id AS BIGINT) NOT IN ({excluded_ids})
         AND {domain_clauses}
-        AND {name_expr} NOT LIKE 'test%'
-        AND {name_expr} NOT LIKE '% test%'
-        AND {email_expr} NOT LIKE 'test%@%'
-        AND {email_expr} NOT LIKE '%+test@%'
+        AND substr({name_expr}, 1, 4) <> 'test'
+        AND strpos({name_expr}, ' test') = 0
+        AND substr({email_expr}, 1, 4) <> 'test'
+        AND strpos({email_expr}, '+test@') = 0
     """
 
 
