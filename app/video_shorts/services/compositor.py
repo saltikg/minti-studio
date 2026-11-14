@@ -5724,6 +5724,7 @@ def _compose_trimmed_with_background(
                 source_seg_start = float(segment.get("_source_start", seg_start))
                 source_seg_end = float(segment.get("_source_end", seg_end))
                 source_seg_duration = max(0.001, source_seg_end - source_seg_start)
+                source_trim_duration = source_seg_duration + (0.100 if isolated_face_segments else 0.0)
                 face_aware_segment_output_stage = _face_aware_segment_output_stage(
                     segment,
                     output_fps=output_fps,
@@ -5736,7 +5737,7 @@ def _compose_trimmed_with_background(
                 )
                 filter_parts.append(
                     f"{layout_src}trim=start={0.0 if isolated_face_segments else source_seg_start:.6f}:"
-                    f"end={source_seg_duration if isolated_face_segments else source_seg_end:.6f},"
+                    f"end={source_trim_duration if isolated_face_segments else source_seg_end:.6f},"
                     f"setpts=PTS-STARTPTS,settb=AVTB{seg_trim}"
                 )
                 if segment["mode"] == "fit":
