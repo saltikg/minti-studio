@@ -16327,17 +16327,28 @@ def generate_short(video_pk):
     # A stale plan can contain the same plan_index twice. Rendering both rows
     # creates duplicate clip cards and duplicate label/input ids in the editor.
     unique_clip_rows: List[Dict[str, Any]] = []
-    seen_clip_plan_indexes: set[int] = set()
+    clip_row_position_by_plan: Dict[int, int] = {}
+
+    def _clip_row_quality(row: Dict[str, Any]) -> tuple[int, int, int]:
+        return (
+            int(row.get("status") == "created" and bool(row.get("video_url"))),
+            int(str(row.get("render_job_status") or "").lower() in {"queued", "processing", "running"}),
+            int(bool(row.get("media_version"))),
+        )
+
     for clip_row in clip_rows:
         clip_plan_index = int(clip_row["plan_index"])
-        if clip_plan_index in seen_clip_plan_indexes:
+        existing_position = clip_row_position_by_plan.get(clip_plan_index)
+        if existing_position is not None:
             current_app.logger.warning(
                 "Skipping duplicate clip row video_pk=%s plan_index=%s",
                 video_pk,
                 clip_plan_index,
             )
+            if _clip_row_quality(clip_row) > _clip_row_quality(unique_clip_rows[existing_position]):
+                unique_clip_rows[existing_position] = clip_row
             continue
-        seen_clip_plan_indexes.add(clip_plan_index)
+        clip_row_position_by_plan[clip_plan_index] = len(unique_clip_rows)
         unique_clip_rows.append(clip_row)
     clip_rows = unique_clip_rows
     latest_schedule_iso, latest_schedule_dt = _find_latest_publish(plan_entries)
