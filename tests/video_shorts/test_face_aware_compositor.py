@@ -175,6 +175,124 @@ def test_split_caption_overlay_specs_use_transformed_frame(tmp_path: Path) -> No
     assert specs[0]["y_offset"] == 0.0
 
 
+@pytest.mark.parametrize("caption_count", [2, 200])
+def test_positioned_caption_render_stays_one_input_and_constant_filter(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+    caption_count: int,
+) -> None:
+    source_path = tmp_path / "caption.png"
+    Image.new("RGBA", (200, 200), (0, 0, 0, 0)).save(source_path)
+    specs = [
+        {"path": source_path, "start": index * 0.1, "end": (index + 1) * 0.1}
+        for index in range(caption_count)
+    ]
+    events = [
+        {
+            "start": index * 0.1,
+            "end": (index + 1) * 0.1,
+            "metrics": {
+                "block_bbox": [20, 100, 180, 120],
+                "line_glyph_boxes": [[20, 100, 180, 120]],
+            },
+        }
+        for index in range(caption_count)
+    ]
+    build_calls: list[int] = []
+
+    def _fake_build(*, temp_dir, overlay_specs, **_kwargs):
+        build_calls.append(len(overlay_specs))
+        output = temp_dir / "word_highlight_overlay.mov"
+        output.touch()
+        return output, (0, 0)
+
+    monkeypatch.setattr(compositor, "_build_word_highlight_overlay_video", _fake_build)
+    overlay_path, origin, temp_dir, positioned_count = compositor._build_compact_positioned_caption_overlay(
+        specs,
+        overlay_events=events,
+        layout_segments=[{"start": 0.0, "end": caption_count * 0.1, "mode": "split"}],
+        target_width=200,
+        target_height=200,
+        duration=caption_count * 0.1,
+        subtitle_font_size=40,
+        subtitle_margin=60,
+        subtitle_margin_custom=True,
+        caption_anchor="top",
+    )
+    try:
+        caption_inputs = [overlay_path]
+        final_filter = compositor._compact_caption_overlay_filter(
+            "[base]", source_label="[caption_src]", origin=origin,
+        )
+        assert positioned_count == caption_count
+        assert build_calls == [caption_count]
+        assert len(caption_inputs) <= 2
+        assert len(final_filter) == len(
+            compositor._compact_caption_overlay_filter(
+                "[base]", source_label="[caption_src]", origin=(0, 0),
+            )
+        )
+        assert "caption_out_" not in final_filter
+    finally:
+        shutil.rmtree(temp_dir, ignore_errors=True)
+
+
+@pytest.mark.parametrize(
+    "layout_segments",
+    [
+        [{"start": 0.0, "end": 1.0, "mode": "split"}],
+        [{"start": 0.0, "end": 1.0, "mode": "fill", "auto_layout": True}],
+        [{"start": 0.0, "end": 1.0, "mode": "fit", "auto_layout": True}],
+        [
+            {"start": 0.0, "end": 0.34, "mode": "split"},
+            {"start": 0.34, "end": 0.67, "mode": "fill", "auto_layout": True},
+            {"start": 0.67, "end": 1.0, "mode": "fit", "auto_layout": True},
+        ],
+    ],
+)
+def test_every_auto_layout_mode_builds_one_compact_caption_video(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+    layout_segments: list[dict],
+) -> None:
+    source_path = tmp_path / "caption.png"
+    Image.new("RGBA", (200, 200), (0, 0, 0, 0)).save(source_path)
+    calls = 0
+
+    def _fake_build(*, temp_dir, **_kwargs):
+        nonlocal calls
+        calls += 1
+        output = temp_dir / "word_highlight_overlay.mov"
+        output.touch()
+        return output, (0, 0)
+
+    monkeypatch.setattr(compositor, "_build_word_highlight_overlay_video", _fake_build)
+    overlay_path, _origin, temp_dir, _count = compositor._build_compact_positioned_caption_overlay(
+        [{"path": source_path, "start": 0.0, "end": 1.0}],
+        overlay_events=[{
+            "start": 0.0,
+            "end": 1.0,
+            "metrics": {
+                "block_bbox": [20, 100, 180, 120],
+                "line_glyph_boxes": [[20, 100, 180, 120]],
+            },
+        }],
+        layout_segments=layout_segments,
+        target_width=200,
+        target_height=200,
+        duration=1.0,
+        subtitle_font_size=40,
+        subtitle_margin=60,
+        subtitle_margin_custom=True,
+        caption_anchor="top",
+    )
+    try:
+        assert calls == 1
+        assert overlay_path.name == "word_highlight_overlay.mov"
+    finally:
+        shutil.rmtree(temp_dir, ignore_errors=True)
+
+
 def test_manual_custom_caption_position_is_unchanged() -> None:
     assert compositor.caption_block_top(857, "top", 124, 1280) == 857
     assert compositor.caption_block_top(857, "bottom", 124, 1280) == 299

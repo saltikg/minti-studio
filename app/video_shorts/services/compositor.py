@@ -45,6 +45,7 @@ from app.video_shorts.config import (
 )
 from app.video_shorts.services.arabic_text import contains_arabic_script
 from app.video_shorts.services.caption_geometry import split_caption_line_offsets
+from app.video_shorts.services.transcript_service import _build_word_highlight_overlay_video
 
 from app.video_shorts.services.media_utils import (
     _normalize_source_cache_container,
@@ -3527,6 +3528,97 @@ def _split_caption_overlay_frame(
     return output_path
 
 
+def _bake_caption_overlay_frame(
+    path: Path,
+    *,
+    y_offset: float,
+    target_width: int,
+    target_height: int,
+    output_dir: Path,
+    sequence: int,
+) -> Path:
+    """Bake one whole-frame caption Y offset into a transparent raster."""
+    with Image.open(path) as source_image:
+        source = source_image.convert("RGBA")
+    if source.size != (int(target_width), int(target_height)):
+        raise ValueError(
+            f"caption frame must preserve the render canvas; got={source.size} "
+            f"expected={(int(target_width), int(target_height))}"
+        )
+    output = Image.new("RGBA", source.size, (0, 0, 0, 0))
+    output.alpha_composite(source, (0, int(round(float(y_offset or 0.0)))))
+    output_path = output_dir / f"caption_positioned_{sequence:04d}.png"
+    output.save(output_path)
+    return output_path
+
+
+def _build_compact_positioned_caption_overlay(
+    overlay_specs: list[Dict[str, Any]],
+    *,
+    overlay_events: list[Dict[str, Any]],
+    layout_segments: list[Dict[str, Any]],
+    target_width: int,
+    target_height: int,
+    duration: float,
+    subtitle_font_size: int,
+    subtitle_margin: int,
+    subtitle_margin_custom: bool,
+    caption_anchor: str,
+) -> tuple[Path, tuple[int, int], Path, int]:
+    """Bake all layout placement into frames, then encode one overlay video."""
+    positioned_specs = _face_aware_subtitle_overlay_specs(
+        overlay_specs,
+        overlay_events=overlay_events,
+        layout_segments=layout_segments,
+        target_width=target_width,
+        target_height=target_height,
+        subtitle_font_size=subtitle_font_size,
+        subtitle_margin=subtitle_margin,
+        subtitle_margin_custom=subtitle_margin_custom,
+        caption_anchor=caption_anchor,
+    )
+    if not positioned_specs:
+        raise ValueError("positioned caption overlay specs required")
+    temp_dir = Path(tempfile.mkdtemp(prefix="positioned_caption_overlay_"))
+    baked_specs: list[Dict[str, Any]] = []
+    try:
+        for index, spec in enumerate(positioned_specs):
+            baked_path = _bake_caption_overlay_frame(
+                Path(spec["path"]),
+                y_offset=float(spec.get("y_offset") or 0.0),
+                target_width=target_width,
+                target_height=target_height,
+                output_dir=temp_dir,
+                sequence=index,
+            )
+            baked_specs.append({**spec, "path": baked_path, "y_offset": 0.0})
+        overlay_path, origin = _build_word_highlight_overlay_video(
+            temp_dir=temp_dir,
+            overlay_specs=baked_specs,
+            clip_duration=duration,
+            canvas_width=target_width,
+            canvas_height=target_height,
+        )
+        return overlay_path, origin, temp_dir, len(baked_specs)
+    except Exception:
+        shutil.rmtree(temp_dir, ignore_errors=True)
+        raise
+
+
+def _compact_caption_overlay_filter(
+    base_label: str,
+    *,
+    source_label: str,
+    origin: tuple[int, int],
+    output_label: str = "[caption_out]",
+) -> str:
+    """Return the O(1) final filter for one pre-positioned caption video."""
+    return (
+        f"{base_label}{source_label}overlay={int(origin[0])}:{int(origin[1])}:"
+        f"format=yuv420:shortest=1{output_label}"
+    )
+
+
 def _append_timed_subtitle_overlay_filters(
     filter_parts: list[str],
     final_label: str,
@@ -4787,7 +4879,8 @@ def _compose_trimmed_with_background(
         if show_subtitle
         else []
     )
-    split_caption_overlay_paths: set[Path] = set()
+    caption_overlay_temp_dirs: list[Path] = []
+    caption_overlay_position_baked = False
     effective_subtitle_overlay_events = (
         _normalize_subtitle_overlay_events(subtitle_overlay_events)
         if show_subtitle
@@ -4962,12 +5055,8 @@ def _compose_trimmed_with_background(
     face_aware_segment_caption_placement = bool(
         face_aware_layout_active or manual_fill_caption_placement or manual_split_caption_placement
     )
-    has_split_caption_layout = any(
-        str(segment.get("mode") or "").strip().lower() == "split"
-        for segment in caption_layout_segments
-    )
-    if not has_split_caption_layout:
-        # The prebuilt overlay video is much more efficient for ordinary layouts.
+    if not face_aware_segment_caption_placement:
+        # Ordinary layouts already use the original compact overlay video.
         effective_subtitle_overlay_specs = []
     face_aware_fit_metrics = _face_aware_fit_position_metrics(
         target_width=target_width,
@@ -5774,40 +5863,35 @@ def _compose_trimmed_with_background(
             )
         final_label = "[subout]"
     if effective_subtitle_overlay_specs:
-        positioned_subtitle_overlay_specs = effective_subtitle_overlay_specs
-        if face_aware_segment_caption_placement:
-            positioned_subtitle_overlay_specs = _face_aware_subtitle_overlay_specs(
+        compact_overlay_path, compact_origin, compact_temp_dir, positioned_count = (
+            _build_compact_positioned_caption_overlay(
                 effective_subtitle_overlay_specs,
                 overlay_events=effective_subtitle_overlay_events,
                 layout_segments=caption_layout_segments,
                 target_width=target_width,
                 target_height=target_height,
+                duration=duration,
                 subtitle_font_size=subtitle_font_size,
                 subtitle_margin=subtitle_margin,
                 subtitle_margin_custom=subtitle_margin_custom,
                 caption_anchor=caption_anchor,
             )
-        original_overlay_paths = {Path(spec["path"]) for spec in effective_subtitle_overlay_specs}
-        split_caption_overlay_paths.update(
-            Path(spec["path"])
-            for spec in positioned_subtitle_overlay_specs
-            if Path(spec["path"]) not in original_overlay_paths
         )
-        # The ffmpeg input list is assembled after the filters, so it must use
-        # the same transformed split-line frames referenced by these filters.
-        effective_subtitle_overlay_specs = positioned_subtitle_overlay_specs
-        final_label, next_video_input_index = _append_timed_subtitle_overlay_filters(
-            filter_parts,
-            final_label,
-            start_input_index=next_video_input_index,
-            overlay_specs=positioned_subtitle_overlay_specs,
-            label_prefix="caption",
+        caption_overlay_temp_dirs.append(compact_temp_dir)
+        effective_subtitle_overlay_path = compact_overlay_path
+        effective_subtitle_overlay_specs = []
+        subtitle_overlay_origin = compact_origin
+        caption_overlay_position_baked = True
+        current_app.logger.info(
+            "Compact positioned caption overlay frames=%s input_count=1 origin=%s",
+            positioned_count,
+            compact_origin,
         )
-    elif effective_subtitle_overlay_path:
+    if effective_subtitle_overlay_path:
         filter_parts.append(f"[{next_video_input_index}:v]format=yuva420p[caption_src]")
         caption_overlay_y_expr = "0"
         caption_overlay_enable_expr: Optional[str] = None
-        if face_aware_segment_caption_placement:
+        if face_aware_segment_caption_placement and not caption_overlay_position_baked:
             caption_overlay_y_expr = "0"
             if effective_subtitle_overlay_events:
                 fallback_height = _face_aware_caption_block_height(subtitle_font_size)
@@ -5873,10 +5957,19 @@ def _compose_trimmed_with_background(
             caption_enable_filter = f":enable='{escaped_caption_enable_expr}'"
         else:
             caption_enable_filter = ""
-        filter_parts.append(
-            f"{final_label}[caption_src]overlay={caption_x}:{caption_position_y}:format=yuv420:shortest=1"
-            f"{caption_enable_filter}[caption_out]"
-        )
+        if caption_overlay_position_baked:
+            filter_parts.append(
+                _compact_caption_overlay_filter(
+                    final_label,
+                    source_label="[caption_src]",
+                    origin=(int(caption_x), int(caption_y)),
+                )
+            )
+        else:
+            filter_parts.append(
+                f"{final_label}[caption_src]overlay={caption_x}:{caption_position_y}:format=yuv420:shortest=1"
+                f"{caption_enable_filter}[caption_out]"
+            )
         final_label = "[caption_out]"
         next_video_input_index += 1
     current_app.logger.info("video_date_text=%r", video_date_text)
@@ -6374,12 +6467,14 @@ def _compose_trimmed_with_background(
             f"FFmpeg compose failed (key={bg_path.name}): {err.stderr.strip() or err.stdout.strip()}"
         ) from err
     finally:
-        for temp_path in (trimmed, merged_override, merged_audio_override, temp_out_path, face_aware_subtitle_path, anchored_subtitle_path, *(shape_path for shape_path, _, _ in shape_overlay_specs), *title_overlay_paths, *split_caption_overlay_paths):
+        for temp_path in (trimmed, merged_override, merged_audio_override, temp_out_path, face_aware_subtitle_path, anchored_subtitle_path, *(shape_path for shape_path, _, _ in shape_overlay_specs), *title_overlay_paths):
             if temp_path and temp_path.exists():
                 try:
                     temp_path.unlink()
                 except Exception:
                     pass
+        for temp_dir in caption_overlay_temp_dirs:
+            shutil.rmtree(temp_dir, ignore_errors=True)
 
 
 def _cut_clip(

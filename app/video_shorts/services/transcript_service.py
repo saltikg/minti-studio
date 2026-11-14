@@ -2182,11 +2182,17 @@ def _build_word_highlight_overlay_video(
     else:
         left, top, right, bottom = 0, 0, 2, 2
     band = (left, top, right, bottom)
-    for spec in overlay_specs:
+    prepared_specs: List[Dict[str, Any]] = []
+    for index, spec in enumerate(overlay_specs):
         frame_path = Path(spec["path"])
         with Image.open(frame_path) as frame:
             cropped = frame.crop(band)
-        cropped.save(frame_path)
+        # Preserve the full-canvas source frames. Auto-layout may need to bake
+        # split/fill/fit positions into them before building the final compact
+        # overlay video.
+        cropped_path = temp_dir / f"caption_crop_{index:04d}.png"
+        cropped.save(cropped_path)
+        prepared_specs.append({**spec, "path": cropped_path})
 
     blank_frame = temp_dir / "caption_blank.png"
     Image.new("RGBA", (right - left, bottom - top), (0, 0, 0, 0)).save(blank_frame)
@@ -2194,7 +2200,7 @@ def _build_word_highlight_overlay_video(
     timeline: List[Tuple[Path, float]] = []
     cursor = 0.0
     clip_duration = max(float(clip_duration or 0.0), 0.01)
-    for spec in overlay_specs:
+    for spec in prepared_specs:
         start = max(0.0, min(float(spec["start"]), clip_duration))
         end = max(start + 0.01, min(float(spec["end"]), clip_duration))
         if start > cursor:
