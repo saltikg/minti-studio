@@ -53,7 +53,7 @@ def test_admin_share_links_funnel_is_unique_and_cumulative() -> None:
         },
     ]
 
-    funnel, clicked = _build_admin_share_links_funnel(rows)
+    funnel, side_metrics = _build_admin_share_links_funnel(rows)
 
     assert [step["key"] for step in funnel] == [
         "sent",
@@ -62,17 +62,20 @@ def test_admin_share_links_funnel_is_unique_and_cumulative() -> None:
         "watched_75",
         "entered_feed",
         "reached_trial_card",
-        "requested",
-        "converted",
     ]
-    assert [step["count"] for step in funnel] == [2, 2, 2, 1, 1, 1, 1, 1]
+    assert [step["count"] for step in funnel] == [2, 2, 2, 1, 1, 1]
     assert all(
         funnel[index]["count"] <= funnel[index - 1]["count"]
         for index in range(1, len(funnel))
     )
-    assert funnel[-2]["leads"] == ["A — a@example.net"]
-    assert funnel[-1]["leads"] == ["A — a@example.net"]
-    assert clicked["count"] == 1
+    metrics_by_key = {metric["key"]: metric for metric in side_metrics}
+    assert metrics_by_key["clicked"]["count"] == 1
+    assert metrics_by_key["requested"]["count"] == 2
+    assert metrics_by_key["converted"]["count"] == 2
+    assert metrics_by_key["requested"]["leads"] == [
+        "A — a@example.net",
+        "B — b@example.net",
+    ]
 
 
 def test_admin_share_links_account_filter_has_required_exclusions() -> None:

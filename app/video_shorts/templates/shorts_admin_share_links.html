@@ -488,8 +488,7 @@
         {% set step_funnel = 'all' if selected_funnel == step.key else step.key %}
         <a
           href="{{ url_for('video_shorts_bp.admin_share_links', email=email_query, engagement=selected_engagement, archive=selected_archive, funnel=step_funnel, sort=sort_key, dir=sort_dir, page=1) }}"
-          class="admin-share-links-funnel-step {% if selected_funnel == step.key %}is-active{% endif %}"
-          {% if step.key in ('requested', 'converted') and step.leads %}title="{{ step.leads|join(' | ') }}"{% endif %}>
+          class="admin-share-links-funnel-step {% if selected_funnel == step.key %}is-active{% endif %}">
           <div class="admin-share-links-funnel-label">{{ step.label }}</div>
           <div class="admin-share-links-funnel-count">{{ step.count }}</div>
           <div class="admin-share-links-funnel-meta">
@@ -502,24 +501,26 @@
               {% endif %}
             {% endif %}
           </div>
-          {% if step.key in ('requested', 'converted') and step.leads %}
-            <div class="admin-share-links-funnel-leads">
-              {{ step.leads[:3]|join(', ') }}{% if step.leads|length > 3 %} +{{ step.leads|length - 3 }} more{% endif %}
-            </div>
-          {% endif %}
         </a>
       {% endfor %}
     </div>
 
-    <div class="admin-share-links-side-metrics" aria-label="Non-funnel email metrics">
-      <a
-        href="{{ url_for('video_shorts_bp.admin_share_links', email=email_query, engagement=selected_engagement, archive=selected_archive, funnel=('all' if selected_funnel == 'clicked' else 'clicked'), sort=sort_key, dir=sort_dir, page=1) }}"
-        class="admin-share-links-side-metric {% if selected_funnel == 'clicked' %}is-active{% endif %}"
-        {% if funnel_clicked_metric.leads %}title="{{ funnel_clicked_metric.leads|join(' | ') }}"{% endif %}>
-        <div class="admin-share-links-funnel-label">{{ funnel_clicked_metric.label }} · side metric</div>
-        <div class="admin-share-links-funnel-count">{{ funnel_clicked_metric.count }}</div>
-        <div class="admin-share-links-funnel-meta">{{ '%.1f%%'|format(funnel_clicked_metric.total_rate) }} of sent</div>
-      </a>
+    <div class="admin-share-links-side-metrics" aria-label="Non-funnel metrics">
+      {% for metric in funnel_side_metrics %}
+        <a
+          href="{{ url_for('video_shorts_bp.admin_share_links', email=email_query, engagement=selected_engagement, archive=selected_archive, funnel=('all' if selected_funnel == metric.key else metric.key), sort=sort_key, dir=sort_dir, page=1) }}"
+          class="admin-share-links-side-metric {% if selected_funnel == metric.key %}is-active{% endif %}"
+          {% if metric.leads %}title="{{ metric.leads|join(' | ') }}"{% endif %}>
+          <div class="admin-share-links-funnel-label">{{ metric.label }} · side metric</div>
+          <div class="admin-share-links-funnel-count">{{ metric.count }}</div>
+          <div class="admin-share-links-funnel-meta">{{ '%.1f%%'|format(metric.total_rate) }} of sent</div>
+          {% if metric.key in ('requested', 'converted') and metric.leads %}
+            <div class="admin-share-links-funnel-leads">
+              {{ metric.leads[:3]|join(', ') }}{% if metric.leads|length > 3 %} +{{ metric.leads|length - 3 }} more{% endif %}
+            </div>
+          {% endif %}
+        </a>
+      {% endfor %}
     </div>
 
     <div class="admin-share-links-table-wrap">

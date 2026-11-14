@@ -20910,8 +20910,8 @@ def _admin_share_link_account_filter_sql(alias: str = "sl") -> str:
     """
 
 
-def _build_admin_share_links_funnel(rows: List[Dict[str, Any]]) -> Tuple[List[Dict[str, Any]], Dict[str, Any]]:
-    """Build a cumulative, unique-lead funnel from already-cleaned link facts."""
+def _build_admin_share_links_funnel(rows: List[Dict[str, Any]]) -> Tuple[List[Dict[str, Any]], List[Dict[str, Any]]]:
+    """Build a cumulative funnel and raw side metrics from cleaned link facts."""
     leads: Dict[str, Dict[str, Any]] = {}
     for row in rows:
         key = str(row.get("recipient_key") or row.get("share_link_id") or "").strip()
@@ -20953,8 +20953,6 @@ def _build_admin_share_links_funnel(rows: List[Dict[str, Any]]) -> Tuple[List[Di
         ("watched_75", "watched_75", "Watched ≥75%"),
         ("entered_feed", "entered_feed", "Entered feed"),
         ("reached_trial_card", "reached_trial_card", "Reached trial card"),
-        ("requested", "requested", "Requested"),
-        ("converted", "converted", "Converted"),
     ]
     qualifying: Dict[str, List[Dict[str, Any]]] = {}
     previous_keys: set[str] = set(leads)
@@ -20988,16 +20986,24 @@ def _build_admin_share_links_funnel(rows: List[Dict[str, Any]]) -> Tuple[List[Di
         )
         previous_count = count
 
-    clicked_members = [lead for lead in leads.values() if lead["sent"] and lead["clicked"]]
-    clicked_members.sort(key=lambda lead: (lead["email"].lower(), lead["name"].lower()))
-    clicked_metric = {
-        "label": "Email clicked",
-        "key": "clicked",
-        "count": len(clicked_members),
-        "total_rate": round((len(clicked_members) / sent_count * 100.0) if sent_count else 0.0, 1),
-        "leads": [f"{lead['name']} — {lead['email']}" for lead in clicked_members],
-    }
-    return funnel_summary, clicked_metric
+    side_metrics: List[Dict[str, Any]] = []
+    for flag, key, label in (
+        ("clicked", "clicked", "Email clicked"),
+        ("requested", "requested", "Requested"),
+        ("converted", "converted", "Converted"),
+    ):
+        members = [lead for lead in leads.values() if lead[flag]]
+        members.sort(key=lambda lead: (lead["email"].lower(), lead["name"].lower()))
+        side_metrics.append(
+            {
+                "label": label,
+                "key": key,
+                "count": len(members),
+                "total_rate": round((len(members) / sent_count * 100.0) if sent_count else 0.0, 1),
+                "leads": [f"{lead['name']} — {lead['email']}" for lead in members],
+            }
+        )
+    return funnel_summary, side_metrics
 
 
 def _load_admin_share_links(
@@ -21011,7 +21017,7 @@ def _load_admin_share_links(
     sort_dir: str = "desc",
     limit: int = 200,
     offset: int = 0,
-) -> Tuple[List[Dict[str, Any]], int, str, str, str, str, str, List[Dict[str, Any]], Dict[str, Any]]:
+) -> Tuple[List[Dict[str, Any]], int, str, str, str, str, str, List[Dict[str, Any]], List[Dict[str, Any]]]:
     share_link_columns = table_columns(conn, "short_share_links")
     onboarding_magic_link_columns = table_columns(conn, "onboarding_magic_links")
     outreach_scheduled_email_columns = table_columns(conn, "outreach_scheduled_emails")
@@ -21511,14 +21517,8 @@ def _load_admin_share_links(
         f"{entered_feed_condition_sql} AND lfe.first_trial_card_at IS NOT NULL "
         "AND lfe.first_trial_card_at >= lfe.first_feed_at"
     )
-    requested_condition_sql = (
-        f"{reached_trial_condition_sql} AND lyi.yes_intent_at IS NOT NULL "
-        "AND lyi.yes_intent_at >= lfe.first_trial_card_at"
-    )
-    converted_condition_sql = (
-        f"{requested_condition_sql} AND slc.converted_at IS NOT NULL "
-        "AND slc.converted_at >= lyi.yes_intent_at"
-    )
+    requested_condition_sql = "lyi.yes_intent_at IS NOT NULL"
+    converted_condition_sql = "slc.converted_at IS NOT NULL"
     clicked_condition_sql = "FALSE"
     if onboarding_magic_link_columns:
         clicked_condition_sql = (
@@ -21636,7 +21636,7 @@ def _load_admin_share_links(
         }
         for row in funnel_fact_rows
     ]
-    funnel_summary, funnel_clicked_metric = _build_admin_share_links_funnel(funnel_facts)
+    funnel_summary, funnel_side_metrics = _build_admin_share_links_funnel(funnel_facts)
 
     rows = conn.execute(
         f"""
@@ -21889,7 +21889,7 @@ def _load_admin_share_links(
         normalized_sort_key,
         normalized_sort_dir,
         funnel_summary,
-        funnel_clicked_metric,
+        funnel_side_metrics,
     )
 
 
@@ -25103,7 +25103,7 @@ def admin_share_links():
             normalized_sort_key,
             normalized_sort_dir,
             funnel_summary,
-            funnel_clicked_metric,
+            funnel_side_metrics,
         ) = _load_admin_share_links(
             conn,
             email_query=email_query,
@@ -25133,7 +25133,7 @@ def admin_share_links():
         total_links=total_links,
         total_pages=total_pages,
         funnel_summary=funnel_summary,
-        funnel_clicked_metric=funnel_clicked_metric,
+        funnel_side_metrics=funnel_side_metrics,
     )
 
 
