@@ -2316,6 +2316,7 @@ def _build_word_highlight_caption_overlay(
     force_uppercase: Optional[bool] = None,
     target_width: int = _PILLOW_CAPTION_WIDTH,
     target_height: int = _PILLOW_CAPTION_HEIGHT,
+    defer_overlay_video: bool = False,
 ) -> Tuple[Path | None, List[Path], Dict[str, Any]]:
     preset = _resolve_subtitle_preset(subtitle_preset)
     preset_key = str(subtitle_preset or DEFAULT_SUBTITLE_PRESET).strip() or DEFAULT_SUBTITLE_PRESET
@@ -2666,18 +2667,20 @@ def _build_word_highlight_caption_overlay(
         shutil.rmtree(temp_dir, ignore_errors=True)
         return None, [], {"reason": "no_specs"}
 
-    overlay_path, overlay_origin = _build_word_highlight_overlay_video(
-        temp_dir=temp_dir,
-        overlay_specs=overlay_specs,
-        clip_duration=clip_duration,
-        canvas_width=int(target_width),
-        canvas_height=int(target_height),
-    )
-    cleanup_paths.append(overlay_path)
+    overlay_path: Path | None = None
+    overlay_origin = (0, 0)
+    if not defer_overlay_video:
+        overlay_path, overlay_origin = _build_word_highlight_overlay_video(
+            temp_dir=temp_dir,
+            overlay_specs=overlay_specs,
+            clip_duration=clip_duration,
+            canvas_width=int(target_width),
+            canvas_height=int(target_height),
+        )
+        cleanup_paths.append(overlay_path)
     return overlay_path, cleanup_paths, {
-        # Keep the frame specs available for split layouts, where individual
-        # measured lines must move independently around the divider.  Non-split
-        # renders continue to use the compact prebuilt overlay video.
+        # Keep the full-canvas frames available until the compositor knows the
+        # active split/fill/fit geometry and can encode one final overlay video.
         "specs": overlay_specs,
         "frame_count": len(overlay_specs),
         "timeline_segments": len(overlay_specs),
@@ -2695,8 +2698,9 @@ def _build_word_highlight_caption_overlay(
             for spec in overlay_specs
         ],
         "temp_dir": str(temp_dir),
-        "overlay_path": str(overlay_path),
+        "overlay_path": str(overlay_path) if overlay_path else None,
         "origin": overlay_origin,
+        "overlay_video_deferred": bool(defer_overlay_video),
     }
 
 

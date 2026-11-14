@@ -36025,14 +36025,15 @@ def autoclip_video(video_pk):
                             force_uppercase=video_subtitle_uppercase,
                             target_width=render_target_width,
                             target_height=render_target_height,
+                            defer_overlay_video=True,
                         )
                         subtitle_overlay_meta = overlay_meta or {}
                         subtitle_overlay_specs = list((overlay_meta or {}).get("specs") or [])
                         subtitle_overlay_events = list((overlay_meta or {}).get("timing_events") or [])
                         overlay_frame_count = int((overlay_meta or {}).get("frame_count") or len(subtitle_overlay_specs))
-                        if subtitle_overlay_video_path and Path(subtitle_overlay_video_path).exists():
+                        if subtitle_overlay_specs:
                             current_app.logger.info(
-                                "Using Pillow word_highlight subtitle overlay clip=%s frames=%s timing=word_timestamps mode=single_overlay_video",
+                                "Using Pillow word_highlight subtitle frames clip=%s frames=%s timing=word_timestamps mode=deferred_single_overlay_video",
                                 clip_filename,
                                 overlay_frame_count,
                             )
@@ -36126,14 +36127,15 @@ def autoclip_video(video_pk):
                         force_uppercase=video_subtitle_uppercase,
                         target_width=render_target_width,
                         target_height=render_target_height,
+                        defer_overlay_video=True,
                     )
                     subtitle_overlay_meta = overlay_meta or {}
                     subtitle_overlay_specs = list((overlay_meta or {}).get("specs") or [])
                     subtitle_overlay_events = list((overlay_meta or {}).get("timing_events") or [])
                     overlay_frame_count = int((overlay_meta or {}).get("frame_count") or len(subtitle_overlay_specs))
-                    if subtitle_overlay_video_path and Path(subtitle_overlay_video_path).exists():
+                    if subtitle_overlay_specs:
                         current_app.logger.info(
-                            "Using Pillow word_highlight subtitle overlay clip=%s frames=%s timing=word_timestamps mode=single_overlay_video",
+                            "Using Pillow word_highlight subtitle frames clip=%s frames=%s timing=word_timestamps mode=deferred_single_overlay_video",
                             clip_filename,
                             overlay_frame_count,
                         )

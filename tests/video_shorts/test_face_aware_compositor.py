@@ -226,7 +226,7 @@ def test_positioned_caption_render_stays_one_input_and_constant_filter(
         )
         assert positioned_count == caption_count
         assert build_calls == [caption_count]
-        assert len(caption_inputs) <= 2
+        assert len(caption_inputs) <= 1
         assert len(final_filter) == len(
             compositor._compact_caption_overlay_filter(
                 "[base]", source_label="[caption_src]", origin=(0, 0),

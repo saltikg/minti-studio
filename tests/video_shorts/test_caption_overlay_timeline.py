@@ -1,7 +1,7 @@
 import shutil
 
 from app.video_shorts.services.compositor import _overlay_position_enable_expr
-from app.video_shorts.services import transcript_service
+from app.video_shorts.services import compositor, transcript_service
 from app.video_shorts.services.transcript_service import _normalize_word_highlight_overlay_specs
 
 
@@ -95,6 +95,72 @@ def test_caption_builder_leaves_a_long_word_gap_blank(monkeypatch):
             (0.88, 1.2),
         ]
     finally:
+        for path in cleanup:
+            if path.is_dir():
+                shutil.rmtree(path, ignore_errors=True)
+
+
+def test_deferred_caption_path_encodes_exactly_once_in_compositor(monkeypatch):
+    encode_calls = []
+
+    def _fake_render(*args, **kwargs):
+        from PIL import Image
+
+        Image.new("RGBA", (200, 200), (0, 0, 0, 0)).save(kwargs["out_path"])
+        return {
+            "block_bbox": [20, 100, 180, 120],
+            "line_glyph_boxes": [[20, 100, 180, 120]],
+        }
+
+    def _fake_encode(*, temp_dir, overlay_specs, **kwargs):
+        encode_calls.append(len(overlay_specs))
+        output = temp_dir / "word_highlight_overlay.mov"
+        output.touch()
+        return output, (0, 0)
+
+    monkeypatch.setattr(transcript_service, "_render_word_highlight_caption_frame", _fake_render)
+    monkeypatch.setattr(transcript_service, "_build_word_highlight_overlay_video", _fake_encode)
+    overlay, cleanup, meta = transcript_service._build_word_highlight_caption_overlay(
+        [{
+            "start": 0.0,
+            "end": 1.0,
+            "words": [{"word": "hello", "start": 0.0, "end": 1.0}],
+        }],
+        0.0,
+        1.0,
+        subtitle_font_size=40,
+        subtitle_margin=60,
+        subtitle_preset="podcast",
+        subtitle_font_key="montserrat_black_italic",
+        target_width=200,
+        target_height=200,
+        defer_overlay_video=True,
+    )
+    positioned_temp_dir = None
+    try:
+        assert overlay is None
+        assert encode_calls == []
+        monkeypatch.setattr(compositor, "_build_word_highlight_overlay_video", _fake_encode)
+        overlay, _origin, positioned_temp_dir, _count = (
+            compositor._build_compact_positioned_caption_overlay(
+                meta["specs"],
+                overlay_events=meta["timing_events"],
+                layout_segments=[{"start": 0.0, "end": 1.0, "mode": "split"}],
+                target_width=200,
+                target_height=200,
+                duration=1.0,
+                subtitle_font_size=40,
+                subtitle_margin=60,
+                subtitle_margin_custom=False,
+                caption_anchor="bottom",
+            )
+        )
+        caption_inputs = [overlay]
+        assert encode_calls == [1]
+        assert len(caption_inputs) <= 1
+    finally:
+        if positioned_temp_dir:
+            shutil.rmtree(positioned_temp_dir, ignore_errors=True)
         for path in cleanup:
             if path.is_dir():
                 shutil.rmtree(path, ignore_errors=True)

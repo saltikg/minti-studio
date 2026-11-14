@@ -3605,6 +3605,31 @@ def _build_compact_positioned_caption_overlay(
         raise
 
 
+def _build_compact_caption_overlay(
+    overlay_specs: list[Dict[str, Any]],
+    *,
+    target_width: int,
+    target_height: int,
+    duration: float,
+) -> tuple[Path, tuple[int, int], Path, int]:
+    """Encode full-canvas caption frames into one compact overlay video."""
+    if not overlay_specs:
+        raise ValueError("caption overlay specs required")
+    temp_dir = Path(tempfile.mkdtemp(prefix="compact_caption_overlay_"))
+    try:
+        overlay_path, origin = _build_word_highlight_overlay_video(
+            temp_dir=temp_dir,
+            overlay_specs=overlay_specs,
+            clip_duration=duration,
+            canvas_width=target_width,
+            canvas_height=target_height,
+        )
+        return overlay_path, origin, temp_dir, len(overlay_specs)
+    except Exception:
+        shutil.rmtree(temp_dir, ignore_errors=True)
+        raise
+
+
 def _compact_caption_overlay_filter(
     base_label: str,
     *,
@@ -4175,6 +4200,28 @@ def _compose_trimmed_with_background(
             if show_subtitle
             else []
         )
+        podcast_caption_temp_dir: Optional[Path] = None
+        if effective_subtitle_overlay_specs:
+            if effective_subtitle_overlay_path:
+                effective_subtitle_overlay_specs = []
+            else:
+                (
+                    effective_subtitle_overlay_path,
+                    subtitle_overlay_origin,
+                    podcast_caption_temp_dir,
+                    caption_frame_count,
+                ) = _build_compact_caption_overlay(
+                    effective_subtitle_overlay_specs,
+                    target_width=target_width,
+                    target_height=target_height,
+                    duration=duration,
+                )
+                effective_subtitle_overlay_specs = []
+                current_app.logger.info(
+                    "Compact podcast caption overlay frames=%s input_count=1 origin=%s",
+                    caption_frame_count,
+                    subtitle_overlay_origin,
+                )
         final_label = "[base]"
         filter_parts = [
             f"[0:v]scale={target_width}:{target_height}:force_original_aspect_ratio=increase,"
@@ -4410,6 +4457,8 @@ def _compose_trimmed_with_background(
                     Path(title_overlay_path).unlink()
                 except Exception:
                     pass
+            if podcast_caption_temp_dir:
+                shutil.rmtree(podcast_caption_temp_dir, ignore_errors=True)
         return
 
 
@@ -5056,7 +5105,26 @@ def _compose_trimmed_with_background(
         face_aware_layout_active or manual_fill_caption_placement or manual_split_caption_placement
     )
     if not face_aware_segment_caption_placement:
-        # Ordinary layouts already use the original compact overlay video.
+        if effective_subtitle_overlay_specs and not effective_subtitle_overlay_path:
+            (
+                effective_subtitle_overlay_path,
+                subtitle_overlay_origin,
+                compact_temp_dir,
+                caption_frame_count,
+            ) = _build_compact_caption_overlay(
+                effective_subtitle_overlay_specs,
+                target_width=target_width,
+                target_height=target_height,
+                duration=duration,
+            )
+            caption_overlay_temp_dirs.append(compact_temp_dir)
+            current_app.logger.info(
+                "Compact caption overlay frames=%s input_count=1 origin=%s",
+                caption_frame_count,
+                subtitle_overlay_origin,
+            )
+        # The final graph always receives one compact caption video, never the
+        # individual raster frames.
         effective_subtitle_overlay_specs = []
     face_aware_fit_metrics = _face_aware_fit_position_metrics(
         target_width=target_width,
