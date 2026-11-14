@@ -355,6 +355,25 @@
       line-height: 1.35;
       white-space: normal;
     }
+    .admin-share-links-funnel-leads {
+      margin-top: 8px;
+      color: rgba(255, 255, 255, 0.78);
+      font-size: 0.74rem;
+      line-height: 1.35;
+      overflow-wrap: anywhere;
+    }
+    .admin-share-links-side-metrics {
+      display: flex;
+      gap: 10px;
+      margin: -6px 0 18px;
+    }
+    .admin-share-links-side-metric {
+      min-width: 180px;
+      border: 1px dashed rgba(110, 231, 216, 0.34);
+      border-radius: 12px;
+      padding: 10px 14px;
+      background: rgba(110, 231, 216, 0.05);
+    }
     .admin-share-links-feed-detail {
       display: grid;
       gap: 4px;
@@ -469,21 +488,38 @@
         {% set step_funnel = 'all' if selected_funnel == step.key else step.key %}
         <a
           href="{{ url_for('video_shorts_bp.admin_share_links', email=email_query, engagement=selected_engagement, archive=selected_archive, funnel=step_funnel, sort=sort_key, dir=sort_dir, page=1) }}"
-          class="admin-share-links-funnel-step {% if selected_funnel == step.key %}is-active{% endif %}">
+          class="admin-share-links-funnel-step {% if selected_funnel == step.key %}is-active{% endif %}"
+          {% if step.key in ('requested', 'converted') and step.leads %}title="{{ step.leads|join(' | ') }}"{% endif %}>
           <div class="admin-share-links-funnel-label">{{ step.label }}</div>
           <div class="admin-share-links-funnel-count">{{ step.count }}</div>
           <div class="admin-share-links-funnel-meta">
             {% if loop.first %}
               {{ '%.1f%%'|format(step.total_rate) }} of sent
             {% else %}
-              {{ '%.1f%%'|format(step.previous_rate) }} from previous · {{ '%.1f%%'|format(step.total_rate) }} of sent
+              {{ '%.1f%%'|format(step.total_rate) }} of sent · {{ '%.1f%%'|format(step.previous_rate) }} of previous
               {% if step.dropoff %}
                 <br>{{ step.dropoff }} dropped
               {% endif %}
             {% endif %}
           </div>
+          {% if step.key in ('requested', 'converted') and step.leads %}
+            <div class="admin-share-links-funnel-leads">
+              {{ step.leads[:3]|join(', ') }}{% if step.leads|length > 3 %} +{{ step.leads|length - 3 }} more{% endif %}
+            </div>
+          {% endif %}
         </a>
       {% endfor %}
+    </div>
+
+    <div class="admin-share-links-side-metrics" aria-label="Non-funnel email metrics">
+      <a
+        href="{{ url_for('video_shorts_bp.admin_share_links', email=email_query, engagement=selected_engagement, archive=selected_archive, funnel=('all' if selected_funnel == 'clicked' else 'clicked'), sort=sort_key, dir=sort_dir, page=1) }}"
+        class="admin-share-links-side-metric {% if selected_funnel == 'clicked' %}is-active{% endif %}"
+        {% if funnel_clicked_metric.leads %}title="{{ funnel_clicked_metric.leads|join(' | ') }}"{% endif %}>
+        <div class="admin-share-links-funnel-label">{{ funnel_clicked_metric.label }} · side metric</div>
+        <div class="admin-share-links-funnel-count">{{ funnel_clicked_metric.count }}</div>
+        <div class="admin-share-links-funnel-meta">{{ '%.1f%%'|format(funnel_clicked_metric.total_rate) }} of sent</div>
+      </a>
     </div>
 
     <div class="admin-share-links-table-wrap">
