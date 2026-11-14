@@ -21549,9 +21549,10 @@ document.addEventListener("DOMContentLoaded", () => {
   };
   window.verifyCropEditorPaintLayers = schedulePreviewLayerSafetyCheck;
   const positionedMeasuredSpec = (spec, kind) => {
-    if (measuredPlacement[kind] == null) return spec;
+    const splitCaption = kind === "caption" && isSplitCaptionLayout();
+    if (measuredPlacement[kind] == null && !splitCaption) return spec;
     const measuredHeight = Number(spec?.box?.[3]) - Number(spec?.box?.[1]);
-    const targetTop = kind === "caption" && isSplitCaptionLayout() && Number.isFinite(measuredHeight)
+    const targetTop = splitCaption && Number.isFinite(measuredHeight)
       ? resolveSplitCaptionTop(measuredHeight)
       : Number(measuredPlacement[kind]);
     const currentTop = Number(spec?.box?.[1]);
