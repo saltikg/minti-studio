@@ -2646,7 +2646,10 @@ def _face_aware_split_position_metrics(
     subtitle_font_size: int = DEFAULT_SUB_FONT_SIZE,
 ) -> Dict[str, float]:
     caption_block_height = _face_aware_caption_block_height(subtitle_font_size)
-    caption_top = max(0.0, min(float(target_height) - caption_block_height, (float(target_height) * DESIGN_GEOMETRY["split_ratio"]) - (caption_block_height / 2.0)))
+    caption_top = _face_aware_split_caption_top(
+        block_height=caption_block_height,
+        target_height=target_height,
+    )
     return {
         "caption_top": caption_top,
         "caption_margin_v": max(0.0, float(target_height) - caption_top - caption_block_height),
@@ -2656,6 +2659,32 @@ def _face_aware_split_position_metrics(
 
 def _face_aware_caption_block_height(subtitle_font_size: Optional[int]) -> float:
     return max(24.0, float(subtitle_font_size or DEFAULT_SUB_FONT_SIZE) * 2.0)
+
+
+def _face_aware_split_caption_top(
+    *,
+    block_height: float,
+    target_height: int,
+    desired_top: Optional[float] = None,
+) -> float:
+    """Keep a split caption outside the divider gap, growing upward by default."""
+    canvas_height = max(1.0, float(target_height))
+    safe_height = max(1.0, min(float(block_height), canvas_height))
+    max_top = max(0.0, canvas_height - safe_height)
+    divider_y = canvas_height * float(DESIGN_GEOMETRY["split_ratio"])
+    gap = canvas_height * float(DESIGN_GEOMETRY["split_caption_gap_ratio"])
+    upper_bottom = divider_y - gap
+    lower_top = divider_y + gap
+    above_top = max(0.0, min(max_top, upper_bottom - safe_height))
+    if desired_top is None:
+        return above_top
+
+    desired = max(0.0, min(max_top, float(desired_top)))
+    desired_bottom = desired + safe_height
+    if desired_bottom <= upper_bottom or desired >= lower_top:
+        return desired
+    below_top = max(0.0, min(max_top, lower_top))
+    return above_top if abs(desired - above_top) <= abs(below_top - desired) else below_top
 
 
 def _face_aware_event_caption_block(metrics: Optional[Dict[str, Any]], *, fallback_top: float, fallback_height: float) -> Dict[str, float]:
@@ -2700,7 +2729,19 @@ def _face_aware_caption_top_for_block(
         subtitle_margin_custom=subtitle_margin_custom,
     )
     if mode == "split":
-        return max(0.0, min(float(target_height) - safe_block_height, (float(target_height) * DESIGN_GEOMETRY["split_ratio"]) - (safe_block_height / 2.0)))
+        desired_top = None
+        if custom_position:
+            desired_top = caption_block_top(
+                subtitle_margin,
+                caption_anchor,
+                safe_block_height,
+                target_height,
+            )
+        return _face_aware_split_caption_top(
+            block_height=safe_block_height,
+            target_height=target_height,
+            desired_top=desired_top,
+        )
     if mode == "fit" and custom_position and not bool(segment.get("auto_layout")):
         return caption_block_top(
             subtitle_margin,

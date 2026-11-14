@@ -28,6 +28,7 @@ from app.video_shorts.services.db import get_db_readonly
 
 VIEWPORTS = ((1280, 720), (1920, 1080), (2560, 1440))
 DPRS = (1, 2)
+SPLIT_FRAME_DIR = Path(os.environ["SPLIT_CAPTION_SMOKE_DIR"]) if os.environ.get("SPLIT_CAPTION_SMOKE_DIR") else None
 
 
 def _admin_video_context(video_id: int | None) -> tuple[int, str, str]:
@@ -706,6 +707,71 @@ def _assert_auto_layout_caption_drag_persists(
     _print_pass(variant, f"auto-layout {export_label} caption stays dropped after save/reload for 3s")
 
 
+def _assert_split_caption_stays_above_divider(page: Page, variant: str) -> None:
+    page.locator('[data-crop-aspect="portrait"][data-split-enabled="1"]').evaluate(
+        "element => element.click()"
+    )
+    page.wait_for_timeout(250)
+
+    def measure(text: str, expected_lines: int, frame_name: str) -> dict:
+        page.evaluate(
+            """text => {
+              const panel = document.getElementById('clip-management-panel');
+              const active = String(panel?.dataset.activePlanIndex || '').trim();
+              const card = active
+                ? document.querySelector(`.clip-card.is-active[data-plan-index="${CSS.escape(active)}"]`)
+                : null;
+              if (!card) throw new Error('No active clip for split caption smoke');
+              card.dataset.previewCaption = text;
+              window.refreshMeasuredDesignPreview?.({force: true});
+            }""",
+            text,
+        )
+        page.wait_for_function(
+            """lines => {
+              const band = document.getElementById('shorts-preview-subtitle-band');
+              return band?.dataset.captionDomOwner === 'measured-svg'
+                && Number(band.dataset.lineCount) === lines;
+            }""",
+            arg=expected_lines,
+            timeout=10_000,
+        )
+        if SPLIT_FRAME_DIR:
+            SPLIT_FRAME_DIR.mkdir(parents=True, exist_ok=True)
+            page.locator("#shorts-preview-frame").screenshot(
+                path=str(SPLIT_FRAME_DIR / frame_name)
+            )
+        return page.evaluate(
+            """() => {
+              const frame = document.getElementById('shorts-preview-frame').getBoundingClientRect();
+              const band = document.getElementById('shorts-preview-subtitle-band').getBoundingClientRect();
+              return {
+                lines: Number(document.getElementById('shorts-preview-subtitle-band')?.dataset.lineCount),
+                top: band.top - frame.top,
+                bottom: band.bottom - frame.top,
+                frameHeight: frame.height,
+              };
+            }"""
+        )
+
+    one_line = measure("Strong today", 1, "split-caption-1-line.png")
+    two_lines = measure(
+        "Progressive strength training improves mobility",
+        2,
+        "split-caption-2-lines.png",
+    )
+    expected_bottom = one_line["frameHeight"] * 0.48
+    tolerance = 2.5
+    assert abs(one_line["bottom"] - expected_bottom) <= tolerance, one_line
+    assert abs(two_lines["bottom"] - expected_bottom) <= tolerance, two_lines
+    assert abs(one_line["bottom"] - two_lines["bottom"]) <= tolerance, {
+        "one_line": one_line,
+        "two_lines": two_lines,
+    }
+    assert two_lines["top"] < one_line["top"], {"one_line": one_line, "two_lines": two_lines}
+    _print_pass(variant, "split caption 1-line/2-line bottom edge stays above divider gap")
+
+
 def _run_variant(browser: Browser, *, base_url: str, cookie_name: str,
                  cookie_value: str, selected_video: int, width: int,
                  height: int, dpr: int) -> None:
@@ -862,6 +928,7 @@ def _run_variant(browser: Browser, *, base_url: str, cookie_name: str,
         _print_pass(variant, "page contains one clip-card node per plan")
         if width == 1280 and height == 720 and dpr == 1:
             _assert_stubbed_regenerate(page, variant)
+            _assert_split_caption_stays_above_divider(page, variant)
             _assert_auto_layout_caption_drag_persists(page, variant, 1280)
         if width == 1920 and height == 1080 and dpr == 1:
             _assert_auto_layout_caption_drag_persists(page, variant, 1920)

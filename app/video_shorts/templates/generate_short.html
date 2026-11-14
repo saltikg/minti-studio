@@ -21550,7 +21550,10 @@ document.addEventListener("DOMContentLoaded", () => {
   window.verifyCropEditorPaintLayers = schedulePreviewLayerSafetyCheck;
   const positionedMeasuredSpec = (spec, kind) => {
     if (measuredPlacement[kind] == null) return spec;
-    const targetTop = Number(measuredPlacement[kind]);
+    const measuredHeight = Number(spec?.box?.[3]) - Number(spec?.box?.[1]);
+    const targetTop = kind === "caption" && isSplitCaptionLayout() && Number.isFinite(measuredHeight)
+      ? resolveSplitCaptionTop(measuredHeight)
+      : Number(measuredPlacement[kind]);
     const currentTop = Number(spec?.box?.[1]);
     if (!spec || !Number.isFinite(targetTop) || !Number.isFinite(currentTop)) return spec;
     const deltaY = targetTop - currentTop;
@@ -21788,6 +21791,40 @@ document.addEventListener("DOMContentLoaded", () => {
     if (!segment) return null;
     const customPosition = initialSubtitleMarginCustom || dirtyOverlayFields.has("sub_margin");
     return customPosition ? null : segment;
+  };
+  const isSplitCaptionLayout = () => getEffectiveSplitEnabled()
+    || (isAutoLayoutMode() && String(getAutoLayoutPreviewSegment()?.mode || "") === "split");
+  const splitCaptionTopForBlock = (blockHeight, desiredTop = null) => {
+    const activeHeight = Number(getActiveRenderFrameHeight());
+    const safeHeight = Math.max(1, Math.min(Number(blockHeight) || 1, activeHeight));
+    const maxTop = Math.max(0, activeHeight - safeHeight);
+    const dividerY = activeHeight * Number(DESIGN_GEOMETRY.split_ratio || 0.5);
+    const gap = activeHeight * Number(DESIGN_GEOMETRY.split_caption_gap_ratio || 0.02);
+    const upperBottom = dividerY - gap;
+    const lowerTop = dividerY + gap;
+    const aboveTop = clampRenderValue(upperBottom - safeHeight, 0, maxTop);
+    if (!Number.isFinite(Number(desiredTop))) return aboveTop;
+    const desired = clampRenderValue(Number(desiredTop), 0, maxTop);
+    if (desired + safeHeight <= upperBottom || desired >= lowerTop) return desired;
+    const belowTop = clampRenderValue(lowerTop, 0, maxTop);
+    return Math.abs(desired - aboveTop) <= Math.abs(belowTop - desired) ? aboveTop : belowTop;
+  };
+  const resolveSplitCaptionTop = (blockHeight) => {
+    const customPosition = initialSubtitleMarginCustom || dirtyOverlayFields.has("sub_margin");
+    if (!customPosition) return splitCaptionTopForBlock(blockHeight);
+    const activeHeight = Number(getActiveRenderFrameHeight());
+    const rawMargin = getNumericFieldValue(
+      subtitleMarginInput,
+      renderFrameHeight - previewConfig.subtitleY - previewConfig.subtitleHeight,
+    );
+    const scaledMargin = rawMargin / Math.max(1, renderFrameHeight) * activeHeight;
+    const desiredTop = captionTopForPosition(
+      scaledMargin,
+      getCaptionAnchor(),
+      blockHeight,
+      activeHeight,
+    );
+    return splitCaptionTopForBlock(blockHeight, desiredTop);
   };
   const getAutoFitPreviewDims = () => {
     if (getAutoLayoutPreviewSegment()?.mode !== "fit") return null;
@@ -22148,7 +22185,7 @@ document.addEventListener("DOMContentLoaded", () => {
         );
       }
     }
-    const subtitleTop = Number.isFinite(resolvedAutoCaptionTop)
+    let subtitleTop = Number.isFinite(resolvedAutoCaptionTop)
       ? clampRenderValue(resolvedAutoCaptionTop, 0, Math.max(0, activeRenderHeight - subtitleHeight))
       : fillUsesDefaultPosition
         ? clampRenderValue(fillDefaultCaptionTop, 0, Math.max(0, activeRenderHeight - subtitleHeight))
@@ -22157,6 +22194,9 @@ document.addEventListener("DOMContentLoaded", () => {
           subtitleSafeMargin,
           Math.max(subtitleSafeMargin, activeRenderHeight - subtitleSafeMargin - subtitleHeight),
         );
+    if (isSplitCaptionLayout()) {
+      subtitleTop = resolveSplitCaptionTop(subtitleHeight);
+    }
     if (originalPreview && !titleMarginCustom) {
       const minGap = Math.max(8, activeRenderHeight * 0.025);
       titleTop = Math.min(titleTop, Math.max(safeMargin, subtitleTop - baseTitleHeight - minGap));

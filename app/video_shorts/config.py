@@ -1581,6 +1581,7 @@ for entry in STATIC_VISUAL_PRESETS:
 DESIGN_GEOMETRY = {
     "width": 720, "height": 1280, "preview_width": 270,
     "split_ratio": 0.5, "split_divider": 6, "split_outline": 1,
+    "split_caption_gap_ratio": 0.02,
     "letter_spacing": 0, "font_scale": 1, "title_engine": "pillow",
     "title_side_margin": 48, "title_box_border": 22,
     "title_max_lines": 3, "title_min_font_size": 30,

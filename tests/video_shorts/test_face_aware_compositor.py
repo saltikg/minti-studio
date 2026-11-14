@@ -19,8 +19,8 @@ FFPROBE = shutil.which("ffprobe")
 @pytest.mark.parametrize(
     ("target_width", "target_height", "custom_position", "expected_split_top", "expected_fill_top"),
     [
-        (720, 1280, 857, 578.0, 832.0),
-        (1080, 1920, 1286, 898.0, 1248.0),
+        (720, 1280, 857, 857.0, 832.0),
+        (1080, 1920, 1286, 1286.0, 1248.0),
     ],
 )
 def test_auto_caption_policy_is_mode_specific_with_custom_position(
@@ -74,6 +74,35 @@ def test_auto_caption_policy_is_mode_specific_with_custom_position(
         compositor.DESIGN_GEOMETRY["fit_caption_gap"] * target_height / compositor.DESIGN_GEOMETRY["height"]
     )
     assert fit_top == pytest.approx(expected_fit_top)
+
+
+@pytest.mark.parametrize("block_height", [62.0, 124.0])
+def test_split_caption_bottom_edge_is_fixed_above_divider(block_height: float) -> None:
+    top = compositor._face_aware_split_caption_top(
+        block_height=block_height,
+        target_height=1280,
+    )
+
+    expected_bottom = 1280 * (
+        compositor.DESIGN_GEOMETRY["split_ratio"]
+        - compositor.DESIGN_GEOMETRY["split_caption_gap_ratio"]
+    )
+    assert top + block_height == pytest.approx(expected_bottom)
+
+
+@pytest.mark.parametrize(
+    ("desired_top", "expected_top"),
+    [(400.0, 400.0), (570.0, 490.4), (620.0, 665.6), (800.0, 800.0)],
+)
+def test_custom_split_caption_overlap_moves_to_nearest_safe_side(
+    desired_top: float,
+    expected_top: float,
+) -> None:
+    assert compositor._face_aware_split_caption_top(
+        block_height=124.0,
+        target_height=1280,
+        desired_top=desired_top,
+    ) == pytest.approx(expected_top)
 
 
 def test_manual_custom_caption_position_is_unchanged() -> None:
