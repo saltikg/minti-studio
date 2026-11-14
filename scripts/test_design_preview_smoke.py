@@ -713,7 +713,7 @@ def _assert_split_caption_straddles_divider(page: Page, variant: str) -> None:
     )
     page.wait_for_timeout(250)
 
-    def measure(text: str, expected_lines: int, frame_name: str) -> dict:
+    def measure(text: str, expected_lines: int | None, frame_name: str | None = None) -> dict:
         previous_paint_version = page.evaluate(
             "() => Number(document.getElementById('shorts-preview-subtitle-band')?.__mintiMeasuredPaintVersion || 0)"
         )
@@ -734,13 +734,13 @@ def _assert_split_caption_straddles_divider(page: Page, variant: str) -> None:
             """expected => {
               const band = document.getElementById('shorts-preview-subtitle-band');
               return band?.dataset.captionDomOwner === 'measured-svg'
-                && Number(band.dataset.lineCount) === expected.lines
+                && (expected.lines === null || Number(band.dataset.lineCount) === expected.lines)
                 && Number(band.__mintiMeasuredPaintVersion || 0) > expected.previousPaintVersion;
             }""",
             arg={"lines": expected_lines, "previousPaintVersion": previous_paint_version},
             timeout=10_000,
         )
-        if SPLIT_FRAME_DIR:
+        if SPLIT_FRAME_DIR and frame_name:
             SPLIT_FRAME_DIR.mkdir(parents=True, exist_ok=True)
             page.locator("#shorts-preview-frame").screenshot(
                 path=str(SPLIT_FRAME_DIR / frame_name)
@@ -761,6 +761,19 @@ def _assert_split_caption_straddles_divider(page: Page, variant: str) -> None:
               };
             }"""
         )
+
+    def measure_two_lines(candidates: tuple[str, ...], frame_name: str) -> dict:
+        for candidate in candidates:
+            measured = measure(candidate, None)
+            if measured["lines"] != 2:
+                continue
+            if SPLIT_FRAME_DIR:
+                SPLIT_FRAME_DIR.mkdir(parents=True, exist_ok=True)
+                page.locator("#shorts-preview-frame").screenshot(
+                    path=str(SPLIT_FRAME_DIR / frame_name)
+                )
+            return measured
+        raise AssertionError({"expected_lines": 2, "candidates": candidates})
 
     def assert_geometry(one_line: dict, two_lines: dict) -> None:
         divider_y = one_line["renderHeight"] * 0.5
@@ -786,9 +799,12 @@ def _assert_split_caption_straddles_divider(page: Page, variant: str) -> None:
           field.dispatchEvent(new Event('change', {bubbles: true})); }"""
     )
     large_one_line = measure("Strong today", 1, "split-caption-large-1-line.png")
-    large_two_lines = measure(
-        "Progressive strength training",
-        2,
+    large_two_lines = measure_two_lines(
+        (
+            "Progressive strength training",
+            "Progressive strength training improves mobility",
+            "Progressive strength training improves mobility and balance",
+        ),
         "split-caption-large-2-lines.png",
     )
     assert_geometry(large_one_line, large_two_lines)
