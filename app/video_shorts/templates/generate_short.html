@@ -21801,7 +21801,11 @@ document.addEventListener("DOMContentLoaded", () => {
     const upperBottom = dividerY - gap;
     const lowerTop = dividerY + gap;
     const aboveTop = clampRenderValue(upperBottom - safeHeight, 0, maxTop);
-    if (!Number.isFinite(Number(desiredTop))) return aboveTop;
+    const hasDesiredTop = desiredTop !== null
+      && desiredTop !== undefined
+      && String(desiredTop).trim() !== ""
+      && Number.isFinite(Number(desiredTop));
+    if (!hasDesiredTop) return aboveTop;
     const desired = clampRenderValue(Number(desiredTop), 0, maxTop);
     if (desired + safeHeight <= upperBottom || desired >= lowerTop) return desired;
     const belowTop = clampRenderValue(lowerTop, 0, maxTop);
