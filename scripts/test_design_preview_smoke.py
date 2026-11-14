@@ -837,6 +837,10 @@ def _run_variant(browser: Browser, *, base_url: str, cookie_name: str,
         _assert_make_clip_add_keeps_exact_word_indexes(page, variant)
         _assert_trim_selection_keeps_exact_first_word(page, variant)
         _assert_trim_restore_keeps_only_selected_words(page, variant)
+        if width == 1280 and height == 720 and dpr == 1:
+            # Exercise the split default before geometry round-trip checks mark
+            # the caption position as a deliberate custom placement.
+            _assert_split_caption_stays_above_divider(page, variant)
 
         aspect = page.evaluate(
             """() => {
@@ -928,7 +932,6 @@ def _run_variant(browser: Browser, *, base_url: str, cookie_name: str,
         _print_pass(variant, "page contains one clip-card node per plan")
         if width == 1280 and height == 720 and dpr == 1:
             _assert_stubbed_regenerate(page, variant)
-            _assert_split_caption_stays_above_divider(page, variant)
             _assert_auto_layout_caption_drag_persists(page, variant, 1280)
         if width == 1920 and height == 1080 and dpr == 1:
             _assert_auto_layout_caption_drag_persists(page, variant, 1920)
