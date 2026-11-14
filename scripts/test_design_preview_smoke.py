@@ -728,12 +728,15 @@ def _assert_split_caption_stays_above_divider(page: Page, variant: str) -> None:
             text,
         )
         page.wait_for_function(
-            """lines => {
+            """expected => {
               const band = document.getElementById('shorts-preview-subtitle-band');
+              const paintedText = Array.from(band?.querySelectorAll('text:not([data-preview-shadow="1"])') || [])
+                .map(node => node.textContent || '').join(' ').replace(/\s+/g, ' ').trim().toLowerCase();
               return band?.dataset.captionDomOwner === 'measured-svg'
-                && Number(band.dataset.lineCount) === lines;
+                && Number(band.dataset.lineCount) === expected.lines
+                && paintedText === expected.text.toLowerCase();
             }""",
-            arg=expected_lines,
+            arg={"lines": expected_lines, "text": text},
             timeout=10_000,
         )
         if SPLIT_FRAME_DIR:
