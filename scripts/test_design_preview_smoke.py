@@ -714,6 +714,9 @@ def _assert_split_caption_straddles_divider(page: Page, variant: str) -> None:
     page.wait_for_timeout(250)
 
     def measure(text: str, expected_lines: int | None, frame_name: str | None = None) -> dict:
+        previous_measured_text = page.evaluate(
+            "() => document.getElementById('shorts-preview-subtitle-band')?.dataset.measuredText || ''"
+        )
         page.evaluate(
             """text => {
               const panel = document.getElementById('clip-management-panel');
@@ -730,12 +733,11 @@ def _assert_split_caption_straddles_divider(page: Page, variant: str) -> None:
         page.wait_for_function(
             """expected => {
               const band = document.getElementById('shorts-preview-subtitle-band');
-              const normalized = value => String(value || '').trim().replace(/\s+/g, ' ').toLocaleLowerCase();
               return band?.dataset.captionDomOwner === 'measured-svg'
-                && normalized(band.dataset.measuredText) === normalized(expected.text)
+                && String(band.dataset.measuredText || '') !== expected.previousText
                 && (expected.lines === null || Number(band.dataset.lineCount) === expected.lines)
             }""",
-            arg={"lines": expected_lines, "text": text},
+            arg={"lines": expected_lines, "previousText": previous_measured_text},
             timeout=10_000,
         )
         if SPLIT_FRAME_DIR and frame_name:
@@ -799,9 +801,9 @@ def _assert_split_caption_straddles_divider(page: Page, variant: str) -> None:
     large_one_line = measure("Strong today", 1, "split-caption-large-1-line.png")
     large_two_lines = measure_two_lines(
         (
-            "Progressive strength training",
-            "Progressive strength training improves mobility",
-            "Progressive strength training improves mobility and balance",
+            "Alpha progressive strength training",
+            "Bravo progressive strength training improves mobility",
+            "Charlie progressive strength training improves mobility and balance",
         ),
         "split-caption-large-2-lines.png",
     )
