@@ -21705,6 +21705,7 @@ document.addEventListener("DOMContentLoaded", () => {
       element.dataset.renderBbox = JSON.stringify(spec.box);
       element.dataset.lineGlyphBoxes = JSON.stringify(spec.line_glyph_boxes || []);
       element.dataset.lineCount = String(spec.lines);
+      element.dataset.measuredText = String(spec.text || "");
       element.dataset.previewScale = renderedPreviewScaleSignature();
       element.dataset.paintPreset = String(paintInput.presetKey || "");
       element.replaceChildren(svg);

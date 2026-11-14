@@ -714,9 +714,6 @@ def _assert_split_caption_straddles_divider(page: Page, variant: str) -> None:
     page.wait_for_timeout(250)
 
     def measure(text: str, expected_lines: int | None, frame_name: str | None = None) -> dict:
-        previous_paint_version = page.evaluate(
-            "() => Number(document.getElementById('shorts-preview-subtitle-band')?.__mintiMeasuredPaintVersion || 0)"
-        )
         page.evaluate(
             """text => {
               const panel = document.getElementById('clip-management-panel');
@@ -733,11 +730,12 @@ def _assert_split_caption_straddles_divider(page: Page, variant: str) -> None:
         page.wait_for_function(
             """expected => {
               const band = document.getElementById('shorts-preview-subtitle-band');
+              const normalized = value => String(value || '').trim().replace(/\s+/g, ' ').toLocaleLowerCase();
               return band?.dataset.captionDomOwner === 'measured-svg'
+                && normalized(band.dataset.measuredText) === normalized(expected.text)
                 && (expected.lines === null || Number(band.dataset.lineCount) === expected.lines)
-                && Number(band.__mintiMeasuredPaintVersion || 0) > expected.previousPaintVersion;
             }""",
-            arg={"lines": expected_lines, "previousPaintVersion": previous_paint_version},
+            arg={"lines": expected_lines, "text": text},
             timeout=10_000,
         )
         if SPLIT_FRAME_DIR and frame_name:
