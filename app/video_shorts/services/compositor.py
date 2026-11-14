@@ -44,6 +44,7 @@ from app.video_shorts.config import (
     SUB_MARGIN_DEFAULT,
 )
 from app.video_shorts.services.arabic_text import contains_arabic_script
+from app.video_shorts.services.caption_geometry import split_caption_line_offsets
 
 from app.video_shorts.services.media_utils import (
     _normalize_source_cache_container,
@@ -2729,18 +2730,9 @@ def _face_aware_caption_top_for_block(
         subtitle_margin_custom=subtitle_margin_custom,
     )
     if mode == "split":
-        desired_top = None
-        if custom_position:
-            desired_top = caption_block_top(
-                subtitle_margin,
-                caption_anchor,
-                safe_block_height,
-                target_height,
-            )
         return _face_aware_split_caption_top(
             block_height=safe_block_height,
             target_height=target_height,
-            desired_top=desired_top,
         )
     if mode == "fit" and custom_position and not bool(segment.get("auto_layout")):
         return caption_block_top(
@@ -3446,6 +3438,7 @@ def _face_aware_subtitle_overlay_specs(
     caption_anchor: str,
 ) -> list[Dict[str, Any]]:
     adjusted: list[Dict[str, Any]] = []
+    split_overlay_cache: Dict[str, Path] = {}
     fallback_height = _face_aware_caption_block_height(subtitle_font_size)
     for spec in overlay_specs:
         start = float(spec.get("start") or 0.0)
@@ -3464,6 +3457,26 @@ def _face_aware_subtitle_overlay_specs(
             fallback_height=fallback_height,
         )
         for slice_start, slice_end, segment in _face_aware_event_slices(layout_segments, start, end):
+            if str(segment.get("mode") or "").strip().lower() == "split":
+                source_path = Path(spec["path"])
+                cache_key = str(source_path)
+                split_path = split_overlay_cache.get(cache_key)
+                if split_path is None:
+                    split_path = _split_caption_overlay_frame(
+                        source_path,
+                        metrics=(event or {}).get("metrics") or {},
+                        target_height=target_height,
+                        sequence=len(split_overlay_cache),
+                    )
+                    split_overlay_cache[cache_key] = split_path
+                adjusted.append({
+                    **spec,
+                    "path": split_path,
+                    "start": slice_start,
+                    "end": slice_end,
+                    "y_offset": 0.0,
+                })
+                continue
             desired_top = _face_aware_caption_top_for_block(
                 segment,
                 block_height=block["height"],
@@ -3480,6 +3493,38 @@ def _face_aware_subtitle_overlay_specs(
                 "y_offset": desired_top - block["top"],
             })
     return adjusted
+
+
+def _split_caption_overlay_frame(
+    path: Path,
+    *,
+    metrics: Dict[str, Any],
+    target_height: int,
+    sequence: int = 0,
+) -> Path:
+    """Move measured raster caption lines independently around the divider."""
+    raw_boxes = metrics.get("line_glyph_boxes") if isinstance(metrics, dict) else None
+    offsets = split_caption_line_offsets(raw_boxes or [], frame_height=target_height)
+    if not offsets:
+        return path
+    boxes = [tuple(float(value) for value in box) for box in raw_boxes]
+    with Image.open(path) as source_image:
+        source = source_image.convert("RGBA")
+    output = Image.new("RGBA", source.size, (0, 0, 0, 0))
+    boundaries = [0]
+    for index in range(len(boxes) - 1):
+        boundaries.append(int(round((boxes[index][3] + boxes[index + 1][1]) / 2.0)))
+    boundaries.append(source.height)
+    for index, offset in enumerate(offsets):
+        crop_top = max(0, min(source.height, boundaries[index]))
+        crop_bottom = max(crop_top, min(source.height, boundaries[index + 1]))
+        if crop_bottom <= crop_top:
+            continue
+        line_region = source.crop((0, crop_top, source.width, crop_bottom))
+        output.alpha_composite(line_region, (0, int(round(crop_top + offset))))
+    output_path = path.with_name(f"{path.stem}.split-{sequence}{path.suffix}")
+    output.save(output_path)
+    return output_path
 
 
 def _append_timed_subtitle_overlay_filters(
@@ -4742,6 +4787,7 @@ def _compose_trimmed_with_background(
         if show_subtitle
         else []
     )
+    split_caption_overlay_paths: set[Path] = set()
     effective_subtitle_overlay_events = (
         _normalize_subtitle_overlay_events(subtitle_overlay_events)
         if show_subtitle
@@ -4863,6 +4909,7 @@ def _compose_trimmed_with_background(
             {"start": 0.0, "end": float(duration), "mode": "fill", "zoom": 1.0, "auto_layout": True}
         ]
     face_aware_layout_active = len(layout_segments) >= 1
+    manual_split_caption_placement = bool(split_stack_enabled)
     manual_fill_caption_placement = bool(
         not face_aware_layout_active
         and overlay_aspect == "portrait"
@@ -4876,7 +4923,11 @@ def _compose_trimmed_with_background(
         )
     )
     caption_layout_segments = layout_segments
-    if manual_fill_caption_placement:
+    if manual_split_caption_placement:
+        caption_layout_segments = [
+            {"start": 0.0, "end": float(duration), "mode": "split", "auto_layout": False}
+        ]
+    elif manual_fill_caption_placement:
         caption_layout_segments = [
             {"start": 0.0, "end": float(duration), "mode": "fill", "auto_layout": False}
         ]
@@ -4908,7 +4959,16 @@ def _compose_trimmed_with_background(
         and not outreach_layout
         and source_fps <= 60.01
     )
-    face_aware_segment_caption_placement = bool(face_aware_layout_active or manual_fill_caption_placement)
+    face_aware_segment_caption_placement = bool(
+        face_aware_layout_active or manual_fill_caption_placement or manual_split_caption_placement
+    )
+    has_split_caption_layout = any(
+        str(segment.get("mode") or "").strip().lower() == "split"
+        for segment in caption_layout_segments
+    )
+    if not has_split_caption_layout:
+        # The prebuilt overlay video is much more efficient for ordinary layouts.
+        effective_subtitle_overlay_specs = []
     face_aware_fit_metrics = _face_aware_fit_position_metrics(
         target_width=target_width,
         target_height=target_height,
@@ -5727,6 +5787,15 @@ def _compose_trimmed_with_background(
                 subtitle_margin_custom=subtitle_margin_custom,
                 caption_anchor=caption_anchor,
             )
+        original_overlay_paths = {Path(spec["path"]) for spec in effective_subtitle_overlay_specs}
+        split_caption_overlay_paths.update(
+            Path(spec["path"])
+            for spec in positioned_subtitle_overlay_specs
+            if Path(spec["path"]) not in original_overlay_paths
+        )
+        # The ffmpeg input list is assembled after the filters, so it must use
+        # the same transformed split-line frames referenced by these filters.
+        effective_subtitle_overlay_specs = positioned_subtitle_overlay_specs
         final_label, next_video_input_index = _append_timed_subtitle_overlay_filters(
             filter_parts,
             final_label,
@@ -6305,7 +6374,7 @@ def _compose_trimmed_with_background(
             f"FFmpeg compose failed (key={bg_path.name}): {err.stderr.strip() or err.stdout.strip()}"
         ) from err
     finally:
-        for temp_path in (trimmed, merged_override, merged_audio_override, temp_out_path, face_aware_subtitle_path, anchored_subtitle_path, *(shape_path for shape_path, _, _ in shape_overlay_specs), *title_overlay_paths):
+        for temp_path in (trimmed, merged_override, merged_audio_override, temp_out_path, face_aware_subtitle_path, anchored_subtitle_path, *(shape_path for shape_path, _, _ in shape_overlay_specs), *title_overlay_paths, *split_caption_overlay_paths):
             if temp_path and temp_path.exists():
                 try:
                     temp_path.unlink()

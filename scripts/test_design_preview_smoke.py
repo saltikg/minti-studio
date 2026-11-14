@@ -707,7 +707,7 @@ def _assert_auto_layout_caption_drag_persists(
     _print_pass(variant, f"auto-layout {export_label} caption stays dropped after save/reload for 3s")
 
 
-def _assert_split_caption_stays_above_divider(page: Page, variant: str) -> None:
+def _assert_split_caption_straddles_divider(page: Page, variant: str) -> None:
     page.locator('#crop-aspect-selector .aspect-card[data-crop-aspect="portrait"][data-split-enabled="1"]').evaluate(
         "element => element.click()"
     )
@@ -748,32 +748,51 @@ def _assert_split_caption_stays_above_divider(page: Page, variant: str) -> None:
         return page.evaluate(
             """() => {
               const frame = document.getElementById('shorts-preview-frame').getBoundingClientRect();
-              const band = document.getElementById('shorts-preview-subtitle-band').getBoundingClientRect();
+              const bandElement = document.getElementById('shorts-preview-subtitle-band');
+              const band = bandElement.getBoundingClientRect();
+              const geometry = window.getCropEditorPreviewGeometry();
               return {
-                lines: Number(document.getElementById('shorts-preview-subtitle-band')?.dataset.lineCount),
+                lines: Number(bandElement?.dataset.lineCount),
                 top: band.top - frame.top,
                 bottom: band.bottom - frame.top,
                 frameHeight: frame.height,
+                renderHeight: geometry.renderHeight,
+                lineGlyphBoxes: JSON.parse(bandElement?.dataset.lineGlyphBoxes || '[]'),
               };
             }"""
         )
 
-    one_line = measure("Strong today", 1, "split-caption-1-line.png")
-    two_lines = measure(
+    def assert_geometry(one_line: dict, two_lines: dict) -> None:
+        divider_y = one_line["renderHeight"] * 0.5
+        gap = one_line["renderHeight"] * 0.01
+        tolerance = 2.0
+        assert len(one_line["lineGlyphBoxes"]) == 1, one_line
+        assert len(two_lines["lineGlyphBoxes"]) == 2, two_lines
+        assert abs(one_line["lineGlyphBoxes"][0][3] - (divider_y - gap)) <= tolerance, one_line
+        assert abs(two_lines["lineGlyphBoxes"][0][3] - (divider_y - gap)) <= tolerance, two_lines
+        assert abs(two_lines["lineGlyphBoxes"][1][1] - (divider_y + gap)) <= tolerance, two_lines
+
+    default_one_line = measure("Strong today", 1, "split-caption-default-1-line.png")
+    default_two_lines = measure(
         "Progressive strength training improves mobility",
         2,
-        "split-caption-2-lines.png",
+        "split-caption-default-2-lines.png",
     )
-    expected_bottom = one_line["frameHeight"] * 0.48
-    tolerance = 2.5
-    assert abs(one_line["bottom"] - expected_bottom) <= tolerance, one_line
-    assert abs(two_lines["bottom"] - expected_bottom) <= tolerance, two_lines
-    assert abs(one_line["bottom"] - two_lines["bottom"]) <= tolerance, {
-        "one_line": one_line,
-        "two_lines": two_lines,
-    }
-    assert two_lines["top"] < one_line["top"], {"one_line": one_line, "two_lines": two_lines}
-    _print_pass(variant, "split caption 1-line/2-line bottom edge stays above divider gap")
+    assert_geometry(default_one_line, default_two_lines)
+
+    page.locator("[name='sub_font_size']").evaluate(
+        """field => { field.value = '72';
+          field.dispatchEvent(new Event('input', {bubbles: true}));
+          field.dispatchEvent(new Event('change', {bubbles: true})); }"""
+    )
+    large_one_line = measure("Strong today", 1, "split-caption-large-1-line.png")
+    large_two_lines = measure(
+        "Progressive strength training",
+        2,
+        "split-caption-large-2-lines.png",
+    )
+    assert_geometry(large_one_line, large_two_lines)
+    _print_pass(variant, "split caption glyph lines straddle divider at default and large sizes")
 
 
 def _run_variant(browser: Browser, *, base_url: str, cookie_name: str,
@@ -844,7 +863,7 @@ def _run_variant(browser: Browser, *, base_url: str, cookie_name: str,
         if width == 1280 and height == 720 and dpr == 1:
             # Exercise the split default before geometry round-trip checks mark
             # the caption position as a deliberate custom placement.
-            _assert_split_caption_stays_above_divider(page, variant)
+            _assert_split_caption_straddles_divider(page, variant)
 
         aspect = page.evaluate(
             """() => {

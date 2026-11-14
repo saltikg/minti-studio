@@ -21452,6 +21452,7 @@ document.addEventListener("DOMContentLoaded", () => {
     return isOriginalCropAspect() ? origPreviewCaption : previewSubtitle;
   };
   const positionMeasuredLayer = (kind, top) => {
+    if (kind === "caption" && isSplitCaptionLayout()) return;
     const element = activeMeasuredLayer(kind);
     if (!element || element.dataset.captionDomOwner !== "measured-svg" || !Number.isFinite(Number(top))) return;
     const nextTop = Number(top);
@@ -21547,6 +21548,7 @@ document.addEventListener("DOMContentLoaded", () => {
   window.verifyCropEditorPaintLayers = schedulePreviewLayerSafetyCheck;
   const positionedMeasuredSpec = (spec, kind) => {
     const splitCaption = kind === "caption" && isSplitCaptionLayout();
+    if (splitCaption) return spec;
     if (measuredPlacement[kind] == null && !splitCaption) return spec;
     const measuredHeight = Number(spec?.box?.[3]) - Number(spec?.box?.[1]);
     const targetTop = splitCaption && Number.isFinite(measuredHeight)
@@ -21701,6 +21703,7 @@ document.addEventListener("DOMContentLoaded", () => {
       if (!element.isConnected || element.__mintiMeasuredPaintVersion !== paintVersion) return;
       Object.assign(element.style, nextStyles);
       element.dataset.renderBbox = JSON.stringify(spec.box);
+      element.dataset.lineGlyphBoxes = JSON.stringify(spec.line_glyph_boxes || []);
       element.dataset.lineCount = String(spec.lines);
       element.dataset.previewScale = renderedPreviewScaleSignature();
       element.dataset.paintPreset = String(paintInput.presetKey || "");
@@ -21811,23 +21814,7 @@ document.addEventListener("DOMContentLoaded", () => {
     const belowTop = clampRenderValue(lowerTop, 0, maxTop);
     return Math.abs(desired - aboveTop) <= Math.abs(belowTop - desired) ? aboveTop : belowTop;
   };
-  const resolveSplitCaptionTop = (blockHeight) => {
-    const customPosition = initialSubtitleMarginCustom || dirtyOverlayFields.has("sub_margin");
-    if (!customPosition) return splitCaptionTopForBlock(blockHeight);
-    const activeHeight = Number(getActiveRenderFrameHeight());
-    const rawMargin = getNumericFieldValue(
-      subtitleMarginInput,
-      renderFrameHeight - previewConfig.subtitleY - previewConfig.subtitleHeight,
-    );
-    const scaledMargin = rawMargin / Math.max(1, renderFrameHeight) * activeHeight;
-    const desiredTop = captionTopForPosition(
-      scaledMargin,
-      getCaptionAnchor(),
-      blockHeight,
-      activeHeight,
-    );
-    return splitCaptionTopForBlock(blockHeight, desiredTop);
-  };
+  const resolveSplitCaptionTop = (blockHeight) => splitCaptionTopForBlock(blockHeight);
   const getAutoFitPreviewDims = () => {
     if (getAutoLayoutPreviewSegment()?.mode !== "fit") return null;
     const source = cropperImages.top;
@@ -21916,6 +21903,7 @@ document.addEventListener("DOMContentLoaded", () => {
       title_text_color: getEditorField("title_text_color")?.value,
       title_bg_alpha: Number(getEditorField("title_bg_alpha")?.value || 0),
       active_word: Number(previewSubtitle?.dataset.activeWord || 0),
+      split_caption: isSplitCaptionLayout(),
     };
     if (original && getCaptionAnchor() === "bottom" && !initialSubtitleMarginCustom && !dirtyOverlayFields.has("sub_margin")) {
       data.caption_margin = Math.round(height-height*DESIGN_GEOMETRY.original_caption_center-data.caption_size);

@@ -1,6 +1,7 @@
 """Live preview geometry. Returns numbers and text only, never rendered frames."""
 from PIL import ImageFont
 from app.video_shorts.config import DESIGN_GEOMETRY as D, SUBTITLE_PRESETS, caption_effect_values, resolve_caption_effect
+from app.video_shorts.services.caption_geometry import split_caption_line_offsets
 from app.video_shorts.services.compositor import _title_overlay_layout
 from app.video_shorts.services.transcript_service import (
     _caption_display_words,
@@ -106,15 +107,20 @@ def measure_design(data, *, title_font_path, caption_font_path, title_behavior):
         force_uppercase=caption_uppercase, precomputed_layout=precomputed,
         canvas_width=width, canvas_height=height, caption_anchor=data.get('caption_anchor', 'bottom'))
     runs, line_boxes, glyph_boxes = [], [], []
+    glyph_boxes_by_line = {}
     pill = None
     for word in layout['words']:
         is_active = word['global_index'] == active
         f = active_font if is_active else font
         x, y = word['x'], word['y']
         b = f.getbbox(word['word'], anchor='la', stroke_width=outline)
-        glyph_boxes.append([x+b[0],y+b[1],x+b[2],y+b[3]])
+        glyph_box = [x+b[0],y+b[1],x+b[2],y+b[3]]
+        glyph_boxes.append(glyph_box)
+        line_index = int(word.get('line_index') or 0)
+        glyph_boxes_by_line.setdefault(line_index, []).append(glyph_box)
         runs.append(dict(text=word['word'], x=x, y=y+f.getmetrics()[0],
-                         size=active_size if is_active else caption_size, active=is_active and karaoke))
+                         size=active_size if is_active else caption_size, active=is_active and karaoke,
+                         line_index=line_index))
         if is_active and draw_pill:
             py = max(D['pill_padding_min_y'], round(caption_size*D['pill_padding_y']))
             ph = b[3]-b[1]+2*py
@@ -127,11 +133,44 @@ def measure_design(data, *, title_font_path, caption_font_path, title_behavior):
     px = max(D['caption_padding_min_x'], round(caption_size*D['caption_padding_x']))
     py = max(D['caption_padding_min_y'], round(caption_size*D['caption_padding_y']))
     caption_box = _box(_union(line_boxes), px, py, width, height)
-    return dict(title=title_result, caption=dict(box=caption_box, runs=runs, pill=pill,
-        glyph_box=_union(glyph_boxes), lines=len(layout['lines']), font_size=caption_size,
+    line_glyph_boxes = [
+        _union(glyph_boxes_by_line.get(index) or [])
+        for index in range(len(layout['lines']))
+    ]
+    caption_result = dict(box=caption_box, runs=runs, pill=pill,
+        glyph_box=_union(glyph_boxes), line_glyph_boxes=line_glyph_boxes,
+        pill_line_index=int(layout['words'][active].get('line_index') or 0),
+        lines=len(layout['lines']), font_size=caption_size,
         outline=outline, active_outline=bool(preset.get('active_outline')),
         highlight_color=data.get('subtitle_highlight_color') or preset.get('active_color'),
         effect=effect, effect_values=effect_values,
         anchor=layout['lines'][0]['y'] if layout['lines'] else 0,
-        block_height=layout['total_height'], text=' '.join(str(word['word']) for word in layout['words'])),
-        width=width, height=height)
+        block_height=layout['total_height'], text=' '.join(str(word['word']) for word in layout['words']))
+    if bool(data.get('split_caption')):
+        offsets = split_caption_line_offsets(line_glyph_boxes, frame_height=height)
+        if len(offsets) == len(line_glyph_boxes):
+            original_glyph_box = _union(line_glyph_boxes)
+            moved_line_boxes = [
+                [box[0], box[1] + offsets[index], box[2], box[3] + offsets[index]]
+                for index, box in enumerate(line_glyph_boxes)
+            ]
+            moved_glyph_box = _union(moved_line_boxes)
+            top_slack = max(0, original_glyph_box[1] - caption_box[1])
+            bottom_slack = max(0, caption_box[3] - original_glyph_box[3])
+            caption_result['box'] = [
+                caption_box[0],
+                max(0, moved_glyph_box[1] - top_slack),
+                caption_box[2],
+                min(height, moved_glyph_box[3] + bottom_slack),
+            ]
+            caption_result['runs'] = [
+                {**run, 'y': run['y'] + offsets[int(run.get('line_index') or 0)]}
+                for run in runs
+            ]
+            if pill:
+                pill_offset = offsets[int(caption_result['pill_line_index'])]
+                caption_result['pill'] = [pill[0], pill[1] + pill_offset, pill[2], pill[3] + pill_offset]
+            caption_result['glyph_box'] = moved_glyph_box
+            caption_result['line_glyph_boxes'] = moved_line_boxes
+            caption_result['split_line_offsets'] = offsets
+    return dict(title=title_result, caption=caption_result, width=width, height=height)

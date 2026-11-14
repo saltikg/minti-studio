@@ -10,6 +10,7 @@ from flask import Flask
 from PIL import Image
 
 from app.video_shorts.services import compositor
+from app.video_shorts.services.caption_geometry import split_caption_line_offsets
 
 
 FFMPEG = shutil.which("ffmpeg")
@@ -19,8 +20,8 @@ FFPROBE = shutil.which("ffprobe")
 @pytest.mark.parametrize(
     ("target_width", "target_height", "custom_position", "expected_split_top", "expected_fill_top"),
     [
-        (720, 1280, 857, 857.0, 832.0),
-        (1080, 1920, 1286, 1286.0, 1248.0),
+        (720, 1280, 857, 503.2, 832.0),
+        (1080, 1920, 1286, 816.8, 1248.0),
     ],
 )
 def test_auto_caption_policy_is_mode_specific_with_custom_position(
@@ -62,7 +63,7 @@ def test_auto_caption_policy_is_mode_specific_with_custom_position(
         caption_anchor="top",
     )
 
-    assert split_top == expected_split_top
+    assert split_top == pytest.approx(expected_split_top)
     assert fill_top == expected_fill_top
     assert fill_top > fill_face_bottom
     fit_metrics = compositor._face_aware_fit_position_metrics(
@@ -90,19 +91,88 @@ def test_split_caption_bottom_edge_is_fixed_above_divider(block_height: float) -
     assert top + block_height == pytest.approx(expected_bottom)
 
 
-@pytest.mark.parametrize(
-    ("desired_top", "expected_top"),
-    [(400.0, 400.0), (570.0, 490.4), (620.0, 665.6), (800.0, 800.0)],
-)
-def test_custom_split_caption_overlap_moves_to_nearest_safe_side(
-    desired_top: float,
-    expected_top: float,
-) -> None:
-    assert compositor._face_aware_split_caption_top(
+def test_custom_split_caption_position_is_ignored() -> None:
+    automatic = compositor._face_aware_caption_top_for_block(
+        {"mode": "split"},
         block_height=124.0,
+        target_width=720,
         target_height=1280,
-        desired_top=desired_top,
-    ) == pytest.approx(expected_top)
+        subtitle_margin=400,
+        subtitle_margin_custom=False,
+    )
+    custom = compositor._face_aware_caption_top_for_block(
+        {"mode": "split"},
+        block_height=124.0,
+        target_width=720,
+        target_height=1280,
+        subtitle_margin=900,
+        subtitle_margin_custom=True,
+        caption_anchor="top",
+    )
+    assert custom == pytest.approx(automatic)
+
+
+@pytest.mark.parametrize(
+    ("boxes", "expected"),
+    [
+        ([[10, 100, 100, 120]], [507.2]),
+        ([[10, 100, 100, 120], [10, 140, 100, 160]], [507.2, 512.8]),
+        (
+            [[10, 80, 100, 100], [10, 110, 100, 130], [10, 150, 100, 170]],
+            [497.2, 497.2, 502.8],
+        ),
+    ],
+)
+def test_split_caption_line_offsets_use_measured_glyph_edges(boxes, expected) -> None:
+    assert split_caption_line_offsets(boxes, frame_height=1280) == pytest.approx(expected)
+
+
+def test_split_caption_raster_places_two_lines_around_divider(tmp_path: Path) -> None:
+    source_path = tmp_path / "caption.png"
+    image = Image.new("RGBA", (200, 200), (0, 0, 0, 0))
+    for top, bottom in ((100, 120), (140, 160)):
+        for y in range(top, bottom):
+            for x in range(20, 180):
+                image.putpixel((x, y), (255, 255, 255, 255))
+    image.save(source_path)
+
+    output_path = compositor._split_caption_overlay_frame(
+        source_path,
+        metrics={"line_glyph_boxes": [[20, 100, 180, 120], [20, 140, 180, 160]]},
+        target_height=200,
+    )
+
+    with Image.open(output_path) as output:
+        alpha = output.getchannel("A")
+        assert alpha.crop((0, 97, 200, 98)).getbbox() is not None
+        assert alpha.crop((0, 98, 200, 102)).getbbox() is None
+        assert alpha.crop((0, 102, 200, 103)).getbbox() is not None
+
+
+def test_split_caption_overlay_specs_use_transformed_frame(tmp_path: Path) -> None:
+    source_path = tmp_path / "caption.png"
+    Image.new("RGBA", (200, 200), (255, 255, 255, 0)).save(source_path)
+
+    specs = compositor._face_aware_subtitle_overlay_specs(
+        [{"path": source_path, "start": 0.0, "end": 1.0}],
+        overlay_events=[{
+            "start": 0.0,
+            "end": 1.0,
+            "metrics": {"line_glyph_boxes": [[20, 100, 180, 120]]},
+        }],
+        layout_segments=[{"start": 0.0, "end": 1.0, "mode": "split"}],
+        target_width=200,
+        target_height=200,
+        subtitle_font_size=40,
+        subtitle_margin=60,
+        subtitle_margin_custom=True,
+        caption_anchor="top",
+    )
+
+    assert len(specs) == 1
+    assert specs[0]["path"] != source_path
+    assert specs[0]["path"].exists()
+    assert specs[0]["y_offset"] == 0.0
 
 
 def test_manual_custom_caption_position_is_unchanged() -> None:

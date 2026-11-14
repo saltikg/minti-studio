@@ -2089,6 +2089,36 @@ def _render_word_highlight_caption_frame(
                 stroke_width=outline_width if is_active_word and active_outline else (0 if is_active_word else outline_width),
             )
 
+    glyph_boxes_by_line: Dict[int, List[Tuple[int, int, int, int]]] = {}
+    for word in layout["words"]:
+        is_active_word = int(word["global_index"]) == int(active_index)
+        word_font = _font_for_script(word["word"], active_font if is_active_word else font)
+        rendered_outline = (
+            outline_width if is_active_word and active_outline
+            else (0 if is_active_word else outline_width)
+        )
+        glyph_bbox = draw.textbbox(
+            (int(word["x"]), int(word["y"])),
+            str(word["word"]),
+            font=word_font,
+            anchor="la",
+            stroke_width=rendered_outline,
+        )
+        glyph_boxes_by_line.setdefault(int(word.get("line_index") or 0), []).append(
+            tuple(int(value) for value in glyph_bbox)
+        )
+    line_glyph_boxes = []
+    for line_index in range(len(layout.get("lines") or [])):
+        boxes = glyph_boxes_by_line.get(line_index) or []
+        if not boxes:
+            continue
+        line_glyph_boxes.append([
+            min(box[0] for box in boxes),
+            min(box[1] for box in boxes),
+            max(box[2] for box in boxes),
+            max(box[3] for box in boxes),
+        ])
+
     content_bbox = image.getbbox()
     if content_bbox:
         block_bbox = [int(content_bbox[0]), int(content_bbox[1]), int(content_bbox[2]), int(content_bbox[3])]
@@ -2100,6 +2130,7 @@ def _render_word_highlight_caption_frame(
         "block_bbox": block_bbox,
         "block_center_y": (block_bbox[1] + block_bbox[3]) / 2.0 if block_bbox[3] > block_bbox[1] else None,
         "block_height": max(0, block_bbox[3] - block_bbox[1]),
+        "line_glyph_boxes": line_glyph_boxes,
         "active_word": active_word,
         "active_text_bbox": [int(active_bbox[0]), int(active_bbox[1]), int(active_bbox[2]), int(active_bbox[3])],
         "active_text_w": active_text_w,
@@ -2638,7 +2669,10 @@ def _build_word_highlight_caption_overlay(
     )
     cleanup_paths.append(overlay_path)
     return overlay_path, cleanup_paths, {
-        "specs": [],
+        # Keep the frame specs available for split layouts, where individual
+        # measured lines must move independently around the divider.  Non-split
+        # renders continue to use the compact prebuilt overlay video.
+        "specs": overlay_specs,
         "frame_count": len(overlay_specs),
         "timeline_segments": len(overlay_specs),
         "gradient_fill_mode": "gradient" if uses_gradient_layers else fill_mode,
