@@ -17052,6 +17052,9 @@ const refreshServerClipFreshness = async () => {
 };
 
 const finalizeClipJobSuccess = async (planIndex, { cached = false, freshness = null } = {}) => {
+  const selectedPlanIndex = String(
+    document.getElementById("clip-management-panel")?.dataset.activePlanIndex || "",
+  ).trim();
   const clearTerminalUi = () => {
     const cleanupSteps = [
       ["overlay_clear", () => setGenerateV2RenderOverlay(planIndex, { active: false, failed: false, success: false })],
@@ -17080,7 +17083,10 @@ const finalizeClipJobSuccess = async (planIndex, { cached = false, freshness = n
         planIndex,
         "card_and_timing_refresh",
         async () => {
-          const result = await refreshClipList(planIndex, "list", { forceReplaceSelected: true });
+          const refreshPlanIndex = selectedPlanIndex || planIndex;
+          const result = await refreshClipList(refreshPlanIndex, "list", {
+            forceReplaceSelected: String(refreshPlanIndex) === String(planIndex),
+          });
           if (!result) throw new Error("Clip card refresh returned false");
           return result;
         },
