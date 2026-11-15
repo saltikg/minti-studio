@@ -735,6 +735,61 @@ def test_discovery_render_waits_behind_customer_job(monkeypatch, tmp_path):
     assert second["id"] == discovery_job["job"]["id"]
 
 
+def test_customer_ingest_claimed_before_higher_priority_admin_render(monkeypatch, tmp_path):
+    _configure_duckdb(monkeypatch, tmp_path, "customer_before_admin.duckdb")
+    admin_user = str(uuid4())
+    customer_user = str(uuid4())
+    _insert_user(admin_user, "plan_100gb")
+    _insert_user(customer_user, "plan_free")
+    _insert_video(101, "admin-video", admin_user, brand_id="brand-1")
+
+    admin_job = render_jobs.enqueue_render_job(
+        user_id=admin_user,
+        payload={
+            **_payload(101, "admin-video"),
+            "job_origin": render_jobs.ADMIN_JOB_ORIGIN,
+            "made_by_admin": True,
+        },
+        input_hash=_input_hash("admin-video"),
+        priority=20,
+    )
+    customer_job = render_jobs.enqueue_worker_job(
+        user_id=customer_user,
+        job_type=render_jobs.JOB_TYPE_INGEST_YOUTUBE,
+        payload={"video_id": "customer-video", "ingest_source": "user_youtube_import"},
+        input_hash="customer-ingest",
+        priority=0,
+    )
+
+    first = render_jobs.claim_next_job("customer-worker")
+    render_jobs.mark_job_done(first["id"], {"status": "test"})
+    second = render_jobs.claim_next_job("customer-worker")
+
+    assert first["id"] == customer_job["job"]["id"]
+    assert second["id"] == admin_job["job"]["id"]
+
+
+def test_admin_render_claimed_when_no_customer_job_is_queued(monkeypatch, tmp_path):
+    _configure_duckdb(monkeypatch, tmp_path, "admin_when_customer_queue_empty.duckdb")
+    admin_user = str(uuid4())
+    _insert_user(admin_user, "plan_100gb")
+    _insert_video(102, "admin-only-video", admin_user, brand_id="brand-1")
+    admin_job = render_jobs.enqueue_render_job(
+        user_id=admin_user,
+        payload={
+            **_payload(102, "admin-only-video"),
+            "job_origin": render_jobs.ADMIN_JOB_ORIGIN,
+            "made_by_admin": True,
+        },
+        input_hash=_input_hash("admin-only-video"),
+        priority=20,
+    )
+
+    claimed = render_jobs.claim_next_job("customer-worker")
+
+    assert claimed["id"] == admin_job["job"]["id"]
+
+
 def test_regular_worker_excludes_publish_jobs_and_scheduler_can_claim_them(monkeypatch, tmp_path):
     _configure_duckdb(monkeypatch, tmp_path, "publish_worker_ownership.duckdb")
     user_id = str(uuid4())

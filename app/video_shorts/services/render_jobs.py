@@ -113,6 +113,46 @@ def _auto_job_clause(conn, alias: str = "") -> str:
     return f"{_payload_origin_sql(conn, alias)} = '{AUTO_RENDER_JOB_ORIGIN}'"
 
 
+def _payload_text_sql(conn, key: str, alias: str = "") -> str:
+    column = f"{alias}.payload_json" if alias else "payload_json"
+    if getattr(conn, "backend_name", "") == "postgres":
+        return f"COALESCE({column}->>'{key}', '')"
+    return f"COALESCE(json_extract_string({column}, '$.{key}'), '')"
+
+
+def _customer_initiated_job_clause(conn, alias: str = "candidate") -> str:
+    job_type = f"{alias}.type" if alias else "type"
+    origin = _payload_origin_sql(conn, alias)
+    made_by_admin = f"LOWER({_payload_text_sql(conn, 'made_by_admin', alias)}) IN ('true', '1')"
+    made_by_customer = f"LOWER({_payload_text_sql(conn, 'made_by_customer', alias)}) IN ('true', '1')"
+    auto_suggest_default = f"LOWER({_payload_text_sql(conn, 'auto_suggest_default', alias)}) IN ('true', '1')"
+    ingest_source = f"LOWER({_payload_text_sql(conn, 'ingest_source', alias)})"
+    auto_suggest_mode = f"LOWER({_payload_text_sql(conn, 'auto_suggest_mode', alias)})"
+    return f"""
+        NOT ({made_by_admin})
+        AND {origin} NOT IN ('{ADMIN_JOB_ORIGIN}', '{GUEST_JOB_ORIGIN}', '{DISCOVERY_JOB_ORIGIN}')
+        AND (
+          {job_type} IN ('{JOB_TYPE_INGEST_YOUTUBE}', '{JOB_TYPE_NORMALIZE_UPLOAD}', '{JOB_TYPE_PREVIEW_FRAME}')
+          OR (
+            {job_type} = '{JOB_TYPE_AUTO_SUGGEST_RENDER}'
+            AND (
+              {made_by_customer}
+              OR {ingest_source} IN ('user_local_upload', 'user_youtube_import')
+              OR {auto_suggest_mode} = 'user_added'
+            )
+          )
+          OR (
+            {job_type} = '{JOB_TYPE_RENDER_SHORT}'
+            AND (
+              {origin} = '{CUSTOMER_JOB_ORIGIN}'
+              OR {made_by_customer}
+              OR {auto_suggest_default}
+            )
+          )
+        )
+    """.strip()
+
+
 def _autopilot_billing_paused_clause(conn, alias: str = "candidate") -> str:
     paused_job_types = ", ".join(
         f"'{value}'"
@@ -1196,6 +1236,7 @@ def claim_next_job(
             discovery_clause = _discovery_job_clause(conn, "candidate")
             auto_clause = _auto_job_clause(conn, "candidate")
             guest_clause = _guest_job_clause(conn, "candidate")
+            customer_initiated_clause = _customer_initiated_job_clause(conn, "candidate")
             customer_queued_exists = _customer_queued_exists_sql(conn)
             fair_order = _fair_customer_order_sql(conn)
             billing_paused_clause = _autopilot_billing_paused_clause(conn, "candidate")
@@ -1219,6 +1260,7 @@ def claim_next_job(
                   AND NOT ({billing_paused_clause})
                 ORDER BY
                   CASE
+                    WHEN {customer_initiated_clause} THEN -1
                     WHEN {discovery_clause} THEN 3
                     WHEN {guest_clause} THEN 2
                     WHEN {auto_clause} THEN 1
@@ -1287,6 +1329,7 @@ def claim_next_job(
             discovery_clause = _discovery_job_clause(conn, "candidate")
             auto_clause = _auto_job_clause(conn, "candidate")
             guest_clause = _guest_job_clause(conn, "candidate")
+            customer_initiated_clause = _customer_initiated_job_clause(conn, "candidate")
             customer_queued_exists = _customer_queued_exists_sql(conn)
             fair_order = _fair_customer_order_sql(conn)
             billing_paused_clause = _autopilot_billing_paused_clause(conn, "candidate")
@@ -1310,6 +1353,7 @@ def claim_next_job(
                   AND NOT ({billing_paused_clause})
                 ORDER BY
                   CASE
+                    WHEN {customer_initiated_clause} THEN -1
                     WHEN {discovery_clause} THEN 3
                     WHEN {guest_clause} THEN 2
                     WHEN {auto_clause} THEN 1
