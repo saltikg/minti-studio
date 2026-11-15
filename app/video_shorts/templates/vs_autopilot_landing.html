@@ -768,6 +768,31 @@
     border-top: 1px solid rgba(255, 255, 255, 0.055);
   }
 
+  .ap-editor-loop-card {
+    overflow: hidden;
+    margin: 0 0 1rem;
+    border: 1px solid rgba(255, 255, 255, 0.09);
+    border-radius: 21px;
+    background: var(--ap-surface);
+    box-shadow: 0 24px 60px rgba(0, 0, 0, 0.2);
+  }
+
+  .ap-editor-loop-card video {
+    width: 100%;
+    aspect-ratio: 16 / 9;
+    display: block;
+    object-fit: cover;
+    background: linear-gradient(145deg, #14202a, #0b1118);
+  }
+
+  .ap-editor-loop-card figcaption {
+    padding: 1.15rem 1.25rem 1.25rem;
+    color: #edf5f5;
+    font-size: clamp(0.95rem, 1.8vw, 1.08rem);
+    font-weight: 650;
+    text-align: center;
+  }
+
   .ap-screenshot-grid {
     display: grid;
     grid-template-columns: repeat(3, minmax(0, 1fr));
@@ -1404,6 +1429,13 @@
         <p class="ap-section-lede">Everything is visible. You can fine-tune anything — but you never have to.</p>
       </div>
 
+      <figure class="ap-editor-loop-card" data-ap-editor-loop>
+        <video muted autoplay loop playsinline preload="none" poster="{{ url_for('video_shorts_bp.static', filename='motion/editor-loop.jpg') }}" aria-label="MintiStudio editor automatically preparing a Short">
+          <source data-src="{{ url_for('video_shorts_bp.static', filename='motion/editor-loop.mp4') }}" type="video/mp4">
+        </video>
+        <figcaption>Your editor does the work. You just approve.</figcaption>
+      </figure>
+
       <div class="ap-screenshot-grid">
         <article class="ap-screenshot-card">
           <div class="ap-screenshot-window">
@@ -1514,6 +1546,29 @@
   autopilotVideo?.addEventListener("ended", function () {
     if (typeof trackMintiEvent === "function") trackMintiEvent("autopilot_video_complete");
   });
+
+  const editorLoopCard = document.querySelector("[data-ap-editor-loop]");
+  const editorLoopVideo = editorLoopCard?.querySelector("video");
+  const editorLoopSource = editorLoopVideo?.querySelector("source[data-src]");
+  const reducedMotion = window.matchMedia("(prefers-reduced-motion: reduce)");
+
+  if (editorLoopCard && editorLoopVideo && editorLoopSource && !reducedMotion.matches) {
+    const editorLoopObserver = new IntersectionObserver(function (entries) {
+      entries.forEach(function (entry) {
+        if (entry.isIntersecting) {
+          if (!editorLoopSource.src) {
+            editorLoopSource.src = editorLoopSource.dataset.src;
+            editorLoopVideo.load();
+          }
+          editorLoopVideo.play().catch(function () {});
+        } else {
+          editorLoopVideo.pause();
+        }
+      });
+    }, { threshold: 0.25 });
+
+    editorLoopObserver.observe(editorLoopCard);
+  }
 
   const workspaceLightbox = document.querySelector("[data-ap-workspace-lightbox]");
   const workspaceLightboxImage = workspaceLightbox?.querySelector("[data-ap-workspace-lightbox-image]");
