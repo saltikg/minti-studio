@@ -21137,6 +21137,8 @@ def _load_admin_share_links(
     clean_share_event_sql = _share_watch_clean_event_sql(conn)
     view_bucket_expr = _share_watch_view_bucket_sql(conn)
     feed_share_link_expr = _user_event_metadata_text_sql(conn, "share_link_id")
+    share_token_expr = _user_event_metadata_text_sql(conn, "token")
+    clean_event_join_sql = "ue.resolved_share_link_id = CAST(sl.id AS VARCHAR)"
     feed_lead_expr = _user_event_metadata_text_sql(conn, "autopilot_lead_id")
     feed_item_type_expr = _user_event_metadata_text_sql(conn, "item_type")
     feed_card_type_expr = _user_event_metadata_text_sql(conn, "card_type")
@@ -21204,7 +21206,7 @@ def _load_admin_share_links(
                 ) AS rn
               FROM short_share_links sl
               JOIN clean_share_events ue
-                ON {_share_link_event_join_sql(conn)}
+                ON {clean_event_join_sql}
               WHERE ue.event_name = 'share_cta_click'
                 AND {cta_expr} IS NOT NULL
             ) ranked_share_cta
@@ -21224,7 +21226,7 @@ def _load_admin_share_links(
                 ) AS rn
               FROM short_share_links sl
               JOIN clean_share_events ue
-                ON {_share_link_event_join_sql(conn)}
+                ON {clean_event_join_sql}
               WHERE ue.event_name IN (
                   'share_view',
                   'share_play',
@@ -21272,7 +21274,7 @@ def _load_admin_share_links(
                 ) AS rn
               FROM short_share_links sl
               JOIN clean_share_events ue
-                ON {_share_link_event_join_sql(conn)}
+                ON {clean_event_join_sql}
               WHERE ue.event_name = 'share_cta_click'
                 AND {cta_expr} IS NOT NULL
             ) ranked_share_cta
@@ -21292,7 +21294,7 @@ def _load_admin_share_links(
                 ) AS rn
               FROM short_share_links sl
               JOIN clean_share_events ue
-                ON {_share_link_event_join_sql(conn)}
+                ON {clean_event_join_sql}
               WHERE ue.event_name IN (
                   'share_view',
                   'share_play',
@@ -21353,16 +21355,24 @@ def _load_admin_share_links(
               MAX(ue.created_at) AS yes_intent_at
             FROM short_share_links sl
             JOIN clean_share_events ue
-              ON {_share_link_event_join_sql(conn)}
+              ON {clean_event_join_sql}
             WHERE ue.event_name = 'share_yes_intent'
             GROUP BY sl.id
         )
     """
 
     base_cte_sql = f"""
-        WITH clean_share_events AS (
-            SELECT ue.*
+        WITH clean_share_events AS {cte_materialized_sql}(
+            SELECT
+              ue.*,
+              COALESCE(
+                {feed_share_link_expr},
+                CAST(token_share_link.id AS VARCHAR)
+              ) AS resolved_share_link_id
             FROM user_events ue
+            LEFT JOIN short_share_links token_share_link
+              ON {feed_share_link_expr} IS NULL
+             AND {share_token_expr} = token_share_link.token
             WHERE ue.event_name IN (
                 'share_view',
                 'share_play',
@@ -21382,7 +21392,7 @@ def _load_admin_share_links(
               MIN(CASE WHEN ue.event_name = 'share_play' THEN ue.created_at END) AS first_play_at
             FROM short_share_links sl
             JOIN clean_share_events ue
-              ON {_share_link_event_join_sql(conn)}
+              ON {clean_event_join_sql}
             WHERE ue.event_name IN ('share_view', 'share_play')
             GROUP BY sl.id, {view_bucket_expr}
             HAVING
@@ -21436,7 +21446,7 @@ def _load_admin_share_links(
             LEFT JOIN shorts_generated_videos gv
               ON CAST(gv.id AS BIGINT) = CAST(sl.generated_video_id AS BIGINT)
             LEFT JOIN clean_share_events ue
-              ON {_share_link_event_join_sql(conn)}
+              ON {clean_event_join_sql}
             LEFT JOIN clean_view_agg cva
               ON cva.share_link_id = sl.id
             WHERE {where_sql}
