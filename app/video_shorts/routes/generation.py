@@ -6055,6 +6055,30 @@ def _format_datetime_pst(value: Any) -> str:
     return f"{localized:%b} {localized.day}, {localized.year} · {localized:%H:%M} {localized:%Z}"
 
 
+def _admin_activity_time_display(value: Any) -> Dict[str, Any]:
+    if not isinstance(value, datetime):
+        return {"value": None, "relative": "Never", "exact": ""}
+    moment = value if value.tzinfo else value.replace(tzinfo=timezone.utc)
+    moment_utc = moment.astimezone(timezone.utc)
+    elapsed_seconds = max(0, int((datetime.now(timezone.utc) - moment_utc).total_seconds()))
+    if elapsed_seconds < 60:
+        relative = "just now"
+    elif elapsed_seconds < 3600:
+        minutes = elapsed_seconds // 60
+        relative = f"{minutes} minute{'s' if minutes != 1 else ''} ago"
+    elif elapsed_seconds < 86400:
+        hours = elapsed_seconds // 3600
+        relative = f"{hours} hour{'s' if hours != 1 else ''} ago"
+    else:
+        days = elapsed_seconds // 86400
+        relative = f"{days} day{'s' if days != 1 else ''} ago"
+    return {
+        "value": value,
+        "relative": relative,
+        "exact": _format_datetime_pst(value),
+    }
+
+
 def _trial_duration_label(days: Any, language: str = "EN") -> str:
     return trial_duration_text(days, language)
 
@@ -23727,6 +23751,8 @@ def _load_admin_autopilot_customers(
                 COALESCE(NULLIF(u.email, ''), NULLIF(u.username, ''), '') AS email,
                 COALESCE(u.service_tier, 15) AS service_tier,
                 u.service_mode_chosen_at,
+                u.last_login_at,
+                u.last_active_at,
                 COALESCE(NULLIF(u.password_hash, ''), '') <> '' AS password_set,
                 COALESCE(NULLIF(u.google_sub, ''), '') <> '' AS google_linked,
                 CAST(b.id AS VARCHAR) AS brand_id,
@@ -23822,7 +23848,9 @@ def _load_admin_autopilot_customers(
                 FROM shorts_user_preferences design_pref
                 WHERE CAST(design_pref.user_id AS VARCHAR) = c.user_id
                   AND design_pref.preference_key = 'short_editor_defaults:' || c.brand_id
-            ) AS design_defaults_present
+            ) AS design_defaults_present,
+            c.last_login_at,
+            c.last_active_at
         FROM customers c
         LEFT JOIN source_counts sc ON sc.user_id = c.user_id
         LEFT JOIN youtube_oauth_tokens_v2 t
@@ -23903,6 +23931,8 @@ def _load_admin_autopilot_customers(
                 "new_video_count": 0,
                 "overdue": False,
                 "design_defaults_missing": bool(row[7]) and not bool(row[26]),
+                "last_login": _admin_activity_time_display(row[27]),
+                "last_active": _admin_activity_time_display(row[28]),
             }
             items_by_user[user_id] = item
         if row[19] is not None:
@@ -23981,13 +24011,16 @@ def _token_table_has_any_rows(table_name: str, owner_user_id: str) -> bool:
 
 
 def _load_admin_user_detail(conn, user_id: str) -> Optional[Dict[str, Any]]:
+    user_columns = table_columns(conn, "shorts_users")
     youtube_columns = table_columns(conn, "youtube_videos")
     generated_columns = table_columns(conn, "shorts_generated_videos")
     render_job_columns = table_columns(conn, "shorts_render_jobs")
     onboarding_magic_link_columns = table_columns(conn, "onboarding_magic_links")
 
+    last_login_sql = "last_login_at" if "last_login_at" in user_columns else "NULL"
+    last_active_sql = "last_active_at" if "last_active_at" in user_columns else "NULL"
     row = conn.execute(
-        """
+        f"""
         SELECT
           CAST(id AS VARCHAR),
           username,
@@ -24001,7 +24034,9 @@ def _load_admin_user_detail(conn, user_id: str) -> Optional[Dict[str, Any]]:
           updated_at,
           google_sub,
           COALESCE(service_mode, ''),
-          service_tier
+          service_tier,
+          {last_login_sql} AS last_login_at,
+          {last_active_sql} AS last_active_at
         FROM shorts_users
         WHERE CAST(id AS VARCHAR) = ?
         LIMIT 1
@@ -24308,6 +24343,8 @@ def _load_admin_user_detail(conn, user_id: str) -> Optional[Dict[str, Any]]:
         "service_mode": "autopilot" if str(row[11] or "").strip().lower() == "autopilot" else "self",
         "service_mode_label": "Autopilot" if str(row[11] or "").strip().lower() == "autopilot" else "Self-serve",
         "service_tier": int(row[12]) if row[12] is not None else None,
+        "last_login": _admin_activity_time_display(row[13]),
+        "last_active": _admin_activity_time_display(row[14]),
         "export_resolution_override": export_resolution.override or "auto",
         "export_resolution_effective": export_resolution.resolution,
         "export_resolution_options": [

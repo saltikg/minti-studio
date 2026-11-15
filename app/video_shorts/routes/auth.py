@@ -94,6 +94,11 @@ from app.video_shorts.services.onboarding_magic_links import (
     normalize_outreach_language,
 )
 from app.video_shorts.services.user_events import track_event
+from app.video_shorts.services.user_activity import (
+    load_activity_user_context,
+    record_authenticated_activity,
+    record_successful_login,
+)
 from app.video_shorts.services.export_resolution import export_quality_label, resolve_export_resolution
 from app.video_shorts.services.free_tool_analytics import (
     attribution_metadata as free_tool_attribution_metadata,
@@ -1877,6 +1882,17 @@ def _guard_video_shorts():
                 return redirect("/tools/youtube-to-shorts")
 
 
+@video_shorts_bp.before_request
+def _track_authenticated_customer_activity() -> None:
+    try:
+        current_user = getattr(g, "vs_current_user", None)
+        if current_user is None:
+            current_user = load_activity_user_context(str(session.get("vs_user_id") or ""))
+        record_authenticated_activity(current_user)
+    except Exception:
+        logger.exception("Authenticated activity hook failed; request will continue")
+
+
 @video_shorts_bp.route("/login", methods=["GET", "POST"])
 def login():
     if request.method == "GET":
@@ -1980,6 +1996,7 @@ def login():
                     user_id=row[0],
                     brand_id=(brand or {}).get("id"),
                 )
+                record_successful_login(row[0], "password")
                 g.vs_current_user = None
                 if post_choice["intent"]:
                     persist_conn = get_db()
@@ -2645,6 +2662,7 @@ def redeem_onboarding_magic_link(token: str):
             pass
 
     _establish_authenticated_session(user_id=user_id, brand_id=brand_id)
+    record_successful_login(user_id, "magic_link")
     if autopilot_requested:
         if lead_share_link_unresolved:
             _clear_pending_service_choice()
@@ -3143,6 +3161,7 @@ def google_oauth_callback():
         user_id=user_id,
         brand_id=(brand or {}).get("id"),
     )
+    record_successful_login(user_id, "google")
     flash("Signed in with Google.", "success")
     nxt = _normalize_next_url(session.pop("google_login_next", None)) or url_for("video_shorts_bp.my_videos_page")
     action = _normalize_guest_resume_action(session.pop("google_login_action", ""))

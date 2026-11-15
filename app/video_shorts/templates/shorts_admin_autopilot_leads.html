@@ -204,6 +204,8 @@
             <th class="admin-autopilot-status-col">Password<br>set?</th>
             <th class="admin-autopilot-status-col">Google<br>linked?</th>
             <th class="admin-autopilot-date-col">Created<br>date</th>
+            <th>Last login</th>
+            <th>Last active</th>
             <th class="admin-autopilot-status-col">Channel<br>connected</th>
             <th>Uploads</th>
             <th>Monthly quota</th>
@@ -237,6 +239,12 @@
               <td class="admin-autopilot-status-col">{{ customer.password_set_label }}</td>
               <td class="admin-autopilot-status-col">{{ customer.google_linked_label }}</td>
               <td class="admin-autopilot-date-col">{{ customer.chosen_date_pst or '—' }}</td>
+              <td>
+                <span{% if customer.last_login.exact %} title="{{ customer.last_login.exact }}"{% endif %}>{{ customer.last_login.relative }}</span>
+              </td>
+              <td>
+                <span{% if customer.last_active.exact %} title="{{ customer.last_active.exact }}"{% endif %}>{{ customer.last_active.relative }}</span>
+              </td>
               <td class="admin-autopilot-status-col">
                 {% if customer.no_channel %}
                   <span class="admin-autopilot-no-channel">No channel</span>
@@ -272,7 +280,7 @@
             </tr>
           {% else %}
             <tr>
-              <td colspan="11" class="text-center text-muted py-4">No autopilot customers yet.</td>
+              <td colspan="13" class="text-center text-muted py-4">No autopilot customers yet.</td>
             </tr>
           {% endfor %}
         </tbody>

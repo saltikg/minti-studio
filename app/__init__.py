@@ -99,12 +99,22 @@ def create_app():
 
     @app.get("/api/usage")
     def video_shorts_usage_api_alias():
-        _current_user()
+        current_user = _current_user()
+        try:
+            from app.video_shorts.services.user_activity import record_authenticated_activity
+            record_authenticated_activity(current_user)
+        except Exception:
+            logger.exception("Authenticated activity alias tracking failed; request will continue")
         return usage_api()
 
     @app.get("/api/jobs/<job_id>")
     def video_shorts_render_job_status_api_alias(job_id):
-        _current_user()
+        current_user = _current_user()
+        try:
+            from app.video_shorts.services.user_activity import record_authenticated_activity
+            record_authenticated_activity(current_user)
+        except Exception:
+            logger.exception("Authenticated activity alias tracking failed; request will continue")
         return render_job_status_api(job_id)
 
     @app.get("/w/<token>")

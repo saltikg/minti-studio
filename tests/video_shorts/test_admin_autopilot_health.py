@@ -32,7 +32,8 @@ def _database():
         """CREATE TABLE shorts_users (
             id VARCHAR, email VARCHAR, username VARCHAR, service_mode VARCHAR, service_tier INTEGER,
             service_mode_chosen_at TIMESTAMP, password_hash VARCHAR, google_sub VARCHAR,
-            updated_at TIMESTAMP, created_at TIMESTAMP)""",
+            updated_at TIMESTAMP, created_at TIMESTAMP,
+            last_login_at TIMESTAMP, last_active_at TIMESTAMP)""",
         "CREATE TABLE shorts_brands (id VARCHAR, name VARCHAR, owner_user_id VARCHAR)",
         "CREATE TABLE shorts_user_preferences (user_id VARCHAR, preference_key VARCHAR)",
         """CREATE TABLE autopilot_leads (
@@ -56,8 +57,8 @@ def _database():
         conn.execute(statement)
     now = datetime.now(timezone.utc).replace(tzinfo=None)
     conn.execute(
-        "INSERT INTO shorts_users VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
-        ["u1", "customer@example.com", "customer", "autopilot", 15, now, "hash", "", now, now],
+        "INSERT INTO shorts_users VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+        ["u1", "customer@example.com", "customer", "autopilot", 15, now, "hash", "", now, now, now, now],
     )
     conn.execute("INSERT INTO shorts_brands VALUES ('b1', 'Brand', 'u1')")
     conn.execute("INSERT INTO autopilot_leads VALUES ('l1', 'u1', 'b1', 'Creator', 'UC0000000000000000000000', ?, ?)", [now, now])
@@ -94,6 +95,8 @@ def test_customer_delivery_health_is_loaded_in_one_query(monkeypatch):
     assert customers[0]["channel_health"] == "Token error"
     assert customers[0]["new_video_count"] == 1
     assert customers[0]["overdue"] is True
+    assert customers[0]["last_login"]["relative"] != "Never"
+    assert customers[0]["last_active"]["relative"] != "Never"
 
 
 def test_process_revalidates_customer_scope_and_uses_shared_ingest(monkeypatch):

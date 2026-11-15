@@ -396,6 +396,12 @@
             <dt>Created</dt>
             <dd>{{ user_detail.created_at|admin_datetime }}</dd>
 
+            <dt>Last login</dt>
+            <dd><span{% if user_detail.last_login.exact %} title="{{ user_detail.last_login.exact }}"{% endif %}>{{ user_detail.last_login.relative }}</span></dd>
+
+            <dt>Last active</dt>
+            <dd><span{% if user_detail.last_active.exact %} title="{{ user_detail.last_active.exact }}"{% endif %}>{{ user_detail.last_active.relative }}</span></dd>
+
             <dt>Trial reminder</dt>
             <dd>
               {% if user_detail.trial_days and user_detail.trial_expires_at %}
