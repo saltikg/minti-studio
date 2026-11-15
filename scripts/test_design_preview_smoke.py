@@ -853,6 +853,21 @@ def _run_variant(browser: Browser, *, base_url: str, cookie_name: str,
               .some(id => document.getElementById(id)?.dataset.captionDomOwner === 'measured-svg')""",
             timeout=10_000,
         )
+        layer_order = page.evaluate(
+            """() => {
+              const visible = ids => ids.map(id => document.getElementById(id)).find(
+                el => el?.dataset.captionDomOwner === 'measured-svg'
+                  && getComputedStyle(el).display !== 'none');
+              const title = visible(['shorts-preview-title-band', 'orig-preview-title']);
+              const caption = visible(['shorts-preview-subtitle-band', 'orig-preview-caption']);
+              return {
+                title: Number(getComputedStyle(title).zIndex),
+                caption: Number(getComputedStyle(caption).zIndex),
+              };
+            }"""
+        )
+        assert layer_order["title"] > layer_order["caption"], layer_order
+        _print_pass(variant, "title preview layer stays above caption")
 
         reported_dpr = page.evaluate("() => window.devicePixelRatio")
         assert reported_dpr == dpr, (variant, reported_dpr)

@@ -4217,6 +4217,7 @@ def _compose_with_background(
     final_label = "[ov]"
 
     title_overlay_path = None
+    title_overlay_meta = None
     if title_txt:
         test_font_file = _title_font_path_for_text(title_txt, font_path)
         title_overlay_path, title_overlay_meta = _render_title_overlay(
@@ -4237,8 +4238,6 @@ def _compose_with_background(
             crop_to_bounds=True,
         )
         filter_parts.append("[2:v]format=yuva420p[title_src]")
-        filter_parts.append(f"{final_label}[title_src]overlay={title_overlay_meta['origin_x']}:{title_overlay_meta['origin_y']}:format=yuv420:shortest=1[ov_title]")
-        final_label = "[ov_title]"
 
     if subtitle_path:
         style = _subtitle_force_style(
@@ -4258,6 +4257,13 @@ def _compose_with_background(
             f"{final_label}subtitles='{_escape_ass_path(subtitle_path)}':fontsdir='{_escape_ass_path(SUBTITLE_FONTS_DIR)}':force_style='{style}'[subout]"
         )
         final_label = "[subout]"
+
+    if title_overlay_path and title_overlay_meta:
+        filter_parts.append(
+            f"{final_label}[title_src]overlay={title_overlay_meta['origin_x']}:{title_overlay_meta['origin_y']}:"
+            "format=yuv420:shortest=1[ov_title]"
+        )
+        final_label = "[ov_title]"
 
     filter_complex = ";".join(filter_parts)
 
@@ -4537,6 +4543,7 @@ def _compose_trimmed_with_background(
                 )
                 final_label = "[pod_ov_out]"
         next_video_input_index = 2 + len(overlay_sources)
+        pending_podcast_title_overlay: Optional[tuple[int, int]] = None
         if show_title and title_txt:
             test_font_file = _title_font_path_for_text(title_txt, font_path)
             if normalized_title_engine == "pillow":
@@ -4569,10 +4576,10 @@ def _compose_trimmed_with_background(
                 )
                 title_input_index = next_video_input_index
                 filter_parts.append(f"[{title_input_index}:v]format=yuva420p[pod_title_src]")
-                filter_parts.append(
-                    f"{final_label}[pod_title_src]overlay={title_overlay_meta['origin_x']}:{title_overlay_meta['origin_y']}:format=yuv420:shortest=1[pod_title_out]"
+                pending_podcast_title_overlay = (
+                    int(title_overlay_meta["origin_x"]),
+                    int(title_overlay_meta["origin_y"]),
                 )
-                final_label = "[pod_title_out]"
                 next_video_input_index += 1
         if effective_subtitle_path:
             style = _subtitle_force_style(
@@ -4606,6 +4613,13 @@ def _compose_trimmed_with_background(
             )
             final_label = "[pod_caption_out]"
             next_video_input_index += 1
+        if pending_podcast_title_overlay:
+            title_x, title_y = pending_podcast_title_overlay
+            filter_parts.append(
+                f"{final_label}[pod_title_src]overlay={title_x}:{title_y}:"
+                "format=yuv420:shortest=1[pod_title_out]"
+            )
+            final_label = "[pod_title_out]"
         if video_date_text:
             date_txt = _sanitize_text_for_overlay(video_date_text, 160)
             if date_txt:
@@ -5994,6 +6008,7 @@ def _compose_trimmed_with_background(
             f"{final_label}{shape_source_label}overlay={shape_x}:{shape_y}:format=yuv420:shortest=1{shape_output_label}"
         )
         final_label = shape_output_label
+    pending_title_overlays: list[Dict[str, Any]] = []
     if show_title and title_txt:
         test_font_file = _title_font_path_for_text(title_txt, font_path)
         if normalized_title_engine == "pillow":
@@ -6116,7 +6131,6 @@ def _compose_trimmed_with_background(
                         fit_source_by_index = {idx: f"[title_fit_src_{idx}]" for idx in fit_segment_indices}
                     else:
                         fit_source_by_index[fit_segment_indices[0]] = "[title_fit_src]"
-                current_title_label = final_label
                 for idx, segment in enumerate(layout_segments):
                     seg_start = float(segment.get("start") or 0.0)
                     seg_end = float(segment.get("end") or duration)
@@ -6127,15 +6141,15 @@ def _compose_trimmed_with_background(
                     )
                     if not source_label:
                         continue
-                    next_title_label = f"[ov_title_debug_{idx}]"
                     enable_expr = f"between(t\\,{seg_start:.6f}\\,{seg_end:.6f})"
                     title_path = fit_title_overlay_path if str(segment.get("mode") or "fill") == "fit" else title_overlay_path
                     title_x, title_y = title_overlay_positions[title_path]
-                    filter_parts.append(
-                        f"{current_title_label}{source_label}overlay={title_x}:{title_y}:format=yuv420:shortest=0:eof_action=pass:enable='{enable_expr}'{next_title_label}"
-                    )
-                    current_title_label = next_title_label
-                final_label = current_title_label
+                    pending_title_overlays.append({
+                        "source_label": source_label,
+                        "x": title_x,
+                        "y": title_y,
+                        "enable": enable_expr,
+                    })
             else:
                 title_overlay_paths.append(title_overlay_path)
                 title_input_index = next_video_input_index
@@ -6143,10 +6157,12 @@ def _compose_trimmed_with_background(
                     _title_source_filter(f"[{title_input_index}:v]", "[title_src]")
                 )
                 title_x, title_y = title_overlay_positions[title_overlay_path]
-                filter_parts.append(
-                    f"{final_label}[title_src]overlay={title_x}:{title_y}:format=yuv420:shortest=0:eof_action=pass[ov_title_debug]"
-                )
-                final_label = "[ov_title_debug]"
+                pending_title_overlays.append({
+                    "source_label": "[title_src]",
+                    "x": title_x,
+                    "y": title_y,
+                    "enable": None,
+                })
                 next_video_input_index += 1
     face_aware_subtitle_path: Optional[Path] = None
     anchored_subtitle_path: Optional[Path] = None
@@ -6357,6 +6373,18 @@ def _compose_trimmed_with_background(
                 )
             final_label = "[caption_out]"
             next_video_input_index += 1
+    for title_overlay_idx, title_overlay in enumerate(pending_title_overlays):
+        title_output_label = f"[ov_title_debug_{title_overlay_idx}]"
+        title_enable = (
+            f":enable='{title_overlay['enable']}'"
+            if title_overlay.get("enable")
+            else ""
+        )
+        filter_parts.append(
+            f"{final_label}{title_overlay['source_label']}overlay={title_overlay['x']}:{title_overlay['y']}:"
+            f"format=yuv420:shortest=0:eof_action=pass{title_enable}{title_output_label}"
+        )
+        final_label = title_output_label
     current_app.logger.info("video_date_text=%r", video_date_text)
     if video_date_text:
         date_txt = _sanitize_text_for_overlay(video_date_text, 160)
