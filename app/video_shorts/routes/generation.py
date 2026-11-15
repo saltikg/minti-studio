@@ -21143,6 +21143,7 @@ def _load_admin_share_links(
     feed_item_index_expr = _user_event_metadata_numeric_sql(conn, "item_index")
     free_tool_lead_expr = _user_event_metadata_text_sql(conn, "lead_id")
     free_tool_title_expr = _user_event_metadata_text_sql(conn, "video_title")
+    cte_materialized_sql = "MATERIALIZED " if getattr(conn, "backend_name", "") == "postgres" else ""
     if getattr(conn, "backend_name", "") == "postgres":
         channel_connected_agg_sql = "string_agg(DISTINCT ue.platform, ', ' ORDER BY ue.platform)"
     else:
@@ -21187,7 +21188,7 @@ def _load_admin_share_links(
             FROM clicked_magic_links
             WHERE rn = 1
         ),
-        latest_share_cta AS (
+        latest_share_cta AS {cte_materialized_sql}(
             SELECT
               share_link_id,
               cta_clicked,
@@ -21209,7 +21210,7 @@ def _load_admin_share_links(
             ) ranked_share_cta
             WHERE rn = 1
         ),
-        latest_share_device AS (
+        latest_share_device AS {cte_materialized_sql}(
             SELECT
               share_link_id,
               device_type
@@ -21236,7 +21237,7 @@ def _load_admin_share_links(
             ) ranked_share_device
             WHERE rn = 1
         ),
-        clicked_channel_connections AS (
+        clicked_channel_connections AS {cte_materialized_sql}(
             SELECT
               sl.id AS share_link_id,
               {channel_connected_agg_sql} AS connected_platforms,
@@ -21255,7 +21256,7 @@ def _load_admin_share_links(
     else:
         redeemed_magic_cte_sql = f"""
         ,
-        latest_share_cta AS (
+        latest_share_cta AS {cte_materialized_sql}(
             SELECT
               share_link_id,
               cta_clicked,
@@ -21277,7 +21278,7 @@ def _load_admin_share_links(
             ) ranked_share_cta
             WHERE rn = 1
         ),
-        latest_share_device AS (
+        latest_share_device AS {cte_materialized_sql}(
             SELECT
               share_link_id,
               device_type
@@ -21346,7 +21347,7 @@ def _load_admin_share_links(
 
     yes_intent_cte_sql = f"""
         ,
-        latest_yes_intent AS (
+        latest_yes_intent AS {cte_materialized_sql}(
             SELECT
               sl.id AS share_link_id,
               MAX(ue.created_at) AS yes_intent_at
@@ -21373,7 +21374,7 @@ def _load_admin_share_links(
               )
               AND {clean_share_event_sql}
         ),
-        clean_view_sessions AS (
+        clean_view_sessions AS {cte_materialized_sql}(
             SELECT
               sl.id AS share_link_id,
               {view_bucket_expr} AS view_bucket,
@@ -21388,7 +21389,7 @@ def _load_admin_share_links(
               SUM(CASE WHEN ue.event_name = 'share_view' THEN 1 ELSE 0 END) > 0
               AND SUM(CASE WHEN ue.event_name = 'share_play' THEN 1 ELSE 0 END) > 0
         ),
-        clean_view_agg AS (
+        clean_view_agg AS {cte_materialized_sql}(
             SELECT
               share_link_id,
               COUNT(*) AS clean_view_count,
@@ -21461,7 +21462,7 @@ def _load_admin_share_links(
               cva.first_view_at,
               cva.first_play_at
         ),
-        lead_feed_events AS (
+        lead_feed_events AS {cte_materialized_sql}(
             SELECT
               sl.id AS share_link_id,
               MAX(CASE WHEN ue.event_name = 'lead_feed_view' THEN 1 ELSE 0 END) AS entered_feed,
@@ -21501,7 +21502,7 @@ def _load_admin_share_links(
              )
             GROUP BY sl.id
         ),
-        share_link_conversion AS (
+        share_link_conversion AS {cte_materialized_sql}(
             SELECT
               sl.id AS share_link_id,
               MAX(l.converted_at) AS converted_at
@@ -21511,7 +21512,7 @@ def _load_admin_share_links(
              AND CAST(l.id AS VARCHAR) = CAST(sl.autopilot_lead_id AS VARCHAR)
             GROUP BY sl.id
         ),
-        lead_feed_short_counts AS (
+        lead_feed_short_counts AS {cte_materialized_sql}(
             SELECT
               sl.id AS share_link_id,
               COUNT(DISTINCT gv.id) AS feed_short_total
@@ -21525,25 +21526,50 @@ def _load_admin_share_links(
              AND NULLIF(trim(coalesce(gv.clip_filename, '')), '') IS NOT NULL
             GROUP BY sl.id
         ),
-        free_tool_events AS (
-            SELECT share_link_id, event_name, video_title, created_at
+        free_tool_event_source AS {cte_materialized_sql}(
+            SELECT
+              ue.id,
+              {free_tool_lead_expr} AS lead_id,
+              ue.event_name,
+              {free_tool_title_expr} AS video_title,
+              ue.created_at
+            FROM user_events ue
+            WHERE ue.event_name IN ('free_tool_landing_view', 'free_tool_submit', 'free_tool_claim')
+              AND {free_tool_lead_expr} IS NOT NULL
+        ),
+        free_tool_event_latest_time AS {cte_materialized_sql}(
+            SELECT lead_id, MAX(created_at) AS created_at
+            FROM free_tool_event_source
+            GROUP BY lead_id
+        ),
+        free_tool_event_latest AS {cte_materialized_sql}(
+            SELECT lead_id, event_name, video_title, created_at
             FROM (
               SELECT
-                sl.id AS share_link_id,
-                ue.event_name,
-                {free_tool_title_expr} AS video_title,
-                ue.created_at,
+                source.lead_id,
+                source.event_name,
+                source.video_title,
+                source.created_at,
                 ROW_NUMBER() OVER (
-                  PARTITION BY sl.id
-                  ORDER BY ue.created_at DESC, ue.id DESC
+                  PARTITION BY source.lead_id
+                  ORDER BY source.id DESC
                 ) AS rn
-              FROM short_share_links sl
-              JOIN user_events ue
-                ON ue.event_name IN ('free_tool_landing_view', 'free_tool_submit', 'free_tool_claim')
-               AND NULLIF(CAST(sl.autopilot_lead_id AS VARCHAR), '') IS NOT NULL
-               AND {free_tool_lead_expr} = CAST(sl.autopilot_lead_id AS VARCHAR)
+              FROM free_tool_event_source source
+              JOIN free_tool_event_latest_time latest
+                ON latest.lead_id = source.lead_id
+               AND latest.created_at = source.created_at
             ) ranked_free_tool_events
             WHERE rn = 1
+        ),
+        free_tool_events AS {cte_materialized_sql}(
+            SELECT
+              sl.id AS share_link_id,
+              latest.event_name,
+              latest.video_title,
+              latest.created_at
+            FROM short_share_links sl
+            JOIN free_tool_event_latest latest
+              ON NULLIF(CAST(sl.autopilot_lead_id AS VARCHAR), '') = latest.lead_id
         )
         {redeemed_magic_cte_sql}
         {latest_scheduled_outreach_cte_sql}
@@ -21608,88 +21634,7 @@ def _load_admin_share_links(
         having_clauses.append(converted_condition_sql)
     having_sql = " AND ".join(having_clauses)
 
-    total_count = int(
-        conn.execute(
-            f"""
-            {base_cte_sql}
-            SELECT COUNT(*)
-            FROM share_rows sr
-            LEFT JOIN latest_share_cta lsc
-              ON lsc.share_link_id = sr.id
-            LEFT JOIN lead_feed_events lfe
-              ON lfe.share_link_id = sr.id
-            LEFT JOIN share_link_conversion slc
-              ON slc.share_link_id = sr.id
-            LEFT JOIN latest_yes_intent lyi
-              ON lyi.share_link_id = sr.id
-            LEFT JOIN free_tool_events fte
-              ON fte.share_link_id = sr.id
-            {("LEFT JOIN latest_clicked_magic_link lr ON lr.share_link_id = sr.id" if onboarding_magic_link_columns else "")}
-            WHERE {having_sql}
-            """,
-            params,
-        ).fetchone()[0]
-        or 0
-    )
-    funnel_fact_rows = conn.execute(
-        f"""
-        {base_cte_sql}
-        SELECT
-          sr.id,
-          COALESCE(
-            sr.autopilot_lead_id,
-            lower(NULLIF(sr.recipient_email, '—')),
-            CAST(sr.id AS VARCHAR)
-          ) AS recipient_key,
-          sr.recipient_name,
-          sr.recipient_email,
-          CASE WHEN {sent_condition_sql} THEN 1 ELSE 0 END AS sent,
-          CASE WHEN {opened_condition_sql} THEN 1 ELSE 0 END AS opened,
-          CASE WHEN {played_condition_sql} THEN 1 ELSE 0 END AS played,
-          CASE WHEN {watched_75_condition_sql} THEN 1 ELSE 0 END AS watched_75,
-          CASE WHEN {entered_feed_condition_sql} THEN 1 ELSE 0 END AS entered_feed,
-          CASE WHEN {reached_trial_condition_sql} THEN 1 ELSE 0 END AS reached_trial_card,
-          CASE WHEN {requested_condition_sql} THEN 1 ELSE 0 END AS requested,
-          CASE WHEN {converted_condition_sql} THEN 1 ELSE 0 END AS converted,
-          CASE WHEN {clicked_condition_sql} THEN 1 ELSE 0 END AS clicked
-        FROM share_rows sr
-        LEFT JOIN latest_share_cta lsc
-          ON lsc.share_link_id = sr.id
-        LEFT JOIN lead_feed_events lfe
-          ON lfe.share_link_id = sr.id
-        LEFT JOIN share_link_conversion slc
-          ON slc.share_link_id = sr.id
-        LEFT JOIN latest_yes_intent lyi
-          ON lyi.share_link_id = sr.id
-        LEFT JOIN free_tool_events fte
-          ON fte.share_link_id = sr.id
-        {("LEFT JOIN latest_clicked_magic_link lr ON lr.share_link_id = sr.id" if onboarding_magic_link_columns else "")}
-        WHERE {summary_having_sql}
-          AND COALESCE(sr.declined, false) = false
-        """,
-        params,
-    ).fetchall()
-    funnel_facts = [
-        {
-            "share_link_id": row[0],
-            "recipient_key": row[1],
-            "recipient_name": row[2],
-            "recipient_email": row[3],
-            "sent": bool(row[4]),
-            "opened": bool(row[5]),
-            "played": bool(row[6]),
-            "watched_75": bool(row[7]),
-            "entered_feed": bool(row[8]),
-            "reached_trial_card": bool(row[9]),
-            "requested": bool(row[10]),
-            "converted": bool(row[11]),
-            "clicked": bool(row[12]),
-        }
-        for row in funnel_fact_rows
-    ]
-    funnel_summary, funnel_side_metrics = _build_admin_share_links_funnel(funnel_facts)
-
-    rows = conn.execute(
+    all_rows = conn.execute(
         f"""
         {base_cte_sql}
         SELECT
@@ -21743,7 +21688,17 @@ def _load_admin_share_links(
           sr.first_play_at,
           sr.first_watched_75_at,
           lfe.first_feed_at,
-          lfe.first_trial_card_at
+          lfe.first_trial_card_at,
+          sr.autopilot_lead_id,
+          CASE WHEN {sent_condition_sql} THEN 1 ELSE 0 END AS funnel_sent,
+          CASE WHEN {opened_condition_sql} THEN 1 ELSE 0 END AS funnel_opened,
+          CASE WHEN {played_condition_sql} THEN 1 ELSE 0 END AS funnel_played,
+          CASE WHEN {watched_75_condition_sql} THEN 1 ELSE 0 END AS funnel_watched_75,
+          CASE WHEN {entered_feed_condition_sql} THEN 1 ELSE 0 END AS funnel_entered_feed,
+          CASE WHEN {reached_trial_condition_sql} THEN 1 ELSE 0 END AS funnel_reached_trial_card,
+          CASE WHEN {requested_condition_sql} THEN 1 ELSE 0 END AS funnel_requested,
+          CASE WHEN {converted_condition_sql} THEN 1 ELSE 0 END AS funnel_converted,
+          CASE WHEN {clicked_condition_sql} THEN 1 ELSE 0 END AS funnel_clicked
         FROM share_rows sr
         LEFT JOIN latest_share_cta lsc
           ON lsc.share_link_id = sr.id
@@ -21763,12 +21718,59 @@ def _load_admin_share_links(
           ON fte.share_link_id = sr.id
         {("LEFT JOIN latest_clicked_magic_link lr ON lr.share_link_id = sr.id" if onboarding_magic_link_columns else "")}
         {("LEFT JOIN clicked_channel_connections rcc ON rcc.share_link_id = sr.id" if onboarding_magic_link_columns else "")}
-        WHERE {having_sql}
+        WHERE {summary_having_sql}
         ORDER BY {order_column} {order_direction} NULLS LAST, sr.id DESC
-        LIMIT ? OFFSET ?
         """,
-        params + [limit, offset],
+        params,
     ).fetchall()
+
+    funnel_facts = [
+        {
+            "share_link_id": row[0],
+            "recipient_key": (
+                str(row[51] or "").strip()
+                or (str(row[6] or "").strip().lower() if str(row[6] or "").strip() != "—" else "")
+                or str(row[0])
+            ),
+            "recipient_name": row[5],
+            "recipient_email": row[6],
+            "sent": bool(row[52]),
+            "opened": bool(row[53]),
+            "played": bool(row[54]),
+            "watched_75": bool(row[55]),
+            "entered_feed": bool(row[56]),
+            "reached_trial_card": bool(row[57]),
+            "requested": bool(row[58]),
+            "converted": bool(row[59]),
+            "clicked": bool(row[60]),
+        }
+        for row in all_rows
+        if not bool(row[38])
+    ]
+    funnel_summary, funnel_side_metrics = _build_admin_share_links_funnel(funnel_facts)
+
+    funnel_flag_index = {
+        "sent": 52,
+        "viewed": 53,
+        "played": 54,
+        "watched_75": 55,
+        "entered_feed": 56,
+        "reached_trial_card": 57,
+        "requested": 58,
+        "converted": 59,
+        "clicked": 60,
+    }
+    if normalized_funnel_filter == "all":
+        filtered_rows = all_rows
+    else:
+        flag_index = funnel_flag_index[normalized_funnel_filter]
+        filtered_rows = [row for row in all_rows if bool(row[flag_index])]
+    total_count = len(filtered_rows)
+    page_limit = max(1, int(limit))
+    requested_offset = max(0, int(offset))
+    last_page_offset = ((total_count - 1) // page_limit) * page_limit if total_count else 0
+    effective_offset = min(requested_offset, last_page_offset)
+    rows = filtered_rows[effective_offset : effective_offset + page_limit]
 
     items: List[Dict[str, Any]] = []
     for row in rows:
@@ -25145,19 +25147,6 @@ def admin_share_links():
 
     conn = get_db_readonly()
     try:
-        total_links = _load_admin_share_links(
-            conn,
-            email_query=email_query,
-            engagement_filter=engagement_filter,
-            funnel_filter=funnel_filter,
-            archive_filter=archive_filter,
-            sort_key=sort_key,
-            sort_dir=sort_dir,
-            limit=1,
-            offset=0,
-        )[1]
-        total_pages = max(1, (total_links + per_page - 1) // per_page)
-        page = min(page, total_pages)
         (
             links,
             total_links,
@@ -25179,6 +25168,8 @@ def admin_share_links():
             limit=per_page,
             offset=(page - 1) * per_page,
         )
+        total_pages = max(1, (total_links + per_page - 1) // per_page)
+        page = min(page, total_pages)
     finally:
         conn.close()
 
