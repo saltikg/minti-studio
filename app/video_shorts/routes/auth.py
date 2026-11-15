@@ -166,6 +166,7 @@ def _free_tool_claim_metadata(**metadata):
 AUTOPILOT_SERVICE_TIERS = {15, 30, 45, 60}
 SELF_SERVE_PLAN_IDS = {"plan_free", "plan_2gb", "plan_10gb"}
 SERVICE_MODE_VALUES = {"autopilot", "self"}
+AUTH_EMAIL_SESSION_KEY = "vs_auth_email"
 
 LOGIN_RATE_LIMITS = [RateLimitRule(limit=5, window_seconds=60)]
 REGISTER_RATE_LIMITS = [RateLimitRule(limit=5, window_seconds=60)]
@@ -174,6 +175,24 @@ FORGOT_PASSWORD_RATE_LIMITS = [RateLimitRule(limit=1, window_seconds=60), RateLi
 RESEND_VERIFICATION_RATE_LIMITS = [RateLimitRule(limit=1, window_seconds=60), RateLimitRule(limit=5, window_seconds=3600)]
 RESET_PASSWORD_RATE_LIMITS = [RateLimitRule(limit=5, window_seconds=3600)]
 CONTACT_RATE_LIMITS = [RateLimitRule(limit=3, window_seconds=60), RateLimitRule(limit=10, window_seconds=3600)]
+
+
+def _remember_auth_email(value: object) -> str:
+    email = _normalize_auth_email(value or "")
+    if email:
+        session[AUTH_EMAIL_SESSION_KEY] = email
+        session.modified = True
+    return email
+
+
+def _remember_legacy_email_query_and_redirect(endpoint: str):
+    email = _normalize_auth_email(request.args.get("email") or "")
+    if not email:
+        return None
+    _remember_auth_email(email)
+    safe_args = request.args.to_dict(flat=True)
+    safe_args.pop("email", None)
+    return redirect(url_for(endpoint, **safe_args))
 
 
 def _format_size_bytes(num: int) -> str:
@@ -1905,6 +1924,9 @@ def _track_authenticated_customer_activity() -> None:
 @video_shorts_bp.route("/login", methods=["GET", "POST"])
 def login():
     if request.method == "GET":
+        clean_email_redirect = _remember_legacy_email_query_and_redirect("video_shorts_bp.login")
+        if clean_email_redirect is not None:
+            return clean_email_redirect
         choice = _current_auth_choice(include_request_values=True)
         if choice["intent"] or choice["plan_id"]:
             _stash_auth_choice(
@@ -1917,7 +1939,7 @@ def login():
         nxt = _normalize_next_url(request.args.get("next")) or url_for("video_shorts_bp.my_videos_page")
         return redirect(nxt)
     error = None
-    prefill_email = (request.args.get("email") or "").strip().lower()
+    prefill_email = _normalize_auth_email(session.get(AUTH_EMAIL_SESSION_KEY) or "")
     resend_email = ""
     if request.method == "POST":
         resume = _guest_resume_values(request.form)
@@ -2237,14 +2259,15 @@ def register():
                     session.pop("vs_user_id", None)
                     session.pop("vs_brand_id", None)
                     g.vs_current_user = None
-                track_event(user_id, "signup")
+                track_event(user_id, "signup", metadata={"method": "email"})
+                _remember_auth_email(email)
                 try:
                     send_verification_email(to_email=email, verify_token=verify_token, recipient_name=name)
                 except Exception:
                     logger.exception("Failed to send verification email for user=%s", user_id)
                     flash("Your account was created, but we couldn't send the verification email. Please try again.", "danger")
-                    return redirect(url_for("video_shorts_bp.register_check_email", email=email, delivery_failed=1))
-                return redirect(url_for("video_shorts_bp.register_check_email", email=email))
+                    return redirect(url_for("video_shorts_bp.register_check_email", delivery_failed=1))
+                return redirect(url_for("video_shorts_bp.register_check_email"))
     if error:
         flash(error, "danger")
     return _render_register_page(pending_email=pending_email)
@@ -2252,7 +2275,10 @@ def register():
 
 @video_shorts_bp.route("/register/check-email", methods=["GET"])
 def register_check_email():
-    email = _normalize_auth_email(request.args.get("email") or "")
+    clean_email_redirect = _remember_legacy_email_query_and_redirect("video_shorts_bp.register_check_email")
+    if clean_email_redirect is not None:
+        return clean_email_redirect
+    email = _normalize_auth_email(session.get(AUTH_EMAIL_SESSION_KEY) or "")
     if not email:
         return redirect(url_for("video_shorts_bp.register"))
     delivery_failed = str(request.args.get("delivery_failed") or "").strip().lower() in {"1", "true", "yes"}
@@ -2322,7 +2348,8 @@ def verify_email():
             expires_at = expires_at.replace(tzinfo=timezone.utc)
         if bool(row[3]):
             flash("Email already verified. You can sign in.", "success")
-            login_kwargs = {"email": _normalize_auth_email(row[1] or row[2] or "")}
+            _remember_auth_email(row[1] or row[2] or "")
+            login_kwargs = {}
             if _normalize_next_url(row[5] if len(row) > 5 else None):
                 login_kwargs["next"] = _normalize_next_url(row[5])
             action = _normalize_guest_resume_action(row[6] if len(row) > 6 else "")
@@ -2364,7 +2391,8 @@ def verify_email():
     except Exception:
         logger.exception("Membership activation email orchestration failed after verify_email for user=%s", row[0])
     flash("Email verified. You can sign in.", "success")
-    login_kwargs = {"email": _normalize_auth_email(row[1] or row[2] or "")}
+    _remember_auth_email(row[1] or row[2] or "")
+    login_kwargs = {}
     if _normalize_next_url(row[5] if len(row) > 5 else None):
         login_kwargs["next"] = _normalize_next_url(row[5])
     action = _normalize_guest_resume_action(row[6] if len(row) > 6 else "")
@@ -2406,28 +2434,36 @@ def resend_verification_email():
         return redirect(url_for("video_shorts_bp.register"))
     if bool(user_row[5]):
         flash("This email is already verified. You can sign in.", "success")
-        return redirect(url_for("video_shorts_bp.login", email=email))
+        _remember_auth_email(email)
+        return redirect(url_for("video_shorts_bp.login"))
     try:
         ok, message, _retry_after = _resend_verification_for_user(user_row)
     except Exception:
         logger.exception("Failed to resend verification email for %s", email)
         flash("We couldn't send the verification email right now. Please try again.", "danger")
+        _remember_auth_email(email)
         if context != "login":
-            return redirect(url_for("video_shorts_bp.register_check_email", email=email))
-        return redirect(url_for("video_shorts_bp.login", email=email))
+            return redirect(url_for("video_shorts_bp.register_check_email"))
+        return redirect(url_for("video_shorts_bp.login"))
     flash(message, "success" if ok else "warning")
+    _remember_auth_email(email)
     if context != "login":
-        return redirect(url_for("video_shorts_bp.register_check_email", email=email))
-    return redirect(url_for("video_shorts_bp.login", email=email))
+        return redirect(url_for("video_shorts_bp.register_check_email"))
+    return redirect(url_for("video_shorts_bp.login"))
 
 
 @video_shorts_bp.route("/forgot-password", methods=["GET", "POST"])
 def forgot_password():
-    prefill_email = _normalize_auth_email(request.args.get("email") or "")
+    if request.method == "GET":
+        clean_email_redirect = _remember_legacy_email_query_and_redirect("video_shorts_bp.forgot_password")
+        if clean_email_redirect is not None:
+            return clean_email_redirect
+    prefill_email = _normalize_auth_email(session.get(AUTH_EMAIL_SESSION_KEY) or "")
     sent = False
     if request.method == "POST":
         email = _normalize_auth_email(request.form.get("email") or "")
         prefill_email = email
+        _remember_auth_email(email)
         allowed, _retry_after = check_rate_limits("auth-forgot-password", _rate_limit_key(email), FORGOT_PASSWORD_RATE_LIMITS)
         if not allowed:
             flash("Too many attempts. Please try again later.", "danger")
@@ -2485,6 +2521,7 @@ def reset_password():
         if expires_at and getattr(expires_at, "tzinfo", None) is None:
             expires_at = expires_at.replace(tzinfo=timezone.utc)
         if not expires_at or expires_at < now_utc:
+            _remember_auth_email(row[1] or row[2] or "")
             return render_template(
                 "vs_reset_password.html",
                 token=token,
@@ -2517,7 +2554,8 @@ def reset_password():
             )
             conn.commit()
             flash("Your password has been reset. You can sign in.", "success")
-            return redirect(url_for("video_shorts_bp.login", email=email))
+            _remember_auth_email(email)
+            return redirect(url_for("video_shorts_bp.login"))
     finally:
         conn.close()
     return render_template("vs_reset_password.html", token=token, token_invalid=False, token_expired=False)
@@ -2690,7 +2728,7 @@ def redeem_onboarding_magic_link(token: str):
     finally:
         signup_exists_conn.close()
     if not signup_exists:
-        track_event(user_id, "signup")
+        track_event(user_id, "signup", metadata={"method": "magic_link"})
     record_successful_login(user_id, "magic_link")
     if autopilot_requested:
         if lead_share_link_unresolved:
@@ -3181,7 +3219,7 @@ def google_oauth_callback():
         conn.commit()
     conn.close()
     if created_new_user:
-        track_event(user_id, "signup")
+        track_event(user_id, "signup", metadata={"method": "google"})
         try:
             send_membership_activated_emails(user_id=user_id, signup_method="Google")
         except Exception:

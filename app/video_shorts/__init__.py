@@ -21,9 +21,12 @@ def close_video_shorts_request_connections(error=None):
 
 @video_shorts_bp.app_context_processor
 def inject_video_shorts_db_backend():
+    from app.video_shorts.services.analytics_consent import should_show_analytics_consent_banner
+
     return {
         "video_shorts_db_backend": (VIDEO_SHORTS_DB_BACKEND or "duckdb"),
         "comments_enabled": comments_enabled(),
+        "ga_consent_banner_required": should_show_analytics_consent_banner(),
     }
 
 

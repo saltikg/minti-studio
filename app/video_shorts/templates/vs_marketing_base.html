@@ -25,6 +25,42 @@
   {% include "_ga4_google_tag.html" %}
 
   <style>
+    .minti-consent-banner {
+      position: fixed;
+      z-index: 2000;
+      right: 18px;
+      bottom: 18px;
+      width: min(420px, calc(100vw - 36px));
+      padding: 16px;
+      border: 1px solid rgba(110, 231, 216, 0.3);
+      border-radius: 14px;
+      background: rgba(7, 18, 27, 0.98);
+      color: #eef7f6;
+      box-shadow: 0 18px 44px rgba(0, 0, 0, 0.38);
+    }
+    .minti-consent-banner[hidden] { display: none; }
+    .minti-consent-banner p { margin: 0 0 12px; line-height: 1.45; }
+    .minti-consent-actions { display: flex; justify-content: flex-end; gap: 8px; }
+    .minti-consent-actions button {
+      border-radius: 999px;
+      padding: 7px 15px;
+      font: inherit;
+      font-weight: 650;
+      cursor: pointer;
+    }
+    .minti-consent-decline {
+      border: 1px solid rgba(238, 247, 246, 0.4);
+      background: transparent;
+      color: #eef7f6;
+    }
+    .minti-consent-accept {
+      border: 1px solid #6ee7d8;
+      background: #6ee7d8;
+      color: #06212a;
+    }
+  </style>
+
+  <style>
     html {
       scroll-behavior: smooth;
       scroll-padding-top: 88px;
@@ -650,6 +686,16 @@
   </main>
 
   {% include "_marketing_footer.html" %}
+
+  {% if ga_consent_banner_required %}
+    <aside class="minti-consent-banner" data-ga-consent-banner hidden aria-label="Analytics cookie preferences">
+      <p>We use analytics cookies to improve Minti.</p>
+      <div class="minti-consent-actions">
+        <button type="button" class="minti-consent-decline" data-ga-consent-decline>Decline</button>
+        <button type="button" class="minti-consent-accept" data-ga-consent-accept>Accept</button>
+      </div>
+    </aside>
+  {% endif %}
 
   <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/js/bootstrap.bundle.min.js"></script>
   <script>

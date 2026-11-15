@@ -170,6 +170,8 @@ def test_password_signup_records_first_touch_attribution(monkeypatch, tmp_path):
         headers={"Referer": "https://chatgpt.com/c/example?secret=not-stored"},
     )
     assert first.status_code in {200, 301, 302}
+    assert "utm_source=test_attr" in first.headers.get("Location", "")
+    assert "utm_medium=check" in first.headers.get("Location", "")
     client.get("/video_shorts/?utm_source=overwrite&utm_medium=wrong")
 
     email = "signup-attribution@example.com"
@@ -182,6 +184,17 @@ def test_password_signup_records_first_touch_attribution(monkeypatch, tmp_path):
         },
     )
     assert response.status_code == 302
+    assert response.headers["Location"].endswith("/video_shorts/register/check-email")
+    assert email not in response.headers["Location"]
+    check_email_page = client.get(response.headers["Location"])
+    assert check_email_page.status_code == 200
+    check_email_html = check_email_page.get_data(as_text=True)
+    assert "si••" in check_email_html
+    assert "@example.com" in check_email_html
+    assert "gtag('consent', 'default'" in check_email_html
+    assert "wait_for_update: 500" in check_email_html
+    assert "page_location: mintiSanitizedPageLocation()" in check_email_html
+    assert "We use analytics cookies to improve Minti." in check_email_html
 
     conn = db_service.get_db()
     try:

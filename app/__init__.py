@@ -200,7 +200,10 @@ def create_app():
     else:
         @app.get("/")
         def legacy_root_redirect():
-            return redirect(url_for("video_shorts_bp.home"), code=301)
+            destination = url_for("video_shorts_bp.home")
+            if request.query_string:
+                destination = f"{destination}?{request.query_string.decode('latin-1')}"
+            return redirect(destination, code=301)
 
     def _absolute_public_url(path: str) -> str:
         base_url = "https://mintistudio.com"

@@ -155,6 +155,13 @@ def track_event(
         from app.video_shorts.services.signup_attribution import signup_attribution_metadata
 
         metadata = {**dict(metadata or {}), **signup_attribution_metadata()}
+    if name in {"signup", "free_tool_submit"}:
+        from app.video_shorts.services.ga4_measurement import send_ga4_event
+
+        ga4_params = {}
+        if name == "signup":
+            ga4_params["method"] = str((metadata or {}).get("method") or "unknown")[:40]
+        send_ga4_event("sign_up" if name == "signup" else "free_tool_submit", ga4_params)
     conn = None
     try:
         conn = get_db()
