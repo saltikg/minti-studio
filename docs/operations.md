@@ -25,6 +25,9 @@
   - Instagram / Facebook / TikTok publish is not a systemd service.
     It runs from user crontab every 10 minutes through:
     `scripts/run_social_jobs_cron.sh publish`
+  - Instagram long-lived token refresh checks run daily at 3:30 AM
+    `America/Los_Angeles` through:
+    `scripts/run_social_jobs_cron.sh instagram-token-refresh`
   - Hourly YouTube comments sync runs through:
     `scripts/run_social_jobs_cron.sh youtube-comments`
   - Disk alarm runs from root crontab:

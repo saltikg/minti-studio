@@ -43,6 +43,13 @@ if [[ "$MODE" == "youtube-comments" ]]; then
     "--only-youtube-comments"
     "--comment-scan-scope" "$COMMENT_SCAN_SCOPE"
   )
+elif [[ "$MODE" == "instagram-token-refresh" ]]; then
+  LOG_FILE="$(pick_log_file "$LOG_DIR/instagram_token_refresh.log")"
+  CMD=(
+    "$ROOT/.venv/bin/python"
+    "-m"
+    "app.video_shorts.tasks.refresh_instagram_tokens"
+  )
 else
   LOG_FILE="$(pick_log_file "$LOG_DIR/social_all.log")"
   CMD=(

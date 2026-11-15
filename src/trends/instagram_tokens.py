@@ -1,5 +1,6 @@
 import datetime
 import json
+import logging
 from typing import Optional, Dict, List
 import requests
 
@@ -16,6 +17,8 @@ from app.video_shorts.services.brands import current_brand_id
 from src.trends.token_store_db import connect_store, has_columns, relation_missing
 
 load_dotenv()
+
+logger = logging.getLogger(__name__)
 
 
 class InstagramTokenStoreError(Exception):
@@ -295,7 +298,15 @@ def get_instagram_credentials(
                 current=data,
             )
             return refreshed or data
-        except Exception:
+        except Exception as exc:
+            scoped_owner = _scope_owner(user_id, brand_id)
+            _owner_user_id, _separator, scoped_brand_id = scoped_owner.partition("::")
+            logger.error(
+                "Instagram token refresh failed brand=%s account=%s error=%s",
+                scoped_brand_id or "<unknown>",
+                data.get("instagram_username") or data.get("instagram_business_account_id") or "<unknown>",
+                describe_instagram_refresh_error(exc, token=data.get("page_access_token")),
+            )
             return data
     return None
 
@@ -436,6 +447,41 @@ def _parse_iso_datetime(value: Optional[str]) -> Optional[datetime.datetime]:
         return datetime.datetime.fromisoformat(str(value))
     except Exception:
         return None
+
+
+def describe_instagram_refresh_error(
+    exc: Exception,
+    *,
+    token: Optional[str] = None,
+) -> str:
+    """Return a useful refresh error without logging access-token values or URLs."""
+    response = getattr(exc, "response", None)
+    status_code = getattr(response, "status_code", None)
+    error_code = None
+    error_subcode = None
+    message = None
+    if response is not None:
+        try:
+            payload = response.json() or {}
+            error = payload.get("error") if isinstance(payload, dict) else None
+            if isinstance(error, dict):
+                error_code = error.get("code")
+                error_subcode = error.get("error_subcode")
+                message = error.get("message")
+        except Exception:
+            pass
+    if message and token:
+        message = str(message).replace(str(token), "[redacted]")
+    details = [exc.__class__.__name__]
+    if status_code is not None:
+        details.append(f"status={status_code}")
+    if error_code is not None:
+        details.append(f"code={error_code}")
+    if error_subcode is not None:
+        details.append(f"subcode={error_subcode}")
+    if message:
+        details.append(f"message={message}")
+    return " ".join(details)
 
 
 def _fetch_instagram_account_profile(access_token: str, instagram_user_id: Optional[str] = None) -> Dict[str, Optional[str]]:
