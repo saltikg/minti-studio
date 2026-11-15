@@ -24058,6 +24058,21 @@ def _load_admin_user_detail(conn, user_id: str) -> Optional[Dict[str, Any]]:
     if not row:
         return None
 
+    from app.video_shorts.services.signup_attribution import signup_source_label
+
+    signup_event_row = conn.execute(
+        """
+        SELECT metadata
+        FROM user_events
+        WHERE CAST(user_id AS VARCHAR) = ?
+          AND event_name = 'signup'
+        ORDER BY created_at ASC
+        LIMIT 1
+        """,
+        [user_id],
+    ).fetchone()
+    signup_source = signup_source_label(signup_event_row[0] if signup_event_row else None)
+
     uploaded_videos = 0
     if youtube_columns and "owner_user_id" in youtube_columns:
         uploaded_videos = int(
@@ -24357,6 +24372,7 @@ def _load_admin_user_detail(conn, user_id: str) -> Optional[Dict[str, Any]]:
         "service_tier": int(row[12]) if row[12] is not None else None,
         "last_login": _admin_activity_time_display(row[13]),
         "last_active": _admin_activity_time_display(row[14]),
+        "signup_source": signup_source,
         "export_resolution_override": export_resolution.override or "auto",
         "export_resolution_effective": export_resolution.resolution,
         "export_resolution_options": [

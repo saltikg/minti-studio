@@ -73,3 +73,48 @@
     {% block auth_content %}{% endblock %}
   </section>
 {% endblock %}
+
+{% block scripts %}
+  {{ super() }}
+  <script>
+    (() => {
+      const WINDOW_SECONDS = 60;
+      document.querySelectorAll("[data-resend-verification]").forEach((form) => {
+        const button = form.querySelector("[data-resend-button]");
+        if (!button) return;
+        const emailInput = form.querySelector('input[name="email"]');
+        const storageKey = () =>
+          `minti-resend-verification:${(emailInput?.value || "unknown").toLowerCase()}`;
+        const serverRetry = Number(form.dataset.resendRetryAfter || 0);
+        let activeStorageKey = storageKey();
+        let deadline = Number(sessionStorage.getItem(activeStorageKey) || 0);
+        if (serverRetry > 0) {
+          deadline = Date.now() + serverRetry * 1000;
+          sessionStorage.setItem(activeStorageKey, String(deadline));
+        }
+        const originalLabel = button.textContent;
+        let timer = null;
+        const update = () => {
+          const seconds = Math.max(0, Math.ceil((deadline - Date.now()) / 1000));
+          if (seconds > 0) {
+            button.disabled = true;
+            button.textContent = `You can resend in ${seconds}s`;
+            timer = window.setTimeout(update, 250);
+          } else {
+            button.disabled = false;
+            button.textContent = originalLabel;
+            sessionStorage.removeItem(activeStorageKey);
+            if (timer) window.clearTimeout(timer);
+          }
+        };
+        form.addEventListener("submit", () => {
+          activeStorageKey = storageKey();
+          deadline = Date.now() + WINDOW_SECONDS * 1000;
+          sessionStorage.setItem(activeStorageKey, String(deadline));
+          update();
+        });
+        update();
+      });
+    })();
+  </script>
+{% endblock %}

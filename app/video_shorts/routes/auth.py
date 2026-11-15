@@ -980,12 +980,19 @@ def _create_password_reset_token_for_user(conn, *, user_id: str) -> tuple[str, d
     return reset_token, expires_at
 
 
-def _render_login_page(*, resend_email: str = "", prefill_email: str = "", status_code: int = 200):
+def _render_login_page(
+    *,
+    resend_email: str = "",
+    prefill_email: str = "",
+    resend_retry_after: int = 0,
+    status_code: int = 200,
+):
     route_kwargs = _build_auth_route_kwargs(include_next=True)
     return (
         render_template(
             "vs_login.html",
             resend_email=resend_email,
+            resend_retry_after=max(0, int(resend_retry_after or 0)),
             prefill_email=prefill_email,
             auth_intent=route_kwargs.get("intent", ""),
             auth_tier=route_kwargs.get("tier"),
@@ -1056,6 +1063,7 @@ def _render_check_email_page(
     verification_expired: bool = False,
     delivery_failed: bool = False,
     resend_context: str = "check_email",
+    resend_retry_after: int = 0,
     status_code: int = 200,
 ):
     return (
@@ -1068,6 +1076,7 @@ def _render_check_email_page(
             delivery_failed=delivery_failed,
             resend_email=email,
             resend_context=resend_context,
+            resend_retry_after=max(0, int(resend_retry_after or 0)),
         ),
         status_code,
     )
@@ -2371,12 +2380,22 @@ def verify_email():
 def resend_verification_email():
     email = _normalize_auth_email(request.form.get("email") or request.args.get("email") or "")
     context = (request.form.get("context") or request.args.get("context") or "login").strip()
-    allowed, _retry_after = check_rate_limits("auth-resend-verification", _rate_limit_key(email), RESEND_VERIFICATION_RATE_LIMITS)
+    allowed, retry_after = check_rate_limits("auth-resend-verification", _rate_limit_key(email), RESEND_VERIFICATION_RATE_LIMITS)
     if not allowed:
-        flash("Too many attempts. Please try again later.", "danger")
+        flash(f"You can resend in {retry_after} seconds.", "warning")
         if context != "login":
-            return _render_check_email_page(email=email, resend_context=context or "check_email", status_code=429)
-        return _render_login_page(resend_email=email, prefill_email=email, status_code=429)
+            return _render_check_email_page(
+                email=email,
+                resend_context=context or "check_email",
+                resend_retry_after=retry_after,
+                status_code=429,
+            )
+        return _render_login_page(
+            resend_email=email,
+            prefill_email=email,
+            resend_retry_after=retry_after,
+            status_code=429,
+        )
     if not email:
         flash("Enter your email address first.", "warning")
         return redirect(url_for("video_shorts_bp.login"))
@@ -2662,6 +2681,16 @@ def redeem_onboarding_magic_link(token: str):
             pass
 
     _establish_authenticated_session(user_id=user_id, brand_id=brand_id)
+    signup_exists_conn = get_db_readonly()
+    try:
+        signup_exists = signup_exists_conn.execute(
+            "SELECT 1 FROM user_events WHERE CAST(user_id AS VARCHAR) = ? AND event_name = 'signup' LIMIT 1",
+            [str(user_id)],
+        ).fetchone()
+    finally:
+        signup_exists_conn.close()
+    if not signup_exists:
+        track_event(user_id, "signup")
     record_successful_login(user_id, "magic_link")
     if autopilot_requested:
         if lead_share_link_unresolved:

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import io
+import json
 import sys
 from datetime import datetime, timezone
 from email.utils import parsedate_to_datetime
@@ -152,6 +153,83 @@ def test_register_page_and_post_are_blocked_when_signups_disabled(monkeypatch, t
     assert post_response.status_code == 403
     post_page = post_response.get_data(as_text=True)
     assert "We&#39;re at capacity right now" in post_page
+
+
+def test_password_signup_records_first_touch_attribution(monkeypatch, tmp_path):
+    _configure_duckdb(monkeypatch, tmp_path, "signup_attribution.duckdb")
+    monkeypatch.setenv("SIGNUPS_ENABLED", "true")
+    monkeypatch.setattr(auth_routes, "_verify_turnstile_or_fail", lambda: True)
+    monkeypatch.setattr(auth_routes, "send_verification_email", lambda **kwargs: None)
+    monkeypatch.setattr(auth_routes, "create_brand_record", lambda *args, **kwargs: {"id": "brand-test"})
+
+    app = create_app()
+    app.secret_key = "test-secret"
+    client = app.test_client()
+    first = client.get(
+        "/?utm_source=test_attr&utm_medium=check&utm_campaign=first",
+        headers={"Referer": "https://chatgpt.com/c/example?secret=not-stored"},
+    )
+    assert first.status_code in {200, 301, 302}
+    client.get("/video_shorts/?utm_source=overwrite&utm_medium=wrong")
+
+    email = "signup-attribution@example.com"
+    response = client.post(
+        "/video_shorts/register",
+        data={
+            "email": email,
+            "password": "StrongPassword123!",
+            "password_confirm": "StrongPassword123!",
+        },
+    )
+    assert response.status_code == 302
+
+    conn = db_service.get_db()
+    try:
+        row = conn.execute(
+            """
+            SELECT ue.metadata
+            FROM user_events ue
+            JOIN shorts_users u ON CAST(u.id AS VARCHAR) = CAST(ue.user_id AS VARCHAR)
+            WHERE lower(u.email) = lower(?) AND ue.event_name = 'signup'
+            ORDER BY ue.created_at ASC
+            LIMIT 1
+            """,
+            [email],
+        ).fetchone()
+    finally:
+        conn.close()
+    metadata = json.loads(row[0]) if isinstance(row[0], str) else row[0]
+    assert metadata["utm_source"] == "test_attr"
+    assert metadata["utm_medium"] == "check"
+    assert metadata["utm_campaign"] == "first"
+    assert metadata["referrer_host"] == "chatgpt.com"
+    assert metadata["landing_path"].startswith("/?utm_source=test_attr")
+    assert "secret" not in json.dumps(metadata)
+    assert metadata["first_seen_at"]
+
+
+def test_resend_verification_rate_limit_shows_countdown(monkeypatch, tmp_path):
+    _configure_duckdb(monkeypatch, tmp_path, "resend_verification_countdown.duckdb")
+    app = create_app()
+    app.secret_key = "test-secret"
+    client = app.test_client()
+    email = f"missing-{uuid4()}@example.com"
+
+    first = client.post(
+        "/video_shorts/verification/resend",
+        data={"email": email, "context": "login"},
+    )
+    assert first.status_code == 302
+    second = client.post(
+        "/video_shorts/verification/resend",
+        data={"email": email, "context": "login"},
+    )
+
+    assert second.status_code == 429
+    page = second.get_data(as_text=True)
+    assert "You can resend in" in page
+    assert 'data-resend-verification' in page
+    assert 'data-resend-retry-after="0"' not in page
 
 
 def test_existing_google_user_can_sign_in_when_signups_disabled(monkeypatch, tmp_path):

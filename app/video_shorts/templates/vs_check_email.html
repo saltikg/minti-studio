@@ -27,19 +27,19 @@
       {% endif %}
 
       {% if resend_email %}
-        <form method="post" action="{{ url_for('video_shorts_bp.resend_verification_email') }}">
+        <form method="post" action="{{ url_for('video_shorts_bp.resend_verification_email') }}" data-resend-verification data-resend-retry-after="{{ resend_retry_after|default(0) }}">
           <input type="hidden" name="email" value="{{ resend_email }}">
           <input type="hidden" name="context" value="{{ resend_context or 'check_email' }}">
-          <button class="btn btn-primary w-100" type="submit">Resend email</button>
+          <button class="btn btn-primary w-100" type="submit" data-resend-button>Resend email</button>
         </form>
       {% else %}
-        <form method="post" action="{{ url_for('video_shorts_bp.resend_verification_email') }}">
+        <form method="post" action="{{ url_for('video_shorts_bp.resend_verification_email') }}" data-resend-verification data-resend-retry-after="{{ resend_retry_after|default(0) }}">
           <input type="hidden" name="context" value="{{ resend_context or 'verify_invalid' }}">
           <div class="mb-3">
             <label class="form-label">Email</label>
             <input type="email" class="form-control" name="email" placeholder="you@example.com" required autofocus>
           </div>
-          <button class="btn btn-primary w-100" type="submit">Resend email</button>
+          <button class="btn btn-primary w-100" type="submit" data-resend-button>Resend email</button>
         </form>
       {% endif %}
 

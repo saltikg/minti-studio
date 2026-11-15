@@ -48,4 +48,11 @@ def redirect_disabled_comment_routes():
         return redirect(url_for("video_shorts_bp.my_videos_page"))
     return None
 
+
+@video_shorts_bp.before_app_request
+def capture_first_touch_signup_attribution():
+    from app.video_shorts.services.signup_attribution import capture_signup_attribution
+
+    capture_signup_attribution()
+
 from .routes import *  # noqa: F401,F403

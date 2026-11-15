@@ -75,10 +75,10 @@
         </a>
       {% endif %}
       {% if resend_email %}
-        <form method="post" action="{{ url_for('video_shorts_bp.resend_verification_email') }}" class="mt-3">
+        <form method="post" action="{{ url_for('video_shorts_bp.resend_verification_email') }}" class="mt-3" data-resend-verification data-resend-retry-after="{{ resend_retry_after|default(0) }}">
           <input type="hidden" name="email" value="{{ resend_email }}">
           <input type="hidden" name="context" value="login">
-          <button type="submit" class="btn btn-link w-100 p-0 text-decoration-underline">Resend verification email</button>
+          <button type="submit" class="btn btn-link w-100 p-0 text-decoration-underline" data-resend-button>Resend verification email</button>
         </form>
       {% endif %}
       <p class="text-center mt-3 small">

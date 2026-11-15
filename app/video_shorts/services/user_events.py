@@ -151,6 +151,10 @@ def track_event(
     name = str(event_name or "").strip()
     if not owner_id or not name:
         return
+    if name == "signup":
+        from app.video_shorts.services.signup_attribution import signup_attribution_metadata
+
+        metadata = {**dict(metadata or {}), **signup_attribution_metadata()}
     conn = None
     try:
         conn = get_db()
