@@ -2,7 +2,17 @@
 {% set vs_library_href = url_for('video_shorts_bp.my_videos_page') %}
 {% set vs_library_label = 'My Videos' %}
 
-{% block title %}MintiStudio{% endblock %}
+{% set page_title = "Turn Long Videos into Shorts | Minti Studio" %}
+{% set page_description = "Turn long videos into captioned Shorts. Make them yourself in minutes, or let our team make and schedule them for you with Autopilot." %}
+
+{% block title %}{{ page_title }}{% endblock %}
+{% block meta_description %}{{ page_description }}{% endblock %}
+
+{% block seo_meta %}
+  {{ super() }}
+  <meta property="og:title" content="{{ page_title }}">
+  <meta property="og:description" content="{{ page_description }}">
+{% endblock %}
 
 {% block extra_styles %}
 <style>

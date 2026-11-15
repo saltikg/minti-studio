@@ -119,6 +119,7 @@ def main() -> int:
     meta, body = _parse_front_matter(POST_SOURCE.read_text(encoding="utf-8"))
     title = str(meta.get("title") or NEW_POST_TITLE)
     slug = _slugify(meta.get("slug") or title)
+    meta_title = str(meta.get("meta_title") or title).strip()
     meta_description = str(meta.get("meta_description") or "").strip()
     published_at = datetime.now(UTC)
     reading_time = _reading_time_minutes(body)
@@ -171,7 +172,7 @@ def main() -> int:
                 summary,
                 body,
                 COVER_URL,
-                title,
+                meta_title,
                 meta_description,
                 reading_time,
                 published_at,

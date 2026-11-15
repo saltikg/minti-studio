@@ -1,7 +1,8 @@
 ---
 title: "Free YouTube to Shorts: Paste a Link, Get an Edited Short in Minutes"
 slug: free-youtube-to-shorts-tool
-meta_description: "Paste a YouTube link and get a captioned, vertical Short in minutes. AI picks the best moment, you edit it like a document. Free, no sign-up to try."
+meta_title: "YouTube to Shorts for Free: Step-by-Step | Minti Studio"
+meta_description: "A step-by-step guide to turning a YouTube video into a captioned Short: paste the link, pick the moment, edit, and download. Free to try."
 primary_keyword: "youtube to shorts free"
 secondary_keywords: ["free youtube to shorts converter", "ai clip finder", "youtube video to shorts online"]
 ---
