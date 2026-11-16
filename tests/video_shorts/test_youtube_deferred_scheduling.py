@@ -1,5 +1,6 @@
 from datetime import timedelta
 import json
+import logging
 from pathlib import Path
 
 import duckdb
@@ -501,7 +502,7 @@ def test_design_only_difference_allows_enqueue_and_sends_info_alert(db, monkeypa
     assert any(kind == 'design_only_render_difference' and 'caption_anchor' in message for kind, message in alerts)
 
 
-def test_legacy_warnings_apply_and_warning_scan_does_not_mutate(db, monkeypatch):
+def test_render_pending_preflight_is_informational_for_fresh_frozen_asset(db, monkeypatch):
     alerts = []
     monkeypatch.setattr(scheduling, '_alert', lambda sid, kind, message: alerts.append(kind))
     first = schedule(publish_at=scheduling.iso(scheduling.utc() + timedelta(hours=5)))
@@ -514,14 +515,75 @@ def test_legacy_warnings_apply_and_warning_scan_does_not_mutate(db, monkeypatch)
             [json.dumps(payload)],
         )
     scheduling.scheduler_tick(now=stored['upload_due_at'] - timedelta(hours=2, minutes=59))
-    assert 'preflight_failed' in alerts
+    assert 'preflight_failed' not in alerts
     assert json.loads(row(db)['payload_json'])['render_pending'] is True
-    scheduling._alert_due_not_enqueued(
-        duckdb.connect(db), stored['upload_due_at'] + timedelta(minutes=16)
-    )
-    assert 'enqueue_late' in alerts
-    assert json.loads(row(db)['payload_json'])['render_pending'] is True
+    with duckdb.connect(db) as conn:
+        assert conn.execute(
+            "SELECT status FROM shorts_schedule_status_history WHERE schedule_id=? ORDER BY created_at DESC LIMIT 1",
+            [first['schedule_id']],
+        ).fetchone()[0] == 'preflight_ok'
     assert first['schedule_id'] == row(db)['id']
+
+
+def test_render_pending_preflight_still_fails_when_frozen_asset_is_missing(db, monkeypatch):
+    alerts = []
+    monkeypatch.setattr(scheduling, '_alert', lambda sid, kind, message: alerts.append((kind, message)))
+    first = schedule(publish_at=scheduling.iso(scheduling.utc() + timedelta(hours=5)))
+    stored = row(db)
+    with duckdb.connect(db) as conn:
+        payload = json.loads(stored['payload_json'])
+        payload['render_pending'] = True
+        conn.execute('UPDATE shorts_youtube_schedules SET payload_json=?', [json.dumps(payload)])
+    monkeypatch.setattr(scheduling, '_file_exists', lambda payload: False)
+    scheduling.scheduler_tick(now=stored['upload_due_at'] - timedelta(hours=2, minutes=59))
+    assert ('preflight_failed', f"YouTube schedule {first['schedule_id']} pre-flight failed; blocker=missing_file.") in alerts
+
+
+def test_editing_lease_does_not_block_frozen_asset_after_upload_due(db, monkeypatch):
+    alerts = []
+    monkeypatch.setattr(scheduling, '_alert', lambda sid, kind, message: alerts.append(kind))
+    first = schedule(publish_at=scheduling.iso(scheduling.utc() + timedelta(hours=3)))
+    now = scheduling.utc()
+    with duckdb.connect(db) as conn:
+        conn.execute(
+            'UPDATE shorts_youtube_schedules SET upload_due_at=?,created_at=? WHERE id=?',
+            [now - timedelta(minutes=20), now, first['schedule_id']],
+        )
+    scheduling.acquire_clip_mutation_lease(
+        user_id='owner', brand_id='brand', video_pk=1, plan_index='2', state='editing',
+    )
+    assert scheduling.scheduler_tick(now=now) is True
+    assert row(db)['status'] == 'queued'
+    assert 'enqueue_late' not in alerts
+
+
+def test_mutation_lease_audit_logs_holder_times_and_release_reason(db, caplog):
+    with caplog.at_level(logging.INFO, logger=scheduling.__name__):
+        lease = scheduling.acquire_clip_mutation_lease(
+            user_id='owner', brand_id='brand', video_pk=1, plan_index='2', state='editing',
+        )
+        assert scheduling.release_clip_mutation_lease(lease, reason='unit_test') is True
+    audit = '\n'.join(record.getMessage() for record in caplog.records if 'clip_mutation_lease_audit' in record.getMessage())
+    assert 'event=acquired' in audit
+    assert 'holder_type=system holder_user=owner state=editing' in audit
+    assert 'acquired_at=' in audit
+    assert 'event=released' in audit
+    assert 'released_at=' in audit and 'release_reason=unit_test' in audit
+
+
+def test_enqueue_late_requires_later_pass_after_five_minute_block_grace(db, monkeypatch):
+    alerts = []
+    monkeypatch.setattr(scheduling, '_alert', lambda sid, kind, message: alerts.append(kind))
+    schedule(publish_at=scheduling.iso(scheduling.utc() + timedelta(hours=5)))
+    due = row(db)['upload_due_at']
+    monkeypatch.setattr(scheduling, '_file_exists', lambda payload: False)
+    first_seen = due + timedelta(minutes=16)
+    scheduling.scheduler_tick(now=first_seen)
+    assert 'enqueue_late' not in alerts
+    scheduling.scheduler_tick(now=first_seen + timedelta(minutes=4, seconds=59))
+    assert 'enqueue_late' not in alerts
+    scheduling.scheduler_tick(now=first_seen + timedelta(minutes=5))
+    assert 'enqueue_late' in alerts
 
 
 def test_duplicate_title_blocks_before_upload(db, monkeypatch, tmp_path):
@@ -547,6 +609,7 @@ def test_scheduler_alerts_preflight_enqueue_due_and_missed(db, monkeypatch):
     preflight_at = stored['upload_due_at'] - timedelta(hours=2, minutes=59)
     scheduling.scheduler_tick(now=preflight_at)
     scheduling.scheduler_tick(now=stored['upload_due_at'] + timedelta(minutes=16))
+    scheduling.scheduler_tick(now=stored['upload_due_at'] + timedelta(minutes=21))
     scheduling.scheduler_tick(now=stored['publish_at'])
     scheduling.scheduler_tick(now=stored['publish_at'] + timedelta(hours=25))
     kinds = {kind for _, kind, _ in alerts}

@@ -1,10 +1,12 @@
 from __future__ import annotations
 
 import json
+import inspect
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 import duckdb
+import pytest
 from flask import Flask
 
 from app.video_shorts.routes import generation
@@ -93,3 +95,44 @@ def test_admin_action_never_records(monkeypatch):
             action="edit+save", changed_fields=["title"],
         )
     assert called == []
+
+
+def test_delete_protection_cancels_active_schedule_before_media_removal(monkeypatch):
+    events = []
+    contexts = [{"platform": "youtube", "publish_at": "2026-11-16T16:11:00Z"}]
+    context_reads = iter((contexts, []))
+    monkeypatch.setattr(generation, "_pending_schedule_contexts", lambda **kwargs: next(context_reads))
+    monkeypatch.setattr(
+        generation.youtube_scheduling, "cancel_schedule",
+        lambda **kwargs: events.append(("cancel", kwargs)),
+    )
+    result = generation._cancel_active_schedules_before_clip_delete(
+        owner_user_id="owner", brand_id="brand", video_pk=7956,
+        source_video_id="LKaf1CYh4wQ", plan_index=7,
+        clip_filename="7_LKaf1CYh4wQ_v7956.mp4",
+    )
+    events.append(("delete", None))
+    assert result == contexts
+    assert [event[0] for event in events] == ["cancel", "delete"]
+    source = inspect.getsource(generation.delete_clip_plan_entry)
+    assert source.index("_cancel_active_schedules_before_clip_delete") < source.index("_remove_plan_entry_and_media")
+
+
+def test_delete_protection_keeps_frozen_file_when_schedule_cannot_cancel(monkeypatch):
+    monkeypatch.setattr(
+        generation, "_pending_schedule_contexts",
+        lambda **kwargs: [{"platform": "youtube", "publish_at": "2026-11-16T16:11:00Z"}],
+    )
+    monkeypatch.setattr(
+        generation.youtube_scheduling, "cancel_schedule",
+        lambda **kwargs: (_ for _ in ()).throw(generation.youtube_scheduling.YouTubeScheduleLocked("uploading")),
+    )
+    deleted = []
+    with pytest.raises(generation.youtube_scheduling.YouTubeScheduleLocked):
+        generation._cancel_active_schedules_before_clip_delete(
+            owner_user_id="owner", brand_id="brand", video_pk=7956,
+            source_video_id="LKaf1CYh4wQ", plan_index=7,
+            clip_filename="7_LKaf1CYh4wQ_v7956.mp4",
+        )
+        deleted.append(True)
+    assert deleted == []

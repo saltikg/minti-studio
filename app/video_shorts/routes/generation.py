@@ -11728,6 +11728,56 @@ def _pending_schedule_contexts(
     return contexts
 
 
+def _cancel_active_schedules_before_clip_delete(
+    *, owner_user_id: str, brand_id: Optional[str], video_pk: int,
+    source_video_id: str, plan_index: int, clip_filename: str,
+) -> List[Dict[str, Any]]:
+    """Cancel active publishing rows before their frozen clip can be removed."""
+    contexts = _pending_schedule_contexts(
+        owner_user_id=owner_user_id, brand_id=brand_id, video_pk=video_pk,
+        source_video_id=source_video_id, plan_index=plan_index,
+    )
+    if not contexts:
+        return []
+    if any(str(item.get("platform") or "").lower() == "youtube" for item in contexts):
+        youtube_scheduling.cancel_schedule(
+            user_id=owner_user_id, brand_id=brand_id,
+            video_pk=video_pk, plan_index=plan_index,
+        )
+    social_platforms = {
+        str(item.get("platform") or "").lower()
+        for item in contexts
+        if str(item.get("platform") or "").lower() in {"instagram", "facebook", "tiktok"}
+    }
+    if social_platforms:
+        conn = get_db()
+        try:
+            ensure_instagram_queue_schema(conn)
+            ensure_facebook_queue_schema(conn)
+            ensure_tiktok_queue_schema(conn)
+            for platform in social_platforms:
+                _cancel_pending_social_queue_rows(
+                    conn, table_name=f"shorts_{platform}_queue",
+                    video_id=source_video_id, plan_index=plan_index,
+                    video_pk=video_pk, clip_filename=clip_filename,
+                )
+            conn.commit()
+        except Exception:
+            conn.rollback()
+            raise
+        finally:
+            conn.close()
+    remaining = _pending_schedule_contexts(
+        owner_user_id=owner_user_id, brand_id=brand_id, video_pk=video_pk,
+        source_video_id=source_video_id, plan_index=plan_index,
+    )
+    if remaining:
+        raise youtube_scheduling.YouTubeScheduleLocked(
+            "A scheduled publish is still active; cancel it before deleting this clip."
+        )
+    return contexts
+
+
 def _record_scheduled_customer_action(
     *, editor_context: Dict[str, Any], current_user: Dict[str, Any], video_pk: int,
     source_video_id: str, plan_index: int, clip_title: str, action: str,
@@ -13068,11 +13118,11 @@ def _lock_uploaded_youtube_clip():
         return _guard_youtube_clip_mutation(video_pk,plan_index)
 
 
-def _release_youtube_clip_mutation_lease():
+def _release_youtube_clip_mutation_lease(*, reason="request_completed"):
     lease = g.pop("youtube_clip_mutation_lease", None)
     if lease is not None:
         try:
-            youtube_scheduling.release_clip_mutation_lease(lease)
+            youtube_scheduling.release_clip_mutation_lease(lease, reason=reason)
         except Exception:
             current_app.logger.exception(
                 "Failed to clear clip mutation lease asset_key=%s",
@@ -13092,7 +13142,7 @@ def _finish_youtube_clip_mutation(response):
 def _release_youtube_schedule_edits(error=None):
     if g.get("youtube_clip_mutation_request_id") != id(request._get_current_object()):
         return
-    _release_youtube_clip_mutation_lease()
+    _release_youtube_clip_mutation_lease(reason="request_error" if error else "request_teardown")
 
 
 @video_shorts_bp.after_request
@@ -28658,6 +28708,8 @@ def admin_refresh_user_youtube_status(user_id: str):
 
 @video_shorts_bp.route("/generate/<int:video_pk>/delete_clip", methods=["POST"])
 def delete_clip(video_pk):
+    current_user = getattr(g, "vs_current_user", None) or {}
+    editor_context = _active_editor_context()
     ajax_request = request.headers.get("X-Requested-With") == "XMLHttpRequest"
     filename = (request.form.get("filename") or "").strip()
     plan_index_raw = (request.form.get("plan_index") or "").strip()
@@ -28687,29 +28739,38 @@ def delete_clip(video_pk):
         if not str(target).startswith(str(SHORTS_DIR.resolve())):
             message = "Invalid path."
         elif _short_exists(filename):
-            _delete_short_media(filename)
             plan_entries = _load_plan_entries(row[0], video_pk=video_pk)
-            if plan_entries:
-                match_entry = None
-                plan_index = None
-                if plan_index_raw:
+            match_entry = None
+            plan_index = None
+            if plan_index_raw:
+                try:
+                    plan_index = int(plan_index_raw)
+                except Exception:
+                    plan_index = None
+            if plan_index is not None:
+                for entry in plan_entries:
                     try:
-                        plan_index = int(plan_index_raw)
-                    except Exception:
-                        plan_index = None
-                if plan_index is not None:
-                    for entry in plan_entries:
-                        try:
-                            if int(entry.get("plan_index") or 0) == plan_index:
-                                match_entry = entry
-                                break
-                        except Exception:
-                            continue
-                if match_entry is None:
-                    for entry in plan_entries:
-                        if entry.get("clip_filename") == filename or entry.get("output_filename") == filename:
+                        if int(entry.get("plan_index") or 0) == plan_index:
                             match_entry = entry
                             break
+                    except Exception:
+                        continue
+            if match_entry is None:
+                for entry in plan_entries:
+                    if entry.get("clip_filename") == filename or entry.get("output_filename") == filename:
+                        match_entry = entry
+                        break
+            delete_schedules = []
+            if match_entry and match_entry.get("plan_index") is not None:
+                plan_index = int(match_entry["plan_index"])
+            if plan_index is not None:
+                delete_schedules = _cancel_active_schedules_before_clip_delete(
+                    owner_user_id=str(editor_context["owner_user_id"]), brand_id=editor_context["brand_id"],
+                    video_pk=video_pk, source_video_id=str(row[0]), plan_index=plan_index,
+                    clip_filename=filename,
+                )
+            _delete_short_media(filename)
+            if plan_entries:
                 if match_entry:
                     match_entry["status"] = "pending"
                     match_entry["output_filename"] = None
@@ -28730,12 +28791,20 @@ def delete_clip(video_pk):
                         )
                     except Exception as exc:
                         current_app.logger.warning("Failed to clear render cache after delete: %s", exc)
+                    _record_scheduled_customer_action(
+                        editor_context=editor_context, current_user=current_user, video_pk=video_pk,
+                        source_video_id=str(row[0]), plan_index=plan_index,
+                        clip_title=str(match_entry.get("title") or f"Clip {plan_index}"), action="delete",
+                        changed_fields=[], schedules=delete_schedules,
+                    )
             message = f"Deleted clip: {filename}"
             success = True
         else:
             message = "Clip not found."
     except tenant_media.TenantMediaConflict as exc:
         return jsonify(success=False, message=str(exc)), 403
+    except youtube_scheduling.YouTubeScheduleLocked as exc:
+        return jsonify(success=False, message=str(exc)), 409
     except Exception as e:
         message = f"Delete failed: {e}"
 
@@ -28750,6 +28819,8 @@ def delete_clip(video_pk):
 
 @video_shorts_bp.route("/generate/<int:video_pk>/remove_plan_entry", methods=["POST"])
 def remove_plan_entry(video_pk):
+    current_user = getattr(g, "vs_current_user", None) or {}
+    editor_context = _active_editor_context()
     plan_index_raw = (request.form.get("plan_index") or "").strip()
     filename = (request.form.get("filename") or "").strip()
     ajax_request = request.headers.get("X-Requested-With") == "XMLHttpRequest"
@@ -28786,7 +28857,16 @@ def remove_plan_entry(video_pk):
         return redirect(url_for("video_shorts_bp.generate_short", video_pk=video_pk))
 
     try:
+        target_plan_index = int(target_entry.get("plan_index"))
+        clip_filename = str(target_entry.get("clip_filename") or target_entry.get("output_filename") or "")
+        delete_schedules = _cancel_active_schedules_before_clip_delete(
+            owner_user_id=str(editor_context["owner_user_id"]), brand_id=editor_context["brand_id"],
+            video_pk=video_pk, source_video_id=str(video_id), plan_index=target_plan_index,
+            clip_filename=clip_filename,
+        )
         removed_entry = _remove_plan_entry_and_media(video_id, plan_entries, target_entry, video_pk=video_pk)
+    except youtube_scheduling.YouTubeScheduleLocked as exc:
+        return jsonify(success=False, message=str(exc)), 409
     except tenant_media.TenantMediaConflict as exc:
         return jsonify(success=False, message=str(exc)), 403
     except Exception as exc:
@@ -28797,6 +28877,12 @@ def remove_plan_entry(video_pk):
         flash(message, "danger")
         return redirect(url_for("video_shorts_bp.generate_short", video_pk=video_pk))
 
+    _record_scheduled_customer_action(
+        editor_context=editor_context, current_user=current_user, video_pk=video_pk,
+        source_video_id=str(video_id), plan_index=target_plan_index,
+        clip_title=str(removed_entry.get("title") or f"Clip {target_plan_index}"), action="delete",
+        changed_fields=[], schedules=delete_schedules,
+    )
     if ajax_request:
         return jsonify(success=True, plan_index=removed_entry.get("plan_index"), message="Plan section removed.")
     flash("Plan section removed.", "success")
@@ -28826,13 +28912,11 @@ def _find_plan_entry(
 
 
 def _plan_entry_youtube_locked(entry: Dict[str, Any]) -> bool:
-    terminal_publish_statuses = {"scheduled", "uploaded", "published"}
+    terminal_publish_statuses = {"uploaded", "published"}
     publish_status = str(entry.get("publish_status") or "").strip().lower()
     if publish_status in terminal_publish_statuses:
         return True
     if str(entry.get("yt_video_id") or entry.get("youtube_video_id") or "").strip():
-        return True
-    if str(entry.get("publish_at") or entry.get("publish_at_iso") or entry.get("planned_publish_at") or "").strip():
         return True
     return False
 
@@ -28917,13 +29001,16 @@ def delete_clip_plan_entry(video_pk, plan_index):
             message="Scheduled/published clips cannot be deleted here. Remove it on YouTube first.",
         ), 409
 
-    delete_schedules = _pending_schedule_contexts(
-        owner_user_id=str(editor_context["owner_user_id"]), brand_id=editor_context["brand_id"],
-        video_pk=video_pk, source_video_id=str(video_id), plan_index=plan_index,
-    )
-
     try:
+        clip_filename = str(target_entry.get("clip_filename") or target_entry.get("output_filename") or "")
+        delete_schedules = _cancel_active_schedules_before_clip_delete(
+            owner_user_id=str(editor_context["owner_user_id"]), brand_id=editor_context["brand_id"],
+            video_pk=video_pk, source_video_id=str(video_id), plan_index=plan_index,
+            clip_filename=clip_filename,
+        )
         removed_entry = _remove_plan_entry_and_media(video_id, plan_entries, target_entry, video_pk=video_pk)
+    except youtube_scheduling.YouTubeScheduleLocked as exc:
+        return jsonify(success=False, message=str(exc)), 409
     except tenant_media.TenantMediaConflict as exc:
         return jsonify(success=False, message=str(exc)), 403
     except Exception as exc:

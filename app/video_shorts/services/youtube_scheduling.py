@@ -29,6 +29,7 @@ logger = logging.getLogger(__name__)
 TABLE = "shorts_youtube_schedules"
 MUTATION_LEASE_TABLE = "shorts_clip_mutation_leases"
 MUTATION_LEASE_MINUTES = 30
+ENQUEUE_LATE_BLOCK_GRACE_MINUTES = 5
 HISTORY_TABLE = "shorts_schedule_status_history"
 ALERTS_TABLE = "shorts_schedule_alerts"
 SCHEDULER_STATE_TABLE = "shorts_scheduler_state"
@@ -119,6 +120,15 @@ def _actor(user_id=None):
     return f"system:{str(user_id or 'unknown')}"
 
 
+def _lease_holder(user_id):
+    if has_app_context():
+        current = getattr(g, "vs_current_user", None) or {}
+        if current.get("id"):
+            role = str(current.get("role") or "customer").strip().lower()
+            return ("admin" if role == "admin" else "customer"), str(current["id"])
+    return "system", str(user_id or "unknown")
+
+
 def _new_rules_apply(row):
     if not row or not row.get("created_at"):
         return False
@@ -141,26 +151,48 @@ def _sanitize_error(exc):
     return f"HTTP {status}: {message}" if status else message or exc.__class__.__name__
 
 
-def _history(conn, schedule_id, status, *, reason=None, error=None, actor=None, metadata=None):
+def _history(
+    conn, schedule_id, status, *, reason=None, error=None, actor=None,
+    metadata=None, created_at=None,
+):
     value_sql = "CAST(? AS JSONB)" if getattr(conn, "backend_name", "") == "postgres" else "?"
     conn.execute(
         f"""INSERT INTO {HISTORY_TABLE}
             (id,schedule_id,platform,status,reason,error_sanitized,actor,metadata_json,created_at)
             VALUES (?,?,?,?,?,?,?,{value_sql},?)""",
         [int.from_bytes(uuid4().bytes[:8], "big", signed=False) & ((1 << 63) - 1), schedule_id, "youtube", status,
-         reason, error, actor or "scheduler", json.dumps(metadata or {}), utc()],
+         reason, error, actor or "scheduler", json.dumps(metadata or {}), utc(created_at)],
     )
 
 
-def _history_once(conn, schedule_id, status, *, reason=None, error=None, actor=None, metadata=None):
+def _history_once(
+    conn, schedule_id, status, *, reason=None, error=None, actor=None,
+    metadata=None, created_at=None,
+):
     latest = conn.execute(
         f"SELECT status,reason FROM {HISTORY_TABLE} WHERE schedule_id=? ORDER BY created_at DESC,id DESC LIMIT 1",
         [schedule_id],
     ).fetchone()
     if latest and str(latest[0] or "") == str(status) and str(latest[1] or "") == str(reason or ""):
         return False
-    _history(conn, schedule_id, status, reason=reason, error=error, actor=actor, metadata=metadata)
+    _history(
+        conn, schedule_id, status, reason=reason, error=error, actor=actor,
+        metadata=metadata, created_at=created_at,
+    )
     return True
+
+
+def _record_block_and_grace_elapsed(conn, schedule_id, reason, now):
+    """Persist the first observation and require a later pass after the grace."""
+    latest = conn.execute(
+        f"""SELECT status,reason,created_at FROM {HISTORY_TABLE}
+            WHERE schedule_id=? ORDER BY created_at DESC,id DESC LIMIT 1""",
+        [schedule_id],
+    ).fetchone()
+    if not latest or str(latest[0] or "") != "blocked" or str(latest[1] or "") != str(reason or ""):
+        _history(conn, schedule_id, "blocked", reason=reason, created_at=now)
+        return False
+    return utc(now) >= utc(latest[2]) + timedelta(minutes=ENQUEUE_LATE_BLOCK_GRACE_MINUTES)
 
 
 def _admin_recipients():
@@ -315,17 +347,27 @@ def acquire_clip_mutation_lease(*, user_id, brand_id, video_pk, plan_index, stat
             """,
             [str(user_id), str(brand_id), key, str(state), lease_token, lease_until],
         )
-    return {
+    holder_type, holder_user = _lease_holder(user_id)
+    lease = {
         "user_id": str(user_id),
         "brand_id": str(brand_id),
         "asset_key": key,
         "state": str(state),
         "lease_token": lease_token,
         "lease_until": lease_until,
+        "acquired_at": now,
+        "holder_type": holder_type,
+        "holder_user": holder_user,
     }
+    logger.info(
+        "clip_mutation_lease_audit event=acquired holder_type=%s holder_user=%s "
+        "state=%s asset_key=%s acquired_at=%s released_at= release_reason=",
+        holder_type, holder_user, state, key, iso(now),
+    )
+    return lease
 
 
-def release_clip_mutation_lease(lease):
+def release_clip_mutation_lease(lease, *, reason="request_completed"):
     """Clear only the caller's lease; stale workers cannot clear a newer lease."""
     value = lease or {}
     if not value.get("lease_token"):
@@ -343,7 +385,18 @@ def release_clip_mutation_lease(lease):
             """,
             [user_id, brand_id, key, str(value["lease_token"])],
         ).fetchone()
-        return bool(row)
+        released = bool(row)
+    if released:
+        logger.info(
+            "clip_mutation_lease_audit event=released holder_type=%s holder_user=%s "
+            "state=%s asset_key=%s acquired_at=%s released_at=%s release_reason=%s",
+            value.get("holder_type") or "unknown",
+            value.get("holder_user") or value.get("user_id"),
+            value.get("state") or "unknown", value.get("asset_key") or "",
+            iso(value.get("acquired_at")) if value.get("acquired_at") else "unknown",
+            iso(utc()), str(reason or "unknown"),
+        )
+    return released
 
 
 def release_orphaned_rendering_leases(*, active_job_scopes=None, minimum_age_seconds=60):
@@ -379,6 +432,12 @@ def release_orphaned_rendering_leases(*, active_job_scopes=None, minimum_age_sec
             ).fetchone()
             if deleted:
                 released.append(scope)
+                logger.info(
+                    "clip_mutation_lease_audit event=released holder_type=system holder_user=%s "
+                    "state=rendering asset_key=%s acquired_at=unknown released_at=%s "
+                    "release_reason=orphaned_rendering_lease",
+                    scope[0], scope[2], iso(utc()),
+                )
     return released
 
 
@@ -652,7 +711,12 @@ def _blocking_reason(
         and str(lease.get("state") or "").strip().lower() == "rendering"
         and _file_exists(payload)
     )
-    if lease and not rendering_fallback:
+    editing_with_frozen_asset = bool(
+        lease
+        and str(lease.get("state") or "").strip().lower() == "editing"
+        and _file_exists(payload)
+    )
+    if lease and not rendering_fallback and not editing_with_frozen_asset:
         return f"lease:{lease['state']}"
     if _billing_paused(conn, candidate["user_id"]):
         return "billing_pause"
@@ -684,8 +748,6 @@ def _blocking_reason(
                 f"saved design changes not in that render: {fields}.",
             )
     if payload.get("render_pending"):
-        if not repair_stale_render_pending and not simulate_due:
-            return "render_pending (fresh render verified; scheduler can clear at upload_due_at)"
         if repair_stale_render_pending:
             payload["render_pending"] = False
             conn.execute(
@@ -800,8 +862,8 @@ def _enqueue(conn, schedule_id, now):
         use_last_finished_during_render=True,
     )
     if reason:
-        _history_once(conn, schedule_id, "blocked", reason=reason)
-        if utc(now) >= utc(candidate["upload_due_at"]) + timedelta(minutes=15):
+        grace_elapsed = _record_block_and_grace_elapsed(conn, schedule_id, reason, now)
+        if grace_elapsed and utc(now) >= utc(candidate["upload_due_at"]) + timedelta(minutes=15):
             _alert(schedule_id, "enqueue_late", f"YouTube schedule {schedule_id} was not enqueued 15m after upload_due_at; blocker={reason}.")
         return False
     job_id = str(uuid4())
@@ -881,10 +943,11 @@ def _alert_due_not_enqueued(conn, now):
         candidate = _row(conn, schedule_id)
         payload = json.loads(candidate["payload_json"])
         reason = _blocking_reason(conn, candidate, payload, now) or "scheduler did not enqueue a ready schedule"
-        _alert(
-            schedule_id, "enqueue_late",
-            f"YouTube schedule {schedule_id} was not enqueued 15m after upload_due_at; blocker={reason}.",
-        )
+        if _record_block_and_grace_elapsed(conn, schedule_id, reason, now):
+            _alert(
+                schedule_id, "enqueue_late",
+                f"YouTube schedule {schedule_id} was not enqueued 15m after upload_due_at; blocker={reason}.",
+            )
 
 
 def _alert_due_not_uploaded(conn, now):
