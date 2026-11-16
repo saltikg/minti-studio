@@ -1,4 +1,5 @@
 <footer class="site-footer vs-marketing-footer">
+  {% if not hide_marketing_footer_cta|default(false) %}
   <div class="footer-cta">
     <h2 class="footer-cta-title">Grow your channel — starting today</h2>
     <p class="footer-cta-subline">Upload one video and let MintiStudio handle the rest.</p>
@@ -14,6 +15,7 @@
     </div>
     <p class="footer-note">No credit card required</p>
   </div>
+  {% endif %}
 
   <div class="footer-legal">
     <a class="footer-brand" href="{{ url_for('video_shorts_bp.home') }}">
@@ -22,7 +24,7 @@
     </a>
 
     <div class="footer-links" aria-label="Footer links">
-      <a class="footer-link footer-tool-link" href="{{ url_for('short_form_video_editing_service') }}">
+      <a class="footer-link footer-tool-link" href="{{ url_for('autopilot_landing') }}">
         <span class="footer-tool-title">Done-for-you Shorts</span>
         <span class="footer-tool-desc">Short-form video editing from your long videos</span>
       </a>
