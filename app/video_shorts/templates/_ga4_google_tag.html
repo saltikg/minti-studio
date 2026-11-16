@@ -10,14 +10,6 @@
     'GB', 'GR', 'HR', 'HU', 'IE', 'IS', 'IT', 'LI', 'LT', 'LU', 'LV', 'MT',
     'NL', 'NO', 'PL', 'PT', 'RO', 'SE', 'SI', 'SK'
   ];
-  var mintiConsentCookieName = 'minti_analytics_consent';
-  var mintiConsentChoice = document.cookie.split(';').map(function (item) {
-    return item.trim();
-  }).find(function (item) {
-    return item.indexOf(mintiConsentCookieName + '=') === 0;
-  });
-  mintiConsentChoice = mintiConsentChoice ? mintiConsentChoice.split('=', 2)[1] : '';
-
   var mintiGrantedConsent = {
     ad_storage: 'granted',
     analytics_storage: 'granted',
@@ -33,14 +25,8 @@
 
   gtag('consent', 'default', mintiGrantedConsent);
   gtag('consent', 'default', Object.assign({
-    region: mintiConsentRegion,
-    wait_for_update: 500
+    region: mintiConsentRegion
   }, mintiDeniedConsent));
-  if (mintiConsentChoice === 'accepted') {
-    gtag('consent', 'update', mintiGrantedConsent);
-  } else if (mintiConsentChoice === 'declined') {
-    gtag('consent', 'update', mintiDeniedConsent);
-  }
 
   function mintiSanitizedPageLocation() {
     var url = new URL(window.location.href);
@@ -73,24 +59,4 @@
     }
   }
 
-  function mintiSaveAnalyticsConsent(choice) {
-    var secure = window.location.protocol === 'https:' ? '; Secure' : '';
-    document.cookie = mintiConsentCookieName + '=' + choice
-      + '; Max-Age=15552000; Path=/; SameSite=Lax' + secure;
-    gtag('consent', 'update', choice === 'accepted' ? mintiGrantedConsent : mintiDeniedConsent);
-    var banner = document.querySelector('[data-ga-consent-banner]');
-    if (banner) banner.hidden = true;
-  }
-
-  document.addEventListener('DOMContentLoaded', function () {
-    var banner = document.querySelector('[data-ga-consent-banner]');
-    if (!banner || mintiConsentChoice) return;
-    banner.hidden = false;
-    banner.querySelector('[data-ga-consent-accept]')?.addEventListener('click', function () {
-      mintiSaveAnalyticsConsent('accepted');
-    });
-    banner.querySelector('[data-ga-consent-decline]')?.addEventListener('click', function () {
-      mintiSaveAnalyticsConsent('declined');
-    });
-  });
 </script>

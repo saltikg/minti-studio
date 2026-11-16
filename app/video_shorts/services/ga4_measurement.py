@@ -9,9 +9,6 @@ from typing import Any, Mapping
 import requests
 from flask import has_request_context, request
 
-from app.video_shorts.services.analytics_consent import analytics_measurement_allowed
-
-
 logger = logging.getLogger(__name__)
 
 GA4_MEASUREMENT_ID = "G-BFML4VLWMF"
@@ -40,8 +37,8 @@ def _post_event(*, api_secret: str, payload: dict[str, Any], event_name: str) ->
 
 
 def send_ga4_event(event_name: str, params: Mapping[str, Any] | None = None) -> bool:
-    """Queue a consent-aware, PII-free GA4 event without delaying the request."""
-    if not has_request_context() or not analytics_measurement_allowed():
+    """Queue a PII-free GA4 event when the browser supplied a GA client id."""
+    if not has_request_context():
         return False
     api_secret = str(os.getenv("GA4_API_SECRET") or "").strip()
     client_id = ga4_client_id_from_cookie(request.cookies.get("_ga"))

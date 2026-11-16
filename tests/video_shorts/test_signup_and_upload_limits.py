@@ -192,9 +192,10 @@ def test_password_signup_records_first_touch_attribution(monkeypatch, tmp_path):
     assert "si••" in check_email_html
     assert "@example.com" in check_email_html
     assert "gtag('consent', 'default'" in check_email_html
-    assert "wait_for_update: 500" in check_email_html
+    assert "region: mintiConsentRegion" in check_email_html
+    assert "wait_for_update" not in check_email_html
     assert "page_location: mintiSanitizedPageLocation()" in check_email_html
-    assert "We use analytics cookies to improve Minti." in check_email_html
+    assert "data-ga-consent-banner" not in check_email_html
 
     conn = db_service.get_db()
     try:
