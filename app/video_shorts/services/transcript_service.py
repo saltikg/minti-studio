@@ -2117,6 +2117,42 @@ def _caption_frame_layout(
         )
     else:
         layout = precomputed_layout
+
+    # The editor positions the caption's padded visual box. Pillow's ``la``
+    # anchor, however, positions the font's line origin. Keep those two
+    # coordinate systems explicit so the saved position has the same meaning
+    # in the preview and in the rendered frame.
+    visual_pad_y = max(
+        int(round(DESIGN_GEOMETRY["caption_padding_min_y"] * render_scale)),
+        int(round(float(font_size) * DESIGN_GEOMETRY["caption_padding_y"])),
+    )
+    visual_height = int(layout.get("total_height") or 0) + (visual_pad_y * 2)
+    placement_signature = (
+        int(subtitle_margin),
+        normalize_caption_anchor(caption_anchor),
+        int(canvas_height),
+        visual_pad_y,
+        visual_height,
+    )
+    if layout.get("_visual_placement_signature") != placement_signature and layout.get("lines"):
+        current_visual_top = int(layout["lines"][0]["y"]) - visual_pad_y
+        target_visual_top = int(round(caption_block_top(
+            subtitle_margin,
+            caption_anchor,
+            visual_height,
+            canvas_height,
+        )))
+        delta_y = target_visual_top - current_visual_top
+        if delta_y:
+            for line in layout["lines"]:
+                line["y"] = int(line["y"]) + delta_y
+            # The flat list and per-line lists share the same word dictionaries.
+            for word in layout["words"]:
+                word["y"] = int(word["y"]) + delta_y
+        layout["visual_top"] = target_visual_top
+        layout["visual_height"] = visual_height
+        layout["visual_padding_y"] = visual_pad_y
+        layout["_visual_placement_signature"] = placement_signature
     return layout
 
 

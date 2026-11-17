@@ -2195,24 +2195,15 @@ def _title_overlay_layout(
         chosen_line_height = _measure_line_height(candidate_font)
         break
 
-    block_height = (
+    line_block_height = (
         chosen_line_height * len(chosen_lines)
         + safe_line_spacing * max(0, len(chosen_lines) - 1)
     )
-    draw_y = clamp_design_position(
-        "title_margin",
-        base_y,
-        target_height=target_height,
-        element_height=block_height,
-    )
-    if video_top_limit is not None and block_height > 0 and draw_y + block_height > int(video_top_limit):
-        draw_y = max(0, int(video_top_limit) - block_height)
-
     line_entries: List[Dict[str, Any]] = []
     for line_index, line in enumerate(chosen_lines):
         line_width = _measure_text_width(chosen_font, line)
         line_x = int(round((target_width - line_width) / 2.0))
-        line_y = draw_y + line_index * (chosen_line_height + safe_line_spacing)
+        line_y = int(base_y) + line_index * (chosen_line_height + safe_line_spacing)
         line_entries.append(
             {
                 "text": line,
@@ -2221,9 +2212,42 @@ def _title_overlay_layout(
             }
         )
 
+    # The preview treats title_margin as the top of the padded visual box,
+    # while Pillow's ``la`` anchor is a line origin. Measure and translate the
+    # entries once so both paths use the preview's visual-box coordinate.
+    visual_boxes = []
+    for entry in line_entries:
+        bbox = chosen_font.getbbox(
+            str(entry["text"]), anchor="la", stroke_width=safe_outline_width,
+        )
+        visual_boxes.append((
+            int(entry["x"]) + int(bbox[0]),
+            int(entry["y"]) + int(bbox[1]),
+            int(entry["x"]) + int(bbox[2]),
+            int(entry["y"]) + int(bbox[3]),
+        ))
+    bg_pad_y = max(
+        int(round(DESIGN_GEOMETRY["title_padding_min_y"] * render_scale)),
+        int(round(float(chosen_font_size) * DESIGN_GEOMETRY["title_padding_y"])),
+    )
+    raw_visual_top = min(box[1] for box in visual_boxes) - bg_pad_y
+    raw_visual_bottom = max(box[3] for box in visual_boxes) + bg_pad_y
+    block_height = max(1, raw_visual_bottom - raw_visual_top)
+    draw_y = clamp_design_position(
+        "title_margin", base_y, target_height=target_height, element_height=block_height,
+    )
+    if video_top_limit is not None and draw_y + block_height > int(video_top_limit):
+        draw_y = max(0, int(video_top_limit) - block_height)
+    visual_delta_y = int(draw_y) - int(raw_visual_top)
+    if visual_delta_y:
+        for entry in line_entries:
+            entry["y"] = int(entry["y"]) + visual_delta_y
+
     return dict(font=chosen_font, font_size=chosen_font_size, lines=chosen_lines,
                 line_height=chosen_line_height, entries=line_entries, draw_y=draw_y,
-                block_height=block_height, side_margin=side_margin,
+                block_height=block_height, line_block_height=line_block_height,
+                visual_box=[0, draw_y, target_width, draw_y + block_height],
+                side_margin=side_margin,
                 outline_width=safe_outline_width, max_text_width=max_text_width,
                 outline_color=effects["outline_color"], shadow=effects["shadow"],
                 text=display_text)
@@ -2735,6 +2759,17 @@ def _face_aware_caption_top_for_block(
             block_height=safe_block_height,
             target_height=target_height,
         )
+    # Auto-layout's caption_top is the exact visual-box top shown in the
+    # editor. Recomputing it here from the rendered glyph height changes that
+    # top into an implicit center/bottom placement whenever the measured text
+    # height differs from the preview's planning height.
+    if bool(segment.get("auto_layout")):
+        try:
+            preview_top = float(segment.get("caption_top"))
+        except (TypeError, ValueError):
+            preview_top = None
+        if preview_top is not None:
+            return max(0.0, min(float(target_height) - safe_block_height, preview_top))
     if mode == "fit" and custom_position and not bool(segment.get("auto_layout")):
         return caption_block_top(
             subtitle_margin,

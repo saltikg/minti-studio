@@ -700,6 +700,21 @@ def test_manual_fill_custom_caption_position_is_unchanged() -> None:
     assert caption_top == 857.0
 
 
+@pytest.mark.parametrize("caption_anchor", ["top", "center", "bottom"])
+def test_auto_layout_uses_preview_caption_box_top_for_every_anchor(caption_anchor: str) -> None:
+    caption_top = compositor._face_aware_caption_top_for_block(
+        {"mode": "fill", "auto_layout": True, "caption_top": 884.0},
+        block_height=58.0,
+        target_width=720,
+        target_height=1280,
+        subtitle_margin=884,
+        subtitle_margin_custom=True,
+        caption_anchor=caption_anchor,
+    )
+
+    assert caption_top == 884.0
+
+
 def test_pillow_overlay_specs_receive_fill_caption_offset() -> None:
     specs = compositor._face_aware_subtitle_overlay_specs(
         [{"path": Path("caption.png"), "start": 0.0, "end": 1.0}],

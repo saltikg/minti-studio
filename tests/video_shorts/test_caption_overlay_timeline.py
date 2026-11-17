@@ -1,10 +1,92 @@
 import shutil
 from pathlib import Path
 
+import pytest
+from PIL import Image, ImageFont
+
+from app.video_shorts.config import SUBTITLE_PRESETS
 from app.video_shorts.services.compositor import _overlay_position_enable_expr
 from app.video_shorts.services import compositor, transcript_service
 from app.video_shorts.services.design_preview import measure_design
 from app.video_shorts.services.transcript_service import _normalize_word_highlight_overlay_specs
+
+
+@pytest.mark.parametrize("caption_anchor", ["top", "center", "bottom"])
+def test_preview_and_render_visual_boxes_match_for_every_caption_anchor(
+    caption_anchor, tmp_path,
+):
+    font_path = Path("app/video_shorts/static/fonts/Montserrat-BlackItalic.ttf")
+    settings = {
+        "width": 720,
+        "height": 1280,
+        "title": "The Peptide Safety Risk Every Woman Should Know",
+        "title_size": 45,
+        "title_top": 714,
+        "title_bg_alpha": 100,
+        "caption_size": 44,
+        "caption_margin": 884,
+        "caption_anchor": caption_anchor,
+        "caption_style": "karaoke",
+        "caption_source": "contraindication bioidentical peptide safety",
+        "caption": "contraindication bioidentical peptide safety",
+        "preset": "podcast",
+        "subtitle_effect": "none",
+        "split_caption": False,
+        "active_word": 0,
+    }
+    behavior = {
+        "title_uppercase": False,
+        "title_outline_color": "#000000",
+        "title_outline_width": 0,
+    }
+    preview = measure_design(
+        settings,
+        title_font_path=font_path,
+        caption_font_path=font_path,
+        title_behavior=behavior,
+    )
+
+    title_path, title_meta = compositor._render_title_overlay(
+        settings["title"], font_path=str(font_path), font_size=settings["title_size"],
+        target_width=720, target_height=1280, base_y=settings["title_top"],
+        line_spacing=-4, title_text_color="#FFFFFF", subtitle_preset="podcast",
+        title_bg_alpha=100, uppercase=False, video_top_limit=None,
+        title_outline_color="#000000", title_outline_width=0, crop_to_bounds=True,
+    )
+    try:
+        with Image.open(title_path) as title_image:
+            render_title_box = [
+                title_meta["origin_x"], title_meta["origin_y"],
+                title_meta["origin_x"] + title_image.width,
+                title_meta["origin_y"] + title_image.height,
+            ]
+        assert render_title_box[1] == pytest.approx(preview["title"]["box"][1], abs=4)
+        assert render_title_box[3] == pytest.approx(preview["title"]["box"][3], abs=4)
+    finally:
+        title_path.unlink(missing_ok=True)
+
+    preset = SUBTITLE_PRESETS["podcast"]
+    font = ImageFont.truetype(str(font_path), settings["caption_size"])
+    active_font = ImageFont.truetype(
+        str(font_path),
+        settings["caption_size"] + int(preset.get("active_font_size_delta") or 0),
+    )
+    caption_path = tmp_path / f"caption-{caption_anchor}.png"
+    render_caption = transcript_service._render_word_highlight_caption_frame(
+        settings["caption_source"].split()[:4], active_index=0, font=font,
+        active_font=active_font, subtitle_margin=settings["caption_margin"],
+        caption_anchor=caption_anchor, font_size=settings["caption_size"],
+        inactive_color="#FFFFFF", active_color="#FFFF00", outline_color="#000000",
+        outline_width=0, pill_color="#FFFF00", caption_bg_color="#000000",
+        caption_bg_alpha=100, draw_pill=False, stable_highlight_geometry=True,
+        canvas_width=720, canvas_height=1280, out_path=caption_path,
+    )
+    with Image.open(caption_path) as caption_image:
+        render_caption_box = list(caption_image.getbbox())
+    assert render_caption_box[1] == pytest.approx(preview["caption"]["box"][1], abs=4)
+    assert render_caption_box[3] == pytest.approx(preview["caption"]["box"][3], abs=4)
+    assert len(render_caption["layout"]["lines"]) == preview["caption"]["lines"]
+    assert render_caption["line_glyph_boxes"] == preview["caption"]["line_glyph_boxes"]
 
 
 def test_caption_overlay_timeline_bridges_small_gaps_and_holds_last_event():
