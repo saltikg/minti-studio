@@ -165,6 +165,38 @@ def test_new_word_selection_ranges_never_pad_into_neighbors():
     }
 
 
+def test_restore_partial_selection_restores_only_selected_words():
+    words = [
+        {"start": 0.0, "end": 1.0},
+        {"start": 1.0, "end": 2.0},
+        {"start": 2.0, "end": 3.0},
+        {"start": 3.0, "end": 4.0},
+        {"start": 4.0, "end": 5.0},
+    ]
+    current = [{
+        "start": 1.08,
+        "end": 1.92,
+        "start_word_index": 1,
+        "end_word_index": 1,
+    }]
+
+    restored = generation.derive_clip_keep_ranges_from_word_selection(
+        words,
+        current,
+        3,
+        3,
+        "restore",
+        start_padding=0.04,
+        end_padding=0.08,
+    )
+
+    assert restored["ok"] is True
+    assert restored["ranges"] == [
+        {"start": 1.08, "end": 1.92, "start_word_index": 1, "end_word_index": 1},
+        {"start": 3.08, "end": 3.92, "start_word_index": 3, "end_word_index": 3},
+    ]
+
+
 def test_indexed_caption_text_excludes_unselected_neighbors():
     segments = [{
         "start": 0.0,

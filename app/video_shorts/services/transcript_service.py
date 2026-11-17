@@ -1,8 +1,10 @@
 import json
 import math
+from difflib import SequenceMatcher
 import shutil
 import subprocess
 import tempfile
+import unicodedata
 from pathlib import Path
 from typing import Any, Callable, Dict, List, Optional, Tuple
 
@@ -537,6 +539,220 @@ def _seg_val(seg: Any, key: str, default=None):
     return val if val is not None else default
 
 
+def _unicode_alignment_key(value: Any) -> str:
+    """Normalize only for comparison; never use this value as transcript copy."""
+    normalized = unicodedata.normalize("NFKC", str(value or "")).casefold()
+    return "".join(character for character in normalized if character.isalnum())
+
+
+def _split_punctuated_token(value: str, normalized_lengths: List[int]) -> List[str]:
+    """Split one raw token across ASR timing tokens without losing punctuation."""
+    text = str(value or "")
+    if len(normalized_lengths) <= 1:
+        return [text]
+    alnum_offsets = [index for index, character in enumerate(text) if character.isalnum()]
+    if sum(normalized_lengths) != len(alnum_offsets):
+        return [text, *([""] * (len(normalized_lengths) - 1))]
+    parts: List[str] = []
+    start = 0
+    consumed = 0
+    for length in normalized_lengths[:-1]:
+        consumed += length
+        boundary = alnum_offsets[consumed] if consumed < len(alnum_offsets) else len(text)
+        parts.append(text[start:boundary])
+        start = boundary
+    parts.append(text[start:])
+    return parts
+
+
+def _display_timed_words(seg: Dict[str, Any], *, merge_joined: bool = False) -> List[Dict[str, Any]]:
+    """Project punctuated segment text onto normalized word timings.
+
+    Whisper's timed-word track can omit punctuation or split ``2.1%`` into
+    ``2`` and ``1``. Segment text remains the copy source; word text is used
+    only to align timestamps.
+    """
+    words_raw = seg.get("words") or []
+    if not isinstance(words_raw, list):
+        return []
+    timed: List[Dict[str, Any]] = []
+    for source_word_index, word in enumerate(words_raw):
+        if not isinstance(word, dict):
+            continue
+        try:
+            word_start = float(word.get("start"))
+            word_end = float(word.get("end"))
+        except (TypeError, ValueError):
+            continue
+        word_text = str(word.get("word") or word.get("text") or "").strip()
+        if not word_text or word_end < word_start:
+            continue
+        timed.append({
+            **word,
+            "word": word_text,
+            "start": word_start,
+            "end": word_end,
+            "_source_word_index": source_word_index,
+        })
+    if not timed:
+        return []
+
+    source_text = str(seg.get("tr_text") or seg.get("text") or seg.get("ar_text") or "").strip()
+    raw_tokens = re.findall(r"\S+", source_text)
+    if not raw_tokens:
+        return timed
+    raw_keys = [_unicode_alignment_key(token) for token in raw_tokens]
+    timed_keys = [_unicode_alignment_key(word["word"]) for word in timed]
+    projected = [
+        {**word, "display_word": str(word["word"]), "display_join_left": False}
+        for word in timed
+    ]
+
+    missing_insertions: Dict[int, List[str]] = {}
+
+    def remember_missing(tokens: List[str], next_timed_index: int) -> None:
+        values = [str(token) for token in tokens if str(token)]
+        if values:
+            missing_insertions.setdefault(next_timed_index, []).extend(values)
+
+    matcher = SequenceMatcher(None, raw_keys, timed_keys, autojunk=False)
+    for tag, raw_start, raw_end, timed_start, timed_end in matcher.get_opcodes():
+        if tag == "equal":
+            for raw_index, timed_index in zip(range(raw_start, raw_end), range(timed_start, timed_end)):
+                projected[timed_index]["display_word"] = raw_tokens[raw_index]
+            continue
+        if tag == "delete":
+            remember_missing(raw_tokens[raw_start:raw_end], timed_start)
+            continue
+        if tag == "insert":
+            # The timing provider can occasionally include a spoken token that
+            # is absent from the segment sentence. Keep it rather than silently
+            # dropping audible caption content.
+            continue
+
+        raw_slice = raw_tokens[raw_start:raw_end]
+        timed_slice = timed[timed_start:timed_end]
+        # A raw token can correspond to several timing tokens (``2.1%`` ->
+        # ``2``, ``1``; ``%80'i 90'ı`` -> ``80``, ``i``, ``90``, ``ı``).
+        # Resolve each raw token independently so adjacent split forms do not
+        # collapse into the first timing entry.
+        split_groups: List[Tuple[str, int, int]] = []
+        timed_cursor = 0
+        for raw_token in raw_slice:
+            raw_key = _unicode_alignment_key(raw_token)
+            combined = ""
+            group_start = timed_cursor
+            while timed_cursor < len(timed_slice) and len(combined) < len(raw_key):
+                combined += _unicode_alignment_key(timed_slice[timed_cursor]["word"])
+                timed_cursor += 1
+            if not raw_key or combined != raw_key:
+                split_groups = []
+                break
+            split_groups.append((raw_token, group_start, timed_cursor))
+        if split_groups and timed_cursor == len(timed_slice):
+            for raw_token, group_start, group_end in split_groups:
+                group = timed_slice[group_start:group_end]
+                lengths = [len(_unicode_alignment_key(word["word"])) for word in group]
+                pieces = _split_punctuated_token(raw_token, lengths)
+                for offset, piece in enumerate(pieces):
+                    projected[timed_start + group_start + offset]["display_word"] = piece
+                    projected[timed_start + group_start + offset]["display_join_left"] = offset > 0
+            continue
+        if timed_slice:
+            projected[timed_start]["display_word"] = " ".join(raw_slice)
+        else:
+            remember_missing(raw_slice, timed_start)
+
+    # Raw ASR segment text can contain spoken tokens that are missing from the
+    # provider's word-timing list. Give those display-only tokens a position in
+    # the available gap. They must never become cut-point/index authorities.
+    with_interpolated: List[Dict[str, Any]] = []
+    segment_start = float(seg.get("start") or timed[0]["start"])
+    segment_end = float(seg.get("end") or timed[-1]["end"])
+    for next_index in range(len(projected) + 1):
+        missing = missing_insertions.get(next_index) or []
+        if missing:
+            left_boundary = (
+                float(projected[next_index - 1]["end"])
+                if next_index > 0
+                else segment_start
+            )
+            right_boundary = (
+                float(projected[next_index]["start"])
+                if next_index < len(projected)
+                else segment_end
+            )
+            if right_boundary < left_boundary:
+                right_boundary = left_boundary
+            slot = (right_boundary - left_boundary) / len(missing) if missing else 0.0
+            anchor_index = (
+                projected[next_index - 1]["_source_word_index"]
+                if next_index > 0
+                else projected[next_index]["_source_word_index"]
+            )
+            for offset, token in enumerate(missing):
+                token_start = left_boundary + (slot * offset)
+                token_end = left_boundary + (slot * (offset + 1))
+                with_interpolated.append({
+                    "word": token,
+                    "display_word": token,
+                    "display_join_left": False,
+                    "start": token_start,
+                    "end": token_end,
+                    "_source_word_index": None,
+                    "_display_anchor_word_index": anchor_index,
+                    "_interpolated_display_timing": True,
+                })
+        if next_index < len(projected):
+            with_interpolated.append(projected[next_index])
+    projected = with_interpolated
+
+    if not merge_joined:
+        return projected
+
+    merged: List[Dict[str, Any]] = []
+    for word in projected:
+        display_word = str(word.get("display_word") or "")
+        if not display_word:
+            continue
+        if word.get("display_join_left") and merged:
+            merged[-1]["word"] = f"{merged[-1]['word']}{display_word}"
+            merged[-1]["end"] = max(float(merged[-1]["end"]), float(word["end"]))
+            continue
+        merged.append({**word, "word": display_word})
+    return merged
+
+
+def replace_display_word_text(display_word: Any, alignment_word: Any, replacement: Any) -> str:
+    """Replace an alignment token while retaining its surrounding punctuation."""
+    display = str(display_word or "")
+    old = str(alignment_word or "").strip()
+    new = str(replacement or "").strip()
+    if not display or not new:
+        return new
+    if old:
+        offset = display.find(old)
+        if offset >= 0:
+            return f"{display[:offset]}{new}{display[offset + len(old):]}"
+    alnum_offsets = [index for index, character in enumerate(display) if character.isalnum()]
+    if not alnum_offsets:
+        return new
+    return f"{display[:alnum_offsets[0]]}{new}{display[alnum_offsets[-1] + 1:]}"
+
+
+def join_display_timed_words(words: List[Dict[str, Any]]) -> str:
+    """Rebuild copy from projected words while honoring punctuation joins."""
+    text = ""
+    for word in words or []:
+        value = str(word.get("display_word") or word.get("word") or "")
+        if not value:
+            continue
+        if text and not word.get("display_join_left"):
+            text += " "
+        text += value
+    return text.strip()
+
+
 def _chunk_text_entries(text: str, rel_start: float, rel_end: float, max_words: int = 10) -> List[Tuple[float, float, str]]:
     chunks = _split_text_into_chunks(text, max_words=max_words)
     if not chunks:
@@ -587,7 +803,7 @@ def _word_timed_text_for_overlap(
     clip_start: float,
     clip_end: float,
 ) -> Optional[Tuple[str, float, float]]:
-    words_raw = seg.get("words") or []
+    words_raw = _display_timed_words(seg, merge_joined=True)
     if not isinstance(words_raw, list) or not words_raw:
         return None
     kept: List[Tuple[str, float, float]] = []
@@ -1062,7 +1278,7 @@ def _build_ass_karaoke_for_clip(
         rel_start = max(0.0, overlap_start - clip_start)
         rel_end = max(rel_start + 0.1, overlap_end - clip_start)
 
-        words_raw = seg.get("words") or []
+        words_raw = _display_timed_words(seg, merge_joined=True)
         karaoke_words: List[Dict[str, Any]] = []
         if isinstance(words_raw, list):
             for word in words_raw:
@@ -2434,7 +2650,7 @@ def _build_word_highlight_caption_overlay(
         if overlap_duration <= 0.0:
             continue
 
-        words_raw = seg.get("words") or []
+        words_raw = _display_timed_words(seg, merge_joined=True)
         karaoke_words: List[Dict[str, Any]] = []
         if isinstance(words_raw, list):
             for word in words_raw:
@@ -3340,8 +3556,7 @@ def _normalize_segments_for_use(raw_segments: List[Dict[str, Any]]) -> List[Dict
         # If we already have an Arabic script text, trust that to mark Arabic.
         if ar_text:
             lang = "ar"
-        normalized.append(
-            {
+        normalized_segment = {
                 "start": start,
                 "end": end if end is not None else start + max(duration or 0.0, 0.0),
                 "duration": duration if duration is not None else 0.0,
@@ -3353,7 +3568,8 @@ def _normalize_segments_for_use(raw_segments: List[Dict[str, Any]]) -> List[Dict
                 "words": seg.get("words"),
                 "word_tags": seg.get("word_tags"),
             }
-        )
+        normalized_segment["display_words"] = _display_timed_words(normalized_segment)
+        normalized.append(normalized_segment)
     return normalized
 
 

@@ -15373,7 +15373,9 @@ window.initGenerateV2TextTranscript = () => {
           span.classList.add("is-added");
         }
         span.dataset.wordIndex = String(word.index);
-        span.textContent = `${word.text || ""} `;
+        const isFirstVisibleWord = !p.querySelector(".generate-v2-text-word");
+        const leadingSpace = isFirstVisibleWord || word.join_left ? "" : " ";
+        span.textContent = `${leadingSpace}${word.text || ""}`;
         span.addEventListener("click", () => {
           if (!state.preview.active || partIndex < 0) return;
           const resolvedPart = state.preview.ranges[partIndex];

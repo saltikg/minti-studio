@@ -370,6 +370,9 @@ from app.video_shorts.services.transcript_service import (
     _fetch_transcript,
     save_transcript_override,
     _normalize_segments_for_use,
+    _display_timed_words,
+    join_display_timed_words,
+    replace_display_word_text,
     transcribe_for_brand,
     build_transcript_for_range,
 )
@@ -7422,6 +7425,16 @@ def _flatten_transcript_words_for_snapping(segments: List[Dict[str, Any]]) -> Li
     for segment in segments or []:
         segment_start = _to_float(segment.get("start")) or 0.0
         segment_words = [word for word in (segment.get("words") or []) if isinstance(word, dict)]
+        projected = segment.get("display_words") or _display_timed_words(segment)
+        display_by_source: Dict[int, List[Dict[str, Any]]] = {}
+        for display_word in projected:
+            if not isinstance(display_word, dict):
+                continue
+            source_index = display_word.get("_source_word_index")
+            if source_index is None:
+                source_index = display_word.get("_display_anchor_word_index")
+            if isinstance(source_index, int):
+                display_by_source.setdefault(source_index, []).append(display_word)
         explicit_timing_source = str(segment.get("word_timing_source") or "").strip().lower()
         synthetic_timing = explicit_timing_source == "synthetic"
         if not explicit_timing_source and len(segment_words) >= 3:
@@ -7438,7 +7451,7 @@ def _flatten_transcript_words_for_snapping(segments: List[Dict[str, Any]]) -> Li
                 contiguous = all(abs(spans[index][1] - spans[index + 1][0]) <= 0.002 for index in range(len(spans) - 1))
                 uniform = max(durations) - min(durations) <= 0.002
                 synthetic_timing = contiguous and uniform
-        for word in segment_words:
+        for source_word_index, word in enumerate(segment_words):
             if not isinstance(word, dict):
                 continue
             start = _to_float(word.get("start"))
@@ -7454,11 +7467,17 @@ def _flatten_transcript_words_for_snapping(segments: List[Dict[str, Any]]) -> Li
             timing_source = str(word.get("timing_source") or "").strip().lower()
             if timing_source not in {"whisper_word", "synthetic"}:
                 timing_source = "synthetic" if synthetic_timing else "whisper_word"
+            source_display_words = display_by_source.get(source_word_index) or []
+            display_text = join_display_timed_words(source_display_words)
             words.append(
                 {
                     "start": float(start),
                     "end": float(end),
                     "text": str(word.get("word") or word.get("text") or ""),
+                    "display_text": display_text or str(word.get("word") or word.get("text") or ""),
+                    "display_join_left": bool(
+                        source_display_words and source_display_words[0].get("display_join_left")
+                    ),
                     "timing_source": timing_source,
                 }
             )
@@ -7494,7 +7513,8 @@ def _transcript_words_with_sentence_indexes(segments: List[Dict[str, Any]]) -> L
             continue
         if end is None or end < start:
             end = start
-        clean_text = str(word.get("text") or "").strip()
+        alignment_text = str(word.get("text") or "").strip()
+        clean_text = str(word.get("display_text") or alignment_text).strip()
         if not clean_text:
             continue
         words.append(
@@ -7505,12 +7525,13 @@ def _transcript_words_with_sentence_indexes(segments: List[Dict[str, Any]]) -> L
                 "end": round(float(end), 3),
                 "text": clean_text,
                 "timing_source": str(word.get("timing_source") or "whisper_word"),
+                "join_left": bool(word.get("display_join_left")),
             }
         )
         next_word = flattened[idx + 1] if idx + 1 < len(flattened) else None
         next_start = _to_float((next_word or {}).get("start"))
         pause = (float(next_start) - float(end)) if next_start is not None else 0.0
-        if _word_text_has_sentence_end(clean_text) or pause >= 0.6:
+        if _word_text_has_sentence_end(alignment_text) or pause >= 0.6:
             sentence_index += 1
     return words
 
@@ -7596,6 +7617,18 @@ def _canonicalize_indexed_keep_ranges(
     return canonical
 
 
+def _join_indexed_transcript_words(words: List[Dict[str, Any]]) -> str:
+    text = ""
+    for word in words:
+        value = str(word.get("text") or "").strip()
+        if not value:
+            continue
+        if text and not word.get("join_left"):
+            text += " "
+        text += value
+    return text
+
+
 def _segments_for_indexed_keep_ranges(
     segments: List[Dict[str, Any]],
     ranges: List[Dict[str, Any]],
@@ -7615,9 +7648,15 @@ def _segments_for_indexed_keep_ranges(
         selected_segments.append({
             "start": selected[0]["start"],
             "end": selected[-1]["end"],
-            "text": " ".join(str(word["text"]) for word in selected),
+            "text": _join_indexed_transcript_words(selected),
             "words": [
-                {"start": word["start"], "end": word["end"], "word": word["text"], "index": word["index"]}
+                {
+                    "start": word["start"],
+                    "end": word["end"],
+                    "word": word["text"],
+                    "index": word["index"],
+                    "display_join_left": bool(word.get("join_left")),
+                }
                 for word in selected
             ],
         })
@@ -7803,7 +7842,7 @@ def _remap_transcript_segments_to_keep_ranges(
         range_start = float(range_item["start"])
         range_end = float(range_item["end"])
         segment_words: List[Dict[str, Any]] = []
-        segment_text_parts: List[str] = []
+        selected_words: List[Dict[str, Any]] = []
         for word in _transcript_words_with_sentence_indexes(segments):
             word_start = _to_float(word.get("start"))
             word_end = _to_float(word.get("end"))
@@ -7817,7 +7856,7 @@ def _remap_transcript_segments_to_keep_ranges(
             new_start = max(0.0, float(word_start) - range_start) + output_offset
             new_end = max(new_start + 0.01, min(float(word_end), range_end) - range_start + output_offset)
             segment_words.append({"word": text, "start": round(new_start, 3), "end": round(new_end, 3)})
-            segment_text_parts.append(text)
+            selected_words.append(word)
         if segment_words:
             seg_start = output_offset
             seg_end = output_offset + max(0.0, range_end - range_start)
@@ -7825,7 +7864,7 @@ def _remap_transcript_segments_to_keep_ranges(
                 {
                     "start": round(seg_start, 3),
                     "end": round(seg_end, 3),
-                    "text": " ".join(segment_text_parts),
+                    "text": _join_indexed_transcript_words(selected_words),
                     "words": segment_words,
                 }
             )
@@ -32821,15 +32860,29 @@ def edit_segment_text(video_pk):
         segment_end = segment_start + max(duration, 0.0)
     response_payload: Dict[str, Any] = {"success": True}
     if target_word is not None and word_index is not None:
+        display_words = _display_timed_words(seg)
+        target_segment_word_index = next(
+            (index for index, word in enumerate(seg.get("words") or []) if word is target_word),
+            None,
+        )
+        target_display_word = next(
+            (
+                word for word in display_words
+                if word.get("_source_word_index") == target_segment_word_index
+            ),
+            None,
+        )
+        old_alignment_text = str(target_word.get("word") or target_word.get("text") or "")
+        if target_display_word is not None:
+            target_display_word["display_word"] = replace_display_word_text(
+                target_display_word.get("display_word"),
+                old_alignment_text,
+                new_text,
+            )
         if "word" in target_word or "text" not in target_word:
             target_word["word"] = new_text
         target_word["text"] = new_text
-        segment_text_parts = [
-            str(word.get("word") or word.get("text") or "").strip()
-            for word in (seg.get("words") or [])
-            if isinstance(word, dict) and str(word.get("word") or word.get("text") or "").strip()
-        ]
-        segment_text = " ".join(segment_text_parts).strip()
+        segment_text = join_display_timed_words(display_words)
         seg["tr_text"] = segment_text
         seg["text"] = segment_text
         response_payload.update(
