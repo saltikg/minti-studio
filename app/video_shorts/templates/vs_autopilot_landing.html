@@ -8,12 +8,16 @@
   <a class="vs-marketing-nav-link" href="#how-it-works">How it works</a>
   <a class="vs-marketing-nav-link" href="#what-we-handle">What we handle</a>
   <a class="vs-marketing-nav-link" href="#product">Product</a>
+  <a class="vs-marketing-nav-link" href="#pricing">Pricing</a>
+  <a class="vs-marketing-nav-link" href="#faq">FAQ</a>
 {% endblock %}
 
 {% block marketing_mobile_links %}
   <a class="vs-marketing-mobile-link" href="#how-it-works">How it works</a>
   <a class="vs-marketing-mobile-link" href="#what-we-handle">What we handle</a>
   <a class="vs-marketing-mobile-link" href="#product">Product</a>
+  <a class="vs-marketing-mobile-link" href="#pricing">Pricing</a>
+  <a class="vs-marketing-mobile-link" href="#faq">FAQ</a>
   <a class="vs-marketing-mobile-link" href="{{ url_for('video_shorts_bp.login') }}">Login</a>
 {% endblock %}
 
@@ -1152,7 +1156,7 @@
       <div class="ap-hero-copy">
         <p class="ap-kicker">MintiStudio Autopilot</p>
         <h1 id="autopilot-hero-title">You make the long videos. <span>We handle the Shorts.</span></h1>
-        <p class="ap-hero-subtitle">An editor turns every long video into ready-to-post Shorts. You approve, we publish — so you stay consistent without the extra work.</p>
+        <p class="ap-hero-subtitle">An editor turns every long video into ready-to-post Shorts. You review, we publish — so you stay consistent without the extra work.</p>
         <div class="ap-actions">
           <a
             class="ap-button ap-button-primary"
@@ -1202,7 +1206,7 @@
         <li class="ap-step">
           <div class="ap-step-icon"><i class="bi bi-check2-square" aria-hidden="true"></i></div>
           <span class="ap-step-number">03</span>
-          <h3>You review and approve</h3>
+          <h3>You review, change or remove</h3>
         </li>
         <li class="ap-step">
           <div class="ap-step-icon"><i class="bi bi-calendar2-week" aria-hidden="true"></i></div>
@@ -1306,7 +1310,7 @@
         <article class="ap-compare-card is-autopilot">
           <h3>Autopilot</h3>
           <strong>Fully handled, at a fair price</strong>
-          <p>An editor does the work, you approve</p>
+          <p>An editor does the work; you review, change or remove</p>
           <span class="ap-compare-cost">From $49/mo</span>
         </article>
       </div>
@@ -1334,7 +1338,7 @@
           <li><i class="bi bi-check-lg"></i><span>Your new long videos are picked up automatically</span></li>
           <li><i class="bi bi-check-lg"></i><span>An editor turns them into ready-to-post Shorts</span></li>
           <li><i class="bi bi-check-lg"></i><span>Captions, titles and your branding</span></li>
-          <li><i class="bi bi-check-lg"></i><span>You approve before anything goes live</span></li>
+          <li><i class="bi bi-check-lg"></i><span>Review, change or remove any Short before it goes live</span></li>
           <li><i class="bi bi-check-lg"></i><span>Scheduled &amp; published to YouTube and Instagram</span></li>
           <li><i class="bi bi-check-lg"></i><span>Monthly performance report</span></li>
         </ul>
@@ -1358,7 +1362,7 @@
         <video muted autoplay loop playsinline preload="none" poster="{{ url_for('video_shorts_bp.static', filename='motion/editor-loop.jpg') }}" aria-label="MintiStudio editor automatically preparing a Short">
           <source data-src="{{ url_for('video_shorts_bp.static', filename='motion/editor-loop.mp4') }}" type="video/mp4">
         </video>
-        <figcaption>Your editor does the work. You just approve.</figcaption>
+        <figcaption>Your editor does the work. Review, change or remove any Short before it goes live.</figcaption>
       </figure>
 
       <div class="ap-workspace-grid">
@@ -1391,8 +1395,8 @@
       </div>
       <div class="ap-faq-list">
         <details class="ap-faq-item"><summary>Do I need to edit anything?</summary><p>No. An editor prepares every Short: clip, captions, title and branding. You can tweak anything if you want, but you don't have to.</p></details>
-        <details class="ap-faq-item"><summary>Do I have to connect my YouTube channel?</summary><p>Connecting lets us publish approved Shorts on schedule. Nothing is posted without your approval, and you can disconnect anytime. Prefer to post yourself? You can download every Short.</p></details>
-        <details class="ap-faq-item"><summary>What if I don't like a Short?</summary><p>Skip it. Only the Shorts you approve go out, and we prepare extra options so you have a choice.</p></details>
+        <details class="ap-faq-item"><summary>Do I have to connect my YouTube channel?</summary><p>Connecting lets us publish Shorts on schedule. Review, change or remove any Short before it goes live, and you can disconnect anytime. Prefer to post yourself? You can download every Short.</p></details>
+        <details class="ap-faq-item"><summary>What if I don't like a Short?</summary><p>Remove it or ask for changes. You can review, edit or remove any Short before it goes live, and we prepare extra options so you have a choice.</p></details>
         <details class="ap-faq-item"><summary>Who actually makes my Shorts?</summary><p>A real video editor, using AI to find candidate moments faster. Every Short is reviewed by a person before you see it.</p></details>
         <details class="ap-faq-item"><summary>Which platforms do you publish to?</summary><p>YouTube Shorts and Instagram Reels.</p></details>
         <details class="ap-faq-item"><summary>What happens after the free month?</summary><p>Your plan continues at the monthly price. Cancel anytime before it renews and you won't be charged.</p></details>

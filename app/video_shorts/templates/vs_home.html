@@ -2171,17 +2171,17 @@
             Grow your <span class="hero-growth-word">channel<span class="hero-growth-icon" aria-hidden="true"><svg viewBox="0 0 24 24" fill="none" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" focusable="false"><path d="M4 16l6-6 4 4 6-6"></path><path d="M15 8h5v5"></path></svg></span></span><span class="hero-title-line">from content you already have</span>
           </h1>
           <p class="flow-shell-subtitle">Keep filming. We turn your long videos into Shorts, publish them to your channels, and track what's growing.</p>
-          <p class="flow-shell-tagline">No editing · no extra hours · no surprises</p>
+          <p class="flow-shell-tagline">Do it yourself in minutes — or let us do it for you</p>
         </div>
         <div class="hero-actions">
           <div class="hero-cta-primary">
             <a
               class="btn hero-primary hero-link"
-              href="{{ url_for('autopilot_landing') }}"
+              href="/autopilot"
               data-minti-cta
               data-cta-location="home_hero"
             >
-              Do it for me
+              Autopilot
             </a>
           </div>
           <a
@@ -2324,7 +2324,7 @@
                 </div>
               </div>
             </div>
-            <p class="flow-stage-label">Auto-posts everywhere</p>
+            <p class="flow-stage-label">Auto-posts to YouTube, Instagram &amp; Facebook</p>
           </div>
 
           <div class="flow-fork">
@@ -2335,7 +2335,7 @@
             <div class="fork-cards">
               <div class="fork-card flow-reveal" style="--flow-delay: 3.45s;">
                 <i class="bi bi-flag"></i>
-                <span>Comment moderation</span>
+                <span>Schedule ahead — pick dates once, posts go out on time</span>
               </div>
               <div class="fork-card flow-reveal" style="--flow-delay: 3.8s;">
                 <i class="bi bi-graph-up"></i>
@@ -2402,13 +2402,9 @@
       <div class="comparison-minti"><i class="bi bi-check-lg comparison-check"></i></div>
       <div class="comparison-other">an analytics tool</div>
 
-      <div class="comparison-capability"><i class="bi bi-chat-dots"></i><span>Comment moderation</span></div>
-      <div class="comparison-minti"><i class="bi bi-check-lg comparison-check"></i></div>
-      <div class="comparison-other">done by hand</div>
-
       <div class="comparison-capability comparison-foot-label"></div>
       <div class="comparison-minti comparison-minti-foot">1 login</div>
-      <div class="comparison-other comparison-foot-label">4 tools</div>
+      <div class="comparison-other comparison-foot-label">3 tools</div>
     </div>
   </section>
 
@@ -2496,7 +2492,7 @@
       </div>
       <div class="audience-card">
         <i class="bi bi-chat-dots"></i>
-        <p class="audience-card-text">Comments pile up — the old ones you never see</p>
+        <p class="audience-card-text">You film great long videos, but Shorts never get made</p>
       </div>
       <div class="audience-card">
         <i class="bi bi-graph-up-arrow"></i>
@@ -2508,16 +2504,16 @@
   <section class="pricing-section" id="pricing">
     <p class="pricing-eyebrow">PRICING</p>
     <h2 class="pricing-title">Two ways to get your Shorts — do it yourself, or let us run it for you.</h2>
-    <p class="pricing-subline">Monthly only for now. Start free with the tool, or pick the done-for-you path and continue through the same signup flow.</p>
+    <p class="pricing-subline">Monthly only for now. Start free with the tool, or pick Autopilot and continue through the same signup flow.</p>
 
     <div class="pricing-grid">
       {% set autopilot_initial = autopilot_tiers[0] %}
       {% set self_serve_initial = self_serve_tiers[0] %}
       <article class="pricing-card pricing-card-featured">
         <div class="pricing-badge">Most Popular</div>
-        <h3 class="pricing-plan-name">Do it for me</h3>
-        <p class="pricing-card-tagline">You post long videos. We turn them into Shorts — automatically, every month.</p>
-        <a class="pricing-learn-link" href="{{ url_for('autopilot_landing') }}">See Autopilot →</a>
+        <h3 class="pricing-plan-name">Autopilot <small>Done for you</small></h3>
+        <p class="pricing-card-tagline">You post long videos. An editor turns them into ready-to-post Shorts, every month.</p>
+        <a class="pricing-learn-link" href="/autopilot">See Autopilot →</a>
         <ul class="pricing-lines">
           <li class="pricing-line"><i class="bi bi-check-lg" aria-hidden="true"></i><span>We take your latest long videos automatically</span></li>
           <li class="pricing-line"><i class="bi bi-check-lg" aria-hidden="true"></i><span>Captioned, vertical, ready to post</span></li>
@@ -2526,7 +2522,7 @@
           <li class="pricing-line"><i class="bi bi-check-lg" aria-hidden="true"></i><span>Monthly performance report</span></li>
         </ul>
         <div class="pricing-actions">
-          <a class="pricing-learn-link" href="{{ url_for('short_form_video_editing_service') }}">Learn about done-for-you short-form video editing</a>
+          <a class="pricing-learn-link" href="/autopilot">Learn about Autopilot</a>
         </div>
       </article>
 
@@ -2560,7 +2556,7 @@
         <ul class="pricing-lines">
           <li class="pricing-line"><i class="bi bi-check-lg" aria-hidden="true"></i><span>Clip, caption &amp; edit yourself</span></li>
           <li class="pricing-line"><i class="bi bi-check-lg" aria-hidden="true"></i><span>Publish to YouTube, IG &amp; Facebook</span></li>
-          <li class="pricing-line"><i class="bi bi-check-lg" aria-hidden="true"></i><span>Comment inbox &amp; analytics</span></li>
+          <li class="pricing-line"><i class="bi bi-check-lg" aria-hidden="true"></i><span>Analytics dashboard</span></li>
         </ul>
         <div class="pricing-actions">
           <a
@@ -2676,18 +2672,6 @@
         <div class="faq-panel" id="faq-panel-6" role="region" aria-labelledby="faq-trigger-6" hidden>
           <div class="faq-panel-inner">
             <p class="faq-answer">Yes. Track views and performance across your platforms from one dashboard, so you can see what's working and make more of it.</p>
-          </div>
-        </div>
-      </div>
-
-      <div class="faq-item">
-        <button class="faq-trigger" type="button" aria-expanded="false" aria-controls="faq-panel-7" id="faq-trigger-7">
-          <span>Can it handle my comments too?</span>
-          <i class="bi bi-chevron-down faq-chevron" aria-hidden="true"></i>
-        </button>
-        <div class="faq-panel" id="faq-panel-7" role="region" aria-labelledby="faq-trigger-7" hidden>
-          <div class="faq-panel-inner">
-            <p class="faq-answer">Yes. Your social media comments land in one inbox, AI flags the ones that need attention, and you can reply, hide, or delete right there.</p>
           </div>
         </div>
       </div>
