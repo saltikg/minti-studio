@@ -11,14 +11,21 @@
   <meta property="og:description" content="{{ meta_description }}">
   <meta property="og:url" content="{{ canonical_url }}">
   <meta property="og:site_name" content="MintiStudio">
-  {% if article.cover_image_absolute_url %}
-    <meta property="og:image" content="{{ article.cover_image_absolute_url }}">
-    <meta name="twitter:image" content="{{ article.cover_image_absolute_url }}">
-  {% endif %}
   {% if article.published_on_iso %}
     <meta property="article:published_time" content="{{ article.published_on_iso }}">
   {% endif %}
   <script type="application/ld+json">{{ article_json_ld|safe }}</script>
+{% endblock %}
+
+{% block social_image_meta %}
+  {% if article.cover_image_absolute_url %}
+    <meta property="og:image" content="{{ article.cover_image_absolute_url }}">
+    <meta property="og:image:alt" content="{{ article.title }}">
+    <meta name="twitter:card" content="summary_large_image">
+    <meta name="twitter:image" content="{{ article.cover_image_absolute_url }}">
+  {% else %}
+    {{ super() }}
+  {% endif %}
 {% endblock %}
 
 {% block extra_styles %}

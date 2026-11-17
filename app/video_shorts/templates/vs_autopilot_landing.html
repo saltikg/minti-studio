@@ -4,6 +4,14 @@
 {% block title %}MintiStudio Autopilot — Your long videos, turned into Shorts{% endblock %}
 {% block meta_description %}You make the long videos. MintiStudio Autopilot handles clipping, editing, review, and publishing prep for your Shorts.{% endblock %}
 
+{% block seo_meta %}
+  {{ super() }}
+  <meta property="og:type" content="website">
+  <meta property="og:title" content="MintiStudio Autopilot — Your long videos, turned into Shorts">
+  <meta property="og:description" content="You make the long videos. MintiStudio Autopilot handles clipping, editing, review, and publishing prep for your Shorts.">
+  <meta property="og:url" content="{{ canonical_url }}">
+{% endblock %}
+
 {% block marketing_nav_links %}
   <a class="vs-marketing-nav-link" href="#how-it-works">How it works</a>
   <a class="vs-marketing-nav-link" href="#what-we-handle">What we handle</a>
