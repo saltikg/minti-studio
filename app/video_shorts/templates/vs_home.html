@@ -427,35 +427,6 @@
     object-fit: cover;
   }
 
-  .vs-home .demo-play-overlay {
-    position: absolute;
-    inset: 0;
-    display: none;
-    align-items: center;
-    justify-content: center;
-    background: linear-gradient(180deg, rgba(7, 12, 20, 0.18), rgba(7, 12, 20, 0.44));
-    border: 0;
-    color: #e6fff5;
-    padding: 0;
-  }
-
-  .vs-home .demo-play-overlay.is-visible {
-    display: inline-flex;
-  }
-
-  .vs-home .demo-play-overlay-icon {
-    width: 68px;
-    height: 68px;
-    border-radius: 999px;
-    display: inline-flex;
-    align-items: center;
-    justify-content: center;
-    background: rgba(93, 202, 165, 0.92);
-    color: #07131a;
-    box-shadow: 0 14px 34px rgba(29, 158, 117, 0.28);
-    font-size: 1.6rem;
-  }
-
   .vs-home .hero-flow {
     display: grid;
     grid-template-columns: minmax(0, 1.22fr) auto minmax(0, 1.18fr) auto minmax(0, 0.98fr) minmax(0, 0.98fr);
@@ -2349,8 +2320,8 @@
 
   <section class="demo-section">
     <p class="demo-eyebrow">SEE IT IN ACTION</p>
-    <h2 class="demo-title">Three clicks to a finished short</h2>
-    <p class="demo-subline">Mark the start, mark the end, and MintiStudio builds the clip — captions, formatting, and all.</p>
+    <h2 class="demo-title">From long video to scheduled Short.</h2>
+    <p class="demo-subline">Pick a moment, choose a style, schedule it — captions, framing and titles handled.</p>
 
     <div class="demo-frame">
       <div class="demo-browserbar">
@@ -2366,16 +2337,14 @@
           class="demo-video"
           data-demo-video
           muted
+          autoplay
           loop
           playsinline
-          preload="metadata"
-          poster="{{ url_for('video_shorts_bp.static', filename='img/mintistudio-demo-poster.webp') }}"
-          aria-label="MintiStudio clip generation demo">
-          <source src="{{ url_for('video_shorts_bp.static', filename='img/mintistudio-demo.mp4') }}" type="video/mp4">
+          preload="none"
+          poster="{{ url_for('video_shorts_bp.static', filename='motion/editor-loop.jpg') }}"
+          aria-label="MintiStudio editor preparing a Short for scheduling">
+          <source data-src="{{ url_for('video_shorts_bp.static', filename='motion/editor-loop.mp4') }}" type="video/mp4">
         </video>
-        <button type="button" class="demo-play-overlay" data-demo-play aria-label="Play MintiStudio demo video">
-          <span class="demo-play-overlay-icon"><i class="bi bi-play-fill" aria-hidden="true"></i></span>
-        </button>
       </div>
     </div>
   </section>
@@ -2697,39 +2666,28 @@
   document.addEventListener("DOMContentLoaded", function () {
     const prefersReducedMotion = window.matchMedia("(prefers-reduced-motion: reduce)");
     document.querySelectorAll("[data-demo-video]").forEach(function (video) {
-      const playButton = video.parentElement ? video.parentElement.querySelector("[data-demo-play]") : null;
+      const source = video.querySelector("source[data-src]");
 
-      function showPlayButton() {
-        if (playButton) playButton.classList.add("is-visible");
-      }
-
-      function hidePlayButton() {
-        if (playButton) playButton.classList.remove("is-visible");
-      }
-
-      if (prefersReducedMotion.matches) {
-        video.removeAttribute("autoplay");
-        video.removeAttribute("loop");
+      if (!source || prefersReducedMotion.matches || !("IntersectionObserver" in window)) {
         video.pause();
-        showPlayButton();
-        if (playButton) {
-          playButton.addEventListener("click", function () {
-            hidePlayButton();
-            video.setAttribute("controls", "controls");
-            video.play().catch(function () {
-              showPlayButton();
-            });
-          });
-        }
-      } else {
-        video.autoplay = true;
-        video.muted = true;
-        video.loop = true;
-        hidePlayButton();
-        video.play().catch(function () {
-          showPlayButton();
-        });
+        return;
       }
+
+      const observer = new IntersectionObserver(function (entries) {
+        entries.forEach(function (entry) {
+          if (entry.isIntersecting) {
+            if (!source.src) {
+              source.src = source.dataset.src;
+              video.load();
+            }
+            video.play().catch(function () {});
+          } else {
+            video.pause();
+          }
+        });
+      }, { threshold: 0.25 });
+
+      observer.observe(video);
     });
 
     const selfServeSelector = document.getElementById("selfServePricingSelector");
