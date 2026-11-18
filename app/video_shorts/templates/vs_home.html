@@ -168,6 +168,77 @@
     min-width: 14rem;
   }
 
+  .vs-home .home-demo-card {
+    position: relative;
+    width: 100%;
+    aspect-ratio: 16 / 9;
+    overflow: hidden;
+    border: 1px solid rgba(93, 202, 165, 0.24);
+    border-radius: clamp(18px, 2vw, 26px);
+    background: #071018;
+    box-shadow:
+      0 24px 60px rgba(0, 0, 0, 0.34),
+      0 0 42px rgba(93, 202, 165, 0.12);
+    opacity: 0;
+    animation: vsHomeFadeUp 0.8s ease-out 0.4s forwards;
+  }
+
+  .vs-home .home-demo-video {
+    display: block;
+    width: 100%;
+    height: 100%;
+    object-fit: cover;
+    background: #071018;
+  }
+
+  .vs-home .home-demo-video::cue {
+    color: #fff;
+    background: rgba(3, 8, 13, 0.82);
+    font-family: "Montserrat", ui-sans-serif, system-ui, sans-serif;
+    font-size: 1rem;
+    font-weight: 700;
+    line-height: 1.35;
+    text-align: center;
+  }
+
+  .vs-home .home-demo-sound {
+    position: absolute;
+    z-index: 2;
+    left: 0.85rem;
+    bottom: 0.85rem;
+    min-height: 42px;
+    padding: 0.62rem 0.88rem;
+    border: 1px solid rgba(255, 255, 255, 0.2);
+    border-radius: 999px;
+    background: rgba(3, 8, 13, 0.84);
+    color: #fff;
+    font-size: 0.86rem;
+    font-weight: 700;
+    line-height: 1;
+    box-shadow: 0 8px 24px rgba(0, 0, 0, 0.32);
+    backdrop-filter: blur(8px);
+  }
+
+  .vs-home .home-demo-sound:hover,
+  .vs-home .home-demo-sound:focus-visible {
+    background: rgba(7, 20, 25, 0.96);
+    border-color: rgba(93, 202, 165, 0.58);
+  }
+
+  .vs-home .home-demo-sound.is-toggle {
+    top: 0.75rem;
+    bottom: auto;
+    min-height: 36px;
+    padding: 0.5rem 0.72rem;
+    font-size: 0.78rem;
+  }
+
+  .vs-home .home-demo-card.is-reduced-motion .home-demo-sound {
+    left: 50%;
+    bottom: 50%;
+    transform: translate(-50%, 50%);
+  }
+
   .vs-home .vs-home-flow-section {
     width: 100%;
   }
@@ -1777,6 +1848,40 @@
     }
   }
 
+  @media (min-width: 1024px) {
+    .vs-home .vs-home-hero-inner {
+      display: grid;
+      grid-template-columns: minmax(0, 45fr) minmax(0, 55fr);
+      align-items: center;
+      gap: clamp(2rem, 4vw, 4.75rem);
+    }
+
+    .vs-home .hero-copy,
+    .vs-home .vs-home-hero .flow-shell-header {
+      text-align: left;
+    }
+
+    .vs-home .vs-home-hero .flow-shell {
+      padding-inline: 0;
+    }
+
+    .vs-home .vs-home-hero .flow-shell-subtitle {
+      margin-inline: 0;
+      max-width: 36rem;
+    }
+
+    .vs-home .vs-home-hero .hero-actions,
+    .vs-home .vs-home-hero .hero-cta-primary {
+      align-items: flex-start;
+      justify-content: flex-start;
+      text-align: left;
+    }
+
+    .vs-home .vs-home-hero .flow-shell-title {
+      font-size: clamp(2.55rem, 3.6vw, 3.75rem);
+    }
+  }
+
   @media (max-width: 575px) {
     .vs-home {
       gap: 3rem;
@@ -2112,6 +2217,7 @@
     }
 
     .vs-home .hero-copy,
+    .vs-home .home-demo-card,
     .vs-home .flow-shell,
     .vs-home .flow-reveal {
       opacity: 1;
@@ -2167,6 +2273,23 @@
           </a>
         </div>
         </div>
+      </div>
+      <div class="home-demo-card" data-home-demo-card>
+        <video
+          class="home-demo-video"
+          data-home-demo-video
+          muted
+          autoplay
+          loop
+          playsinline
+          preload="metadata"
+          poster="{{ url_for('video_shorts_bp.static', filename='motion/maya-demo.jpg') }}"
+          aria-label="MintiStudio editor demo"
+        >
+          <source src="{{ url_for('video_shorts_bp.static', filename='motion/maya-demo.mp4') }}" type="video/mp4">
+          <track kind="captions" srclang="en" src="{{ url_for('video_shorts_bp.static', filename='motion/maya-demo.en.vtt') }}" label="English" default>
+        </video>
+        <button class="home-demo-sound" type="button" data-home-demo-sound data-action="sound">🔊 Tap for sound</button>
       </div>
     </div>
   </section>
@@ -2667,6 +2790,86 @@
 <script>
   document.addEventListener("DOMContentLoaded", function () {
     const prefersReducedMotion = window.matchMedia("(prefers-reduced-motion: reduce)");
+    const homeDemoCard = document.querySelector("[data-home-demo-card]");
+    const homeDemoVideo = document.querySelector("[data-home-demo-video]");
+    const homeDemoSound = document.querySelector("[data-home-demo-sound]");
+
+    if (homeDemoCard && homeDemoVideo && homeDemoSound) {
+      let isInView = false;
+      let manualPlaybackStarted = false;
+      let unmuteTracked = false;
+
+      const setCaptions = function (mode) {
+        Array.from(homeDemoVideo.textTracks || []).forEach(function (track) {
+          if (track.kind === "captions") track.mode = mode;
+        });
+      };
+
+      const showSoundAction = function () {
+        homeDemoSound.dataset.action = "sound";
+        homeDemoSound.textContent = "🔊 Tap for sound";
+        homeDemoSound.classList.remove("is-toggle");
+      };
+
+      homeDemoVideo.muted = true;
+      setCaptions("showing");
+
+      if (prefersReducedMotion.matches) {
+        homeDemoVideo.autoplay = false;
+        homeDemoVideo.pause();
+        homeDemoCard.classList.add("is-reduced-motion");
+        homeDemoSound.dataset.action = "play";
+        homeDemoSound.textContent = "▶ Play demo";
+      }
+
+      if ("IntersectionObserver" in window) {
+        const homeDemoObserver = new IntersectionObserver(function (entries) {
+          entries.forEach(function (entry) {
+            isInView = entry.isIntersecting;
+            if (!isInView) {
+              homeDemoVideo.pause();
+            } else if (!prefersReducedMotion.matches || manualPlaybackStarted) {
+              homeDemoVideo.play().catch(function () {});
+            }
+          });
+        }, { threshold: 0.25 });
+        homeDemoObserver.observe(homeDemoCard);
+      } else {
+        homeDemoVideo.pause();
+      }
+
+      homeDemoSound.addEventListener("click", function () {
+        const action = homeDemoSound.dataset.action;
+        if (action === "play") {
+          manualPlaybackStarted = true;
+          homeDemoCard.classList.remove("is-reduced-motion");
+          showSoundAction();
+          homeDemoVideo.play().catch(function () {});
+          return;
+        }
+
+        if (homeDemoVideo.muted) {
+          homeDemoVideo.muted = false;
+          homeDemoVideo.currentTime = 0;
+          homeDemoVideo.controls = true;
+          setCaptions("hidden");
+          homeDemoSound.dataset.action = "mute";
+          homeDemoSound.textContent = "🔇 Mute";
+          homeDemoSound.classList.add("is-toggle");
+          homeDemoVideo.play().catch(function () {});
+          if (!unmuteTracked && typeof trackMintiEvent === "function") {
+            trackMintiEvent("home_demo_unmute");
+            unmuteTracked = true;
+          }
+        } else {
+          homeDemoVideo.muted = true;
+          setCaptions("showing");
+          showSoundAction();
+          if (!isInView) homeDemoVideo.pause();
+        }
+      });
+    }
+
     document.querySelectorAll("[data-demo-video]").forEach(function (video) {
       const source = video.querySelector("source[data-src]");
 
