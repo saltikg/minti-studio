@@ -146,7 +146,8 @@
 
   .vs-home .vs-home-hero .hero-actions {
     display: flex;
-    flex-direction: column;
+    flex-direction: row;
+    flex-wrap: wrap;
     align-items: center;
     gap: 0.55rem;
     margin-top: 1.65rem;
@@ -193,19 +194,22 @@
 
   .vs-home .home-demo-video::cue {
     color: #fff;
-    background: rgba(3, 8, 13, 0.82);
+    background: rgba(0, 0, 0, 0.65);
     font-family: "Montserrat", ui-sans-serif, system-ui, sans-serif;
     font-size: 1rem;
     font-weight: 700;
     line-height: 1.35;
     text-align: center;
+    border-radius: 0.45rem;
+    padding: 0.18em 0.42em;
   }
 
   .vs-home .home-demo-sound {
     position: absolute;
     z-index: 2;
-    left: 0.85rem;
-    bottom: 0.85rem;
+    top: 12px;
+    left: 12px;
+    bottom: auto;
     min-height: 42px;
     padding: 0.62rem 0.88rem;
     border: 1px solid rgba(255, 255, 255, 0.2);
@@ -226,14 +230,13 @@
   }
 
   .vs-home .home-demo-sound.is-toggle {
-    top: 0.75rem;
-    bottom: auto;
     min-height: 36px;
     padding: 0.5rem 0.72rem;
     font-size: 0.78rem;
   }
 
   .vs-home .home-demo-card.is-reduced-motion .home-demo-sound {
+    top: auto;
     left: 50%;
     bottom: 50%;
     transform: translate(-50%, 50%);
@@ -263,6 +266,9 @@
 
   .vs-home .vs-home-hero .flow-shell {
     padding: 0.45rem 1rem 1.15rem;
+    border: 0;
+    background: transparent;
+    box-shadow: none;
   }
 
   .vs-home .flow-shell-header {
@@ -348,28 +354,30 @@
   }
 
   .vs-home .vs-home-hero .hero-secondary {
-    display: inline-block;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
     width: auto;
-    min-width: 0;
-    padding: 0;
-    border: 0 !important;
-    border-radius: 0;
+    min-width: 14rem;
+    min-height: 52px;
+    padding: 0.9rem 1.35rem;
+    border: 1px solid rgba(93, 202, 165, 0.58) !important;
+    border-radius: 0.6rem;
     background: transparent !important;
     box-shadow: none !important;
-    color: var(--text-2);
-    font-size: 0.9rem;
+    color: rgba(238, 255, 250, 0.96);
+    font-size: 1rem;
+    font-weight: 600;
     line-height: 1.35;
     text-decoration: none;
   }
 
   .vs-home .vs-home-hero .hero-secondary:hover,
   .vs-home .vs-home-hero .hero-secondary:focus {
-    color: var(--text-1);
-    background: transparent !important;
-    border: 0 !important;
-    box-shadow: none !important;
-    text-decoration: underline;
-    text-underline-offset: 0.18em;
+    color: #fff;
+    background: rgba(93, 202, 165, 0.1) !important;
+    border-color: rgba(93, 202, 165, 0.82) !important;
+    text-decoration: none;
   }
 
   .vs-home .demo-section {
@@ -2253,23 +2261,21 @@
           <p class="flow-shell-tagline">Do it yourself in minutes — or let us do it for you</p>
         </div>
         <div class="hero-actions">
-          <div class="hero-cta-primary">
-            <a
-              class="btn hero-primary hero-link"
-              href="/autopilot"
-              data-minti-cta
-              data-cta-location="home_hero"
-            >
-              Autopilot
-            </a>
-          </div>
           <a
-            class="hero-secondary"
+            class="btn hero-primary hero-link"
             href="{{ url_for('video_shorts_bp.register') }}"
+            data-minti-cta
+            data-cta-location="home_hero"
+          >
+            Try it free
+          </a>
+          <a
+            class="btn hero-secondary"
+            href="/autopilot"
             data-minti-cta
             data-cta-location="home_hero_secondary"
           >
-            Or start free →
+            Let us do it for you →
           </a>
         </div>
         </div>
@@ -2793,6 +2799,7 @@
     const homeDemoCard = document.querySelector("[data-home-demo-card]");
     const homeDemoVideo = document.querySelector("[data-home-demo-video]");
     const homeDemoSound = document.querySelector("[data-home-demo-sound]");
+    const homeDemoCaptionTrack = homeDemoVideo?.querySelector('track[kind="captions"]');
 
     if (homeDemoCard && homeDemoVideo && homeDemoSound) {
       let isInView = false;
@@ -2804,6 +2811,21 @@
           if (track.kind === "captions") track.mode = mode;
         });
       };
+
+      const positionCaptionCues = function () {
+        const textTrack = homeDemoCaptionTrack?.track;
+        Array.from(textTrack?.cues || []).forEach(function (cue) {
+          cue.snapToLines = false;
+          cue.line = 88;
+          cue.position = 50;
+          cue.positionAlign = "center";
+          cue.align = "center";
+          cue.size = 88;
+        });
+      };
+
+      homeDemoCaptionTrack?.addEventListener("load", positionCaptionCues);
+      positionCaptionCues();
 
       const showSoundAction = function () {
         homeDemoSound.dataset.action = "sound";
