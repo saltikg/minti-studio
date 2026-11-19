@@ -84,6 +84,13 @@ Generate original, audience-first blog topics for the supplied cluster. The clus
 
 Every topic must help the cluster audience grow an expertise-led long-form video channel with Shorts. Avoid generic AI-tool roundups. Do not repeat an existing reader question or angle, even with different wording.
 
+Title and scope rules:
+- Write plain, search-style titles, not abstract, literary, clever, or poetic titles.
+- Every title must naturally include the cluster's primary_search_phrase.
+- Keep titles to about 70 characters maximum.
+- Propose topics broad enough for a substantial standalone post. Do not propose a sub-question that belongs as one section of an existing post.
+- Do not propose specialty or audience variants that would repeat the same article with only one word changed.
+
 For the doctors cluster, topics are strictly about channel growth, publishing workflow, professional reputation, context preservation, and privacy-aware content operations. Do not propose medical advice, treatment guidance, diagnosis claims, patient stories, patient-identifiable information, or medical statistics.
 
 Return exactly the requested number when enough distinct angles exist. Return:
@@ -495,6 +502,7 @@ def _generate_cluster_topics(
             "slug": cluster.slug,
             "name": cluster.name,
             "audience": cluster.audience,
+            "primary_search_phrase": cluster.primary_search_phrase,
             "seed_topics": list(cluster.seed_topics),
         },
         "existing_titles_and_angles_to_avoid": existing,

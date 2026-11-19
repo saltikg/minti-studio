@@ -105,6 +105,7 @@ class BlogCluster:
     slug: str
     name: str
     audience: str
+    primary_search_phrase: str
     seed_topics: tuple[str, ...]
     weight: int
     boost_weight: int
@@ -143,7 +144,8 @@ def list_blog_clusters(conn=None, *, active_only: bool = False) -> list[BlogClus
         where = "WHERE active IS TRUE" if active_only else ""
         rows = conn.execute(
             f"""
-            SELECT slug, name, audience, seed_topics, weight, boost_weight, boost_until, active
+            SELECT slug, name, audience, primary_search_phrase, seed_topics,
+                   weight, boost_weight, boost_until, active
             FROM blog_clusters
             {where}
             ORDER BY slug
@@ -154,11 +156,12 @@ def list_blog_clusters(conn=None, *, active_only: bool = False) -> list[BlogClus
                 slug=str(row[0]),
                 name=str(row[1]),
                 audience=str(row[2]),
-                seed_topics=_seed_topic_list(row[3]),
-                weight=int(row[4] or 0),
-                boost_weight=int(row[5] or 0),
-                boost_until=row[6],
-                active=bool(row[7]),
+                primary_search_phrase=str(row[3]),
+                seed_topics=_seed_topic_list(row[4]),
+                weight=int(row[5] or 0),
+                boost_weight=int(row[6] or 0),
+                boost_until=row[7],
+                active=bool(row[8]),
             )
             for row in rows
         ]

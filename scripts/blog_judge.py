@@ -85,6 +85,15 @@ Bad: source "Best Video Repurposing Tools" -> ours "Best Video Repurposing Tools
 Good: source "Best Video Repurposing Tools" -> duplicate of our comparison seed, reject
 Good: source "How to add captions to Shorts" -> ours "Do Coaches Need Captions on Every Short?"
 
+Title and scope rules:
+- For non-seed topics, write plain, search-style titles that naturally include the cluster's
+  primary_search_phrase and are about 70 characters maximum.
+- Never use abstract, literary, clever, or poetic phrasing.
+- A topic must support a substantial standalone post. Reject or merge a sub-question that belongs
+  as a section of an existing post.
+- Reject specialty or audience variants that would repeat the same article with one word changed.
+- If source_type="seed", do not rewrite the title: return current_title unchanged as our_title.
+
 Fit rubric: return sub-scores and fit_score as their sum:
 - audience_fit 0-40: does it serve the candidate's supplied cluster audience specifically?
 - minti_bridge 0-30: can the article lead naturally to MintiStudio / Autopilot?
@@ -211,6 +220,7 @@ def _build_user_prompt(candidates: list[dict[str, Any]], existing: list[dict[str
                 "headline": row.get("source_title") or row.get("title"),
                 "summary": row.get("brief") or "",
                 "source_name": row.get("source_name") or "",
+                "source_type": row.get("source_type") or "",
                 "source_url": row.get("source_url") or "",
                 "current_title": row.get("title") or "",
                 "current_status": row.get("status") or "",
@@ -285,6 +295,9 @@ def _validate_title_distance(
             continue
         topic_id = int(decision.get("id") or 0)
         candidate = by_id.get(topic_id)
+        if str((candidate or {}).get("source_type") or "") == "seed":
+            decision["our_title"] = str((candidate or {}).get("title") or decision.get("our_title") or "")
+            continue
         source_title = str((candidate or {}).get("source_title") or (candidate or {}).get("title") or "")
         our_title = str(decision.get("our_title") or "")
         if title_similarity(our_title, source_title) < TITLE_SIMILARITY_REJECT_THRESHOLD:
@@ -325,6 +338,12 @@ def _format_prev_reason(row: dict[str, Any], decision: dict[str, Any]) -> str:
     return reason[:500]
 
 
+def _title_for_update(candidate: dict[str, Any], decision: dict[str, Any]) -> str | None:
+    if str(candidate.get("source_type") or "") == "seed":
+        return None
+    return str(decision.get("our_title") or "").strip() or None
+
+
 def _apply_decision(conn, candidate: dict[str, Any], decision: dict[str, Any], *, preserve_seed: bool = False, rejudge: bool = False) -> bool:
     now = datetime.now(timezone.utc)
     has_adapted_from = "adapted_from" in table_columns(conn, "blog_topics")
@@ -334,7 +353,7 @@ def _apply_decision(conn, candidate: dict[str, Any], decision: dict[str, Any], *
     expires_at = None
     if decision.get("is_timely") and decision.get("expires_in_days"):
         expires_at = now + timedelta(days=max(1, int(decision.get("expires_in_days") or 1)))
-    title = str(decision.get("our_title") or "").strip() or None
+    title = _title_for_update(candidate, decision)
     adapted_sql = ", adapted_from = ?" if has_adapted_from else ""
     params = (
         ([] if preserve_seed else [status, int(decision.get("fit_score") or 0)])
@@ -543,6 +562,7 @@ def judge(
             "slug": cluster.slug,
             "name": cluster.name,
             "audience": cluster.audience,
+            "primary_search_phrase": cluster.primary_search_phrase,
             "seed_topics": list(cluster.seed_topics),
         }
         for cluster in cluster_rows
