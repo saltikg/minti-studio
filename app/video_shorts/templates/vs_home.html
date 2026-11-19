@@ -450,62 +450,119 @@
     line-height: 1.65;
   }
 
-  .vs-home .demo-frame {
+  .vs-home .feature-showcase {
     width: 100%;
-    max-width: 820px;
+    max-width: 1100px;
     margin: 1.6rem auto 0;
-    overflow: hidden;
-    border-radius: 12px;
-    border: 0.5px solid rgba(255, 255, 255, 0.12);
-    background: rgba(13, 17, 23, 0.96);
-    text-align: left;
   }
 
-  .vs-home .demo-browserbar {
-    display: flex;
-    align-items: center;
-    justify-content: space-between;
-    gap: 1rem;
-    padding: 0.72rem 0.85rem;
-    border-bottom: 0.5px solid rgba(255, 255, 255, 0.08);
-    background: rgba(255, 255, 255, 0.02);
-  }
-
-  .vs-home .demo-browserbar-left {
-    display: inline-flex;
-    align-items: center;
-    gap: 0.38rem;
-    flex: 0 0 auto;
-  }
-
-  .vs-home .demo-browserbar-dot {
-    width: 8px;
-    height: 8px;
-    border-radius: 999px;
-    background: rgba(148, 163, 184, 0.42);
-  }
-
-  .vs-home .demo-browserbar-url {
-    min-width: 0;
-    color: rgba(148, 163, 184, 0.84);
-    font-size: 0.82rem;
-    font-weight: 500;
-    white-space: nowrap;
-    overflow: hidden;
-    text-overflow: ellipsis;
-  }
-
-  .vs-home .demo-video-wrap {
+  .vs-home .feature-stage {
     position: relative;
-    background: #0b1220;
+    width: 100%;
+    aspect-ratio: 16 / 9;
+    overflow: hidden;
+    border: 1px solid rgba(93, 202, 165, 0.24);
+    border-radius: clamp(18px, 2.4vw, 30px);
+    background: #071018;
+    box-shadow:
+      0 26px 70px rgba(0, 0, 0, 0.34),
+      0 0 52px rgba(93, 202, 165, 0.1);
   }
 
-  .vs-home .demo-video {
+  .vs-home .feature-stage-video {
+    position: absolute;
+    inset: 0;
     display: block;
     width: 100%;
-    height: auto;
-    aspect-ratio: 16 / 9;
+    height: 100%;
     object-fit: cover;
+    opacity: 0;
+    visibility: hidden;
+    transition: opacity 320ms ease, visibility 320ms ease;
+  }
+
+  .vs-home .feature-stage-video.is-active {
+    opacity: 1;
+    visibility: visible;
+  }
+
+  .vs-home .feature-tabs-wrap {
+    width: 100%;
+    margin-top: 1.15rem;
+    overflow-x: auto;
+    scrollbar-width: thin;
+    scrollbar-color: rgba(93, 202, 165, 0.45) transparent;
+  }
+
+  .vs-home .feature-tabs {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    gap: 0.6rem;
+    min-width: max-content;
+    padding: 0.2rem 0.15rem 0.55rem;
+  }
+
+  .vs-home .feature-tab {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    gap: 0.5rem;
+    min-height: 44px;
+    padding: 0.68rem 1rem;
+    border: 1px solid rgba(255, 255, 255, 0.12);
+    border-radius: 999px;
+    background: rgba(255, 255, 255, 0.035);
+    color: rgba(226, 232, 240, 0.82);
+    font-size: 0.9rem;
+    font-weight: 600;
+    white-space: nowrap;
+    transition: color 180ms ease, background 180ms ease, border-color 180ms ease, transform 180ms ease;
+  }
+
+  .vs-home .feature-tab:hover,
+  .vs-home .feature-tab:focus-visible {
+    color: #fff;
+    border-color: rgba(93, 202, 165, 0.48);
+    transform: translateY(-1px);
+  }
+
+  .vs-home .feature-tab.is-active {
+    border-color: rgba(93, 202, 165, 0.72);
+    background: rgba(93, 202, 165, 0.16);
+    color: #79e1bd;
+    box-shadow: inset 0 0 0 1px rgba(93, 202, 165, 0.1);
+  }
+
+  .vs-home .feature-tab i {
+    font-size: 1rem;
+  }
+
+  .vs-home .feature-tab-copy {
+    min-height: 1.65em;
+    margin: 0.45rem auto 0;
+    color: var(--text-2);
+    font-size: 1rem;
+    line-height: 1.65;
+    text-align: center;
+  }
+
+  @media (max-width: 767px) {
+    .vs-home .feature-tabs-wrap {
+      margin-inline: calc((100vw - 100%) / -2);
+      width: 100vw;
+      padding-inline: max(1rem, calc((100vw - 100%) / 2));
+    }
+
+    .vs-home .feature-tabs {
+      justify-content: flex-start;
+    }
+
+    .vs-home .feature-tab {
+      min-height: 42px;
+      padding: 0.62rem 0.9rem;
+      font-size: 0.86rem;
+    }
   }
 
   .vs-home .hero-flow {
@@ -2451,32 +2508,69 @@
 
   <section class="demo-section">
     <p class="demo-eyebrow">SEE IT IN ACTION</p>
-    <h2 class="demo-title">Don't like the AI's picks? Make your own in seconds.</h2>
-    <p class="demo-subline">Highlight a sentence in the transcript, pick a style, and your Short is ready. No timeline, no editing skills.</p>
+    <h2 class="demo-title">Everything a Short needs, in one place.</h2>
 
-    <div class="demo-frame">
-      <div class="demo-browserbar">
-        <div class="demo-browserbar-left" aria-hidden="true">
-          <span class="demo-browserbar-dot"></span>
-          <span class="demo-browserbar-dot"></span>
-          <span class="demo-browserbar-dot"></span>
-        </div>
-        <div class="demo-browserbar-url">mintistudio.com/generate</div>
-      </div>
-      <div class="demo-video-wrap">
+    <div class="feature-showcase" data-feature-showcase>
+      <div class="feature-stage" aria-live="off">
         <video
-          class="demo-video"
-          data-demo-video
+          class="feature-stage-video is-active"
+          data-feature-video="clip"
+          muted
+          autoplay
+          loop
+          playsinline
+          preload="metadata"
+          poster="{{ url_for('video_shorts_bp.static', filename='motion/tab-clip.jpg') }}"
+          aria-label="Select transcript text to create a Short">
+          <source src="{{ url_for('video_shorts_bp.static', filename='motion/tab-clip.mp4') }}" type="video/mp4">
+        </video>
+        <video
+          class="feature-stage-video"
+          data-feature-video="styles"
           muted
           autoplay
           loop
           playsinline
           preload="none"
-          poster="{{ url_for('video_shorts_bp.static', filename='motion/editor-loop.jpg') }}"
-          aria-label="MintiStudio editor preparing a Short for scheduling">
-          <source data-src="{{ url_for('video_shorts_bp.static', filename='motion/editor-loop.mp4') }}" type="video/mp4">
+          poster="{{ url_for('video_shorts_bp.static', filename='motion/tab-styles.jpg') }}"
+          aria-label="Choose and save caption styles">
+          <source data-src="{{ url_for('video_shorts_bp.static', filename='motion/tab-styles.mp4') }}" type="video/mp4">
+        </video>
+        <video
+          class="feature-stage-video"
+          data-feature-video="reframe"
+          muted
+          autoplay
+          loop
+          playsinline
+          preload="none"
+          poster="{{ url_for('video_shorts_bp.static', filename='motion/tab-reframe.jpg') }}"
+          aria-label="Automatically reframe speakers for vertical video">
+          <source data-src="{{ url_for('video_shorts_bp.static', filename='motion/tab-reframe.mp4') }}" type="video/mp4">
+        </video>
+        <video
+          class="feature-stage-video"
+          data-feature-video="schedule"
+          muted
+          autoplay
+          loop
+          playsinline
+          preload="none"
+          poster="{{ url_for('video_shorts_bp.static', filename='motion/tab-schedule.jpg') }}"
+          aria-label="Schedule a Short to social channels">
+          <source data-src="{{ url_for('video_shorts_bp.static', filename='motion/tab-schedule.mp4') }}" type="video/mp4">
         </video>
       </div>
+
+      <div class="feature-tabs-wrap">
+        <div class="feature-tabs" role="tablist" aria-label="Short creation features">
+          <button class="feature-tab is-active" type="button" role="tab" aria-selected="true" data-feature-tab="clip" data-feature-copy="Highlight a sentence, get a Short. No timeline."><i class="bi bi-scissors" aria-hidden="true"></i>Clip from transcript</button>
+          <button class="feature-tab" type="button" role="tab" aria-selected="false" data-feature-tab="styles" data-feature-copy="Pick a caption style once. Save it as your default."><i class="bi bi-fonts" aria-hidden="true"></i>Caption styles</button>
+          <button class="feature-tab" type="button" role="tab" aria-selected="false" data-feature-tab="reframe" data-feature-copy="Faces stay centered. Two speakers? Auto split."><i class="bi bi-aspect-ratio" aria-hidden="true"></i>Auto reframe</button>
+          <button class="feature-tab" type="button" role="tab" aria-selected="false" data-feature-tab="schedule" data-feature-copy="Schedule to YouTube and Instagram in one step."><i class="bi bi-calendar-check" aria-hidden="true"></i>Schedule</button>
+        </div>
+      </div>
+      <p class="feature-tab-copy" data-feature-description aria-live="polite">Highlight a sentence, get a Short. No timeline.</p>
     </div>
   </section>
 
@@ -2892,30 +2986,110 @@
       });
     }
 
-    document.querySelectorAll("[data-demo-video]").forEach(function (video) {
-      const source = video.querySelector("source[data-src]");
+    const featureShowcase = document.querySelector("[data-feature-showcase]");
 
-      if (!source || prefersReducedMotion.matches || !("IntersectionObserver" in window)) {
-        video.pause();
-        return;
-      }
+    if (featureShowcase) {
+      const featureVideos = Array.from(featureShowcase.querySelectorAll("[data-feature-video]"));
+      const featureTabs = Array.from(featureShowcase.querySelectorAll("[data-feature-tab]"));
+      const featureDescription = featureShowcase.querySelector("[data-feature-description]");
+      let activeFeatureIndex = 0;
+      let featureStageInView = false;
+      let featureManuallySelected = false;
+      const featureLastTimes = new WeakMap();
 
-      const observer = new IntersectionObserver(function (entries) {
-        entries.forEach(function (entry) {
-          if (entry.isIntersecting) {
-            if (!source.src) {
-              source.src = source.dataset.src;
-              video.load();
-            }
-            video.play().catch(function () {});
-          } else {
-            video.pause();
+      const loadFeatureVideo = function (video) {
+        const source = video?.querySelector("source[data-src]");
+        if (source && !source.src) {
+          source.src = source.dataset.src;
+          video.load();
+        }
+      };
+
+      const playActiveFeature = function () {
+        const video = featureVideos[activeFeatureIndex];
+        if (!video || !featureStageInView || prefersReducedMotion.matches) return;
+        loadFeatureVideo(video);
+        video.play().catch(function () {});
+      };
+
+      const activateFeature = function (index, { manual = false } = {}) {
+        if (index < 0 || index >= featureVideos.length) return;
+        if (manual) featureManuallySelected = true;
+
+        featureVideos.forEach(function (video, videoIndex) {
+          const isActive = videoIndex === index;
+          video.classList.toggle("is-active", isActive);
+          video.setAttribute("aria-hidden", isActive ? "false" : "true");
+          if (!isActive) video.pause();
+        });
+
+        featureTabs.forEach(function (tab, tabIndex) {
+          const isActive = tabIndex === index;
+          tab.classList.toggle("is-active", isActive);
+          tab.setAttribute("aria-selected", isActive ? "true" : "false");
+          tab.tabIndex = isActive ? 0 : -1;
+        });
+
+        activeFeatureIndex = index;
+        const activeVideo = featureVideos[index];
+        loadFeatureVideo(activeVideo);
+        if (!prefersReducedMotion.matches) {
+          activeVideo.currentTime = 0;
+          featureLastTimes.set(activeVideo, 0);
+        }
+        if (featureDescription) featureDescription.textContent = featureTabs[index]?.dataset.featureCopy || "";
+        featureTabs[index]?.scrollIntoView({ behavior: "smooth", block: "nearest", inline: "nearest" });
+        playActiveFeature();
+      };
+
+      featureTabs.forEach(function (tab, index) {
+        tab.addEventListener("click", function () {
+          activateFeature(index, { manual: true });
+        });
+      });
+
+      featureVideos.forEach(function (video, index) {
+        video.addEventListener("timeupdate", function () {
+          const previousTime = featureLastTimes.get(video) || 0;
+          const currentTime = video.currentTime;
+          featureLastTimes.set(video, currentTime);
+          const looped = Number.isFinite(video.duration)
+            && previousTime > Math.max(1, video.duration - 0.75)
+            && currentTime < 0.75;
+          if (looped && index === activeFeatureIndex && !featureManuallySelected) {
+            activateFeature((activeFeatureIndex + 1) % featureVideos.length);
           }
         });
-      }, { threshold: 0.25 });
+      });
 
-      observer.observe(video);
-    });
+      featureVideos.forEach(function (video, index) {
+        video.setAttribute("aria-hidden", index === 0 ? "false" : "true");
+        if (prefersReducedMotion.matches) {
+          video.autoplay = false;
+          video.removeAttribute("autoplay");
+          video.pause();
+          video.load();
+        } else if (index !== 0) {
+          video.pause();
+        }
+      });
+
+      if ("IntersectionObserver" in window) {
+        const featureObserver = new IntersectionObserver(function (entries) {
+          entries.forEach(function (entry) {
+            featureStageInView = entry.isIntersecting;
+            if (featureStageInView) {
+              playActiveFeature();
+            } else {
+              featureVideos.forEach(function (video) { video.pause(); });
+            }
+          });
+        }, { threshold: 0.25 });
+        featureObserver.observe(featureShowcase);
+      } else {
+        featureVideos.forEach(function (video) { video.pause(); });
+      }
+    }
 
     const selfServeSelector = document.getElementById("selfServePricingSelector");
     const selfServePrice = document.querySelector("[data-self-serve-price]");
