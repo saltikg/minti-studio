@@ -26,6 +26,7 @@ from scripts import blog_pipeline  # noqa: E402
 
 PROTECTED_SLUGS = {"getting-started-with-mintistudio", "free-youtube-to-shorts-tool"}
 DOCTORS_SLUG = "youtube-shorts-for-doctors-guide"
+DOCTORS_OLD_SLUG = "youtube-shorts-for-doctors-practical-guide-educational-clips-without-extra-admin"
 IMAGE_RE = re.compile(
     r'!\[(?P<alt>[^\]\n]*)\]\((?P<url>/video_shorts/static/img/blog/[^)\s"]+)'
     r'(?:\s+"(?P<title>[^"]*)")?\)'
@@ -156,11 +157,27 @@ def _rewrite_article(
 
 def _protected_old_images(rows: list[tuple[Any, ...]]) -> dict[str, list[str]]:
     report: dict[str, list[str]] = {}
-    for _article_id, slug, content in rows:
+    for _article_id, slug, content, _cover_image_url in rows:
         if str(slug) not in PROTECTED_SLUGS:
             continue
         report[str(slug)] = [str(match.group("url")) for match in IMAGE_RE.finditer(str(content or ""))]
     return report
+
+
+def _migrate_doctors_cover(slug: str, cover_image_url: str, *, apply: bool) -> tuple[str, dict[str, str] | None]:
+    old_prefix = f"/video_shorts/static/img/blog/{DOCTORS_OLD_SLUG}/"
+    if slug != DOCTORS_SLUG or not str(cover_image_url or "").startswith(old_prefix):
+        return cover_image_url, None
+    filename = Path(unquote(str(cover_image_url))).name
+    new_url = f"/video_shorts/static/img/blog/{quote(DOCTORS_SLUG)}/{quote(filename)}"
+    if apply:
+        source = blog_pipeline.STATIC_BLOG_ROOT / DOCTORS_OLD_SLUG / filename
+        target_dir = blog_pipeline.STATIC_BLOG_ROOT / DOCTORS_SLUG
+        if not source.is_file():
+            raise RuntimeError(f"doctors cover source is missing: {source}")
+        target_dir.mkdir(parents=True, exist_ok=True)
+        shutil.copy2(source, target_dir / filename)
+    return new_url, {"from": cover_image_url, "to": new_url}
 
 
 def run(*, apply: bool) -> dict[str, Any]:
@@ -168,7 +185,7 @@ def run(*, apply: bool) -> dict[str, Any]:
     conn = get_db()
     try:
         rows = conn.execute(
-            "SELECT id, slug, content FROM blog_articles WHERE status = 'published' ORDER BY slug"
+            "SELECT id, slug, content, cover_image_url FROM blog_articles WHERE status = 'published' ORDER BY slug"
         ).fetchall()
         report: dict[str, Any] = {
             "mode": "apply" if apply else "dry-run",
@@ -176,7 +193,7 @@ def run(*, apply: bool) -> dict[str, Any]:
             "lost_images": [],
             "protected_old_images": _protected_old_images(rows),
         }
-        for article_id, slug_value, content_value in rows:
+        for article_id, slug_value, content_value, cover_value in rows:
             slug = str(slug_value or "")
             if slug in PROTECTED_SLUGS:
                 continue
@@ -186,13 +203,14 @@ def run(*, apply: bool) -> dict[str, Any]:
                 active,
                 apply=apply,
             )
-            if changes or lost or rewritten != str(content_value or ""):
-                report["changed_posts"].append({"slug": slug, "replacements": changes, "removed": lost})
+            new_cover, cover_change = _migrate_doctors_cover(slug, str(cover_value or ""), apply=apply)
+            if changes or lost or cover_change or rewritten != str(content_value or ""):
+                report["changed_posts"].append({"slug": slug, "replacements": changes, "removed": lost, "cover": cover_change})
                 report["lost_images"].extend({"slug": slug, **item} for item in lost)
                 if apply:
                     conn.execute(
-                        "UPDATE blog_articles SET content = ?, content_updated_at = CURRENT_TIMESTAMP, updated_at = CURRENT_TIMESTAMP WHERE id = ?",
-                        [rewritten, int(article_id)],
+                        "UPDATE blog_articles SET content = ?, cover_image_url = ?, content_updated_at = CURRENT_TIMESTAMP, updated_at = CURRENT_TIMESTAMP WHERE id = ?",
+                        [rewritten, new_cover, int(article_id)],
                     )
         if apply:
             conn.commit()

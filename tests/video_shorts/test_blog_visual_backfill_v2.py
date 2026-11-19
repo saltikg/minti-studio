@@ -46,3 +46,19 @@ def test_backfill_removes_unmatched_and_caps_library_visuals():
     assert "tab-styles.jpg" in rewritten
     assert "tab-schedule.jpg" not in rewritten
     assert "10-track.png" not in rewritten
+
+
+def test_doctors_cover_moves_to_new_slug_in_dry_run():
+    old_url = (
+        "/video_shorts/static/img/blog/"
+        f"{backfill.DOCTORS_OLD_SLUG}/cover.png"
+    )
+
+    new_url, change = backfill._migrate_doctors_cover(
+        backfill.DOCTORS_SLUG,
+        old_url,
+        apply=False,
+    )
+
+    assert new_url == f"/video_shorts/static/img/blog/{backfill.DOCTORS_SLUG}/cover.png"
+    assert change == {"from": old_url, "to": new_url}
