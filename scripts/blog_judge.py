@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import logging
 import sys
 from datetime import datetime, timedelta, timezone
 from itertools import islice
@@ -99,6 +100,7 @@ Return JSON object only.
 
 BATCH_SIZE = 25
 TITLE_SIMILARITY_REJECT_THRESHOLD = 0.60
+logger = logging.getLogger(__name__)
 
 
 def _topic_rows(conn, *, mode: str = "candidate") -> list[dict[str, Any]]:
@@ -175,36 +177,13 @@ def _ensure_fit_score(decision: dict[str, Any]) -> None:
         decision["fit_score"] = total
 
 
-def _apply_prefilter(conn, candidates: list[dict[str, Any]], existing: list[dict[str, str]], *, dry_run: bool, preserve_seed: bool = False) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
+def _apply_prefilter(candidates: list[dict[str, Any]], existing: list[dict[str, str]]) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
     remaining = []
     rejected = []
     for candidate in candidates:
         match = best_duplicate_match(str(candidate.get("title") or ""), existing)
         if match:
             rejected.append({"id": candidate["id"], "decision": "duplicate", "duplicate_of": match, "judge_reason": "prefilter match", "our_title": candidate.get("title")})
-            if not dry_run:
-                if preserve_seed:
-                    previous = str(candidate.get("judge_reason") or "").strip()
-                    reason = f"manual seed; duplicate flag: {match}"
-                    if previous and "manual seed" not in previous:
-                        reason = f"{previous}; duplicate flag: {match}"
-                    conn.execute(
-                        """
-                        UPDATE blog_topics
-                        SET judge_reason = ?
-                        WHERE id = ?
-                        """,
-                        [reason[:500], candidate["id"]],
-                    )
-                else:
-                    conn.execute(
-                        """
-                        UPDATE blog_topics
-                        SET status = 'rejected_duplicate', duplicate_of = ?, judge_reason = 'prefilter match'
-                        WHERE id = ?
-                        """,
-                        [match, candidate["id"]],
-                    )
         else:
             remaining.append(candidate)
     return remaining, rejected
@@ -267,6 +246,17 @@ def _decision_for_id(decisions: list[dict[str, Any]], topic_id: int) -> dict[str
     return None
 
 
+def _decision_candidate(candidates: list[dict[str, Any]], decision: dict[str, Any]) -> dict[str, Any] | None:
+    try:
+        topic_id = int(decision.get("id") or 0)
+    except (TypeError, ValueError):
+        return None
+    for candidate in candidates:
+        if int(candidate.get("id") or 0) == topic_id:
+            return candidate
+    return None
+
+
 def _validate_title_distance(
     *,
     candidates: list[dict[str, Any]],
@@ -322,61 +312,116 @@ def _format_prev_reason(row: dict[str, Any], decision: dict[str, Any]) -> str:
     return reason[:500]
 
 
-def _apply_decisions(conn, candidates: list[dict[str, Any]], decisions: list[dict[str, Any]], *, dry_run: bool, preserve_seed: bool = False, rejudge: bool = False) -> None:
-    if dry_run:
-        return
-    by_id = {int(row["id"]): row for row in candidates}
+def _apply_decision(conn, candidate: dict[str, Any], decision: dict[str, Any], *, preserve_seed: bool = False, rejudge: bool = False) -> bool:
     now = datetime.now(timezone.utc)
     has_adapted_from = "adapted_from" in table_columns(conn, "blog_topics")
-    for decision in decisions:
-        _ensure_fit_score(decision)
-        topic_id = int(decision.get("id") or 0)
-        candidate = by_id.get(topic_id, {})
-        status = _status_for_decision(decision)
-        expires_at = None
-        if decision.get("is_timely") and decision.get("expires_in_days"):
-            expires_at = now + timedelta(days=max(1, int(decision.get("expires_in_days") or 1)))
-        title = str(decision.get("our_title") or "").strip() or None
-        adapted_sql = ", adapted_from = ?" if has_adapted_from else ""
-        params = (
-            ([] if preserve_seed else [status, int(decision.get("fit_score") or 0)])
-            + [
-                _format_prev_reason(candidate, decision) if rejudge else str(decision.get("judge_reason") or "")[:500],
-                candidate.get("duplicate_of") if preserve_seed else decision.get("duplicate_of"),
-                None if preserve_seed else title,
-                normalize_keyword(decision.get("primary_keyword")),
-                decision.get("category"),
-                decision.get("intent"),
-                decision.get("angle"),
-                decision.get("brief"),
-                json.dumps(_fit_breakdown(decision), ensure_ascii=True),
-                bool(decision.get("is_timely")),
-                expires_at,
-            ]
+    _ensure_fit_score(decision)
+    topic_id = int(decision.get("id") or 0)
+    status = _status_for_decision(decision)
+    expires_at = None
+    if decision.get("is_timely") and decision.get("expires_in_days"):
+        expires_at = now + timedelta(days=max(1, int(decision.get("expires_in_days") or 1)))
+    title = str(decision.get("our_title") or "").strip() or None
+    adapted_sql = ", adapted_from = ?" if has_adapted_from else ""
+    params = (
+        ([] if preserve_seed else [status, int(decision.get("fit_score") or 0)])
+        + [
+            _format_prev_reason(candidate, decision) if rejudge else str(decision.get("judge_reason") or "")[:500],
+            candidate.get("duplicate_of") if preserve_seed else decision.get("duplicate_of"),
+            None if preserve_seed else title,
+            normalize_keyword(decision.get("primary_keyword")),
+            decision.get("category"),
+            decision.get("intent"),
+            decision.get("angle"),
+            decision.get("brief"),
+            json.dumps(_fit_breakdown(decision), ensure_ascii=True),
+            bool(decision.get("is_timely")),
+            expires_at,
+        ]
+    )
+    if has_adapted_from:
+        params.append(None if preserve_seed else (str(decision.get("adapted_from") or "").strip() or None))
+    params.extend([topic_id, str(candidate.get("status") or "candidate")])
+    result = conn.execute(
+        f"""
+        UPDATE blog_topics
+        SET {"status = ?," if not preserve_seed else ""}
+            {"fit_score = ?," if not preserve_seed else ""}
+            judge_reason = ?,
+            duplicate_of = ?,
+            title = COALESCE(?, title),
+            primary_keyword = ?,
+            category = ?,
+            intent = ?,
+            angle = ?,
+            brief = ?,
+            fit_breakdown = ?,
+            is_timely = ?,
+            expires_at = ?{adapted_sql}
+        WHERE id = ?
+          AND status = ?
+        """,
+        params,
+    )
+    return bool(result.rowcount)
+
+
+def _apply_prefilter_decision(conn, candidate: dict[str, Any], decision: dict[str, Any], *, preserve_seed: bool = False) -> bool:
+    topic_id = int(candidate["id"])
+    match = str(decision.get("duplicate_of") or "")
+    expected_status = str(candidate.get("status") or "candidate")
+    if preserve_seed:
+        previous = str(candidate.get("judge_reason") or "").strip()
+        reason = f"manual seed; duplicate flag: {match}"
+        if previous and "manual seed" not in previous:
+            reason = f"{previous}; duplicate flag: {match}"
+        result = conn.execute(
+            "UPDATE blog_topics SET judge_reason = ? WHERE id = ? AND status = ?",
+            [reason[:500], topic_id, expected_status],
         )
-        if has_adapted_from:
-            params.append(None if preserve_seed else (str(decision.get("adapted_from") or "").strip() or None))
-        params.append(topic_id)
-        conn.execute(
-            f"""
+    else:
+        result = conn.execute(
+            """
             UPDATE blog_topics
-            SET {"status = ?," if not preserve_seed else ""}
-                {"fit_score = ?," if not preserve_seed else ""}
-                judge_reason = ?,
-                duplicate_of = ?,
-                title = COALESCE(?, title),
-                primary_keyword = ?,
-                category = ?,
-                intent = ?,
-                angle = ?,
-                brief = ?,
-                fit_breakdown = ?,
-                is_timely = ?,
-                expires_at = ?{adapted_sql}
-            WHERE id = ?
+            SET status = 'rejected_duplicate', duplicate_of = ?, judge_reason = 'prefilter match'
+            WHERE id = ? AND status = ?
             """,
-            params,
+            [match, topic_id, expected_status],
         )
+    return bool(result.rowcount)
+
+
+def _write_topic_decision(
+    candidate: dict[str, Any],
+    decision: dict[str, Any],
+    *,
+    preserve_seed: bool = False,
+    rejudge: bool = False,
+    prefiltered: bool = False,
+) -> bool:
+    topic_id = int(candidate.get("id") or decision.get("id") or 0)
+    conn = get_db()
+    try:
+        if prefiltered:
+            applied = _apply_prefilter_decision(conn, candidate, decision, preserve_seed=preserve_seed)
+        else:
+            applied = _apply_decision(conn, candidate, decision, preserve_seed=preserve_seed, rejudge=rejudge)
+        conn.commit()
+        if not applied:
+            logger.info("BLOG_JUDGE_SKIPPED topic_id=%s status_changed", topic_id)
+        return applied
+    except Exception as exc:
+        try:
+            conn.rollback()
+        except Exception:
+            pass
+        logger.error("BLOG_JUDGE_WRITE_FAILED topic_id=%s error=%s", topic_id, exc)
+        return False
+    finally:
+        try:
+            conn.close()
+        except Exception:
+            pass
 
 
 def _usage_payload(result) -> dict[str, Any]:
@@ -392,7 +437,13 @@ def _usage_payload(result) -> dict[str, Any]:
     }
 
 
-def _run_llm_batches(candidates: list[dict[str, Any]], existing: list[dict[str, str]], *, dry_run: bool = False) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
+def _run_llm_batches(
+    candidates: list[dict[str, Any]],
+    existing: list[dict[str, str]],
+    *,
+    dry_run: bool = False,
+    on_batch=None,
+) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
     decisions: list[dict[str, Any]] = []
     usages: list[dict[str, Any]] = []
     stage_name = "judge_dry" if dry_run else "judge"
@@ -418,6 +469,8 @@ def _run_llm_batches(candidates: list[dict[str, Any]], existing: list[dict[str, 
         if missing_ids:
             raise RuntimeError(f"LLM omitted decisions for candidate ids: {missing_ids[:20]}")
         llm_decisions, repair_results = _validate_title_distance(candidates=batch, decisions=llm_decisions, existing=existing, stage_name=stage_name)
+        if on_batch:
+            on_batch(batch, llm_decisions)
         decisions.extend(llm_decisions)
         if result:
             usages.append(_usage_payload(result))
@@ -461,43 +514,70 @@ def judge(
         candidates = _topic_rows(conn, mode=mode)
         exclude_ids = {int(row["id"]) for row in candidates}
         existing = list_existing_articles_and_topics(conn, exclude_topic_ids=exclude_ids)
-        remaining, prefiltered = _apply_prefilter(conn, candidates, existing, dry_run=dry_run, preserve_seed=enrich_seeds)
-        decisions = list(prefiltered)
-        usages: list[dict[str, Any]] = []
-        if remaining:
-            llm_decisions, usages = _run_llm_batches(remaining, existing, dry_run=dry_run)
-            decisions.extend(llm_decisions)
-            _apply_decisions(
-                conn,
-                remaining,
-                llm_decisions,
-                dry_run=dry_run,
-                preserve_seed=enrich_seeds,
-                rejudge=rejudge_queued or rejudge_rejected,
-            )
-            for usage in usages:
-                log_usage("judge_dry" if dry_run else "judge", usage["_result"])
         if not dry_run:
             conn.commit()
-        counts: dict[str, int] = {}
-        for decision in decisions:
-            status = _status_for_decision(decision) if decision.get("decision") != "duplicate" or decision.get("judge_reason") != "prefilter match" else "rejected_duplicate"
-            counts[status] = counts.get(status, 0) + 1
-        public_usages = [{key: value for key, value in usage.items() if key != "_result"} for usage in usages]
-        return {
-            "expired": expired,
-            "decisions": decisions,
-            "counts": counts,
-            "usages": public_usages,
-            "usage": public_usages[-1] if public_usages else None,
-            "seeds": seed_result,
-            "before_after": _before_after_rows(candidates, decisions) if (dry_run and (rejudge_queued or enrich_seeds or rejudge_rejected)) else [],
-        }
-    except Exception:
-        conn.rollback()
-        raise
+        else:
+            conn.rollback()
     finally:
         conn.close()
+
+    remaining, prefiltered = _apply_prefilter(candidates, existing)
+    decisions = list(prefiltered)
+    applied_decisions: list[dict[str, Any]] = []
+    write_errors: list[int] = []
+
+    for decision in prefiltered:
+        candidate = _decision_candidate(candidates, decision)
+        if dry_run:
+            applied_decisions.append(decision)
+        elif candidate and _write_topic_decision(candidate, decision, preserve_seed=enrich_seeds, prefiltered=True):
+            applied_decisions.append(decision)
+        elif candidate:
+            write_errors.append(int(candidate["id"]))
+
+    def persist_batch(batch: list[dict[str, Any]], batch_decisions: list[dict[str, Any]]) -> None:
+        for decision in batch_decisions:
+            candidate = _decision_candidate(batch, decision)
+            if not candidate:
+                continue
+            if dry_run or _write_topic_decision(
+                candidate,
+                decision,
+                preserve_seed=enrich_seeds,
+                rejudge=rejudge_queued or rejudge_rejected,
+            ):
+                applied_decisions.append(decision)
+            else:
+                write_errors.append(int(candidate["id"]))
+
+    usages: list[dict[str, Any]] = []
+    if remaining:
+        llm_decisions, usages = _run_llm_batches(
+            remaining,
+            existing,
+            dry_run=dry_run,
+            on_batch=persist_batch,
+        )
+        decisions.extend(llm_decisions)
+        for usage in usages:
+            log_usage("judge_dry" if dry_run else "judge", usage["_result"])
+
+    counted_decisions = decisions if dry_run else applied_decisions
+    counts: dict[str, int] = {}
+    for decision in counted_decisions:
+        status = _status_for_decision(decision) if decision.get("decision") != "duplicate" or decision.get("judge_reason") != "prefilter match" else "rejected_duplicate"
+        counts[status] = counts.get(status, 0) + 1
+    public_usages = [{key: value for key, value in usage.items() if key != "_result"} for usage in usages]
+    return {
+        "expired": expired,
+        "decisions": decisions,
+        "counts": counts,
+        "write_errors": write_errors,
+        "usages": public_usages,
+        "usage": public_usages[-1] if public_usages else None,
+        "seeds": seed_result,
+        "before_after": _before_after_rows(candidates, decisions) if (dry_run and (rejudge_queued or enrich_seeds or rejudge_rejected)) else [],
+    }
 
 
 def main() -> int:
@@ -521,6 +601,8 @@ def main() -> int:
         print("seeds_skipped=" + json.dumps(result["seeds"]["skipped"]))
     print("expired=" + str(result["expired"]))
     print("counts=" + json.dumps(result["counts"], sort_keys=True))
+    if result.get("write_errors"):
+        print("write_errors=" + json.dumps(result["write_errors"]))
     if result["usages"]:
         print("usages=" + json.dumps(result["usages"], sort_keys=True))
     if result["before_after"]:

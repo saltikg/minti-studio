@@ -1238,6 +1238,44 @@ def _call_stage(state: PipelineState, stage: str, model: str, system_prompt: str
     return json.loads(result.content), result.cost_usd
 
 
+def _record_pipeline_stage(
+    state: PipelineState,
+    *,
+    stage: str,
+    status: str,
+    model: str | None = None,
+    output: Any = None,
+    score: int | None = None,
+    notes: str | None = None,
+    cost_usd: Decimal | float | str | None = None,
+    set_current: bool = False,
+) -> None:
+    if state.dry_run or not state.run_id:
+        return
+    conn = get_db()
+    try:
+        if set_current:
+            set_current_stage(conn, state.run_id, stage)
+        record_stage(
+            conn,
+            run_id=state.run_id,
+            seq=state.seq,
+            stage=stage,
+            status=status,
+            model=model,
+            output=output,
+            score=score,
+            notes=notes,
+            cost_usd=cost_usd,
+        )
+        conn.commit()
+    except Exception:
+        conn.rollback()
+        raise
+    finally:
+        conn.close()
+
+
 def _internal_link_urls(articles: list[dict[str, Any]]) -> set[str]:
     return {str(article["url"]) for article in articles}
 
@@ -2159,7 +2197,13 @@ def run_pipeline(*, topic_id: int | None = None, dry_run: bool = False) -> dict[
         run_id = create_run(conn, topic_id=int(topic["id"]), dry_run=dry_run)
         state = PipelineState(topic=topic, run_id=run_id, dry_run=dry_run)
         conn.rollback() if dry_run else conn.commit()
+    except Exception:
+        conn.rollback()
+        raise
+    finally:
+        conn.close()
 
+    try:
         user_base = {
             "stable_context": prefix,
             "topic": topic,
@@ -2193,23 +2237,27 @@ def run_pipeline(*, topic_id: int | None = None, dry_run: bool = False) -> dict[
             if retry_violations:
                 writer_retry_notes.extend(f"writer schema still repaired by code: {item}" for item in retry_violations)
         article = _prepare_cover_plan(_normalize_article_payload(article), topic)
-        conn = get_db()
         state.seq += 1
-        set_current_stage(conn, state.run_id, "writer")
-        record_stage(conn, run_id=state.run_id, seq=state.seq, stage="writer", status="done", model=BLOG_MODEL_WRITER, output=article, notes=_join_notes(writer_retry_notes), cost_usd=cost)
-        conn.commit()
+        _record_pipeline_stage(
+            state,
+            stage="writer",
+            status="done",
+            model=BLOG_MODEL_WRITER,
+            output=article,
+            notes=_join_notes(writer_retry_notes),
+            cost_usd=cost,
+            set_current=True,
+        )
 
         checks = _code_checks(article, screenshots, published)
         state.seq += 1
-        record_stage(conn, run_id=state.run_id, seq=state.seq, stage="checks", status="done" if checks["ok"] else "failed", output=checks, notes=_checks_notes(checks))
-        conn.commit()
+        _record_pipeline_stage(state, stage="checks", status="done" if checks["ok"] else "failed", output=checks, notes=_checks_notes(checks))
 
         reviewer_payload = {**user_base, "article": article, "checks": checks, "existing_titles": [item["title"] for item in published]}
         review_1, cost = _call_stage(state, "reviewer_1", BLOG_MODEL_REVIEWER, _reviewer_prompt(), reviewer_payload)
         state.seq += 1
         review_1_score = _review_score(review_1)
-        record_stage(conn, run_id=state.run_id, seq=state.seq, stage="reviewer_1", status="done", model=BLOG_MODEL_REVIEWER, output=review_1, score=review_1_score, cost_usd=cost)
-        conn.commit()
+        _record_pipeline_stage(state, stage="reviewer_1", status="done", model=BLOG_MODEL_REVIEWER, output=review_1, score=review_1_score, cost_usd=cost, set_current=True)
 
         final_review = review_1
         if review_1_score < BLOG_REVIEW_PASS or _blocking_issues(review_1, checks):
@@ -2234,17 +2282,16 @@ def run_pipeline(*, topic_id: int | None = None, dry_run: bool = False) -> dict[
                 revision_notes = _join_notes(token_repairs)
                 revision_output = {**article, "token_repairs": token_repairs} if token_repairs else article
             state.seq += 1
-            record_stage(conn, run_id=state.run_id, seq=state.seq, stage="revision_1", status=revision_status, model=BLOG_MODEL_WRITER, output=revision_output, notes=revision_notes, cost_usd=cost)
+            _record_pipeline_stage(state, stage="revision_1", status=revision_status, model=BLOG_MODEL_WRITER, output=revision_output, notes=revision_notes, cost_usd=cost)
             checks = _code_checks(article, screenshots, published)
             state.seq += 1
-            record_stage(conn, run_id=state.run_id, seq=state.seq, stage="checks", status="done" if checks["ok"] else "failed", output=checks, notes=_checks_notes(checks))
+            _record_pipeline_stage(state, stage="checks", status="done" if checks["ok"] else "failed", output=checks, notes=_checks_notes(checks))
             reviewer_payload = {**user_base, "article": article, "checks": checks, "existing_titles": [item["title"] for item in published]}
             review_2, cost = _call_stage(state, "reviewer_2", BLOG_MODEL_REVIEWER, _reviewer_prompt(), reviewer_payload)
             final_review = review_2
             state.seq += 1
             review_2_score = _review_score(review_2)
-            record_stage(conn, run_id=state.run_id, seq=state.seq, stage="reviewer_2", status="done", model=BLOG_MODEL_REVIEWER, output=review_2, score=review_2_score, cost_usd=cost)
-            conn.commit()
+            _record_pipeline_stage(state, stage="reviewer_2", status="done", model=BLOG_MODEL_REVIEWER, output=review_2, score=review_2_score, cost_usd=cost, set_current=True)
             if review_2_score < BLOG_REVIEW_PASS or _blocking_issues(review_2, checks):
                 previous_article = dict(article)
                 masked_previous, previous_masked_content, previous_blocks = _masked_article(previous_article)
@@ -2266,11 +2313,10 @@ def run_pipeline(*, topic_id: int | None = None, dry_run: bool = False) -> dict[
                     revision_notes = _join_notes(token_repairs)
                     revision_output = {**article, "token_repairs": token_repairs} if token_repairs else article
                 state.seq += 1
-                record_stage(conn, run_id=state.run_id, seq=state.seq, stage="revision_2", status=revision_status, model=BLOG_MODEL_WRITER, output=revision_output, notes=revision_notes, cost_usd=cost)
+                _record_pipeline_stage(state, stage="revision_2", status=revision_status, model=BLOG_MODEL_WRITER, output=revision_output, notes=revision_notes, cost_usd=cost)
                 checks = _code_checks(article, screenshots, published)
                 state.seq += 1
-                record_stage(conn, run_id=state.run_id, seq=state.seq, stage="checks", status="done" if checks["ok"] else "failed", output=checks, notes=_checks_notes(checks))
-                conn.commit()
+                _record_pipeline_stage(state, stage="checks", status="done" if checks["ok"] else "failed", output=checks, notes=_checks_notes(checks))
 
         before_design = str(article.get("content_md") or "")
         masked_design_content, design_blocks = _mask_protected_blocks(before_design)
@@ -2296,13 +2342,11 @@ def run_pipeline(*, topic_id: int | None = None, dry_run: bool = False) -> dict[
         else:
             designer_status = "failed"
         state.seq += 1
-        record_stage(conn, run_id=state.run_id, seq=state.seq, stage="designer", status=designer_status, model=BLOG_MODEL_DESIGNER, output={"guard": guard_note, "source_content_md": before_design, "content_md": after_design, "visuals": article.get("visuals"), "token_repairs": token_repairs}, notes=guard_note, cost_usd=cost)
-        conn.commit()
+        _record_pipeline_stage(state, stage="designer", status=designer_status, model=BLOG_MODEL_DESIGNER, output={"guard": guard_note, "source_content_md": before_design, "content_md": after_design, "visuals": article.get("visuals"), "token_repairs": token_repairs}, notes=guard_note, cost_usd=cost, set_current=True)
 
         checks = _code_checks(article, screenshots, published)
         state.seq += 1
-        record_stage(conn, run_id=state.run_id, seq=state.seq, stage="checks", status="done" if checks["ok"] else "failed", output=checks, notes=_checks_notes(checks))
-        conn.commit()
+        _record_pipeline_stage(state, stage="checks", status="done" if checks["ok"] else "failed", output=checks, notes=_checks_notes(checks))
         if not checks.get("ok"):
             raise RuntimeError("pre-save blog checks failed: " + "; ".join(checks.get("issues") or []))
 
@@ -2313,10 +2357,8 @@ def run_pipeline(*, topic_id: int | None = None, dry_run: bool = False) -> dict[
         for variant in image_output.get("test_variants") or []:
             image_cost += Decimal(str((variant.get("medium") or {}).get("cost_usd") or "0"))
         state.seq += 1
-        record_stage(
-            conn,
-            run_id=state.run_id,
-            seq=state.seq,
+        _record_pipeline_stage(
+            state,
             stage="images",
             status=image_status,
             model=f"{BLOG_IMAGE_COVER}/{BLOG_IMAGE_INLINE}",
@@ -2324,7 +2366,6 @@ def run_pipeline(*, topic_id: int | None = None, dry_run: bool = False) -> dict[
             notes="; ".join(f"{item.get('kind')} {item.get('marker') or ''}: {item.get('message')}" for item in image_output.get("errors") or [])[:1000],
             cost_usd=image_cost,
         )
-        conn.commit()
         run_status = "draft_ready"
         final_score = _review_score(final_review)
         if designer_status != "done" or image_status != "done" or final_score < BLOG_REVIEW_PASS or _blocking_issues(final_review, checks) or not checks.get("ok"):
@@ -2344,9 +2385,16 @@ def run_pipeline(*, topic_id: int | None = None, dry_run: bool = False) -> dict[
             print(json.dumps(result, ensure_ascii=False, indent=2))
             return result
 
-        article_id = _save_draft(conn, state=state, article=article, visuals_plan={"cover": article.get("cover"), "visuals": article.get("visuals"), "screenshots_placed": article.get("screenshots_placed")}, run_status=run_status)
-        finish_run(conn, state.run_id, status=run_status, article_id=article_id, final_review_score=final_score)
-        conn.commit()
+        conn = get_db()
+        try:
+            article_id = _save_draft(conn, state=state, article=article, visuals_plan={"cover": article.get("cover"), "visuals": article.get("visuals"), "screenshots_placed": article.get("screenshots_placed")}, run_status=run_status)
+            finish_run(conn, state.run_id, status=run_status, article_id=article_id, final_review_score=final_score)
+            conn.commit()
+        except Exception:
+            conn.rollback()
+            raise
+        finally:
+            conn.close()
         result["article_id"] = article_id
         published, publish_reason, publish_verification = _publish_if_clean(
             article_id=article_id,
@@ -2406,10 +2454,6 @@ def run_pipeline(*, topic_id: int | None = None, dry_run: bool = False) -> dict[
         print(json.dumps(result, ensure_ascii=False, indent=2))
         return result
     except Exception as exc:
-        try:
-            conn.rollback()
-        except Exception:
-            pass
         if state and not state.dry_run:
             try:
                 fail_conn = get_db()
@@ -2437,11 +2481,6 @@ def run_pipeline(*, topic_id: int | None = None, dry_run: bool = False) -> dict[
                     reason=str(exc)[:500],
                 )
         raise
-    finally:
-        try:
-            conn.close()
-        except Exception:
-            pass
 
 
 def main() -> int:

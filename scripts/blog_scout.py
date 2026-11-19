@@ -386,52 +386,65 @@ def _with_transcript_summaries(items: list[dict[str, Any]], stats: dict[str, int
     return enriched
 
 
-def scout() -> dict[str, int | str]:
-    counts: dict[str, int | str] = {}
+def _record_source_error(source: BlogSource, error: str) -> None:
     conn = get_db()
     try:
-        for source in list_blog_sources(conn, enabled_only=True):
-            if not source.enabled or not source.url:
-                counts[source.name] = "disabled"
-                continue
-            if source.source_type != "youtube_channel" and not robots_allows(source.url):
-                counts[source.name] = "disabled_robots"
-                update_blog_source_check(conn, source, error="robots.txt disallows source URL")
-                conn.commit()
-                continue
-            stats: dict[str, int] = {}
-            try:
-                if source.source_type == "youtube_channel":
-                    items = _with_transcript_summaries(_youtube_channel_videos(source), stats)
-                else:
-                    status, _, _, data = fetch_url(source.url)
-                    if not status or status >= 400:
-                        raise RuntimeError("unreachable")
-                    if source.source_type == "youtube_news" or "blog.youtube/sitemap.xml" in source.url:
-                        items = parse_youtube_blog_sitemap(data)
-                    elif source.entry_kind == "feed":
-                        items = parse_feed_items(data)
-                    else:
-                        items = parse_sitemap_items(data, source_url=source.url)
-                    items = _fresh_items(items)
-            except Exception as exc:
-                counts[source.name] = f"error:{exc}"
-                update_blog_source_check(conn, source, error=str(exc))
-                conn.commit()
-                continue
-            inserted = 0
-            for item in items:
-                if insert_candidate(conn, source=source, item=item):
-                    inserted += 1
-            update_blog_source_check(conn, source, error=None)
-            conn.commit()
-            suffix = f" {json.dumps(stats, sort_keys=True)}" if stats else ""
-            counts[source.name] = f"{inserted}{suffix}"
+        update_blog_source_check(conn, source, error=error)
+        conn.commit()
     except Exception:
         conn.rollback()
         raise
     finally:
         conn.close()
+
+
+def _persist_source_items(source: BlogSource, items: list[dict[str, Any]]) -> int:
+    conn = get_db()
+    try:
+        inserted = sum(1 for item in items if insert_candidate(conn, source=source, item=item))
+        update_blog_source_check(conn, source, error=None)
+        conn.commit()
+        return inserted
+    except Exception:
+        conn.rollback()
+        raise
+    finally:
+        conn.close()
+
+
+def scout() -> dict[str, int | str]:
+    counts: dict[str, int | str] = {}
+    sources = list_blog_sources(enabled_only=True)
+    for source in sources:
+        if not source.enabled or not source.url:
+            counts[source.name] = "disabled"
+            continue
+        if source.source_type != "youtube_channel" and not robots_allows(source.url):
+            counts[source.name] = "disabled_robots"
+            _record_source_error(source, "robots.txt disallows source URL")
+            continue
+        stats: dict[str, int] = {}
+        try:
+            if source.source_type == "youtube_channel":
+                items = _with_transcript_summaries(_youtube_channel_videos(source), stats)
+            else:
+                status, _, _, data = fetch_url(source.url)
+                if not status or status >= 400:
+                    raise RuntimeError("unreachable")
+                if source.source_type == "youtube_news" or "blog.youtube/sitemap.xml" in source.url:
+                    items = parse_youtube_blog_sitemap(data)
+                elif source.entry_kind == "feed":
+                    items = parse_feed_items(data)
+                else:
+                    items = parse_sitemap_items(data, source_url=source.url)
+                items = _fresh_items(items)
+        except Exception as exc:
+            counts[source.name] = f"error:{exc}"
+            _record_source_error(source, str(exc))
+            continue
+        inserted = _persist_source_items(source, items)
+        suffix = f" {json.dumps(stats, sort_keys=True)}" if stats else ""
+        counts[source.name] = f"{inserted}{suffix}"
     return counts
 
 
