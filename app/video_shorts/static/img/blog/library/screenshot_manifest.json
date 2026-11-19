@@ -1,148 +1,30 @@
 [
-  {
-    "id": "analytics-subscribers",
-    "filename": "1-minti-dashboard.png",
-    "feature": "Analytics: followers per platform + daily subscribers",
-    "shows": "Follower cards for YouTube, Instagram, Facebook Page, TikTok, a daily subscribers line chart per platform, and a daily audience change table.",
-    "alt": "MintiStudio audience analytics with daily subscriber changes per platform",
-    "use_for": [
-      "audience growth",
-      "views vs subscribers",
-      "tracking channel growth"
-    ],
-    "hold": true,
-    "caution": "HOLD — the subscriber snapshot ingest has an open cross-channel contamination bug; do not publish this chart until that is fixed. Data is Gokhan's own channel."
-  },
-  {
-    "id": "analytics-views",
-    "filename": "2-minti-barchart.png",
-    "feature": "Analytics: total views + daily views by platform",
-    "shows": "Total Views and Total Comments cards with period change, and a daily stacked bar chart of YouTube and Instagram views over about a month.",
-    "alt": "MintiStudio analytics showing daily Shorts views across YouTube and Instagram",
-    "use_for": [
-      "measuring Shorts performance",
-      "analytics",
-      "what to track after publishing"
-    ],
-    "hold": false,
-    "caution": "Data is from Gokhan's own channel (OK to publish)."
-  },
-  {
-    "id": "video-from-url",
-    "filename": "3-minti-youtube-video-url-paste.png",
-    "feature": "Add a video by pasting a YouTube link",
-    "shows": "Close-up of the 'Video from URL' tab: 'Paste a YouTube link — we'll pull it in and get it ready.'",
-    "alt": "Paste a YouTube link to start making Shorts in MintiStudio",
-    "use_for": [
-      "getting started",
-      "no upload needed",
-      "first step of the workflow"
-    ]
-  },
-  {
-    "id": "clip-edit-modal",
-    "filename": "4-manual-changing-video-details.png",
-    "feature": "Clip detail: trim, title, text",
-    "shows": "A single clip's detail modal: vertical preview, editable start/end times, clip title with regenerate button, the clip's transcript text, and Schedule / Delete clip actions. YouTube and Instagram target icons at the top.",
-    "alt": "MintiStudio clip detail with start and end times, title, and transcript text",
-    "use_for": [
-      "fine-tuning a clip",
-      "clip titles",
-      "preparing a Short to publish"
-    ]
-  },
-  {
-    "id": "transcript-selection",
-    "filename": "5-manual-video-creation.png",
-    "feature": "Pick a clip by selecting transcript lines",
-    "shows": "Transcript panel with a selected range marked START and END across several lines; footer shows the selection length and a 'Create clip' button.",
-    "alt": "Selecting a clip range directly from the transcript in MintiStudio",
-    "use_for": [
-      "choosing clip moments",
-      "manual clip selection",
-      "editing without a timeline"
-    ]
-  },
-  {
-    "id": "my-videos-shorts-library",
-    "filename": "6-my-videos-page.png",
-    "feature": "My Videos: Shorts library + source videos",
-    "shows": "My Videos page: 'Video from URL' tab with a paste-a-YouTube-link field, a 'Your Shorts' strip of vertical thumbnails with Published/Ready badges and dates, and the list of source long videos with length and added date.",
-    "alt": "MintiStudio My Videos page with a library of Shorts made from long videos",
-    "use_for": [
-      "one long video becomes many Shorts",
-      "Shorts library",
-      "repurposing",
-      "workflow overview"
-    ]
-  },
-  {
-    "id": "planning-calendar",
-    "filename": "7-scheduled-videos-calender.png",
-    "feature": "Publishing calendar + per-platform status",
-    "shows": "Planning page: Published / Scheduled / Videos-with-new-comments counters, a monthly calendar with YouTube and Instagram markers per day, and a table of Shorts with per-platform status (Scheduled, Published, Reel queued, Not planned) and view/like/comment counts.",
-    "alt": "MintiStudio publishing calendar with scheduled and published Shorts across YouTube and Instagram",
-    "use_for": [
-      "weekly publishing schedule",
-      "consistency",
-      "cross-platform tracking",
-      "done-for-you publishing"
-    ],
-    "hold": true,
-    "caution": "HOLD until recropped — rows show 'Unknown channel' and very low view counts. Crop to the calendar + counters (or retake after the label is fixed), then set hold to false."
-  },
-  {
-    "id": "schedule-publish-modal",
-    "filename": "8-manual-video-scheduling.png",
-    "feature": "Schedule & Publish to YouTube + Instagram",
-    "shows": "Schedule & Publish modal: title, description with 'Create Description LLM' button (description, hashtags, transcript), YouTube publish time in Pacific time, Instagram options (share as Reel or feed video, publish same time / immediately / separate time), and a Facebook Page section.",
-    "alt": "MintiStudio Schedule and Publish modal for YouTube Shorts and Instagram Reels",
-    "use_for": [
-      "scheduling Shorts",
-      "cross-posting to Instagram Reels",
-      "descriptions and hashtags",
-      "time zones",
-      "publishing consistency"
-    ],
-    "caution": "Facebook Page section shows 'not connected' — fine for a scheduling article, avoid for a Facebook-focused one."
-  },
-  {
-    "id": "transcript-clips-overview",
-    "filename": "9-generate-video-screen.png",
-    "feature": "Transcript + player + clip list",
-    "shows": "Video workspace: timestamped English transcript on the left (click a row to set start, another to set end), the source video player on the right, and a Clips panel with 'Suggest clips with AI', an 'Auto-create clips scoring >= 72' slider, 'Schedule all', and a created clip card.",
-    "alt": "MintiStudio video workspace with timestamped transcript, video player, and AI clip suggestions",
-    "use_for": [
-      "finding the best moments",
-      "AI clip suggestions",
-      "turning long videos into Shorts",
-      "workflow overview"
-    ]
-  },
-  {
-    "id": "crop-style-templates",
-    "filename": "10-manual-video-crop.png",
-    "feature": "Crop for Shorts: style templates + reframe",
-    "shows": "The 'Crop for Shorts' editor. Top row: caption style templates (Modern Pink, Modern Purple, Sky Cyan, Electric Lime, Serif Bordo, Word Highlight). Layout tab with Fill / Fill split / Fit options, a Subscribe Animation toggle, a 'Drag to reframe' crop box over the horizontal source video, and a vertical Final Preview with a title and word-highlighted captions.",
-    "alt": "MintiStudio Crop for Shorts editor with caption style templates, reframe box, and vertical preview",
-    "use_for": [
-      "captions",
-      "caption styles",
-      "reframing horizontal video to vertical",
-      "branding Shorts",
-      "editing workflow"
-    ]
-  },
-  {
-    "id": "clips-suggest-ai",
-    "filename": "11-ai-suggested-video-schedule-all-function.png",
-    "feature": "Suggest clips with AI + auto-create threshold",
-    "shows": "Close-up of the Clips panel: 'Suggest clips with AI' button, 'Auto-create clips scoring >= 72' slider, 'Create clips' and 'Schedule all' buttons, and one clip card.",
-    "alt": "Suggest clips with AI and the auto-create score threshold in MintiStudio",
-    "use_for": [
-      "AI clip selection",
-      "batch creating Shorts",
-      "saving time"
-    ]
-  }
+  {"id":"transcript-selection","filename":"motion/tab-clip.jpg","type":"screenshot","status":"active","captured_at":"2026-11-19","feature":"Clip editor / Your Clips / transcript selection","shows":"Current clip editor with transcript selection and Your Clips.","alt":"MintiStudio clip editor with transcript selection and Your Clips","use_for":["transcript selection","choosing clip moments","editing without a timeline","general","doctors","podcasters"]},
+  {"id":"clip-edit-modal","filename":"motion/tab-clip.jpg","type":"screenshot","status":"active","captured_at":"2026-11-19","feature":"Clip editor and Your Clips","shows":"Current clip editor with transcript selection and Your Clips.","alt":"MintiStudio clip editor for reviewing and refining a Short","use_for":["fine-tuning a clip","reviewing a Short","clip titles","preparing a Short"]},
+  {"id":"transcript-clips-overview","filename":"motion/tab-clip.jpg","type":"screenshot","status":"active","captured_at":"2026-11-19","feature":"Transcript and Your Clips overview","shows":"Current clip editor with transcript selection and Your Clips.","alt":"MintiStudio transcript workspace and Your Clips overview","use_for":["finding the best moments","turning long videos into Shorts","workflow overview","Your Clips"]},
+  {"id":"clips-suggest-ai","filename":"motion/tab-clip.jpg","type":"screenshot","status":"active","captured_at":"2026-11-19","feature":"AI-assisted clip selection","shows":"Current clip editor with transcript selection and Your Clips.","alt":"MintiStudio clip editor for selecting moments from a transcript","use_for":["AI clip selection","clip suggestions","saving time","batch creating Shorts"]},
+  {"id":"crop-style-templates","filename":"motion/tab-styles.jpg","type":"screenshot","status":"active","captured_at":"2026-11-19","feature":"Design panel and caption styles","shows":"Current design panel with caption styles and a vertical preview.","alt":"MintiStudio design panel with caption styles and Short preview","use_for":["captions","caption styles","branding Shorts","design workflow"]},
+  {"id":"schedule-publish-modal","filename":"motion/tab-schedule.jpg","type":"screenshot","status":"active","captured_at":"2026-11-19","feature":"Schedule and Publish","shows":"Current Schedule and Publish workflow.","alt":"MintiStudio Schedule and Publish screen for a finished Short","use_for":["scheduling Shorts","publishing consistency","YouTube","Instagram"]},
+  {"id":"auto-reframe-split","filename":"motion/tab-reframe.jpg","type":"screenshot","status":"active","captured_at":"2026-11-19","feature":"Auto reframe and two-speaker split","shows":"Current auto-reframe view with a vertical split for two speakers.","alt":"MintiStudio auto reframe with a two-speaker vertical split","use_for":["podcasters","interviews","two speakers","auto reframe","split screen"]},
+  {"id":"workflow-three-ways","filename":"motion/three-ways.jpg","type":"graphic","status":"active","captured_at":"2026-10-25","feature":"DIY tool vs agency vs MintiStudio","shows":"A comparison of three ways to create Shorts.","alt":"DIY tool, agency, and MintiStudio Shorts workflows compared","use_for":["DIY versus done-for-you","agency comparison","choosing a workflow","Autopilot"]},
+  {"id":"weekly-shorts-routine","filename":"motion/weekly-routine.jpg","type":"graphic","status":"active","captured_at":"2026-10-25","feature":"Weekly Shorts routine and time cost","shows":"A weekly routine for creating and publishing Shorts.","alt":"A practical weekly Shorts routine and its time cost","use_for":["weekly workflow","time cost","publishing consistency","busy creators","doctors","coaches"]},
+  {"id":"real-short-doctor-busy","filename":"motion/real-short-1-preview.mp4","poster":"motion/real-short-1.jpg","type":"video","status":"active","captured_at":"2026-11-19","feature":"Finished doctor Short","shows":"Busy doctor? Your best Shorts are already recorded.","alt":"Finished MintiStudio Short for a busy doctor","playback":"silent_loop","use_for":["doctors","clinicians","medical creators","finished Short example"]},
+  {"id":"real-short-podcast","filename":"motion/real-short-2-preview.mp4","poster":"motion/real-short-2.jpg","type":"video","status":"active","captured_at":"2026-11-19","feature":"Finished podcast Short","shows":"Why do you need Shorts? Two-speaker podcast layout.","alt":"Finished two-speaker podcast Short made with MintiStudio","playback":"silent_loop","use_for":["podcasters","interviews","two speakers","finished Short example"]},
+  {"id":"real-short-client-journey","filename":"motion/real-short-3-preview.mp4","poster":"motion/real-short-3.jpg","type":"video","status":"active","captured_at":"2026-11-19","feature":"Finished coaching Short","shows":"Shorts start the client journey.","alt":"Finished coaching Short about starting the client journey","playback":"silent_loop","use_for":["general","coaches","consultants","client journey","finished Short example"]},
+  {"id":"real-short-audience-fit","filename":"motion/real-short-4-preview.mp4","poster":"motion/real-short-4.jpg","type":"video","status":"active","captured_at":"2026-11-19","feature":"Finished creator Short","shows":"Are Shorts even for my audience?","alt":"Finished creator Short about audience fit","playback":"silent_loop","use_for":["general","coaches","educators","audience fit","finished Short example"]},
+  {"id":"real-short-doctor-consistency","filename":"motion/real-short-5-preview.mp4","poster":"motion/real-short-5.jpg","type":"video","status":"active","captured_at":"2026-11-19","feature":"Finished doctor Short","shows":"How often should doctors post Shorts?","alt":"Finished doctor Short about posting consistently","playback":"silent_loop","use_for":["doctors","clinicians","posting consistency","finished Short example"]},
+  {"id":"maya-product-demo","filename":"motion/maya-demo-web.mp4","poster":"motion/maya-demo.jpg","type":"video","status":"active","captured_at":"2026-11-18","feature":"Narrated MintiStudio product demo","shows":"A narrated walkthrough of the current workflow.","alt":"Narrated walkthrough of the MintiStudio workflow","playback":"narrated","use_for":["MintiStudio walkthrough","product demo","general workflow"]},
+  {"id":"autopilot-demo","filename":"motion/autopilot.mp4","poster":"motion/autopilot.jpg","type":"video","status":"active","captured_at":"2026-11-12","feature":"Narrated Autopilot demo","shows":"A narrated walkthrough of MintiStudio Autopilot.","alt":"Narrated MintiStudio Autopilot walkthrough","playback":"narrated","use_for":["Autopilot","done-for-you","managed Shorts","editor service"]},
+  {"id":"editor-loop-founder","filename":"motion/editor-loop.mp4","poster":"motion/editor-loop.jpg","type":"video","status":"hold","captured_at":"2026-11-15","feature":"Editor loop with founder footage","shows":"Editor demo containing the founder's face.","alt":"MintiStudio editor loop","playback":"silent_loop","use_for":["editor demo"],"caution":"HOLD — shows the founder's face; do not use."},
+  {"id":"analytics-subscribers","filename":"img/blog/library/archive/1-minti-dashboard.png","type":"screenshot","status":"hold","captured_at":"2026-09-29","feature":"Legacy subscriber analytics","alt":"Legacy subscriber analytics","use_for":["legacy analytics"],"caution":"HOLD — old UI and subscriber snapshot contamination bug."},
+  {"id":"planning-calendar","filename":"img/blog/library/archive/7-scheduled-videos-calender.png","type":"screenshot","status":"hold","captured_at":"2026-09-29","feature":"Legacy publishing calendar","alt":"Legacy publishing calendar","use_for":["legacy scheduling"],"caution":"HOLD — old UI, unknown channel labels, and misleading data."},
+  {"id":"retired-analytics-views-sep29","filename":"img/blog/library/archive/2-minti-barchart.png","type":"screenshot","status":"retired","captured_at":"2026-09-29","feature":"Legacy views analytics","alt":"Retired views analytics","use_for":["legacy analytics"]},
+  {"id":"video-from-url","filename":"img/blog/library/archive/3-minti-youtube-video-url-paste.png","type":"screenshot","status":"retired","captured_at":"2026-09-29","feature":"Legacy paste-link screen","alt":"Retired paste-link screen","use_for":["legacy video import"]},
+  {"id":"retired-clip-edit-modal-sep29","filename":"img/blog/library/archive/4-manual-changing-video-details.png","type":"screenshot","status":"retired","captured_at":"2026-09-29","feature":"Legacy clip detail modal","alt":"Retired clip detail modal","use_for":["legacy clip editing"]},
+  {"id":"retired-transcript-selection-sep29","filename":"img/blog/library/archive/5-manual-video-creation.png","type":"screenshot","status":"retired","captured_at":"2026-09-29","feature":"Legacy transcript selection","alt":"Retired transcript selection","use_for":["legacy transcript editing"]},
+  {"id":"my-videos-shorts-library","filename":"img/blog/library/archive/6-my-videos-page.png","type":"screenshot","status":"retired","captured_at":"2026-09-29","feature":"Legacy My Videos page","alt":"Retired My Videos page","use_for":["legacy video library"]},
+  {"id":"retired-schedule-publish-modal-sep29","filename":"img/blog/library/archive/8-manual-video-scheduling.png","type":"screenshot","status":"retired","captured_at":"2026-09-29","feature":"Legacy Schedule and Publish modal","alt":"Retired Schedule and Publish modal","use_for":["legacy scheduling"]},
+  {"id":"retired-transcript-clips-overview-sep29","filename":"img/blog/library/archive/9-generate-video-screen.png","type":"screenshot","status":"retired","captured_at":"2026-09-29","feature":"Legacy transcript and clips overview","alt":"Retired transcript and clips overview","use_for":["legacy clip workflow"]},
+  {"id":"retired-crop-style-templates-sep29","filename":"img/blog/library/archive/10-manual-video-crop.png","type":"screenshot","status":"retired","captured_at":"2026-09-29","feature":"Legacy crop and style editor","alt":"Retired crop and style editor","use_for":["legacy styling"]},
+  {"id":"retired-clips-suggest-ai-sep29","filename":"img/blog/library/archive/11-ai-suggested-video-schedule-all-function.png","type":"screenshot","status":"retired","captured_at":"2026-09-29","feature":"Legacy AI clips panel","alt":"Retired AI clips panel","use_for":["legacy AI clip selection"]}
 ]

@@ -68,7 +68,8 @@ BLOG_AUTO_CATEGORIES = tuple(
     for item in os.getenv("BLOG_AUTO_CATEGORIES", "persona,craft,workflow,monetization,news").split(",")
     if item.strip()
 )
-STATIC_BLOG_ROOT = ROOT / "app" / "video_shorts" / "static" / "img" / "blog"
+STATIC_ROOT = ROOT / "app" / "video_shorts" / "static"
+STATIC_BLOG_ROOT = STATIC_ROOT / "img" / "blog"
 LIBRARY_ROOT = STATIC_BLOG_ROOT / "library"
 MANIFEST_PATH = LIBRARY_ROOT / "screenshot_manifest.json"
 CONTEXT_ROOT = ROOT / "app" / "video_shorts" / "blog_pipeline"
@@ -610,13 +611,17 @@ def _repair_visual_slots(content: str, visuals: list[dict[str, Any]], screenshot
     repaired: list[dict[str, Any]] = []
     notes: list[str] = []
     screenshot_count = 0
+    video_count = 0
     for visual in visuals:
         current = dict(visual)
         marker = str(current.get("marker") or "")
         if current.get("type") == "screenshot":
             screenshot_id = str(current.get("screenshot_id") or "").strip()
-            if screenshot_id in available_by_id and screenshot_count < 2:
+            selected = available_by_id.get(screenshot_id)
+            selected_is_video = str((selected or {}).get("type") or "") == "video"
+            if selected and screenshot_count < 2 and (not selected_is_video or video_count < 1):
                 screenshot_count += 1
+                video_count += int(selected_is_video)
                 repaired.append(current)
                 continue
             component_type = _component_type_for_marker(content, marker)
@@ -627,11 +632,13 @@ def _repair_visual_slots(content: str, visuals: list[dict[str, Any]], screenshot
                 repaired.append(current)
                 continue
             heading, _paragraph = _section_context_for_marker(content, marker)
-            candidate = _best_screenshot_for_section(screenshots, heading) if screenshot_count < 2 else None
+            candidates = [item for item in screenshots if video_count < 1 or str(item.get("type") or "") != "video"]
+            candidate = _best_screenshot_for_section(candidates, heading) if screenshot_count < 2 else None
             if candidate:
                 current["screenshot_id"] = candidate["id"]
                 current.setdefault("alt", candidate.get("alt") or heading)
                 screenshot_count += 1
+                video_count += int(str(candidate.get("type") or "") == "video")
                 notes.append(f"{marker}: repaired screenshot slot with invalid id '{screenshot_id}' to screenshot_id '{candidate['id']}'")
                 repaired.append(current)
                 continue
@@ -668,18 +675,29 @@ def _repair_visual_slots(content: str, visuals: list[dict[str, Any]], screenshot
         component_checked.append(current)
     capped: list[dict[str, Any]] = []
     screenshot_count = 0
+    video_count = 0
     for visual in component_checked:
         current = dict(visual)
         if current.get("type") == "screenshot":
             screenshot_count += 1
-            if screenshot_count > 2:
+            manifest_item = available_by_id.get(str(current.get("screenshot_id") or "")) or {}
+            is_video = str(manifest_item.get("type") or "") == "video"
+            video_count += int(is_video)
+            if screenshot_count > 2 or video_count > 1:
                 replacement = _generated_visual_for_marker(content, str(current.get("marker") or ""))
                 replacement["caption"] = current.get("caption") or replacement["alt"]
-                notes.append(f"{current.get('marker')}: repaired screenshot cap overflow to generate")
+                cap_name = "video" if video_count > 1 else "library visual"
+                notes.append(f"{current.get('marker')}: repaired {cap_name} cap overflow to generate")
                 current = replacement
         capped.append(current)
     final: list[dict[str, Any]] = []
     screenshot_count = sum(1 for visual in capped if visual.get("type") == "screenshot")
+    video_count = sum(
+        1
+        for visual in capped
+        if visual.get("type") == "screenshot"
+        and str((available_by_id.get(str(visual.get("screenshot_id") or "")) or {}).get("type") or "") == "video"
+    )
     generate_seen = False
     used_screenshot_ids = {str(visual.get("screenshot_id") or "") for visual in capped if visual.get("type") == "screenshot"}
     for visual in capped:
@@ -694,7 +712,11 @@ def _repair_visual_slots(content: str, visuals: list[dict[str, Any]], screenshot
             continue
         heading = _visual_section_heading(content, current)
         candidate = _best_screenshot_for_section(
-            [item for item in screenshots if str(item.get("id") or "") not in used_screenshot_ids],
+            [
+                item for item in screenshots
+                if str(item.get("id") or "") not in used_screenshot_ids
+                and (video_count < 1 or str(item.get("type") or "") != "video")
+            ],
             heading,
         ) if screenshot_count < 2 else None
         if candidate:
@@ -707,6 +729,7 @@ def _repair_visual_slots(content: str, visuals: list[dict[str, Any]], screenshot
             }
             replacement.pop("prompt", None)
             screenshot_count += 1
+            video_count += int(str(candidate.get("type") or "") == "video")
             used_screenshot_ids.add(str(candidate["id"]))
             notes.append(f"{marker}: repaired extra generate slot to screenshot_id '{candidate['id']}'")
             final.append(replacement)
@@ -952,11 +975,16 @@ def _load_manifest() -> list[dict[str, Any]]:
     items: list[dict[str, Any]] = []
     for item in raw:
         filename = str(item.get("filename") or "")
-        exists = bool(filename and (LIBRARY_ROOT / filename).is_file())
+        source = _manifest_source_path(filename)
+        poster = str(item.get("poster") or "")
+        exists = bool(filename and source.is_file())
+        if str(item.get("type") or "") == "video":
+            exists = exists and bool(poster and _manifest_source_path(poster).is_file())
         normalized = dict(item)
         normalized["exists"] = exists
-        normalized["hold"] = bool(item.get("hold"))
-        if exists and not normalized["hold"]:
+        normalized["status"] = str(item.get("status") or "retired").strip().lower()
+        normalized["hold"] = normalized["status"] == "hold"
+        if exists and normalized["status"] == "active":
             items.append(normalized)
     return items
 
@@ -965,9 +993,21 @@ def _all_manifest_entries() -> list[dict[str, Any]]:
     raw = json.loads(MANIFEST_PATH.read_text(encoding="utf-8"))
     for item in raw:
         filename = str(item.get("filename") or "")
-        item["exists"] = bool(filename and (LIBRARY_ROOT / filename).is_file())
-        item["hold"] = bool(item.get("hold"))
+        poster = str(item.get("poster") or "")
+        item["exists"] = bool(filename and _manifest_source_path(filename).is_file())
+        if str(item.get("type") or "") == "video":
+            item["exists"] = item["exists"] and bool(poster and _manifest_source_path(poster).is_file())
+        item["status"] = str(item.get("status") or "retired").strip().lower()
+        item["hold"] = item["status"] == "hold"
     return raw
+
+
+def _manifest_source_path(filename: str) -> Path:
+    candidate = (STATIC_ROOT / str(filename or "")).resolve()
+    static_root = STATIC_ROOT.resolve()
+    if candidate != static_root and static_root not in candidate.parents:
+        raise ValueError(f"manifest path escapes static root: {filename}")
+    return candidate
 
 
 def _published_articles(limit: int | None = None, *, include_content: bool = False) -> list[dict[str, Any]]:
@@ -1151,7 +1191,12 @@ def _screenshot_prompt_list(screenshots: list[dict[str, Any]]) -> list[dict[str,
     for item in screenshots:
         use_for = ", ".join(str(value) for value in (item.get("use_for") or [])[:4])
         description = str(item.get("alt") or item.get("title") or use_for or item.get("filename") or "").strip()
-        items.append({"id": str(item.get("id") or ""), "description": description[:160]})
+        items.append({
+            "id": str(item.get("id") or ""),
+            "type": str(item.get("type") or "screenshot"),
+            "description": description[:160],
+            "use_for": use_for[:200],
+        })
     return items
 
 
@@ -1159,6 +1204,7 @@ def _writer_schema_violations(article: dict[str, Any], screenshots: list[dict[st
     violations: list[str] = []
     visuals = article.get("visuals") if isinstance(article.get("visuals"), list) else []
     available_ids = {str(item.get("id") or "") for item in screenshots if item.get("id")}
+    available_by_id = {str(item.get("id") or ""): item for item in screenshots if item.get("id")}
     if len(visuals) != 3:
         violations.append(f"visuals must contain exactly 3 items before repair; got {len(visuals)}")
     seen_markers: set[str] = set()
@@ -1189,6 +1235,16 @@ def _writer_schema_violations(article: dict[str, Any], screenshots: list[dict[st
     generate_count = sum(1 for visual in visuals if isinstance(visual, dict) and visual.get("type") == "generate")
     if generate_count > 1:
         violations.append(f"generate may be used at most once before repair; got {generate_count}")
+    library_visuals = [visual for visual in visuals if isinstance(visual, dict) and visual.get("type") == "screenshot"]
+    if len(library_visuals) > 2:
+        violations.append(f"library visuals may be used at most twice; got {len(library_visuals)}")
+    video_count = sum(
+        1
+        for visual in library_visuals
+        if str((available_by_id.get(str(visual.get("screenshot_id") or "")) or {}).get("type") or "") == "video"
+    )
+    if video_count > 1:
+        violations.append(f"library videos may be used at most once; got {video_count}")
     return violations
 
 
@@ -1616,13 +1672,28 @@ def _code_checks(
     if missing_compare:
         blocking_issues.append("compare metric numbers not found in article text: " + ", ".join(missing_compare[:4]))
     screenshot_by_id = {item["id"]: item for item in screenshots}
+    library_visual_count = 0
+    library_video_count = 0
     for visual in visuals:
         if visual.get("type") not in VISUAL_TYPES:
             fixed["visuals"] = f"repaired unknown visual type: {visual.get('type')}"
         if visual.get("type") == "screenshot":
+            library_visual_count += 1
             screenshot_id = str(visual.get("screenshot_id") or "")
             if screenshot_id not in screenshot_by_id:
                 fixed["visuals"] = f"repaired screenshot_id is unavailable or on hold: {screenshot_id}"
+                continue
+            manifest_item = screenshot_by_id[screenshot_id]
+            if str(manifest_item.get("type") or "") == "video":
+                library_video_count += 1
+            if screenshot_id == "autopilot-demo":
+                topic_text = " ".join(str((topic or {}).get(key) or "") for key in ("title", "primary_keyword", "brief", "intent"))
+                if not re.search(r"\b(?:autopilot|done[- ]for[- ]you)\b", topic_text, flags=re.I):
+                    blocking_issues.append("autopilot video is only allowed for Autopilot or done-for-you topics")
+    if library_visual_count > 2:
+        blocking_issues.append(f"more than two library visuals ({library_visual_count})")
+    if library_video_count > 1:
+        blocking_issues.append(f"more than one library video ({library_video_count})")
     repair_notes = list(article.get("visual_repairs") or [])
     if repair_notes:
         fixed["visual_repairs"] = repair_notes
@@ -1715,6 +1786,7 @@ def _replace_screenshot_placeholders(article: dict[str, Any], screenshots: list[
     slug = str(article["slug"])
     content = str(article.get("content_md") or "")
     screenshot_by_id = {item["id"]: item for item in screenshots}
+    all_by_id = {str(item.get("id") or ""): item for item in _all_manifest_entries() if item.get("id")}
     target_dir = STATIC_BLOG_ROOT / slug
     if copy_files:
         target_dir.mkdir(parents=True, exist_ok=True)
@@ -1725,8 +1797,32 @@ def _replace_screenshot_placeholders(article: dict[str, Any], screenshots: list[
             continue
         screenshot = screenshot_by_id.get(str(visual.get("screenshot_id") or ""))
         if not screenshot:
+            requested_id = str(visual.get("screenshot_id") or "")
+            status = str((all_by_id.get(requested_id) or {}).get("status") or "unknown")
+            raise RuntimeError(f"library visual id {requested_id!r} is not active (status={status})")
+        if str(screenshot.get("status") or "") != "active":
+            raise RuntimeError(f"library visual id {screenshot.get('id')!r} is not active")
+        media_type = str(screenshot.get("type") or "screenshot")
+        source = _manifest_source_path(str(screenshot["filename"]))
+        if not source.is_file():
+            raise RuntimeError(f"library visual source is missing: {screenshot['filename']}")
+        alt = str(screenshot.get("alt") or visual.get("alt") or "").replace('"', "'")
+        caption = str(visual.get("caption") or alt or "MintiStudio workflow visual").strip().replace('"', "'")
+        if media_type == "video":
+            poster = _manifest_source_path(str(screenshot.get("poster") or ""))
+            if not poster.is_file():
+                raise RuntimeError(f"library video poster is missing: {screenshot.get('poster')}")
+            content = content.replace(f"<!-- {marker} -->", f":::motion {screenshot['id']}\n{caption}\n:::")
+            placed.append({
+                "marker": marker,
+                "id": str(screenshot["id"]),
+                "type": media_type,
+                "filename": source.name,
+                "url": f"/video_shorts/static/{quote(str(screenshot['filename']))}",
+                "poster": f"/video_shorts/static/{quote(str(screenshot['poster']))}",
+                "alt": alt,
+            })
             continue
-        source = LIBRARY_ROOT / str(screenshot["filename"])
         target_name = source.name
         if copy_files:
             target = target_dir / source.name
@@ -1734,13 +1830,44 @@ def _replace_screenshot_placeholders(article: dict[str, Any], screenshots: list[
             _add_logo_badge(target, badge_ratio=0.14, margin_ratio=0.02)
             target_name = target.name
         url = f"/video_shorts/static/img/blog/{quote(slug)}/{quote(target_name)}"
-        alt = str(screenshot.get("alt") or visual.get("alt") or "").replace('"', "'")
-        caption = str(visual.get("caption") or alt or "MintiStudio workflow screenshot").strip().replace('"', "'")
-        content = content.replace(f"<!-- {marker} -->", f"![{alt}]({url} \"{caption} [screenshot]\")")
-        placed.append({"marker": marker, "filename": target_name, "url": url, "alt": alt})
+        badge = "screenshot" if media_type == "screenshot" else "graphic"
+        content = content.replace(f"<!-- {marker} -->", f"![{alt}]({url} \"{caption} [{badge}]\")")
+        placed.append({"marker": marker, "id": str(screenshot["id"]), "type": media_type, "filename": target_name, "url": url, "alt": alt})
     article["content_md"] = content
     article["screenshots_placed"] = placed
     return article
+
+
+def _image_stage_manifest_violations(content: str) -> list[str]:
+    active = _load_manifest()
+    active_by_id = {str(item.get("id") or ""): item for item in active}
+    active_image_names = {
+        Path(str(item.get("filename") or "")).name
+        for item in active
+        if str(item.get("type") or "") in {"screenshot", "graphic"}
+    }
+    active_motion_paths = {
+        "/video_shorts/static/" + str(item.get(key) or "").lstrip("/")
+        for item in active
+        for key in ("filename", "poster")
+        if item.get(key)
+    }
+    violations: list[str] = []
+    for motion_id in re.findall(r"(?m)^:::motion\s+([a-z0-9-]+)\s*$", content or ""):
+        item = active_by_id.get(motion_id)
+        if not item or str(item.get("type") or "") != "video":
+            violations.append(f"motion id is not an active manifest video: {motion_id}")
+    for path in re.findall(r"/video_shorts/static/motion/[A-Za-z0-9_.-]+", content or ""):
+        if path not in active_motion_paths:
+            violations.append(f"motion path is not active in the manifest: {path}")
+    for match in re.finditer(r"!\[[^\]]*\]\((?P<url>[^)\s]+)(?:\s+\"(?P<title>[^\"]*)\")?\)", content or ""):
+        title = str(match.group("title") or "").lower()
+        if "[screenshot]" not in title and "[graphic]" not in title:
+            continue
+        filename = Path(str(match.group("url") or "")).name
+        if filename not in active_image_names:
+            violations.append(f"library image is not active in the manifest: {filename}")
+    return list(dict.fromkeys(violations))
 
 
 def _image_prompt_for_cover(article: dict[str, Any]) -> str:
@@ -2010,6 +2137,13 @@ def _run_image_stage(
         except Exception as exc:
             run_status = "needs_you"
             output["errors"].append({"kind": "inline", "marker": marker, "error_class": exc.__class__.__name__, "message": str(exc)[:300]})
+    manifest_violations = _image_stage_manifest_violations(content)
+    if manifest_violations:
+        run_status = "needs_you"
+        output["errors"].extend(
+            {"kind": "manifest", "error_class": "InactiveLibraryVisual", "message": violation}
+            for violation in manifest_violations
+        )
     article["content_md"] = content
     if article_id and not state.dry_run:
         conn = get_db()
@@ -2230,8 +2364,8 @@ reading_time must be an integer number of minutes only, such as 8. Never return 
 cover.prompt must describe only the scene: 2-4 objects, one visual idea, story, and mood. Never include style, colors, text, logos, UI, screenshots, third-party brands, or realistic people in cover.prompt.
 cover.archetypes must be the top 3 archetype letters from stable_context.cover_archetypes that fit the topic. Code chooses the final archetype for variety; do not force one in the prose.
 visuals must contain exactly the planned items with marker values IMAGE_1, IMAGE_2, IMAGE_3. Never return more than {BLOG_MAX_VISUAL_ITEMS} visual items. Valid visual types are screenshot, flow, compare, generate.
-For type=screenshot, screenshot_id is required and must exactly match one of requirements.available_screenshots ids. Never leave screenshot_id empty. If none of the listed screenshots fits the section, choose flow, compare, or generate instead.
-Use flow for a process/workflow and compare for metric or option comparisons. Use screenshots for product features. Use generate at most once per article, only when flow, compare, and screenshot do not fit.
+For type=screenshot, screenshot_id is required and must exactly match one of requirements.available_screenshots ids. These ids may represent an active screenshot, graphic, or video; inspect the listed media type and use_for values. Never leave screenshot_id empty. If none fits the section, choose flow, compare, or generate instead.
+Use at most two manifest/library visuals total and at most one manifest video. The autopilot-demo video is allowed only when the topic is specifically about Autopilot or done-for-you service. Use flow for a process/workflow and compare for metric or option comparisons. Use active library visuals for product features and finished examples. Use generate at most once per article, only when flow, compare, and an active library visual do not fit.
 For screenshot or generate visuals, content_md must include that marker as a standalone HTML comment such as <!-- IMAGE_1 -->. Bare IMAGE_1 text is forbidden.
 For flow or compare visuals, put the full :::flow or :::compare block directly in content_md where that visual belongs; do not also include an IMAGE comment for that slot.
 Produce exactly the visual-bearing body blocks required by the planned visuals, and no more. Do not write standalone or unplanned :::compare or :::flow blocks. One compare visual in the plan means one :::compare block in the article.
@@ -2255,16 +2389,24 @@ When MintiStudio features are mentioned, tie each one to the reader's task in th
 Screenshot placement: if the article covers Autopilot, prefer placing a relevant screenshot in or near the Autopilot or "Where MintiStudio helps" section when the screenshot library has a suitable image."""
 
 
-def _reviewer_prompt(cluster_slug: str = "general") -> str:
+def _reviewer_prompt(cluster_slug: str = "general", *, pre_image: bool = True) -> str:
     doctor_rule = """
 Doctors-cluster safety rule: This post is about growing and operating a channel, not medicine. Add a blocking issue and an explicit fix for any medical advice, diagnosis or treatment claim; any statistic not present in supplied verified facts; any patient-identifiable information; or anything that encourages posting patient information. Require the fix to return the passage to channel growth, publishing workflow, professional context, or privacy-safe content operations.
 """ if cluster_slug == "doctors" else ""
+    image_rule = (
+        "Pre-image draft rule: screenshot and generated-image visuals must still use IMAGE comment placeholders. "
+        "Flow and compare visuals use their component blocks and must not have IMAGE placeholders."
+        if pre_image
+        else
+        "Published-content rule: real Markdown images and manifest-backed motion blocks are expected. "
+        "Do not require IMAGE placeholders and do not flag a real image merely because its placeholder was replaced."
+    )
     return f"""You are the MintiStudio blog Reviewer. Return strict JSON only. Score the article against the supplied facts, checks, screenshots, published URLs, and existing titles. Be concrete and conservative.
 
 Return JSON with total, scores, blocking_issues, fixes.
 Any deterministic check issue must be copied into blocking_issues.
-Blocking issues regardless of total score: any price mention, including a MintiStudio price; a rewritten article title that does not exactly equal topic.title; a meta title over 60 characters; a meta description over 155 characters or ending mid-sentence; more than one product pitch section before the final CTA; MintiStudio self-disclaimers or hedges; any internal link not exactly in published_articles or the CTA URL; bare IMAGE_n placeholder text; missing IMAGE comment placeholders for screenshot/generate visuals; IMAGE comment placeholders for flow/compare visuals; more than {BLOG_MAX_VISUAL_ITEMS} visual items after code repair; invalid flow/compare syntax; compare metric numbers not present in the article prose outside the compare block.
-Updated component rule: screenshot and generate visuals use IMAGE comment placeholders; flow and compare visuals use their :::flow / :::compare blocks directly and must not have IMAGE comment placeholders. Do not require IMAGE placeholders for flow or compare visuals.
+Blocking issues regardless of total score: any price mention, including a MintiStudio price; a rewritten article title that does not exactly equal topic.title; a meta title over 60 characters; a meta description over 155 characters or ending mid-sentence; more than one product pitch section before the final CTA; MintiStudio self-disclaimers or hedges; any internal link not exactly in published_articles or the CTA URL; bare IMAGE_n placeholder text; more than {BLOG_MAX_VISUAL_ITEMS} visual items after code repair; invalid flow/compare syntax; compare metric numbers not present in the article prose outside the compare block.
+{image_rule}
 Facts rule: flow/compare text may only describe MintiStudio features that appear in minti_facts.md. Third-party brand features, limits, or workflow claims are allowed only when they match competitor_facts.md. Any price mention is a blocking issue. Do not allow invented metrics, features, platform logos, or unverified third-party brand claims. Autopilot has no required approval step: customers may change or remove a Short before it goes live.
 Non-blocking fix: a MintiStudio section that reads as a feature list without tying features to the reader's problem.
 {doctor_rule}"""

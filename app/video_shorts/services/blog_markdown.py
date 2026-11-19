@@ -1,6 +1,9 @@
 from __future__ import annotations
 
 from html import escape, unescape
+import json
+from functools import lru_cache
+from pathlib import Path
 import re
 from urllib.parse import parse_qs, urlparse
 
@@ -27,6 +30,8 @@ _PLACEHOLDER_ALT_VALUES = {"alt text", "image", "placeholder"}
 _INTERNAL_LINK_HOSTS = {"mintistudio.com", "www.mintistudio.com"}
 _HEADING_ID_RE = re.compile(r"^[a-z0-9-]+$")
 _MOTION_NAME_RE = re.compile(r"^[a-z0-9-]{1,60}$")
+_ROOT = Path(__file__).resolve().parents[3]
+_BLOG_VISUAL_MANIFEST = _ROOT / "app" / "video_shorts" / "static" / "img" / "blog" / "library" / "screenshot_manifest.json"
 
 _ALLOWED_TAGS = [
     "a",
@@ -150,11 +155,46 @@ def _youtube_embed_html(video_id: str) -> str:
     )
 
 
+@lru_cache(maxsize=1)
+def _active_manifest_videos() -> dict[str, dict[str, str]]:
+    try:
+        entries = json.loads(_BLOG_VISUAL_MANIFEST.read_text(encoding="utf-8"))
+    except (OSError, ValueError, TypeError):
+        return {}
+    return {
+        str(item.get("id") or ""): item
+        for item in entries
+        if str(item.get("status") or "") == "active" and str(item.get("type") or "") == "video"
+    }
+
+
 def _motion_html(name: str, caption: str) -> str:
     motion_name = (name or "").strip()
     motion_caption = (caption or "").strip()
     if not _MOTION_NAME_RE.fullmatch(motion_name) or "\n" in motion_caption:
         return ""
+
+    manifest_video = _active_manifest_videos().get(motion_name)
+    if manifest_video:
+        video_url = escape(
+            url_for("video_shorts_bp.static", filename=str(manifest_video["filename"])),
+            quote=True,
+        )
+        poster_url = escape(
+            url_for("video_shorts_bp.static", filename=str(manifest_video["poster"])),
+            quote=True,
+        )
+        safe_caption = escape(motion_caption)
+        aria_label = escape(motion_caption or str(manifest_video.get("alt") or "Video"), quote=True)
+        caption_html = f"<figcaption>{safe_caption}</figcaption>" if motion_caption else ""
+        playback = str(manifest_video.get("playback") or "silent_loop")
+        attributes = "autoplay muted loop playsinline preload=\"none\"" if playback == "silent_loop" else "controls playsinline preload=\"none\""
+        return (
+            f'<figure class="blog-motion blog-motion--{escape(playback, quote=True)}"><video {attributes} '
+            f'poster="{poster_url}" aria-label="{aria_label}">'
+            f'<source src="{video_url}" type="video/mp4">'
+            f"</video>{caption_html}</figure>"
+        )
 
     webm_url = escape(
         url_for("video_shorts_bp.static", filename=f"motion/{motion_name}.webm"),

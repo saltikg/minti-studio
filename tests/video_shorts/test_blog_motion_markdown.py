@@ -72,6 +72,28 @@ def test_raw_video_figure_and_source_html_remain_stripped():
     assert "Fallback" in rendered
 
 
+def test_manifest_silent_loop_uses_preview_and_poster_without_preload():
+    rendered = blog_markdown.render_markdown(
+        ":::motion real-short-doctor-busy\nA finished doctor Short\n:::"
+    )
+
+    assert '<video autoplay muted loop playsinline preload="none"' in rendered
+    assert 'poster="/video_shorts/static/motion/real-short-1.jpg"' in rendered
+    assert 'src="/video_shorts/static/motion/real-short-1-preview.mp4"' in rendered
+    assert " controls" not in rendered
+
+
+def test_manifest_narrated_video_has_controls_and_no_autoplay():
+    rendered = blog_markdown.render_markdown(
+        ":::motion autopilot-demo\nSee how Autopilot works\n:::"
+    )
+
+    assert '<video controls playsinline preload="none"' in rendered
+    assert 'poster="/video_shorts/static/motion/autopilot.jpg"' in rendered
+    assert 'src="/video_shorts/static/motion/autopilot.mp4"' in rendered
+    assert " autoplay" not in rendered
+
+
 def test_existing_image_figure_and_youtube_embed_render_unchanged():
     rendered = blog_markdown.render_markdown(
         "![Demo](/video_shorts/static/img/blog/demo.jpg)\n\n"

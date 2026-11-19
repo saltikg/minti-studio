@@ -142,7 +142,7 @@ def review_updated_article(article_id: int) -> dict:
     result = call_json(
         "reviewer_manual",
         model=BLOG_MODEL_REVIEWER,
-        system_prompt=blog_pipeline._reviewer_prompt("doctors"),
+        system_prompt=blog_pipeline._reviewer_prompt("doctors", pre_image=False),
         user_prompt=blog_pipeline.json_dumps_compact(payload),
     )
     log_usage("reviewer_manual", result, topic_id=int(topic["id"]), run_id=run_id)
