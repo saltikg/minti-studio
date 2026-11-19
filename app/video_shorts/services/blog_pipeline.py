@@ -5,13 +5,14 @@ import os
 import re
 import secrets
 from dataclasses import dataclass
-from datetime import datetime, timezone
+from datetime import date, datetime, timezone
 from decimal import Decimal
 from difflib import SequenceMatcher
 from email.utils import parsedate_to_datetime
 from typing import Any
 from urllib import parse, request, robotparser
 from xml.etree import ElementTree as ET
+from zoneinfo import ZoneInfo
 
 from app.video_shorts.services.db import get_db, get_db_readonly, table_columns
 
@@ -36,6 +37,7 @@ BLOG_AUTO_CATEGORIES = tuple(
     for item in os.getenv("BLOG_AUTO_CATEGORIES", "persona,craft,workflow").split(",")
     if item.strip()
 )
+PACIFIC_TZ = ZoneInfo("America/Los_Angeles")
 
 
 def normalize_keyword(value: str | None) -> str | None:
@@ -96,6 +98,116 @@ class BlogSource:
     enabled: bool = True
     id: int | None = None
     channel_id: str | None = None
+
+
+@dataclass(frozen=True)
+class BlogCluster:
+    slug: str
+    name: str
+    audience: str
+    seed_topics: tuple[str, ...]
+    weight: int
+    boost_weight: int
+    boost_until: date | None
+    active: bool = True
+
+
+def _seed_topic_list(value: Any) -> tuple[str, ...]:
+    if isinstance(value, (list, tuple)):
+        return tuple(str(item).strip() for item in value if str(item).strip())
+    text = str(value or "").strip()
+    if not text:
+        return ()
+    try:
+        parsed = json.loads(text)
+    except (TypeError, ValueError):
+        parsed = [line.strip(" -\t") for line in text.splitlines()]
+    if not isinstance(parsed, list):
+        return ()
+    return tuple(str(item).strip() for item in parsed if str(item).strip())
+
+
+def effective_cluster_weight(cluster: BlogCluster, *, today_pt: date | None = None) -> int:
+    today_pt = today_pt or datetime.now(PACIFIC_TZ).date()
+    if cluster.boost_until and today_pt <= cluster.boost_until:
+        return max(0, int(cluster.boost_weight))
+    return max(0, int(cluster.weight))
+
+
+def list_blog_clusters(conn=None, *, active_only: bool = False) -> list[BlogCluster]:
+    close_conn = conn is None
+    conn = conn or get_db_readonly()
+    try:
+        if not table_columns(conn, "blog_clusters"):
+            return []
+        where = "WHERE active IS TRUE" if active_only else ""
+        rows = conn.execute(
+            f"""
+            SELECT slug, name, audience, seed_topics, weight, boost_weight, boost_until, active
+            FROM blog_clusters
+            {where}
+            ORDER BY slug
+            """
+        ).fetchall()
+        return [
+            BlogCluster(
+                slug=str(row[0]),
+                name=str(row[1]),
+                audience=str(row[2]),
+                seed_topics=_seed_topic_list(row[3]),
+                weight=int(row[4] or 0),
+                boost_weight=int(row[5] or 0),
+                boost_until=row[6],
+                active=bool(row[7]),
+            )
+            for row in rows
+        ]
+    finally:
+        if close_conn:
+            conn.close()
+
+
+def allocate_cluster_topic_counts(clusters: list[BlogCluster], *, total: int = 15, today_pt: date | None = None) -> dict[str, int]:
+    active = [cluster for cluster in clusters if cluster.active and effective_cluster_weight(cluster, today_pt=today_pt) > 0]
+    if not active or total <= 0:
+        return {}
+    total_weight = sum(effective_cluster_weight(cluster, today_pt=today_pt) for cluster in active)
+    raw = {
+        cluster.slug: total * effective_cluster_weight(cluster, today_pt=today_pt) / total_weight
+        for cluster in active
+    }
+    counts = {cluster.slug: max(1, int(raw[cluster.slug])) for cluster in active}
+    while sum(counts.values()) > total:
+        slug = min((slug for slug, count in counts.items() if count > 1), key=lambda item: raw[item] - counts[item], default=None)
+        if slug is None:
+            break
+        counts[slug] -= 1
+    while sum(counts.values()) < total:
+        slug = max(counts, key=lambda item: raw[item] - counts[item])
+        counts[slug] += 1
+    return counts
+
+
+def rank_clusters_by_deficit(clusters: list[BlogCluster], recent_cluster_slugs: list[str], *, today_pt: date | None = None) -> list[dict[str, Any]]:
+    weighted = [cluster for cluster in clusters if cluster.active and effective_cluster_weight(cluster, today_pt=today_pt) > 0]
+    total_weight = sum(effective_cluster_weight(cluster, today_pt=today_pt) for cluster in weighted) or 1
+    history_size = len(recent_cluster_slugs)
+    ranked = []
+    for cluster in weighted:
+        target_share = effective_cluster_weight(cluster, today_pt=today_pt) / total_weight
+        actual_count = recent_cluster_slugs.count(cluster.slug)
+        actual_share = actual_count / history_size if history_size else 0.0
+        ranked.append(
+            {
+                "cluster": cluster,
+                "effective_weight": effective_cluster_weight(cluster, today_pt=today_pt),
+                "target_share": target_share,
+                "actual_count": actual_count,
+                "actual_share": actual_share,
+                "deficit": target_share - actual_share,
+            }
+        )
+    return sorted(ranked, key=lambda row: (-row["deficit"], -row["effective_weight"], row["cluster"].slug))
 
 
 BLOG_SOURCES: tuple[BlogSource, ...] = (
@@ -421,6 +533,102 @@ def best_duplicate_match(title: str, existing: list[dict[str, str]], threshold: 
     return best_label if best_score >= threshold else None
 
 
+def title_token_overlap(left: str | None, right: str | None) -> float:
+    stopwords = {"a", "an", "and", "can", "for", "how", "in", "of", "on", "per", "the", "to", "your"}
+
+    def tokens(value: str | None) -> set[str]:
+        normalized = set()
+        for token in normalize_title(value).split():
+            if token in stopwords:
+                continue
+            normalized.add(token[:-1] if len(token) > 4 and token.endswith("s") else token)
+        return normalized
+
+    left_tokens = tokens(left)
+    right_tokens = tokens(right)
+    if not left_tokens or not right_tokens:
+        return 0.0
+    intersection = len(left_tokens & right_tokens)
+    containment = intersection / min(len(left_tokens), len(right_tokens))
+    union = intersection / len(left_tokens | right_tokens)
+    return max(containment, union, title_similarity(left, right))
+
+
+def best_near_duplicate_match(title: str, existing: list[dict[str, str]], threshold: float = 0.72) -> str | None:
+    best_score = 0.0
+    best_label = None
+    for row in existing:
+        label = str(row.get("title") or row.get("slug") or "").strip()
+        if not label:
+            continue
+        score = title_token_overlap(title, label)
+        if score > best_score:
+            best_score = score
+            best_label = label
+    return best_label if best_score >= threshold else None
+
+
+def list_cluster_scout_titles(conn, cluster_slug: str) -> list[dict[str, str]]:
+    rows: list[dict[str, str]] = []
+    if table_columns(conn, "blog_articles"):
+        for title, slug in conn.execute("SELECT title, slug FROM blog_articles WHERE status = 'published'").fetchall():
+            label = str(title or slug or "").strip()
+            if label:
+                rows.append({"kind": "published", "title": label, "slug": str(slug or "")})
+    if table_columns(conn, "blog_topics"):
+        columns = table_columns(conn, "blog_topics")
+        cluster_sql = "COALESCE(cluster_slug, 'general') = ?" if "cluster_slug" in columns else "? = 'general'"
+        for title, keyword in conn.execute(
+            f"""
+            SELECT title, primary_keyword
+            FROM blog_topics
+            WHERE status IN ('candidate', 'queued')
+              AND {cluster_sql}
+            """,
+            [cluster_slug],
+        ).fetchall():
+            label = str(title or keyword or "").strip()
+            if label:
+                rows.append({"kind": "active_topic", "title": label, "slug": str(keyword or "")})
+    deduped: dict[str, dict[str, str]] = {}
+    for row in rows:
+        deduped.setdefault(normalize_title(row["title"]), row)
+    return list(deduped.values())
+
+
+def insert_cluster_candidate(conn, *, cluster: BlogCluster, item: dict[str, Any]) -> int | None:
+    title = str(item.get("title") or "").strip()
+    if not title:
+        return None
+    keyword = normalize_keyword(item.get("primary_keyword") or title)
+    source_key = re.sub(r"[^a-z0-9]+", "-", normalize_title(title)).strip("-")[:180]
+    source_url = f"cluster://{cluster.slug}/{source_key}"
+    row = conn.execute(
+        """
+        INSERT INTO blog_topics (
+            title, primary_keyword, category, intent, source_type, source_name,
+            source_url, source_title, status, angle, brief, cluster_slug
+        )
+        VALUES (?, ?, ?, ?, 'cluster_scout', ?, ?, ?, 'candidate', ?, ?, ?)
+        ON CONFLICT (source_url) WHERE source_url IS NOT NULL DO NOTHING
+        RETURNING id
+        """,
+        [
+            title,
+            keyword,
+            str(item.get("category") or "persona")[:40],
+            str(item.get("intent") or "informational")[:40],
+            f"Cluster scout: {cluster.name}",
+            source_url,
+            title,
+            str(item.get("angle") or "")[:1000],
+            str(item.get("brief") or "")[:2000],
+            cluster.slug,
+        ],
+    ).fetchone()
+    return int(row[0]) if row else None
+
+
 def insert_candidate(conn, *, source: BlogSource, item: dict[str, Any]) -> bool:
     source_url = str(item.get("url") or "").strip()
     title = str(item.get("title") or "").strip()
@@ -523,23 +731,28 @@ def json_dumps_compact(value: Any) -> str:
     return json.dumps(value, ensure_ascii=True, separators=(",", ":"))
 
 
-def admin_blog_topics(status: str | None = None) -> list[dict[str, Any]]:
+def admin_blog_topics(status: str | None = None, cluster_slug: str | None = None) -> list[dict[str, Any]]:
     conn = get_db_readonly()
     try:
         columns = table_columns(conn, "blog_topics")
         fit_breakdown_sql = "fit_breakdown" if "fit_breakdown" in columns else "NULL AS fit_breakdown"
         source_summary_sql = "source_summary" if "source_summary" in columns else "NULL AS source_summary"
         adapted_from_sql = "adapted_from" if "adapted_from" in columns else "NULL AS adapted_from"
-        where = ""
+        cluster_slug_sql = "COALESCE(cluster_slug, 'general') AS cluster_slug" if "cluster_slug" in columns else "'general' AS cluster_slug"
+        conditions: list[str] = []
         params: list[Any] = []
         if status and status in BLOG_TOPIC_STATUSES:
-            where = "WHERE status = ?"
+            conditions.append("status = ?")
             params.append(status)
+        if cluster_slug:
+            conditions.append("COALESCE(cluster_slug, 'general') = ?" if "cluster_slug" in columns else "? = 'general'")
+            params.append(cluster_slug)
+        where = "WHERE " + " AND ".join(conditions) if conditions else ""
         rows = conn.execute(
             f"""
             SELECT id, created_at, title, source_title, source_name, source_url,
                    source_type, fit_score, status, judge_reason, brief, primary_keyword, category,
-                   {fit_breakdown_sql}, {source_summary_sql}, {adapted_from_sql}
+                   {fit_breakdown_sql}, {source_summary_sql}, {adapted_from_sql}, {cluster_slug_sql}
             FROM blog_topics
             {where}
             ORDER BY
@@ -580,7 +793,7 @@ def blog_topics_header_stats() -> dict[str, Any]:
                 SELECT MAX(created_at), COUNT(*),
                        SUM(CASE WHEN status = 'queued' THEN 1 ELSE 0 END)
                 FROM blog_topics
-                WHERE source_type IN ('competitor_blog', 'youtube_news', 'youtube_channel')
+                WHERE source_type IN ('cluster_scout', 'competitor_blog', 'youtube_news', 'youtube_channel')
                   AND created_at >= CURRENT_TIMESTAMP - INTERVAL '2 hours'
                 """
             ).fetchone()
@@ -589,7 +802,7 @@ def blog_topics_header_stats() -> dict[str, Any]:
                     """
                     SELECT MAX(created_at)
                     FROM blog_topics
-                    WHERE source_type IN ('competitor_blog', 'youtube_news', 'youtube_channel')
+                    WHERE source_type IN ('cluster_scout', 'competitor_blog', 'youtube_news', 'youtube_channel')
                     """
                 ).fetchone()
                 last_scout_run = topic_row[0] if topic_row else None

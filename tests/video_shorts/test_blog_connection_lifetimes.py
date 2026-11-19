@@ -32,17 +32,20 @@ def test_judge_closes_read_connection_before_llm_and_continues_after_write_failu
     monkeypatch.setattr(blog_judge, "get_db", lambda: read_connection)
     monkeypatch.setattr(blog_judge, "_expire_timely", lambda conn, **kwargs: (_ for _ in ()).throw(AssertionError("filtered repair must not expire unrelated topics")))
 
-    def topic_rows(conn, mode, topic_ids):
+    def topic_rows(conn, mode, topic_ids, cluster_slug):
         assert topic_ids == [11, 12]
+        assert cluster_slug is None
         return candidates
 
     monkeypatch.setattr(blog_judge, "_topic_rows", topic_rows)
     monkeypatch.setattr(blog_judge, "list_existing_articles_and_topics", lambda conn, exclude_topic_ids: [])
+    monkeypatch.setattr(blog_judge, "list_blog_clusters", lambda active_only: [])
     monkeypatch.setattr(blog_judge, "_apply_prefilter", lambda rows, existing: (rows, []))
     monkeypatch.setattr(blog_judge, "log_usage", lambda *args: None)
 
-    def run_llm(rows, existing, *, dry_run, on_batch):
+    def run_llm(rows, existing, *, dry_run, on_batch, clusters):
         assert read_connection.closed
+        assert clusters == {}
         on_batch(rows, decisions)
         return decisions, [{"_result": SimpleNamespace(), "input_tokens": 1}]
 

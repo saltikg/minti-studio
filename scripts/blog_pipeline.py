@@ -5,6 +5,7 @@ import argparse
 import difflib
 import hashlib
 import json
+import logging
 import os
 import re
 import shutil
@@ -42,7 +43,12 @@ from app.video_shorts.services.blog_images import (  # noqa: E402
 )
 from app.video_shorts.services.blog_articles import update_blog_article_status  # noqa: E402
 from app.video_shorts.services.blog_notifications import BLOG_NOTIFY_EMAIL, send_blog_run_notification  # noqa: E402
-from app.video_shorts.services.blog_pipeline import current_month_spend, json_dumps_compact  # noqa: E402
+from app.video_shorts.services.blog_pipeline import (  # noqa: E402
+    current_month_spend,
+    json_dumps_compact,
+    list_blog_clusters,
+    rank_clusters_by_deficit,
+)
 from app.video_shorts.services.blog_pipeline_runs import (  # noqa: E402
     create_run,
     finish_run,
@@ -80,6 +86,7 @@ SELF_DISCLAIMER_RE = re.compile(
 )
 IMAGE_MARKERS = ("IMAGE_1", "IMAGE_2", "IMAGE_3")
 BLOG_MAX_VISUAL_ITEMS = 4
+logger = logging.getLogger(__name__)
 VISUAL_TYPES = {"screenshot", "flow", "compare", "generate"}
 IMAGE_VISUAL_TYPES = {"screenshot", "generate"}
 FLOW_BLOCK_RE = re.compile(r"(?ms)^:::flow(?:\s+[^\n]+)?\n(?P<body>.*?)\n:::\s*$")
@@ -1179,17 +1186,43 @@ def _writer_schema_violations(article: dict[str, Any], screenshots: list[dict[st
     return violations
 
 
+def _recent_generated_cluster_slugs(conn) -> list[str]:
+    if not table_columns(conn, "blog_pipeline_runs"):
+        return []
+    rows = conn.execute(
+        """
+        SELECT COALESCE(recent.cluster_slug, 'general')
+        FROM (
+            SELECT DISTINCT ON (r.topic_id)
+                   r.topic_id,
+                   COALESCE(t.cluster_slug, 'general') AS cluster_slug,
+                   r.finished_at
+            FROM blog_pipeline_runs r
+            JOIN blog_topics t ON t.id = r.topic_id
+            WHERE r.article_id IS NOT NULL
+              AND r.status IN ('draft_ready', 'needs_you', 'published')
+            ORDER BY r.topic_id, r.finished_at DESC NULLS LAST
+        ) recent
+        ORDER BY recent.finished_at DESC NULLS LAST
+        LIMIT 10
+        """
+    ).fetchall()
+    return [str(row[0] or "general") for row in rows]
+
+
 def _pop_topic(conn, topic_id: int | None, *, dry_run: bool = False) -> dict[str, Any] | None:
     columns = table_columns(conn, "blog_topics")
     source_summary_sql = "source_summary" if "source_summary" in columns else "NULL AS source_summary"
     fit_breakdown_sql = "fit_breakdown" if "fit_breakdown" in columns else "NULL AS fit_breakdown"
     adapted_from_sql = "adapted_from" if "adapted_from" in columns else "NULL AS adapted_from"
+    cluster_slug_sql = "COALESCE(cluster_slug, 'general') AS cluster_slug" if "cluster_slug" in columns else "'general' AS cluster_slug"
+    select_columns = f"""id, title, primary_keyword, category, intent, brief, source_type, source_name,
+                   source_url, source_title, fit_score, judge_reason, {source_summary_sql},
+                   {fit_breakdown_sql}, {adapted_from_sql}, {cluster_slug_sql}"""
     if topic_id:
         row = conn.execute(
             f"""
-            SELECT id, title, primary_keyword, category, intent, brief, source_type, source_name,
-                   source_url, source_title, fit_score, judge_reason, {source_summary_sql},
-                   {fit_breakdown_sql}, {adapted_from_sql}
+            SELECT {select_columns}
             FROM blog_topics
             WHERE id = ?
               AND status = 'queued'
@@ -1201,21 +1234,50 @@ def _pop_topic(conn, topic_id: int | None, *, dry_run: bool = False) -> dict[str
     else:
         auto_categories = BLOG_AUTO_CATEGORIES or ("persona", "craft", "workflow", "monetization", "news")
         placeholders = ", ".join(["?"] * len(auto_categories))
-        row = conn.execute(
-            f"""
-            SELECT id, title, primary_keyword, category, intent, brief, source_type, source_name,
-                   source_url, source_title, fit_score, judge_reason, {source_summary_sql},
-                   {fit_breakdown_sql}, {adapted_from_sql}
-            FROM blog_topics
-            WHERE status = 'queued'
-              AND created_at >= CURRENT_TIMESTAMP - INTERVAL '45 days'
-              AND LOWER(COALESCE(category, '')) IN ({placeholders})
-            ORDER BY fit_score DESC NULLS LAST, created_at ASC
-            FOR UPDATE SKIP LOCKED
-            LIMIT 1
-            """,
-            list(auto_categories),
-        ).fetchone()
+        clusters = list_blog_clusters(conn, active_only=True)
+        recent = _recent_generated_cluster_slugs(conn)
+        ranked = rank_clusters_by_deficit(clusters, recent)
+        row = None
+        for cluster_row in ranked:
+            cluster = cluster_row["cluster"]
+            row = conn.execute(
+                f"""
+                SELECT {select_columns}
+                FROM blog_topics
+                WHERE status = 'queued'
+                  AND created_at >= CURRENT_TIMESTAMP - INTERVAL '45 days'
+                  AND COALESCE(cluster_slug, 'general') = ?
+                ORDER BY fit_score DESC NULLS LAST, created_at ASC
+                FOR UPDATE SKIP LOCKED
+                LIMIT 1
+                """,
+                [cluster.slug],
+            ).fetchone()
+            logger.info(
+                "BLOG_CLUSTER_PICK cluster=%s deficit=%.3f target=%.3f actual=%.3f recent=%s queued_found=%s",
+                cluster.slug,
+                cluster_row["deficit"],
+                cluster_row["target_share"],
+                cluster_row["actual_share"],
+                recent,
+                bool(row),
+            )
+            if row:
+                break
+        if row is None and not ranked:
+            row = conn.execute(
+                f"""
+                SELECT {select_columns}
+                FROM blog_topics
+                WHERE status = 'queued'
+                  AND created_at >= CURRENT_TIMESTAMP - INTERVAL '45 days'
+                  AND LOWER(COALESCE(category, '')) IN ({placeholders})
+                ORDER BY fit_score DESC NULLS LAST, created_at ASC
+                FOR UPDATE SKIP LOCKED
+                LIMIT 1
+                """,
+                list(auto_categories),
+            ).fetchone()
     if not row:
         return None
     topic = _row_to_dict(conn.description, row)
@@ -2156,7 +2218,10 @@ When MintiStudio features are mentioned, tie each one to the reader's task in th
 Screenshot placement: if the article covers Autopilot, prefer placing a relevant screenshot in or near the Autopilot or "Where MintiStudio helps" section when the screenshot library has a suitable image."""
 
 
-def _reviewer_prompt() -> str:
+def _reviewer_prompt(cluster_slug: str = "general") -> str:
+    doctor_rule = """
+Doctors-cluster safety rule: This post is about growing and operating a channel, not medicine. Add a blocking issue and an explicit fix for any medical advice, diagnosis or treatment claim; any statistic not present in supplied verified facts; any patient-identifiable information; or anything that encourages posting patient information. Require the fix to return the passage to channel growth, publishing workflow, professional context, or privacy-safe content operations.
+""" if cluster_slug == "doctors" else ""
     return f"""You are the MintiStudio blog Reviewer. Return strict JSON only. Score the article against the supplied facts, checks, screenshots, published URLs, and existing titles. Be concrete and conservative.
 
 Return JSON with total, scores, blocking_issues, fixes.
@@ -2164,7 +2229,8 @@ Any deterministic check issue must be copied into blocking_issues.
 Blocking issues regardless of total score: MintiStudio self-disclaimers or hedges; any internal link not exactly in published_articles or the CTA URL; bare IMAGE_n placeholder text; missing IMAGE comment placeholders for screenshot/generate visuals; IMAGE comment placeholders for flow/compare visuals; more than {BLOG_MAX_VISUAL_ITEMS} visual items after code repair; invalid flow/compare syntax; compare metric numbers not present in the article prose outside the compare block.
 Updated component rule: screenshot and generate visuals use IMAGE comment placeholders; flow and compare visuals use their :::flow / :::compare blocks directly and must not have IMAGE comment placeholders. Do not require IMAGE placeholders for flow or compare visuals.
 Facts rule: flow/compare text may only describe MintiStudio features that appear in minti_facts.md. Third-party brand features, limits, or workflow claims are allowed only when they match competitor_facts.md. Stating any competitor dollar price is a blocking issue because competitor_facts.md intentionally omits prices; MintiStudio's own price from minti_facts.md remains allowed. Do not allow invented metrics, features, platform logos, or unverified third-party brand claims.
-Non-blocking fix: a MintiStudio section that reads as a feature list without tying features to the reader's problem."""
+Non-blocking fix: a MintiStudio section that reads as a feature list without tying features to the reader's problem.
+{doctor_rule}"""
 
 
 def _revision_prompt() -> str:
@@ -2215,6 +2281,11 @@ def run_pipeline(*, topic_id: int | None = None, dry_run: bool = False) -> dict[
                 "reviewer_model": BLOG_MODEL_REVIEWER,
                 "designer_model": BLOG_MODEL_DESIGNER,
                 "available_screenshots": _screenshot_prompt_list(screenshots),
+                "cluster_audience_rule": (
+                    "Doctors-cluster posts are about channel growth, publishing workflow, professional context, and privacy-safe operations. Do not provide medical advice, diagnosis or treatment claims, invent statistics, or encourage sharing patient information."
+                    if str(topic.get("cluster_slug") or "general") == "doctors"
+                    else None
+                ),
             },
         }
         article, cost = _call_stage(state, "writer", BLOG_MODEL_WRITER, _writer_prompt(), user_base)
@@ -2254,7 +2325,7 @@ def run_pipeline(*, topic_id: int | None = None, dry_run: bool = False) -> dict[
         _record_pipeline_stage(state, stage="checks", status="done" if checks["ok"] else "failed", output=checks, notes=_checks_notes(checks))
 
         reviewer_payload = {**user_base, "article": article, "checks": checks, "existing_titles": [item["title"] for item in published]}
-        review_1, cost = _call_stage(state, "reviewer_1", BLOG_MODEL_REVIEWER, _reviewer_prompt(), reviewer_payload)
+        review_1, cost = _call_stage(state, "reviewer_1", BLOG_MODEL_REVIEWER, _reviewer_prompt(str(topic.get("cluster_slug") or "general")), reviewer_payload)
         state.seq += 1
         review_1_score = _review_score(review_1)
         _record_pipeline_stage(state, stage="reviewer_1", status="done", model=BLOG_MODEL_REVIEWER, output=review_1, score=review_1_score, cost_usd=cost, set_current=True)
@@ -2287,7 +2358,7 @@ def run_pipeline(*, topic_id: int | None = None, dry_run: bool = False) -> dict[
             state.seq += 1
             _record_pipeline_stage(state, stage="checks", status="done" if checks["ok"] else "failed", output=checks, notes=_checks_notes(checks))
             reviewer_payload = {**user_base, "article": article, "checks": checks, "existing_titles": [item["title"] for item in published]}
-            review_2, cost = _call_stage(state, "reviewer_2", BLOG_MODEL_REVIEWER, _reviewer_prompt(), reviewer_payload)
+            review_2, cost = _call_stage(state, "reviewer_2", BLOG_MODEL_REVIEWER, _reviewer_prompt(str(topic.get("cluster_slug") or "general")), reviewer_payload)
             final_review = review_2
             state.seq += 1
             review_2_score = _review_score(review_2)

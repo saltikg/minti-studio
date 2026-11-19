@@ -1,6 +1,7 @@
 #!/home/ubuntu/apps/minti_studio/.venv/bin/python
 from __future__ import annotations
 
+import argparse
 import json
 import os
 import re
@@ -19,12 +20,17 @@ if str(ROOT) not in sys.path:
 
 from app.video_shorts.services.blog_llm import BLOG_MODEL_REVIEWER, call_json, log_usage  # noqa: E402
 from app.video_shorts.services.blog_pipeline import (  # noqa: E402
+    BlogCluster,
     BlogSource,
+    allocate_cluster_topic_counts,
+    best_near_duplicate_match,
     fetch_url,
     inject_dataimpulse_sessid,
-    insert_candidate,
+    insert_cluster_candidate,
     json_dumps_compact,
+    list_blog_clusters,
     list_blog_sources,
+    list_cluster_scout_titles,
     parse_feed_items,
     parse_sitemap_items,
     robots_allows,
@@ -70,6 +76,18 @@ Audience: solo educators, coaches, consultants, and podcasters who publish long-
 Return compact JSON only with:
 {"video_summary":"1-2 sentences","creator_takeaways":["..."],"claims_to_verify":["..."],"mentioned_official_sources":["..."]}
 Keep claims conservative. If the transcript is mostly product promo or unrelated, say so clearly.
+"""
+
+CLUSTER_SCOUT_SYSTEM_PROMPT = """You are the MintiStudio cluster topic scout. Return strict JSON only.
+
+Generate original, audience-first blog topics for the supplied cluster. The cluster audience and seed topics are the primary direction. Trend and competitor signals are secondary inspiration only; do not copy their headlines or structure.
+
+Every topic must help the cluster audience grow an expertise-led long-form video channel with Shorts. Avoid generic AI-tool roundups. Do not repeat an existing reader question or angle, even with different wording.
+
+For the doctors cluster, topics are strictly about channel growth, publishing workflow, professional reputation, context preservation, and privacy-aware content operations. Do not propose medical advice, treatment guidance, diagnosis claims, patient stories, patient-identifiable information, or medical statistics.
+
+Return exactly the requested number when enough distinct angles exist. Return:
+{"topics":[{"title":"...","primary_keyword":"...","category":"persona|craft|workflow|monetization|news|comparison","intent":"commercial|informational","angle":"one distinct angle","brief":"2-3 sentences describing reader, problem, promise, and natural MintiStudio bridge"}]}
 """
 
 
@@ -398,13 +416,11 @@ def _record_source_error(source: BlogSource, error: str) -> None:
         conn.close()
 
 
-def _persist_source_items(source: BlogSource, items: list[dict[str, Any]]) -> int:
+def _mark_source_success(source: BlogSource) -> None:
     conn = get_db()
     try:
-        inserted = sum(1 for item in items if insert_candidate(conn, source=source, item=item))
         update_blog_source_check(conn, source, error=None)
         conn.commit()
-        return inserted
     except Exception:
         conn.rollback()
         raise
@@ -412,7 +428,8 @@ def _persist_source_items(source: BlogSource, items: list[dict[str, Any]]) -> in
         conn.close()
 
 
-def scout() -> dict[str, int | str]:
+def _secondary_signals() -> tuple[list[dict[str, str]], dict[str, int | str]]:
+    signals: list[dict[str, str]] = []
     counts: dict[str, int | str] = {}
     sources = list_blog_sources(enabled_only=True)
     for source in sources:
@@ -442,17 +459,123 @@ def scout() -> dict[str, int | str]:
             counts[source.name] = f"error:{exc}"
             _record_source_error(source, str(exc))
             continue
-        inserted = _persist_source_items(source, items)
+        for item in items:
+            signals.append(
+                {
+                    "source": source.name,
+                    "title": str(item.get("title") or "")[:240],
+                    "summary": str(item.get("summary") or "")[:500],
+                    "url": str(item.get("url") or "")[:500],
+                }
+            )
+        _mark_source_success(source)
         suffix = f" {json.dumps(stats, sort_keys=True)}" if stats else ""
-        counts[source.name] = f"{inserted}{suffix}"
-    return counts
+        counts[source.name] = f"{len(items)} signals{suffix}"
+    return signals[:60], counts
+
+
+def _cluster_existing_titles(cluster_slug: str) -> list[dict[str, str]]:
+    conn = get_db()
+    try:
+        return list_cluster_scout_titles(conn, cluster_slug)
+    finally:
+        conn.close()
+
+
+def _generate_cluster_topics(
+    cluster: BlogCluster,
+    *,
+    count: int,
+    signals: list[dict[str, str]],
+    existing: list[dict[str, str]],
+) -> list[dict[str, Any]]:
+    payload = {
+        "requested_count": count,
+        "cluster": {
+            "slug": cluster.slug,
+            "name": cluster.name,
+            "audience": cluster.audience,
+            "seed_topics": list(cluster.seed_topics),
+        },
+        "existing_titles_and_angles_to_avoid": existing,
+        "secondary_trend_and_competitor_signals": signals,
+    }
+    result = call_json(
+        "scout_cluster",
+        model=BLOG_MODEL_REVIEWER,
+        system_prompt=CLUSTER_SCOUT_SYSTEM_PROMPT,
+        user_prompt=json_dumps_compact(payload),
+    )
+    log_usage("scout_cluster", result)
+    parsed = json.loads(result.content)
+    return [item for item in (parsed.get("topics") or []) if isinstance(item, dict)][:count]
+
+
+def _persist_cluster_topics(cluster: BlogCluster, topics: list[dict[str, Any]]) -> dict[str, Any]:
+    conn = get_db()
+    inserted_ids: list[int] = []
+    dropped: list[dict[str, str]] = []
+    try:
+        existing = list_cluster_scout_titles(conn, cluster.slug)
+        for topic in topics:
+            title = str(topic.get("title") or "").strip()
+            if not title:
+                continue
+            duplicate_of = best_near_duplicate_match(title, existing)
+            if duplicate_of:
+                dropped.append({"title": title, "duplicate_of": duplicate_of})
+                continue
+            topic_id = insert_cluster_candidate(conn, cluster=cluster, item=topic)
+            if topic_id:
+                inserted_ids.append(topic_id)
+                existing.append({"kind": "candidate", "title": title, "slug": str(topic.get("primary_keyword") or "")})
+        conn.commit()
+    except Exception:
+        conn.rollback()
+        raise
+    finally:
+        conn.close()
+    return {"inserted_ids": inserted_ids, "similarity_dropped": dropped}
+
+
+def scout(*, cluster_slug: str | None = None) -> dict[str, Any]:
+    clusters = list_blog_clusters(active_only=True)
+    if cluster_slug:
+        selected = [cluster for cluster in clusters if cluster.slug == cluster_slug]
+        if not selected:
+            raise ValueError(f"Unknown or inactive blog cluster: {cluster_slug}")
+    else:
+        selected = clusters
+    allocations = allocate_cluster_topic_counts(clusters, total=int(os.getenv("BLOG_SCOUT_TOPIC_COUNT", "15") or "15"))
+    signals, source_counts = _secondary_signals()
+    result: dict[str, Any] = {
+        "sources": source_counts,
+        "clusters": {},
+        "inserted_ids": [],
+        "similarity_dropped": 0,
+    }
+    for cluster in selected:
+        count = max(1, allocations.get(cluster.slug, 1))
+        existing = _cluster_existing_titles(cluster.slug)
+        proposed = _generate_cluster_topics(cluster, count=count, signals=signals, existing=existing)
+        persisted = _persist_cluster_topics(cluster, proposed)
+        result["clusters"][cluster.slug] = {
+            "requested": count,
+            "proposed": len(proposed),
+            **persisted,
+        }
+        result["inserted_ids"].extend(persisted["inserted_ids"])
+        result["similarity_dropped"] += len(persisted["similarity_dropped"])
+    return result
 
 
 def main() -> int:
-    counts = scout()
+    parser = argparse.ArgumentParser(description="Generate cluster-led MintiStudio blog topic candidates.")
+    parser.add_argument("--cluster", help="Generate candidates for one active cluster only.")
+    args = parser.parse_args()
+    counts = scout(cluster_slug=args.cluster)
     print("BLOG_SCOUT_DONE")
-    for name, count in counts.items():
-        print(f"{name}: {count}")
+    print(json.dumps(counts, ensure_ascii=False, sort_keys=True))
     return 0
 
 

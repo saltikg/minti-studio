@@ -158,6 +158,13 @@
         <option value="{{ status }}" {% if selected_status == status %}selected{% endif %}>{{ status|replace('_', ' ') }}</option>
       {% endfor %}
     </select>
+    <label for="blog-topic-cluster" class="form-label mb-0">Cluster</label>
+    <select id="blog-topic-cluster" name="cluster" class="form-select form-select-sm w-auto">
+      <option value="">All</option>
+      {% for cluster in clusters %}
+        <option value="{{ cluster.slug }}" {% if selected_cluster == cluster.slug %}selected{% endif %}>{{ cluster.name }}</option>
+      {% endfor %}
+    </select>
     <button class="btn btn-sm btn-outline-light" type="submit">Filter</button>
     <a class="btn btn-sm btn-outline-secondary" href="{{ url_for('video_shorts_bp.admin_blog_pipeline_topics') }}">Reset</a>
   </form>
@@ -168,6 +175,7 @@
         <tr>
           <th>Date</th>
           <th>Topic</th>
+          <th>Cluster</th>
           <th>Source</th>
           <th>Fit</th>
           <th>Status</th>
@@ -184,6 +192,7 @@
             <td class="blog-topic-title">
               <form method="post" action="{{ url_for('video_shorts_bp.admin_blog_pipeline_topic_update', topic_id=topic.id) }}" id="topic-form-{{ topic.id }}">
                 <input type="hidden" name="filter_status" value="{{ selected_status }}">
+                <input type="hidden" name="filter_cluster" value="{{ selected_cluster }}">
                 <div class="blog-topic-read">
                   <div class="blog-topic-name">{{ topic.title or 'Untitled topic' }}</div>
                   {% if topic.source_title %}
@@ -237,6 +246,7 @@
                 {% endif %}
               </div>
             </td>
+            <td><span class="blog-status-badge queued">{{ topic.cluster_slug or 'general' }}</span></td>
             <td>
               <div>{{ topic.source_name or '—' }}</div>
               {% if topic.source_url %}
@@ -286,7 +296,7 @@
           </tr>
         {% else %}
           <tr>
-            <td colspan="7" class="text-center text-white-50 py-4">No blog topics yet.</td>
+            <td colspan="8" class="text-center text-white-50 py-4">No blog topics yet.</td>
           </tr>
         {% endfor %}
       </tbody>

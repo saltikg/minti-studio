@@ -19,6 +19,7 @@ from app.video_shorts.services.blog_pipeline import (  # noqa: E402
     BLOG_JUDGE_MIN_SCORE,
     best_duplicate_match,
     json_dumps_compact,
+    list_blog_clusters,
     list_existing_articles_and_topics,
     normalize_keyword,
     row_to_dict,
@@ -30,7 +31,7 @@ from app.video_shorts.services.db import get_db, table_columns  # noqa: E402
 
 SYSTEM_PROMPT = """You judge blog topic candidates for MintiStudio.
 
-Audience: solo educators, coaches, consultants, podcasters, mostly US English, who make long-form video and have something to sell.
+Each candidate includes a cluster with its own audience description. Treat that cluster audience as binding when scoring audience_fit; do not replace it with a generic creator audience. The general cluster covers solo educators, coaches, consultants, and creators. Use mostly US English.
 MintiStudio turns long videos into Shorts. It offers DIY self-serve plus Autopilot done-for-you at $20/mo. It is not a tool you learn and run yourself.
 
 A topic fits if a genuinely useful article for OUR AUDIENCE can naturally lead to MintiStudio.
@@ -85,7 +86,7 @@ Good: source "Best Video Repurposing Tools" -> duplicate of our comparison seed,
 Good: source "How to add captions to Shorts" -> ours "Do Coaches Need Captions on Every Short?"
 
 Fit rubric: return sub-scores and fit_score as their sum:
-- audience_fit 0-40: does it serve educators/coaches/consultants/podcasters specifically?
+- audience_fit 0-40: does it serve the candidate's supplied cluster audience specifically?
 - minti_bridge 0-30: can the article lead naturally to MintiStudio / Autopilot?
 - intent 0-20: commercial > informational
 - timeliness 0-10
@@ -103,7 +104,7 @@ TITLE_SIMILARITY_REJECT_THRESHOLD = 0.60
 logger = logging.getLogger(__name__)
 
 
-def _topic_rows(conn, *, mode: str = "candidate", topic_ids: list[int] | None = None) -> list[dict[str, Any]]:
+def _topic_rows(conn, *, mode: str = "candidate", topic_ids: list[int] | None = None, cluster_slug: str | None = None) -> list[dict[str, Any]]:
     if mode == "rejudge_queued":
         where = "status = 'queued' AND source_type <> 'seed'"
     elif mode == "enrich_seeds":
@@ -115,15 +116,19 @@ def _topic_rows(conn, *, mode: str = "candidate", topic_ids: list[int] | None = 
     columns = table_columns(conn, "blog_topics")
     source_summary_sql = "source_summary" if "source_summary" in columns else "NULL AS source_summary"
     adapted_from_sql = "adapted_from" if "adapted_from" in columns else "NULL AS adapted_from"
+    cluster_slug_sql = "COALESCE(cluster_slug, 'general') AS cluster_slug" if "cluster_slug" in columns else "'general' AS cluster_slug"
     params: list[Any] = []
     if topic_ids:
         where += " AND id IN (" + ", ".join(["?"] * len(topic_ids)) + ")"
         params.extend(int(topic_id) for topic_id in topic_ids)
+    if cluster_slug:
+        where += " AND " + ("COALESCE(cluster_slug, 'general') = ?" if "cluster_slug" in columns else "? = 'general'")
+        params.append(cluster_slug)
     rows = conn.execute(
         f"""
         SELECT id, title, source_type, source_name, source_url, source_title, brief,
                created_at, status, fit_score, judge_reason, duplicate_of,
-               {source_summary_sql}, {adapted_from_sql}
+               {source_summary_sql}, {adapted_from_sql}, {cluster_slug_sql}
         FROM blog_topics
         WHERE {where}
         ORDER BY created_at ASC
@@ -194,7 +199,7 @@ def _apply_prefilter(candidates: list[dict[str, Any]], existing: list[dict[str, 
     return remaining, rejected
 
 
-def _build_user_prompt(candidates: list[dict[str, Any]], existing: list[dict[str, str]]) -> str:
+def _build_user_prompt(candidates: list[dict[str, Any]], existing: list[dict[str, str]], clusters: dict[str, dict[str, Any]] | None = None) -> str:
     ids = [row["id"] for row in candidates]
     payload = {
         "instruction": f"Return exactly {len(ids)} decisions, one for every candidate id in candidate_ids. Do not omit any candidate.",
@@ -211,6 +216,8 @@ def _build_user_prompt(candidates: list[dict[str, Any]], existing: list[dict[str
                 "current_status": row.get("status") or "",
                 "current_fit_score": row.get("fit_score"),
                 "source_summary": row.get("source_summary") or "",
+                "cluster_slug": row.get("cluster_slug") or "general",
+                "cluster": (clusters or {}).get(str(row.get("cluster_slug") or "general"), {}),
             }
             for row in candidates
         ],
@@ -267,6 +274,7 @@ def _validate_title_distance(
     candidates: list[dict[str, Any]],
     decisions: list[dict[str, Any]],
     existing: list[dict[str, str]],
+    clusters: dict[str, dict[str, Any]] | None = None,
     stage_name: str = "judge",
 ) -> tuple[list[dict[str, Any]], list[Any]]:
     revised = list(decisions)
@@ -281,7 +289,7 @@ def _validate_title_distance(
         our_title = str(decision.get("our_title") or "")
         if title_similarity(our_title, source_title) < TITLE_SIMILARITY_REJECT_THRESHOLD:
             continue
-        repair_prompt = _build_user_prompt([candidate], existing) + (
+        repair_prompt = _build_user_prompt([candidate], existing, clusters) + (
             "\n\nThe proposed our_title was too close to the source headline. "
             "Return one decision for this candidate with a genuinely different our_title, "
             "written from the MintiStudio audience's problem. If no distinct title is possible, return lowfit."
@@ -448,12 +456,13 @@ def _run_llm_batches(
     *,
     dry_run: bool = False,
     on_batch=None,
+    clusters: dict[str, dict[str, Any]] | None = None,
 ) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
     decisions: list[dict[str, Any]] = []
     usages: list[dict[str, Any]] = []
     stage_name = "judge_dry" if dry_run else "judge"
     for batch in _chunks(candidates):
-        prompt = _build_user_prompt(batch, existing)
+        prompt = _build_user_prompt(batch, existing, clusters)
         result = None
         llm_decisions: list[dict[str, Any]] = []
         missing_ids: list[int] = []
@@ -473,7 +482,7 @@ def _run_llm_batches(
                 break
         if missing_ids:
             raise RuntimeError(f"LLM omitted decisions for candidate ids: {missing_ids[:20]}")
-        llm_decisions, repair_results = _validate_title_distance(candidates=batch, decisions=llm_decisions, existing=existing, stage_name=stage_name)
+        llm_decisions, repair_results = _validate_title_distance(candidates=batch, decisions=llm_decisions, existing=existing, clusters=clusters, stage_name=stage_name)
         if on_batch:
             on_batch(batch, llm_decisions)
         decisions.extend(llm_decisions)
@@ -511,13 +520,14 @@ def judge(
     enrich_seeds: bool = False,
     rejudge_rejected: bool = False,
     topic_ids: list[int] | None = None,
+    cluster_slug: str | None = None,
 ) -> dict[str, Any]:
     seed_result = seed_topics() if seed and not dry_run else {"inserted": [], "skipped": []}
     conn = get_db()
     try:
         expired = 0 if topic_ids else _expire_timely(conn, dry_run=dry_run)
         mode = "enrich_seeds" if enrich_seeds else ("rejudge_rejected" if rejudge_rejected else ("rejudge_queued" if rejudge_queued else "candidate"))
-        candidates = _topic_rows(conn, mode=mode, topic_ids=topic_ids)
+        candidates = _topic_rows(conn, mode=mode, topic_ids=topic_ids, cluster_slug=cluster_slug)
         exclude_ids = {int(row["id"]) for row in candidates}
         existing = list_existing_articles_and_topics(conn, exclude_topic_ids=exclude_ids)
         if not dry_run:
@@ -527,6 +537,16 @@ def judge(
     finally:
         conn.close()
 
+    cluster_rows = list_blog_clusters(active_only=False)
+    clusters = {
+        cluster.slug: {
+            "slug": cluster.slug,
+            "name": cluster.name,
+            "audience": cluster.audience,
+            "seed_topics": list(cluster.seed_topics),
+        }
+        for cluster in cluster_rows
+    }
     remaining, prefiltered = _apply_prefilter(candidates, existing)
     decisions = list(prefiltered)
     applied_decisions: list[dict[str, Any]] = []
@@ -563,6 +583,7 @@ def judge(
             existing,
             dry_run=dry_run,
             on_batch=persist_batch,
+            clusters=clusters,
         )
         decisions.extend(llm_decisions)
         for usage in usages:
@@ -594,6 +615,7 @@ def main() -> int:
     parser.add_argument("--rejudge-rejected", action="store_true", help="Re-judge rejected competitor_blog/youtube_news topics.")
     parser.add_argument("--enrich-seeds", action="store_true", help="Fill angle/brief on seed topics without changing status or score.")
     parser.add_argument("--topic-id", type=int, action="append", dest="topic_ids", help="Judge only this candidate topic ID; repeat for multiple IDs.")
+    parser.add_argument("--cluster", help="Judge only candidates in this cluster.")
     args = parser.parse_args()
     result = judge(
         dry_run=args.dry_run,
@@ -602,6 +624,7 @@ def main() -> int:
         enrich_seeds=args.enrich_seeds,
         rejudge_rejected=args.rejudge_rejected,
         topic_ids=args.topic_ids,
+        cluster_slug=args.cluster,
     )
     print("BLOG_JUDGE_DRY_RUN" if args.dry_run else "BLOG_JUDGE_DONE")
     if result["seeds"]["inserted"] or result["seeds"]["skipped"]:
