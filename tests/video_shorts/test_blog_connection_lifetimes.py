@@ -30,8 +30,13 @@ def test_judge_closes_read_connection_before_llm_and_continues_after_write_failu
     write_calls = []
 
     monkeypatch.setattr(blog_judge, "get_db", lambda: read_connection)
-    monkeypatch.setattr(blog_judge, "_expire_timely", lambda conn, **kwargs: 0)
-    monkeypatch.setattr(blog_judge, "_topic_rows", lambda conn, mode: candidates)
+    monkeypatch.setattr(blog_judge, "_expire_timely", lambda conn, **kwargs: (_ for _ in ()).throw(AssertionError("filtered repair must not expire unrelated topics")))
+
+    def topic_rows(conn, mode, topic_ids):
+        assert topic_ids == [11, 12]
+        return candidates
+
+    monkeypatch.setattr(blog_judge, "_topic_rows", topic_rows)
     monkeypatch.setattr(blog_judge, "list_existing_articles_and_topics", lambda conn, exclude_topic_ids: [])
     monkeypatch.setattr(blog_judge, "_apply_prefilter", lambda rows, existing: (rows, []))
     monkeypatch.setattr(blog_judge, "log_usage", lambda *args: None)
@@ -48,7 +53,7 @@ def test_judge_closes_read_connection_before_llm_and_continues_after_write_failu
     monkeypatch.setattr(blog_judge, "_run_llm_batches", run_llm)
     monkeypatch.setattr(blog_judge, "_write_topic_decision", write)
 
-    result = blog_judge.judge()
+    result = blog_judge.judge(topic_ids=[11, 12])
 
     assert write_calls == [11, 12]
     assert result["write_errors"] == [11]

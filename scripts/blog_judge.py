@@ -103,7 +103,7 @@ TITLE_SIMILARITY_REJECT_THRESHOLD = 0.60
 logger = logging.getLogger(__name__)
 
 
-def _topic_rows(conn, *, mode: str = "candidate") -> list[dict[str, Any]]:
+def _topic_rows(conn, *, mode: str = "candidate", topic_ids: list[int] | None = None) -> list[dict[str, Any]]:
     if mode == "rejudge_queued":
         where = "status = 'queued' AND source_type <> 'seed'"
     elif mode == "enrich_seeds":
@@ -115,6 +115,10 @@ def _topic_rows(conn, *, mode: str = "candidate") -> list[dict[str, Any]]:
     columns = table_columns(conn, "blog_topics")
     source_summary_sql = "source_summary" if "source_summary" in columns else "NULL AS source_summary"
     adapted_from_sql = "adapted_from" if "adapted_from" in columns else "NULL AS adapted_from"
+    params: list[Any] = []
+    if topic_ids:
+        where += " AND id IN (" + ", ".join(["?"] * len(topic_ids)) + ")"
+        params.extend(int(topic_id) for topic_id in topic_ids)
     rows = conn.execute(
         f"""
         SELECT id, title, source_type, source_name, source_url, source_title, brief,
@@ -123,7 +127,8 @@ def _topic_rows(conn, *, mode: str = "candidate") -> list[dict[str, Any]]:
         FROM blog_topics
         WHERE {where}
         ORDER BY created_at ASC
-        """
+        """,
+        params,
     ).fetchall()
     return [row_to_dict(conn.description, row) for row in rows]
 
@@ -505,13 +510,14 @@ def judge(
     rejudge_queued: bool = False,
     enrich_seeds: bool = False,
     rejudge_rejected: bool = False,
+    topic_ids: list[int] | None = None,
 ) -> dict[str, Any]:
     seed_result = seed_topics() if seed and not dry_run else {"inserted": [], "skipped": []}
     conn = get_db()
     try:
-        expired = _expire_timely(conn, dry_run=dry_run)
+        expired = 0 if topic_ids else _expire_timely(conn, dry_run=dry_run)
         mode = "enrich_seeds" if enrich_seeds else ("rejudge_rejected" if rejudge_rejected else ("rejudge_queued" if rejudge_queued else "candidate"))
-        candidates = _topic_rows(conn, mode=mode)
+        candidates = _topic_rows(conn, mode=mode, topic_ids=topic_ids)
         exclude_ids = {int(row["id"]) for row in candidates}
         existing = list_existing_articles_and_topics(conn, exclude_topic_ids=exclude_ids)
         if not dry_run:
@@ -587,6 +593,7 @@ def main() -> int:
     parser.add_argument("--rejudge-queued", action="store_true", help="Re-judge non-seed queued topics.")
     parser.add_argument("--rejudge-rejected", action="store_true", help="Re-judge rejected competitor_blog/youtube_news topics.")
     parser.add_argument("--enrich-seeds", action="store_true", help="Fill angle/brief on seed topics without changing status or score.")
+    parser.add_argument("--topic-id", type=int, action="append", dest="topic_ids", help="Judge only this candidate topic ID; repeat for multiple IDs.")
     args = parser.parse_args()
     result = judge(
         dry_run=args.dry_run,
@@ -594,6 +601,7 @@ def main() -> int:
         rejudge_queued=args.rejudge_queued,
         enrich_seeds=args.enrich_seeds,
         rejudge_rejected=args.rejudge_rejected,
+        topic_ids=args.topic_ids,
     )
     print("BLOG_JUDGE_DRY_RUN" if args.dry_run else "BLOG_JUDGE_DONE")
     if result["seeds"]["inserted"] or result["seeds"]["skipped"]:
