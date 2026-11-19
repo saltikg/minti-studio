@@ -251,6 +251,151 @@
     text-align: center;
   }
 
+  .vs-home .how-paths-section {
+    width: 100%;
+    max-width: 1040px;
+    margin: 0 auto;
+    text-align: center;
+  }
+
+  .vs-home .how-paths-heading {
+    margin-top: 0.65rem;
+  }
+
+  .vs-home .how-paths-grid {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 1rem;
+    margin-top: 1.7rem;
+    text-align: left;
+  }
+
+  .vs-home .how-path-card {
+    display: flex;
+    flex-direction: column;
+    min-height: 100%;
+    padding: clamp(1.35rem, 2.6vw, 2rem);
+    border: 1px solid rgba(255, 255, 255, 0.11);
+    border-radius: 18px;
+    background: rgba(15, 23, 42, 0.72);
+    box-shadow: 0 18px 44px rgba(0, 0, 0, 0.16);
+  }
+
+  .vs-home .how-path-card.is-autopilot {
+    border-color: rgba(93, 202, 165, 0.62);
+    box-shadow: 0 18px 44px rgba(29, 158, 117, 0.12);
+  }
+
+  .vs-home .how-path-title-row {
+    display: flex;
+    align-items: center;
+    gap: 0.65rem;
+    flex-wrap: wrap;
+  }
+
+  .vs-home .how-path-title {
+    margin: 0;
+    color: rgba(248, 250, 252, 0.98);
+    font-size: clamp(1.35rem, 2.2vw, 1.65rem);
+    font-weight: 650;
+    letter-spacing: -0.02em;
+  }
+
+  .vs-home .how-path-pill {
+    padding: 0.3rem 0.62rem;
+    border: 1px solid rgba(93, 202, 165, 0.52);
+    border-radius: 999px;
+    background: rgba(93, 202, 165, 0.1);
+    color: #7ee0bd;
+    font-size: 0.72rem;
+    font-weight: 700;
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
+  }
+
+  .vs-home .how-path-subtitle {
+    margin: 0.45rem 0 0;
+    color: var(--vs-home-muted);
+    font-size: 0.95rem;
+    line-height: 1.5;
+  }
+
+  .vs-home .how-path-steps {
+    display: grid;
+    gap: 1rem;
+    margin: 1.6rem 0 1.8rem;
+  }
+
+  .vs-home .how-path-step {
+    display: grid;
+    grid-template-columns: 42px minmax(0, 1fr);
+    align-items: center;
+    gap: 0.85rem;
+  }
+
+  .vs-home .how-path-icon {
+    position: relative;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    width: 42px;
+    height: 42px;
+    border: 1px solid rgba(93, 202, 165, 0.3);
+    border-radius: 11px;
+    background: rgba(93, 202, 165, 0.08);
+    color: #5dcaa5;
+    font-size: 1rem;
+  }
+
+  .vs-home .how-path-step-number {
+    position: absolute;
+    top: -6px;
+    right: -6px;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    width: 18px;
+    height: 18px;
+    border-radius: 999px;
+    background: #5dcaa5;
+    color: #07131a;
+    font-size: 0.66rem;
+    font-weight: 800;
+  }
+
+  .vs-home .how-path-step-copy {
+    color: rgba(248, 250, 252, 0.94);
+    font-size: 0.96rem;
+    font-weight: 600;
+    line-height: 1.4;
+  }
+
+  .vs-home .how-path-button {
+    align-self: flex-start;
+    margin-top: auto;
+    min-height: 48px;
+    padding: 0.82rem 1.25rem;
+    border-radius: 0.6rem;
+    text-decoration: none;
+  }
+
+  .vs-home .how-path-button-outline {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    border: 1px solid rgba(93, 202, 165, 0.58);
+    background: transparent;
+    color: rgba(238, 255, 250, 0.96);
+    font-weight: 600;
+  }
+
+  .vs-home .how-path-button-outline:hover,
+  .vs-home .how-path-button-outline:focus-visible {
+    border-color: rgba(93, 202, 165, 0.82);
+    background: rgba(93, 202, 165, 0.1);
+    color: #fff;
+  }
+
   .vs-home .flow-shell {
     width: 100%;
     max-width: none;
@@ -885,10 +1030,7 @@
 
   .vs-home .dashboard-proof-frames {
     margin: 1.6rem auto 0;
-    display: grid;
-    grid-template-columns: repeat(2, minmax(0, 1fr));
-    gap: 1rem;
-    max-width: 960px;
+    max-width: 900px;
   }
 
   .vs-home .dashboard-proof-frame {
@@ -926,9 +1068,9 @@
   .vs-home .dashboard-proof-callouts {
     margin: 1.4rem auto 0;
     display: grid;
-    grid-template-columns: repeat(3, minmax(0, 1fr));
+    grid-template-columns: repeat(2, minmax(0, 1fr));
     gap: 0.9rem;
-    max-width: 960px;
+    max-width: 900px;
   }
 
   .vs-home .dashboard-proof-callout {
@@ -1769,6 +1911,12 @@
       grid-template-columns: 1fr;
     }
 
+    .vs-home .how-paths-grid {
+      grid-template-columns: 1fr;
+      max-width: 640px;
+      margin-inline: auto;
+    }
+
     .vs-home .dashboard-proof-frames {
       grid-template-columns: 1fr;
       max-width: 720px;
@@ -2223,6 +2371,57 @@
     </div>
   </section>
 
+  <section class="how-paths-section" id="how-it-works" aria-labelledby="how-paths-heading">
+    <p class="demo-eyebrow">HOW IT WORKS</p>
+    <h2 class="demo-title how-paths-heading" id="how-paths-heading">Two ways to get your Shorts</h2>
+    <div class="how-paths-grid">
+      <article class="how-path-card">
+        <div class="how-path-title-row">
+          <h3 class="how-path-title">Do it yourself</h3>
+        </div>
+        <p class="how-path-subtitle">In minutes, in your browser</p>
+        <div class="how-path-steps">
+          <div class="how-path-step">
+            <span class="how-path-icon"><i class="bi bi-link-45deg" aria-hidden="true"></i><span class="how-path-step-number">1</span></span>
+            <span class="how-path-step-copy">Paste a YouTube link</span>
+          </div>
+          <div class="how-path-step">
+            <span class="how-path-icon"><i class="bi bi-stars" aria-hidden="true"></i><span class="how-path-step-number">2</span></span>
+            <span class="how-path-step-copy">Pick a moment, or let AI suggest</span>
+          </div>
+          <div class="how-path-step">
+            <span class="how-path-icon"><i class="bi bi-calendar-check" aria-hidden="true"></i><span class="how-path-step-number">3</span></span>
+            <span class="how-path-step-copy">Style it and schedule</span>
+          </div>
+        </div>
+        <a class="btn hero-primary how-path-button" href="{{ url_for('video_shorts_bp.register') }}">Try it free</a>
+      </article>
+
+      <article class="how-path-card is-autopilot">
+        <div class="how-path-title-row">
+          <h3 class="how-path-title">Let us do it</h3>
+          <span class="how-path-pill">Autopilot</span>
+        </div>
+        <p class="how-path-subtitle">An editor handles it every week</p>
+        <div class="how-path-steps">
+          <div class="how-path-step">
+            <span class="how-path-icon"><i class="bi bi-plug" aria-hidden="true"></i><span class="how-path-step-number">1</span></span>
+            <span class="how-path-step-copy">Connect your channel once</span>
+          </div>
+          <div class="how-path-step">
+            <span class="how-path-icon"><i class="bi bi-scissors" aria-hidden="true"></i><span class="how-path-step-number">2</span></span>
+            <span class="how-path-step-copy">We turn each new video into Shorts</span>
+          </div>
+          <div class="how-path-step">
+            <span class="how-path-icon"><i class="bi bi-send-check" aria-hidden="true"></i><span class="how-path-step-number">3</span></span>
+            <span class="how-path-step-copy">You review, we publish</span>
+          </div>
+        </div>
+        <a class="how-path-button how-path-button-outline" href="/autopilot">See Autopilot →</a>
+      </article>
+    </div>
+  </section>
+
   <section class="sample-shorts-section" aria-labelledby="sample-shorts-heading">
     <h2 class="demo-title" id="sample-shorts-heading">See what Minti creates</h2>
     <p class="demo-subline">Real Shorts made with MintiStudio — different speakers, layouts and caption styles.</p>
@@ -2254,133 +2453,6 @@
       </article>
     </div>
   </section>
-
-  <section class="vs-home-flow-section" id="how-it-works">
-    <div class="flow-shell">
-      <h2 class="demo-title vs-home-flow-section-heading">How it works</h2>
-      <div class="hero-flow">
-          <div class="flow-stage">
-            <div class="flow-card">
-              <div class="flow-wide flow-reveal" style="--flow-delay: 0.15s;">
-                <picture>
-                  <source
-                    srcset="{{ url_for('video_shorts_bp.static', filename='img/long_video_1.webp') }}"
-                    type="image/webp"
-                  >
-                  <img
-                    src="{{ url_for('video_shorts_bp.static', filename='img/long_video_1.jpeg') }}"
-                    alt="Long-form source video ready to be turned into clips"
-                    class="flow-wide-image"
-                    width="640"
-                    height="331"
-                    loading="lazy"
-                  >
-                </picture>
-                <div class="flow-play">
-                  <i class="bi bi-play-fill"></i>
-                </div>
-                <div class="flow-duration">24:03</div>
-              </div>
-            </div>
-            <p class="flow-stage-label">Start with one long video</p>
-          </div>
-
-          <div class="flow-arrow" aria-hidden="true">
-            <i class="bi bi-arrow-right flow-reveal" style="--flow-delay: 0.65s;"></i>
-          </div>
-
-          <div class="flow-stage">
-            <div class="flow-card">
-              <div class="flow-clips">
-                <div class="flow-clip flow-reveal" style="--flow-delay: 1.05s;">
-                  <picture>
-                    <source
-                      srcset="{{ url_for('video_shorts_bp.static', filename='img/long_video_short_1.webp') }}"
-                      type="image/webp"
-                    >
-                    <img
-                      src="{{ url_for('video_shorts_bp.static', filename='img/long_video_short_1.jpeg') }}"
-                      alt="Short-form clip example one prepared for publishing"
-                      class="flow-clip-image"
-                      width="360"
-                      height="563"
-                      loading="lazy"
-                    >
-                  </picture>
-                </div>
-                <div class="flow-clip flow-reveal" style="--flow-delay: 1.28s;">
-                  <picture>
-                    <source
-                      srcset="{{ url_for('video_shorts_bp.static', filename='img/long_video_short_2.webp') }}"
-                      type="image/webp"
-                    >
-                    <img
-                      src="{{ url_for('video_shorts_bp.static', filename='img/long_video_short_2.jpeg') }}"
-                      alt="Short-form clip example two ready for distribution"
-                      class="flow-clip-image"
-                      width="360"
-                      height="568"
-                      loading="lazy"
-                    >
-                  </picture>
-                </div>
-                <div class="flow-clip flow-reveal" style="--flow-delay: 1.51s;">
-                  <picture>
-                    <source
-                      srcset="{{ url_for('video_shorts_bp.static', filename='img/long_video_short_3.webp') }}"
-                      type="image/webp"
-                    >
-                    <img
-                      src="{{ url_for('video_shorts_bp.static', filename='img/long_video_short_3.jpeg') }}"
-                      alt="Short-form clip example three lined up for cross-platform posting"
-                      class="flow-clip-image"
-                      width="360"
-                      height="593"
-                      loading="lazy"
-                    >
-                  </picture>
-                </div>
-              </div>
-            </div>
-            <p class="flow-stage-label">Get multiple short clips</p>
-          </div>
-
-          <div class="flow-arrow" aria-hidden="true">
-            <i class="bi bi-arrow-right flow-reveal" style="--flow-delay: 2.0s;"></i>
-          </div>
-
-          <div class="flow-stage">
-            <div class="flow-card">
-              <div class="flow-platforms">
-                <div class="platform-pill flow-reveal" style="--flow-delay: 2.4s;">
-                  <i class="bi bi-youtube"></i>
-                  <i class="bi bi-instagram"></i>
-                  <i class="bi bi-facebook"></i>
-                </div>
-              </div>
-            </div>
-            <p class="flow-stage-label">Auto-posts to YouTube, Instagram &amp; Facebook</p>
-          </div>
-
-          <div class="flow-fork">
-            <div class="fork-lines" aria-hidden="true">
-              <span class="fork-line fork-line-up flow-reveal-line" style="--flow-delay: 2.9s;"></span>
-              <span class="fork-line fork-line-down flow-reveal-line" style="--flow-delay: 3.1s;"></span>
-            </div>
-            <div class="fork-cards">
-              <div class="fork-card flow-reveal" style="--flow-delay: 3.45s;">
-                <i class="bi bi-flag"></i>
-                <span>Schedule ahead — pick dates once, posts go out on time</span>
-              </div>
-              <div class="fork-card flow-reveal" style="--flow-delay: 3.8s;">
-                <i class="bi bi-graph-up"></i>
-                <span>Track growth</span>
-              </div>
-            </div>
-          </div>
-      </div>
-    </div>
-    </section>
 
   <section class="demo-section">
     <p class="demo-eyebrow">SEE IT IN ACTION</p>
@@ -2453,7 +2525,7 @@
   <section class="dashboard-proof-section">
     <p class="dashboard-proof-eyebrow">YOUR DASHBOARD</p>
     <h2 class="dashboard-proof-title">See your whole channel in one place</h2>
-    <p class="dashboard-proof-subline">Views and subscriber growth across every platform — from a single dashboard.</p>
+    <p class="dashboard-proof-subline">Views across every platform — from a single dashboard.</p>
 
     <div class="dashboard-proof-frames">
       <div class="dashboard-proof-frame">
@@ -2478,44 +2550,16 @@
         </picture>
       </div>
 
-      <div class="dashboard-proof-frame">
-        <div class="dashboard-proof-browserbar" aria-hidden="true">
-          <span class="dashboard-proof-dot"></span>
-          <span class="dashboard-proof-dot"></span>
-          <span class="dashboard-proof-dot"></span>
-        </div>
-        <picture>
-          <source
-            srcset="{{ url_for('video_shorts_bp.static', filename='img/dashboard_2.webp') }}"
-            type="image/webp"
-          >
-          <img
-            src="{{ url_for('video_shorts_bp.static', filename='img/dashboard_2.png') }}"
-            alt="Daily subscribers chart"
-            class="dashboard-proof-image"
-            width="1300"
-            height="656"
-            loading="lazy"
-          >
-        </picture>
-      </div>
     </div>
 
     <div class="dashboard-proof-callouts">
       <div class="dashboard-proof-callout">
         <i class="bi bi-bar-chart-line" aria-hidden="true"></i>
-        <p class="dashboard-proof-callout-title">Views by platform</p>
-        <p class="dashboard-proof-callout-copy">Know where your reach comes from.</p>
-      </div>
-      <div class="dashboard-proof-callout">
-        <i class="bi bi-people" aria-hidden="true"></i>
-        <p class="dashboard-proof-callout-title">Subscriber growth</p>
-        <p class="dashboard-proof-callout-copy">Watch every channel climb.</p>
+        <p class="dashboard-proof-callout-title">Views by platform — Know where your reach comes from.</p>
       </div>
       <div class="dashboard-proof-callout">
         <i class="bi bi-grid-1x2" aria-hidden="true"></i>
-        <p class="dashboard-proof-callout-title">One dashboard</p>
-        <p class="dashboard-proof-callout-copy">Every platform, side by side.</p>
+        <p class="dashboard-proof-callout-title">One dashboard — Every platform, side by side.</p>
       </div>
     </div>
   </section>
