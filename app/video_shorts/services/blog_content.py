@@ -24,145 +24,117 @@ BLOG_ARTICLES = [
         "sections": [
             {
                 "step_number": "01",
-                "heading": "Open your account and land in My Videos",
+                "heading": "Add your video",
                 "paragraphs": [
                     (
-                        "Start by signing in to MintiStudio, then head straight to My Videos. This is your working library: "
-                        "the place where uploaded long videos, generated Shorts, and their current progress all come together."
+                        "Paste a public YouTube link or upload a video from your computer. MintiStudio adds it to My Videos "
+                        "and keeps the original recording ready for clipping."
                     ),
                 ],
                 "images": [
                     {
-                        "src": "img/blog/getting-started/02-my-videos.png",
-                        "alt": "My Videos library in MintiStudio",
+                        "src": "img/blog/getting-started-with-mintistudio/add-video-url.jpg",
+                        "alt": "Paste a YouTube link or upload a video to add it to MintiStudio",
                     },
                 ],
             },
             {
                 "step_number": "02",
-                "heading": "Upload a long video and start the analysis",
+                "heading": "Let AI find the best moments",
                 "paragraphs": [
                     (
-                        "Upload the long-form video you want to repurpose, then start analysis. MintiStudio prepares the video "
-                        "for the rest of the workflow by pulling together the media, transcript, and clip-planning context."
+                        "MintiStudio imports the video, creates its transcript, and analyzes the full recording for moments "
+                        "that can stand on their own as Shorts. You can leave the page while this runs."
                     ),
                 ],
                 "images": [
                     {
-                        "src": "img/blog/getting-started/03-start-analysis.png",
-                        "alt": "Start analysis action for a long video in MintiStudio",
+                        "src": "img/blog/getting-started-with-mintistudio/video-ready-ai-analysis.jpg",
+                        "alt": "Import, AI analysis, and best-moment detection completed in MintiStudio",
                     },
                 ],
             },
             {
                 "step_number": "03",
-                "heading": "Review and clean up the transcript",
+                "heading": "Let your first Shorts render",
                 "paragraphs": [
                     (
-                        "Once the transcript is ready, skim through it and make any fixes that matter before clipping. A clean "
-                        "transcript gives Minti better material for suggestions and makes later caption editing much smoother."
+                        "Your first Shorts are created in the background. Each clip has a title, duration, transcript range, "
+                        "and AI score so you can quickly see which moments are strongest."
                     ),
                 ],
                 "images": [
                     {
-                        "src": "img/blog/getting-started/04-edit-transcript.png",
-                        "alt": "Transcript editing interface in MintiStudio",
+                        "src": "img/blog/getting-started-with-mintistudio/clips-rendering-scores.jpg",
+                        "alt": "Shorts rendering in the background with titles and AI clip scores",
                     },
                 ],
             },
             {
                 "step_number": "04",
-                "heading": "Let Minti suggest the strongest moments",
+                "heading": "Review your clips",
                 "paragraphs": [
                     (
-                        "Ask Minti to suggest clips from the full video. Instead of starting from a blank slate, you get a set "
-                        "of candidate moments that are already shaped around hooks, self-contained ideas, and short-form pacing."
+                        "Open Your Clips to watch each Short and review its transcript. Keep it, edit it, delete it, or create "
+                        "more clips from the remaining AI suggestions."
                     ),
                 ],
                 "images": [
                     {
-                        "src": "img/blog/getting-started/05-suggest-clips.png",
-                        "alt": "AI-generated clip suggestions in MintiStudio",
+                        "src": "img/blog/getting-started-with-mintistudio/your-clips-ai-scores.jpg",
+                        "alt": "Review rendered Shorts and more AI suggestions in Your Clips",
                     },
                 ],
             },
             {
                 "step_number": "05",
-                "heading": "Choose a clip and style the frame",
+                "heading": "Pick a different moment from the transcript",
                 "paragraphs": [
                     (
-                        "Open the clip in the editor and set the look you want: crop, background, subtitles, and overall framing. "
-                        "This is where the Short starts to feel ready for publishing rather than just extracted."
+                        "If the moment you want was not suggested, open Make a Clip. Highlight a sentence or passage in the "
+                        "transcript, give the clip a title, and create it without scrubbing through a timeline."
                     ),
                 ],
                 "images": [
                     {
-                        "src": "img/blog/getting-started/06-crop-style.png",
-                        "alt": "Crop and style controls for a Short in MintiStudio",
+                        "src": "img/blog/getting-started-with-mintistudio/make-a-clip-transcript.jpg",
+                        "alt": "Select a moment from the transcript in Make a Clip",
                     },
                 ],
             },
             {
                 "step_number": "06",
-                "heading": "Create the clip from the chosen moment",
+                "heading": "Style the Short and set the layout",
                 "paragraphs": [
                     (
-                        "When the framing and styling look right, create the clip. Minti turns that selected range into a proper "
-                        "Short project that can now be rendered, reviewed, and published."
+                        "Choose a caption style that matches your brand. Then use Auto layout to keep the speaker centered as "
+                        "the shot moves; MintiStudio handles the vertical framing for you."
                     ),
                 ],
                 "images": [
                     {
-                        "src": "img/blog/getting-started/07-create-clip.png",
-                        "alt": "Create clip action in MintiStudio",
+                        "src": "img/blog/getting-started-with-mintistudio/design-styles.jpg",
+                        "alt": "Choose a caption style in the MintiStudio Design workspace",
+                    },
+                    {
+                        "src": "img/blog/getting-started-with-mintistudio/layout-auto-single.jpg",
+                        "alt": "Auto layout keeps the speaker centered in vertical video",
                     },
                 ],
             },
             {
                 "step_number": "07",
-                "heading": "Render the final Short",
+                "heading": "Schedule and publish",
                 "paragraphs": [
                     (
-                        "Run the render once everything is set. Minti composes the vertical video, captions, title treatment, "
-                        "and background choices into the final export you can review and download."
+                        "When the Short is ready, open Schedule & Publish. Choose YouTube or Instagram, set the date and time, "
+                        "and publish from the same workflow."
                     ),
                 ],
                 "images": [
                     {
-                        "src": "img/blog/getting-started/08-render.png",
-                        "alt": "Render progress for a Short in MintiStudio",
-                    },
-                ],
-            },
-            {
-                "step_number": "08",
-                "heading": "Schedule and publish across platforms",
-                "paragraphs": [
-                    (
-                        "After rendering, send the Short into your publishing flow. You can schedule the release and manage where "
-                        "it goes next, so YouTube, Instagram, and Facebook all fit into the same workflow instead of separate tools."
-                    ),
-                ],
-                "images": [
-                    {
-                        "src": "img/blog/getting-started/09-schedule-publish.png",
-                        "alt": "Schedule and publish screen in MintiStudio",
-                    },
-                ],
-            },
-            {
-                "step_number": "09",
-                "heading": "Track the result and keep the loop going",
-                "paragraphs": [
-                    (
-                        "Once the Short is live, use the tracking view to see how it performed and carry that learning into the "
-                        "next batch. The workflow is meant to repeat: one long video in, several smarter Shorts out."
-                    ),
-                ],
-                "images": [
-                    {
-                        "src": "img/blog/getting-started/10-track.png",
-                        "alt": "Tracking and performance view for Shorts in MintiStudio",
+                        "src": "img/blog/getting-started-with-mintistudio/tab-schedule.jpg",
+                        "alt": "Schedule and publish a finished Short to YouTube or Instagram",
                     },
                 ],
             },

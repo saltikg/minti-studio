@@ -45,7 +45,7 @@ calendar | Edit and post | Download or schedule with a free account
 Copy the link of a video up to 30 minutes long and paste it into the box. The thumbnail, title and length appear right away.
 
 ### Watch the progress
-Minti fetches the video, prepares the transcript, finds the best moments and renders your first Short. You can follow each step on the page.
+Minti fetches the video, prepares the transcript, finds the best moments and creates your first clips in the background. Each clip shows its title, duration and AI score as it renders.
 
 ### Open your first Short
 You land in the editor with your best moment already turned into a vertical, captioned Short. The other suggested moments are listed below it.
@@ -57,9 +57,9 @@ Cut words from the transcript and they're cut from the video. Fix caption text, 
 Create a free account (no credit card) to download your Short, or connect your channel and schedule it to YouTube, Instagram and Facebook. Your clips and edits move into your account automatically.
 :::
 
-![MintiStudio free YouTube to Shorts tool with a pasted YouTube link and video preview](/video_shorts/static/img/blog/free-youtube-to-shorts-tool/1-free-tool-landing.png "Paste any YouTube link up to 30 minutes [screenshot]")
+![MintiStudio free YouTube to Shorts tool with a pasted video link](/video_shorts/static/img/blog/free-youtube-to-shorts-tool/free-tool-landing.jpg "Paste a YouTube link without signing up [screenshot]")
 
-![MintiStudio free YouTube to Shorts processing card showing each creation step](/video_shorts/static/img/blog/free-youtube-to-shorts-tool/2-processing.png "Follow each step while Minti works [screenshot]")
+![MintiStudio rendering multiple Shorts with AI clip scores](/video_shorts/static/img/blog/free-youtube-to-shorts-tool/clips-rendering-scores.jpg "Review titles and AI scores while clips render [screenshot]")
 
 ## Framing that follows the people on screen
 
@@ -104,7 +104,7 @@ Here, the transcript is the editor:
 - shorten the setup so the payoff comes first
 - change the title before you regenerate
 
-![MintiStudio editor with transcript word cuts and a rendered Short preview](/video_shorts/static/img/blog/free-youtube-to-shorts-tool/3-generate-rendered-short.png "Cut words in the transcript and they're cut from the Short [screenshot]")
+![MintiStudio Your Clips workspace with AI suggestions and clip scores](/video_shorts/static/img/blog/free-youtube-to-shorts-tool/your-clips-ai-scores.jpg "Review the finished Short and more AI suggestions [screenshot]")
 
 :::compare Editing a Short
 clips | Timeline scrubbing for every cut | Delete words in the transcript | up
