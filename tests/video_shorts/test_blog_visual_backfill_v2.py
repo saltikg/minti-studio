@@ -16,7 +16,7 @@ def test_doctors_backfill_moves_media_to_new_slug_and_adds_preview():
     )
 
     assert ":::motion real-short-doctor-busy" in rewritten
-    assert f"/img/blog/{backfill.DOCTORS_SLUG}/tab-clip.jpg" in rewritten
+    assert f"/img/blog/{backfill.DOCTORS_SLUG}/your-clips-rendered.jpg" in rewritten
     assert "Many doctors stop not because Shorts don't work, but because the workflow is annoying." in rewritten
     assert "old/" not in rewritten
     assert len(changes) == 2
@@ -42,8 +42,8 @@ def test_backfill_removes_unmatched_and_caps_library_visuals():
 
     assert len(changes) == 2
     assert len(lost) == 2
-    assert "tab-clip.jpg" in rewritten
-    assert "tab-styles.jpg" in rewritten
+    assert "make-a-clip-transcript.jpg" in rewritten
+    assert "design-styles.jpg" in rewritten
     assert "tab-schedule.jpg" not in rewritten
     assert "10-track.png" not in rewritten
 

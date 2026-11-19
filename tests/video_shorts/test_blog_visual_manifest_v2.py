@@ -34,7 +34,8 @@ def test_image_stage_rejects_non_active_manifest_media():
 
 def test_image_stage_accepts_active_copied_image_and_motion():
     content = (
-        '![New UI](/video_shorts/static/img/blog/example/tab-clip.jpg "Current UI [screenshot]")\n\n'
+        '![New UI](/video_shorts/static/img/blog/example/make-a-clip-transcript.jpg '
+        '"Current UI [screenshot]")\n\n'
         ":::motion real-short-doctor-busy\nFinished Short\n:::"
     )
 
