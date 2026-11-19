@@ -1247,8 +1247,8 @@
         <span class="ap-editor-pill is-music"><i class="bi bi-music-note-beamed"></i> Music</span>
         <span class="ap-editor-pill is-title"><i class="bi bi-type"></i> Titles</span>
         <div class="ap-editor-phone">
-          <video muted autoplay loop playsinline preload="metadata" poster="{{ url_for('video_shorts_bp.static', filename='motion/autopilot-short.jpg') }}" aria-label="A finished branded Short with captions">
-            <source src="{{ url_for('video_shorts_bp.static', filename='motion/autopilot-short.mp4') }}" type="video/mp4">
+          <video data-ap-phone-preview muted autoplay loop playsinline preload="metadata" poster="{{ url_for('video_shorts_bp.static', filename='motion/real-short-3.jpg') }}?v=2" aria-label="A finished branded coaching Short with captions">
+            <source src="{{ url_for('video_shorts_bp.static', filename='motion/real-short-3-preview.mp4') }}?v=2" type="video/mp4">
           </video>
         </div>
       </div>
@@ -1358,8 +1358,8 @@
       </div>
 
       <figure class="ap-editor-loop-card" data-ap-editor-loop>
-        <video muted autoplay loop playsinline preload="none" poster="{{ url_for('video_shorts_bp.static', filename='motion/editor-loop.jpg') }}" aria-label="MintiStudio editor automatically preparing a Short">
-          <source data-src="{{ url_for('video_shorts_bp.static', filename='motion/editor-loop.mp4') }}" type="video/mp4">
+        <video muted autoplay loop playsinline preload="none" poster="{{ url_for('video_shorts_bp.static', filename='motion/tab-styles.jpg') }}?v=2" aria-label="MintiStudio caption style editor with a Short preview">
+          <source data-src="{{ url_for('video_shorts_bp.static', filename='motion/tab-styles.mp4') }}?v=2" type="video/mp4">
         </video>
         <figcaption>Your editor does the work. Review, change or remove any Short before it goes live.</figcaption>
       </figure>
@@ -1524,10 +1524,28 @@
     });
   }
 
+  const reducedMotion = window.matchMedia("(prefers-reduced-motion: reduce)");
+  const phonePreviewVideo = document.querySelector("[data-ap-phone-preview]");
+
+  if (phonePreviewVideo && !reducedMotion.matches && "IntersectionObserver" in window) {
+    const phonePreviewObserver = new IntersectionObserver(function (entries) {
+      entries.forEach(function (entry) {
+        if (entry.isIntersecting) {
+          phonePreviewVideo.play().catch(function () {});
+        } else {
+          phonePreviewVideo.pause();
+        }
+      });
+    }, { threshold: 0.25 });
+    phonePreviewObserver.observe(phonePreviewVideo);
+  } else if (phonePreviewVideo && reducedMotion.matches) {
+    phonePreviewVideo.autoplay = false;
+    phonePreviewVideo.pause();
+  }
+
   const editorLoopCard = document.querySelector("[data-ap-editor-loop]");
   const editorLoopVideo = editorLoopCard?.querySelector("video");
   const editorLoopSource = editorLoopVideo?.querySelector("source[data-src]");
-  const reducedMotion = window.matchMedia("(prefers-reduced-motion: reduce)");
 
   if (editorLoopCard && editorLoopVideo && editorLoopSource && !reducedMotion.matches) {
     const editorLoopObserver = new IntersectionObserver(function (entries) {
