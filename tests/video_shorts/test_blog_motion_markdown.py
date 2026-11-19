@@ -77,10 +77,12 @@ def test_manifest_silent_loop_uses_preview_and_poster_without_preload():
         ":::motion real-short-doctor-busy\nA finished doctor Short\n:::"
     )
 
-    assert '<video autoplay muted loop playsinline preload="none"' in rendered
+    assert 'class="blog-motion blog-motion--silent_loop blog-motion--portrait"' in rendered
+    assert '<video muted loop playsinline controls preload="none"' in rendered
     assert 'poster="/video_shorts/static/motion/real-short-1.jpg"' in rendered
     assert 'src="/video_shorts/static/motion/real-short-1-preview.mp4"' in rendered
-    assert " controls" not in rendered
+    assert " autoplay" not in rendered
+    assert "<figcaption>Example Short: A finished doctor Short</figcaption>" in rendered
 
 
 def test_manifest_narrated_video_has_controls_and_no_autoplay():
@@ -103,3 +105,11 @@ def test_existing_image_figure_and_youtube_embed_render_unchanged():
     assert '<figure class="figure">' in rendered
     assert '<img src="/video_shorts/static/img/blog/demo.jpg" alt="Demo" loading="lazy">' in rendered
     assert '<div class="yt-embed"><iframe src="https://www.youtube-nocookie.com/embed/dQw4w9WgXcQ"' in rendered
+
+
+def test_portrait_image_gets_phone_sized_figure_class():
+    rendered = blog_markdown.render_markdown(
+        "![Finished Short](/video_shorts/static/motion/real-short-1.jpg \"Example Short\")"
+    )
+
+    assert '<figure class="figure figure--portrait">' in rendered

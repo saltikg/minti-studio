@@ -31,6 +31,7 @@ _INTERNAL_LINK_HOSTS = {"mintistudio.com", "www.mintistudio.com"}
 _HEADING_ID_RE = re.compile(r"^[a-z0-9-]+$")
 _MOTION_NAME_RE = re.compile(r"^[a-z0-9-]{1,60}$")
 _ROOT = Path(__file__).resolve().parents[3]
+_STATIC_ROOT = _ROOT / "app" / "video_shorts" / "static"
 _BLOG_VISUAL_MANIFEST = _ROOT / "app" / "video_shorts" / "static" / "img" / "blog" / "library" / "screenshot_manifest.json"
 
 _ALLOWED_TAGS = [
@@ -176,6 +177,15 @@ def _motion_html(name: str, caption: str) -> str:
 
     manifest_video = _active_manifest_videos().get(motion_name)
     if manifest_video:
+        is_portrait = motion_name.startswith("real-short-")
+        if is_portrait and motion_caption:
+            motion_caption = re.sub(
+                r"^(?:#{1,6}\s*)?(?:Screenshot|Example Short)\s*:\s*",
+                "",
+                motion_caption,
+                flags=re.I,
+            ).strip()
+            motion_caption = f"Example Short: {motion_caption}" if motion_caption else "Example Short"
         video_url = escape(
             url_for("video_shorts_bp.static", filename=str(manifest_video["filename"])),
             quote=True,
@@ -188,9 +198,12 @@ def _motion_html(name: str, caption: str) -> str:
         aria_label = escape(motion_caption or str(manifest_video.get("alt") or "Video"), quote=True)
         caption_html = f"<figcaption>{safe_caption}</figcaption>" if motion_caption else ""
         playback = str(manifest_video.get("playback") or "silent_loop")
-        attributes = "autoplay muted loop playsinline preload=\"none\"" if playback == "silent_loop" else "controls playsinline preload=\"none\""
+        attributes = "muted loop playsinline controls preload=\"none\"" if playback == "silent_loop" else "controls playsinline preload=\"none\""
+        classes = ["blog-motion", f"blog-motion--{playback}"]
+        if is_portrait:
+            classes.append("blog-motion--portrait")
         return (
-            f'<figure class="blog-motion blog-motion--{escape(playback, quote=True)}"><video {attributes} '
+            f'<figure class="{escape(" ".join(classes), quote=True)}"><video {attributes} '
             f'poster="{poster_url}" aria-label="{aria_label}">'
             f'<source src="{video_url}" type="video/mp4">'
             f"</video>{caption_html}</figure>"
@@ -245,6 +258,25 @@ def _caption_from_image(alt: str, title: str) -> str:
     return caption or alt
 
 
+@lru_cache(maxsize=512)
+def _is_portrait_image(src: str) -> bool:
+    path = urlparse(src or "").path
+    prefix = "/video_shorts/static/"
+    if not path.startswith(prefix):
+        return False
+    candidate = (_STATIC_ROOT / path[len(prefix):]).resolve()
+    static_root = _STATIC_ROOT.resolve()
+    if static_root not in candidate.parents or not candidate.is_file():
+        return False
+    try:
+        from PIL import Image
+
+        with Image.open(candidate) as image:
+            return image.height > image.width
+    except (ImportError, OSError, ValueError):
+        return False
+
+
 def _figure_html(match: re.Match[str]) -> str:
     tag = match.group(1)
     attrs = _attrs_from_tag(tag)
@@ -262,8 +294,9 @@ def _figure_html(match: re.Match[str]) -> str:
         if _is_screenshot_image(src, title)
         else ""
     )
+    figure_class = "figure figure--portrait" if _is_portrait_image(src) else "figure"
     return (
-        '<figure class="figure">'
+        f'<figure class="{figure_class}">'
         '<div class="media" tabindex="0" role="button" aria-label="Open image in lightbox">'
         f'<img src="{safe_src}" alt="{safe_alt}" loading="lazy">'
         f"{screenshot_tag}"

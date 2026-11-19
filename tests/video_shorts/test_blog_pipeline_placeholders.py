@@ -508,6 +508,53 @@ def test_writer_schema_flags_empty_screenshot_id():
     assert "IMAGE_1: screenshot_id must be a listed available id, got ''" in violations
 
 
+def test_writer_schema_rejects_visual_caption_headings():
+    violations = blog_pipeline._writer_schema_violations(
+        _base_article(
+            "## One\n\nBody.\n\n### Screenshot: Product screen\n\n<!-- IMAGE_1 -->",
+            visuals=[
+                {"marker": "IMAGE_1", "type": "screenshot", "screenshot_id": "valid-shot"},
+                {"marker": "IMAGE_2", "type": "flow"},
+                {"marker": "IMAGE_3", "type": "compare"},
+            ],
+        ),
+        [{"id": "valid-shot", "alt": "Valid shot", "type": "screenshot"}],
+    )
+
+    assert "visual labels must be captions, never Screenshot: or Example Short: headings" in violations
+
+
+def test_manifest_visual_labels_render_as_captions_not_headings():
+    article = {
+        "slug": "caption-test",
+        "content_md": "## Screen\n\n<!-- IMAGE_1 -->\n\n## Short\n\n<!-- IMAGE_2 -->",
+        "visuals": [
+            {
+                "marker": "IMAGE_1",
+                "type": "screenshot",
+                "screenshot_id": "design-styles",
+                "caption": "Caption styles",
+            },
+            {
+                "marker": "IMAGE_2",
+                "type": "screenshot",
+                "screenshot_id": "real-short-doctor-busy",
+                "caption": "Screenshot: A finished doctor Short",
+            },
+        ],
+    }
+
+    replaced = blog_pipeline._replace_screenshot_placeholders(
+        article,
+        blog_pipeline._load_manifest(),
+        copy_files=False,
+    )
+
+    assert '"Screenshot: Caption styles [screenshot]"' in replaced["content_md"]
+    assert ":::motion real-short-doctor-busy\nExample Short: A finished doctor Short\n:::" in replaced["content_md"]
+    assert "### Screenshot:" not in replaced["content_md"]
+
+
 def test_meta_fields_are_not_silently_truncated():
     long_title = "This is a deliberately long title that should be rewritten by the writer instead of truncated"
     long_description = (

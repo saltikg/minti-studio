@@ -505,6 +505,27 @@
     height: auto;
   }
 
+  .vs-blog-article-page .blog-motion--portrait,
+  .vs-blog-article-page .figure--portrait {
+    width: 100%;
+    max-width: 340px;
+    margin-right: auto;
+    margin-left: auto;
+  }
+
+  .vs-blog-article-page .blog-motion--portrait {
+    overflow: visible;
+  }
+
+  .vs-blog-article-page .blog-motion--portrait video,
+  .vs-blog-article-page .figure--portrait .media {
+    overflow: hidden;
+    border: 1px solid rgba(113, 236, 211, 0.2);
+    border-radius: 18px;
+    background: #0b1117;
+    box-shadow: 0 18px 50px rgba(0, 0, 0, 0.34), 0 0 28px rgba(45, 212, 191, 0.07);
+  }
+
   .vs-blog-article-page .media {
     position: relative;
     overflow: hidden;
@@ -576,9 +597,11 @@
 
   .vs-blog-article-page figcaption {
     margin-top: 10px;
-    padding-left: 2px;
-    font-size: 0.82rem;
+    padding: 0 6px;
+    font-size: 14px;
     color: #85919a;
+    line-height: 1.45;
+    text-align: center;
   }
 
   .vs-blog-article-page .steps {
@@ -903,6 +926,12 @@
   }
 
   @media (max-width: 620px) {
+    .vs-blog-article-page .blog-motion--portrait,
+    .vs-blog-article-page .figure--portrait {
+      width: 70vw;
+      max-width: 70vw;
+    }
+
     .vs-blog-article-page .table-shell {
       overflow-x: auto;
     }

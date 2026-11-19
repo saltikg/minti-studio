@@ -41,6 +41,22 @@
       }
 
       document.querySelectorAll(".vs-blog-article-page .media").forEach(function (media) {
+        const mediaImage = media.querySelector("img");
+        const figure = media.closest(".figure");
+        if (mediaImage && figure) {
+          const classifyOrientation = function () {
+            if (mediaImage.naturalHeight > mediaImage.naturalWidth) {
+              figure.classList.add("figure--portrait");
+            } else {
+              figure.classList.remove("figure--portrait");
+            }
+          };
+          if (mediaImage.complete) {
+            classifyOrientation();
+          } else {
+            mediaImage.addEventListener("load", classifyOrientation, { once: true });
+          }
+        }
         media.addEventListener("click", function (event) {
           event.preventDefault();
           openLightbox(media);

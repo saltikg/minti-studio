@@ -1202,6 +1202,9 @@ def _screenshot_prompt_list(screenshots: list[dict[str, Any]]) -> list[dict[str,
 
 def _writer_schema_violations(article: dict[str, Any], screenshots: list[dict[str, Any]]) -> list[str]:
     violations: list[str] = []
+    content = str(article.get("content_md") or "")
+    if re.search(r"(?mi)^#{1,6}\s+(?:Screenshot|Example Short)\s*:", content):
+        violations.append("visual labels must be captions, never Screenshot: or Example Short: headings")
     visuals = article.get("visuals") if isinstance(article.get("visuals"), list) else []
     available_ids = {str(item.get("id") or "") for item in screenshots if item.get("id")}
     available_by_id = {str(item.get("id") or ""): item for item in screenshots if item.get("id")}
@@ -1808,6 +1811,16 @@ def _replace_screenshot_placeholders(article: dict[str, Any], screenshots: list[
             raise RuntimeError(f"library visual source is missing: {screenshot['filename']}")
         alt = str(screenshot.get("alt") or visual.get("alt") or "").replace('"', "'")
         caption = str(visual.get("caption") or alt or "MintiStudio workflow visual").strip().replace('"', "'")
+        caption = re.sub(
+            r"^(?:#{1,6}\s*)?(?:Screenshot|Example Short)\s*:\s*",
+            "",
+            caption,
+            flags=re.I,
+        ).strip()
+        if media_type == "video":
+            caption = f"Example Short: {caption}" if caption else "Example Short"
+        elif media_type == "screenshot":
+            caption = f"Screenshot: {caption}" if caption else "Screenshot"
         if media_type == "video":
             poster = _manifest_source_path(str(screenshot.get("poster") or ""))
             if not poster.is_file():
@@ -2373,6 +2386,7 @@ Never insert a visual element between a sentence and the list, bullets, or examp
 Flow syntax is 2-5 lines of: icon | title max 4 words | subtitle max 8 words. Allowed icons: video, clips, scissors, calendar, clock, eye, users, chart, mic, upload, check, sparkles.
 Compare syntax is exactly two qualitative contrast lines of: icon | value | label | direction. Direction must be up, down, or flat. Prefer non-numeric values such as "One clear focus" vs "Competing elements". Do not put digits, counts, percentages, or number+noun metrics such as "1 clear idea" or "3 crowded elements" in a compare value unless that exact number is already stated in the surrounding article prose. Add an optional note: line.
 Each visual must include a short caption, maximum 12 words, suitable for the markdown image title or component caption.
+Visual labels are captions under the media, never Markdown headings. Do not write headings such as "## Screenshot:", "### Screenshot:", or "### Example Short:". For screenshot visuals, put the label in visual.caption; for video visuals, put the description in visual.caption and the pipeline will render it as "Example Short: …" below the video.
 Never use placeholder image text such as "Alt text", "Image", or "Placeholder"; every visual alt must describe the actual visual.
 Use only the supplied published_articles URLs for internal links. Do not invent blog URLs.
 Never claim anything about MintiStudio unless it is in minti_facts.md.
