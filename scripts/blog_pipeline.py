@@ -84,6 +84,10 @@ SELF_DISCLAIMER_RE = re.compile(
     r"not a promised MintiStudio|confirm .*MintiStudio|MintiStudio .*does not (?:claim|promise|specify))",
     re.I,
 )
+PRICE_MENTION_RE = re.compile(
+    r"\$\s*\d|\b\d+(?:\.\d+)?\s*(?:USD|dollars?)\b|\bper\s+month\b|/\s*mo\b",
+    re.I,
+)
 IMAGE_MARKERS = ("IMAGE_1", "IMAGE_2", "IMAGE_3")
 BLOG_MAX_VISUAL_ITEMS = 4
 logger = logging.getLogger(__name__)
@@ -862,8 +866,10 @@ def _normalize_image_placeholders_and_visuals(article: dict[str, Any]) -> dict[s
     return article
 
 
-def _normalize_article_payload(article: dict[str, Any]) -> dict[str, Any]:
+def _normalize_article_payload(article: dict[str, Any], topic: dict[str, Any] | None = None) -> dict[str, Any]:
     article = dict(article or {})
+    if topic and str(topic.get("title") or "").strip():
+        article["title"] = str(topic["title"]).strip()
     if not article.get("content_md"):
         article["content_md"] = article.get("content") or article.get("content_markdown")
     if not article.get("summary") and article.get("excerpt"):
@@ -887,8 +893,8 @@ def _normalize_article_payload(article: dict[str, Any]) -> dict[str, Any]:
         article["meta_title"] = article.get("title") or ""
     if not article.get("meta_description"):
         article["meta_description"] = article.get("summary") or ""
-    article["meta_title"] = _trim_at_word_boundary(article.get("meta_title"), 60)
-    article["meta_description"] = _trim_at_word_boundary(article.get("meta_description"), 155)
+    article["meta_title"] = re.sub(r"\s+", " ", str(article.get("meta_title") or "")).strip()
+    article["meta_description"] = re.sub(r"\s+", " ", str(article.get("meta_description") or "")).strip()
     article["reading_time"] = _coerce_reading_time_minutes(article.get("reading_time"), str(article.get("content_md") or ""))
     return article
 
@@ -1527,8 +1533,13 @@ def _rename_archived_pipeline_slug_conflict(conn, slug: str) -> str | None:
     return archived_slug
 
 
-def _code_checks(article: dict[str, Any], screenshots: list[dict[str, Any]], published: list[dict[str, Any]]) -> dict[str, Any]:
-    normalized_article = _normalize_article_payload(article)
+def _code_checks(
+    article: dict[str, Any],
+    screenshots: list[dict[str, Any]],
+    published: list[dict[str, Any]],
+    topic: dict[str, Any] | None = None,
+) -> dict[str, Any]:
+    normalized_article = _normalize_article_payload(article, topic)
     article.clear()
     article.update(normalized_article)
     blocking_issues: list[str] = []
@@ -1539,6 +1550,28 @@ def _code_checks(article: dict[str, Any], screenshots: list[dict[str, Any]], pub
         fixed["slug"] = slug
         article["slug"] = slug
     content = str(article.get("content_md") or "")
+    required_title = str((topic or {}).get("title") or "").strip()
+    if required_title and article.get("title") != required_title:
+        blocking_issues.append("article title must exactly match the topic title")
+    meta_title = str(article.get("meta_title") or "").strip()
+    meta_description = str(article.get("meta_description") or "").strip()
+    if not meta_title or len(meta_title) > 60:
+        blocking_issues.append("meta title must be complete and at most 60 characters")
+    if not meta_description or len(meta_description) > 155 or not re.search(r"[.!?]$", meta_description):
+        blocking_issues.append("meta description must be a complete sentence of at most 155 characters")
+    searchable_text = "\n".join(
+        str(article.get(key) or "")
+        for key in ("title", "summary", "content_md", "meta_title", "meta_description")
+    )
+    if PRICE_MENTION_RE.search(searchable_text):
+        blocking_issues.append("auto-generated posts must not mention prices")
+    product_pitch_headings = [
+        heading
+        for heading in _h2_headings(content)
+        if re.search(r"\b(?:mintistudio|autopilot|diy|do it yourself)\b", heading, flags=re.I)
+    ]
+    if len(product_pitch_headings) > 1:
+        blocking_issues.append("more than one product pitch section before the final CTA")
     word_count = _word_count(content)
     if word_count < 100:
         blocking_issues.append("article body is missing or too short")
@@ -2189,6 +2222,10 @@ def _writer_prompt() -> str:
     return f"""You are the MintiStudio blog Writer. Return strict JSON only. Write original, practical long-form blog content for the supplied topic. Use the stable context as binding instructions.
 
 Required JSON keys: title, slug, summary, content_md, meta_title, meta_description, reading_time, cover, visuals.
+The article title and H1 must equal topic.title exactly. Never rewrite, lengthen, subtitle, or improve it. Topic titles already follow the scout's plain search-style rules, contain the cluster search phrase, avoid poetic wording, and stay near 70 characters.
+Never state a price, dollar amount, monthly amount, package amount, or price-derived claim anywhere in an auto-generated post. Link to /autopilot or /video_shorts/#pricing for current plan details instead.
+Use at most one product pitch section, titled "Where MintiStudio helps", plus the final CTA. Do not add separate DIY, Autopilot, pricing, product-example, or repeated product-pitch sections.
+Generate meta_title at no more than 60 characters and meta_description at no more than 155 characters. Both must be deliberately written to fit; meta_description must end as a complete sentence. Never truncate either field.
 reading_time must be an integer number of minutes only, such as 8. Never return "8 min read" or any other phrase; the renderer adds the label.
 cover.prompt must describe only the scene: 2-4 objects, one visual idea, story, and mood. Never include style, colors, text, logos, UI, screenshots, third-party brands, or realistic people in cover.prompt.
 cover.archetypes must be the top 3 archetype letters from stable_context.cover_archetypes that fit the topic. Code chooses the final archetype for variety; do not force one in the prose.
@@ -2206,7 +2243,7 @@ Never use placeholder image text such as "Alt text", "Image", or "Placeholder"; 
 Use only the supplied published_articles URLs for internal links. Do not invent blog URLs.
 Never claim anything about MintiStudio unless it is in minti_facts.md.
 Any third-party (competitor) pricing, features, limits, or comparison claims may ONLY use competitor_facts.md. If a competitor detail is not in competitor_facts.md, omit it; never invent or guess competitor pricing or features. You may name and compare competitors when their data is present in competitor_facts.md.
-Do not state competitor prices at all; competitor_facts.md intentionally omits them. Compare competitors on features and workflow only. You may still state MintiStudio's own price from minti_facts.md. If a reader wants competitor pricing, suggest they check that competitor's site.
+Do not state prices for MintiStudio or competitors. Compare products on features and workflow only, and link readers to the relevant pricing page for current plan details.
 For "best OpusClip alternatives" or competitor-comparison articles, OpusClip is the reference point the reader already knows, not one of the alternatives. Do not list OpusClip as "alternative #1". Frame OpusClip as a capable baseline readers are comparing against; the alternatives are the other tools in competitor_facts.md, such as Klap, Vizard, Quso, 2Short, Submagic, plus MintiStudio when it fits the workflow.
 Compare at most 3 competitor tools in one article. Pick the 3 most relevant to the topic from competitor_facts.md; do not dump every available competitor. MintiStudio is the product, not counted as one of the 3. In OpusClip-alternatives articles, OpusClip is the baseline/reference and also not counted as one of the 3.
 MintiStudio must appear as a clear, concrete option in the comparison and conclusion, stated plainly and tied to the reader's bottleneck. Do not hedge Minti with words like "usually", "maybe", "for the right buyer", or "might be". Do not claim Minti is best at everything; recommend it for the specific need it fits, such as done-for-you Autopilot for readers short on time or self-serve clipping for readers who want control. Do not trash competitors; they are capable tools, and the article helps the reader find the best fit.
@@ -2226,9 +2263,9 @@ Doctors-cluster safety rule: This post is about growing and operating a channel,
 
 Return JSON with total, scores, blocking_issues, fixes.
 Any deterministic check issue must be copied into blocking_issues.
-Blocking issues regardless of total score: MintiStudio self-disclaimers or hedges; any internal link not exactly in published_articles or the CTA URL; bare IMAGE_n placeholder text; missing IMAGE comment placeholders for screenshot/generate visuals; IMAGE comment placeholders for flow/compare visuals; more than {BLOG_MAX_VISUAL_ITEMS} visual items after code repair; invalid flow/compare syntax; compare metric numbers not present in the article prose outside the compare block.
+Blocking issues regardless of total score: any price mention, including a MintiStudio price; a rewritten article title that does not exactly equal topic.title; a meta title over 60 characters; a meta description over 155 characters or ending mid-sentence; more than one product pitch section before the final CTA; MintiStudio self-disclaimers or hedges; any internal link not exactly in published_articles or the CTA URL; bare IMAGE_n placeholder text; missing IMAGE comment placeholders for screenshot/generate visuals; IMAGE comment placeholders for flow/compare visuals; more than {BLOG_MAX_VISUAL_ITEMS} visual items after code repair; invalid flow/compare syntax; compare metric numbers not present in the article prose outside the compare block.
 Updated component rule: screenshot and generate visuals use IMAGE comment placeholders; flow and compare visuals use their :::flow / :::compare blocks directly and must not have IMAGE comment placeholders. Do not require IMAGE placeholders for flow or compare visuals.
-Facts rule: flow/compare text may only describe MintiStudio features that appear in minti_facts.md. Third-party brand features, limits, or workflow claims are allowed only when they match competitor_facts.md. Stating any competitor dollar price is a blocking issue because competitor_facts.md intentionally omits prices; MintiStudio's own price from minti_facts.md remains allowed. Do not allow invented metrics, features, platform logos, or unverified third-party brand claims.
+Facts rule: flow/compare text may only describe MintiStudio features that appear in minti_facts.md. Third-party brand features, limits, or workflow claims are allowed only when they match competitor_facts.md. Any price mention is a blocking issue. Do not allow invented metrics, features, platform logos, or unverified third-party brand claims. Autopilot has no required approval step: customers may change or remove a Short before it goes live.
 Non-blocking fix: a MintiStudio section that reads as a feature list without tying features to the reader's problem.
 {doctor_rule}"""
 
@@ -2307,7 +2344,7 @@ def run_pipeline(*, topic_id: int | None = None, dry_run: bool = False) -> dict[
             writer_retry_notes = [f"writer schema retry: {item}" for item in writer_schema_violations]
             if retry_violations:
                 writer_retry_notes.extend(f"writer schema still repaired by code: {item}" for item in retry_violations)
-        article = _prepare_cover_plan(_normalize_article_payload(article), topic)
+        article = _prepare_cover_plan(_normalize_article_payload(article, topic), topic)
         state.seq += 1
         _record_pipeline_stage(
             state,
@@ -2320,7 +2357,7 @@ def run_pipeline(*, topic_id: int | None = None, dry_run: bool = False) -> dict[
             set_current=True,
         )
 
-        checks = _code_checks(article, screenshots, published)
+        checks = _code_checks(article, screenshots, published, topic)
         state.seq += 1
         _record_pipeline_stage(state, stage="checks", status="done" if checks["ok"] else "failed", output=checks, notes=_checks_notes(checks))
 
@@ -2340,7 +2377,7 @@ def run_pipeline(*, topic_id: int | None = None, dry_run: bool = False) -> dict[
             candidate_article, token_repairs = _restore_candidate_article(candidate_article, previous_masked_content, previous_blocks)
             if not candidate_article.get("visuals") and previous_visuals:
                 candidate_article["visuals"] = previous_visuals
-            candidate_article = _prepare_cover_plan(_normalize_article_payload(candidate_article), topic)
+            candidate_article = _prepare_cover_plan(_normalize_article_payload(candidate_article, topic), topic)
             rejection_reason = _revision_rejection_reason(previous_article, candidate_article)
             if rejection_reason:
                 article = previous_article
@@ -2354,7 +2391,7 @@ def run_pipeline(*, topic_id: int | None = None, dry_run: bool = False) -> dict[
                 revision_output = {**article, "token_repairs": token_repairs} if token_repairs else article
             state.seq += 1
             _record_pipeline_stage(state, stage="revision_1", status=revision_status, model=BLOG_MODEL_WRITER, output=revision_output, notes=revision_notes, cost_usd=cost)
-            checks = _code_checks(article, screenshots, published)
+            checks = _code_checks(article, screenshots, published, topic)
             state.seq += 1
             _record_pipeline_stage(state, stage="checks", status="done" if checks["ok"] else "failed", output=checks, notes=_checks_notes(checks))
             reviewer_payload = {**user_base, "article": article, "checks": checks, "existing_titles": [item["title"] for item in published]}
@@ -2371,7 +2408,7 @@ def run_pipeline(*, topic_id: int | None = None, dry_run: bool = False) -> dict[
                 candidate_article, token_repairs = _restore_candidate_article(candidate_article, previous_masked_content, previous_blocks)
                 if not candidate_article.get("visuals") and previous_visuals:
                     candidate_article["visuals"] = previous_visuals
-                candidate_article = _prepare_cover_plan(_normalize_article_payload(candidate_article), topic)
+                candidate_article = _prepare_cover_plan(_normalize_article_payload(candidate_article, topic), topic)
                 rejection_reason = _revision_rejection_reason(previous_article, candidate_article)
                 if rejection_reason:
                     article = previous_article
@@ -2385,7 +2422,7 @@ def run_pipeline(*, topic_id: int | None = None, dry_run: bool = False) -> dict[
                     revision_output = {**article, "token_repairs": token_repairs} if token_repairs else article
                 state.seq += 1
                 _record_pipeline_stage(state, stage="revision_2", status=revision_status, model=BLOG_MODEL_WRITER, output=revision_output, notes=revision_notes, cost_usd=cost)
-                checks = _code_checks(article, screenshots, published)
+                checks = _code_checks(article, screenshots, published, topic)
                 state.seq += 1
                 _record_pipeline_stage(state, stage="checks", status="done" if checks["ok"] else "failed", output=checks, notes=_checks_notes(checks))
 
@@ -2415,7 +2452,7 @@ def run_pipeline(*, topic_id: int | None = None, dry_run: bool = False) -> dict[
         state.seq += 1
         _record_pipeline_stage(state, stage="designer", status=designer_status, model=BLOG_MODEL_DESIGNER, output={"guard": guard_note, "source_content_md": before_design, "content_md": after_design, "visuals": article.get("visuals"), "token_repairs": token_repairs}, notes=guard_note, cost_usd=cost, set_current=True)
 
-        checks = _code_checks(article, screenshots, published)
+        checks = _code_checks(article, screenshots, published, topic)
         state.seq += 1
         _record_pipeline_stage(state, stage="checks", status="done" if checks["ok"] else "failed", output=checks, notes=_checks_notes(checks))
         if not checks.get("ok"):

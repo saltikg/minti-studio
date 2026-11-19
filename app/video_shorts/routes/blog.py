@@ -19,6 +19,8 @@ from app.video_shorts.services.blog_markdown import render_markdown
 
 OLD_AI_CLIPPING_COMPARISON_SLUG = "best-opusclip-alternatives-for-busy-experts-who-need-less-clipping-work"
 AI_CLIPPING_COMPARISON_SLUG = "best-ai-video-clipping-tools-2026"
+OLD_DOCTORS_SHORTS_GUIDE_SLUG = "youtube-shorts-for-doctors-practical-guide-educational-clips-without-extra-admin"
+DOCTORS_SHORTS_GUIDE_SLUG = "youtube-shorts-for-doctors-guide"
 
 
 def _base_url() -> str:
@@ -111,6 +113,14 @@ def blog_index():
 def legacy_ai_clipping_comparison_redirect():
     return redirect(
         url_for("video_shorts_bp.blog_article", slug=AI_CLIPPING_COMPARISON_SLUG),
+        code=301,
+    )
+
+
+@video_shorts_bp.get(f"/blog/{OLD_DOCTORS_SHORTS_GUIDE_SLUG}/")
+def legacy_doctors_shorts_guide_redirect():
+    return redirect(
+        url_for("video_shorts_bp.blog_article", slug=DOCTORS_SHORTS_GUIDE_SLUG),
         code=301,
     )
 

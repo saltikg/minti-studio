@@ -508,23 +508,22 @@ def test_writer_schema_flags_empty_screenshot_id():
     assert "IMAGE_1: screenshot_id must be a listed available id, got ''" in violations
 
 
-def test_meta_fields_trim_at_word_boundary():
+def test_meta_fields_are_not_silently_truncated():
+    long_title = "This is a deliberately long title that should be rewritten by the writer instead of truncated"
+    long_description = (
+        "This is a deliberately long meta description for a MintiStudio blog article that should be "
+        "rewritten as a complete sentence instead of being cut off by normalization."
+    )
     article = _normalize_article_payload(
         {
             **_base_article("## One\n\nBody paragraph.\n\n<!-- IMAGE_1 -->\n\n<!-- IMAGE_2 -->\n\n<!-- IMAGE_3 -->"),
-            "meta_title": "This is a deliberately long title that should be trimmed without chopping words in half",
-            "meta_description": (
-                "This is a deliberately long meta description for a MintiStudio blog article that should be "
-                "trimmed cleanly at a word boundary instead of chopping the final word in half for display."
-            ),
+            "meta_title": long_title,
+            "meta_description": long_description,
         }
     )
 
-    assert len(article["meta_title"]) <= 60
-    assert article["meta_title"].endswith("trimmed")
-    assert len(article["meta_description"]) <= 155
-    assert not article["meta_description"].endswith((" ", ",", ";", ":", "-"))
-    assert "displa" not in article["meta_description"]
+    assert article["meta_title"] == long_title
+    assert article["meta_description"] == long_description
 
 
 def test_revision_guard_rejects_article_body_loss():
