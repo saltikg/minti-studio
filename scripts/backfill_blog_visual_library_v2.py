@@ -16,11 +16,13 @@ ROOT = Path(__file__).resolve().parents[1]
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
+from scripts.safe_to_deploy import _load_env_file  # noqa: E402
+
+_load_env_file()
+
 from app.video_shorts.services.blog_images import _add_logo_badge  # noqa: E402
 from app.video_shorts.services.db import get_db  # noqa: E402
 from scripts import blog_pipeline  # noqa: E402
-from scripts.safe_to_deploy import _load_env_file  # noqa: E402
-
 
 PROTECTED_SLUGS = {"getting-started-with-mintistudio", "free-youtube-to-shorts-tool"}
 DOCTORS_SLUG = "youtube-shorts-for-doctors-guide"
@@ -232,7 +234,6 @@ def main() -> int:
     parser.add_argument("--apply", action="store_true")
     parser.add_argument("--cleanup-orphans", action="store_true")
     args = parser.parse_args()
-    _load_env_file()
     result = cleanup_orphans() if args.cleanup_orphans else run(apply=args.apply)
     print(json.dumps(result, ensure_ascii=False, indent=2))
     return 0
