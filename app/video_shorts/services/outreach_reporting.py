@@ -195,6 +195,16 @@ def collect_outreach_report(*, now: Optional[datetime] = None) -> Dict[str, Any]
             SELECT CAST(sl.id AS VARCHAR), 2, sl.followup_sent_at
             FROM short_share_links sl
             WHERE sl.followup_sent_at >= ? AND sl.followup_sent_at < ? AND {share_filter}
+              AND NOT EXISTS (
+                SELECT 1
+                FROM outreach_scheduled_emails legacy_check
+                WHERE legacy_check.share_link_id = sl.id
+                  AND lower(COALESCE(legacy_check.status, '')) = 'sent'
+                  AND COALESCE(
+                    legacy_check.sequence_number,
+                    CASE WHEN lower(legacy_check.stage) = 'first' THEN 1 ELSE 2 END
+                  ) >= 2
+              )
             UNION ALL
             SELECT CAST(ose.share_link_id AS VARCHAR),
                    COALESCE(ose.sequence_number, CASE WHEN lower(ose.stage) = 'first' THEN 1 ELSE 2 END),
@@ -341,10 +351,18 @@ def collect_outreach_report(*, now: Optional[datetime] = None) -> Dict[str, Any]
         ).fetchone()
         discovery_queued = int((queue_row[0] if queue_row else 0) or 0)
         discovery_processing = int((queue_row[1] if queue_row else 0) or 0)
-        cutoff = now_utc - timedelta(hours=48)
+        stuck_cutoff = now_utc - timedelta(hours=48)
+        legacy_cutoff = now_utc - timedelta(days=30)
         stuck_row = conn.execute(
             f"""
-            SELECT COUNT(*)
+            SELECT
+              COUNT(*) FILTER (
+                WHERE COALESCE(latest.last_event_at, l.created_at) <= ?
+                  AND COALESCE(latest.last_event_at, l.created_at) > ?
+              ),
+              COUNT(*) FILTER (
+                WHERE COALESCE(latest.last_event_at, l.created_at) <= ?
+              )
             FROM autopilot_leads l
             LEFT JOIN LATERAL (
               SELECT MAX(e.created_at) AS last_event_at
@@ -352,12 +370,12 @@ def collect_outreach_report(*, now: Optional[datetime] = None) -> Dict[str, Any]
               WHERE CAST(e.lead_id AS VARCHAR) = CAST(l.id AS VARCHAR)
             ) latest ON TRUE
             WHERE COALESCE(l.pipeline_state, 'new') NOT IN ('sent', 'failed')
-              AND COALESCE(latest.last_event_at, l.created_at) <= ?
               AND {lead_filter}
             """,
-            [cutoff],
+            [stuck_cutoff, legacy_cutoff, legacy_cutoff],
         ).fetchone()
-        stuck_over_48h = int((stuck_row[0] if stuck_row else 0) or 0)
+        stuck_last_30d = int((stuck_row[0] if stuck_row else 0) or 0)
+        legacy_stale = int((stuck_row[1] if stuck_row else 0) or 0)
         first_queue_row = conn.execute(
             """
             SELECT COUNT(*) FROM outreach_scheduled_emails
@@ -384,8 +402,8 @@ def collect_outreach_report(*, now: Optional[datetime] = None) -> Dict[str, Any]
         warnings.append("first-email queue empty")
     if "old_discovery_queue_with_zero_processing" in active_health_reasons:
         warnings.append("discovery queue stalled")
-    if stuck_over_48h > 0:
-        warnings.append(f"{stuck_over_48h} lead(s) stuck >48h")
+    if stuck_last_30d > 0:
+        warnings.append(f"{stuck_last_30d} lead(s) stuck >48h (last 30 days)")
     if int(health.get("disk_usage_pct") or 0) >= 70:
         warnings.append(f"disk {int(health.get('disk_usage_pct') or 0)}%")
 
@@ -417,7 +435,8 @@ def collect_outreach_report(*, now: Optional[datetime] = None) -> Dict[str, Any]
             "awaiting_email_enrichment": awaiting_enrichment,
             "discovery_jobs_queued": discovery_queued,
             "discovery_jobs_processing": discovery_processing,
-            "leads_stuck_over_48h": stuck_over_48h,
+            "leads_stuck_over_48h_last_30d": stuck_last_30d,
+            "legacy_stale_over_30d": legacy_stale,
             "root_disk_pct": int(health.get("disk_usage_pct") or 0),
             "first_email_queue": first_email_queue,
         },
@@ -431,7 +450,11 @@ def render_outreach_report(report: Dict[str, Any]) -> Dict[str, str]:
     suffix = "OK" if not warnings else f"⚠️ {warnings[0]}" + (f" +{len(warnings) - 1}" if len(warnings) > 1 else "")
     subject = f"Minti Outreach — {report['today_pt']} · {suffix}"
     dates = list(report["dates"])
-    heading = [*dates, "7 days"]
+    date_headings = [
+        f"{date.fromisoformat(value).strftime('%a')} {date.fromisoformat(value).day}"
+        for value in dates
+    ]
+    heading = [*date_headings, "7 days"]
     text_lines = [subject, "", "Metric | " + " | ".join(heading)]
     for row in report["rows"]:
         text_lines.append(f"{row['label']} | " + " | ".join(str(value) for value in [*row["values"], row["total"]]))
@@ -443,7 +466,8 @@ def render_outreach_report(report: Dict[str, Any]) -> Dict[str, str]:
             f"Promotable ready pool: {status['promotable_ready_pool']}",
             f"Awaiting email enrichment: {status['awaiting_email_enrichment']}",
             f"Discovery jobs: {status['discovery_jobs_queued']} queued / {status['discovery_jobs_processing']} processing",
-            f"Leads stuck >48h: {status['leads_stuck_over_48h']}",
+            f"Stuck >48h (last 30 days): {status['leads_stuck_over_48h_last_30d']}",
+            f"Legacy stale (state unchanged >30 days): {status['legacy_stale_over_30d']}",
             f"Root disk: {status['root_disk_pct']}%",
             "",
             "Clicked today",
@@ -475,14 +499,21 @@ def render_outreach_report(report: Dict[str, Any]) -> Dict[str, str]:
             ("Promotable ready pool", status["promotable_ready_pool"]),
             ("Awaiting email enrichment", status["awaiting_email_enrichment"]),
             ("Discovery jobs", f"{status['discovery_jobs_queued']} queued / {status['discovery_jobs_processing']} processing"),
-            ("Leads stuck >48h", status["leads_stuck_over_48h"]),
+            ("Stuck >48h (last 30 days)", status["leads_stuck_over_48h_last_30d"]),
+            ("Legacy stale (state unchanged >30 days)", status["legacy_stale_over_30d"]),
             ("Root disk", f"{status['root_disk_pct']}%"),
         )
     )
-    clicked_html = "".join(
-        f"<li style='margin:4px 0'>{html.escape(item['channel_name'])} — {html.escape(item['category'])}</li>"
-        for item in clicked
-    ) or "<li>none</li>"
+    clicked_html = (
+        "<ul style='margin:0;padding-left:20px'>"
+        + "".join(
+            f"<li style='margin:4px 0'>{html.escape(item['channel_name'])} — {html.escape(item['category'])}</li>"
+            for item in clicked
+        )
+        + "</ul>"
+        if clicked
+        else "<p style='margin:0;color:#52615d'>none</p>"
+    )
     warning_html = ""
     if warnings:
         warning_html = (
@@ -501,7 +532,7 @@ def render_outreach_report(report: Dict[str, Any]) -> Dict[str, str]:
         </table>
       </div>
       <h3 style="margin:20px 0 6px">Current status</h3><ul style="margin:0;padding-left:20px">{status_items}</ul>
-      <h3 style="margin:20px 0 6px">Clicked today</h3><ul style="margin:0;padding-left:20px">{clicked_html}</ul>
+      <h3 style="margin:20px 0 6px">Clicked today</h3>{clicked_html}
     </div>
     """.strip()
     return {"subject": subject, "html": html_body, "text": "\n".join(text_lines) + "\n"}
