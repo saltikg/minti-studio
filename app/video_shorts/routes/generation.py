@@ -414,6 +414,10 @@ from app.video_shorts.services.lead_pipeline import (
 )
 from app.video_shorts.services.discovery_automation import load_discovery_automation_dashboard
 from app.video_shorts.services.discovery_email_enrichment import _auto_trakk_remaining
+from app.video_shorts.services.outreach_reporting import (
+    outreach_account_filter_sql,
+    share_watch_clean_event_sql,
+)
 from app.video_shorts.services.discovery_promote_queue import (
     NO_GREETING_NAME_MARKER,
     load_promote_statuses,
@@ -20968,12 +20972,6 @@ def _user_event_metadata_bool_sql(conn, field_name: str) -> str:
     return f"LOWER(COALESCE({text_expr}, '')) IN ('true', '1', 'yes', 'on')"
 
 
-def _share_watch_clean_event_sql(conn) -> str:
-    is_internal_expr = _user_event_metadata_bool_sql(conn, "is_internal")
-    is_bot_expr = _user_event_metadata_bool_sql(conn, "is_bot")
-    return f"NOT ({is_internal_expr}) AND NOT ({is_bot_expr})"
-
-
 def _share_watch_view_bucket_sql(conn) -> str:
     if getattr(conn, "backend_name", "") == "postgres":
         return "FLOOR(EXTRACT(EPOCH FROM ue.created_at) / 1800)"
@@ -21020,34 +21018,6 @@ def _normalize_share_watch_int(value: Any, *, minimum: int, maximum: int) -> int
     except (TypeError, ValueError):
         return minimum
     return min(maximum, max(minimum, numeric))
-
-
-_ADMIN_SHARE_LINK_EXCLUDED_IDS = (99, 171, 194)
-_ADMIN_SHARE_LINK_TEST_DOMAINS = (
-    "mintistudio.com",
-    "example.com",
-    "yoursite.com",
-    "slotbeer.com",
-)
-
-
-def _admin_share_link_account_filter_sql(alias: str = "sl") -> str:
-    """Exclude known internal/test recipients from Share Links admin reporting."""
-    email_expr = f"lower(trim(coalesce({alias}.recipient_email, '')))"
-    name_expr = f"lower(trim(coalesce({alias}.recipient_name, '')))"
-    domain_clauses = " AND ".join(
-        f"right({email_expr}, {len(domain) + 1}) <> '@{domain}'"
-        for domain in _ADMIN_SHARE_LINK_TEST_DOMAINS
-    )
-    excluded_ids = ", ".join(str(value) for value in _ADMIN_SHARE_LINK_EXCLUDED_IDS)
-    return f"""
-        CAST({alias}.id AS BIGINT) NOT IN ({excluded_ids})
-        AND {domain_clauses}
-        AND substr({name_expr}, 1, 4) <> 'test'
-        AND strpos({name_expr}, ' test') = 0
-        AND substr({email_expr}, 1, 4) <> 'test'
-        AND strpos({email_expr}, '+test@') = 0
-    """
 
 
 def _build_admin_share_links_funnel(rows: List[Dict[str, Any]]) -> Tuple[List[Dict[str, Any]], List[Dict[str, Any]]]:
@@ -21209,7 +21179,15 @@ def _load_admin_share_links(
     order_column = sort_column_map[normalized_sort_key]
     order_direction = "ASC" if normalized_sort_dir == "asc" else "DESC"
 
-    where_clauses = ["1=1", _admin_share_link_account_filter_sql("sl")]
+    where_clauses = [
+        "1=1",
+        outreach_account_filter_sql(
+            "sl",
+            email_column="recipient_email",
+            name_column="recipient_name",
+            id_column="id",
+        ),
+    ]
     params: List[Any] = []
     if normalized_email:
         where_clauses.append("lower(coalesce(sl.recipient_email, '')) LIKE ?")
@@ -21223,7 +21201,7 @@ def _load_admin_share_links(
     percent_watched_expr = _user_event_metadata_numeric_sql(conn, "percent_watched")
     cta_expr = _user_event_metadata_text_sql(conn, "cta")
     device_expr = _user_event_metadata_text_sql(conn, "device_type")
-    clean_share_event_sql = _share_watch_clean_event_sql(conn)
+    clean_share_event_sql = share_watch_clean_event_sql(conn)
     view_bucket_expr = _share_watch_view_bucket_sql(conn)
     feed_share_link_expr = _user_event_metadata_text_sql(conn, "share_link_id")
     share_token_expr = _user_event_metadata_text_sql(conn, "token")

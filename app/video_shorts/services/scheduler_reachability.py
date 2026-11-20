@@ -15,7 +15,7 @@ import logging
 import os
 from zoneinfo import ZoneInfo
 
-from app.video_shorts.services import tenant_media, youtube_scheduling
+from app.video_shorts.services import outreach_reporting, tenant_media, youtube_scheduling
 from app.video_shorts.services.db import get_db, get_db_readonly
 from app.video_shorts.services.email_verification import send_resend_email
 from app.video_shorts.services.social_queue_identity import queue_identity
@@ -342,5 +342,9 @@ def process_monitors(*, now=None):
         processed = True
     if _last_monitor_at is None or now - _last_monitor_at >= timedelta(minutes=1):
         check_canary(now=now)
+        try:
+            outreach_reporting.process_scheduled_outreach_report(now=now)
+        except Exception:
+            logger.exception("Daily outreach report scheduler check failed")
         _last_monitor_at = now
     return processed
