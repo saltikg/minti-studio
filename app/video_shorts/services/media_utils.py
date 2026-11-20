@@ -11,7 +11,7 @@ import hashlib
 import threading
 import uuid
 from pathlib import Path
-from typing import Callable, Iterable, Optional
+from typing import Any, Callable, Dict, Iterable, Optional
 
 from app.video_shorts.config import (
     FFMPEG_BIN,
@@ -626,9 +626,15 @@ def _source_cache_bytes() -> int:
     return total
 
 
-def _evict_source_cache(*, keep: Optional[Path] = None) -> None:
+def evict_source_cache(*, keep: Optional[Path] = None, dry_run: bool = False) -> Dict[str, Any]:
+    """Evict least-recently-used source files down to the configured limits.
+
+    Cross-process leases are the source of truth for files held by processing
+    jobs. A scheduled eviction therefore has the same safety guarantees as an
+    eviction triggered while resolving a source on demand.
+    """
     root, _, _ = _source_cache_dirs()
-    max_bytes = max(1, int(SOURCE_CACHE_MAX_GB or 15)) * 1024**3
+    max_bytes = max(1, int(SOURCE_CACHE_MAX_GB or 8)) * 1024**3
     keep_path = keep.resolve() if keep else None
     active = _active_source_cache_paths()
 
@@ -654,15 +660,49 @@ def _evict_source_cache(*, keep: Optional[Path] = None) -> None:
         candidates.append((stat.st_atime, stat.st_mtime, item, stat.st_size))
     candidates.sort(key=lambda row: (row[0], row[1]))
 
-    total = _source_cache_bytes()
+    total_before = _source_cache_bytes()
+    total = total_before
+    removed: list[str] = []
+    bytes_freed = 0
     for _, _, item, size in candidates:
         if total <= max_bytes and free_bytes() >= _SOURCE_CACHE_MIN_FREE_BYTES:
             break
+        if dry_run:
+            removed.append(str(item))
+            bytes_freed += size
+            total -= size
+            continue
         try:
             item.unlink()
+            removed.append(str(item))
+            bytes_freed += size
             total -= size
         except Exception:
+            logger.warning("source_cache eviction failed path=%s", item, exc_info=True)
             continue
+    result = {
+        "dry_run": bool(dry_run),
+        "max_bytes": max_bytes,
+        "total_before": total_before,
+        "total_after": total,
+        "bytes_freed": bytes_freed,
+        "removed": removed,
+        "active_leases": sorted(str(path) for path in active),
+    }
+    if removed:
+        logger.info(
+            "source_cache eviction dry_run=%s removed=%s bytes_freed=%s total_after=%s active_leases=%s",
+            dry_run,
+            len(removed),
+            bytes_freed,
+            total,
+            len(active),
+        )
+    return result
+
+
+def _evict_source_cache(*, keep: Optional[Path] = None) -> None:
+    evict_source_cache(keep=keep, dry_run=False)
 
 
 def purge_source_cache_for_video(video_id: str) -> None:

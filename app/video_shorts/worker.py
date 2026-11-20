@@ -53,6 +53,7 @@ from app.video_shorts.services.media_utils import (
     _cleanup_resolved_source_video,
     _probe_video_stream_info,
     _resolve_source_video,
+    evict_source_cache,
     normalize_s3_source_video_for_upload,
     purge_source_cache_for_video,
     resolve_s3_source_video_cached,
@@ -111,6 +112,10 @@ from app.video_shorts.services.discovery_automation import process_due_discovery
 from app.video_shorts.services.discovery_promote_queue import customer_job_waiting, process_next_discovery_promote_request
 from app.video_shorts.services.instagram_comment_webhook import process_instagram_comment_webhook_job
 from app.video_shorts.services.lead_pipeline import record_lead_pipeline_event_for_scope
+from app.video_shorts.services.discovery_health import (
+    evaluate_discovery_health,
+    reconcile_failed_discovery_downloads,
+)
 from app.video_shorts.services.outreach_email_send import process_due_scheduled_outreach_email
 from app.video_shorts.services.email_sequence import process_due_signup_nurture_email
 from app.video_shorts.services.disk_guard import disk_guard_triggered
@@ -165,6 +170,29 @@ ACCESS_LOG_REQUEST_RE = re.compile(r'"(?:GET|POST|HEAD|OPTIONS)\s+(?P<target>\S+
 _PT = ZoneInfo("America/Los_Angeles")
 _last_idle_skip_log: Dict[str, float] = {}
 _last_discovery_temp_janitor_run = 0.0
+
+_MINTI_TMP_PATTERNS = (
+    "vs_quick_*",
+    "word_highlight_overlay_*",
+    "track_*",
+    "minti-*",
+    "minti_*",
+    "split-smoke-*",
+    "split_smoke_*",
+    "overlay-compare*",
+    "overlay_compare*",
+    "switch-frames*",
+    "switch_frames*",
+    "switch-encode*",
+    "switch_encode*",
+    "preview-candidate*",
+    "preview_candidate*",
+    "quality-test*",
+    "quality_test*",
+    "plan*_profile*",
+    "hoca-encode*",
+    "hoca_encode*",
+)
 
 
 def _worker_id() -> str:
@@ -355,6 +383,27 @@ def _path_is_referenced(path: Path, refs: set[str]) -> bool:
     return False
 
 
+def _path_has_open_handle(path: Path) -> bool:
+    """Best-effort check for Minti worker file descriptors under a temp path."""
+    try:
+        resolved = path.resolve()
+    except OSError:
+        return True
+    for fd_dir in Path("/proc").glob("[0-9]*/fd"):
+        try:
+            handles = list(fd_dir.iterdir())
+        except (OSError, PermissionError):
+            continue
+        for handle in handles:
+            try:
+                target = handle.resolve(strict=True)
+            except (OSError, PermissionError, RuntimeError):
+                continue
+            if target == resolved or resolved in target.parents:
+                return True
+    return False
+
+
 def _delete_path(path: Path) -> int:
     try:
         if path.is_dir():
@@ -375,16 +424,17 @@ def _delete_path(path: Path) -> int:
         return 0
 
 
-def run_discovery_temp_janitor(*, force: bool = False) -> Dict[str, Any]:
+def run_discovery_temp_janitor(*, force: bool = False, dry_run: bool = False) -> Dict[str, Any]:
     global _last_discovery_temp_janitor_run
     now = time.time()
     if not force and now - _last_discovery_temp_janitor_run < float(DISCOVERY_TEMP_JANITOR_INTERVAL_SECONDS):
         return {"deleted": [], "bytes_freed": 0, "skipped": "interval"}
-    _last_discovery_temp_janitor_run = now
+    if not dry_run:
+        _last_discovery_temp_janitor_run = now
     cutoff = now - float(DISCOVERY_TEMP_JANITOR_MAX_AGE_SECONDS)
     refs = _active_job_temp_refs()
     candidates: list[Path] = []
-    for pattern in ("vs_quick_*", "word_highlight_overlay_*", "track_*"):
+    for pattern in _MINTI_TMP_PATTERNS:
         candidates.extend(Path("/tmp").glob(pattern))
     tmp_dir = Path(VIDEO_SHORTS_TMP_DIR)
     if tmp_dir.exists():
@@ -394,6 +444,7 @@ def run_discovery_temp_janitor(*, force: bool = False) -> Dict[str, Any]:
             logger.info("Discovery temp janitor skipped %s files because a job is processing", tmp_dir)
 
     deleted: list[str] = []
+    skipped_open: list[str] = []
     bytes_freed = 0
     for path in sorted(set(candidates), key=lambda item: str(item)):
         try:
@@ -403,6 +454,21 @@ def run_discovery_temp_janitor(*, force: bool = False) -> Dict[str, Any]:
         if stat.st_mtime >= cutoff:
             continue
         if _path_is_referenced(path, refs):
+            continue
+        if _path_has_open_handle(path):
+            skipped_open.append(str(path))
+            continue
+        if dry_run:
+            try:
+                size = path.stat().st_size if path.is_file() else sum(
+                    child.stat().st_size
+                    for child in path.rglob("*")
+                    if child.is_file() or child.is_symlink()
+                )
+            except OSError:
+                size = 0
+            bytes_freed += size
+            deleted.append(str(path))
             continue
         freed = _delete_path(path)
         if freed or not path.exists():
@@ -417,7 +483,49 @@ def run_discovery_temp_janitor(*, force: bool = False) -> Dict[str, Any]:
         )
     else:
         logger.info("Discovery temp janitor deleted 0 paths, freed 0 bytes")
-    return {"deleted": deleted, "bytes_freed": bytes_freed}
+    return {
+        "dry_run": bool(dry_run),
+        "deleted": deleted,
+        "bytes_freed": bytes_freed,
+        "skipped_open": skipped_open,
+    }
+
+
+def run_discovery_hourly_maintenance(
+    app,
+    *,
+    force: bool = False,
+    dry_run: bool = False,
+    send_alerts: bool = True,
+) -> Dict[str, Any]:
+    janitor = run_discovery_temp_janitor(force=force, dry_run=dry_run)
+    if janitor.get("skipped"):
+        return {"skipped": janitor["skipped"], "janitor": janitor}
+    cache = evict_source_cache(dry_run=dry_run)
+    reconciliation = reconcile_failed_discovery_downloads(dry_run=dry_run)
+    gate_reason = discovery_idle_skip_reason(app, include_disk_gate=True)
+    health = evaluate_discovery_health(
+        gate_reason=gate_reason,
+        in_night_window=_in_discovery_night_window(),
+        dry_run=dry_run,
+        send_alerts=send_alerts,
+    )
+    result = {
+        "dry_run": bool(dry_run),
+        "janitor": janitor,
+        "source_cache": cache,
+        "reconciliation": reconciliation,
+        "health": health,
+    }
+    logger.info(
+        "Discovery hourly maintenance dry_run=%s cache_removed=%s temp_removed=%s reconciled=%s disk_pct=%s",
+        dry_run,
+        len(cache.get("removed") or []),
+        len(janitor.get("deleted") or []),
+        len(reconciliation.get("changed") or []),
+        health.get("disk_usage_pct"),
+    )
+    return result
 
 
 def _in_discovery_night_window(now_utc: Optional[datetime] = None) -> bool:
@@ -2688,9 +2796,9 @@ def run_worker_loop() -> None:
             except Exception:
                 app.logger.exception("Discovery processing job recovery failed at startup")
             try:
-                run_discovery_temp_janitor(force=True)
+                run_discovery_hourly_maintenance(app, force=True)
             except Exception:
-                app.logger.exception("Discovery temp janitor failed at startup")
+                app.logger.exception("Discovery hourly maintenance failed at startup")
         while True:
             worker_context.__exit__(None, None, None)
             context_active = False
@@ -2699,9 +2807,9 @@ def run_worker_loop() -> None:
             context_active = True
             if mode in {"all", "discovery"}:
                 try:
-                    run_discovery_temp_janitor()
+                    run_discovery_hourly_maintenance(app)
                 except Exception:
-                    app.logger.exception("Discovery temp janitor failed")
+                    app.logger.exception("Discovery hourly maintenance failed")
             requeue_dead_local_worker_jobs()
             try:
                 recover_orphaned_render_mutation_leases(app)
