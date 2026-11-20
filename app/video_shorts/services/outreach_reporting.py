@@ -449,7 +449,7 @@ def render_outreach_report(report: Dict[str, Any]) -> Dict[str, str]:
     warnings = list(report.get("warnings") or [])
     suffix = "OK" if not warnings else f"⚠️ {warnings[0]}" + (f" +{len(warnings) - 1}" if len(warnings) > 1 else "")
     subject = f"Minti Outreach — {report['today_pt']} · {suffix}"
-    dates = list(report["dates"])
+    dates = list(reversed(report["dates"]))
     date_headings = [
         f"{date.fromisoformat(value).strftime('%a')} {date.fromisoformat(value).day}"
         for value in dates
@@ -457,7 +457,8 @@ def render_outreach_report(report: Dict[str, Any]) -> Dict[str, str]:
     heading = [*date_headings, "7 days"]
     text_lines = [subject, "", "Metric | " + " | ".join(heading)]
     for row in report["rows"]:
-        text_lines.append(f"{row['label']} | " + " | ".join(str(value) for value in [*row["values"], row["total"]]))
+        display_values = [*reversed(row["values"]), row["total"]]
+        text_lines.append(f"{row['label']} | " + " | ".join(str(value) for value in display_values))
     status = report["status"]
     text_lines.extend(
         [
@@ -489,7 +490,7 @@ def render_outreach_report(report: Dict[str, Any]) -> Dict[str, str]:
     row_html = "".join(
         "<tr>"
         f"<td style=\"{first_style}\">{html.escape(row['label'])}</td>"
-        + "".join(f"<td style=\"{td_style}\">{int(value)}</td>" for value in [*row["values"], row["total"]])
+        + "".join(f"<td style=\"{td_style}\">{int(value)}</td>" for value in [*reversed(row["values"]), row["total"]])
         + "</tr>"
         for row in report["rows"]
     )

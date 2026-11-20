@@ -34,10 +34,10 @@ def test_render_outreach_report_has_html_and_plain_text():
     rendered = outreach_reporting.render_outreach_report(_report())
 
     assert rendered["subject"] == "Minti Outreach — 2026-11-19 · ⚠️ first-email queue empty"
-    assert "Metric | Fri 13 | Sat 14 | Sun 15 | Mon 16 | Tue 17 | Wed 18 | Thu 19 | 7 days" in rendered["text"]
-    assert "Channels discovered | 1 | 2 | 3 | 4 | 5 | 6 | 7 | 28" in rendered["text"]
+    assert "Metric | Thu 19 | Wed 18 | Tue 17 | Mon 16 | Sun 15 | Sat 14 | Fri 13 | 7 days" in rendered["text"]
+    assert "Channels discovered | 7 | 6 | 5 | 4 | 3 | 2 | 1 | 28" in rendered["text"]
     assert "A Doctor — Doctors" in rendered["text"]
-    assert "Fri 13" in rendered["html"]
+    assert rendered["html"].index("Thu 19") < rendered["html"].index("Fri 13")
     assert "Legacy stale (state unchanged &gt;30 days)" in rendered["html"]
     assert "overflow-x:auto" in rendered["html"]
     assert "<td" in rendered["html"]
