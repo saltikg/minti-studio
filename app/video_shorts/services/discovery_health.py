@@ -152,6 +152,17 @@ def _send_admin_alert(reason: str, summary: Dict[str, Any]) -> None:
     )
 
 
+def send_discovery_alert_once(alert_key: str, reason: str, summary: Dict[str, Any]) -> bool:
+    """Send an admin alert at most once per key per 24 hours."""
+    now = datetime.now(timezone.utc)
+    observation = {**summary, "observed_at": now.isoformat(), "active": True}
+    _store_observation(alert_key, observation)
+    if not _claim_discovery_alert(alert_key, observation, now):
+        return False
+    _send_admin_alert(reason, observation)
+    return True
+
+
 def _emit_condition(
     *,
     alert_key: str,

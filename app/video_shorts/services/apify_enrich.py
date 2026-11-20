@@ -16,6 +16,14 @@ GENERIC_EMAIL_LOCAL_PARTS = {"info", "hello", "contact", "support", "admin", "te
 PERSON_EMAIL_ROLES = {"creator", "owner", "founder", "personal", "person"}
 
 
+class ApifyOutOfCreditError(RuntimeError):
+    pass
+
+
+def _safe_apify_error(value: Any) -> str:
+    return re.sub(r"([?&]token=)[^&\s]+", r"\1<redacted>", str(value or ""))[:500]
+
+
 def _channel_id_from_url(value: str | None) -> str:
     text = str(value or "").strip()
     match = re.search(r"/channel/([^/?#]+)", text)
@@ -128,7 +136,19 @@ def _request_json(method: str, url: str, *, token: str, timeout: int, **kwargs) 
     params = dict(kwargs.pop("params", {}) or {})
     params["token"] = token
     response = requests.request(method, url, params=params, timeout=timeout, **kwargs)
-    response.raise_for_status()
+    response_text = _safe_apify_error(response.text)
+    if response.status_code in {402, 403} and any(
+        marker in response_text.lower()
+        for marker in ("credit", "payment", "usage limit", "monthly limit", "insufficient")
+    ):
+        raise ApifyOutOfCreditError(f"Apify credit unavailable (HTTP {response.status_code}).")
+    try:
+        response.raise_for_status()
+    except requests.HTTPError as exc:
+        raise requests.HTTPError(
+            f"Apify request failed (HTTP {response.status_code}): {response_text[:200]}",
+            response=response,
+        ) from exc
     if not response.text:
         return None
     return response.json()
@@ -195,13 +215,17 @@ def apify_trakk_enrich(channel_urls: List[str], *, timeout_seconds: int = 240, p
             payload = _request_json("POST", sync_url, token=token, timeout=min(70, max(20, timeout_seconds)), json=actor_input)
             if isinstance(payload, list):
                 items = payload
+        except ApifyOutOfCreditError:
+            raise
         except Exception as exc:
-            errors.append({"error": "apify_sync_fallback", "message": str(exc)})
+            errors.append({"error": "apify_sync_fallback", "message": _safe_apify_error(exc)})
     if not items:
         try:
             items = _run_actor_with_poll(actor_input, token=token, timeout_seconds=timeout_seconds)
+        except ApifyOutOfCreditError:
+            raise
         except Exception as poll_exc:
-            errors.append({"error": "apify_run_failed", "message": str(poll_exc)})
+            errors.append({"error": "apify_run_failed", "message": _safe_apify_error(poll_exc)})
 
     normalized = [_normalize_result(item if isinstance(item, dict) else {}, "") for item in items]
     by_url = {str(row.get("channel_url") or "").rstrip("/"): row for row in normalized if row.get("channel_url")}

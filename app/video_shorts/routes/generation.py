@@ -26305,6 +26305,8 @@ def admin_discovery_lead_pipeline():
     per_page = min(100, max(10, _request_int(request.args.get("per_page"), 50)))
     offset = (page - 1) * per_page
     wants_csv = str(request.args.get("format") or "").strip().lower() == "csv"
+    no_email_csv = str(request.args.get("export") or "").strip().lower() == "no_email"
+    wants_csv = wants_csv or no_email_csv
     lead_filter = str(request.args.get("filter") or "").strip().lower()
     face_verdict = str(request.args.get("face_verdict") or "").strip().lower()
     if face_verdict not in {"", "face_pass", "face_fail", "face_unsure"}:
@@ -26397,6 +26399,29 @@ def admin_discovery_lead_pipeline():
                 if "promoted_source_video_id" in discovery_columns
                 else "NULL"
             )
+            already_posting_shorts_sql = "COALESCE(already_posting_shorts, false)" if "already_posting_shorts" in discovery_columns else "false"
+            last_upload_at_sql = "last_upload_at" if "last_upload_at" in discovery_columns else "NULL"
+            if no_email_csv:
+                rows = conn.execute(
+                    f"""
+                    SELECT channel_title, channel_url, subscriber_count,
+                           COALESCE(raw_json->>'category', raw_json->>'niche', '') AS category,
+                           matched_keyword, {last_upload_at_sql} AS last_upload_at,
+                           website, email_source_url, {already_posting_shorts_sql} AS already_posting_shorts
+                    FROM discovery_leads
+                    WHERE icp_fit IS TRUE
+                      AND COALESCE(creator_email, '') = ''
+                      AND COALESCE(status, '') NOT IN ('already_lead', 'dismissed')
+                    ORDER BY last_discovered_at DESC NULLS LAST, id DESC
+                    """
+                ).fetchall()
+                headers = ["channel_name", "youtube_url", "subscribers", "category", "keyword", "last_upload_date", "website", "other_links", "already_posting_shorts"]
+                lines = [",".join(headers)]
+                for row in rows:
+                    lines.append(",".join(_csv_cell(value) for value in row))
+                response = current_app.response_class("\n".join(lines), mimetype="text/csv")
+                response.headers["Content-Disposition"] = "attachment; filename=discovery-no-email-leads.csv"
+                return response
             if has_promotion_columns:
                 ready_to_promote_sql = """
                 WHERE icp_fit IS TRUE
@@ -26555,6 +26580,8 @@ def admin_discovery_lead_pipeline():
                     {face_check_same_person_count_sql} AS face_check_same_person_count,
                     {face_check_reason_sql} AS face_check_reason,
                     {face_checked_at_sql} AS face_checked_at
+                    , {already_posting_shorts_sql} AS already_posting_shorts
+                    , {last_upload_at_sql} AS last_upload_at
                 FROM discovery_leads
                 {ready_filter_sql}
                 ORDER BY {lead_order_column} {lead_order_direction} {lead_nulls}, {lead_tie_order}
@@ -26628,6 +26655,8 @@ def admin_discovery_lead_pipeline():
                     "face_check_same_person_count": row[39],
                     "face_check_reason": str(row[40] or ""),
                     "face_checked_at": _format_datetime_pst(row[41]),
+                    "already_posting_shorts": bool(row[42]),
+                    "last_upload_at": _format_datetime_pst(row[43]),
                     "outreach_greeting_name": outreach_greeting_value,
                     "outreach_greeting_text": outreach_greeting_text,
                     "outreach_greeting_is_generic": not bool(outreach_greeting_value),

@@ -1,10 +1,11 @@
 from __future__ import annotations
 
 import logging
+import os
 from datetime import datetime, timezone
 from typing import Any, Dict, List
 
-from app.video_shorts.services.apify_enrich import apify_trakk_enrich
+from app.video_shorts.services.apify_enrich import ApifyOutOfCreditError, apify_trakk_enrich
 from app.video_shorts.services.db import get_db, table_columns
 from app.video_shorts.services.discovery_promote_queue import store_outreach_first_name_if_needed
 
@@ -22,6 +23,10 @@ def _coerce_batch_size(value: Any) -> int:
     except (TypeError, ValueError):
         parsed = DEFAULT_BATCH_SIZE
     return max(1, min(MAX_BATCH_SIZE, parsed))
+
+
+def configured_auto_batch_size(default: int = DEFAULT_BATCH_SIZE) -> int:
+    return _coerce_batch_size(os.getenv("DISCOVERY_EMAIL_ENRICH_BATCH_SIZE", default))
 
 
 def _channel_url(channel_id: str, channel_url: str | None = None) -> str:
@@ -83,6 +88,12 @@ def _auto_trakk_remaining(conn) -> tuple[bool, int, int, int]:
 
 
 def _claim_leads(conn, batch_size: int, *, auto: bool = False, job_id: str = "") -> List[Dict[str, Any]]:
+    blocked = conn.execute(
+        "SELECT 1 FROM discovery_leads WHERE status = 'email_out_of_credit' LIMIT 1"
+    ).fetchone()
+    if blocked:
+        logger.warning("trakk_auto_enrich_blocked_out_of_credit")
+        return []
     if auto:
         enabled, daily_cap, used, remaining = _auto_trakk_remaining(conn)
         if not enabled:
@@ -92,7 +103,19 @@ def _claim_leads(conn, batch_size: int, *, auto: bool = False, job_id: str = "")
             logger.info("trakk_daily_cap_reached used=%s cap=%s", used, daily_cap)
             return []
         batch_size = min(batch_size, remaining)
-    statuses_sql = "('icp_qualified')" if auto else "('icp_qualified', 'email_failed')"
+    retry_columns = table_columns(conn, "discovery_leads")
+    has_retry_count = "email_enrichment_retry_count" in retry_columns
+    retry_count_sql = "COALESCE(email_enrichment_retry_count, 0)" if has_retry_count else "0"
+    candidate_sql = f"""
+        status = 'icp_qualified'
+        OR (
+            status = 'email_failed'
+            AND {retry_count_sql} < 2
+            AND enrichment_attempted_at <= CURRENT_TIMESTAMP - INTERVAL '24 hours'
+            AND lower(COALESCE(email_enrichment_error, '')) <> 'no_email_found'
+            AND lower(COALESCE(email_enrichment_error, '')) ~ '(timeout|timed out|http 50[0-9]|bad gateway|service unavailable|gateway timeout|connection)'
+        )
+    """
     has_job_tracking = "email_enrichment_job_id" in table_columns(conn, "discovery_leads")
     job_assignment = ", email_enrichment_job_id = ?" if has_job_tracking else ""
     job_params = [str(job_id or "").strip() or None] if has_job_tracking else []
@@ -102,7 +125,7 @@ def _claim_leads(conn, batch_size: int, *, auto: bool = False, job_id: str = "")
             WITH candidates AS (
                 SELECT id
                 FROM discovery_leads
-                WHERE status IN {statuses_sql}
+                WHERE ({candidate_sql})
                   AND COALESCE(creator_email, '') = ''
                   AND COALESCE(autopilot_lead_id, '') = ''
                   AND NOT EXISTS (
@@ -118,6 +141,7 @@ def _claim_leads(conn, batch_size: int, *, auto: bool = False, job_id: str = "")
             SET status = 'email_enriching',
                 enrichment_attempted_at = CURRENT_TIMESTAMP,
                 email_enrichment_error = NULL
+                {", email_enrichment_retry_count = CASE WHEN d.status = 'email_failed' THEN COALESCE(d.email_enrichment_retry_count, 0) + 1 ELSE COALESCE(d.email_enrichment_retry_count, 0) END" if has_retry_count else ""}
                 {job_assignment}
             FROM candidates
             WHERE d.id = candidates.id
@@ -126,11 +150,28 @@ def _claim_leads(conn, batch_size: int, *, auto: bool = False, job_id: str = "")
             [batch_size, *job_params],
         ).fetchall()
     else:
+        retry_filter = """
+            status = 'icp_qualified'
+            OR (
+                status = 'email_failed'
+                AND COALESCE(email_enrichment_retry_count, 0) < 2
+                AND enrichment_attempted_at <= datetime('now', '-24 hours')
+                AND lower(COALESCE(email_enrichment_error, '')) <> 'no_email_found'
+                AND (
+                    lower(COALESCE(email_enrichment_error, '')) LIKE '%timeout%'
+                    OR lower(COALESCE(email_enrichment_error, '')) LIKE '%timed out%'
+                    OR lower(COALESCE(email_enrichment_error, '')) LIKE '%http 50%'
+                    OR lower(COALESCE(email_enrichment_error, '')) LIKE '%bad gateway%'
+                    OR lower(COALESCE(email_enrichment_error, '')) LIKE '%service unavailable%'
+                    OR lower(COALESCE(email_enrichment_error, '')) LIKE '%connection%'
+                )
+            )
+        """ if has_retry_count else "status = 'icp_qualified'"
         rows = conn.execute(
             f"""
             SELECT id, youtube_channel_id, channel_url
             FROM discovery_leads
-            WHERE status IN {statuses_sql}
+            WHERE ({retry_filter})
               AND COALESCE(creator_email, '') = ''
               AND COALESCE(autopilot_lead_id, '') = ''
               AND NOT EXISTS (
@@ -152,6 +193,7 @@ def _claim_leads(conn, batch_size: int, *, auto: bool = False, job_id: str = "")
                 SET status = 'email_enriching',
                     enrichment_attempted_at = CURRENT_TIMESTAMP,
                     email_enrichment_error = NULL
+                    {", email_enrichment_retry_count = CASE WHEN status = 'email_failed' THEN COALESCE(email_enrichment_retry_count, 0) + 1 ELSE COALESCE(email_enrichment_retry_count, 0) END" if has_retry_count else ""}
                     {job_assignment}
                 WHERE id IN ({placeholders})
                 """,
@@ -238,7 +280,7 @@ def _mark_enriched(conn, lead_id: Any, result: Dict[str, Any]) -> None:
 
 def enrich_discovery_email_batch(payload: Dict[str, Any] | None = None) -> Dict[str, Any]:
     payload = payload or {}
-    batch_size = _coerce_batch_size(payload.get("batch_size"))
+    batch_size = _coerce_batch_size(payload.get("batch_size") or configured_auto_batch_size())
     auto = bool(payload.get("auto"))
 
     conn = get_db()
@@ -256,7 +298,29 @@ def enrich_discovery_email_batch(payload: Dict[str, Any] | None = None) -> Dict[
 
     urls = [_channel_url(row["youtube_channel_id"], row.get("channel_url")) for row in claimed]
     urls = [url for url in urls if url]
-    response = apify_trakk_enrich(urls, timeout_seconds=ENRICHMENT_TIMEOUT_SECONDS, prefer_sync=False)
+    try:
+        response = apify_trakk_enrich(urls, timeout_seconds=ENRICHMENT_TIMEOUT_SECONDS, prefer_sync=False)
+    except ApifyOutOfCreditError:
+        conn = get_db()
+        try:
+            for lead in claimed:
+                conn.execute(
+                    """UPDATE discovery_leads
+                       SET status = 'email_out_of_credit', email_enrichment_error = 'apify_out_of_credit',
+                           email_enrichment_job_id = NULL
+                       WHERE id = ?""",
+                    [lead["id"]],
+                )
+            conn.commit()
+        finally:
+            conn.close()
+        from app.video_shorts.services.discovery_health import send_discovery_alert_once
+        send_discovery_alert_once(
+            "discovery_health:apify_out_of_credit",
+            "apify_out_of_credit",
+            {"claimed_leads": len(claimed)},
+        )
+        return {"claimed": len(claimed), "enriched": 0, "failed": len(claimed), "out_of_credit": True, "auto": auto}
     results = response.get("results") or []
     errors = response.get("errors") or []
     fallback_error = "; ".join(str(error.get("message") or error.get("error") or "") for error in errors if isinstance(error, dict))

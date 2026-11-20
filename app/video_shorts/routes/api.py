@@ -77,10 +77,9 @@ LEAD_DISCOVERY_DEFAULT_MIN_LONGFORM_60D = 2
 LEAD_DISCOVERY_DEFAULT_MAX_SHORTS_15D = 3
 LEAD_DISCOVERY_DEFAULT_MIN_LONGFORM_SECONDS = 300
 LEAD_DISCOVERY_DEFAULT_SHORT_MAX_SECONDS = 180
-LEAD_DISCOVERY_HARD_MIN_SUBSCRIBERS = 2_000
+LEAD_DISCOVERY_HARD_MIN_SUBSCRIBERS = 1_000
 LEAD_DISCOVERY_HARD_MAX_SUBSCRIBERS = 150_000
 LEAD_DISCOVERY_HARD_MIN_LONGFORM_60D = 2
-LEAD_DISCOVERY_HARD_MAX_SHORTS_15D = 8
 LEAD_DISCOVERY_MAX_KEYWORDS = 10
 LEAD_DISCOVERY_MAX_RESULTS_PER_KEYWORD = 50
 LEAD_DISCOVERY_MAX_CHANNELS_ENRICHED = 150
@@ -253,6 +252,7 @@ def _hard_numeric_disqualification_reason(row: Dict[str, Any]) -> Optional[str]:
         shorts_count = int(row.get("shorts_last_15d") or 0)
     except (TypeError, ValueError):
         shorts_count = 0
+    row["already_posting_shorts"] = shorts_count > 8
 
     if subscriber_count is None:
         reasons.append("subscriber_count missing")
@@ -262,8 +262,6 @@ def _hard_numeric_disqualification_reason(row: Dict[str, Any]) -> Optional[str]:
         reasons.append(f"subscriber_count {subscriber_count} > {LEAD_DISCOVERY_HARD_MAX_SUBSCRIBERS}")
     if longform_count < LEAD_DISCOVERY_HARD_MIN_LONGFORM_60D:
         reasons.append(f"longform_last_60d {longform_count} < {LEAD_DISCOVERY_HARD_MIN_LONGFORM_60D}")
-    if shorts_count > LEAD_DISCOVERY_HARD_MAX_SHORTS_15D:
-        reasons.append(f"shorts_last_15d {shorts_count} > {LEAD_DISCOVERY_HARD_MAX_SHORTS_15D}")
     if not reasons:
         return None
     return "Hard numeric gate failed: " + "; ".join(reasons)
@@ -622,12 +620,15 @@ def diagnose_channel(
     longform_last_60d = 0
     shorts_last_15d = 0
     latest_short_dt = None
+    latest_upload_dt = None
     min_longform_seconds = max(0, int(min_longform_seconds or 0))
     short_max_seconds = max(0, int(short_max_seconds or 0))
     face_check_video_samples: List[Dict[str, str]] = []
     for item in recent_uploads:
         video_id = str(item.get("video_id") or "").strip()
         published_at = _parse_yt_timestamp(item.get("published_at"))
+        if published_at and (latest_upload_dt is None or published_at > latest_upload_dt):
+            latest_upload_dt = published_at
         duration_seconds = (stats_map.get(video_id) or {}).get("duration_seconds")
         try:
             duration_value = int(duration_seconds or 0)
@@ -699,6 +700,8 @@ def diagnose_channel(
         "shorts_color": "yellow" if shorts_last_15d >= 7 else "green",
         "shorts_window": "last_15_days",
         "latest_short_date": latest_short_dt.isoformat().replace("+00:00", "Z") if latest_short_dt else None,
+        "last_upload_at": latest_upload_dt.isoformat().replace("+00:00", "Z") if latest_upload_dt else None,
+        "already_posting_shorts": shorts_last_15d > 8,
         "sweetspot_score": sweetspot.get("score") if sweetspot else None,
         "best_source_video_id": sweetspot.get("video_id") if sweetspot else None,
         "best_source_video_title": sweetspot.get("title") if sweetspot else None,
@@ -2231,6 +2234,44 @@ def _attach_lead_discovery_email(row: Dict[str, Any]) -> None:
     row["email_source"] = email_source
 
 
+def _evaluate_discovery_candidate(
+    row: Dict[str, Any],
+    *,
+    niche: str,
+    ai_icp: bool,
+    run_id: Optional[int] = None,
+) -> Dict[str, Any]:
+    """Apply the same hard gate, ICP and face checks for discovery and re-evaluation."""
+    hard_gate_reason = _hard_numeric_disqualification_reason(row)
+    row["hard_gate_passed"] = hard_gate_reason is None
+    row["hard_gate_reason"] = hard_gate_reason or ""
+    if hard_gate_reason:
+        row["icp_fit"] = False
+        row["icp_reason"] = hard_gate_reason
+    elif ai_icp:
+        _attach_lead_discovery_email(row)
+        row.update(_classify_lead_discovery_icp(niche, row, run_id=run_id))
+        if row.get("icp_fit") is True:
+            face_result = check_face_on_camera(row.get("face_check_video_samples") or [])
+            face_response = face_result.pop("_face_check_response", None)
+            face_model = face_result.pop("_face_check_model", None)
+            row.update(face_result)
+            if face_response is not None:
+                _store_discovery_icp_llm_usage(
+                    run_id=run_id,
+                    response=face_response,
+                    purpose="face_check",
+                    model=face_model,
+                )
+            if FACE_CHECK_ENFORCE and row.get("face_check_verdict") == "face_fail":
+                row["icp_reason"] = f"faceless: {row.get('face_check_presenter_type') or 'unknown'}"
+    else:
+        _attach_lead_discovery_email(row)
+        row["icp_fit"] = None
+        row["icp_reason"] = ""
+    return row
+
+
 def _persist_discovery_lead(row: Dict[str, Any]) -> str:
     youtube_channel_id = str(row.get("channel_id") or "").strip()
     if not youtube_channel_id:
@@ -2341,6 +2382,12 @@ def _persist_discovery_lead(row: Dict[str, Any]) -> str:
         if "is_clinician" in columns:
             optional_updates.append("is_clinician = ?")
             optional_params.append(bool(row.get("is_clinician")))
+        if "already_posting_shorts" in columns:
+            optional_updates.append("already_posting_shorts = ?")
+            optional_params.append(bool(row.get("already_posting_shorts")))
+        if "last_upload_at" in columns and row.get("last_upload_at"):
+            optional_updates.append("last_upload_at = ?")
+            optional_params.append(row.get("last_upload_at"))
         for column in (
             "face_check_verdict",
             "face_check_presenter_type",
@@ -2401,6 +2448,7 @@ def _utc_day_start_naive() -> datetime:
 
 
 def _trakk_daily_usage(conn) -> Dict[str, Any]:
+    from app.video_shorts.services.discovery_email_enrichment import configured_auto_batch_size
     control_columns = table_columns(conn, "discovery_automation_control")
     lead_columns = table_columns(conn, "discovery_leads")
     enabled = False
@@ -2438,6 +2486,7 @@ def _trakk_daily_usage(conn) -> Dict[str, Any]:
             [_utc_day_start_naive()],
         ).fetchone()
         used = int((used_row[0] if used_row else 0) or 0)
+    cycle_cap = configured_auto_batch_size(cycle_cap)
     return {"enabled": enabled, "cap": cap, "cycle_cap": cycle_cap, "used": used, "remaining": max(0, cap - used)}
 
 
@@ -2491,7 +2540,7 @@ def _enqueue_auto_trakk_if_needed(results: List[Dict[str, Any]]) -> Dict[str, An
     if payload["cycle_cap"] <= 0:
         payload["reason"] = "trakk_cycle_cap_zero"
         return payload
-    batch_size = min(5, candidate_count, payload["remaining_today"], payload["cycle_cap"])
+    batch_size = min(candidate_count, payload["remaining_today"], payload["cycle_cap"])
     enqueue_result = enqueue_worker_job(
         user_id="system",
         job_type=JOB_TYPE_ENRICH_DISCOVERY_EMAILS,
@@ -4190,39 +4239,12 @@ def run_lead_discovery_payload(payload: Dict[str, Any]) -> tuple[Dict[str, Any],
             )
             row["matched_keyword"] = candidate.get("matched_keyword")
             row["channel_url"] = f"https://www.youtube.com/channel/{channel_id}"
-            hard_gate_reason = _hard_numeric_disqualification_reason(row)
-            row["hard_gate_passed"] = hard_gate_reason is None
-            row["hard_gate_reason"] = hard_gate_reason or ""
-            if hard_gate_reason:
-                row["icp_fit"] = False
-                row["icp_reason"] = hard_gate_reason
-            elif ai_icp:
-                _attach_lead_discovery_email(row)
-                row.update(
-                    _classify_lead_discovery_icp(
-                        niche or candidate.get("matched_keyword") or "",
-                        row,
-                        run_id=discovery_run_id or None,
-                    )
-                )
-                if row.get("icp_fit") is True:
-                    face_result = check_face_on_camera(row.get("face_check_video_samples") or [])
-                    face_response = face_result.pop("_face_check_response", None)
-                    face_model = face_result.pop("_face_check_model", None)
-                    row.update(face_result)
-                    if face_response is not None:
-                        _store_discovery_icp_llm_usage(
-                            run_id=discovery_run_id or None,
-                            response=face_response,
-                            purpose="face_check",
-                            model=face_model,
-                        )
-                    if FACE_CHECK_ENFORCE and row.get("face_check_verdict") == "face_fail":
-                        row["icp_reason"] = f"faceless: {row.get('face_check_presenter_type') or 'unknown'}"
-            else:
-                _attach_lead_discovery_email(row)
-                row["icp_fit"] = None
-                row["icp_reason"] = ""
+            _evaluate_discovery_candidate(
+                row,
+                niche=niche or candidate.get("matched_keyword") or "",
+                ai_icp=ai_icp,
+                run_id=discovery_run_id or None,
+            )
             row.pop("_email_candidate_descriptions", None)
             persistence_result = _persist_discovery_lead(row)
             if persistence_result in persistence_counts:
