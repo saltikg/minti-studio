@@ -69,7 +69,13 @@ from app.video_shorts.services.user_events import track_event
 from app.video_shorts.services.usage_metering import check_source_video_quota
 from app.video_shorts.services.youtube_oauth import has_refresh_token
 from app.video_shorts.routes import generation
-from app.video_shorts.youtube_api import extract_video_id, fetch_video_metadata, YoutubeApiError
+from app.video_shorts.youtube_api import (
+    YoutubeApiError,
+    YoutubeInputError,
+    extract_video_id,
+    fetch_video_metadata,
+    parse_youtube_video_input,
+)
 from src.trends.instagram_tokens import InstagramTokenStoreError, get_instagram_credentials
 
 MAX_QUICK_SHORT_SECONDS = 120 * 60
@@ -1227,9 +1233,10 @@ def ingest_youtube_for_user(
     watcher_decided_by: str = "system",
     watcher_decision_reason: str = "already imported",
 ) -> Dict[str, Any]:
-    video_id = extract_video_id(video_url)
+    parsed_input = parse_youtube_video_input(video_url)
+    video_id = parsed_input.video_id
     if not video_id:
-        raise ValueError("Enter a valid YouTube video URL.")
+        raise YoutubeInputError(video_url, parsed_input.rejection_reason or "unreadable_link")
     meta = fetch_video_metadata(video_id)
     duration = meta.get("duration_seconds")
     if duration is not None and duration > MAX_QUICK_SHORT_SECONDS:
@@ -1276,9 +1283,14 @@ def quick_short_youtube_metadata():
             return response, 429
     data = request.get_json(silent=True) if request.is_json else request.form
     video_url = str((data.get("video_url") if data else "") or "").strip()
-    video_id = extract_video_id(video_url)
+    parsed_input = parse_youtube_video_input(video_url)
+    video_id = parsed_input.video_id
     if not video_id:
-        return _json_error("Enter a valid YouTube video URL.")
+        return _json_error(
+            parsed_input.message or "We couldn't read that YouTube link.",
+            code="url_rejected",
+            rejection_reason=parsed_input.rejection_reason,
+        )
     try:
         meta = fetch_video_metadata(video_id)
     except YoutubeApiError as exc:
@@ -1316,6 +1328,24 @@ def quick_short_ingest_youtube():
             user_id=current_user["id"],
             brand_id=brand_id,
             video_url=video_url,
+        )
+    except YoutubeInputError as exc:
+        track_event(
+            current_user["id"],
+            "client_error",
+            status="url_rejected",
+            metadata={
+                "error_type": "url_rejected",
+                "path": request.path,
+                "method": request.method,
+                "sanitized_input": exc.sanitized_input,
+                "rejection_reason": exc.reason,
+            },
+        )
+        return _json_error(
+            str(exc),
+            code="url_rejected",
+            rejection_reason=exc.reason,
         )
     except SourceVideoQuotaError as exc:
         return _json_error(

@@ -2208,9 +2208,9 @@ def register():
                             registration_ip_hash, role, plan_id,
                             email_verified, email_verification_token_hash, email_verification_expires_at,
                             email_verification_sent_at, pending_service_intent, pending_service_tier, pricing_offer,
-                            guest_resume_next, guest_resume_action, guest_resume_clip
+                            guest_resume_next, guest_resume_action, guest_resume_clip, created_at
                         )
-                        VALUES (?, ?, ?, ?, ?, ?, ?, 'member', ?, FALSE, ?, ?, now(), ?, ?, ?, ?, ?, ?)
+                        VALUES (?, ?, ?, ?, ?, ?, ?, 'member', ?, FALSE, ?, ?, now(), ?, ?, ?, ?, ?, ?, now())
                         """,
                         [
                             user_id,
@@ -3184,9 +3184,9 @@ def google_oauth_callback():
                 """
                 INSERT INTO shorts_users (
                     id, username, name, email, google_sub, role, plan_id, email_verified, email_verified_at,
-                    pending_service_intent, pending_service_tier, pricing_offer
+                    pending_service_intent, pending_service_tier, pricing_offer, created_at
                 )
-                VALUES (?, ?, ?, ?, ?, 'member', ?, TRUE, now(), ?, ?, ?)
+                VALUES (?, ?, ?, ?, ?, 'member', ?, TRUE, now(), ?, ?, ?, now())
                 """,
                 [
                     user_id,

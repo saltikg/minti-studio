@@ -2081,6 +2081,15 @@
     });
   };
 
+  const reportUrlRejected = (message) => {
+    window.MintiErrorReporter?.report({
+      error_type: 'url_rejected',
+      message: message || 'The YouTube URL was rejected.',
+      source: window.location.pathname,
+      dedupe: false,
+    });
+  };
+
   const setUploadControlsDisabled = (disabled, phase = 'uploading') => {
     isUploading = Boolean(disabled);
     if (uploadInput) {
@@ -2209,7 +2218,10 @@
       payload = {};
     }
     if (!response.ok || !payload.ok) {
-      throw new Error(payload.message || payload.error || 'We could not add that YouTube video right now.');
+      const requestError = new Error(payload.message || payload.error || 'We could not add that YouTube video right now.');
+      requestError.code = payload.code || '';
+      requestError.rejectionReason = payload.rejection_reason || '';
+      throw requestError;
     }
     return payload;
   };
@@ -2679,7 +2691,11 @@
       setCoachmarkState('');
       syncCoachmark();
       const message = error?.message || 'We could not add that YouTube video right now.';
-      reportUploadFailed(message);
+      if (error?.code === 'url_rejected') {
+        reportUrlRejected(message);
+      } else {
+        reportUploadFailed(message);
+      }
       setFeedback(message, true);
     } finally {
       setUploadControlsDisabled(false);

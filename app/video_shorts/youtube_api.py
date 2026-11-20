@@ -4,8 +4,9 @@ import logging
 import os
 import requests
 import re
+from dataclasses import dataclass
 from typing import Optional, Dict, Any, List
-from urllib.parse import urlparse, parse_qs
+from urllib.parse import parse_qs, urlencode, urlparse, urlunparse
 
 from google.auth.exceptions import RefreshError
 
@@ -22,6 +23,128 @@ class YoutubeApiError(Exception):
         super().__init__(message)
         self.status_code = status_code
         self.payload = payload
+
+
+YOUTUBE_INPUT_MESSAGES = {
+    "channel_link": "This is a channel link. Open one video and paste its link.",
+    "playlist_link": "This is a playlist link. Paste a single video link.",
+    "unreadable_link": (
+        "We couldn't read that link. Paste a YouTube video link like "
+        "https://youtu.be/abc123 — or upload the video file."
+    ),
+}
+
+
+@dataclass(frozen=True)
+class YoutubeVideoInput:
+    video_id: Optional[str]
+    rejection_reason: Optional[str] = None
+
+    @property
+    def message(self) -> Optional[str]:
+        if not self.rejection_reason:
+            return None
+        return YOUTUBE_INPUT_MESSAGES[self.rejection_reason]
+
+
+class YoutubeInputError(ValueError):
+    def __init__(self, value: str, reason: str):
+        self.reason = reason
+        self.sanitized_input = sanitize_rejected_youtube_input(value)
+        super().__init__(YOUTUBE_INPUT_MESSAGES[reason])
+
+
+_YOUTUBE_URL_RE = re.compile(
+    r"(?:(?:https?://)?(?:[a-z0-9-]+\.)?(?:youtube\.com|youtube-nocookie\.com|youtu\.be)"
+    r"(?:/[^\s<>\"']*)?)",
+    re.IGNORECASE,
+)
+_VIDEO_ID_RE = re.compile(r"^[A-Za-z0-9_-]+$")
+
+
+def _youtube_url_candidates(value: str) -> List[str]:
+    return [match.group(0).rstrip(".,;:!?)]}") for match in _YOUTUBE_URL_RE.finditer(value)]
+
+
+def _parsed_youtube_url(candidate: str):
+    value = candidate if "://" in candidate else f"https://{candidate}"
+    try:
+        parsed = urlparse(value)
+    except Exception:
+        return None
+    host = (parsed.hostname or "").lower()
+    if host == "youtu.be" or host.endswith(".youtu.be"):
+        return parsed
+    if host in {"youtube.com", "youtube-nocookie.com"}:
+        return parsed
+    if host.endswith(".youtube.com") or host.endswith(".youtube-nocookie.com"):
+        return parsed
+    return None
+
+
+def parse_youtube_video_input(value: str) -> YoutubeVideoInput:
+    """Parse the first YouTube URL in pasted text and classify rejections."""
+    raw = str(value or "").strip()
+    if not raw:
+        return YoutubeVideoInput(None, "unreadable_link")
+    if _VIDEO_ID_RE.fullmatch(raw) and "." not in raw:
+        return YoutubeVideoInput(raw)
+
+    candidates = _youtube_url_candidates(raw)
+    if not candidates:
+        return YoutubeVideoInput(None, "unreadable_link")
+
+    parsed = _parsed_youtube_url(candidates[0])
+    if parsed is None:
+        return YoutubeVideoInput(None, "unreadable_link")
+    host = (parsed.hostname or "").lower()
+    path = parsed.path or ""
+    parts = [part for part in path.split("/") if part]
+    query = parse_qs(parsed.query)
+
+    if host == "youtu.be" or host.endswith(".youtu.be"):
+        video_id = parts[0] if parts else None
+        valid = bool(video_id and _VIDEO_ID_RE.fullmatch(video_id))
+        return YoutubeVideoInput(video_id if valid else None, None if valid else "unreadable_link")
+
+    first_part = parts[0].lower() if parts else ""
+    if first_part.startswith("@") or first_part in {"channel", "c"}:
+        return YoutubeVideoInput(None, "channel_link")
+
+    video_id = None
+    if first_part == "watch":
+        video_id = (query.get("v") or [None])[0]
+    elif first_part in {"shorts", "live", "embed"} and len(parts) > 1:
+        video_id = parts[1]
+    if video_id and _VIDEO_ID_RE.fullmatch(video_id):
+        return YoutubeVideoInput(video_id)
+    if query.get("list"):
+        return YoutubeVideoInput(None, "playlist_link")
+    return YoutubeVideoInput(None, "unreadable_link")
+
+
+def sanitize_rejected_youtube_input(value: str, limit: int = 200) -> str:
+    """Keep a useful URL for telemetry without retaining arbitrary query data."""
+    raw = str(value or "").strip()
+    candidates = _youtube_url_candidates(raw)
+    sanitized = raw
+    if candidates:
+        parsed = _parsed_youtube_url(candidates[0])
+        if parsed is not None:
+            allowed_query = []
+            for key, values in parse_qs(parsed.query, keep_blank_values=True).items():
+                if key not in {"v", "list", "t"}:
+                    continue
+                allowed_query.extend((key, item) for item in values)
+            sanitized = urlunparse((
+                parsed.scheme or "https",
+                parsed.netloc,
+                parsed.path,
+                "",
+                urlencode(allowed_query),
+                "",
+            ))
+    return sanitized[:limit]
 
 
 def _require_api_key():
@@ -190,33 +313,9 @@ def extract_channel_id(channel_url: str):
 
 def extract_video_id(video_url: str) -> Optional[str]:
     """
-    Extract a YouTube video ID from common URL formats.
+    Extract a YouTube video ID from the first URL in pasted text.
     """
-    if not video_url:
-        return None
-    candidate = video_url.strip()
-    if not candidate:
-        return None
-    if "://" not in candidate and "/" not in candidate and "?" not in candidate:
-        return candidate
-    try:
-        parsed = urlparse(candidate)
-    except Exception:
-        return None
-
-    host = (parsed.netloc or "").lower()
-    path = parsed.path or ""
-    query = parse_qs(parsed.query)
-
-    if "youtu.be" in host:
-        return path.lstrip("/").split("/")[0] or None
-
-    if "youtube.com" in host or "youtube-nocookie.com" in host:
-        if path.startswith("/watch"):
-            return (query.get("v") or [None])[0]
-        if path.startswith("/shorts/") or path.startswith("/embed/"):
-            return path.split("/")[2] if len(path.split("/")) > 2 else None
-    return None
+    return parse_youtube_video_input(video_url).video_id
 
 
 def fetch_video_metadata(video_id: str) -> Dict[str, Any]:

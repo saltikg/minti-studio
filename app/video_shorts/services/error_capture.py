@@ -94,7 +94,7 @@ def capture_server_error(
         "request_id": current_request_id(),
     }
     _record_event(
-        event_name="server_error",
+        event_name="client_error" if 400 <= int(status_code) < 500 else "server_error",
         status=str(status_code),
         metadata=metadata,
     )

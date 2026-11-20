@@ -31,7 +31,7 @@ from app.video_shorts.services.free_tool_analytics import (
     capture_first_touch,
     track_free_tool_event,
 )
-from app.video_shorts.youtube_api import YoutubeApiError, extract_video_id, fetch_video_metadata
+from app.video_shorts.youtube_api import YoutubeApiError, fetch_video_metadata, parse_youtube_video_input
 
 
 FREE_TOOL_MAX_VIDEO_SECONDS = 30 * 60
@@ -399,9 +399,10 @@ def render_free_tool_landing(locale: str = "en"):
         if not _verify_turnstile_or_fail():
             error = "Verification failed. Please try again." if locale == "en" else "Doğrulama başarısız. Lütfen tekrar deneyin."
         else:
-            video_id = extract_video_id(video_url)
+            parsed_input = parse_youtube_video_input(video_url)
+            video_id = parsed_input.video_id
             if not video_id:
-                error = "Enter a valid YouTube video URL." if locale == "en" else "Geçerli bir YouTube video bağlantısı girin."
+                error = parsed_input.message or "We couldn't read that YouTube link."
             else:
                 try:
                     meta = fetch_video_metadata(video_id)
