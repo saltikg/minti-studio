@@ -133,7 +133,9 @@ def _claim_leads(conn, batch_size: int, *, auto: bool = False, job_id: str = "")
                       FROM autopilot_leads al
                       WHERE al.youtube_channel_id = discovery_leads.youtube_channel_id
                   )
-                ORDER BY last_discovered_at DESC NULLS LAST, id DESC
+                ORDER BY CASE WHEN status = 'email_failed' THEN 0 ELSE 1 END,
+                         enrichment_attempted_at ASC NULLS FIRST,
+                         last_discovered_at DESC NULLS LAST, id DESC
                 LIMIT ?
                 FOR UPDATE SKIP LOCKED
             )
@@ -179,7 +181,9 @@ def _claim_leads(conn, batch_size: int, *, auto: bool = False, job_id: str = "")
                   FROM autopilot_leads al
                   WHERE al.youtube_channel_id = discovery_leads.youtube_channel_id
               )
-            ORDER BY last_discovered_at DESC, id DESC
+            ORDER BY CASE WHEN status = 'email_failed' THEN 0 ELSE 1 END,
+                     enrichment_attempted_at ASC,
+                     last_discovered_at DESC, id DESC
             LIMIT ?
             """,
             [batch_size],
