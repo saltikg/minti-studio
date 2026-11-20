@@ -15,7 +15,9 @@ def _candidates(limit: int | None) -> list[dict]:
     conn = get_db_readonly()
     try:
         suffix = " LIMIT ?" if limit else ""
-        params = [limit] if limit else []
+        params = ["Hard numeric gate failed:%"]
+        if limit:
+            params.append(limit)
         rows = conn.execute(
             f"""
             SELECT youtube_channel_id, channel_url, channel_title, channel_description,
@@ -24,7 +26,7 @@ def _candidates(limit: int | None) -> list[dict]:
             FROM discovery_leads
             WHERE last_discovered_at >= CURRENT_TIMESTAMP - INTERVAL '30 days'
               AND status = 'disqualified'
-              AND COALESCE(icp_reason, '') LIKE 'Hard numeric gate failed:%'
+              AND COALESCE(icp_reason, '') LIKE ?
               AND COALESCE(subscriber_count, 0) BETWEEN 1000 AND 150000
               AND COALESCE(longform_last_60d, 0) >= 2
               AND (COALESCE(shorts_last_15d, 0) > 8 OR COALESCE(subscriber_count, 0) < 2000)
