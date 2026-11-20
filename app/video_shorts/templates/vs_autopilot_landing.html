@@ -1,5 +1,5 @@
 {% extends "vs_marketing_base.html" %}
-{% set hide_marketing_footer_cta = true %}
+{% set marketing_active_nav = 'autopilot' %}
 
 {% block title %}Minti Studio Autopilot — Your long videos, turned into Shorts{% endblock %}
 {% block meta_description %}You make the long videos. Minti Studio Autopilot handles clipping, editing, review, and publishing prep for your Shorts.{% endblock %}
@@ -10,23 +10,6 @@
   <meta property="og:title" content="Minti Studio Autopilot — Your long videos, turned into Shorts">
   <meta property="og:description" content="You make the long videos. Minti Studio Autopilot handles clipping, editing, review, and publishing prep for your Shorts.">
   <meta property="og:url" content="{{ canonical_url }}">
-{% endblock %}
-
-{% block marketing_nav_links %}
-  <a class="vs-marketing-nav-link" href="#how-it-works">How it works</a>
-  <a class="vs-marketing-nav-link" href="#what-we-handle">What we handle</a>
-  <a class="vs-marketing-nav-link" href="#product">Product</a>
-  <a class="vs-marketing-nav-link" href="#pricing">Pricing</a>
-  <a class="vs-marketing-nav-link" href="#faq">FAQ</a>
-{% endblock %}
-
-{% block marketing_mobile_links %}
-  <a class="vs-marketing-mobile-link" href="#how-it-works">How it works</a>
-  <a class="vs-marketing-mobile-link" href="#what-we-handle">What we handle</a>
-  <a class="vs-marketing-mobile-link" href="#product">Product</a>
-  <a class="vs-marketing-mobile-link" href="#pricing">Pricing</a>
-  <a class="vs-marketing-mobile-link" href="#faq">FAQ</a>
-  <a class="vs-marketing-mobile-link" href="{{ url_for('video_shorts_bp.login') }}">Login</a>
 {% endblock %}
 
 {% block marketing_cta %}
@@ -68,19 +51,9 @@
     padding: 0 !important;
   }
 
-  body:has(.autopilot-page) .vs-marketing-footer {
-    max-width: 1180px;
-    padding: 2rem 1.25rem 2.2rem;
-  }
-
-  body:has(.autopilot-page) .vs-marketing-footer .footer-legal {
-    border-top: 1px solid rgba(255, 255, 255, 0.08);
-    padding-top: 1.6rem;
-  }
-
   .autopilot-page {
     position: relative;
-    overflow: hidden;
+    overflow: clip;
     color: var(--ap-ink);
     font-family: Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
   }
@@ -105,6 +78,46 @@
 
   .ap-section {
     padding-block: clamp(4.8rem, 9vw, 8rem);
+    scroll-margin-top: 132px;
+  }
+
+  .ap-secondary-nav {
+    position: sticky;
+    top: 60px;
+    z-index: 1050;
+    border-block: 1px solid rgba(255, 255, 255, 0.07);
+    background: rgba(7, 11, 16, 0.92);
+    backdrop-filter: blur(16px);
+  }
+
+  .ap-secondary-nav-inner {
+    min-height: 48px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    gap: 0.35rem;
+    overflow-x: auto;
+    scrollbar-width: none;
+  }
+
+  .ap-secondary-nav-inner::-webkit-scrollbar { display: none; }
+
+  .ap-secondary-nav a {
+    flex: 0 0 auto;
+    padding: 0.52rem 0.8rem;
+    border-radius: 999px;
+    color: #a9b8bf;
+    font-size: 0.82rem;
+    font-weight: 650;
+    line-height: 1;
+    text-decoration: none;
+    white-space: nowrap;
+  }
+
+  .ap-secondary-nav a:hover,
+  .ap-secondary-nav a:focus-visible {
+    color: var(--ap-ink);
+    background: rgba(101, 234, 212, 0.08);
   }
 
   .ap-kicker {
@@ -980,6 +993,19 @@
   }
 
   @media (max-width: 820px) {
+    .ap-secondary-nav {
+      position: relative;
+      top: auto;
+    }
+
+    .ap-secondary-nav-inner {
+      justify-content: flex-start;
+      width: 100%;
+      padding-inline: 0.25rem;
+    }
+
+    .ap-section { scroll-margin-top: 76px; }
+
     .ap-compare-grid { grid-template-columns: 1fr; }
     .ap-compare-card { min-height: 0; }
 
@@ -1184,6 +1210,16 @@
     </div>
   </section>
 
+  <nav class="ap-secondary-nav" aria-label="Autopilot sections">
+    <div class="ap-container ap-secondary-nav-inner">
+      <a href="#how-it-works">How it works</a>
+      <a href="#what-we-handle">What we handle</a>
+      <a href="#product">Product</a>
+      <a href="#pricing">Pricing</a>
+      <a href="#faq">FAQ</a>
+    </div>
+  </nav>
+
   <section class="ap-section ap-process-section" id="how-it-works" aria-labelledby="how-title">
     <div class="ap-container">
       <div class="ap-section-head is-centered">
@@ -1386,7 +1422,7 @@
     </div>
   </section>
 
-  <section class="ap-section ap-faq-section" aria-labelledby="faq-title">
+  <section class="ap-section ap-faq-section" id="faq" aria-labelledby="faq-title">
     <div class="ap-container">
       <div class="ap-section-head is-centered">
         <p class="ap-kicker">FAQ</p>
@@ -1575,7 +1611,9 @@
       const tier = button.dataset.apTier;
       document.querySelector("[data-ap-price-display]").textContent = "$" + button.dataset.apPrice;
       const cta = document.querySelector("[data-ap-pricing-cta]");
-      cta.href = {{ url_for('video_shorts_bp.register')|tojson }} + "?intent=autopilot&tier=" + tier + "&offer=" + {{ autopilot_offer|tojson }};
+      const nextUrl = new URL({{ autopilot_register_url|tojson }}, window.location.origin);
+      nextUrl.searchParams.set("tier", tier);
+      cta.href = nextUrl.pathname + nextUrl.search + nextUrl.hash;
       cta.dataset.ctaLocation = "autopilot_pricing_" + tier;
     });
   });

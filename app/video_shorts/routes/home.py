@@ -70,6 +70,11 @@ def home():
 
 
 def render_autopilot_landing():
+    tracking_params = {
+        key: str(request.args.get(key) or "")[:200]
+        for key in ("utm_source", "utm_medium", "utm_campaign", "utm_content", "utm_term")
+        if request.args.get(key)
+    }
     return render_template(
         "vs_autopilot_landing.html",
         autopilot_register_url=url_for(
@@ -77,6 +82,7 @@ def render_autopilot_landing():
             intent="autopilot",
             tier=15,
             offer="autopilot_lp_v1",
+            **tracking_params,
         ),
         autopilot_offer="autopilot_lp_v1",
         autopilot_pricing=[

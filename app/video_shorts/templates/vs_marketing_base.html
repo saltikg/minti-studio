@@ -21,7 +21,7 @@
   <link rel="shortcut icon" href="{{ url_for('video_shorts_bp.static', filename='img/favicon-admin.ico') }}">
   <link rel="stylesheet" href="{{ url_for('static', filename='css/vs_theme.css') }}">
   <link rel="stylesheet"
-    href="{{ url_for('video_shorts_bp.static', filename='video_shorts.css') }}?v=20261119-autopilot-media-1">
+    href="{{ url_for('video_shorts_bp.static', filename='video_shorts.css') }}?v=20261119-autopilot-shell-2">
   {% include "_ga4_google_tag.html" %}
 
   <style>
@@ -99,6 +99,11 @@
     .vs-marketing-nav-link:hover,
     .vs-marketing-nav-link:focus {
       color: rgba(248, 250, 252, 0.98);
+    }
+
+    .vs-marketing-nav-link.is-active,
+    .vs-marketing-mobile-link.is-active {
+      color: var(--mint);
     }
 
     .vs-marketing-dropdown {
@@ -610,7 +615,7 @@
           {% for label, anchor in marketing_nav_items %}
             <a class="vs-marketing-nav-link" href="{{ home_anchor_base }}{{ anchor }}">{{ label }}</a>
           {% endfor %}
-          <a class="vs-marketing-nav-link" href="/autopilot">Autopilot</a>
+          <a class="vs-marketing-nav-link{{ ' is-active' if marketing_active_nav|default('') == 'autopilot' else '' }}" href="/autopilot"{% if marketing_active_nav|default('') == 'autopilot' %} aria-current="page"{% endif %}>Autopilot</a>
           {% if free_tool_enabled %}
             {% set free_tool_is_tr = locale|default('en') == 'tr' or request.path.startswith('/tr/') %}
             <div class="vs-marketing-dropdown">
@@ -662,7 +667,7 @@
           {% for label, anchor in marketing_nav_items %}
             <a class="vs-marketing-mobile-link" href="{{ home_anchor_base }}{{ anchor }}">{{ label }}</a>
           {% endfor %}
-          <a class="vs-marketing-mobile-link" href="/autopilot">Autopilot</a>
+          <a class="vs-marketing-mobile-link{{ ' is-active' if marketing_active_nav|default('') == 'autopilot' else '' }}" href="/autopilot"{% if marketing_active_nav|default('') == 'autopilot' %} aria-current="page"{% endif %}>Autopilot</a>
           {% if free_tool_enabled %}
             {% set free_tool_is_tr = locale|default('en') == 'tr' or request.path.startswith('/tr/') %}
             <a class="vs-marketing-mobile-link" href="{{ '/tr/araclar/youtube-shorts' if free_tool_is_tr else '/tools/youtube-to-shorts' }}">
