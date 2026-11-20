@@ -11,16 +11,11 @@ from zoneinfo import ZoneInfo
 
 from app.video_shorts.services.db import get_db, get_db_readonly
 from app.video_shorts.services.email_verification import send_resend_email
-from app.video_shorts.services.instagram_metrics_state import (
-    _ensure_local_schema,
-    claim_instagram_metrics_alert,
-)
 from app.video_shorts.services.lead_pipeline import record_lead_pipeline_event
 
 
 logger = logging.getLogger(__name__)
 _PT = ZoneInfo("America/Los_Angeles")
-_EPOCH = datetime(1970, 1, 1, tzinfo=timezone.utc)
 _GATE_CATEGORIES = ("disk", "memory", "customer_queue")
 
 
@@ -65,12 +60,19 @@ def _load_alert_state(alert_key: str) -> tuple[Optional[datetime], Dict[str, Any
     conn = get_db_readonly()
     try:
         row = conn.execute(
-            "SELECT last_sent_at, summary_json FROM instagram_metrics_alert_state WHERE alert_key = ?",
+            """
+            SELECT last_gap_alerted_at, last_tick_at, last_worker_id
+            FROM shorts_scheduler_state
+            WHERE name = ?
+            """,
             [alert_key],
         ).fetchone()
         if not row:
             return None, {}
-        return _utc(row[0]), _json_payload(row[1])
+        summary = _json_payload(row[2])
+        if row[1] is not None and not summary.get("blocked_since"):
+            summary["blocked_since"] = _utc(row[1]).isoformat()
+        return _utc(row[0]), summary
     except Exception:
         logger.exception("Discovery health alert state read failed key=%s", alert_key)
         return None, {}
@@ -81,32 +83,52 @@ def _load_alert_state(alert_key: str) -> tuple[Optional[datetime], Dict[str, Any
 def _store_observation(alert_key: str, summary: Dict[str, Any]) -> None:
     conn = get_db()
     payload = json.dumps(summary, default=str, sort_keys=True)
+    blocked_since = _utc(summary.get("blocked_since"))
     try:
-        _ensure_local_schema(conn)
-        if getattr(conn, "backend_name", "") == "postgres":
-            conn.execute(
-                """
-                INSERT INTO instagram_metrics_alert_state (alert_key, last_sent_at, summary_json)
-                VALUES (?, ?, CAST(? AS JSONB))
-                ON CONFLICT(alert_key) DO UPDATE
-                SET summary_json = excluded.summary_json
-                """,
-                [alert_key, _EPOCH, payload],
+        conn.execute(
+            """
+            INSERT INTO shorts_scheduler_state (
+                name, last_tick_at, last_worker_id, last_gap_alerted_at, updated_at
             )
-        else:
-            conn.execute(
-                """
-                INSERT INTO instagram_metrics_alert_state (alert_key, last_sent_at, summary_json)
-                VALUES (?, ?, ?)
-                ON CONFLICT(alert_key) DO UPDATE
-                SET summary_json = excluded.summary_json
-                """,
-                [alert_key, _EPOCH, payload],
-            )
+            VALUES (?, ?, ?, NULL, CURRENT_TIMESTAMP)
+            ON CONFLICT(name) DO UPDATE
+            SET last_tick_at = excluded.last_tick_at,
+                last_worker_id = excluded.last_worker_id,
+                updated_at = CURRENT_TIMESTAMP
+            """,
+            [alert_key, blocked_since, payload],
+        )
         conn.commit()
     except Exception:
         conn.rollback()
         logger.exception("Discovery health alert state write failed key=%s", alert_key)
+    finally:
+        conn.close()
+
+
+def _claim_discovery_alert(alert_key: str, summary: Dict[str, Any], now: datetime) -> bool:
+    conn = get_db()
+    cutoff = now - timedelta(hours=24)
+    payload = json.dumps(summary, default=str, sort_keys=True)
+    try:
+        row = conn.execute(
+            """
+            UPDATE shorts_scheduler_state
+            SET last_gap_alerted_at = ?,
+                last_worker_id = ?,
+                updated_at = CURRENT_TIMESTAMP
+            WHERE name = ?
+              AND (last_gap_alerted_at IS NULL OR last_gap_alerted_at <= ?)
+            RETURNING name
+            """,
+            [now, payload, alert_key, cutoff],
+        ).fetchone()
+        conn.commit()
+        return bool(row)
+    except Exception:
+        conn.rollback()
+        logger.exception("Discovery health alert cooldown claim failed key=%s", alert_key)
+        return False
     finally:
         conn.close()
 
@@ -157,7 +179,7 @@ def _emit_condition(
     _store_observation(alert_key, observation)
     if not active or not send_alerts:
         return result
-    if claim_instagram_metrics_alert(observation, cooldown_hours=24, alert_key=alert_key):
+    if _claim_discovery_alert(alert_key, observation, now):
         try:
             _send_admin_alert(reason, observation)
             result["sent"] = True
