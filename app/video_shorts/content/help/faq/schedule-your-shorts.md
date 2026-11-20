@@ -40,7 +40,7 @@ The button is at the bottom of the window. The Short now shows **Scheduled — u
 Have several Shorts ready? Click `Schedule all` at the top.
 
 - **Start date/time** — when the first Short goes out.
-- **Interval (hours)** — the gap between Shorts. `24` = one per day, `48` = every other day.
+- **Interval (hours)** — the gap between Shorts. `24` = one per day, `48` = every other day, `168` = once a week.
 
 The window shows every date before you confirm. Click `Schedule clips`.
 
@@ -78,7 +78,8 @@ To move it, click `YouTube Studio` in that box (or open the video in YouTube Stu
 ## How often to post {#spacing}
 
 - **Spread them out.** If your Shorts come from a long video, don't release them all right after it. Space them over the following days so each one gets its own moment.
-- **Stay steady.** A regular rhythm — daily or every other day — usually works better than bursts.
+- **Stay steady.** A regular rhythm usually works better than bursts. Fewer is fine too — pick a pace you can keep, whether that's daily, every other day or a few times a week.
+- **Fewer is fine too.** If Shorts compete with your long videos, post fewer and keep them on days away from your long-video uploads.
 - **Use your data.** [Video Analytics](/video_shorts/video-analytics) shows which publish times got your best early views. Schedule new Shorts into those windows.
 
 ## Common questions {#faq}
@@ -86,6 +87,8 @@ To move it, click `YouTube Studio` in that box (or open the video in YouTube Stu
 **Can I change the time after I scheduled?** Yes — unschedule the Short and schedule it again. If it's already uploaded to YouTube, change it in YouTube Studio.
 
 **My Shorts all come out right after my long video.** Unschedule them, then use `Schedule all` with an interval of 24 or 48 hours, starting a day after your long video.
+
+**Can YouTube and Instagram go out on different days?** Yes. In the `Schedule & Publish` window, under `Instagram scheduling mode`, choose `Choose a separate Instagram time` and pick the Instagram date and time.
 
 **What does "Publish now (public)" do?** It skips the schedule and makes the Short public on YouTube right away.
 
