@@ -508,18 +508,8 @@ def render_outreach_report(report: Dict[str, Any]) -> Dict[str, str]:
 
 
 def _admin_recipients() -> list[str]:
-    conn = get_db_readonly()
-    try:
-        rows = conn.execute(
-            "SELECT email FROM shorts_users WHERE lower(COALESCE(role, '')) = 'admin'"
-        ).fetchall()
-    finally:
-        conn.close()
-    recipients = [str(row[0] or "").strip() for row in rows if row and "@" in str(row[0] or "")]
-    fallback = (os.getenv("ADMIN_NOTIFICATION_EMAIL") or "info@mintistudio.com").strip()
-    if "@" in fallback:
-        recipients.append(fallback)
-    return list(dict.fromkeys(recipients))
+    recipient = (os.getenv("ADMIN_NOTIFICATION_EMAIL") or "info@mintistudio.com").strip()
+    return [recipient] if "@" in recipient else []
 
 
 def send_outreach_report(report: Dict[str, Any], *, test: bool = False) -> list[Dict[str, Any]]:
