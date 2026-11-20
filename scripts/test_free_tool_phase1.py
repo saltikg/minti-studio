@@ -184,8 +184,8 @@ def main() -> None:
     preview = client.get("/tools/youtube-to-shorts?preview=preview-secret")
     assert preview.status_code == 200, preview.status_code
     page_html = preview.get_data(as_text=True)
-    assert "<title>YouTube to Shorts | Free AI Video Clipping Tool | MintiStudio</title>" in page_html
-    assert '<meta name="description" content="Turn long YouTube videos into captioned Shorts with MintiStudio&#39;s free AI video clipping tool. Paste a URL and try it without registration.">' in page_html
+    assert "<title>YouTube to Shorts | Free AI Video Clipping Tool | Minti Studio</title>" in page_html
+    assert '<meta name="description" content="Turn long YouTube videos into captioned Shorts with Minti Studio&#39;s free AI video clipping tool. Paste a URL and try it without registration.">' in page_html
     assert '<h1>YouTube to Shorts: Free AI Video Clipping Tool</h1>' in page_html
     assert '<link rel="canonical" href="https://mintistudio.com/tools/youtube-to-shorts">' in page_html
     assert '<meta name="robots" content="index, follow">' in page_html
@@ -196,8 +196,8 @@ def main() -> None:
     service_page = client.get("/services/short-form-video-editing")
     assert service_page.status_code == 200, service_page.status_code
     service_html = service_page.get_data(as_text=True)
-    assert "<title>Short Form Video Editing Service | Done-for-You Shorts | MintiStudio</title>" in service_html
-    assert "Turn your long videos into ready-to-review Shorts with MintiStudio&#39;s done-for-you short form video editing service." in service_html
+    assert "<title>Short Form Video Editing Service | Done-for-You Shorts | Minti Studio</title>" in service_html
+    assert "Turn your long videos into ready-to-review Shorts with Minti Studio&#39;s done-for-you short form video editing service." in service_html
     assert service_html.count("<h1") == 1
     assert '<html lang="en">' in service_html
     assert "<h1>Done-for-You Short Form Video Editing</h1>" in service_html

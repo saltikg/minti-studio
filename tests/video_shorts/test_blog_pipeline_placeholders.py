@@ -558,7 +558,7 @@ def test_manifest_visual_labels_render_as_captions_not_headings():
 def test_meta_fields_are_not_silently_truncated():
     long_title = "This is a deliberately long title that should be rewritten by the writer instead of truncated"
     long_description = (
-        "This is a deliberately long meta description for a MintiStudio blog article that should be "
+        "This is a deliberately long meta description for a Minti Studio blog article that should be "
         "rewritten as a complete sentence instead of being cut off by normalization."
     )
     article = _normalize_article_payload(

@@ -62,7 +62,7 @@ def _form_article_context(article: dict | None = None) -> dict:
         "cover_image_url": article.get("cover_image_url") or "",
         "meta_title": article.get("meta_title") or "",
         "meta_description": article.get("meta_description") or "",
-        "author_name": article.get("author_name") or "MintiStudio Team",
+        "author_name": article.get("author_name") or "Minti Studio Team",
         "reading_time": article.get("reading_time") or "",
         "status": article.get("status") or "draft",
         "published_at": published_at_value,

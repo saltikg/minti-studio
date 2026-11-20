@@ -47,7 +47,7 @@ def rewrite_content(content: str) -> str:
         count=1,
     )
     if autopilot_count != 1:
-        raise RuntimeError("Expected the existing Where MintiStudio helps Autopilot paragraph")
+        raise RuntimeError("Expected the existing Where Minti Studio helps Autopilot paragraph")
 
     text, example_count = re.subn(
         r"(?m)^If you want more control, the DIY plans let you work through the process yourself\..*$",
@@ -69,7 +69,7 @@ def rewrite_content(content: str) -> str:
     for index in range(1, len(parts), 2):
         sections[parts[index].strip()] = parts[index + 1]
     autopilot_sections = [heading for heading, body in sections.items() if "Autopilot" in body]
-    allowed = {"Where MintiStudio helps", "The practical next step"}
+    allowed = {"Where Minti Studio helps", "The practical next step"}
     if set(autopilot_sections) - allowed:
         raise RuntimeError(f"Autopilot pitch remains outside allowed sections: {autopilot_sections}")
     return text

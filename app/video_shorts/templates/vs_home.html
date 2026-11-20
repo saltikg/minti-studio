@@ -14,6 +14,34 @@
   <meta property="og:title" content="{{ page_title }}">
   <meta property="og:description" content="{{ page_description }}">
   <meta property="og:url" content="{{ canonical_url }}">
+  <script type="application/ld+json">
+  {
+    "@context": "https://schema.org",
+    "@graph": [
+      {
+        "@type": "Organization",
+        "@id": "https://mintistudio.com/video_shorts/#organization",
+        "name": "Minti Studio",
+        "alternateName": ["MintiStudio", "mintistudio"],
+        "url": "https://mintistudio.com/video_shorts/",
+        "logo": "https://mintistudio.com/video_shorts/static/img/logo/MintiStudio%20Mint%20Logo.png",
+        "sameAs": [
+          "https://alternativeto.net/software/minti-studio/about/"
+        ]
+      },
+      {
+        "@type": "WebSite",
+        "@id": "https://mintistudio.com/video_shorts/#website",
+        "name": "Minti Studio",
+        "alternateName": "MintiStudio",
+        "url": "https://mintistudio.com/video_shorts/",
+        "publisher": {
+          "@id": "https://mintistudio.com/video_shorts/#organization"
+        }
+      }
+    ]
+  }
+  </script>
 {% endblock %}
 
 {% block extra_styles %}
@@ -2363,10 +2391,10 @@
           playsinline
           preload="metadata"
           poster="{{ url_for('video_shorts_bp.static', filename='motion/maya-demo.jpg') }}?v=3"
-          aria-label="MintiStudio editor demo"
+          aria-label="Minti Studio editor demo"
         >
           <source src="{{ url_for('video_shorts_bp.static', filename='motion/maya-demo.mp4') }}?v=3" type="video/mp4">
-          <track kind="captions" srclang="en" src="{{ url_for('video_shorts_bp.static', filename='motion/maya-demo.en.vtt') }}?v=3" label="English" default>
+          <track kind="captions" srclang="en" src="{{ url_for('video_shorts_bp.static', filename='motion/maya-demo.en.vtt') }}?v=4" label="English" default>
         </video>
         <button class="home-demo-sound" type="button" data-home-demo-sound data-action="sound">🔊 Tap for sound</button>
       </div>
@@ -2426,30 +2454,30 @@
 
   <section class="sample-shorts-section" aria-labelledby="sample-shorts-heading">
     <h2 class="demo-title" id="sample-shorts-heading">See what Minti creates</h2>
-    <p class="demo-subline">Real Shorts made with MintiStudio — different speakers, layouts and caption styles.</p>
+    <p class="demo-subline">Real Shorts made with Minti Studio — different speakers, layouts and caption styles.</p>
     <div class="sample-shorts-gallery" aria-label="Sample vertical Shorts">
       <article class="sample-short-card">
-        <video muted loop playsinline preload="none" poster="{{ url_for('video_shorts_bp.static', filename='motion/real-short-1.jpg') }}" data-real-short aria-label="MintiStudio Short preview one">
+        <video muted loop playsinline preload="none" poster="{{ url_for('video_shorts_bp.static', filename='motion/real-short-1.jpg') }}" data-real-short aria-label="Minti Studio Short preview one">
           <source data-src="{{ url_for('video_shorts_bp.static', filename='motion/real-short-1-preview.mp4') }}" type="video/mp4">
         </video>
       </article>
       <article class="sample-short-card">
-        <video muted loop playsinline preload="none" poster="{{ url_for('video_shorts_bp.static', filename='motion/real-short-2.jpg') }}" data-real-short aria-label="MintiStudio Short preview two">
+        <video muted loop playsinline preload="none" poster="{{ url_for('video_shorts_bp.static', filename='motion/real-short-2.jpg') }}" data-real-short aria-label="Minti Studio Short preview two">
           <source data-src="{{ url_for('video_shorts_bp.static', filename='motion/real-short-2-preview.mp4') }}" type="video/mp4">
         </video>
       </article>
       <article class="sample-short-card">
-        <video muted loop playsinline preload="none" poster="{{ url_for('video_shorts_bp.static', filename='motion/real-short-3.jpg') }}" data-real-short aria-label="MintiStudio Short preview three">
+        <video muted loop playsinline preload="none" poster="{{ url_for('video_shorts_bp.static', filename='motion/real-short-3.jpg') }}" data-real-short aria-label="Minti Studio Short preview three">
           <source data-src="{{ url_for('video_shorts_bp.static', filename='motion/real-short-3-preview.mp4') }}" type="video/mp4">
         </video>
       </article>
       <article class="sample-short-card">
-        <video muted loop playsinline preload="none" poster="{{ url_for('video_shorts_bp.static', filename='motion/real-short-4.jpg') }}" data-real-short aria-label="MintiStudio Short preview four">
+        <video muted loop playsinline preload="none" poster="{{ url_for('video_shorts_bp.static', filename='motion/real-short-4.jpg') }}" data-real-short aria-label="Minti Studio Short preview four">
           <source data-src="{{ url_for('video_shorts_bp.static', filename='motion/real-short-4-preview.mp4') }}" type="video/mp4">
         </video>
       </article>
       <article class="sample-short-card">
-        <video muted loop playsinline preload="none" poster="{{ url_for('video_shorts_bp.static', filename='motion/real-short-5.jpg') }}" data-real-short aria-label="MintiStudio Short preview five">
+        <video muted loop playsinline preload="none" poster="{{ url_for('video_shorts_bp.static', filename='motion/real-short-5.jpg') }}" data-real-short aria-label="Minti Studio Short preview five">
           <source data-src="{{ url_for('video_shorts_bp.static', filename='motion/real-short-5-preview.mp4') }}" type="video/mp4">
         </video>
       </article>
@@ -2693,19 +2721,19 @@
     <div class="faq-list" aria-label="Frequently asked questions">
       <div class="faq-item">
         <button class="faq-trigger" type="button" aria-expanded="false" aria-controls="faq-panel-1" id="faq-trigger-1">
-          <span>How does MintiStudio work?</span>
+          <span>How does Minti Studio work?</span>
           <i class="bi bi-chevron-down faq-chevron" aria-hidden="true"></i>
         </button>
         <div class="faq-panel" id="faq-panel-1" role="region" aria-labelledby="faq-trigger-1" hidden>
           <div class="faq-panel-inner">
-            <p class="faq-answer">Upload one long video. MintiStudio clips the best moments, publishes them to your channels on a schedule, and shows how they perform — all from one panel.</p>
+            <p class="faq-answer">Upload one long video. Minti Studio clips the best moments, publishes them to your channels on a schedule, and shows how they perform — all from one panel.</p>
           </div>
         </div>
       </div>
 
       <div class="faq-item">
         <button class="faq-trigger" type="button" aria-expanded="false" aria-controls="faq-panel-2" id="faq-trigger-2">
-          <span>Who is MintiStudio for?</span>
+          <span>Who is Minti Studio for?</span>
           <i class="bi bi-chevron-down faq-chevron" aria-hidden="true"></i>
         </button>
         <div class="faq-panel" id="faq-panel-2" role="region" aria-labelledby="faq-trigger-2" hidden>
@@ -2734,7 +2762,7 @@
         </button>
         <div class="faq-panel" id="faq-panel-4" role="region" aria-labelledby="faq-trigger-4" hidden>
           <div class="faq-panel-inner">
-            <p class="faq-answer">MintiStudio is AI-powered, so it works across many languages — with the best results in English.</p>
+            <p class="faq-answer">Minti Studio is AI-powered, so it works across many languages — with the best results in English.</p>
           </div>
         </div>
       </div>
@@ -2746,7 +2774,7 @@
         </button>
         <div class="faq-panel" id="faq-panel-5" role="region" aria-labelledby="faq-trigger-5" hidden>
           <div class="faq-panel-inner">
-            <p class="faq-answer">MintiStudio builds each short for you — clips, captions, and formatting. And if you want to fine-tune, a built-in editor is right there.</p>
+            <p class="faq-answer">Minti Studio builds each short for you — clips, captions, and formatting. And if you want to fine-tune, a built-in editor is right there.</p>
           </div>
         </div>
       </div>

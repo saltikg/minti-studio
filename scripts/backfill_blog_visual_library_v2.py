@@ -91,7 +91,7 @@ def _copy_image(entry: dict[str, Any], slug: str, *, apply: bool) -> str:
 def _replacement_markup(entry: dict[str, Any], slug: str, caption: str, *, apply: bool) -> str:
     media_type = str(entry.get("type") or "screenshot")
     clean_caption = re.sub(r"\s*\[(?:screenshot|graphic)\]\s*$", "", caption or "", flags=re.I).strip()
-    clean_caption = clean_caption or str(entry.get("alt") or "MintiStudio visual")
+    clean_caption = clean_caption or str(entry.get("alt") or "Minti Studio visual")
     if media_type == "video":
         return f":::motion {entry['id']}\n{clean_caption}\n:::"
     url = _copy_image(entry, slug, apply=apply)

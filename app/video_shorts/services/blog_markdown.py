@@ -290,7 +290,7 @@ def _figure_html(match: re.Match[str]) -> str:
     caption = _caption_from_image(alt, title)
     safe_caption = escape(caption)
     screenshot_tag = (
-        '<span class="tag">Screenshot from MintiStudio</span>'
+        '<span class="tag">Screenshot from Minti Studio</span>'
         if _is_screenshot_image(src, title)
         else ""
     )

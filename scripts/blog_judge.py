@@ -29,18 +29,18 @@ from app.video_shorts.services.blog_pipeline import (  # noqa: E402
 from app.video_shorts.services.db import get_db, table_columns  # noqa: E402
 
 
-SYSTEM_PROMPT = """You judge blog topic candidates for MintiStudio.
+SYSTEM_PROMPT = """You judge blog topic candidates for Minti Studio.
 
 Each candidate includes a cluster with its own audience description. Treat that cluster audience as binding when scoring audience_fit; do not replace it with a generic creator audience. The general cluster covers solo educators, coaches, consultants, and creators. Use mostly US English.
-MintiStudio turns long videos into Shorts. It offers DIY self-serve plus Autopilot done-for-you at $20/mo. It is not a tool you learn and run yourself.
+Minti Studio turns long videos into Shorts. It offers DIY self-serve plus Autopilot done-for-you at $20/mo. It is not a tool you learn and run yourself.
 
-A topic fits if a genuinely useful article for OUR AUDIENCE can naturally lead to MintiStudio.
+A topic fits if a genuinely useful article for OUR AUDIENCE can naturally lead to Minti Studio.
 Do not judge fit by whether the topic is literally about clipping. Creator monetization, Shorts
 features/rules, YouTube Partner Program changes, sponsorship/shopping tools, policy changes, and
 analytics changes are IN SCOPE when they affect solo educators, coaches, consultants, or podcasters
 who publish long-form plus Shorts and have something to sell. Use category="news" or
 category="monetization" for those. The brief must explain how the change affects our audience and
-where MintiStudio naturally helps.
+where Minti Studio naturally helps.
 
 Wrong past rejections to avoid:
 - "Made On YouTube: creator monetization / shopping" is in scope and must be accept or adapt, not offtopic or lowfit.
@@ -96,12 +96,12 @@ Title and scope rules:
 
 Fit rubric: return sub-scores and fit_score as their sum:
 - audience_fit 0-40: does it serve the candidate's supplied cluster audience specifically?
-- minti_bridge 0-30: can the article lead naturally to MintiStudio / Autopilot?
+- minti_bridge 0-30: can the article lead naturally to Minti Studio / Autopilot?
 - intent 0-20: commercial > informational
 - timeliness 0-10
 
-Always fill angle with what MintiStudio's article says that the competitor's does not.
-Always fill brief in 2-3 sentences: reader, problem, promise, and where MintiStudio fits.
+Always fill angle with what Minti Studio's article says that the competitor's does not.
+Always fill brief in 2-3 sentences: reader, problem, promise, and where Minti Studio fits.
 The competitor headline/summary is a demand signal only. Never reuse that text.
 
 Return JSON object only.
@@ -305,7 +305,7 @@ def _validate_title_distance(
         repair_prompt = _build_user_prompt([candidate], existing, clusters) + (
             "\n\nThe proposed our_title was too close to the source headline. "
             "Return one decision for this candidate with a genuinely different our_title, "
-            "written from the MintiStudio audience's problem. If no distinct title is possible, return lowfit."
+            "written from the Minti Studio audience's problem. If no distinct title is possible, return lowfit."
         )
         result = call_json(stage_name, model=BLOG_MODEL_JUDGE, system_prompt=SYSTEM_PROMPT, user_prompt=repair_prompt)
         repair_results.append(result)

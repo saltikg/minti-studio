@@ -25,7 +25,7 @@ def test_writer_policy_keeps_topic_title_and_blocks_prices_and_bad_meta(monkeypa
             "summary": "The plan costs $20.",
             "content_md": (
                 "Intro with the required CTA https://mintistudio.com/video_shorts/register and a $20 price.\n\n"
-                "## Where MintiStudio helps\n\nPitch one.\n\n"
+                "## Where Minti Studio helps\n\nPitch one.\n\n"
                 "## DIY or Autopilot\n\nPitch two.\n\n" + "word " * 1100
             ),
             "meta_title": "An intentionally overlong meta title that cannot fit within sixty characters cleanly",
@@ -67,7 +67,7 @@ def test_product_facts_use_current_autopilot_description_without_prices():
 
 
 def test_doctors_post_rewrite_removes_extra_pitches_and_prices():
-    source = f"""## Where MintiStudio helps
+    source = f"""## Where Minti Studio helps
 
 If your bottleneck is not ideas but time, Autopilot is the cleanest fit. You share a link and review every prepared Short before anything goes out.
 

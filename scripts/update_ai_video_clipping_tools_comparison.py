@@ -145,7 +145,7 @@ def update_comparison_article(conn, source: ArticleSource) -> int:
             content = ?,
             meta_title = ?,
             meta_description = ?,
-            author_name = 'MintiStudio Team',
+            author_name = 'Minti Studio Team',
             reading_time = ?,
             content_updated_at = CURRENT_TIMESTAMP,
             import_source = 'manual_blog_post',

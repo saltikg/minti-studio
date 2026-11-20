@@ -37,11 +37,11 @@ PATCHES = (
     ArticlePatch(
         slug="done-for-you-vs-diy-video-clipping",
         old=(
-            "[Start free with MintiStudio](https://mintistudio.com/video_shorts/register). "
+            "[Start free with Minti Studio](https://mintistudio.com/video_shorts/register). "
             "If you want production handled, try Autopilot’s first month free, with no card required."
         ),
         new=(
-            "[Explore MintiStudio's done-for-you short form video editing service]"
+            "[Explore Minti Studio's done-for-you short form video editing service]"
             f"({SERVICE_PATH}) to see how Autopilot prepares ready-to-review Shorts, or "
             "[try the free AI clipping tool](/tools/youtube-to-shorts) if you want to run the workflow yourself."
         ),
@@ -49,13 +49,13 @@ PATCHES = (
     ArticlePatch(
         slug="weekly-shorts-workflow-for-busy-creators",
         old=(
-            "If you want the outcome without managing every step, MintiStudio Autopilot follows the same workflow for you. "
-            "The editor team uses MintiStudio to turn your long videos into Shorts, prepare them for publishing, and keep "
+            "If you want the outcome without managing every step, Minti Studio Autopilot follows the same workflow for you. "
+            "The editor team uses Minti Studio to turn your long videos into Shorts, prepare them for publishing, and keep "
             "your schedule moving, so you can stay focused on creating the original content."
         ),
         new=(
             "If you want the outcome without managing every step, "
-            "[MintiStudio's done-for-you short form video editing service]"
+            "[Minti Studio's done-for-you short form video editing service]"
             f"({SERVICE_PATH}) uses Autopilot to turn your long videos into ready-to-review Shorts, prepare captions, "
             "vertical framing and titles, and keep the scheduling workflow moving while you focus on the original content."
         ),

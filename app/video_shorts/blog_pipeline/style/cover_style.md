@@ -1,6 +1,6 @@
 MINTI COVER STYLE, LOCKED:
 
-Create a 16:9 editorial blog cover in MintiStudio's soft 3D illustration style. Use a warm off-white canvas (#FAF9F5) with soft dimensional objects, rounded geometry, subtle depth, matte surfaces, gentle ambient shadows, and bright diffused studio lighting.
+Create a 16:9 editorial blog cover in Minti Studio's soft 3D illustration style. Use a warm off-white canvas (#FAF9F5) with soft dimensional objects, rounded geometry, subtle depth, matte surfaces, gentle ambient shadows, and bright diffused studio lighting.
 
 Primary brand color: Minti mint #2DD4BF (deeper shade #14B8A6). Use it selectively for content-flow ribbons, active states, progress indicators, selected objects, and small brand details. Use deep charcoal/navy #0F1720 for contrast. Burgundy #981B3F is optional and must remain under ~10% of the image, used only as a small editorial accent block, clothing accent, or supporting object. Burgundy is an optional editorial accent, not a core Minti brand color. Natural neutral object colors are allowed (wood, graphite, warm gray, cream, natural plant tones); mint is a controlled accent, not the color of every object.
 

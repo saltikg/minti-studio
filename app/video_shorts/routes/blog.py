@@ -78,7 +78,7 @@ def _article_json_ld(article: dict[str, Any]) -> str:
         },
         "publisher": {
             "@type": "Organization",
-            "name": "MintiStudio",
+            "name": "Minti Studio",
             "url": _absolute_url(url_for("video_shorts_bp.home")),
         },
         "mainEntityOfPage": article["canonical_url"],
@@ -102,7 +102,7 @@ def blog_index():
         "vs_blog_index.html",
         articles=articles,
         canonical_url=canonical_url,
-        meta_title="MintiStudio Blog | Shorts workflow, scheduling, and publishing tips",
+        meta_title="Minti Studio Blog | Shorts workflow, scheduling, and publishing tips",
         meta_description=(
             "Actionable guides on turning long videos into Shorts, scheduling releases, and building a more consistent short-form publishing workflow."
         ),
@@ -144,7 +144,7 @@ def blog_article(slug: str):
         article=article,
         related_articles=related_articles,
         canonical_url=article["canonical_url"],
-        meta_title=article.get("meta_title") or f"{article['title']} | MintiStudio Blog",
+        meta_title=article.get("meta_title") or f"{article['title']} | Minti Studio Blog",
         meta_description=article.get("meta_description") or article["summary"],
         article_json_ld=_article_json_ld(article),
     )

@@ -81,8 +81,8 @@ COMPETITOR_FACTS_PATHS = (
     CONTEXT_ROOT / "comparison_facts.md",
 )
 SELF_DISCLAIMER_RE = re.compile(
-    r"(not a claim that MintiStudio|do not assume Autopilot|should not be inferred from the price|"
-    r"not a promised MintiStudio|confirm .*MintiStudio|MintiStudio .*does not (?:claim|promise|specify))",
+    r"(not a claim that Minti Studio|do not assume Autopilot|should not be inferred from the price|"
+    r"not a promised Minti Studio|confirm .*Minti Studio|Minti Studio .*does not (?:claim|promise|specify))",
     re.I,
 )
 PRICE_MENTION_RE = re.compile(
@@ -298,7 +298,7 @@ def _previous_h2_and_first_paragraph(content: str, marker: str) -> tuple[str, st
         if _is_safe_paragraph_line(line):
             paragraph = line.strip()
             break
-    return heading or "MintiStudio workflow", paragraph
+    return heading or "Minti Studio workflow", paragraph
 
 
 def _section_context_for_marker(content: str, marker: str) -> tuple[str, str]:
@@ -307,7 +307,7 @@ def _section_context_for_marker(content: str, marker: str) -> tuple[str, str]:
     marker_index = IMAGE_MARKERS.index(marker) if marker in IMAGE_MARKERS else 0
     headings = list(re.finditer(r"(?m)^##\s+(.+?)\s*$", content or ""))
     if not headings:
-        return "MintiStudio workflow", ""
+        return "Minti Studio workflow", ""
     heading_match = headings[min(marker_index, len(headings) - 1)]
     heading = heading_match.group(1).strip()
     end = headings[min(marker_index + 1, len(headings) - 1)].start() if marker_index + 1 < len(headings) else len(content or "")
@@ -316,7 +316,7 @@ def _section_context_for_marker(content: str, marker: str) -> tuple[str, str]:
         if _is_safe_paragraph_line(line):
             paragraph = line.strip()
             break
-    return heading or "MintiStudio workflow", paragraph
+    return heading or "Minti Studio workflow", paragraph
 
 
 def _generated_visual_for_marker(content: str, marker: str) -> dict[str, Any]:
@@ -1627,7 +1627,7 @@ def _code_checks(
     product_pitch_headings = [
         heading
         for heading in _h2_headings(content)
-        if re.search(r"\b(?:mintistudio|autopilot|diy|do it yourself)\b", heading, flags=re.I)
+        if re.search(r"\b(?:minti\s+studio|autopilot|diy|do it yourself)\b", heading, flags=re.I)
     ]
     if len(product_pitch_headings) > 1:
         blocking_issues.append("more than one product pitch section before the final CTA")
@@ -1657,7 +1657,7 @@ def _code_checks(
             if status != 200:
                 blocking_issues.append(f"internal blog link returned {status or 'error'}: {url}")
     if SELF_DISCLAIMER_RE.search(content):
-        blocking_issues.append("MintiStudio self-disclaimer is not allowed")
+        blocking_issues.append("Minti Studio self-disclaimer is not allowed")
     if len(visuals) > BLOG_MAX_VISUAL_ITEMS:
         fixed["visuals"] = f"trimmed visuals to at most {BLOG_MAX_VISUAL_ITEMS} items"
     generate_count = sum(1 for visual in visuals if visual.get("type") == "generate")
@@ -1810,7 +1810,7 @@ def _replace_screenshot_placeholders(article: dict[str, Any], screenshots: list[
         if not source.is_file():
             raise RuntimeError(f"library visual source is missing: {screenshot['filename']}")
         alt = str(screenshot.get("alt") or visual.get("alt") or "").replace('"', "'")
-        caption = str(visual.get("caption") or alt or "MintiStudio workflow visual").strip().replace('"', "'")
+        caption = str(visual.get("caption") or alt or "Minti Studio workflow visual").strip().replace('"', "'")
         caption = re.sub(
             r"^(?:#{1,6}\s*)?(?:Screenshot|Example Short)\s*:\s*",
             "",
@@ -1887,7 +1887,7 @@ def _image_prompt_for_cover(article: dict[str, Any]) -> str:
     cover = article.get("cover") if isinstance(article.get("cover"), dict) else {}
     prompt = str(cover.get("prompt") or cover.get("description") or "").strip()
     if not prompt:
-        prompt = f"Two to four symbolic objects showing the article idea: {article.get('title') or 'MintiStudio guide'}"
+        prompt = f"Two to four symbolic objects showing the article idea: {article.get('title') or 'Minti Studio guide'}"
     archetype = str(cover.get("archetype") or article.get("cover_archetype") or "").strip().upper()[:1]
     label = COVER_ARCHETYPE_LABELS.get(archetype)
     additions = [
@@ -2197,7 +2197,7 @@ def _save_draft(conn, *, state: PipelineState, article: dict[str, Any], visuals_
             title, slug, summary, content, cover_image_url, meta_title, meta_description,
             author_name, reading_time, view_count, status, published_at, content_updated_at, import_source, import_source_id
         )
-        VALUES (?, ?, ?, ?, ?, ?, ?, 'MintiStudio Team', ?, 0, 'draft', NULL, CURRENT_TIMESTAMP, 'blog_pipeline', ?)
+        VALUES (?, ?, ?, ?, ?, ?, ?, 'Minti Studio Team', ?, 0, 'draft', NULL, CURRENT_TIMESTAMP, 'blog_pipeline', ?)
         RETURNING id
         """,
         [
@@ -2366,12 +2366,12 @@ def run_images_for_existing_draft(*, run_id: int, article_id: int, low_medium_te
 
 
 def _writer_prompt() -> str:
-    return f"""You are the MintiStudio blog Writer. Return strict JSON only. Write original, practical long-form blog content for the supplied topic. Use the stable context as binding instructions.
+    return f"""You are the Minti Studio blog Writer. Return strict JSON only. Write original, practical long-form blog content for the supplied topic. Use the stable context as binding instructions.
 
 Required JSON keys: title, slug, summary, content_md, meta_title, meta_description, reading_time, cover, visuals.
 The article title and H1 must equal topic.title exactly. Never rewrite, lengthen, subtitle, or improve it. Topic titles already follow the scout's plain search-style rules, contain the cluster search phrase, avoid poetic wording, and stay near 70 characters.
 Never state a price, dollar amount, monthly amount, package amount, or price-derived claim anywhere in an auto-generated post. Link to /autopilot or /video_shorts/#pricing for current plan details instead.
-Use at most one product pitch section, titled "Where MintiStudio helps", plus the final CTA. Do not add separate DIY, Autopilot, pricing, product-example, or repeated product-pitch sections.
+Use at most one product pitch section, titled "Where Minti Studio helps", plus the final CTA. Do not add separate DIY, Autopilot, pricing, product-example, or repeated product-pitch sections.
 Generate meta_title at no more than 60 characters and meta_description at no more than 155 characters. Both must be deliberately written to fit; meta_description must end as a complete sentence. Never truncate either field.
 reading_time must be an integer number of minutes only, such as 8. Never return "8 min read" or any other phrase; the renderer adds the label.
 cover.prompt must describe only the scene: 2-4 objects, one visual idea, story, and mood. Never include style, colors, text, logos, UI, screenshots, third-party brands, or realistic people in cover.prompt.
@@ -2389,18 +2389,18 @@ Each visual must include a short caption, maximum 12 words, suitable for the mar
 Visual labels are captions under the media, never Markdown headings. Do not write headings such as "## Screenshot:", "### Screenshot:", or "### Example Short:". For screenshot visuals, put the label in visual.caption; for video visuals, put the description in visual.caption and the pipeline will render it as "Example Short: …" below the video.
 Never use placeholder image text such as "Alt text", "Image", or "Placeholder"; every visual alt must describe the actual visual.
 Use only the supplied published_articles URLs for internal links. Do not invent blog URLs.
-Never claim anything about MintiStudio unless it is in minti_facts.md.
+Never claim anything about Minti Studio unless it is in minti_facts.md.
 Any third-party (competitor) pricing, features, limits, or comparison claims may ONLY use competitor_facts.md. If a competitor detail is not in competitor_facts.md, omit it; never invent or guess competitor pricing or features. You may name and compare competitors when their data is present in competitor_facts.md.
-Do not state prices for MintiStudio or competitors. Compare products on features and workflow only, and link readers to the relevant pricing page for current plan details.
-For "best OpusClip alternatives" or competitor-comparison articles, OpusClip is the reference point the reader already knows, not one of the alternatives. Do not list OpusClip as "alternative #1". Frame OpusClip as a capable baseline readers are comparing against; the alternatives are the other tools in competitor_facts.md, such as Klap, Vizard, Quso, 2Short, Submagic, plus MintiStudio when it fits the workflow.
-Compare at most 3 competitor tools in one article. Pick the 3 most relevant to the topic from competitor_facts.md; do not dump every available competitor. MintiStudio is the product, not counted as one of the 3. In OpusClip-alternatives articles, OpusClip is the baseline/reference and also not counted as one of the 3.
-MintiStudio must appear as a clear, concrete option in the comparison and conclusion, stated plainly and tied to the reader's bottleneck. Do not hedge Minti with words like "usually", "maybe", "for the right buyer", or "might be". Do not claim Minti is best at everything; recommend it for the specific need it fits, such as done-for-you Autopilot for readers short on time or self-serve clipping for readers who want control. Do not trash competitors; they are capable tools, and the article helps the reader find the best fit.
-Never write sentences that disclaim, hedge, or caution about MintiStudio itself. If a Minti detail is not in minti_facts.md, omit it. Make an honest, clear case for Autopilot where it genuinely fits and tie Minti features to the reader's problem.
+Do not state prices for Minti Studio or competitors. Compare products on features and workflow only, and link readers to the relevant pricing page for current plan details.
+For "best OpusClip alternatives" or competitor-comparison articles, OpusClip is the reference point the reader already knows, not one of the alternatives. Do not list OpusClip as "alternative #1". Frame OpusClip as a capable baseline readers are comparing against; the alternatives are the other tools in competitor_facts.md, such as Klap, Vizard, Quso, 2Short, Submagic, plus Minti Studio when it fits the workflow.
+Compare at most 3 competitor tools in one article. Pick the 3 most relevant to the topic from competitor_facts.md; do not dump every available competitor. Minti Studio is the product, not counted as one of the 3. In OpusClip-alternatives articles, OpusClip is the baseline/reference and also not counted as one of the 3.
+Minti Studio must appear as a clear, concrete option in the comparison and conclusion, stated plainly and tied to the reader's bottleneck. Do not hedge Minti with words like "usually", "maybe", "for the right buyer", or "might be". Do not claim Minti is best at everything; recommend it for the specific need it fits, such as done-for-you Autopilot for readers short on time or self-serve clipping for readers who want control. Do not trash competitors; they are capable tools, and the article helps the reader find the best fit.
+Never write sentences that disclaim, hedge, or caution about Minti Studio itself. If a Minti detail is not in minti_facts.md, omit it. Make an honest, clear case for Autopilot where it genuinely fits and tie Minti features to the reader's problem.
 Use the primary keyword naturally, with correct hyphenation such as "done-for-you"; never place it as a standalone bolded SEO phrase.
 Do not force the exact-match keyword phrase awkwardly into a sentence or repeat it for SEO. One natural use is enough. If the exact phrase reads stiffly, rephrase it for a human, such as "short-form video can be such a useful channel for consultants" instead of "youtube shorts for consultants can be such a useful channel."
 In body prose, spell out small quantities as words: one, two, three. Never write constructions like "a 1 clear idea" or "a 1 private story"; write "one clear idea" or "one private story." Digits are allowed only for real data/statistics such as "10 million views", "15 videos/month", percentages, years, or component/infographic specs, not ordinary prose.
-When MintiStudio features are mentioned, tie each one to the reader's task in the same sentence; never use a comma-separated feature list.
-Screenshot placement: if the article covers Autopilot, prefer placing a relevant screenshot in or near the Autopilot or "Where MintiStudio helps" section when the screenshot library has a suitable image."""
+When Minti Studio features are mentioned, tie each one to the reader's task in the same sentence; never use a comma-separated feature list.
+Screenshot placement: if the article covers Autopilot, prefer placing a relevant screenshot in or near the Autopilot or "Where Minti Studio helps" section when the screenshot library has a suitable image."""
 
 
 def _reviewer_prompt(cluster_slug: str = "general", *, pre_image: bool = True) -> str:
@@ -2415,25 +2415,25 @@ Doctors-cluster safety rule: This post is about growing and operating a channel,
         "Published-content rule: real Markdown images and manifest-backed motion blocks are expected. "
         "Do not require IMAGE placeholders and do not flag a real image merely because its placeholder was replaced."
     )
-    return f"""You are the MintiStudio blog Reviewer. Return strict JSON only. Score the article against the supplied facts, checks, screenshots, published URLs, and existing titles. Be concrete and conservative.
+    return f"""You are the Minti Studio blog Reviewer. Return strict JSON only. Score the article against the supplied facts, checks, screenshots, published URLs, and existing titles. Be concrete and conservative.
 
 Return JSON with total, scores, blocking_issues, fixes.
 Any deterministic check issue must be copied into blocking_issues.
-Blocking issues regardless of total score: any price mention, including a MintiStudio price; a rewritten article title that does not exactly equal topic.title; a meta title over 60 characters; a meta description over 155 characters or ending mid-sentence; more than one product pitch section before the final CTA; MintiStudio self-disclaimers or hedges; any internal link not exactly in published_articles or the CTA URL; bare IMAGE_n placeholder text; more than {BLOG_MAX_VISUAL_ITEMS} visual items after code repair; invalid flow/compare syntax; compare metric numbers not present in the article prose outside the compare block.
+Blocking issues regardless of total score: any price mention, including a Minti Studio price; a rewritten article title that does not exactly equal topic.title; a meta title over 60 characters; a meta description over 155 characters or ending mid-sentence; more than one product pitch section before the final CTA; Minti Studio self-disclaimers or hedges; any internal link not exactly in published_articles or the CTA URL; bare IMAGE_n placeholder text; more than {BLOG_MAX_VISUAL_ITEMS} visual items after code repair; invalid flow/compare syntax; compare metric numbers not present in the article prose outside the compare block.
 {image_rule}
-Facts rule: flow/compare text may only describe MintiStudio features that appear in minti_facts.md. Third-party brand features, limits, or workflow claims are allowed only when they match competitor_facts.md. Any price mention is a blocking issue. Do not allow invented metrics, features, platform logos, or unverified third-party brand claims. Autopilot has no required approval step: customers may change or remove a Short before it goes live.
-Non-blocking fix: a MintiStudio section that reads as a feature list without tying features to the reader's problem.
+Facts rule: flow/compare text may only describe Minti Studio features that appear in minti_facts.md. Third-party brand features, limits, or workflow claims are allowed only when they match competitor_facts.md. Any price mention is a blocking issue. Do not allow invented metrics, features, platform logos, or unverified third-party brand claims. Autopilot has no required approval step: customers may change or remove a Short before it goes live.
+Non-blocking fix: a Minti Studio section that reads as a feature list without tying features to the reader's problem.
 {doctor_rule}"""
 
 
 def _revision_prompt() -> str:
-    return """You are the MintiStudio blog Reviser. Return strict JSON only. Apply only the listed reviewer fixes and blocking issues. Return the full article, not a patch or excerpt. Never shorten, summarize, delete, or rewrite sections that are not mentioned in the fixes. Preserve valid metadata, links, cover, visuals, and exact [[BLOCK_N]] protected tokens unless a fix explicitly requires moving the surrounding paragraph. Keep every [[BLOCK_N]] token exactly once and in the same relative position. Never drop the visuals array.
+    return """You are the Minti Studio blog Reviser. Return strict JSON only. Apply only the listed reviewer fixes and blocking issues. Return the full article, not a patch or excerpt. Never shorten, summarize, delete, or rewrite sections that are not mentioned in the fixes. Preserve valid metadata, links, cover, visuals, and exact [[BLOCK_N]] protected tokens unless a fix explicitly requires moving the surrounding paragraph. Keep every [[BLOCK_N]] token exactly once and in the same relative position. Never drop the visuals array.
 
 If a reviewer flags compare metrics because numbers in a :::compare block are not stated in prose, fix the compare block by removing the digits and making the values qualitative. Do not add filler prose just to justify the metric numbers."""
 
 
 def _designer_prompt() -> str:
-    return """You are the MintiStudio blog Designer. Return strict JSON only with content_md. You are given final, approved prose. Do not change any wording. Only wrap existing passages in ::: component blocks. Return the same text with components added. Never reword, rewrite, re-summarize, regenerate, add, or delete sentences. Never change links, metadata, or [[BLOCK_N]] protected tokens. Keep every [[BLOCK_N]] token exactly once and in the same relative position.
+    return """You are the Minti Studio blog Designer. Return strict JSON only with content_md. You are given final, approved prose. Do not change any wording. Only wrap existing passages in ::: component blocks. Return the same text with components added. Never reword, rewrite, re-summarize, regenerate, add, or delete sentences. Never change links, metadata, or [[BLOCK_N]] protected tokens. Keep every [[BLOCK_N]] token exactly once and in the same relative position.
 
 Do not add, invent, or write markdown image syntax under any circumstances. Never create ![alt](path) image links. Never change image paths. Never add new IMAGE markers. Only keep existing <!-- IMAGE_n --> markers exactly where they already are.
 
@@ -2748,7 +2748,7 @@ def run_pipeline(*, topic_id: int | None = None, dry_run: bool = False) -> dict[
 
 
 def main() -> int:
-    parser = argparse.ArgumentParser(description="Run one MintiStudio blog production pipeline.")
+    parser = argparse.ArgumentParser(description="Run one Minti Studio blog production pipeline.")
     parser.add_argument("--dry-run", action="store_true", help="Do not save the draft or run rows.")
     parser.add_argument("--topic-id", type=int, default=None, help="Run a specific queued topic.")
     parser.add_argument("--images-only", action="store_true", help="Run the image stage for an existing pipeline draft.")

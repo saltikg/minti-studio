@@ -9,7 +9,7 @@ secondary_keywords: ["free youtube to shorts converter", "ai clip finder", "yout
 
 > Your best Short is already inside a video you published.
 
-[Try MintiStudio's free AI video clipping tool](https://mintistudio.com/tools/youtube-to-shorts)
+[Try Minti Studio's free AI video clipping tool](https://mintistudio.com/tools/youtube-to-shorts)
 
 You spent hours recording a 20-minute video. Somewhere inside it there are two or three moments that would stop someone mid-scroll: a sharp answer, a personal story, a line that lands.
 
@@ -23,7 +23,7 @@ The goal is simple: one paste, one finished Short, and the freedom to fix anythi
 
 ## What the free tool does
 
-MintiStudio's **AI video clipping tool** uses the same engine our customers use every day, open to anyone with no sign-up needed to try it.
+Minti Studio's **AI video clipping tool** uses the same engine our customers use every day, open to anyone with no sign-up needed to try it.
 
 - It transcribes your video with its own speech model, not YouTube's auto-captions.
 - It scores every passage for a strong hook, clarity, and whether it makes sense on its own.
@@ -57,9 +57,9 @@ Cut words from the transcript and they're cut from the video. Fix caption text, 
 Create a free account (no credit card) to download your Short, or connect your channel and schedule it to YouTube, Instagram and Facebook. Your clips and edits move into your account automatically.
 :::
 
-![MintiStudio free YouTube to Shorts tool with a pasted video link](/video_shorts/static/img/blog/free-youtube-to-shorts-tool/free-tool-landing.jpg "Paste a YouTube link without signing up [screenshot]")
+![Minti Studio free YouTube to Shorts tool with a pasted video link](/video_shorts/static/img/blog/free-youtube-to-shorts-tool/free-tool-landing.jpg "Paste a YouTube link without signing up [screenshot]")
 
-![MintiStudio rendering multiple Shorts with AI clip scores](/video_shorts/static/img/blog/free-youtube-to-shorts-tool/clips-rendering-scores.jpg "Review titles and AI scores while clips render [screenshot]")
+![Minti Studio rendering multiple Shorts with AI clip scores](/video_shorts/static/img/blog/free-youtube-to-shorts-tool/clips-rendering-scores.jpg "Review titles and AI scores while clips render [screenshot]")
 
 ## Framing that follows the people on screen
 
@@ -104,7 +104,7 @@ Here, the transcript is the editor:
 - shorten the setup so the payoff comes first
 - change the title before you regenerate
 
-![MintiStudio Your Clips workspace with AI suggestions and clip scores](/video_shorts/static/img/blog/free-youtube-to-shorts-tool/your-clips-ai-scores.jpg "Review the finished Short and more AI suggestions [screenshot]")
+![Minti Studio Your Clips workspace with AI suggestions and clip scores](/video_shorts/static/img/blog/free-youtube-to-shorts-tool/your-clips-ai-scores.jpg "Review the finished Short and more AI suggestions [screenshot]")
 
 :::compare Editing a Short
 clips | Timeline scrubbing for every cut | Delete words in the transcript | up
@@ -132,7 +132,7 @@ The free tool is the fastest way to see what Minti picks from your video.
 
 Use the DIY plans if you want to keep making Shorts yourself from longer videos, with AI suggestions, scheduling and publishing.
 
-Use [MintiStudio's done-for-you short form video editing service](/services/short-form-video-editing) if you want the long-video-to-Shorts workflow handled for you, while you still review every Short before it goes live.
+Use [Minti Studio's done-for-you short form video editing service](/services/short-form-video-editing) if you want the long-video-to-Shorts workflow handled for you, while you still review every Short before it goes live.
 
 ## Related guides
 

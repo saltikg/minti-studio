@@ -1,14 +1,14 @@
 {% extends "vs_marketing_base.html" %}
 {% set hide_marketing_footer_cta = true %}
 
-{% block title %}MintiStudio Autopilot — Your long videos, turned into Shorts{% endblock %}
-{% block meta_description %}You make the long videos. MintiStudio Autopilot handles clipping, editing, review, and publishing prep for your Shorts.{% endblock %}
+{% block title %}Minti Studio Autopilot — Your long videos, turned into Shorts{% endblock %}
+{% block meta_description %}You make the long videos. Minti Studio Autopilot handles clipping, editing, review, and publishing prep for your Shorts.{% endblock %}
 
 {% block seo_meta %}
   {{ super() }}
   <meta property="og:type" content="website">
-  <meta property="og:title" content="MintiStudio Autopilot — Your long videos, turned into Shorts">
-  <meta property="og:description" content="You make the long videos. MintiStudio Autopilot handles clipping, editing, review, and publishing prep for your Shorts.">
+  <meta property="og:title" content="Minti Studio Autopilot — Your long videos, turned into Shorts">
+  <meta property="og:description" content="You make the long videos. Minti Studio Autopilot handles clipping, editing, review, and publishing prep for your Shorts.">
   <meta property="og:url" content="{{ canonical_url }}">
 {% endblock %}
 
@@ -1150,7 +1150,7 @@
   <section class="ap-hero" aria-labelledby="autopilot-hero-title">
     <div class="ap-container ap-hero-grid">
       <div class="ap-hero-copy">
-        <p class="ap-kicker">MintiStudio Autopilot</p>
+        <p class="ap-kicker">Minti Studio Autopilot</p>
         <h1 id="autopilot-hero-title">You make the long videos. <span>We handle the Shorts.</span></h1>
         <p class="ap-hero-subtitle">An editor turns every long video into ready-to-post Shorts. You review, we publish — so you stay consistent without the extra work.</p>
         <div class="ap-actions">
@@ -1174,7 +1174,7 @@
           preload="metadata"
           playsinline
           poster="{{ url_for('video_shorts_bp.static', filename='motion/autopilot.jpg') }}"
-          aria-label="MintiStudio Autopilot explainer video"
+          aria-label="Minti Studio Autopilot explainer video"
         >
           <source src="{{ url_for('video_shorts_bp.static', filename='motion/autopilot.mp4') }}?v=2" type="video/mp4">
           <track kind="captions" srclang="en" src="{{ url_for('video_shorts_bp.static', filename='motion/autopilot.en.vtt') }}?v=1" label="English" default>
@@ -1241,7 +1241,7 @@
         </ul>
       </div>
 
-      <div class="ap-editor-visual" aria-label="A finished vertical video surrounded by the production details MintiStudio handles">
+      <div class="ap-editor-visual" aria-label="A finished vertical video surrounded by the production details Minti Studio handles">
         <span class="ap-editor-pill is-captions"><i class="bi bi-badge-cc"></i> Captions</span>
         <span class="ap-editor-pill is-brand"><i class="bi bi-palette2"></i> Your brand</span>
         <span class="ap-editor-pill is-music"><i class="bi bi-music-note-beamed"></i> Music</span>
@@ -1259,7 +1259,7 @@
     <div class="ap-container">
       <div class="ap-why-panel">
         <div>
-          <p class="ap-kicker">Why creators use MintiStudio</p>
+          <p class="ap-kicker">Why creators use Minti Studio</p>
           <h2 id="why-title">Consistency should not become another job.</h2>
           <p class="ap-why-statement">Shorts matter. Showing up regularly matters. But turning every long video into a second editing project is not the best use of your week.</p>
         </div>
@@ -1358,7 +1358,7 @@
       </div>
 
       <figure class="ap-editor-loop-card" data-ap-editor-loop>
-        <video muted autoplay loop playsinline preload="none" poster="{{ url_for('video_shorts_bp.static', filename='motion/tab-styles.jpg') }}?v=2" aria-label="MintiStudio caption style editor with a Short preview">
+        <video muted autoplay loop playsinline preload="none" poster="{{ url_for('video_shorts_bp.static', filename='motion/tab-styles.jpg') }}?v=2" aria-label="Minti Studio caption style editor with a Short preview">
           <source data-src="{{ url_for('video_shorts_bp.static', filename='motion/tab-styles.mp4') }}?v=2" type="video/mp4">
         </video>
         <figcaption>Your editor does the work. Review, change or remove any Short before it goes live.</figcaption>

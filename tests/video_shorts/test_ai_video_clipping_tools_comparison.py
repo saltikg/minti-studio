@@ -31,7 +31,7 @@ def test_comparison_source_uses_new_canonical_url_and_preserves_seo_metadata() -
 
     assert source.slug == TARGET_SLUG == "best-ai-video-clipping-tools-2026"
     assert source.title == "Best AI Video Clipping Tools in 2026: 6 Tools Compared"
-    assert source.meta_title == "Best AI Video Clipping Tools in 2026 | MintiStudio"
+    assert source.meta_title == "Best AI Video Clipping Tools in 2026 | Minti Studio"
     assert source.meta_description.startswith("Compare the best AI video clipping tools")
     assert 140 <= len(source.meta_description) <= 180
 
@@ -40,7 +40,7 @@ def test_comparison_is_balanced_and_contains_verified_workflow_links() -> None:
     source = _source()
     body = source.body
 
-    for product in ("MintiStudio", "OpusClip", "Klap", "Vizard", "Riverside", "Descript"):
+    for product in ("Minti Studio", "OpusClip", "Klap", "Vizard", "Riverside", "Descript"):
         assert product in body
     assert "/tools/youtube-to-shorts" in body
     assert "/services/short-form-video-editing" in body
@@ -144,7 +144,7 @@ def test_old_route_redirects_and_new_route_is_indexable_and_self_canonical(monke
         "cover_image_url": "",
         "meta_title": source.meta_title,
         "meta_description": source.meta_description,
-        "author_name": "MintiStudio Team",
+        "author_name": "Minti Studio Team",
         "reading_time": source.reading_time,
         "view_count": 0,
         "published_at": published_at,

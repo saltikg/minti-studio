@@ -12,13 +12,13 @@ BLOG_ARTICLES = [
             "A step-by-step walk-through: sign in, upload a long video, let Minti find the moments, "
             "style your Short, and publish across platforms."
         ),
-        "meta_title": "Getting Started: From Long Video to Published Short | MintiStudio",
+        "meta_title": "Getting Started: From Long Video to Published Short | Minti Studio",
         "meta_description": (
-            "Follow the full MintiStudio workflow from sign-in to a published Short, including upload, "
+            "Follow the full Minti Studio workflow from sign-in to a published Short, including upload, "
             "transcript review, clip suggestions, styling, rendering, scheduling, and tracking."
         ),
         "published_on": date(2026, 8, 21),
-        "author_name": "MintiStudio Team",
+        "author_name": "Minti Studio Team",
         "reading_time": "7 min read",
         "display_mode": "step_carousel",
         "sections": [
@@ -27,14 +27,14 @@ BLOG_ARTICLES = [
                 "heading": "Add your video",
                 "paragraphs": [
                     (
-                        "Paste a public YouTube link or upload a video from your computer. MintiStudio adds it to My Videos "
+                        "Paste a public YouTube link or upload a video from your computer. Minti Studio adds it to My Videos "
                         "and keeps the original recording ready for clipping."
                     ),
                 ],
                 "images": [
                     {
                         "src": "img/blog/getting-started-with-mintistudio/add-video-url.jpg",
-                        "alt": "Paste a YouTube link or upload a video to add it to MintiStudio",
+                        "alt": "Paste a YouTube link or upload a video to add it to Minti Studio",
                     },
                 ],
             },
@@ -43,14 +43,14 @@ BLOG_ARTICLES = [
                 "heading": "Let AI find the best moments",
                 "paragraphs": [
                     (
-                        "MintiStudio imports the video, creates its transcript, and analyzes the full recording for moments "
+                        "Minti Studio imports the video, creates its transcript, and analyzes the full recording for moments "
                         "that can stand on their own as Shorts. You can leave the page while this runs."
                     ),
                 ],
                 "images": [
                     {
                         "src": "img/blog/getting-started-with-mintistudio/video-ready-ai-analysis.jpg",
-                        "alt": "Import, AI analysis, and best-moment detection completed in MintiStudio",
+                        "alt": "Import, AI analysis, and best-moment detection completed in Minti Studio",
                     },
                 ],
             },
@@ -108,13 +108,13 @@ BLOG_ARTICLES = [
                 "paragraphs": [
                     (
                         "Choose a caption style that matches your brand. Then use Auto layout to keep the speaker centered as "
-                        "the shot moves; MintiStudio handles the vertical framing for you."
+                        "the shot moves; Minti Studio handles the vertical framing for you."
                     ),
                 ],
                 "images": [
                     {
                         "src": "img/blog/getting-started-with-mintistudio/design-styles.jpg",
-                        "alt": "Choose a caption style in the MintiStudio Design workspace",
+                        "alt": "Choose a caption style in the Minti Studio Design workspace",
                     },
                     {
                         "src": "img/blog/getting-started-with-mintistudio/layout-auto-single.jpg",
@@ -152,13 +152,13 @@ BLOG_ARTICLES = [
             "You picked 8:00 AM. Did your Short actually go out at your 8:00 AM? Learn how YouTube, "
             "Instagram, and timezone-aware scheduling really work across platforms."
         ),
-        "meta_title": "Your Scheduled Time Is Only as Good as Your Time Zone | MintiStudio",
+        "meta_title": "Your Scheduled Time Is Only as Good as Your Time Zone | Minti Studio",
         "meta_description": (
             "Scheduling a Short is only reliable when the time is anchored to the right timezone. Learn how "
-            "MintiStudio handles YouTube and Instagram publishing across time zones."
+            "Minti Studio handles YouTube and Instagram publishing across time zones."
         ),
         "published_on": date(2026, 8, 11),
-        "author_name": "MintiStudio Team",
+        "author_name": "Minti Studio Team",
         "reading_time": "6 min read",
         "sections": [
             {
@@ -186,12 +186,12 @@ BLOG_ARTICLES = [
                 "paragraphs": [
                     (
                         "YouTube and Instagram do not handle scheduling the same way, and that difference matters. "
-                        "For YouTube, MintiStudio converts your chosen local time into UTC, uploads the video as private, "
+                        "For YouTube, Minti Studio converts your chosen local time into UTC, uploads the video as private, "
                         "and sends YouTube a scheduled publish timestamp. YouTube then handles the public release on its side."
                     ),
                     (
                         "Instagram works differently. There is no native later-publish timestamp in the publishing call that "
-                        "MintiStudio can hand off and forget about. Instead, Instagram publishing runs through MintiStudio's "
+                        "Minti Studio can hand off and forget about. Instead, Instagram publishing runs through Minti Studio's "
                         "own queue and worker, which hold the UTC due time and publish when that moment arrives."
                     ),
                     (
@@ -225,7 +225,7 @@ BLOG_ARTICLES = [
                 "heading": "Making 8:00 AM mean your 8:00 AM",
                 "paragraphs": [
                     (
-                        "In MintiStudio, the Schedule & Publish window shows your account time zone next to the publish-time field, "
+                        "In Minti Studio, the Schedule & Publish window shows your account time zone next to the publish-time field, "
                         "so you can see which clock your schedule is anchored to. If that label is wrong, the time you pick will be "
                         "interpreted for the wrong place."
                     ),
@@ -249,7 +249,7 @@ BLOG_ARTICLES = [
                         "You may want YouTube and Instagram to launch together, or you may want Instagram to go live earlier or later."
                     ),
                     (
-                        "MintiStudio gives Instagram three timing modes relative to the YouTube schedule: publish at the same time "
+                        "Minti Studio gives Instagram three timing modes relative to the YouTube schedule: publish at the same time "
                         "as YouTube, publish immediately on Instagram, or choose a separate Instagram time. That gives you one "
                         "shared timezone anchor with flexible platform timing on top of it."
                     ),
@@ -281,10 +281,10 @@ BLOG_ARTICLES = [
                 ],
             },
             {
-                "heading": "Where MintiStudio fits",
+                "heading": "Where Minti Studio fits",
                 "paragraphs": [
                     (
-                        "MintiStudio anchors scheduled publishing to your account timezone, converts your selected local time to UTC, "
+                        "Minti Studio anchors scheduled publishing to your account timezone, converts your selected local time to UTC, "
                         "hands the YouTube schedule off to YouTube, and runs Instagram publishing itself when the due time arrives."
                     ),
                     (
@@ -320,13 +320,13 @@ BLOG_ARTICLES = [
             "AI is good at finding candidate moments in a long video. Learn how to keep the speed of AI clip "
             "suggestions without giving up editorial control over what represents your channel."
         ),
-        "meta_title": "AI Clip Suggestions Need Human Review | MintiStudio",
+        "meta_title": "AI Clip Suggestions Need Human Review | Minti Studio",
         "meta_description": (
             "AI can suggest strong clip candidates from a long video, but creators should still decide what gets "
             "published. Here is how to keep editorial control in your Shorts workflow."
         ),
         "published_on": date(2026, 8, 9),
-        "author_name": "MintiStudio Team",
+        "author_name": "Minti Studio Team",
         "reading_time": "5 min read",
         "sections": [
             {
@@ -339,7 +339,7 @@ BLOG_ARTICLES = [
                         "for the good parts."
                     ),
                     (
-                        "In MintiStudio, that is what Suggest clips with AI does: it reads the full transcript and proposes "
+                        "In Minti Studio, that is what Suggest clips with AI does: it reads the full transcript and proposes "
                         "a set of clips, each with a suggested title and time range, so you start with options instead of "
                         "an empty timeline."
                     ),
@@ -385,7 +385,7 @@ BLOG_ARTICLES = [
                         "ones you created or already committed to."
                     ),
                     (
-                        "In MintiStudio, unbuilt AI suggestions are clearly marked as drafts and shown separately from the "
+                        "In Minti Studio, unbuilt AI suggestions are clearly marked as drafts and shown separately from the "
                         "clips you have actually built. A proposal should never get mistaken for a finished clip you chose."
                     ),
                     (
@@ -421,10 +421,10 @@ BLOG_ARTICLES = [
                 ],
             },
             {
-                "heading": "Where MintiStudio fits",
+                "heading": "Where Minti Studio fits",
                 "paragraphs": [
                     (
-                        "MintiStudio is built around this split. AI proposes clips from your long-form video, and those "
+                        "Minti Studio is built around this split. AI proposes clips from your long-form video, and those "
                         "proposals stay clearly marked as suggestions, separate from the clips you have already built."
                     ),
                     (
@@ -451,13 +451,13 @@ BLOG_ARTICLES = [
             "Have 10, 20, or more YouTube Shorts ready to publish? Learn why spacing Shorts across a "
             "consistent schedule is usually better than publishing them all at once."
         ),
-        "meta_title": "Should You Publish All YouTube Shorts at Once? | MintiStudio",
+        "meta_title": "Should You Publish All YouTube Shorts at Once? | Minti Studio",
         "meta_description": (
             "Have 10, 20, or more YouTube Shorts ready to publish? Learn why spacing Shorts across a "
             "consistent schedule is usually better than publishing them all at once."
         ),
         "published_on": date(2026, 8, 8),
-        "author_name": "MintiStudio Team",
+        "author_name": "Minti Studio Team",
         "reading_time": "5 min read",
         "sections": [
             {
@@ -540,10 +540,10 @@ BLOG_ARTICLES = [
                 ],
             },
             {
-                "heading": "Where MintiStudio fits",
+                "heading": "Where Minti Studio fits",
                 "paragraphs": [
                     (
-                        "MintiStudio is built for exactly this workflow: turn one long-form video into multiple Shorts, then spread "
+                        "Minti Studio is built for exactly this workflow: turn one long-form video into multiple Shorts, then spread "
                         "them across a schedule instead of publishing them all at once."
                     ),
                     (
@@ -570,7 +570,7 @@ BLOG_ARTICLES = [
         ],
         "cta_title": "Turn one video into a week of Shorts",
         "cta_body": (
-            "Create multiple Shorts from one long-form video, then use MintiStudio to schedule them across several days."
+            "Create multiple Shorts from one long-form video, then use Minti Studio to schedule them across several days."
         ),
     }
 ]

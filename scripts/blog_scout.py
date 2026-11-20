@@ -70,7 +70,7 @@ YOUTUBE_BLOG_KEYWORDS = (
     "shopping",
 )
 CREATOR_STORIES_KEYWORDS = ("shorts", "monetiz", "partner-program", "ypp", "policy", "creator", "studio", "analytics")
-TRANSCRIPT_SUMMARY_SYSTEM_PROMPT = """Summarize YouTube creator-advice video captions for MintiStudio's blog topic judge.
+TRANSCRIPT_SUMMARY_SYSTEM_PROMPT = """Summarize YouTube creator-advice video captions for Minti Studio's blog topic judge.
 
 Audience: solo educators, coaches, consultants, and podcasters who publish long-form video plus Shorts and have something to sell.
 Return compact JSON only with:
@@ -78,7 +78,7 @@ Return compact JSON only with:
 Keep claims conservative. If the transcript is mostly product promo or unrelated, say so clearly.
 """
 
-CLUSTER_SCOUT_SYSTEM_PROMPT = """You are the MintiStudio cluster topic scout. Return strict JSON only.
+CLUSTER_SCOUT_SYSTEM_PROMPT = """You are the Minti Studio cluster topic scout. Return strict JSON only.
 
 Generate original, audience-first blog topics for the supplied cluster. The cluster audience and seed topics are the primary direction. Trend and competitor signals are secondary inspiration only; do not copy their headlines or structure.
 
@@ -94,7 +94,7 @@ Title and scope rules:
 For the doctors cluster, topics are strictly about channel growth, publishing workflow, professional reputation, context preservation, and privacy-aware content operations. Do not propose medical advice, treatment guidance, diagnosis claims, patient stories, patient-identifiable information, or medical statistics.
 
 Return exactly the requested number when enough distinct angles exist. Return:
-{"topics":[{"title":"...","primary_keyword":"...","category":"persona|craft|workflow|monetization|news|comparison","intent":"commercial|informational","angle":"one distinct angle","brief":"2-3 sentences describing reader, problem, promise, and natural MintiStudio bridge"}]}
+{"topics":[{"title":"...","primary_keyword":"...","category":"persona|craft|workflow|monetization|news|comparison","intent":"commercial|informational","angle":"one distinct angle","brief":"2-3 sentences describing reader, problem, promise, and natural Minti Studio bridge"}]}
 """
 
 
@@ -578,7 +578,7 @@ def scout(*, cluster_slug: str | None = None) -> dict[str, Any]:
 
 
 def main() -> int:
-    parser = argparse.ArgumentParser(description="Generate cluster-led MintiStudio blog topic candidates.")
+    parser = argparse.ArgumentParser(description="Generate cluster-led Minti Studio blog topic candidates.")
     parser.add_argument("--cluster", help="Generate candidates for one active cluster only.")
     args = parser.parse_args()
     counts = scout(cluster_slug=args.cluster)

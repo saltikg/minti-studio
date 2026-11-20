@@ -148,7 +148,7 @@ def main() -> int:
                 import_source,
                 import_source_id
             )
-            VALUES (?, ?, ?, ?, ?, ?, ?, 'MintiStudio Team', ?, 0, 'published', ?, CURRENT_TIMESTAMP, 'manual_blog_post', ?)
+            VALUES (?, ?, ?, ?, ?, ?, ?, 'Minti Studio Team', ?, 0, 'published', ?, CURRENT_TIMESTAMP, 'manual_blog_post', ?)
             ON CONFLICT (slug) DO UPDATE SET
                 title = EXCLUDED.title,
                 summary = EXCLUDED.summary,
