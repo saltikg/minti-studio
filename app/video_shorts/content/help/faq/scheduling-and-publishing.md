@@ -7,6 +7,10 @@ order: 10
 
 Short answers to the questions creators hit most when scheduling clips. Written for the in-app FAQ; grow this list as new questions come up from users.
 
+**How do I change the date of a scheduled Short?**
+
+Open the video in `My Videos` and pick the Short. Click the YouTube icon next to its time, choose `Unschedule` (or `Unschedule all` for every platform), then click `Schedule` and pick the new date. This works until about 2 hours before publish time; after that the Short is already uploaded to YouTube, so change the date in YouTube Studio. Step-by-step with screenshots: [Schedule your Shorts — and change the date later](/video_shorts/help/faq/schedule-your-shorts/).
+
 **Why does the publish time show a specific time zone?**
 
 Every scheduled time has to be anchored to a time zone, or "8:00 AM" is meaningless. The Schedule & Publish window shows your account's time zone next to the publish-time field so you always know which clock you're picking in. If that zone matches where you are, the time you type is the time your clip goes out.
