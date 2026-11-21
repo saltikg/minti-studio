@@ -266,11 +266,11 @@
       border-radius: 9px;
       color: #fff;
       background: rgba(255,255,255,.055);
+      cursor: pointer;
       text-align: left;
     }
     .scheduled-week-card:hover,
     .scheduled-week-card:focus-within { border-color: rgba(147,197,253,.55); background: rgba(255,255,255,.09); }
-    .scheduled-week-card-link { display: contents; color: inherit; text-decoration: none; }
     .scheduled-week-thumb { width: 34px; height: 34px; border-radius: 6px; object-fit: cover; background: rgba(255,255,255,.07); }
     .scheduled-week-time { display: flex; align-items: center; gap: 5px; font-size: .72rem; font-weight: 700; }
     .scheduled-week-title { overflow: hidden; margin-top: 2px; font-size: .72rem; text-overflow: ellipsis; white-space: nowrap; }
@@ -293,8 +293,8 @@
     .scheduled-week-popover {
       position: fixed;
       z-index: 20;
-      width: 270px;
-      padding: 12px;
+      width: min(430px, calc(100vw - 16px));
+      padding: 14px;
       border: 1px solid rgba(255,255,255,.16);
       border-radius: 10px;
       background: #171b25;
@@ -304,6 +304,20 @@
     .scheduled-week-popover-title { margin-bottom: 5px; font-size: .82rem; font-weight: 700; }
     .scheduled-week-popover-date { color: rgba(255,255,255,.58); font-size: .72rem; }
     .scheduled-week-popover-actions { display: flex; flex-wrap: wrap; gap: 7px; margin-top: 10px; }
+    .scheduled-calendar-hint { margin: -4px 0 12px; color: rgba(255,255,255,.48); font-size: .76rem; }
+    .scheduled-detail-head { display: grid; grid-template-columns: 70px minmax(0,1fr); align-items: center; gap: 11px; margin-bottom: 12px; }
+    .scheduled-detail-thumb { width: 70px; height: 44px; border-radius: 8px; object-fit: cover; background: rgba(255,255,255,.07); }
+    .scheduled-detail-thumb.scheduled-thumb-placeholder { display: grid; width: 70px; height: 44px; place-items: center; }
+    .scheduled-detail-title { font-size: .9rem; font-weight: 700; line-height: 1.35; overflow-wrap: anywhere; }
+    .scheduled-detail-row { display: grid; grid-template-columns: 25px minmax(0,1fr); gap: 9px; padding: 10px 0; border-top: 1px solid rgba(255,255,255,.09); }
+    .scheduled-detail-row .scheduled-platform-icon { width: 25px; height: 25px; flex-basis: 25px; }
+    .scheduled-detail-row-main { min-width: 0; }
+    .scheduled-detail-row-top { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
+    .scheduled-detail-status { font-size: .76rem; font-weight: 700; }
+    .scheduled-detail-date { margin-top: 2px; color: rgba(255,255,255,.58); font-size: .72rem; }
+    .scheduled-detail-actions { display: flex; align-items: center; flex-wrap: wrap; gap: 7px; margin-top: 8px; }
+    .scheduled-detail-actions .form-control { min-width: 205px; width: auto; }
+    .scheduled-detail-footer { display: flex; justify-content: flex-end; padding-top: 11px; border-top: 1px solid rgba(255,255,255,.09); }
     .scheduled-time-summary { display: flex; align-items: center; flex-wrap: wrap; gap: 5px; min-width: 150px; }
     .scheduled-time-summary-item { display: inline-flex; align-items: center; gap: 4px; white-space: nowrap; }
     .scheduled-time-summary .scheduled-platform-icon { width: 19px; height: 19px; flex-basis: 19px; border-radius: 6px; font-size: .58rem; }
@@ -317,11 +331,14 @@
     }
     @media (max-width: 600px) {
       .scheduled-month-grid .scheduled-week-card { grid-template-columns: 1fr auto; }
-      .scheduled-month-grid .scheduled-week-card-link { display: block; min-width: 0; }
       .scheduled-month-grid .scheduled-week-thumb,
       .scheduled-month-grid .scheduled-week-title,
       .scheduled-month-grid .scheduled-week-brand { display: none; }
       .scheduled-month-grid .scheduled-week-time { font-size: .65rem; }
+      .scheduled-week-popover {
+        right: 0 !important; bottom: 0 !important; left: 0 !important; top: auto !important;
+        width: 100%; max-height: 82vh; overflow-y: auto; border-radius: 16px 16px 0 0;
+      }
     }
   </style>
 {% endblock %}
@@ -477,6 +494,8 @@
       </div>
     </form>
 
+    <div class="scheduled-calendar-hint" data-calendar-hint>Click a Short to reschedule, unschedule or open it in the editor.</div>
+
     <div data-scheduled-view="week">
       <div class="scheduled-week-scroll">
         <div class="scheduled-calendar-grid" data-week-grid></div>
@@ -526,6 +545,7 @@
   <script>
     const scheduledPostMutationUrl = {{ url_for('video_shorts_bp.admin_scheduled_short_post')|tojson }};
     const weekPosts = {{ week_posts|tojson }};
+    const calendarAllPosts = {{ calendar_all_posts|tojson }};
     const clipEditorUrls = {
       {% for item in upcoming %}{{ item.id|tojson }}: {{ item.editor_url|tojson }},{% endfor %}
       {% for item in published %}{{ item.id|tojson }}: {{ item.editor_url|tojson }},{% endfor %}
@@ -699,6 +719,8 @@
           syncListEdit(oldId, result);
           const post = weekPosts.find((item) => item.id === oldId);
           if (post) Object.assign(post, {id: result.post_id, publish_at_iso: result.publish_at, publish_input_value: result.publish_input_value, publish_time_label: result.publish_time_label});
+          const allPost = calendarAllPosts.find((item) => item.id === oldId);
+          if (allPost && allPost !== post) Object.assign(allPost, {id: result.post_id, publish_at_iso: result.publish_at, publish_input_value: result.publish_input_value, publish_time_label: result.publish_time_label});
           editor.hidden = true;
           renderCalendar();
         } catch (err) {
@@ -717,6 +739,8 @@
           syncListUnschedule(oldId);
           const index = weekPosts.findIndex((item) => item.id === oldId);
           if (index >= 0) weekPosts.splice(index, 1);
+          const allIndex = calendarAllPosts.findIndex((item) => item.id === oldId);
+          if (allIndex >= 0) calendarAllPosts.splice(allIndex, 1);
           renderCalendar();
         } catch (err) {
           showError(err.message);
@@ -727,8 +751,9 @@
     document.querySelectorAll('[data-scheduled-post]').forEach(bindListCard);
 
     const positionPopover = (popover, anchor) => {
-      const rect = anchor.getBoundingClientRect();
-      const width = 270;
+      if (window.matchMedia('(max-width: 600px)').matches) return;
+      const rect = typeof anchor.getBoundingClientRect === 'function' ? anchor.getBoundingClientRect() : anchor;
+      const width = 430;
       popover.style.left = `${Math.max(8, Math.min(rect.left, window.innerWidth - width - 8))}px`;
       popover.style.top = `${Math.max(8, Math.min(rect.bottom + 5, window.innerHeight - popover.offsetHeight - 8))}px`;
     };
@@ -739,93 +764,6 @@
       });
     };
 
-    const buildPlatformPopover = (anchor, post) => {
-      const popover = makeElement('div', 'scheduled-week-popover');
-      popover.dataset.weekPopover = '1';
-      popover.append(
-        makeElement('div', 'scheduled-week-popover-title', post.short_title),
-        makeElement('div', 'scheduled-week-popover-date', exactPTDate(post.publish_at_iso)),
-      );
-      const actions = makeElement('div', 'scheduled-week-popover-actions');
-      const error = makeElement('div', 'scheduled-inline-error');
-      error.hidden = true;
-      if (post.status_key === 'published' && post.live_url) {
-        const live = makeElement('a', 'btn btn-sm btn-outline-success', 'Open post');
-        live.href = post.live_url;
-        live.target = '_blank';
-        live.rel = 'noopener';
-        actions.append(live);
-      } else if (post.is_editable) {
-        const edit = makeElement('button', 'btn btn-sm btn-outline-light', '✎ Edit');
-        edit.type = 'button';
-        const unschedule = makeElement('button', 'btn btn-sm btn-outline-danger', 'Unschedule');
-        unschedule.type = 'button';
-        actions.append(edit, unschedule);
-        edit.addEventListener('click', (event) => {
-          event.stopPropagation();
-          actions.replaceChildren();
-          const input = makeElement('input', 'form-control form-control-sm');
-          input.type = 'datetime-local';
-          input.value = post.publish_input_value;
-          input.setAttribute('aria-label', 'Publish time in Pacific time');
-          const save = makeElement('button', 'btn btn-sm btn-primary', 'Save');
-          save.type = 'button';
-          const cancel = makeElement('button', 'btn btn-sm btn-outline-light', 'Cancel');
-          cancel.type = 'button';
-          actions.append(input, makeElement('span', 'small text-white-50', 'Pacific time'), save, cancel);
-          input.focus();
-          cancel.addEventListener('click', () => renderCalendar());
-          save.addEventListener('click', async () => {
-            save.disabled = true;
-            error.hidden = true;
-            try {
-              const oldId = post.id;
-              const result = await mutateScheduledPost(anchor, 'edit', input.value);
-              Object.assign(post, {id: result.post_id, publish_at_iso: result.publish_at, publish_input_value: result.publish_input_value, publish_time_label: result.publish_time_label});
-              syncListEdit(oldId, result);
-              renderCalendar();
-            } catch (err) {
-              error.textContent = err.message;
-              error.hidden = false;
-              save.disabled = false;
-            }
-          });
-        });
-        unschedule.addEventListener('click', (event) => {
-          event.stopPropagation();
-          actions.replaceChildren(makeElement('span', 'small', `Unschedule ${post.platform_label}?`));
-          const confirm = makeElement('button', 'btn btn-sm btn-danger', 'Yes, unschedule');
-          confirm.type = 'button';
-          const cancel = makeElement('button', 'btn btn-sm btn-outline-light', 'Cancel');
-          cancel.type = 'button';
-          actions.append(confirm, cancel);
-          cancel.addEventListener('click', () => renderCalendar());
-          confirm.addEventListener('click', async () => {
-            confirm.disabled = true;
-            error.hidden = true;
-            try {
-              const oldId = post.id;
-              await mutateScheduledPost(anchor, 'unschedule');
-              syncListUnschedule(oldId);
-              const index = weekPosts.indexOf(post);
-              if (index >= 0) weekPosts.splice(index, 1);
-              renderCalendar();
-            } catch (err) {
-              error.textContent = err.message;
-              error.hidden = false;
-              confirm.disabled = false;
-            }
-          });
-        });
-      } else if (post.youtube_locked) {
-        actions.append(makeElement('div', 'scheduled-youtube-lock', 'Uploaded — manage in YouTube Studio'));
-      }
-      popover.append(actions, error);
-      document.body.append(popover);
-      positionPopover(popover, anchor);
-      return popover;
-    };
-
     const platformTooltip = (post) => {
       const date = new Intl.DateTimeFormat('en-US', {
         timeZone: PT_TIME_ZONE, weekday: 'short', month: 'short', day: 'numeric',
@@ -834,23 +772,147 @@
       return `${post.platform_label} · ${date} · ${post.status_label.replace(' ✓', '')}`;
     };
 
-    const buildPlatformButton = (post) => {
-      const button = makeElement('button', `scheduled-day-platform ${post.week_status}`, platformMark(post.platform));
-      button.type = 'button';
-      button.title = platformTooltip(post);
-      button.setAttribute('aria-label', button.title);
-      button.dataset.platform = post.platform;
-      button.dataset.postId = post.id;
-      button.dataset.brandId = post.brand_id;
-      button.dataset.publishAt = post.publish_at_iso;
-      if (post.week_status === 'uploaded') button.append(makeElement('span', 'scheduled-day-platform-lock', '🔒'));
-      button.addEventListener('click', (event) => {
-        event.preventDefault();
-        event.stopPropagation();
-        closeCalendarPopovers();
-        buildPlatformPopover(button, post);
+    const buildPlatformIndicator = (post) => {
+      const indicator = makeElement('span', `scheduled-day-platform ${post.week_status}`, platformMark(post.platform));
+      indicator.title = platformTooltip(post);
+      indicator.setAttribute('aria-label', indicator.title);
+      if (post.week_status === 'uploaded') indicator.append(makeElement('span', 'scheduled-day-platform-lock', '🔒'));
+      return indicator;
+    };
+
+    const platformOrder = {youtube: 0, instagram: 1, facebook: 2};
+    const clipPostsFor = (post) => calendarAllPosts
+      .filter((item) => item.clip_key === post.clip_key)
+      .sort((left, right) => (platformOrder[left.platform] ?? 99) - (platformOrder[right.platform] ?? 99));
+
+    const detailStatus = (post) => {
+      if (post.youtube_locked) return 'Uploaded to YouTube 🔒';
+      if (post.status_key === 'published') return 'Published';
+      if (post.week_status === 'failed') return 'Failed';
+      return 'Scheduled';
+    };
+
+    const openClipPopover = (anchor, seedPost) => {
+      const anchorRect = anchor.getBoundingClientRect();
+      closeCalendarPopovers();
+      const posts = clipPostsFor(seedPost);
+      if (!posts.length) return;
+      const post = posts[0];
+      const popover = makeElement('div', 'scheduled-week-popover');
+      popover.dataset.weekPopover = '1';
+      popover.dataset.clipDetail = post.clip_key;
+      const head = makeElement('div', 'scheduled-detail-head');
+      let thumb;
+      if (post.thumbnail_url) {
+        thumb = makeElement('img', 'scheduled-detail-thumb');
+        thumb.alt = '';
+        thumb.src = post.thumbnail_url;
+      } else {
+        thumb = makeElement('span', 'scheduled-detail-thumb scheduled-thumb-placeholder', 'SHORT');
+      }
+      head.append(thumb, makeElement('div', 'scheduled-detail-title', post.short_title));
+      popover.append(head);
+
+      posts.forEach((platformPost) => {
+        const row = makeElement('div', 'scheduled-detail-row');
+        row.dataset.platform = platformPost.platform;
+        row.dataset.postId = platformPost.id;
+        row.dataset.brandId = platformPost.brand_id;
+        row.dataset.publishAt = platformPost.publish_at_iso;
+        row.append(createPlatformIcon(platformPost.platform));
+        const main = makeElement('div', 'scheduled-detail-row-main');
+        const top = makeElement('div', 'scheduled-detail-row-top');
+        top.append(
+          makeElement('span', 'scheduled-detail-status', `${platformPost.platform_label} · ${detailStatus(platformPost)}`),
+        );
+        main.append(top, makeElement('div', 'scheduled-detail-date', exactPTDate(platformPost.publish_at_iso)));
+        const actions = makeElement('div', 'scheduled-detail-actions');
+        const error = makeElement('div', 'scheduled-inline-error');
+        error.hidden = true;
+        if (platformPost.is_editable) {
+          const edit = makeElement('button', 'btn btn-sm btn-outline-light', 'Edit');
+          edit.type = 'button';
+          const unschedule = makeElement('button', 'btn btn-sm btn-outline-danger', 'Unschedule');
+          unschedule.type = 'button';
+          actions.append(edit, unschedule);
+          edit.addEventListener('click', (event) => {
+            event.stopPropagation();
+            actions.replaceChildren();
+            const input = makeElement('input', 'form-control form-control-sm');
+            input.type = 'datetime-local';
+            input.value = platformPost.publish_input_value;
+            input.setAttribute('aria-label', `${platformPost.platform_label} publish time in Pacific time`);
+            const save = makeElement('button', 'btn btn-sm btn-primary', 'Save');
+            save.type = 'button';
+            const cancel = makeElement('button', 'btn btn-sm btn-outline-light', 'Cancel');
+            cancel.type = 'button';
+            actions.append(input, makeElement('span', 'small text-white-50', 'Pacific time'), save, cancel);
+            input.focus();
+            cancel.addEventListener('click', () => renderCalendar(platformPost.clip_key));
+            save.addEventListener('click', async () => {
+              save.disabled = true;
+              error.hidden = true;
+              try {
+                const oldId = platformPost.id;
+                const result = await mutateScheduledPost(row, 'edit', input.value);
+                Object.assign(platformPost, {id: result.post_id, publish_at_iso: result.publish_at, publish_input_value: result.publish_input_value, publish_time_label: result.publish_time_label});
+                const visiblePost = weekPosts.find((item) => item.id === oldId);
+                if (visiblePost && visiblePost !== platformPost) Object.assign(visiblePost, platformPost);
+                syncListEdit(oldId, result);
+                renderCalendar(platformPost.clip_key);
+              } catch (err) {
+                error.textContent = err.message;
+                error.hidden = false;
+                save.disabled = false;
+              }
+            });
+          });
+          unschedule.addEventListener('click', (event) => {
+            event.stopPropagation();
+            actions.replaceChildren(makeElement('span', 'small', `Unschedule ${platformPost.platform_label}?`));
+            const confirm = makeElement('button', 'btn btn-sm btn-danger', 'Yes, unschedule');
+            confirm.type = 'button';
+            const cancel = makeElement('button', 'btn btn-sm btn-outline-light', 'Cancel');
+            cancel.type = 'button';
+            actions.append(confirm, cancel);
+            cancel.addEventListener('click', () => renderCalendar(platformPost.clip_key));
+            confirm.addEventListener('click', async () => {
+              confirm.disabled = true;
+              error.hidden = true;
+              try {
+                const oldId = platformPost.id;
+                await mutateScheduledPost(row, 'unschedule');
+                syncListUnschedule(oldId);
+                const allIndex = calendarAllPosts.indexOf(platformPost);
+                if (allIndex >= 0) calendarAllPosts.splice(allIndex, 1);
+                const visibleIndex = weekPosts.findIndex((item) => item.id === oldId);
+                if (visibleIndex >= 0) weekPosts.splice(visibleIndex, 1);
+                renderCalendar(platformPost.clip_key);
+              } catch (err) {
+                error.textContent = err.message;
+                error.hidden = false;
+                confirm.disabled = false;
+              }
+            });
+          });
+        } else if (platformPost.youtube_locked) {
+          actions.append(makeElement('span', 'scheduled-youtube-lock', 'Manage in YouTube Studio'));
+        }
+        main.append(actions, error);
+        row.append(main);
+        popover.append(row);
       });
-      return button;
+
+      const editorUrl = editorUrlFor(post);
+      if (editorUrl) {
+        const footer = makeElement('div', 'scheduled-detail-footer');
+        const editor = makeElement('a', 'btn btn-sm btn-primary', 'Open in editor →');
+        editor.href = editorUrl;
+        footer.append(editor);
+        popover.append(footer);
+      }
+      document.body.append(popover);
+      positionPopover(popover, anchorRect);
     };
 
     const groupDayPosts = (key) => {
@@ -881,11 +943,9 @@
       posts.sort((a, b) => new Date(a.publish_at_iso) - new Date(b.publish_at_iso));
       const post = posts[0];
       const card = makeElement('div', 'scheduled-week-card');
-      const link = document.createElement('a');
-      link.className = 'scheduled-week-card-link';
-      const editorUrl = editorUrlFor(post);
-      link.href = editorUrl || '#';
-      if (!editorUrl) link.setAttribute('aria-disabled', 'true');
+      card.tabIndex = 0;
+      card.setAttribute('role', 'button');
+      card.dataset.clipKey = post.clip_key;
       let thumb;
       if (post.thumbnail_url) {
         thumb = makeElement('img', 'scheduled-week-thumb');
@@ -901,11 +961,20 @@
       title.title = post.short_title;
       details.append(time, title);
       if (showWeekBrand) details.append(makeElement('div', 'scheduled-week-brand', post.brand_name));
-      link.append(thumb, details);
-      link.addEventListener('click', (event) => { if (!editorUrl) event.preventDefault(); });
       const icons = makeElement('div', 'scheduled-day-platforms');
-      posts.forEach((item) => icons.append(buildPlatformButton(item)));
-      card.append(link, icons);
+      posts.forEach((item) => icons.append(buildPlatformIndicator(item)));
+      card.append(thumb, details, icons);
+      card.addEventListener('click', (event) => {
+        event.preventDefault();
+        event.stopPropagation();
+        openClipPopover(card, post);
+      });
+      card.addEventListener('keydown', (event) => {
+        if (event.key === 'Enter' || event.key === ' ') {
+          event.preventDefault();
+          openClipPopover(card, post);
+        }
+      });
       return card;
     };
 
@@ -926,7 +995,7 @@
     let currentMode = 'week';
     let selectedMonth = `${(initialWeek || todayPT).slice(0, 7)}-01`;
 
-    const renderCalendar = () => {
+    const renderCalendar = (reopenClipKey = '') => {
       if (currentMode === 'list') return;
       closeCalendarPopovers();
       const isMonth = currentMode === 'month';
@@ -967,6 +1036,14 @@
         }
         grid.append(cell);
       });
+      if (reopenClipKey) {
+        const seed = weekPosts.find((post) => post.clip_key === reopenClipKey);
+        if (seed) {
+          const escapedKey = window.CSS?.escape ? CSS.escape(reopenClipKey) : reopenClipKey.replace(/"/g, '\\"');
+          const anchor = grid.querySelector(`[data-clip-key="${escapedKey}"]`) || grid;
+          openClipPopover(anchor, seed);
+        }
+      }
       const labelDate = (key) => new Intl.DateTimeFormat('en-US', {month: 'short', day: 'numeric', timeZone: 'UTC'}).format(keyDate(key));
       document.querySelector('[data-week-label]').textContent = isMonth
         ? new Intl.DateTimeFormat('en-US', {month: 'long', year: 'numeric', timeZone: 'UTC'}).format(keyDate(selectedMonth))
@@ -988,6 +1065,7 @@
       document.querySelectorAll('[data-scheduled-view]').forEach((view) => { view.hidden = view.dataset.scheduledView !== normalized; });
       document.querySelectorAll('[data-view-mode]').forEach((button) => button.setAttribute('aria-pressed', button.dataset.viewMode === normalized ? 'true' : 'false'));
       document.querySelector('[data-week-nav]').hidden = normalized === 'list';
+      document.querySelector('[data-calendar-hint]').hidden = normalized === 'list';
       if (remember) {
         try { localStorage.setItem('adminScheduledShortsView', normalized); } catch (_error) {}
       }
@@ -1030,6 +1108,9 @@
     document.addEventListener('click', (event) => {
       if (event.target.closest('.scheduled-week-card, [data-week-popover]')) return;
       closeCalendarPopovers();
+    });
+    document.addEventListener('keydown', (event) => {
+      if (event.key === 'Escape') closeCalendarPopovers();
     });
   </script>
 {% endblock %}

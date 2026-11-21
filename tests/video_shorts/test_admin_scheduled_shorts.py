@@ -114,6 +114,7 @@ def test_admin_schedule_data_is_read_only_filtered_and_sorted():
     assert instagram["upcoming_count"] == 1
     assert {post["platform"] for post in instagram["upcoming"][0]["platforms"]} == {"youtube", "instagram"}
     assert {post["platform"] for post in instagram["week_posts"]} == {"instagram"}
+    assert {post["platform"] for post in instagram["calendar_all_posts"]} == {"youtube", "instagram"}
 
 
 def test_different_platform_days_stay_distinct_in_week_and_list_summary():
@@ -189,6 +190,17 @@ def test_admin_schedule_template_marks_target_mismatch_red():
     assert "url.searchParams.set('clip_id'" in html
     assert "else url.searchParams.set('clip'" in html
     assert "closeCalendarPopovers" in html
+    assert "Click a Short to reschedule, unschedule or open it in the editor." in html
+    assert "const clipPostsFor" in html
+    assert "const calendarAllPosts" in html
+    assert "openClipPopover(card, post)" in html
+    assert "Open in editor →" in html
+    assert "Uploaded to YouTube 🔒" in html
+    assert "Manage in YouTube Studio" in html
+    assert "renderCalendar(platformPost.clip_key)" in html
+    assert "event.key === 'Escape'" in html
+    assert "buildPlatformIndicator" in html
+    assert "buildPlatformButton" not in html
 
 
 def test_generate_page_prefers_stable_clip_id_and_keeps_index_fallback():

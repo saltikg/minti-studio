@@ -600,33 +600,39 @@ def filter_scheduled_shorts(
         key=lambda item: item["event_at"] or datetime.min.replace(tzinfo=timezone.utc),
         reverse=True,
     )
+    def calendar_post(item: dict[str, Any], post: dict[str, Any]) -> dict[str, Any]:
+        return {
+            "clip_key": item["id"],
+            "id": post["id"],
+            "platform": post["platform"],
+            "platform_label": post["platform_label"],
+            "brand_id": post["brand_id"],
+            "brand_name": post["brand_name"],
+            "short_title": post["short_title"],
+            "thumbnail_url": post["thumbnail_url"],
+            "video_pk": post["video_pk"],
+            "generated_video_id": item.get("generated_video_id") or post.get("generated_video_id"),
+            "plan_index": post["plan_index"],
+            "publish_at_iso": post["publish_at_iso"],
+            "publish_input_value": post["publish_input_value"],
+            "publish_time_label": post["publish_time_label"],
+            "status_key": post["status_key"],
+            "status_label": post["status_label"],
+            "week_status": post["week_status"],
+            "is_editable": post["is_editable"],
+            "youtube_locked": post["youtube_locked"],
+            "live_url": post["live_url"],
+        }
+
     week_posts = []
+    calendar_all_posts = []
     for item in [*upcoming, *published]:
         for post in item["platforms"]:
+            serialized = calendar_post(item, post)
+            calendar_all_posts.append(serialized)
             if platform and post["platform"] != platform:
                 continue
-            week_posts.append({
-                "clip_key": item["id"],
-                "id": post["id"],
-                "platform": post["platform"],
-                "platform_label": post["platform_label"],
-                "brand_id": post["brand_id"],
-                "brand_name": post["brand_name"],
-                "short_title": post["short_title"],
-                "thumbnail_url": post["thumbnail_url"],
-                "video_pk": post["video_pk"],
-                "generated_video_id": item.get("generated_video_id") or post.get("generated_video_id"),
-                "plan_index": post["plan_index"],
-                "publish_at_iso": post["publish_at_iso"],
-                "publish_input_value": post["publish_input_value"],
-                "publish_time_label": post["publish_time_label"],
-                "status_key": post["status_key"],
-                "status_label": post["status_label"],
-                "week_status": post["week_status"],
-                "is_editable": post["is_editable"],
-                "youtube_locked": post["youtube_locked"],
-                "live_url": post["live_url"],
-            })
+            week_posts.append(serialized)
     return {
         "upcoming": upcoming,
         "published": published,
@@ -641,4 +647,5 @@ def filter_scheduled_shorts(
         "brand_id": brand_id,
         "include_all_brands": include_all_brands,
         "week_posts": week_posts,
+        "calendar_all_posts": calendar_all_posts,
     }
