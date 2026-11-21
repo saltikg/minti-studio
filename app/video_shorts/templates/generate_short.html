@@ -7316,8 +7316,8 @@
                   {% set v2_edit_locked = row.edit_locked or rail_is_rendering %}
                   {% set rail_has_cover = is_admin and row.cover_url %}
                   {% set rail_render_aspect_class = '' if rail_has_cover else (' is-landscape' if row.render_aspect == 'landscape' or (generate_v2 and not rail_has_rendered_media and (video_crop_aspect or '') == 'original') else (' is-portrait' if row.render_aspect == 'portrait' else '')) %}
-                  <div class="clip-rail-row" data-plan-index="{{ row.plan_index }}">
-                  <button type="button" class="clip-rail-item{{ rail_render_aspect_class }}{% if row.is_ai_suggestion %} is-ai-suggestion{% endif %}{% if generate_v2 and not rail_has_rendered_media %} is-unrendered{% endif %}" title="{{ row.title or ('Manual clip #' ~ row.plan_index) }}" data-plan-index="{{ row.plan_index }}" data-origin="{{ row.origin }}" data-ai-suggestion="{{ '1' if row.is_ai_suggestion else '0' }}" data-score="{{ rail_score if rail_score is not none else '' }}" data-status="{{ row.status }}" data-render-job-status="{{ row.render_job_status or '' }}" data-filename="{{ row.video_filename or '' }}" data-media-version="{{ row.media_version or '' }}" data-render-width="{{ row.render_width or '' }}" data-render-height="{{ row.render_height or '' }}" data-render-aspect="{{ row.render_aspect or '' }}"{% if is_admin %} data-current-cover-url="{{ row.cover_url|e }}"{% endif %} data-frame-thumbnail="{{ (row.poster_url or '')|e }}" data-outdated="{{ '1' if row.render_settings_outdated else '0' }}" data-needs-regenerate="{{ '1' if row.needs_regenerate else '0' }}" data-scheduled-unapplied="{{ '1' if row.scheduled_unapplied_changes else '0' }}" data-regenerate-reason="{{ row.regenerate_reason or '' }}" data-regenerate-locked="{{ '1' if row.regenerate_locked else '0' }}" data-regenerate-lock-reason="{{ row.regenerate_lock_reason or '' }}" data-title="{{ (row.yt_title or row.title or video.title) | e }}" data-description="{{ (row.yt_description or '') | replace('\\', '\\\\') | replace('\n', '\\n') | replace('\r', '\\r') | e }}" data-yt-video-id="{{ row.yt_video_id or '' }}" data-publish-status="{{ row.publish_status or '' }}" data-db-publish-status="{{ row.db_publish_status or '' }}" data-publish-at="{{ row.publish_at or row.publish_at_iso or '' }}" data-start="{{ row.start or 0 }}" data-end="{{ row.end or 0 }}" data-edit-url="{{ editor_url('edit_clip_title_time', video_pk=video.id, plan_index=row.plan_index) }}">
+                  <div class="clip-rail-row" data-plan-index="{{ row.plan_index }}" data-generated-video-id="{{ row.generated_video_id or '' }}">
+                  <button type="button" class="clip-rail-item{{ rail_render_aspect_class }}{% if row.is_ai_suggestion %} is-ai-suggestion{% endif %}{% if generate_v2 and not rail_has_rendered_media %} is-unrendered{% endif %}" title="{{ row.title or ('Manual clip #' ~ row.plan_index) }}" data-plan-index="{{ row.plan_index }}" data-generated-video-id="{{ row.generated_video_id or '' }}" data-origin="{{ row.origin }}" data-ai-suggestion="{{ '1' if row.is_ai_suggestion else '0' }}" data-score="{{ rail_score if rail_score is not none else '' }}" data-status="{{ row.status }}" data-render-job-status="{{ row.render_job_status or '' }}" data-filename="{{ row.video_filename or '' }}" data-media-version="{{ row.media_version or '' }}" data-render-width="{{ row.render_width or '' }}" data-render-height="{{ row.render_height or '' }}" data-render-aspect="{{ row.render_aspect or '' }}"{% if is_admin %} data-current-cover-url="{{ row.cover_url|e }}"{% endif %} data-frame-thumbnail="{{ (row.poster_url or '')|e }}" data-outdated="{{ '1' if row.render_settings_outdated else '0' }}" data-needs-regenerate="{{ '1' if row.needs_regenerate else '0' }}" data-scheduled-unapplied="{{ '1' if row.scheduled_unapplied_changes else '0' }}" data-regenerate-reason="{{ row.regenerate_reason or '' }}" data-regenerate-locked="{{ '1' if row.regenerate_locked else '0' }}" data-regenerate-lock-reason="{{ row.regenerate_lock_reason or '' }}" data-title="{{ (row.yt_title or row.title or video.title) | e }}" data-description="{{ (row.yt_description or '') | replace('\\', '\\\\') | replace('\n', '\\n') | replace('\r', '\\r') | e }}" data-yt-video-id="{{ row.yt_video_id or '' }}" data-publish-status="{{ row.publish_status or '' }}" data-db-publish-status="{{ row.db_publish_status or '' }}" data-publish-at="{{ row.publish_at or row.publish_at_iso or '' }}" data-start="{{ row.start or 0 }}" data-end="{{ row.end or 0 }}" data-edit-url="{{ editor_url('edit_clip_title_time', video_pk=video.id, plan_index=row.plan_index) }}">
                     {% if generate_v2 %}
                     <span class="clip-rail-number">{{ loop.index }}</span>
                     {% endif %}
@@ -7619,6 +7619,7 @@
               {% endif %}
             <div class="clip-card{% if row.is_ai_suggestion %} is-ai-suggestion{% endif %}{% if row.is_original_layout %} is-original-layout{% endif %}"
                  data-plan-index="{{ row.plan_index }}"
+                 data-generated-video-id="{{ row.generated_video_id or '' }}"
                  data-title="{{ (row.title or ('Manual clip #' ~ row.plan_index))|e }}"
                  data-origin="{{ row.origin }}"
                  data-ai-suggestion="{{ '1' if row.is_ai_suggestion else '0' }}"
@@ -9934,19 +9935,25 @@
   window.runGuestResumeAction = () => {
     const params = new URLSearchParams(window.location.search || "");
     const action = String(params.get("action") || "").trim();
+    const clipId = String(params.get("clip_id") || "").trim();
     const clip = String(params.get("clip") || "").trim();
     const root = document.querySelector("#clip-workbench-shell[data-generate-v2='1']");
     if (!root || root.dataset.guestMode === "1") return;
     const selectClip = () => {
-      if (!clip) return null;
-      const escaped = window.CSS?.escape ? CSS.escape(clip) : clip.replace(/'/g, "\\'");
-      const row = document.querySelector(`.clip-rail-item[data-plan-index='${escaped}']`);
+      const stableValue = clipId || clip;
+      if (!stableValue) return null;
+      const escaped = window.CSS?.escape ? CSS.escape(stableValue) : stableValue.replace(/'/g, "\\'");
+      const selector = clipId
+        ? `.clip-rail-item[data-generated-video-id='${escaped}']`
+        : `.clip-rail-item[data-plan-index='${escaped}']`;
+      const row = document.querySelector(selector);
       row?.click?.();
       return row;
     };
     const stripResumeParams = () => {
       try {
         params.delete("action");
+        params.delete("clip_id");
         params.delete("clip");
         const nextUrl = `${window.location.pathname}${params.toString() ? `?${params.toString()}` : ""}${window.location.hash || ""}`;
         window.history.replaceState({}, "", nextUrl);
@@ -9956,7 +9963,7 @@
     };
     window.setTimeout(() => {
       const row = selectClip();
-      if (!action && clip) {
+      if (!action && (clipId || clip)) {
         row?.scrollIntoView?.({ behavior: "smooth", block: "center", inline: "nearest" });
         stripResumeParams();
       } else if (action === "download" && clip) {

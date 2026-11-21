@@ -872,7 +872,8 @@
       const base = clipEditorUrls[post.clip_key] || '';
       if (!base) return '';
       const url = new URL(base, window.location.origin);
-      url.searchParams.set('clip', post.plan_index || '');
+      if (post.generated_video_id) url.searchParams.set('clip_id', post.generated_video_id);
+      else url.searchParams.set('clip', post.plan_index || '');
       return `${url.pathname}${url.search}${url.hash}`;
     };
 

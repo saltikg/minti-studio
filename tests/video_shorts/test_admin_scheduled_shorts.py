@@ -24,6 +24,7 @@ def _database():
         "CREATE TABLE shorts_brands (id VARCHAR, name VARCHAR, owner_user_id VARCHAR)",
         "CREATE TABLE autopilot_leads (user_id VARCHAR, brand_id VARCHAR, converted_at TIMESTAMP)",
         "CREATE TABLE youtube_videos (id INTEGER, owner_user_id VARCHAR, brand_id VARCHAR, video_id VARCHAR, title VARCHAR, thumbnail_url VARCHAR)",
+        "CREATE TABLE shorts_generated_videos (id BIGINT, user_id VARCHAR, brand_id VARCHAR, clip_filename VARCHAR, output_filename VARCHAR)",
         "CREATE TABLE youtube_oauth_tokens_v2 (user_id VARCHAR, youtube_channel_id VARCHAR, channel_title VARCHAR)",
         "CREATE TABLE instagram_oauth_tokens (user_id VARCHAR, instagram_business_account_id VARCHAR, instagram_username VARCHAR)",
         "CREATE TABLE facebook_page_tokens (user_id VARCHAR, page_id VARCHAR, page_name VARCHAR)",
@@ -37,6 +38,7 @@ def _database():
     conn.execute("INSERT INTO shorts_brands VALUES ('customer-brand', 'Customer Brand', 'customer'), ('admin-brand', 'Hoca', 'admin')")
     conn.execute("INSERT INTO autopilot_leads VALUES ('customer', 'customer-brand', '2026-10-01')")
     conn.execute("INSERT INTO youtube_videos VALUES (1, 'customer', 'customer-brand', 'source-1', 'Source one', 'https://img/one.jpg'), (2, 'admin', 'admin-brand', 'source-2', 'Source two', '')")
+    conn.execute("INSERT INTO shorts_generated_videos VALUES (101, 'customer', 'customer-brand', 'clip.mp4', 'clip.mp4'), (102, 'customer', 'customer-brand', 'clip-2.mp4', 'clip-2.mp4'), (201, 'admin', 'admin-brand', 'admin.mp4', 'admin.mp4')")
     conn.execute("INSERT INTO youtube_oauth_tokens_v2 VALUES ('customer::customer-brand', 'yt-customer', 'Customer YouTube'), ('admin::admin-brand', 'yt-admin', 'Hoca YouTube')")
     conn.execute("INSERT INTO instagram_oauth_tokens VALUES ('customer::customer-brand', 'ig-current', 'customer.ig')")
     conn.execute("INSERT INTO facebook_page_tokens VALUES ('customer::customer-brand', 'fb-customer', 'Customer Facebook')")
@@ -103,6 +105,7 @@ def test_admin_schedule_data_is_read_only_filtered_and_sorted():
     assert posts["youtube"]["youtube_locked"] is True
     assert posts["youtube"]["is_editable"] is False
     assert posts["instagram"]["is_editable"] is True
+    assert {post["generated_video_id"] for post in default["week_posts"]} == {"101", "102"}
     assert all_brands["upcoming_count"] == 2
     assert all_brands["upcoming_post_count"] == 3
     assert {row["brand_name"] for row in all_brands["upcoming"]} == {"Customer Brand", "Hoca"}
@@ -183,8 +186,22 @@ def test_admin_schedule_template_marks_target_mismatch_red():
     assert "scheduled-month-more" in html
     assert "post.clip_key" in html
     assert "clipEditorUrls" in html
-    assert "url.searchParams.set('clip'" in html
+    assert "url.searchParams.set('clip_id'" in html
+    assert "else url.searchParams.set('clip'" in html
     assert "closeCalendarPopovers" in html
+
+
+def test_generate_page_prefers_stable_clip_id_and_keeps_index_fallback():
+    template = open(
+        "app/video_shorts/templates/generate_short.html",
+        encoding="utf-8",
+    ).read()
+
+    assert 'params.get("clip_id")' in template
+    assert "data-generated-video-id='${escaped}'" in template
+    assert "data-plan-index='${escaped}'" in template
+    assert "const stableValue = clipId || clip" in template
+    assert 'params.delete("clip_id")' in template
 
 
 def test_shared_social_unschedule_is_tenant_and_platform_scoped():
