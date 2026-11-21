@@ -25666,6 +25666,8 @@ def admin_scheduled_shorts():
         brand_id=selected_brand_id,
         platform=selected_platform,
     )
+    initial_week = str(request.args.get("week") or "").strip()
+    page_data["initial_week"] = initial_week if re.fullmatch(r"\d{4}-\d{2}-\d{2}", initial_week) else ""
     acting_admin_id = str(current_user.get("id") or "").strip()
     for item in [*page_data["upcoming"], *page_data["published"]]:
         video_pk = item.get("video_pk")

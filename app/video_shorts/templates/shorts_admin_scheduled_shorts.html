@@ -223,9 +223,86 @@
       color: rgba(255, 255, 255, 0.48);
       text-align: center;
     }
+    .scheduled-page-shell { max-width: 100%; min-width: 0; overflow: hidden; }
+    .scheduled-view-toolbar {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 12px;
+      margin-bottom: 16px;
+    }
+    .scheduled-view-toggle { display: inline-flex; gap: 4px; padding: 4px; border-radius: 10px; background: rgba(255,255,255,.06); }
+    .scheduled-view-toggle button[aria-pressed="true"] { color: #fff; background: #2563eb; border-color: #2563eb; }
+    .scheduled-week-nav { display: flex; align-items: center; justify-content: center; flex-wrap: wrap; gap: 8px; }
+    .scheduled-week-label { min-width: 170px; color: rgba(255,255,255,.9); font-weight: 700; text-align: center; }
+    .scheduled-week-scroll { max-width: 100%; overflow-x: auto; overscroll-behavior-x: contain; }
+    .scheduled-week-grid {
+      display: grid;
+      grid-template-columns: 128px repeat(7, minmax(155px, 1fr));
+      min-width: 1213px;
+      border: 1px solid rgba(255,255,255,.09);
+      border-radius: 12px;
+      overflow: hidden;
+    }
+    .scheduled-week-corner,
+    .scheduled-week-day,
+    .scheduled-week-platform,
+    .scheduled-week-cell { border-right: 1px solid rgba(255,255,255,.08); border-bottom: 1px solid rgba(255,255,255,.08); }
+    .scheduled-week-corner,
+    .scheduled-week-day { padding: 10px; background: rgba(255,255,255,.04); text-align: center; }
+    .scheduled-week-day strong { display: block; font-size: .8rem; }
+    .scheduled-week-day span { color: rgba(255,255,255,.52); font-size: .72rem; }
+    .scheduled-week-day.is-today,
+    .scheduled-week-cell.is-today { background: rgba(59,130,246,.09); }
+    .scheduled-week-platform { display: flex; align-items: center; gap: 8px; min-height: 112px; padding: 12px; font-size: .8rem; font-weight: 700; }
+    .scheduled-week-cell { min-height: 112px; padding: 7px; }
+    .scheduled-week-card {
+      position: relative;
+      display: grid;
+      grid-template-columns: 38px minmax(0,1fr);
+      gap: 7px;
+      width: 100%;
+      margin-bottom: 6px;
+      padding: 7px;
+      border: 1px solid rgba(255,255,255,.1);
+      border-radius: 9px;
+      color: #fff;
+      background: rgba(255,255,255,.055);
+      text-align: left;
+    }
+    .scheduled-week-card:hover,
+    .scheduled-week-card:focus-within { border-color: rgba(147,197,253,.55); background: rgba(255,255,255,.09); }
+    .scheduled-week-thumb { width: 38px; height: 38px; border-radius: 6px; object-fit: cover; background: rgba(255,255,255,.07); }
+    .scheduled-week-time { display: flex; align-items: center; gap: 5px; font-size: .72rem; font-weight: 700; }
+    .scheduled-week-title { overflow: hidden; margin-top: 2px; font-size: .72rem; text-overflow: ellipsis; white-space: nowrap; }
+    .scheduled-week-brand { overflow: hidden; color: rgba(255,255,255,.48); font-size: .64rem; text-overflow: ellipsis; white-space: nowrap; }
+    .scheduled-status-dot { width: 7px; height: 7px; flex: 0 0 7px; border-radius: 50%; background: #9ca3af; }
+    .scheduled-status-dot.uploaded { background: #f59e0b; }
+    .scheduled-status-dot.published { background: #22c55e; }
+    .scheduled-status-dot.failed { background: #ef4444; }
+    .scheduled-week-popover {
+      position: fixed;
+      z-index: 20;
+      width: 270px;
+      padding: 12px;
+      border: 1px solid rgba(255,255,255,.16);
+      border-radius: 10px;
+      background: #171b25;
+      box-shadow: 0 14px 35px rgba(0,0,0,.4);
+    }
+    .scheduled-week-popover[hidden] { display: none; }
+    .scheduled-week-popover-title { margin-bottom: 5px; font-size: .82rem; font-weight: 700; }
+    .scheduled-week-popover-date { color: rgba(255,255,255,.58); font-size: .72rem; }
+    .scheduled-week-popover-actions { display: flex; flex-wrap: wrap; gap: 7px; margin-top: 10px; }
+    .scheduled-time-summary { display: flex; align-items: center; flex-wrap: wrap; gap: 5px; min-width: 150px; }
+    .scheduled-time-summary-item { display: inline-flex; align-items: center; gap: 4px; white-space: nowrap; }
+    .scheduled-time-summary .scheduled-platform-icon { width: 19px; height: 19px; flex-basis: 19px; border-radius: 6px; font-size: .58rem; }
+    [data-scheduled-view][hidden] { display: none; }
     @media (max-width: 900px) {
       .scheduled-counters { grid-template-columns: 1fr; }
       .scheduled-filters { grid-template-columns: 1fr; }
+      .scheduled-view-toolbar { align-items: flex-start; flex-direction: column; }
+      .scheduled-week-nav { justify-content: flex-start; }
     }
   </style>
 {% endblock %}
@@ -242,7 +319,17 @@
     data-schedule-section="{{ item.section }}"
     data-sort-time="{{ item.publish_at.isoformat() if item.publish_at else '' }}"
     {% if item.editor_url %}data-href="{{ item.editor_url }}" tabindex="0"{% endif %}>
-    <td data-row-publish-time>{{ item.publish_time_label }}</td>
+    <td data-row-publish-time>
+      {% if item.has_time_mismatch %}
+        <div class="scheduled-time-summary">
+          {% for summary in item.time_summary %}
+            <span class="scheduled-time-summary-item">{{ platform_icon(summary.platform) }} {{ summary.label }}</span>{% if not loop.last %}<span>·</span>{% endif %}
+          {% endfor %}
+        </div>
+      {% else %}
+        {{ item.publish_time_label }}
+      {% endif %}
+    </td>
     <td>
       <div class="scheduled-short">
         <div class="scheduled-thumb">
@@ -264,7 +351,7 @@
             <div class="scheduled-channel-target">
               <div class="scheduled-channel-name" title="{{ post.channel_name }}">{{ post.channel_name }}</div>
               <div class="small text-white-50">{{ post.platform_label }}</div>
-              <div class="scheduled-channel-time" data-platform-time {% if not post.show_platform_time %}hidden{% endif %}>{{ post.platform_time_label }}</div>
+              <div class="scheduled-channel-time" data-platform-time>{{ post.platform_time_label }}</div>
             </div>
             <div class="scheduled-channel-controls">
               {% if post.status_key == 'published' and post.live_url %}
@@ -311,6 +398,19 @@
 {%- endmacro %}
 
 {% block content %}
+  <div class="scheduled-page-shell">
+  <div class="scheduled-view-toolbar">
+    <div class="scheduled-view-toggle" aria-label="Schedule view">
+      <button class="btn btn-sm btn-outline-light" type="button" data-view-mode="week" aria-pressed="true">Week</button>
+      <button class="btn btn-sm btn-outline-light" type="button" data-view-mode="list" aria-pressed="false">List</button>
+    </div>
+    <div class="scheduled-week-nav" data-week-nav>
+      <button class="btn btn-sm btn-outline-light" type="button" data-week-step="-1" aria-label="Previous week">←</button>
+      <button class="btn btn-sm btn-outline-light" type="button" data-this-week>This week</button>
+      <div class="scheduled-week-label" data-week-label></div>
+      <button class="btn btn-sm btn-outline-light" type="button" data-week-step="1" aria-label="Next week">→</button>
+    </div>
+  </div>
   <div class="scheduled-counters">
     <div class="scheduled-counter">
       <div class="scheduled-counter-label">Upcoming</div>
@@ -328,6 +428,7 @@
 
   <section class="vs-admin-card p-3 p-lg-4">
     <form method="get" class="scheduled-filters" id="scheduled-short-filters">
+      <input type="hidden" name="week" value="{{ initial_week }}" data-week-filter>
       <div>
         <label class="form-label" for="scheduled-brand">Brand</label>
         <select class="form-select" id="scheduled-brand" name="brand">
@@ -356,7 +457,13 @@
       </div>
     </form>
 
-    <div class="scheduled-table-wrap">
+    <div data-scheduled-view="week">
+      <div class="scheduled-week-scroll">
+        <div class="scheduled-week-grid" data-week-grid></div>
+      </div>
+    </div>
+
+    <div class="scheduled-table-wrap" data-scheduled-view="list" hidden>
       <table class="scheduled-table">
         <thead>
           <tr>
@@ -386,31 +493,65 @@
       </table>
     </div>
   </section>
+  </div>
 {% endblock %}
 
 {% block extra_scripts %}
   <script>
     const scheduledPostMutationUrl = {{ url_for('video_shorts_bp.admin_scheduled_short_post')|tojson }};
+    const weekPosts = {{ week_posts|tojson }};
+    const showWeekBrand = {{ include_all_brands|tojson }};
+    const initialWeek = {{ (initial_week|default(''))|tojson }};
+    const PT_TIME_ZONE = 'America/Los_Angeles';
 
-    const resyncScheduledRow = (row) => {
-      const dates = [...row.querySelectorAll('[data-scheduled-post][data-status="scheduled"]')]
-        .map((card) => ({ card, date: new Date(card.dataset.publishAt || '') }))
-        .filter((item) => !Number.isNaN(item.date.getTime()))
-        .sort((a, b) => a.date - b.date);
-      if (!dates.length) {
-        row.remove();
-        return;
-      }
-      const first = dates[0];
-      row.dataset.sortTime = first.card.dataset.publishAt;
-      const label = first.card.querySelector('[data-platform-time]')?.textContent || '';
-      row.querySelector('[data-row-publish-time]').textContent = label;
-      const body = row.closest('tbody');
-      const divider = body.querySelector('.scheduled-divider');
-      const rows = [...body.querySelectorAll('.scheduled-row[data-schedule-section="upcoming"]')]
-        .sort((a, b) => new Date(a.dataset.sortTime) - new Date(b.dataset.sortTime));
-      rows.forEach((item) => body.insertBefore(item, divider));
+    const makeElement = (tag, className = '', text = '') => {
+      const node = document.createElement(tag);
+      if (className) node.className = className;
+      if (text) node.textContent = text;
+      return node;
     };
+
+    const platformMark = (platform) => platform === 'youtube' ? '▶' : (platform === 'instagram' ? '◎' : 'f');
+    const createPlatformIcon = (platform) => {
+      const icon = makeElement('span', `scheduled-platform-icon ${platform}`, platformMark(platform));
+      icon.setAttribute('aria-label', platform.charAt(0).toUpperCase() + platform.slice(1));
+      return icon;
+    };
+
+    const ptParts = (value) => Object.fromEntries(
+      new Intl.DateTimeFormat('en-US', {
+        timeZone: PT_TIME_ZONE, year: 'numeric', month: '2-digit', day: '2-digit',
+      }).formatToParts(new Date(value)).filter((part) => part.type !== 'literal').map((part) => [part.type, part.value])
+    );
+    const ptDateKey = (value) => {
+      const parts = ptParts(value);
+      return `${parts.year}-${parts.month}-${parts.day}`;
+    };
+    const keyDate = (key) => new Date(`${key}T12:00:00Z`);
+    const keyFromDate = (date) => date.toISOString().slice(0, 10);
+    const addDays = (key, amount) => {
+      const date = keyDate(key);
+      date.setUTCDate(date.getUTCDate() + amount);
+      return keyFromDate(date);
+    };
+    const mondayFor = (key) => {
+      const date = keyDate(key);
+      const offset = (date.getUTCDay() + 6) % 7;
+      return addDays(key, -offset);
+    };
+    const todayPT = ptDateKey(new Date());
+    let selectedMonday = mondayFor(initialWeek || todayPT);
+
+    const shortPTTime = (value) => new Intl.DateTimeFormat('en-US', {
+      timeZone: PT_TIME_ZONE, hour: 'numeric', minute: '2-digit',
+    }).format(new Date(value));
+    const exactPTDate = (value) => new Intl.DateTimeFormat('en-US', {
+      timeZone: PT_TIME_ZONE, weekday: 'short', month: 'short', day: 'numeric', year: 'numeric',
+      hour: 'numeric', minute: '2-digit', timeZoneName: 'short',
+    }).format(new Date(value));
+    const shortPTDay = (value) => new Intl.DateTimeFormat('en-US', {
+      timeZone: PT_TIME_ZONE, weekday: 'short', day: 'numeric',
+    }).format(new Date(value));
 
     const mutateScheduledPost = async (card, action, publishAt = '') => {
       const response = await fetch(scheduledPostMutationUrl, {
@@ -429,7 +570,66 @@
       return result;
     };
 
-    document.querySelectorAll('[data-scheduled-post]').forEach((card) => {
+    const resyncScheduledRow = (row) => {
+      if (!row?.isConnected) return;
+      if (row.dataset.scheduleSection === 'upcoming' && !row.querySelector('[data-scheduled-post][data-status="scheduled"]')) {
+        row.remove();
+        return;
+      }
+      const dates = [...row.querySelectorAll('[data-scheduled-post]')]
+        .map((card) => ({ card, date: new Date(card.dataset.publishAt || '') }))
+        .filter((item) => !Number.isNaN(item.date.getTime()))
+        .sort((a, b) => a.date - b.date);
+      if (!dates.length) {
+        row.remove();
+        return;
+      }
+      const first = dates[0];
+      row.dataset.sortTime = first.card.dataset.publishAt;
+      const timeCell = row.querySelector('[data-row-publish-time]');
+      timeCell.replaceChildren();
+      const sameTime = dates.every((item) => item.date.getTime() === first.date.getTime());
+      if (sameTime) {
+        timeCell.textContent = first.card.querySelector('[data-platform-time]')?.textContent || '';
+      } else {
+        const summary = makeElement('div', 'scheduled-time-summary');
+        dates.forEach((item, index) => {
+          const part = makeElement('span', 'scheduled-time-summary-item');
+          part.append(createPlatformIcon(item.card.dataset.platform), document.createTextNode(` ${shortPTDay(item.card.dataset.publishAt)}`));
+          summary.append(part);
+          if (index < dates.length - 1) summary.append(document.createTextNode(' · '));
+        });
+        timeCell.append(summary);
+      }
+      const body = row.closest('tbody');
+      const divider = body.querySelector('.scheduled-divider');
+      const rows = [...body.querySelectorAll('.scheduled-row[data-schedule-section="upcoming"]')]
+        .sort((a, b) => new Date(a.dataset.sortTime) - new Date(b.dataset.sortTime));
+      rows.forEach((item) => body.insertBefore(item, divider));
+    };
+
+    const findListCard = (postId) => [...document.querySelectorAll('[data-scheduled-post]')]
+      .find((card) => card.dataset.postId === String(postId));
+    const syncListEdit = (oldId, result) => {
+      const card = findListCard(oldId);
+      if (!card) return;
+      card.dataset.postId = result.post_id;
+      card.dataset.publishAt = result.publish_at;
+      const input = card.querySelector('[data-publish-input]');
+      const time = card.querySelector('[data-platform-time]');
+      if (input) input.value = result.publish_input_value;
+      if (time) time.textContent = result.publish_time_label;
+      resyncScheduledRow(card.closest('.scheduled-row'));
+    };
+    const syncListUnschedule = (postId) => {
+      const card = findListCard(postId);
+      if (!card) return;
+      const row = card.closest('.scheduled-row');
+      card.remove();
+      resyncScheduledRow(row);
+    };
+
+    const bindListCard = (card) => {
       const editor = card.querySelector('[data-schedule-editor]');
       const confirmation = card.querySelector('[data-unschedule-confirm]');
       const error = card.querySelector('[data-schedule-error]');
@@ -464,15 +664,13 @@
         showError();
         try {
           const input = editor.querySelector('[data-publish-input]');
+          const oldId = card.dataset.postId;
           const result = await mutateScheduledPost(card, 'edit', input.value);
-          card.dataset.postId = result.post_id;
-          card.dataset.publishAt = result.publish_at;
-          input.value = result.publish_input_value;
-          const time = card.querySelector('[data-platform-time]');
-          time.textContent = result.publish_time_label;
-          time.hidden = false;
+          syncListEdit(oldId, result);
+          const post = weekPosts.find((item) => item.id === oldId);
+          if (post) Object.assign(post, {id: result.post_id, publish_at_iso: result.publish_at, publish_input_value: result.publish_input_value, publish_time_label: result.publish_time_label});
           editor.hidden = true;
-          resyncScheduledRow(card.closest('.scheduled-row'));
+          renderWeek();
         } catch (err) {
           showError(err.message);
         } finally {
@@ -484,16 +682,204 @@
         button.disabled = true;
         showError();
         try {
+          const oldId = card.dataset.postId;
           await mutateScheduledPost(card, 'unschedule');
-          const row = card.closest('.scheduled-row');
-          card.remove();
-          resyncScheduledRow(row);
+          syncListUnschedule(oldId);
+          const index = weekPosts.findIndex((item) => item.id === oldId);
+          if (index >= 0) weekPosts.splice(index, 1);
+          renderWeek();
         } catch (err) {
           showError(err.message);
           button.disabled = false;
         }
       });
+    };
+    document.querySelectorAll('[data-scheduled-post]').forEach(bindListCard);
+
+    const buildWeekPopover = (card, post) => {
+      const popover = makeElement('div', 'scheduled-week-popover');
+      popover.hidden = true;
+      popover.dataset.weekPopover = '1';
+      popover.append(
+        makeElement('div', 'scheduled-week-popover-title', post.short_title),
+        makeElement('div', 'scheduled-week-popover-date', exactPTDate(post.publish_at_iso)),
+      );
+      const actions = makeElement('div', 'scheduled-week-popover-actions');
+      const error = makeElement('div', 'scheduled-inline-error');
+      error.hidden = true;
+      if (post.status_key === 'published' && post.live_url) {
+        const live = makeElement('a', 'btn btn-sm btn-outline-success', 'Open post');
+        live.href = post.live_url;
+        live.target = '_blank';
+        live.rel = 'noopener';
+        actions.append(live);
+      } else if (post.is_editable) {
+        const edit = makeElement('button', 'btn btn-sm btn-outline-light', '✎ Edit');
+        edit.type = 'button';
+        const unschedule = makeElement('button', 'btn btn-sm btn-outline-danger', 'Unschedule');
+        unschedule.type = 'button';
+        actions.append(edit, unschedule);
+        edit.addEventListener('click', (event) => {
+          event.stopPropagation();
+          actions.replaceChildren();
+          const input = makeElement('input', 'form-control form-control-sm');
+          input.type = 'datetime-local';
+          input.value = post.publish_input_value;
+          input.setAttribute('aria-label', 'Publish time in Pacific time');
+          const save = makeElement('button', 'btn btn-sm btn-primary', 'Save');
+          save.type = 'button';
+          const cancel = makeElement('button', 'btn btn-sm btn-outline-light', 'Cancel');
+          cancel.type = 'button';
+          actions.append(input, makeElement('span', 'small text-white-50', 'Pacific time'), save, cancel);
+          input.focus();
+          cancel.addEventListener('click', () => renderWeek());
+          save.addEventListener('click', async () => {
+            save.disabled = true;
+            error.hidden = true;
+            try {
+              const oldId = post.id;
+              const result = await mutateScheduledPost(card, 'edit', input.value);
+              Object.assign(post, {id: result.post_id, publish_at_iso: result.publish_at, publish_input_value: result.publish_input_value, publish_time_label: result.publish_time_label});
+              syncListEdit(oldId, result);
+              renderWeek();
+            } catch (err) {
+              error.textContent = err.message;
+              error.hidden = false;
+              save.disabled = false;
+            }
+          });
+        });
+        unschedule.addEventListener('click', (event) => {
+          event.stopPropagation();
+          actions.replaceChildren(makeElement('span', 'small', `Unschedule ${post.platform_label}?`));
+          const confirm = makeElement('button', 'btn btn-sm btn-danger', 'Yes, unschedule');
+          confirm.type = 'button';
+          const cancel = makeElement('button', 'btn btn-sm btn-outline-light', 'Cancel');
+          cancel.type = 'button';
+          actions.append(confirm, cancel);
+          cancel.addEventListener('click', () => renderWeek());
+          confirm.addEventListener('click', async () => {
+            confirm.disabled = true;
+            error.hidden = true;
+            try {
+              const oldId = post.id;
+              await mutateScheduledPost(card, 'unschedule');
+              syncListUnschedule(oldId);
+              const index = weekPosts.indexOf(post);
+              if (index >= 0) weekPosts.splice(index, 1);
+              renderWeek();
+            } catch (err) {
+              error.textContent = err.message;
+              error.hidden = false;
+              confirm.disabled = false;
+            }
+          });
+        });
+      } else if (post.youtube_locked) {
+        actions.append(makeElement('div', 'scheduled-youtube-lock', 'Uploaded — manage in YouTube Studio'));
+      }
+      popover.append(actions, error);
+      return popover;
+    };
+
+    const buildWeekCard = (post) => {
+      const card = makeElement('div', 'scheduled-week-card');
+      card.tabIndex = 0;
+      card.setAttribute('role', 'button');
+      card.dataset.platform = post.platform;
+      card.dataset.postId = post.id;
+      card.dataset.brandId = post.brand_id;
+      card.dataset.publishAt = post.publish_at_iso;
+      const thumb = makeElement('img', 'scheduled-week-thumb');
+      thumb.alt = '';
+      if (post.thumbnail_url) thumb.src = post.thumbnail_url;
+      const details = makeElement('div');
+      const time = makeElement('div', 'scheduled-week-time');
+      time.append(makeElement('span', `scheduled-status-dot ${post.week_status}`), document.createTextNode(shortPTTime(post.publish_at_iso)));
+      details.append(time, makeElement('div', 'scheduled-week-title', post.short_title));
+      if (showWeekBrand) details.append(makeElement('div', 'scheduled-week-brand', post.brand_name));
+      card.append(thumb, details);
+      const popover = buildWeekPopover(card, post);
+      card.append(popover);
+      const toggle = (event) => {
+        if (event.target.closest('[data-week-popover]')) return;
+        document.querySelectorAll('[data-week-popover]').forEach((item) => { if (item !== popover) item.hidden = true; });
+        popover.hidden = !popover.hidden;
+        if (!popover.hidden) {
+          const rect = card.getBoundingClientRect();
+          const width = 270;
+          popover.style.left = `${Math.max(8, Math.min(rect.left, window.innerWidth - width - 8))}px`;
+          popover.style.top = `${Math.max(8, Math.min(rect.bottom + 5, window.innerHeight - popover.offsetHeight - 8))}px`;
+        }
+      };
+      card.addEventListener('click', toggle);
+      card.addEventListener('keydown', (event) => {
+        if (event.key === 'Enter' || event.key === ' ') { event.preventDefault(); toggle(event); }
+      });
+      return card;
+    };
+
+    const renderWeek = () => {
+      const grid = document.querySelector('[data-week-grid]');
+      if (!grid) return;
+      grid.replaceChildren();
+      const dayKeys = Array.from({length: 7}, (_, index) => addDays(selectedMonday, index));
+      grid.append(makeElement('div', 'scheduled-week-corner', 'Platform'));
+      dayKeys.forEach((key) => {
+        const date = keyDate(key);
+        const heading = makeElement('div', `scheduled-week-day${key === todayPT ? ' is-today' : ''}`);
+        heading.append(
+          makeElement('strong', '', new Intl.DateTimeFormat('en-US', {weekday: 'short', timeZone: 'UTC'}).format(date)),
+          makeElement('span', '', new Intl.DateTimeFormat('en-US', {month: 'short', day: 'numeric', timeZone: 'UTC'}).format(date)),
+        );
+        grid.append(heading);
+      });
+      const presentPlatforms = ['youtube', 'instagram', 'facebook'].filter((platform) => weekPosts.some((post) => post.platform === platform));
+      presentPlatforms.forEach((platform) => {
+        const label = makeElement('div', 'scheduled-week-platform');
+        label.append(createPlatformIcon(platform), document.createTextNode(platform.charAt(0).toUpperCase() + platform.slice(1)));
+        grid.append(label);
+        dayKeys.forEach((key) => {
+          const cell = makeElement('div', `scheduled-week-cell${key === todayPT ? ' is-today' : ''}`);
+          weekPosts
+            .filter((post) => post.platform === platform && post.publish_at_iso && ptDateKey(post.publish_at_iso) === key)
+            .sort((a, b) => new Date(a.publish_at_iso) - new Date(b.publish_at_iso))
+            .forEach((post) => cell.append(buildWeekCard(post)));
+          grid.append(cell);
+        });
+      });
+      const endKey = addDays(selectedMonday, 6);
+      const labelDate = (key) => new Intl.DateTimeFormat('en-US', {month: 'short', day: 'numeric', timeZone: 'UTC'}).format(keyDate(key));
+      document.querySelector('[data-week-label]').textContent = `${labelDate(selectedMonday)} – ${labelDate(endKey)}`;
+      const filter = document.querySelector('[data-week-filter]');
+      if (filter) filter.value = selectedMonday;
+      const url = new URL(window.location.href);
+      url.searchParams.set('week', selectedMonday);
+      window.history.replaceState({}, '', url);
+    };
+
+    const setViewMode = (mode, remember = true) => {
+      const normalized = mode === 'list' ? 'list' : 'week';
+      document.querySelectorAll('[data-scheduled-view]').forEach((view) => { view.hidden = view.dataset.scheduledView !== normalized; });
+      document.querySelectorAll('[data-view-mode]').forEach((button) => button.setAttribute('aria-pressed', button.dataset.viewMode === normalized ? 'true' : 'false'));
+      document.querySelector('[data-week-nav]').hidden = normalized !== 'week';
+      if (remember) {
+        try { localStorage.setItem('adminScheduledShortsView', normalized); } catch (_error) {}
+      }
+    };
+    let initialMode = 'week';
+    try { initialMode = localStorage.getItem('adminScheduledShortsView') || 'week'; } catch (_error) {}
+    document.querySelectorAll('[data-view-mode]').forEach((button) => button.addEventListener('click', () => setViewMode(button.dataset.viewMode)));
+    document.querySelectorAll('[data-week-step]').forEach((button) => button.addEventListener('click', () => {
+      selectedMonday = addDays(selectedMonday, Number(button.dataset.weekStep) * 7);
+      renderWeek();
+    }));
+    document.querySelector('[data-this-week]')?.addEventListener('click', () => {
+      selectedMonday = mondayFor(todayPT);
+      renderWeek();
     });
+    setViewMode(initialMode, false);
+    renderWeek();
 
     document.querySelectorAll('.scheduled-row[data-href]').forEach((row) => {
       const openRow = () => { window.location.href = row.dataset.href; };
@@ -502,11 +888,16 @@
         openRow();
       });
       row.addEventListener('keydown', (event) => {
+        if (event.target.closest('a, button, input, select, [data-no-row-nav]')) return;
         if (event.key === 'Enter' || event.key === ' ') {
           event.preventDefault();
           openRow();
         }
       });
+    });
+    document.addEventListener('click', (event) => {
+      if (event.target.closest('.scheduled-week-card')) return;
+      document.querySelectorAll('[data-week-popover]').forEach((popover) => { popover.hidden = true; });
     });
   </script>
 {% endblock %}

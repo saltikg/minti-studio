@@ -370,13 +370,30 @@ def _group_platform_items(
         preferred = next((item for item in platforms if item["platform"] == "youtube"), platforms[0])
         platform_times = [item["platform_time"] for item in platforms if item.get("platform_time")]
         earliest_time = min(platform_times) if platform_times else None
-        time_mismatch = bool(
-            len(platform_times) > 1
-            and (max(platform_times) - min(platform_times)).total_seconds() > 5 * 60
-        )
+        time_mismatch = len({item.isoformat() for item in platform_times}) > 1
         for platform_row in platforms:
-            platform_row["show_platform_time"] = time_mismatch
+            platform_row["show_platform_time"] = True
             platform_row["platform_time_label"] = _pt_label(platform_row.get("platform_time"))
+            if platform_row["status_key"] in {"failed", "blocked"}:
+                platform_row["week_status"] = "failed"
+            elif platform_row["status_key"] == "published":
+                platform_row["week_status"] = "published"
+            elif platform_row["platform"] == "youtube" and platform_row["youtube_locked"]:
+                platform_row["week_status"] = "uploaded"
+            else:
+                platform_row["week_status"] = "scheduled"
+
+        time_summary = [
+            {
+                "platform": item["platform"],
+                "label": (
+                    f"{item['platform_time'].astimezone(PT).strftime('%a')} "
+                    f"{item['platform_time'].astimezone(PT).day}"
+                ),
+            }
+            for item in platforms
+            if item.get("platform_time")
+        ] if time_mismatch else []
 
         has_scheduled = any(item["status_key"] == "scheduled" for item in platforms)
         recent_event = max(
@@ -410,6 +427,7 @@ def _group_platform_items(
                 "is_mismatch": is_problem,
                 "publish_at": earliest_time,
                 "publish_time_label": _pt_label(earliest_time),
+                "time_summary": time_summary,
                 "event_at": recent_event,
                 "section": section,
                 "has_time_mismatch": time_mismatch,
@@ -581,6 +599,29 @@ def filter_scheduled_shorts(
         key=lambda item: item["event_at"] or datetime.min.replace(tzinfo=timezone.utc),
         reverse=True,
     )
+    week_posts = []
+    for item in [*upcoming, *published]:
+        for post in item["platforms"]:
+            if platform and post["platform"] != platform:
+                continue
+            week_posts.append({
+                "id": post["id"],
+                "platform": post["platform"],
+                "platform_label": post["platform_label"],
+                "brand_id": post["brand_id"],
+                "brand_name": post["brand_name"],
+                "short_title": post["short_title"],
+                "thumbnail_url": post["thumbnail_url"],
+                "publish_at_iso": post["publish_at_iso"],
+                "publish_input_value": post["publish_input_value"],
+                "publish_time_label": post["publish_time_label"],
+                "status_key": post["status_key"],
+                "status_label": post["status_label"],
+                "week_status": post["week_status"],
+                "is_editable": post["is_editable"],
+                "youtube_locked": post["youtube_locked"],
+                "live_url": post["live_url"],
+            })
     return {
         "upcoming": upcoming,
         "published": published,
@@ -594,4 +635,5 @@ def filter_scheduled_shorts(
         "platform": platform,
         "brand_id": brand_id,
         "include_all_brands": include_all_brands,
+        "week_posts": week_posts,
     }

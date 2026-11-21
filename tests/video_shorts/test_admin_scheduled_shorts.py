@@ -95,6 +95,10 @@ def test_admin_schedule_data_is_read_only_filtered_and_sorted():
     assert default["upcoming"][0]["platforms"][0]["channel_name"] == "Customer YouTube"
     assert default["upcoming"][0]["publish_time_label"] == "Mon Nov 2, 9:00 AM"
     assert default["upcoming"][0]["has_time_mismatch"] is True
+    assert default["upcoming"][0]["time_summary"] == [
+        {"platform": "youtube", "label": "Mon 2"},
+        {"platform": "instagram", "label": "Mon 2"},
+    ]
     posts = {post["platform"]: post for post in default["upcoming"][0]["platforms"]}
     assert posts["youtube"]["youtube_locked"] is True
     assert posts["youtube"]["is_editable"] is False
@@ -106,6 +110,32 @@ def test_admin_schedule_data_is_read_only_filtered_and_sorted():
     instagram = filter_scheduled_shorts(items, include_all_brands=False, platform="instagram")
     assert instagram["upcoming_count"] == 1
     assert {post["platform"] for post in instagram["upcoming"][0]["platforms"]} == {"youtube", "instagram"}
+    assert {post["platform"] for post in instagram["week_posts"]} == {"instagram"}
+
+
+def test_different_platform_days_stay_distinct_in_week_and_list_summary():
+    conn = _database()
+    conn.execute(
+        "UPDATE shorts_instagram_queue SET publish_at = ? WHERE id = 'ig-mismatch'",
+        [datetime(2026, 11, 3, 17, 0)],
+    )
+    page = filter_scheduled_shorts(
+        load_scheduled_shorts(conn, now=NOW),
+        include_all_brands=False,
+    )
+
+    row = page["upcoming"][0]
+    assert row["has_time_mismatch"] is True
+    assert row["time_summary"] == [
+        {"platform": "youtube", "label": "Mon 2"},
+        {"platform": "instagram", "label": "Tue 3"},
+    ]
+    post_dates = {
+        post["platform"]: post["publish_at_iso"][:10]
+        for post in page["week_posts"]
+        if post["platform"] in {"youtube", "instagram"}
+    }
+    assert post_dates == {"youtube": "2026-11-02", "instagram": "2026-11-03"}
 
 
 def test_admin_schedule_template_marks_target_mismatch_red():
@@ -137,6 +167,16 @@ def test_admin_schedule_template_marks_target_mismatch_red():
     assert "Unschedule Instagram?" in html
     assert "window.confirm" not in html
     assert 'scheduledPostMutationUrl = "/video_shorts/admin/scheduled-shorts/post"' in html
+    assert 'data-view-mode="week"' in html
+    assert 'data-view-mode="list"' in html
+    assert "adminScheduledShortsView" in html
+    assert "localStorage.getItem" in html
+    assert "localStorage.setItem" in html
+    assert 'data-week-grid' in html
+    assert 'data-week-step="-1"' in html
+    assert 'data-this-week' in html
+    assert 'data-platform-time hidden' not in html
+    assert 'scheduled-time-summary-item' in html
 
 
 def test_shared_social_unschedule_is_tenant_and_platform_scoped():
