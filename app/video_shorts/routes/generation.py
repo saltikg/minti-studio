@@ -25791,7 +25791,12 @@ def admin_scheduled_short_post():
         return jsonify(success=False, message="The post's source video is outside the selected brand."), 403
     video_pk = int(video_row[0])
     source_video_id = str(video_row[1] or "").strip()
-    entries = _load_plan_entries(source_video_id, video_pk=video_pk)
+    entries = _load_plan_entries(
+        source_video_id,
+        video_pk=video_pk,
+        owner_user_id=owner_user_id,
+        brand_id=brand_id,
+    )
     target_entry = next(
         (entry for entry in entries if str(entry.get("plan_index") or "").strip() == plan_index),
         None,
