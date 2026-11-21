@@ -8050,6 +8050,27 @@ def _cancel_pending_social_queue_rows(
     scope = _active_editor_context()
     video = tenant_media.resolve_video(video_id, video_pk=video_pk,
                                        owner_user_id=scope["owner_user_id"], brand_id=scope["brand_id"])
+    if table_name in {"shorts_instagram_queue", "shorts_facebook_queue"}:
+        from app.video_shorts.services.social_schedule_mutations import cancel_pending_social_schedules
+
+        try:
+            return cancel_pending_social_schedules(
+                conn,
+                platform="instagram" if table_name == "shorts_instagram_queue" else "facebook",
+                owner_user_id=str(video.owner_user_id),
+                brand_id=video.brand_id,
+                video_id=video_id,
+                plan_index=plan_index,
+                clip_filename=clip_filename,
+            )
+        except Exception:
+            current_app.logger.exception(
+                "Failed to cancel pending social queue rows table=%s video_id=%s plan_index=%s",
+                table_name,
+                video_id,
+                plan_index,
+            )
+            return 0
     identity_sql, identity_params = queue_identity_filter(video.owner_user_id, video.brand_id)
     try:
         result = conn.execute(
@@ -25664,6 +25685,254 @@ def admin_scheduled_shorts():
         "shorts_admin_scheduled_shorts.html",
         admin_title="Scheduled Shorts",
         **page_data,
+    )
+
+
+@video_shorts_bp.route("/admin/scheduled-shorts/post", methods=["POST"])
+def admin_scheduled_short_post():
+    """Reschedule or unschedule one platform post from the admin overview."""
+    current_user = getattr(g, "vs_current_user", None) or {}
+    if str(current_user.get("role") or "").strip().lower() != "admin":
+        abort(403)
+    payload = request.get_json(silent=True) or {}
+    action = str(payload.get("action") or "").strip().lower()
+    platform = str(payload.get("platform") or "").strip().lower()
+    post_id = str(payload.get("post_id") or "").strip()
+    brand_id = str(payload.get("brand_id") or "").strip()
+    if action not in {"edit", "unschedule"} or platform not in {"youtube", "instagram", "facebook"}:
+        return jsonify(success=False, message="Unsupported schedule action."), 400
+    if not post_id or not brand_id:
+        return jsonify(success=False, message="A post and selected brand are required."), 400
+
+    table_name = {
+        "youtube": "shorts_youtube_schedules",
+        "instagram": "shorts_instagram_queue",
+        "facebook": "shorts_facebook_queue",
+    }[platform]
+    conn_ro = get_db_readonly()
+    try:
+        if platform == "youtube":
+            row = conn_ro.execute(
+                f"""
+                SELECT id, CAST(user_id AS VARCHAR), CAST(brand_id AS VARCHAR), status,
+                       publish_at, upload_due_at, youtube_video_id, resumable_uri, payload_json
+                  FROM {table_name}
+                 WHERE CAST(id AS VARCHAR) = CAST(? AS VARCHAR)
+                   AND CAST(brand_id AS VARCHAR) = CAST(? AS VARCHAR)
+                 LIMIT 1
+                """,
+                [post_id, brand_id],
+            ).fetchone()
+        else:
+            target_columns = (
+                "instagram_business_account_id, instagram_username, youtube_video_id, "
+                "youtube_short_id" if platform == "instagram" else "page_id, page_name, NULL, NULL"
+            )
+            row = conn_ro.execute(
+                f"""
+                SELECT id, CAST(user_id AS VARCHAR), CAST(brand_id AS VARCHAR), status,
+                       publish_at, video_id, plan_index, clip_filename, caption_text,
+                       plan_title, media_type, {target_columns}
+                  FROM {table_name}
+                 WHERE CAST(id AS VARCHAR) = CAST(? AS VARCHAR)
+                   AND CAST(brand_id AS VARCHAR) = CAST(? AS VARCHAR)
+                 LIMIT 1
+                """,
+                [post_id, brand_id],
+            ).fetchone()
+    finally:
+        conn_ro.close()
+    if not row:
+        return jsonify(success=False, message="Post was not found in the selected brand."), 404
+
+    owner_user_id = str(row[1] or "").split("::", 1)[0].strip()
+    row_brand_id = str(row[2] or "").strip()
+    if not owner_user_id or row_brand_id != brand_id:
+        return jsonify(success=False, message="Post does not belong to the selected brand."), 403
+    raw_status = str(row[3] or "").strip().lower()
+    if raw_status == "published":
+        return jsonify(success=False, message="Published posts cannot be edited."), 409
+
+    video_pk = None
+    source_video_id = ""
+    plan_index = ""
+    schedule_payload: Dict[str, Any] = {}
+    if platform == "youtube":
+        try:
+            schedule_payload = json.loads(row[8] or "{}") if not isinstance(row[8], dict) else row[8]
+        except (TypeError, ValueError, json.JSONDecodeError):
+            schedule_payload = {}
+        video_pk = schedule_payload.get("video_pk")
+        plan_index = str(schedule_payload.get("plan_index") or "").strip()
+    else:
+        source_video_id = str(row[5] or "").strip()
+        plan_index = str(row[6] or "").strip()
+
+    conn_ro = get_db_readonly()
+    try:
+        if video_pk:
+            video_row = conn_ro.execute(
+                """SELECT id, video_id FROM youtube_videos
+                   WHERE id = ? AND CAST(owner_user_id AS VARCHAR) = CAST(? AS VARCHAR)
+                     AND CAST(brand_id AS VARCHAR) = CAST(? AS VARCHAR) LIMIT 1""",
+                [video_pk, owner_user_id, brand_id],
+            ).fetchone()
+        else:
+            video_row = conn_ro.execute(
+                """SELECT id, video_id FROM youtube_videos
+                   WHERE CAST(video_id AS VARCHAR) = CAST(? AS VARCHAR)
+                     AND CAST(owner_user_id AS VARCHAR) = CAST(? AS VARCHAR)
+                     AND CAST(brand_id AS VARCHAR) = CAST(? AS VARCHAR) LIMIT 1""",
+                [source_video_id, owner_user_id, brand_id],
+            ).fetchone()
+    finally:
+        conn_ro.close()
+    if not video_row:
+        return jsonify(success=False, message="The post's source video is outside the selected brand."), 403
+    video_pk = int(video_row[0])
+    source_video_id = str(video_row[1] or "").strip()
+    entries = _load_plan_entries(source_video_id, video_pk=video_pk)
+    target_entry = next(
+        (entry for entry in entries if str(entry.get("plan_index") or "").strip() == plan_index),
+        None,
+    )
+    if not target_entry:
+        return jsonify(success=False, message="The post's clip was not found."), 404
+    latest_filename = str(target_entry.get("output_filename") or target_entry.get("clip_filename") or "").strip()
+    if not latest_filename or not _short_exists(latest_filename):
+        return jsonify(success=False, message="The clip's latest generated video is unavailable."), 409
+
+    if platform == "youtube":
+        publish_dt = row[4]
+        if isinstance(publish_dt, str):
+            publish_dt = _parse_iso_datetime(publish_dt)
+        elif isinstance(publish_dt, datetime):
+            publish_dt = publish_dt.replace(tzinfo=timezone.utc) if publish_dt.tzinfo is None else publish_dt.astimezone(timezone.utc)
+        else:
+            publish_dt = None
+        locked = bool(
+            row[6]
+            or row[7]
+            or raw_status in {"queued", "uploading", "uploaded"}
+            or not publish_dt
+            or publish_dt <= datetime.now(timezone.utc) + timedelta(minutes=youtube_scheduling.lead_minutes())
+        )
+        if locked:
+            return jsonify(success=False, message="Uploaded — manage in YouTube Studio"), 409
+
+    if action == "unschedule":
+        if platform == "youtube":
+            try:
+                youtube_scheduling.cancel_schedule(
+                    user_id=owner_user_id, brand_id=brand_id,
+                    video_pk=video_pk, plan_index=plan_index,
+                )
+            except youtube_scheduling.YouTubeScheduleLocked as exc:
+                return jsonify(success=False, message=str(exc)), 409
+            target_entry.pop("publish_at", None)
+            target_entry.pop("publish_at_iso", None)
+            target_entry.pop("upload_due_at", None)
+            target_entry["publish_status"] = "cancelled"
+            target_entry["yt_status"] = "cancelled"
+            _write_plan_entries(
+                source_video_id, entries, video_pk=video_pk,
+                owner_user_id=owner_user_id, brand_id=brand_id,
+            )
+        else:
+            from app.video_shorts.services.social_schedule_mutations import cancel_pending_social_schedules
+
+            conn = get_db()
+            try:
+                changed = cancel_pending_social_schedules(
+                    conn, platform=platform, owner_user_id=owner_user_id,
+                    brand_id=brand_id, queue_id=post_id,
+                )
+                conn.commit()
+            finally:
+                conn.close()
+            if changed == 0:
+                return jsonify(success=False, message="This post can no longer be unscheduled."), 409
+        return jsonify(success=True, action=action, platform=platform, post_id=post_id)
+
+    local_value = str(payload.get("publish_at") or "").strip()
+    if not local_value:
+        return jsonify(success=False, message="Choose a publish time in Pacific time."), 400
+    try:
+        publish_at_iso = local_to_utc_rfc3339(local_value, "America/Los_Angeles")
+        requested_publish_dt = _parse_iso_datetime(publish_at_iso)
+    except Exception:
+        return jsonify(success=False, message="Invalid Pacific publish time."), 400
+    if not requested_publish_dt or requested_publish_dt <= datetime.now(timezone.utc):
+        return jsonify(success=False, message="Publish time must be in the future."), 400
+
+    new_post_id = post_id
+    if platform == "youtube":
+        try:
+            response = youtube_scheduling.schedule_youtube_upload(
+                video_path=str(tenant_media.short_path(latest_filename)),
+                title=str(schedule_payload.get("title") or target_entry.get("yt_title") or target_entry.get("title") or "Short"),
+                description=str(schedule_payload.get("description") or target_entry.get("yt_description") or target_entry.get("description") or ""),
+                publish_at=publish_at_iso,
+                privacy_status="private",
+                user_id=owner_user_id,
+                brand_id=brand_id,
+                video_pk=video_pk,
+                plan_index=plan_index,
+                publish_at_local=local_value,
+                clip_filename=latest_filename,
+            )
+            new_post_id = str(response.get("schedule_id") or response.get("id") or post_id)
+        except youtube_scheduling.YouTubeScheduleLocked as exc:
+            return jsonify(success=False, message=str(exc)), 409
+        except Exception:
+            current_app.logger.exception("Admin YouTube reschedule failed post_id=%s", post_id)
+            return jsonify(success=False, message="YouTube reschedule failed."), 500
+        _update_plan_entry_publish_state(
+            video_pk=video_pk, plan_index=plan_index, filename=latest_filename,
+            publish_status="pending", publish_at_local=local_value,
+            publish_at_iso=publish_at_iso,
+            title=str(schedule_payload.get("title") or target_entry.get("title") or "Short"),
+            description=str(schedule_payload.get("description") or target_entry.get("yt_description") or ""),
+            owner_user_id=owner_user_id, brand_id=brand_id,
+        )
+    elif platform == "instagram":
+        new_post_id = enqueue_instagram_clip(
+            user_id=owner_user_id, brand_id=brand_id, video_id=source_video_id,
+            plan_index=plan_index, clip_filename=latest_filename,
+            caption_text=str(row[8] or ""), publish_at_iso=publish_at_iso,
+            instagram_business_account_id=str(row[11] or ""), instagram_username=str(row[12] or ""),
+            youtube_video_id=str(row[13] or source_video_id), youtube_short_id=str(row[14] or ""),
+            plan_title=str(row[9] or target_entry.get("title") or ""),
+            media_type=str(row[10] or "reel"), force_requeue=False,
+        )
+    else:
+        new_post_id = enqueue_facebook_clip(
+            user_id=owner_user_id, brand_id=brand_id, video_id=source_video_id,
+            plan_index=plan_index, clip_filename=latest_filename,
+            caption_text=str(row[8] or ""), publish_at_iso=publish_at_iso,
+            page_id=str(row[11] or ""), page_name=str(row[12] or ""),
+            plan_title=str(row[9] or target_entry.get("title") or ""),
+            media_type=str(row[10] or "reel"),
+        )
+    if str(new_post_id or post_id) != post_id and platform != "youtube":
+        from app.video_shorts.services.social_schedule_mutations import cancel_pending_social_schedules
+
+        conn = get_db()
+        try:
+            cancel_pending_social_schedules(
+                conn, platform=platform, owner_user_id=owner_user_id,
+                brand_id=brand_id, queue_id=post_id,
+            )
+            conn.commit()
+        finally:
+            conn.close()
+    local_dt = requested_publish_dt.astimezone(ZoneInfo("America/Los_Angeles"))
+    hour = local_dt.strftime("%I").lstrip("0") or "12"
+    label = f"{local_dt.strftime('%a %b')} {local_dt.day}, {hour}:{local_dt.strftime('%M %p')}"
+    return jsonify(
+        success=True, action=action, platform=platform,
+        post_id=str(new_post_id or post_id), publish_at=publish_at_iso,
+        publish_input_value=local_value, publish_time_label=label,
     )
 
 

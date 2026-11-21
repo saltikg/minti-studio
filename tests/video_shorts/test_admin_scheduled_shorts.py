@@ -11,6 +11,7 @@ from app.video_shorts.services.admin_scheduled_shorts import (
     filter_scheduled_shorts,
     load_scheduled_shorts,
 )
+from app.video_shorts.services.social_schedule_mutations import cancel_pending_social_schedules
 
 
 NOW = datetime(2026, 11, 2, 16, 0, tzinfo=timezone.utc)
@@ -94,6 +95,10 @@ def test_admin_schedule_data_is_read_only_filtered_and_sorted():
     assert default["upcoming"][0]["platforms"][0]["channel_name"] == "Customer YouTube"
     assert default["upcoming"][0]["publish_time_label"] == "Mon Nov 2, 9:00 AM"
     assert default["upcoming"][0]["has_time_mismatch"] is True
+    posts = {post["platform"]: post for post in default["upcoming"][0]["platforms"]}
+    assert posts["youtube"]["youtube_locked"] is True
+    assert posts["youtube"]["is_editable"] is False
+    assert posts["instagram"]["is_editable"] is True
     assert all_brands["upcoming_count"] == 2
     assert all_brands["upcoming_post_count"] == 3
     assert {row["brand_name"] for row in all_brands["upcoming"]} == {"Customer Brand", "Hoca"}
@@ -127,6 +132,129 @@ def test_admin_schedule_template_marks_target_mismatch_red():
     assert "Customer YouTube" in html
     assert "customer.ig" in html
     assert "· 2 posts" in html
+    assert "Uploaded — manage in YouTube Studio" in html
+    assert "✎ Edit" in html
+    assert "Unschedule Instagram?" in html
+    assert "window.confirm" not in html
+    assert 'scheduledPostMutationUrl = "/video_shorts/admin/scheduled-shorts/post"' in html
+
+
+def test_shared_social_unschedule_is_tenant_and_platform_scoped():
+    conn = duckdb.connect(":memory:")
+    conn.execute(
+        """CREATE TABLE shorts_instagram_queue (
+            id VARCHAR, user_id VARCHAR, brand_id VARCHAR, status VARCHAR,
+            status_detail VARCHAR, updated_at VARCHAR
+        )"""
+    )
+    conn.execute(
+        "INSERT INTO shorts_instagram_queue VALUES "
+        "('target', 'owner', 'brand-a', 'pending', NULL, NULL), "
+        "('other-brand', 'owner', 'brand-b', 'pending', NULL, NULL), "
+        "('published', 'owner', 'brand-a', 'published', NULL, NULL)"
+    )
+
+    cancel_pending_social_schedules(
+        conn,
+        platform="instagram",
+        owner_user_id="owner",
+        brand_id="brand-a",
+        queue_id="target",
+    )
+
+    statuses = dict(conn.execute("SELECT id, status FROM shorts_instagram_queue").fetchall())
+    assert statuses == {
+        "target": "canceled",
+        "other-brand": "pending",
+        "published": "published",
+    }
+
+
+def test_admin_schedule_mutation_requires_admin():
+    app = Flask(__name__)
+    app.secret_key = "test-secret"
+    app.register_blueprint(video_shorts_bp)
+    with app.test_request_context(
+        "/video_shorts/admin/scheduled-shorts/post",
+        method="POST",
+        json={"action": "unschedule", "platform": "instagram", "post_id": "p", "brand_id": "b"},
+    ):
+        g.vs_current_user = {"id": "member", "role": "member"}
+        with pytest.raises(Forbidden):
+            generation.admin_scheduled_short_post()
+
+
+def test_admin_instagram_edit_is_brand_scoped_and_uses_latest_clip(monkeypatch):
+    class _Result:
+        def __init__(self, row):
+            self.row = row
+
+        def fetchone(self):
+            return self.row
+
+    class _Connection:
+        def __init__(self, row):
+            self.row = row
+            self.calls = []
+
+        def execute(self, sql, params=None):
+            self.calls.append((sql, params or []))
+            return _Result(self.row)
+
+        def close(self):
+            pass
+
+    post_row = (
+        "ig-1", "owner", "brand-a", "pending", datetime(2026, 11, 21, 18, 0),
+        "source-1", "1", "old.mp4", "caption", "title", "reel",
+        "ig-account", "ig-user", "source-1", "yt-short",
+    )
+    post_conn = _Connection(post_row)
+    video_conn = _Connection((1, "source-1"))
+    connections = iter([post_conn, video_conn])
+    monkeypatch.setattr(generation, "get_db_readonly", lambda: next(connections))
+    monkeypatch.setattr(
+        generation,
+        "_load_plan_entries",
+        lambda *_args, **_kwargs: [{"plan_index": 1, "output_filename": "latest.mp4", "title": "Latest"}],
+    )
+    monkeypatch.setattr(generation, "_short_exists", lambda filename: filename == "latest.mp4")
+    calls = []
+    monkeypatch.setattr(
+        generation,
+        "enqueue_instagram_clip",
+        lambda **kwargs: calls.append(kwargs) or "ig-1",
+    )
+    monkeypatch.setattr(
+        generation,
+        "enqueue_facebook_clip",
+        lambda **_kwargs: pytest.fail("Facebook schedule must not change"),
+    )
+    monkeypatch.setattr(
+        generation.youtube_scheduling,
+        "schedule_youtube_upload",
+        lambda **_kwargs: pytest.fail("YouTube schedule must not change"),
+    )
+    app = Flask(__name__)
+    app.secret_key = "test-secret"
+    app.register_blueprint(video_shorts_bp)
+    with app.test_request_context(
+        "/video_shorts/admin/scheduled-shorts/post",
+        method="POST",
+        json={
+            "action": "edit", "platform": "instagram", "post_id": "ig-1",
+            "brand_id": "brand-a", "publish_at": "2026-11-22T10:00",
+        },
+    ):
+        g.vs_current_user = {"id": "admin", "role": "admin"}
+        response = app.make_response(generation.admin_scheduled_short_post())
+
+    assert response.status_code == 200
+    assert post_conn.calls[0][1] == ["ig-1", "brand-a"]
+    assert video_conn.calls[0][1] == ["source-1", "owner", "brand-a"]
+    assert len(calls) == 1
+    assert calls[0]["clip_filename"] == "latest.mp4"
+    assert calls[0]["brand_id"] == "brand-a"
 
 
 def test_customer_workspace_has_tenant_filtered_scheduled_link():

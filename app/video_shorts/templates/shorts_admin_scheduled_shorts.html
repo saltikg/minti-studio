@@ -142,6 +142,33 @@
       border-radius: 10px;
       background: rgba(255, 255, 255, 0.035);
     }
+    .scheduled-channel-controls { display: flex; flex-direction: column; align-items: flex-end; gap: 5px; }
+    .scheduled-channel-actions { display: flex; align-items: center; gap: 7px; }
+    .scheduled-channel-action {
+      border: 0;
+      padding: 0;
+      color: #93c5fd;
+      background: transparent;
+      font-size: 0.72rem;
+      font-weight: 700;
+    }
+    .scheduled-channel-action:hover { color: #dbeafe; text-decoration: underline; }
+    .scheduled-channel-action.is-danger { color: #fca5a5; }
+    .scheduled-channel-editor,
+    .scheduled-unschedule-confirm {
+      grid-column: 1 / -1;
+      display: flex;
+      align-items: center;
+      flex-wrap: wrap;
+      gap: 7px;
+      padding-top: 6px;
+      border-top: 1px solid rgba(255, 255, 255, 0.08);
+    }
+    .scheduled-channel-editor[hidden],
+    .scheduled-unschedule-confirm[hidden] { display: none; }
+    .scheduled-channel-editor input { width: auto; min-width: 205px; }
+    .scheduled-inline-error { grid-column: 1 / -1; color: #fca5a5; font-size: 0.72rem; }
+    .scheduled-youtube-lock { max-width: 175px; color: #fbbf24; font-size: 0.7rem; line-height: 1.25; text-align: right; }
     .scheduled-channel-target { min-width: 0; }
     .scheduled-channel-name {
       overflow: hidden;
@@ -212,8 +239,10 @@
 {% macro schedule_row(item) -%}
   <tr
     class="scheduled-row{% if item.is_problem %} is-mismatch{% endif %}"
+    data-schedule-section="{{ item.section }}"
+    data-sort-time="{{ item.publish_at.isoformat() if item.publish_at else '' }}"
     {% if item.editor_url %}data-href="{{ item.editor_url }}" tabindex="0"{% endif %}>
-    <td>{{ item.publish_time_label }}</td>
+    <td data-row-publish-time>{{ item.publish_time_label }}</td>
     <td>
       <div class="scheduled-short">
         <div class="scheduled-thumb">
@@ -230,17 +259,42 @@
     <td>
       <div class="scheduled-channels">
         {% for post in item.platforms %}
-          <div class="scheduled-channel-chip">
+          <div class="scheduled-channel-chip" data-scheduled-post data-platform="{{ post.platform }}" data-post-id="{{ post.id }}" data-brand-id="{{ post.brand_id }}" data-publish-at="{{ post.publish_at_iso }}" data-status="{{ post.status_key }}">
             {{ platform_icon(post.platform) }}
             <div class="scheduled-channel-target">
               <div class="scheduled-channel-name" title="{{ post.channel_name }}">{{ post.channel_name }}</div>
               <div class="small text-white-50">{{ post.platform_label }}</div>
-              {% if post.show_platform_time %}<div class="scheduled-channel-time">{{ post.platform_time_label }}</div>{% endif %}
+              <div class="scheduled-channel-time" data-platform-time {% if not post.show_platform_time %}hidden{% endif %}>{{ post.platform_time_label }}</div>
             </div>
-            {% if post.status_key == 'published' and post.live_url %}
-              <a class="scheduled-status published scheduled-live-link" href="{{ post.live_url }}" target="_blank" rel="noopener" data-no-row-nav>{{ post.status_label }}</a>
-            {% else %}
-              <span class="scheduled-status {{ post.status_key }}">{{ post.status_label }}</span>
+            <div class="scheduled-channel-controls">
+              {% if post.status_key == 'published' and post.live_url %}
+                <a class="scheduled-status published scheduled-live-link" href="{{ post.live_url }}" target="_blank" rel="noopener" data-no-row-nav>{{ post.status_label }}</a>
+              {% else %}
+                <span class="scheduled-status {{ post.status_key }}">{{ post.status_label }}</span>
+              {% endif %}
+              {% if post.is_editable %}
+                <div class="scheduled-channel-actions" data-no-row-nav>
+                  <button type="button" class="scheduled-channel-action" data-edit-schedule aria-label="Edit {{ post.platform_label }} publish time">✎ Edit</button>
+                  <button type="button" class="scheduled-channel-action is-danger" data-unschedule>Unschedule</button>
+                </div>
+              {% elif post.youtube_locked %}
+                <div class="scheduled-youtube-lock">Uploaded — manage in YouTube Studio</div>
+              {% endif %}
+            </div>
+            {% if post.is_editable %}
+              <form class="scheduled-channel-editor" data-schedule-editor hidden data-no-row-nav>
+                <label class="visually-hidden">Publish time in Pacific time</label>
+                <input class="form-control form-control-sm" type="datetime-local" value="{{ post.publish_input_value }}" data-publish-input required>
+                <span class="small text-white-50">Pacific time</span>
+                <button class="btn btn-sm btn-primary" type="submit">Save</button>
+                <button class="btn btn-sm btn-outline-light" type="button" data-cancel-edit>Cancel</button>
+              </form>
+              <div class="scheduled-unschedule-confirm" data-unschedule-confirm hidden data-no-row-nav>
+                <span>Unschedule {{ post.platform_label }}?</span>
+                <button class="btn btn-sm btn-danger" type="button" data-confirm-unschedule>Yes, unschedule</button>
+                <button class="btn btn-sm btn-outline-light" type="button" data-cancel-unschedule>Cancel</button>
+              </div>
+              <div class="scheduled-inline-error" data-schedule-error hidden></div>
             {% endif %}
           </div>
         {% endfor %}
@@ -336,6 +390,111 @@
 
 {% block extra_scripts %}
   <script>
+    const scheduledPostMutationUrl = {{ url_for('video_shorts_bp.admin_scheduled_short_post')|tojson }};
+
+    const resyncScheduledRow = (row) => {
+      const dates = [...row.querySelectorAll('[data-scheduled-post][data-status="scheduled"]')]
+        .map((card) => ({ card, date: new Date(card.dataset.publishAt || '') }))
+        .filter((item) => !Number.isNaN(item.date.getTime()))
+        .sort((a, b) => a.date - b.date);
+      if (!dates.length) {
+        row.remove();
+        return;
+      }
+      const first = dates[0];
+      row.dataset.sortTime = first.card.dataset.publishAt;
+      const label = first.card.querySelector('[data-platform-time]')?.textContent || '';
+      row.querySelector('[data-row-publish-time]').textContent = label;
+      const body = row.closest('tbody');
+      const divider = body.querySelector('.scheduled-divider');
+      const rows = [...body.querySelectorAll('.scheduled-row[data-schedule-section="upcoming"]')]
+        .sort((a, b) => new Date(a.dataset.sortTime) - new Date(b.dataset.sortTime));
+      rows.forEach((item) => body.insertBefore(item, divider));
+    };
+
+    const mutateScheduledPost = async (card, action, publishAt = '') => {
+      const response = await fetch(scheduledPostMutationUrl, {
+        method: 'POST',
+        headers: {'Content-Type': 'application/json', 'X-Requested-With': 'XMLHttpRequest'},
+        body: JSON.stringify({
+          action,
+          platform: card.dataset.platform,
+          post_id: card.dataset.postId,
+          brand_id: card.dataset.brandId,
+          publish_at: publishAt,
+        }),
+      });
+      const result = await response.json().catch(() => ({}));
+      if (!response.ok || !result.success) throw new Error(result.message || 'Could not update this schedule.');
+      return result;
+    };
+
+    document.querySelectorAll('[data-scheduled-post]').forEach((card) => {
+      const editor = card.querySelector('[data-schedule-editor]');
+      const confirmation = card.querySelector('[data-unschedule-confirm]');
+      const error = card.querySelector('[data-schedule-error]');
+      const showError = (message = '') => {
+        if (!error) return;
+        error.textContent = message;
+        error.hidden = !message;
+      };
+      card.querySelector('[data-edit-schedule]')?.addEventListener('click', () => {
+        confirmation.hidden = true;
+        editor.hidden = false;
+        showError();
+        editor.querySelector('[data-publish-input]')?.focus();
+      });
+      card.querySelector('[data-cancel-edit]')?.addEventListener('click', () => {
+        editor.hidden = true;
+        showError();
+      });
+      card.querySelector('[data-unschedule]')?.addEventListener('click', () => {
+        editor.hidden = true;
+        confirmation.hidden = false;
+        showError();
+      });
+      card.querySelector('[data-cancel-unschedule]')?.addEventListener('click', () => {
+        confirmation.hidden = true;
+        showError();
+      });
+      editor?.addEventListener('submit', async (event) => {
+        event.preventDefault();
+        const submit = editor.querySelector('[type="submit"]');
+        submit.disabled = true;
+        showError();
+        try {
+          const input = editor.querySelector('[data-publish-input]');
+          const result = await mutateScheduledPost(card, 'edit', input.value);
+          card.dataset.postId = result.post_id;
+          card.dataset.publishAt = result.publish_at;
+          input.value = result.publish_input_value;
+          const time = card.querySelector('[data-platform-time]');
+          time.textContent = result.publish_time_label;
+          time.hidden = false;
+          editor.hidden = true;
+          resyncScheduledRow(card.closest('.scheduled-row'));
+        } catch (err) {
+          showError(err.message);
+        } finally {
+          submit.disabled = false;
+        }
+      });
+      card.querySelector('[data-confirm-unschedule]')?.addEventListener('click', async (event) => {
+        const button = event.currentTarget;
+        button.disabled = true;
+        showError();
+        try {
+          await mutateScheduledPost(card, 'unschedule');
+          const row = card.closest('.scheduled-row');
+          card.remove();
+          resyncScheduledRow(row);
+        } catch (err) {
+          showError(err.message);
+          button.disabled = false;
+        }
+      });
+    });
+
     document.querySelectorAll('.scheduled-row[data-href]').forEach((row) => {
       const openRow = () => { window.location.href = row.dataset.href; };
       row.addEventListener('click', (event) => {

@@ -1,4 +1,4 @@
-"""Read-only aggregation for the admin Scheduled Shorts page."""
+"""Aggregation helpers for the admin Scheduled Shorts page."""
 
 from __future__ import annotations
 
@@ -8,6 +8,7 @@ from typing import Any, Dict, Iterable, Optional
 from zoneinfo import ZoneInfo
 
 from app.video_shorts.services.db import table_columns
+from app.video_shorts.services.youtube_scheduling import lead_minutes
 
 
 PT = ZoneInfo("America/Los_Angeles")
@@ -252,6 +253,7 @@ def _build_item(
     users: dict[str, dict[str, str]],
     brands: dict[str, dict[str, str]],
     customer_scopes: set[tuple[str, str]],
+    now_utc: datetime,
 ) -> dict[str, Any]:
     current_target_id = str((current_connection or {}).get("id") or "").strip()
     expected_target_id = str(expected_target_id or "").strip()
@@ -259,11 +261,25 @@ def _build_item(
     status_key, status_label = _status(row.get("status"))
     publish_dt = _utc(publish_at)
     published_dt = _utc(published_at)
+    raw_status = str(row.get("status") or "").strip().lower()
+    if platform == "youtube" and raw_status == "uploaded" and publish_dt and publish_dt > now_utc:
+        status_key, status_label = "scheduled", "Scheduled"
     event_dt = (published_dt or publish_dt) if status_key == "published" else (_utc(updated_at) or publish_dt)
     brand = brands.get(brand_id) or {}
     user = users.get(owner_user_id) or {}
     is_customer = user.get("service_mode") == "autopilot"
     channel_name = str(snapshot_target_name or "").strip() or expected_target_id or "Missing target"
+    youtube_locked = bool(
+        platform == "youtube"
+        and status_key == "scheduled"
+        and (
+            str(row.get("youtube_video_id") or "").strip()
+            or str(row.get("resumable_uri") or "").strip()
+            or raw_status in {"queued", "uploading", "uploaded"}
+            or not publish_dt
+            or publish_dt <= now_utc + timedelta(minutes=lead_minutes())
+        )
+    )
     return {
         "id": str(row.get("id") or ""),
         "platform": platform,
@@ -288,12 +304,16 @@ def _build_item(
         "status_label": status_label,
         "is_problem": mismatch or status_key in {"blocked", "failed"},
         "publish_at": publish_dt,
+        "publish_at_iso": publish_dt.isoformat().replace("+00:00", "Z") if publish_dt else "",
+        "publish_input_value": publish_dt.astimezone(PT).strftime("%Y-%m-%dT%H:%M") if publish_dt else "",
         "publish_time_label": _pt_label(publish_dt),
         "event_at": event_dt,
         "platform_time": (published_dt or publish_dt) if status_key == "published" else publish_dt,
         "live_url": _live_url(platform, row) if status_key == "published" else "",
         "raw_status": str(row.get("status") or "").strip(),
         "token_key": token_key,
+        "is_editable": status_key == "scheduled" and not youtube_locked,
+        "youtube_locked": youtube_locked,
     }
 
 
@@ -415,14 +435,17 @@ def load_scheduled_shorts(conn, *, now: Optional[datetime] = None) -> list[dict[
     youtube_connections, youtube_titles_by_id, instagram_connections, facebook_connections = _load_connections(conn)
     items: list[dict[str, Any]] = []
 
+    youtube_columns = table_columns(conn, "shorts_youtube_schedules")
+    upload_due_select = "upload_due_at" if "upload_due_at" in youtube_columns else "NULL AS upload_due_at"
+    resumable_select = "resumable_uri" if "resumable_uri" in youtube_columns else "NULL AS resumable_uri"
     youtube_rows = _table_rows(
         conn,
         "shorts_youtube_schedules",
-        """
+        f"""
         SELECT id, user_id, brand_id, expected_youtube_channel_id, payload_json,
-               status, publish_at, youtube_video_id, updated_at
+               status, publish_at, {upload_due_select}, youtube_video_id, {resumable_select}, updated_at
         FROM shorts_youtube_schedules
-        WHERE status NOT IN ('cancelled')
+        WHERE lower(status) NOT IN ('cancelled', 'canceled')
         """,
     )
     for row in youtube_rows:
@@ -456,6 +479,7 @@ def load_scheduled_shorts(conn, *, now: Optional[datetime] = None) -> list[dict[
             users=users,
             brands=brands,
             customer_scopes=customer_scopes,
+            now_utc=now_utc,
         )
         items.append(item)
 
@@ -469,7 +493,7 @@ def load_scheduled_shorts(conn, *, now: Optional[datetime] = None) -> list[dict[
                    instagram_business_account_id, instagram_username, status, publish_at,
                    published_at, instagram_media_id, permalink, updated_at
             FROM shorts_instagram_queue
-            WHERE status NOT IN ('cancelled')
+            WHERE lower(status) NOT IN ('cancelled', 'canceled')
             """,
             "instagram_business_account_id",
             "instagram_username",
@@ -483,7 +507,7 @@ def load_scheduled_shorts(conn, *, now: Optional[datetime] = None) -> list[dict[
                    page_id, page_name, status, publish_at, published_at,
                    facebook_video_id, permalink, updated_at
             FROM shorts_facebook_queue
-            WHERE status NOT IN ('cancelled')
+            WHERE lower(status) NOT IN ('cancelled', 'canceled')
             """,
             "page_id",
             "page_name",
@@ -515,6 +539,7 @@ def load_scheduled_shorts(conn, *, now: Optional[datetime] = None) -> list[dict[
                 users=users,
                 brands=brands,
                 customer_scopes=customer_scopes,
+                now_utc=now_utc,
             )
             items.append(item)
 
