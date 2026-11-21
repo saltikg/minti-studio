@@ -48,7 +48,9 @@ def help_faq_article(slug: str):
     if not entry:
         abort(404)
     if entry.get("type") == "guide":
-        entry["content_html"] = render_markdown(str(entry.get("body") or ""))
+        entry["content_html"] = render_markdown(
+            str(entry.get("body") or ""), show_screenshot_badges=False
+        )
     return render_template(
         "vs_help_faq_article.html",
         entry=entry,

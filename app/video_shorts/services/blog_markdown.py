@@ -233,6 +233,27 @@ def _motion_html(name: str, caption: str) -> str:
     )
 
 
+def _tour_html(name: str, caption: str) -> str:
+    tour_name = (name or "").strip()
+    tour_caption = (caption or "").strip()
+    if tour_name != "maya-demo" or "\n" in tour_caption:
+        return ""
+    base_url = url_for("video_shorts_bp.static", filename=f"motion/{tour_name}")
+    safe_caption = escape(tour_caption)
+    aria_label = escape(tour_caption or "Minti Studio editor tour", quote=True)
+    caption_html = f"<figcaption>{safe_caption}</figcaption>" if tour_caption else ""
+    return (
+        '<figure class="blog-motion vs-help-tour" data-help-tour>'
+        '<video controls playsinline preload="metadata" '
+        f'poster="{escape(base_url + ".jpg?v=5", quote=True)}" '
+        f'aria-label="{aria_label}" data-help-tour-video>'
+        f'<source src="{escape(base_url + ".mp4?v=5", quote=True)}" type="video/mp4">'
+        f'<track kind="captions" srclang="en" src="{escape(base_url + ".en.vtt?v=5", quote=True)}" '
+        'label="English" default>'
+        f"</video>{caption_html}</figure>"
+    )
+
+
 def _attrs_from_tag(tag: str) -> dict[str, str]:
     attrs: dict[str, str] = {}
     for match in re.finditer(r'([A-Za-z_:][-A-Za-z0-9_:.]*)\s*=\s*("([^"]*)"|\'([^\']*)\')', tag):
@@ -277,7 +298,7 @@ def _is_portrait_image(src: str) -> bool:
         return False
 
 
-def _figure_html(match: re.Match[str]) -> str:
+def _figure_html(match: re.Match[str], *, show_screenshot_badges: bool = True) -> str:
     tag = match.group(1)
     attrs = _attrs_from_tag(tag)
     src = attrs.get("src", "")
@@ -291,7 +312,7 @@ def _figure_html(match: re.Match[str]) -> str:
     safe_caption = escape(caption)
     screenshot_tag = (
         '<span class="tag">Screenshot from Minti Studio</span>'
-        if _is_screenshot_image(src, title)
+        if show_screenshot_badges and _is_screenshot_image(src, title)
         else ""
     )
     figure_class = "figure figure--portrait" if _is_portrait_image(src) else "figure"
@@ -307,7 +328,9 @@ def _figure_html(match: re.Match[str]) -> str:
     )
 
 
-def _figure_with_em_caption_html(match: re.Match[str]) -> str:
+def _figure_with_em_caption_html(
+    match: re.Match[str], *, show_screenshot_badges: bool = True
+) -> str:
     tag = match.group(1)
     caption = re.sub(r"<[^>]+>", "", match.group(2)).strip()
     if caption:
@@ -317,7 +340,10 @@ def _figure_with_em_caption_html(match: re.Match[str]) -> str:
             tag = re.sub(r"\s*/>$", f' title="{safe_caption}" />', tag)
         else:
             tag = re.sub(r">$", f' title="{safe_caption}">', tag)
-    return _figure_html(re.match(r"(.*)", tag, flags=re.S))
+    return _figure_html(
+        re.match(r"(.*)", tag, flags=re.S),
+        show_screenshot_badges=show_screenshot_badges,
+    )
 
 
 def _add_table_checks(table_html: str) -> str:
@@ -459,6 +485,8 @@ def _compare_html(body: str, caption: str) -> str:
 def _component_html(component_type: str, title: str, body: str) -> str:
     if component_type == "motion":
         return _motion_html(title, body)
+    if component_type == "tour":
+        return _tour_html(title, body)
     safe_title = escape((title or "").strip())
     if component_type == "flow":
         return _flow_html(body, title)
@@ -514,7 +542,7 @@ def _extract_component_blocks(markdown_text: str) -> tuple[str, list[str]]:
         supported_types = (
             _CALLOUT_TYPES
             | _DIAGRAM_TYPES
-            | {"key", "action", "steps", "motion"}
+            | {"key", "action", "steps", "motion", "tour"}
             | set(_SPECIMEN_TAGS)
         )
         if component_type not in supported_types:
@@ -547,7 +575,12 @@ def _restore_component_blocks(clean_html: str, components: list[str]) -> str:
     return _COMPONENT_TOKEN_RE.sub(replace, clean_html)
 
 
-def _render_markdown(markdown_text: str, *, expand_components: bool = True) -> str:
+def _render_markdown(
+    markdown_text: str,
+    *,
+    expand_components: bool = True,
+    show_screenshot_badges: bool = True,
+) -> str:
     component_html: list[str] = []
     source = markdown_text or ""
     if expand_components:
@@ -569,10 +602,18 @@ def _render_markdown(markdown_text: str, *, expand_components: bool = True) -> s
     if expand_components:
         restored_html = _restore_component_blocks(restored_html, component_html)
     restored_html = _wrap_tables(restored_html)
-    restored_html = _IMAGE_WITH_EM_CAPTION_RE.sub(_figure_with_em_caption_html, restored_html)
-    restored_html = _IMAGE_RE.sub(_figure_html, restored_html)
+    restored_html = _IMAGE_WITH_EM_CAPTION_RE.sub(
+        lambda match: _figure_with_em_caption_html(
+            match, show_screenshot_badges=show_screenshot_badges
+        ),
+        restored_html,
+    )
+    restored_html = _IMAGE_RE.sub(
+        lambda match: _figure_html(match, show_screenshot_badges=show_screenshot_badges),
+        restored_html,
+    )
     return restored_html
 
 
-def render_markdown(markdown_text: str) -> str:
-    return _render_markdown(markdown_text)
+def render_markdown(markdown_text: str, *, show_screenshot_badges: bool = True) -> str:
+    return _render_markdown(markdown_text, show_screenshot_badges=show_screenshot_badges)

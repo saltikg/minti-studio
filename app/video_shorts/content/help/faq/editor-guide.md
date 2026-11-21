@@ -10,6 +10,10 @@ order: 25
 
 Turn one long video into several Shorts: add the video, pick your moments, design them, and render. This guide walks through every part of the editor.
 
+:::tour maya-demo
+Watch: a 90-second tour of the editor
+:::
+
 **On this page:** [Add a video](#add-a-video) · [Your Clips](#your-clips) · [Make a Clip](#make-a-clip) · [Edit a clip's text](#edit-clip-text) · [Design](#edit-shorts) · [Style](#style) · [Layout](#layout) · [Captions](#captions) · [Title](#title) · [Overlays](#overlays) · [Music](#music) · [Background](#background) · [Subscribe](#subscribe) · [Save & regenerate](#saving) · [Schedule](#schedule) · [Common questions](#faq)
 
 ## Add a video {#add-a-video}
@@ -18,7 +22,7 @@ Go to [My Videos](/video_shorts/my-videos) and paste a YouTube link, or upload a
 
 MintiStudio downloads the video and creates a transcript. Long videos can take a few minutes. The editor opens as soon as the transcript is ready.
 
-![Adding a video in My Videos](/video_shorts/static/help/editor/01-add-video.png "Paste a YouTube link or upload a file [screenshot]")
+![The Add Video screen with options to paste a YouTube link or upload a file](/video_shorts/static/img/blog/library/v3/add-video-url.jpg?v=2 "Paste a YouTube link or upload a file")
 
 ## Your Clips — the clip list {#your-clips}
 
@@ -30,6 +34,10 @@ MintiStudio downloads the video and creates a transcript. Long videos can take a
 - **Status** — `Not created yet`, `In queue`, `Rendering…` or `Rendered`. You can keep working while clips render.
 
 Click a clip to open it. Under the preview of a rendered clip you'll find:
+
+![Your Clips with finished Shorts and AI scores](/video_shorts/static/img/blog/library/v3/your-clips-ai-scores.jpg?v=2 "Review finished Shorts and their AI scores")
+
+![Shorts rendering in Your Clips](/video_shorts/static/img/blog/library/v3/clips-rendering-scores.jpg?v=2 "Clips render in the background, each with an AI score")
 
 | Button | What it does |
 |---|---|
@@ -57,11 +65,7 @@ Type a title, or leave it empty and AI writes one for you.
 Click `▶ Preview all` to hear the whole Short, then `Create clip`. The clip appears in `Your Clips` and starts rendering.
 :::
 
-![Select text, then click + Add](/video_shorts/static/help/editor/03b-make-a-clip-select.png "Select text, preview it, then + Add [screenshot]")
-
-![Parts added — ready to create](/video_shorts/static/help/editor/03-make-a-clip.png "The bottom bar shows parts, length and title [screenshot]")
-
-![A new clip rendering](/video_shorts/static/help/editor/02b-rendering.png "The new clip renders in Your Clips [screenshot]")
+![Selecting a moment from the transcript in Make a Clip](/video_shorts/static/img/blog/library/v3/make-a-clip-transcript.jpg?v=2 "Highlight a sentence in the transcript to make a clip")
 
 :::tip
 Start and end on full sentences. Shorts that start mid-sentence lose viewers in the first second.
@@ -88,9 +92,9 @@ The preview is labelled **Preview — not rendered**. It's a live preview. Your 
 
 ### Style {#style}
 
-Pick a ready-made look: `Bold Pop`, `Blue Pop`, `Silver Pop`, `Amber Gold`, `Modern Pink`, `Modern Purple`, `Sky Cyan`, `Electric Lime`, `Serif Bordo` or `Word Highlight`. A style sets caption and title fonts, colors and the highlighted-word effect together. You can fine-tune everything afterwards in `Captions` and `Title`.
+Pick a ready-made look: `Bold Pop`, `Podcast`, `Yellow Punch`, `Blue Pop`, `Silver Pop`, `Amber Gold`, `Modern Pink`, `Modern Purple`, `Sky Cyan`, `Electric Lime`, `Serif Bordo` or `Word Highlight`. A style sets caption and title fonts, colors and the highlighted-word effect together. You can fine-tune everything afterwards in `Captions` and `Title`.
 
-![Style templates](/video_shorts/static/help/editor/06-style.png "Style templates [screenshot]")
+![Caption style templates in the Design panel](/video_shorts/static/img/blog/library/v3/design-styles.jpg?v=2 "Choose a caption style for your Shorts")
 
 ### Layout {#layout}
 
@@ -110,7 +114,9 @@ With `Fill` and `Fill split`, drag the frame under **Drag to reframe** to choose
 Below the face in Fill, on the middle line in Fill split, and under the video in Fit — always above the Subscribe button. Move the captions yourself and your position is kept.
 :::
 
-![Layout options](/video_shorts/static/help/editor/07-layout.png "Layout — drag to reframe [screenshot]")
+![Auto layout keeping one speaker centered](/video_shorts/static/img/blog/library/v3/layout-auto-single.jpg?v=2 "Auto keeps one face centered in the vertical frame")
+
+![Auto split layout for two speakers](/video_shorts/static/img/blog/library/v3/layout-auto-split.jpg?v=2 "Auto: 2 faces detected → split")
 
 ### Captions {#captions}
 
@@ -123,7 +129,7 @@ Captions come from the transcript and are synced word by word.
 - **Position** — drag the captions in the preview, or use the ↑ ↓ keys.
 - `More options` — additional caption settings.
 
-![Caption settings](/video_shorts/static/help/editor/08-captions.png "Captions [screenshot]")
+![Caption settings](/video_shorts/static/help/editor/08-captions.png?v=2 "Captions")
 
 ### Title {#title}
 
@@ -178,7 +184,7 @@ Music is written into the video only when the clip is rendered.
 
 Click ✕ to remove the music from this Short.
 
-![Background music](/video_shorts/static/help/editor/11-music.png "Music — voice lane, draggable song and level [screenshot]")
+![Background music](/video_shorts/static/help/editor/11-music.png?v=2 "Music — voice lane, draggable song and level")
 
 :::warning
 Use only music you own or have the rights to. YouTube may block or mute Shorts with copyrighted music.
@@ -191,6 +197,8 @@ Used with the `Fit` layout, or wherever the video doesn't fill the frame. Pick a
 ### Subscribe {#subscribe}
 
 Turn on a **Subscribe** animation near the bottom of the Short and choose its style.
+
+![Subscribe animation controls in the Design panel](/video_shorts/static/img/blog/library/v3/design-subscribe.jpg?v=2 "Add a Subscribe animation to your Short")
 
 ## Save, Save as default and Regenerate {#saving}
 
@@ -212,6 +220,8 @@ When a rendered clip no longer matches its saved design, a small **orange dot** 
 - `Schedule all` at the top — schedule every ready clip at once.
 
 Details: [Scheduling & Publishing](/video_shorts/help/faq/scheduling-and-publishing/).
+
+![The Schedule and Publish window](/video_shorts/static/motion/tab-schedule.jpg?v=2 "Schedule to YouTube and Instagram")
 
 ## Common questions {#faq}
 

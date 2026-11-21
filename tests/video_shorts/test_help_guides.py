@@ -1,7 +1,19 @@
 from pathlib import Path
 
+import pytest
+
+from app.video_shorts.services import blog_markdown
 from app.video_shorts.services.blog_markdown import render_markdown
 from app.video_shorts.services.help_content import build_faq_search_index, get_faq_categories, get_faq_entry
+
+
+@pytest.fixture(autouse=True)
+def static_url_helper(monkeypatch):
+    def fake_url_for(endpoint, *, filename):
+        assert endpoint == "video_shorts_bp.static"
+        return f"/video_shorts/static/{filename}"
+
+    monkeypatch.setattr(blog_markdown, "url_for", fake_url_for)
 
 
 def test_editor_guide_uses_blog_markup_and_safe_heading_ids():
@@ -17,6 +29,47 @@ def test_editor_guide_uses_blog_markup_and_safe_heading_ids():
     assert '<div class="table-shell">' in rendered
     assert '<h2 id="add-a-video">' in rendered
     assert '<h2 id="faq">' in rendered
+
+
+def test_editor_guide_uses_current_media_and_click_to_play_tour():
+    entry = get_faq_entry("editor-guide")
+
+    assert entry is not None
+    body = str(entry["body"])
+    rendered = render_markdown(body, show_screenshot_badges=False)
+
+    assert '<video controls playsinline preload="metadata"' in rendered
+    assert 'src="/video_shorts/static/motion/maya-demo.mp4?v=5"' in rendered
+    assert 'src="/video_shorts/static/motion/maya-demo.en.vtt?v=5"' in rendered
+    assert 'label="English" default' in rendered
+    assert " autoplay" not in rendered
+    assert " muted" not in rendered
+    assert "Watch: a 90-second tour of the editor" in rendered
+    assert "Screenshot from Minti Studio" not in rendered
+    assert body.count("/video_shorts/static/img/blog/library/v3/") == 8
+    assert "/video_shorts/static/motion/tab-schedule.jpg?v=2" in body
+
+
+def test_editor_guide_lists_all_twelve_styles():
+    entry = get_faq_entry("editor-guide")
+    assert entry is not None
+    body = str(entry["body"])
+
+    for style_name in (
+        "Bold Pop",
+        "Podcast",
+        "Yellow Punch",
+        "Blue Pop",
+        "Silver Pop",
+        "Amber Gold",
+        "Modern Pink",
+        "Modern Purple",
+        "Sky Cyan",
+        "Electric Lime",
+        "Serif Bordo",
+        "Word Highlight",
+    ):
+        assert f"`{style_name}`" in body
 
 
 def test_blog_heading_ids_only_allow_lowercase_slug_values():

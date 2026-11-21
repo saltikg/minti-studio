@@ -275,5 +275,28 @@
   {{ super() }}
   {% if entry.type == 'guide' %}
     {% include "_vs_blog_lightbox_script.html" %}
+    {% if entry.slug == 'editor-guide' %}
+      <script>
+        document.addEventListener("DOMContentLoaded", function () {
+          const tourVideo = document.querySelector("[data-help-tour-video]");
+          if (!tourVideo) return;
+
+          const showCaptions = function () {
+            const captionTrack = Array.from(tourVideo.textTracks || []).find(function (track) {
+              return track.kind === "captions";
+            });
+            if (captionTrack) captionTrack.mode = "showing";
+          };
+
+          showCaptions();
+          tourVideo.addEventListener("loadedmetadata", showCaptions, { once: true });
+          tourVideo.addEventListener("play", function () {
+            if (typeof trackMintiEvent === "function") {
+              trackMintiEvent("tour_played", { page: "editor-guide" });
+            }
+          }, { once: true });
+        });
+      </script>
+    {% endif %}
   {% endif %}
 {% endblock %}
