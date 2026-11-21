@@ -9935,7 +9935,6 @@
     const params = new URLSearchParams(window.location.search || "");
     const action = String(params.get("action") || "").trim();
     const clip = String(params.get("clip") || "").trim();
-    if (!action) return;
     const root = document.querySelector("#clip-workbench-shell[data-generate-v2='1']");
     if (!root || root.dataset.guestMode === "1") return;
     const selectClip = () => {
@@ -9957,7 +9956,10 @@
     };
     window.setTimeout(() => {
       const row = selectClip();
-      if (action === "download" && clip) {
+      if (!action && clip) {
+        row?.scrollIntoView?.({ behavior: "smooth", block: "center", inline: "nearest" });
+        stripResumeParams();
+      } else if (action === "download" && clip) {
         window.location.href = `/video_shorts/generate/${root.dataset.videoId}/clip/${encodeURIComponent(clip)}/download`;
       } else if (action === "schedule_all") {
         document.getElementById("clip-schedule-all-btn")?.click?.();

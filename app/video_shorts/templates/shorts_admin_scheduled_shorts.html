@@ -236,30 +236,28 @@
     .scheduled-week-nav { display: flex; align-items: center; justify-content: center; flex-wrap: wrap; gap: 8px; }
     .scheduled-week-label { min-width: 170px; color: rgba(255,255,255,.9); font-weight: 700; text-align: center; }
     .scheduled-week-scroll { max-width: 100%; overflow-x: auto; overscroll-behavior-x: contain; }
-    .scheduled-week-grid {
+    .scheduled-calendar-grid {
       display: grid;
-      grid-template-columns: 128px repeat(7, minmax(155px, 1fr));
-      min-width: 1213px;
+      grid-template-columns: repeat(7, minmax(135px, 1fr));
+      min-width: 945px;
       border: 1px solid rgba(255,255,255,.09);
       border-radius: 12px;
       overflow: hidden;
     }
-    .scheduled-week-corner,
     .scheduled-week-day,
-    .scheduled-week-platform,
     .scheduled-week-cell { border-right: 1px solid rgba(255,255,255,.08); border-bottom: 1px solid rgba(255,255,255,.08); }
-    .scheduled-week-corner,
     .scheduled-week-day { padding: 10px; background: rgba(255,255,255,.04); text-align: center; }
     .scheduled-week-day strong { display: block; font-size: .8rem; }
     .scheduled-week-day span { color: rgba(255,255,255,.52); font-size: .72rem; }
     .scheduled-week-day.is-today,
     .scheduled-week-cell.is-today { background: rgba(59,130,246,.09); }
-    .scheduled-week-platform { display: flex; align-items: center; gap: 8px; min-height: 112px; padding: 12px; font-size: .8rem; font-weight: 700; }
-    .scheduled-week-cell { min-height: 112px; padding: 7px; }
+    .scheduled-week-cell { min-height: 145px; padding: 7px; }
+    .scheduled-week-cell.is-outside { color: rgba(255,255,255,.36); background: rgba(0,0,0,.13); }
+    .scheduled-day-number { margin-bottom: 6px; color: rgba(255,255,255,.62); font-size: .7rem; font-weight: 700; }
     .scheduled-week-card {
       position: relative;
       display: grid;
-      grid-template-columns: 38px minmax(0,1fr);
+      grid-template-columns: 34px minmax(0,1fr) auto;
       gap: 7px;
       width: 100%;
       margin-bottom: 6px;
@@ -272,10 +270,22 @@
     }
     .scheduled-week-card:hover,
     .scheduled-week-card:focus-within { border-color: rgba(147,197,253,.55); background: rgba(255,255,255,.09); }
-    .scheduled-week-thumb { width: 38px; height: 38px; border-radius: 6px; object-fit: cover; background: rgba(255,255,255,.07); }
+    .scheduled-week-card-link { display: contents; color: inherit; text-decoration: none; }
+    .scheduled-week-thumb { width: 34px; height: 34px; border-radius: 6px; object-fit: cover; background: rgba(255,255,255,.07); }
     .scheduled-week-time { display: flex; align-items: center; gap: 5px; font-size: .72rem; font-weight: 700; }
     .scheduled-week-title { overflow: hidden; margin-top: 2px; font-size: .72rem; text-overflow: ellipsis; white-space: nowrap; }
     .scheduled-week-brand { overflow: hidden; color: rgba(255,255,255,.48); font-size: .64rem; text-overflow: ellipsis; white-space: nowrap; }
+    .scheduled-day-platforms { display: flex; align-items: flex-start; gap: 3px; }
+    .scheduled-day-platform {
+      position: relative; display: inline-grid; width: 22px; height: 22px; padding: 0; place-items: center;
+      border: 1px solid transparent; border-radius: 7px; color: #fff; font-size: .62rem; font-weight: 800;
+    }
+    .scheduled-day-platform.scheduled, .scheduled-day-platform.uploaded { background: #d97706; border-color: #fbbf24; }
+    .scheduled-day-platform.published { background: #15803d; border-color: #4ade80; }
+    .scheduled-day-platform.failed { background: #b91c1c; border-color: #f87171; }
+    .scheduled-day-platform-lock { position: absolute; right: -3px; bottom: -5px; font-size: .55rem; }
+    .scheduled-month-grid .scheduled-week-cell { min-height: 154px; }
+    .scheduled-month-more { border: 0; padding: 2px 4px; color: #93c5fd; background: transparent; font-size: .7rem; font-weight: 700; }
     .scheduled-status-dot { width: 7px; height: 7px; flex: 0 0 7px; border-radius: 50%; background: #9ca3af; }
     .scheduled-status-dot.uploaded { background: #f59e0b; }
     .scheduled-status-dot.published { background: #22c55e; }
@@ -298,11 +308,20 @@
     .scheduled-time-summary-item { display: inline-flex; align-items: center; gap: 4px; white-space: nowrap; }
     .scheduled-time-summary .scheduled-platform-icon { width: 19px; height: 19px; flex-basis: 19px; border-radius: 6px; font-size: .58rem; }
     [data-scheduled-view][hidden] { display: none; }
+    .scheduled-day-popover-list { max-height: min(520px, 70vh); overflow-y: auto; }
     @media (max-width: 900px) {
       .scheduled-counters { grid-template-columns: 1fr; }
       .scheduled-filters { grid-template-columns: 1fr; }
       .scheduled-view-toolbar { align-items: flex-start; flex-direction: column; }
       .scheduled-week-nav { justify-content: flex-start; }
+    }
+    @media (max-width: 600px) {
+      .scheduled-month-grid .scheduled-week-card { grid-template-columns: 1fr auto; }
+      .scheduled-month-grid .scheduled-week-card-link { display: block; min-width: 0; }
+      .scheduled-month-grid .scheduled-week-thumb,
+      .scheduled-month-grid .scheduled-week-title,
+      .scheduled-month-grid .scheduled-week-brand { display: none; }
+      .scheduled-month-grid .scheduled-week-time { font-size: .65rem; }
     }
   </style>
 {% endblock %}
@@ -402,6 +421,7 @@
   <div class="scheduled-view-toolbar">
     <div class="scheduled-view-toggle" aria-label="Schedule view">
       <button class="btn btn-sm btn-outline-light" type="button" data-view-mode="week" aria-pressed="true">Week</button>
+      <button class="btn btn-sm btn-outline-light" type="button" data-view-mode="month" aria-pressed="false">Month</button>
       <button class="btn btn-sm btn-outline-light" type="button" data-view-mode="list" aria-pressed="false">List</button>
     </div>
     <div class="scheduled-week-nav" data-week-nav>
@@ -459,7 +479,13 @@
 
     <div data-scheduled-view="week">
       <div class="scheduled-week-scroll">
-        <div class="scheduled-week-grid" data-week-grid></div>
+        <div class="scheduled-calendar-grid" data-week-grid></div>
+      </div>
+    </div>
+
+    <div data-scheduled-view="month" hidden>
+      <div class="scheduled-week-scroll">
+        <div class="scheduled-calendar-grid scheduled-month-grid" data-month-grid></div>
       </div>
     </div>
 
@@ -500,6 +526,10 @@
   <script>
     const scheduledPostMutationUrl = {{ url_for('video_shorts_bp.admin_scheduled_short_post')|tojson }};
     const weekPosts = {{ week_posts|tojson }};
+    const clipEditorUrls = {
+      {% for item in upcoming %}{{ item.id|tojson }}: {{ item.editor_url|tojson }},{% endfor %}
+      {% for item in published %}{{ item.id|tojson }}: {{ item.editor_url|tojson }},{% endfor %}
+    };
     const showWeekBrand = {{ include_all_brands|tojson }};
     const initialWeek = {{ (initial_week|default(''))|tojson }};
     const PT_TIME_ZONE = 'America/Los_Angeles';
@@ -670,7 +700,7 @@
           const post = weekPosts.find((item) => item.id === oldId);
           if (post) Object.assign(post, {id: result.post_id, publish_at_iso: result.publish_at, publish_input_value: result.publish_input_value, publish_time_label: result.publish_time_label});
           editor.hidden = true;
-          renderWeek();
+          renderCalendar();
         } catch (err) {
           showError(err.message);
         } finally {
@@ -687,7 +717,7 @@
           syncListUnschedule(oldId);
           const index = weekPosts.findIndex((item) => item.id === oldId);
           if (index >= 0) weekPosts.splice(index, 1);
-          renderWeek();
+          renderCalendar();
         } catch (err) {
           showError(err.message);
           button.disabled = false;
@@ -696,9 +726,21 @@
     };
     document.querySelectorAll('[data-scheduled-post]').forEach(bindListCard);
 
-    const buildWeekPopover = (card, post) => {
+    const positionPopover = (popover, anchor) => {
+      const rect = anchor.getBoundingClientRect();
+      const width = 270;
+      popover.style.left = `${Math.max(8, Math.min(rect.left, window.innerWidth - width - 8))}px`;
+      popover.style.top = `${Math.max(8, Math.min(rect.bottom + 5, window.innerHeight - popover.offsetHeight - 8))}px`;
+    };
+
+    const closeCalendarPopovers = (except = null) => {
+      document.querySelectorAll('[data-week-popover]').forEach((item) => {
+        if (item !== except) item.remove();
+      });
+    };
+
+    const buildPlatformPopover = (anchor, post) => {
       const popover = makeElement('div', 'scheduled-week-popover');
-      popover.hidden = true;
       popover.dataset.weekPopover = '1';
       popover.append(
         makeElement('div', 'scheduled-week-popover-title', post.short_title),
@@ -732,16 +774,16 @@
           cancel.type = 'button';
           actions.append(input, makeElement('span', 'small text-white-50', 'Pacific time'), save, cancel);
           input.focus();
-          cancel.addEventListener('click', () => renderWeek());
+          cancel.addEventListener('click', () => renderCalendar());
           save.addEventListener('click', async () => {
             save.disabled = true;
             error.hidden = true;
             try {
               const oldId = post.id;
-              const result = await mutateScheduledPost(card, 'edit', input.value);
+              const result = await mutateScheduledPost(anchor, 'edit', input.value);
               Object.assign(post, {id: result.post_id, publish_at_iso: result.publish_at, publish_input_value: result.publish_input_value, publish_time_label: result.publish_time_label});
               syncListEdit(oldId, result);
-              renderWeek();
+              renderCalendar();
             } catch (err) {
               error.textContent = err.message;
               error.hidden = false;
@@ -757,17 +799,17 @@
           const cancel = makeElement('button', 'btn btn-sm btn-outline-light', 'Cancel');
           cancel.type = 'button';
           actions.append(confirm, cancel);
-          cancel.addEventListener('click', () => renderWeek());
+          cancel.addEventListener('click', () => renderCalendar());
           confirm.addEventListener('click', async () => {
             confirm.disabled = true;
             error.hidden = true;
             try {
               const oldId = post.id;
-              await mutateScheduledPost(card, 'unschedule');
+              await mutateScheduledPost(anchor, 'unschedule');
               syncListUnschedule(oldId);
               const index = weekPosts.indexOf(post);
               if (index >= 0) weekPosts.splice(index, 1);
-              renderWeek();
+              renderCalendar();
             } catch (err) {
               error.textContent = err.message;
               error.hidden = false;
@@ -779,107 +821,196 @@
         actions.append(makeElement('div', 'scheduled-youtube-lock', 'Uploaded — manage in YouTube Studio'));
       }
       popover.append(actions, error);
+      document.body.append(popover);
+      positionPopover(popover, anchor);
       return popover;
     };
 
-    const buildWeekCard = (post) => {
+    const platformTooltip = (post) => {
+      const date = new Intl.DateTimeFormat('en-US', {
+        timeZone: PT_TIME_ZONE, weekday: 'short', month: 'short', day: 'numeric',
+        hour: 'numeric', minute: '2-digit',
+      }).format(new Date(post.publish_at_iso)).replace(',', '');
+      return `${post.platform_label} · ${date} · ${post.status_label.replace(' ✓', '')}`;
+    };
+
+    const buildPlatformButton = (post) => {
+      const button = makeElement('button', `scheduled-day-platform ${post.week_status}`, platformMark(post.platform));
+      button.type = 'button';
+      button.title = platformTooltip(post);
+      button.setAttribute('aria-label', button.title);
+      button.dataset.platform = post.platform;
+      button.dataset.postId = post.id;
+      button.dataset.brandId = post.brand_id;
+      button.dataset.publishAt = post.publish_at_iso;
+      if (post.week_status === 'uploaded') button.append(makeElement('span', 'scheduled-day-platform-lock', '🔒'));
+      button.addEventListener('click', (event) => {
+        event.preventDefault();
+        event.stopPropagation();
+        closeCalendarPopovers();
+        buildPlatformPopover(button, post);
+      });
+      return button;
+    };
+
+    const groupDayPosts = (key) => {
+      const groups = new Map();
+      weekPosts
+        .filter((post) => post.publish_at_iso && ptDateKey(post.publish_at_iso) === key)
+        .forEach((post) => {
+          const groupKey = post.clip_key || `${post.brand_id}:${post.video_pk}:${post.plan_index}`;
+          if (!groups.has(groupKey)) groups.set(groupKey, []);
+          groups.get(groupKey).push(post);
+        });
+      return [...groups.values()].sort((left, right) => (
+        Math.min(...left.map((post) => new Date(post.publish_at_iso).getTime()))
+        - Math.min(...right.map((post) => new Date(post.publish_at_iso).getTime()))
+      ));
+    };
+
+    const editorUrlFor = (post) => {
+      const base = clipEditorUrls[post.clip_key] || '';
+      if (!base) return '';
+      const url = new URL(base, window.location.origin);
+      url.searchParams.set('clip', post.plan_index || '');
+      return `${url.pathname}${url.search}${url.hash}`;
+    };
+
+    const buildDayCard = (posts) => {
+      posts.sort((a, b) => new Date(a.publish_at_iso) - new Date(b.publish_at_iso));
+      const post = posts[0];
       const card = makeElement('div', 'scheduled-week-card');
-      card.tabIndex = 0;
-      card.setAttribute('role', 'button');
-      card.dataset.platform = post.platform;
-      card.dataset.postId = post.id;
-      card.dataset.brandId = post.brand_id;
-      card.dataset.publishAt = post.publish_at_iso;
-      const thumb = makeElement('img', 'scheduled-week-thumb');
-      thumb.alt = '';
-      if (post.thumbnail_url) thumb.src = post.thumbnail_url;
+      const link = document.createElement('a');
+      link.className = 'scheduled-week-card-link';
+      const editorUrl = editorUrlFor(post);
+      link.href = editorUrl || '#';
+      if (!editorUrl) link.setAttribute('aria-disabled', 'true');
+      let thumb;
+      if (post.thumbnail_url) {
+        thumb = makeElement('img', 'scheduled-week-thumb');
+        thumb.alt = '';
+        thumb.src = post.thumbnail_url;
+      } else {
+        thumb = makeElement('span', 'scheduled-week-thumb scheduled-thumb-placeholder', 'SHORT');
+      }
       const details = makeElement('div');
       const time = makeElement('div', 'scheduled-week-time');
-      time.append(makeElement('span', `scheduled-status-dot ${post.week_status}`), document.createTextNode(shortPTTime(post.publish_at_iso)));
-      details.append(time, makeElement('div', 'scheduled-week-title', post.short_title));
+      time.textContent = shortPTTime(post.publish_at_iso);
+      const title = makeElement('div', 'scheduled-week-title', post.short_title);
+      title.title = post.short_title;
+      details.append(time, title);
       if (showWeekBrand) details.append(makeElement('div', 'scheduled-week-brand', post.brand_name));
-      card.append(thumb, details);
-      const popover = buildWeekPopover(card, post);
-      card.append(popover);
-      const toggle = (event) => {
-        if (event.target.closest('[data-week-popover]')) return;
-        document.querySelectorAll('[data-week-popover]').forEach((item) => { if (item !== popover) item.hidden = true; });
-        popover.hidden = !popover.hidden;
-        if (!popover.hidden) {
-          const rect = card.getBoundingClientRect();
-          const width = 270;
-          popover.style.left = `${Math.max(8, Math.min(rect.left, window.innerWidth - width - 8))}px`;
-          popover.style.top = `${Math.max(8, Math.min(rect.bottom + 5, window.innerHeight - popover.offsetHeight - 8))}px`;
-        }
-      };
-      card.addEventListener('click', toggle);
-      card.addEventListener('keydown', (event) => {
-        if (event.key === 'Enter' || event.key === ' ') { event.preventDefault(); toggle(event); }
-      });
+      link.append(thumb, details);
+      link.addEventListener('click', (event) => { if (!editorUrl) event.preventDefault(); });
+      const icons = makeElement('div', 'scheduled-day-platforms');
+      posts.forEach((item) => icons.append(buildPlatformButton(item)));
+      card.append(link, icons);
       return card;
     };
 
-    const renderWeek = () => {
-      const grid = document.querySelector('[data-week-grid]');
+    const openDayPopover = (anchor, key, groups) => {
+      closeCalendarPopovers();
+      const popover = makeElement('div', 'scheduled-week-popover');
+      popover.dataset.weekPopover = '1';
+      popover.append(makeElement('div', 'scheduled-week-popover-title', new Intl.DateTimeFormat('en-US', {
+        weekday: 'long', month: 'long', day: 'numeric', year: 'numeric', timeZone: 'UTC',
+      }).format(keyDate(key))));
+      const list = makeElement('div', 'scheduled-day-popover-list');
+      groups.forEach((posts) => list.append(buildDayCard(posts)));
+      popover.append(list);
+      document.body.append(popover);
+      positionPopover(popover, anchor);
+    };
+
+    let currentMode = 'week';
+    let selectedMonth = `${(initialWeek || todayPT).slice(0, 7)}-01`;
+
+    const renderCalendar = () => {
+      if (currentMode === 'list') return;
+      closeCalendarPopovers();
+      const isMonth = currentMode === 'month';
+      const grid = document.querySelector(isMonth ? '[data-month-grid]' : '[data-week-grid]');
       if (!grid) return;
       grid.replaceChildren();
-      const dayKeys = Array.from({length: 7}, (_, index) => addDays(selectedMonday, index));
-      grid.append(makeElement('div', 'scheduled-week-corner', 'Platform'));
-      dayKeys.forEach((key) => {
-        const date = keyDate(key);
-        const heading = makeElement('div', `scheduled-week-day${key === todayPT ? ' is-today' : ''}`);
-        heading.append(
-          makeElement('strong', '', new Intl.DateTimeFormat('en-US', {weekday: 'short', timeZone: 'UTC'}).format(date)),
-          makeElement('span', '', new Intl.DateTimeFormat('en-US', {month: 'short', day: 'numeric', timeZone: 'UTC'}).format(date)),
-        );
+      ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'].forEach((day) => {
+        const heading = makeElement('div', 'scheduled-week-day');
+        heading.append(makeElement('strong', '', day));
         grid.append(heading);
       });
-      const presentPlatforms = ['youtube', 'instagram', 'facebook'].filter((platform) => weekPosts.some((post) => post.platform === platform));
-      presentPlatforms.forEach((platform) => {
-        const label = makeElement('div', 'scheduled-week-platform');
-        label.append(createPlatformIcon(platform), document.createTextNode(platform.charAt(0).toUpperCase() + platform.slice(1)));
-        grid.append(label);
-        dayKeys.forEach((key) => {
-          const cell = makeElement('div', `scheduled-week-cell${key === todayPT ? ' is-today' : ''}`);
-          weekPosts
-            .filter((post) => post.platform === platform && post.publish_at_iso && ptDateKey(post.publish_at_iso) === key)
-            .sort((a, b) => new Date(a.publish_at_iso) - new Date(b.publish_at_iso))
-            .forEach((post) => cell.append(buildWeekCard(post)));
-          grid.append(cell);
-        });
+      let startKey = selectedMonday;
+      let dayCount = 7;
+      if (isMonth) {
+        startKey = mondayFor(selectedMonth);
+        const monthDate = keyDate(selectedMonth);
+        const lastDate = new Date(Date.UTC(monthDate.getUTCFullYear(), monthDate.getUTCMonth() + 1, 0, 12));
+        const lastKey = keyFromDate(lastDate);
+        dayCount = Math.max(35, Math.ceil((Math.round((keyDate(lastKey) - keyDate(startKey)) / 86400000) + 1) / 7) * 7);
+      }
+      Array.from({length: dayCount}, (_, index) => addDays(startKey, index)).forEach((key) => {
+        const outside = isMonth && key.slice(0, 7) !== selectedMonth.slice(0, 7);
+        const cell = makeElement('div', `scheduled-week-cell${key === todayPT ? ' is-today' : ''}${outside ? ' is-outside' : ''}`);
+        cell.append(makeElement('div', 'scheduled-day-number', new Intl.DateTimeFormat('en-US', {
+          month: isMonth && key.endsWith('-01') ? 'short' : undefined, day: 'numeric', timeZone: 'UTC',
+        }).format(keyDate(key))));
+        const groups = groupDayPosts(key);
+        const visible = isMonth ? groups.slice(0, 3) : groups;
+        visible.forEach((posts) => cell.append(buildDayCard(posts)));
+        if (isMonth && groups.length > 3) {
+          const more = makeElement('button', 'scheduled-month-more', `+${groups.length - 3} more`);
+          more.type = 'button';
+          more.addEventListener('click', (event) => {
+            event.stopPropagation();
+            openDayPopover(more, key, groups);
+          });
+          cell.append(more);
+        }
+        grid.append(cell);
       });
-      const endKey = addDays(selectedMonday, 6);
       const labelDate = (key) => new Intl.DateTimeFormat('en-US', {month: 'short', day: 'numeric', timeZone: 'UTC'}).format(keyDate(key));
-      document.querySelector('[data-week-label]').textContent = `${labelDate(selectedMonday)} – ${labelDate(endKey)}`;
+      document.querySelector('[data-week-label]').textContent = isMonth
+        ? new Intl.DateTimeFormat('en-US', {month: 'long', year: 'numeric', timeZone: 'UTC'}).format(keyDate(selectedMonth))
+        : `${labelDate(selectedMonday)} – ${labelDate(addDays(selectedMonday, 6))}`;
+      const todayButton = document.querySelector('[data-this-week]');
+      todayButton.textContent = isMonth ? 'This month' : 'This week';
       const filter = document.querySelector('[data-week-filter]');
-      if (filter) filter.value = selectedMonday;
+      if (filter) filter.value = isMonth ? selectedMonth : selectedMonday;
       const url = new URL(window.location.href);
-      url.searchParams.set('week', selectedMonday);
+      url.searchParams.set('week', isMonth ? selectedMonth : selectedMonday);
       window.history.replaceState({}, '', url);
     };
 
     const setViewMode = (mode, remember = true) => {
-      const normalized = mode === 'list' ? 'list' : 'week';
+      const normalized = ['week', 'month', 'list'].includes(mode) ? mode : 'week';
+      if (normalized === 'month' && currentMode === 'week') selectedMonth = `${selectedMonday.slice(0, 7)}-01`;
+      if (normalized === 'week' && currentMode === 'month') selectedMonday = mondayFor(selectedMonth);
+      currentMode = normalized;
       document.querySelectorAll('[data-scheduled-view]').forEach((view) => { view.hidden = view.dataset.scheduledView !== normalized; });
       document.querySelectorAll('[data-view-mode]').forEach((button) => button.setAttribute('aria-pressed', button.dataset.viewMode === normalized ? 'true' : 'false'));
-      document.querySelector('[data-week-nav]').hidden = normalized !== 'week';
+      document.querySelector('[data-week-nav]').hidden = normalized === 'list';
       if (remember) {
         try { localStorage.setItem('adminScheduledShortsView', normalized); } catch (_error) {}
       }
+      renderCalendar();
     };
     let initialMode = 'week';
     try { initialMode = localStorage.getItem('adminScheduledShortsView') || 'week'; } catch (_error) {}
     document.querySelectorAll('[data-view-mode]').forEach((button) => button.addEventListener('click', () => setViewMode(button.dataset.viewMode)));
     document.querySelectorAll('[data-week-step]').forEach((button) => button.addEventListener('click', () => {
-      selectedMonday = addDays(selectedMonday, Number(button.dataset.weekStep) * 7);
-      renderWeek();
+      const step = Number(button.dataset.weekStep);
+      if (currentMode === 'month') {
+        const date = keyDate(selectedMonth);
+        selectedMonth = keyFromDate(new Date(Date.UTC(date.getUTCFullYear(), date.getUTCMonth() + step, 1, 12)));
+      } else {
+        selectedMonday = addDays(selectedMonday, step * 7);
+      }
+      renderCalendar();
     }));
     document.querySelector('[data-this-week]')?.addEventListener('click', () => {
-      selectedMonday = mondayFor(todayPT);
-      renderWeek();
+      if (currentMode === 'month') selectedMonth = `${todayPT.slice(0, 7)}-01`;
+      else selectedMonday = mondayFor(todayPT);
+      renderCalendar();
     });
     setViewMode(initialMode, false);
-    renderWeek();
 
     document.querySelectorAll('.scheduled-row[data-href]').forEach((row) => {
       const openRow = () => { window.location.href = row.dataset.href; };
@@ -896,8 +1027,8 @@
       });
     });
     document.addEventListener('click', (event) => {
-      if (event.target.closest('.scheduled-week-card')) return;
-      document.querySelectorAll('[data-week-popover]').forEach((popover) => { popover.hidden = true; });
+      if (event.target.closest('.scheduled-week-card, [data-week-popover]')) return;
+      closeCalendarPopovers();
     });
   </script>
 {% endblock %}

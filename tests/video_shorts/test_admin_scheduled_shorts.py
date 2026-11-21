@@ -168,15 +168,23 @@ def test_admin_schedule_template_marks_target_mismatch_red():
     assert "window.confirm" not in html
     assert 'scheduledPostMutationUrl = "/video_shorts/admin/scheduled-shorts/post"' in html
     assert 'data-view-mode="week"' in html
+    assert 'data-view-mode="month"' in html
     assert 'data-view-mode="list"' in html
     assert "adminScheduledShortsView" in html
     assert "localStorage.getItem" in html
     assert "localStorage.setItem" in html
     assert 'data-week-grid' in html
+    assert 'data-month-grid' in html
     assert 'data-week-step="-1"' in html
     assert 'data-this-week' in html
     assert 'data-platform-time hidden' not in html
     assert 'scheduled-time-summary-item' in html
+    assert "groupDayPosts" in html
+    assert "scheduled-month-more" in html
+    assert "post.clip_key" in html
+    assert "clipEditorUrls" in html
+    assert "url.searchParams.set('clip'" in html
+    assert "closeCalendarPopovers" in html
 
 
 def test_shared_social_unschedule_is_tenant_and_platform_scoped():

@@ -605,6 +605,7 @@ def filter_scheduled_shorts(
             if platform and post["platform"] != platform:
                 continue
             week_posts.append({
+                "clip_key": item["id"],
                 "id": post["id"],
                 "platform": post["platform"],
                 "platform_label": post["platform_label"],
@@ -612,6 +613,8 @@ def filter_scheduled_shorts(
                 "brand_name": post["brand_name"],
                 "short_title": post["short_title"],
                 "thumbnail_url": post["thumbnail_url"],
+                "video_pk": post["video_pk"],
+                "plan_index": post["plan_index"],
                 "publish_at_iso": post["publish_at_iso"],
                 "publish_input_value": post["publish_input_value"],
                 "publish_time_label": post["publish_time_label"],
