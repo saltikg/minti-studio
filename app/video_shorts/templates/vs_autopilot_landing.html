@@ -448,6 +448,12 @@
     border-radius: clamp(18px, 2vw, 26px);
     background: #05090d;
     box-shadow: 0 24px 60px rgba(0, 0, 0, 0.34), 0 0 42px rgba(101, 234, 212, 0.12);
+    cursor: pointer;
+  }
+
+  .ap-video-card:focus-visible {
+    outline: 3px solid rgba(101, 234, 212, 0.9);
+    outline-offset: 4px;
   }
 
   .ap-video-card video {
@@ -472,10 +478,10 @@
   .ap-video-sound {
     position: absolute;
     z-index: 2;
-    top: 12px;
-    left: 12px;
-    min-height: 42px;
-    padding: 0.62rem 0.88rem;
+    left: 50%;
+    bottom: 18px;
+    min-height: 44px;
+    padding: 0.72rem 1.05rem;
     border: 1px solid rgba(255, 255, 255, 0.2);
     border-radius: 999px;
     background: rgba(3, 8, 13, 0.84);
@@ -486,6 +492,8 @@
     box-shadow: 0 8px 24px rgba(0, 0, 0, 0.32);
     backdrop-filter: blur(8px);
     cursor: pointer;
+    transform: translateX(-50%);
+    white-space: nowrap;
   }
 
   .ap-video-sound:hover,
@@ -494,17 +502,48 @@
     border-color: rgba(101, 234, 212, 0.58);
   }
 
-  .ap-video-sound.is-toggle {
-    min-height: 36px;
-    padding: 0.5rem 0.72rem;
-    font-size: 0.78rem;
+  .ap-video-sound.is-pulsing {
+    animation: apVideoSoundPulse 0.8s ease-out;
   }
 
-  .ap-video-card.is-reduced-motion .ap-video-sound {
-    top: auto;
+  .ap-video-audio-toggle {
+    position: absolute;
+    z-index: 3;
+    top: 12px;
+    right: 12px;
+    width: 44px;
+    min-width: 44px;
+    height: 44px;
+    padding: 0;
+    border: 1px solid rgba(255, 255, 255, 0.2);
+    border-radius: 999px;
+    background: rgba(3, 8, 13, 0.84);
+    color: #fff;
+    font-size: 1rem;
+    box-shadow: 0 8px 24px rgba(0, 0, 0, 0.32);
+    backdrop-filter: blur(8px);
+    cursor: pointer;
+  }
+
+  .ap-video-watch-again {
+    position: absolute;
+    z-index: 3;
     left: 50%;
-    bottom: 50%;
-    transform: translate(-50%, 50%);
+    top: 50%;
+    min-height: 44px;
+    padding: 0.72rem 1.05rem;
+    border: 1px solid rgba(255, 255, 255, 0.28);
+    border-radius: 999px;
+    background: rgba(3, 8, 13, 0.9);
+    color: #fff;
+    font-weight: 700;
+    transform: translate(-50%, -50%);
+    cursor: pointer;
+  }
+
+  @keyframes apVideoSoundPulse {
+    0%, 100% { transform: translateX(-50%) scale(1); }
+    45% { transform: translateX(-50%) scale(1.1); box-shadow: 0 0 0 9px rgba(101, 234, 212, 0.14); }
   }
 
   .ap-process-section {
@@ -1168,6 +1207,10 @@
       50% { transform: translateY(-54%) rotate(5deg); }
     }
   }
+
+  @media (prefers-reduced-motion: reduce) {
+    .ap-video-sound.is-pulsing { animation: none; }
+  }
 </style>
 {% endblock %}
 
@@ -1191,7 +1234,7 @@
         <p class="ap-support-line"><i class="bi bi-person-check" aria-hidden="true"></i> Human-guided, AI-assisted. No editing required.</p>
       </div>
 
-      <div class="ap-video-card" data-autopilot-demo-card>
+      <div class="ap-video-card" data-autopilot-demo-card tabindex="0" role="button" aria-label="Play video with sound">
         <video
           data-autopilot-demo-video
           muted
@@ -1199,13 +1242,15 @@
           loop
           preload="metadata"
           playsinline
-          poster="{{ url_for('video_shorts_bp.static', filename='motion/autopilot.jpg') }}"
+          poster="{{ url_for('video_shorts_bp.static', filename='motion/autopilot.jpg') }}?v=3"
           aria-label="Minti Studio Autopilot explainer video"
         >
-          <source src="{{ url_for('video_shorts_bp.static', filename='motion/autopilot.mp4') }}?v=2" type="video/mp4">
-          <track kind="captions" srclang="en" src="{{ url_for('video_shorts_bp.static', filename='motion/autopilot.en.vtt') }}?v=1" label="English" default>
+          <source src="{{ url_for('video_shorts_bp.static', filename='motion/autopilot.mp4') }}?v=3" type="video/mp4">
+          <track kind="captions" srclang="en" src="{{ url_for('video_shorts_bp.static', filename='motion/autopilot.en.vtt') }}?v=2" label="English" default>
         </video>
-        <button class="ap-video-sound" type="button" data-autopilot-demo-sound data-action="sound">🔊 Tap for sound</button>
+        <button class="ap-video-sound" type="button" data-autopilot-demo-sound>🔊 Tap to hear</button>
+        <button class="ap-video-audio-toggle" type="button" data-autopilot-demo-audio-toggle aria-label="Mute video" hidden>🔇</button>
+        <button class="ap-video-watch-again" type="button" data-autopilot-demo-watch-again hidden>↻ Watch again</button>
       </div>
     </div>
   </section>
@@ -1466,13 +1511,18 @@
   const autopilotVideoCard = document.querySelector("[data-autopilot-demo-card]");
   const autopilotVideo = document.querySelector("[data-autopilot-demo-video]");
   const autopilotVideoSound = document.querySelector("[data-autopilot-demo-sound]");
+  const autopilotVideoAudioToggle = document.querySelector("[data-autopilot-demo-audio-toggle]");
+  const autopilotVideoWatchAgain = document.querySelector("[data-autopilot-demo-watch-again]");
   const autopilotCaptionTrack = autopilotVideo?.querySelector('track[kind="captions"]');
   const autopilotReducedMotion = window.matchMedia("(prefers-reduced-motion: reduce)");
 
-  if (autopilotVideoCard && autopilotVideo && autopilotVideoSound) {
+  if (autopilotVideoCard && autopilotVideo && autopilotVideoSound && autopilotVideoAudioToggle && autopilotVideoWatchAgain) {
     let autopilotVideoInView = false;
     let autopilotManualPlaybackStarted = false;
     let autopilotUnmuteTracked = false;
+    let autopilotCompletedTracked = false;
+    let autopilotSoundActivated = false;
+    let autopilotPulseTimer = null;
 
     const setAutopilotCaptions = function (mode) {
       Array.from(autopilotVideo.textTracks || []).forEach(function (track) {
@@ -1495,21 +1545,57 @@
     autopilotCaptionTrack?.addEventListener("load", positionAutopilotCaptionCues);
     positionAutopilotCaptionCues();
 
-    const showAutopilotSoundAction = function () {
-      autopilotVideoSound.dataset.action = "sound";
-      autopilotVideoSound.textContent = "🔊 Tap for sound";
-      autopilotVideoSound.classList.remove("is-toggle");
+    const trackAutopilotHeroEvent = function (eventName) {
+      if (typeof trackMintiEvent === "function") {
+        trackMintiEvent(eventName, { page: "autopilot" });
+      }
+    };
+
+    const syncAutopilotAudioToggle = function () {
+      const isMuted = autopilotVideo.muted;
+      autopilotVideoAudioToggle.textContent = isMuted ? "🔊" : "🔇";
+      autopilotVideoAudioToggle.setAttribute("aria-label", isMuted ? "Unmute video" : "Mute video");
+    };
+
+    const activateAutopilotSound = function () {
+      autopilotSoundActivated = true;
+      autopilotManualPlaybackStarted = true;
+      autopilotVideoCard.classList.remove("is-reduced-motion");
+      autopilotVideo.loop = false;
+      autopilotVideo.muted = false;
+      autopilotVideo.currentTime = 0;
+      setAutopilotCaptions("showing");
+      autopilotVideoSound.hidden = true;
+      autopilotVideoAudioToggle.hidden = false;
+      autopilotVideoWatchAgain.hidden = true;
+      syncAutopilotAudioToggle();
+      autopilotVideo.play().catch(function () {});
+      if (!autopilotUnmuteTracked) {
+        trackAutopilotHeroEvent("hero_unmute");
+        autopilotUnmuteTracked = true;
+      }
     };
 
     autopilotVideo.muted = true;
     setAutopilotCaptions("showing");
 
+    if (!autopilotReducedMotion.matches) {
+      const scheduleAutopilotPulse = function () {
+        if (autopilotSoundActivated || autopilotPulseTimer) return;
+        autopilotPulseTimer = window.setTimeout(function () {
+          if (!autopilotSoundActivated) autopilotVideoSound.classList.add("is-pulsing");
+        }, 3000);
+      };
+      autopilotVideo.addEventListener("playing", scheduleAutopilotPulse, { once: true });
+      autopilotVideoSound.addEventListener("animationend", function () {
+        autopilotVideoSound.classList.remove("is-pulsing");
+      });
+    }
+
     if (autopilotReducedMotion.matches) {
       autopilotVideo.autoplay = false;
       autopilotVideo.pause();
       autopilotVideoCard.classList.add("is-reduced-motion");
-      autopilotVideoSound.dataset.action = "play";
-      autopilotVideoSound.textContent = "▶ Play demo";
     }
 
     if ("IntersectionObserver" in window) {
@@ -1528,34 +1614,56 @@
       autopilotVideo.pause();
     }
 
-    autopilotVideoSound.addEventListener("click", function () {
-      const action = autopilotVideoSound.dataset.action;
-      if (action === "play") {
-        autopilotManualPlaybackStarted = true;
-        autopilotVideoCard.classList.remove("is-reduced-motion");
-        showAutopilotSoundAction();
-        autopilotVideo.play().catch(function () {});
-        return;
-      }
-
-      if (autopilotVideo.muted) {
-        autopilotVideo.muted = false;
+    const handleAutopilotCardPlayback = function () {
+      if (!autopilotSoundActivated) {
+        activateAutopilotSound();
+      } else if (autopilotVideo.ended || !autopilotVideoWatchAgain.hidden) {
+        autopilotVideoWatchAgain.hidden = true;
         autopilotVideo.currentTime = 0;
-        autopilotVideo.controls = true;
-        setAutopilotCaptions("hidden");
-        autopilotVideoSound.dataset.action = "mute";
-        autopilotVideoSound.textContent = "🔇 Mute";
-        autopilotVideoSound.classList.add("is-toggle");
         autopilotVideo.play().catch(function () {});
-        if (!autopilotUnmuteTracked && typeof trackMintiEvent === "function") {
-          trackMintiEvent("autopilot_video_unmute");
-          autopilotUnmuteTracked = true;
-        }
+      } else if (autopilotVideo.paused) {
+        autopilotVideo.play().catch(function () {});
       } else {
-        autopilotVideo.muted = true;
-        setAutopilotCaptions("showing");
-        showAutopilotSoundAction();
-        if (!autopilotVideoInView) autopilotVideo.pause();
+        autopilotVideo.pause();
+      }
+    };
+
+    autopilotVideoCard.addEventListener("click", handleAutopilotCardPlayback);
+    autopilotVideoCard.addEventListener("keydown", function (event) {
+      if (event.target !== autopilotVideoCard || (event.key !== "Enter" && event.key !== " ")) return;
+      event.preventDefault();
+      handleAutopilotCardPlayback();
+    });
+
+    autopilotVideoSound.addEventListener("click", function (event) {
+      event.stopPropagation();
+      activateAutopilotSound();
+    });
+
+    autopilotVideoAudioToggle.addEventListener("click", function (event) {
+      event.stopPropagation();
+      autopilotVideo.muted = !autopilotVideo.muted;
+      autopilotVideo.loop = autopilotVideo.muted;
+      setAutopilotCaptions("showing");
+      syncAutopilotAudioToggle();
+    });
+
+    autopilotVideoWatchAgain.addEventListener("click", function (event) {
+      event.stopPropagation();
+      autopilotVideo.muted = false;
+      autopilotVideo.loop = false;
+      autopilotVideo.currentTime = 0;
+      autopilotVideoWatchAgain.hidden = true;
+      syncAutopilotAudioToggle();
+      autopilotVideo.play().catch(function () {});
+    });
+
+    autopilotVideo.addEventListener("ended", function () {
+      if (autopilotVideo.muted) return;
+      autopilotVideoWatchAgain.hidden = false;
+      if (!autopilotCompletedTracked) {
+        trackAutopilotHeroEvent("hero_completed");
+        autopilotCompletedTracked = true;
       }
     });
   }

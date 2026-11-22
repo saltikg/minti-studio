@@ -212,6 +212,12 @@
       0 0 42px rgba(93, 202, 165, 0.12);
     opacity: 0;
     animation: vsHomeFadeUp 0.8s ease-out 0.4s forwards;
+    cursor: pointer;
+  }
+
+  .vs-home .home-demo-card:focus-visible {
+    outline: 3px solid rgba(93, 202, 165, 0.9);
+    outline-offset: 4px;
   }
 
   .vs-home .home-demo-video {
@@ -237,11 +243,10 @@
   .vs-home .home-demo-sound {
     position: absolute;
     z-index: 2;
-    top: 12px;
-    left: 12px;
-    bottom: auto;
-    min-height: 42px;
-    padding: 0.62rem 0.88rem;
+    left: 50%;
+    bottom: 18px;
+    min-height: 44px;
+    padding: 0.72rem 1.05rem;
     border: 1px solid rgba(255, 255, 255, 0.2);
     border-radius: 999px;
     background: rgba(3, 8, 13, 0.84);
@@ -251,6 +256,9 @@
     line-height: 1;
     box-shadow: 0 8px 24px rgba(0, 0, 0, 0.32);
     backdrop-filter: blur(8px);
+    transform: translateX(-50%);
+    cursor: pointer;
+    white-space: nowrap;
   }
 
   .vs-home .home-demo-sound:hover,
@@ -259,17 +267,48 @@
     border-color: rgba(93, 202, 165, 0.58);
   }
 
-  .vs-home .home-demo-sound.is-toggle {
-    min-height: 36px;
-    padding: 0.5rem 0.72rem;
-    font-size: 0.78rem;
+  .vs-home .home-demo-sound.is-pulsing {
+    animation: homeDemoSoundPulse 0.8s ease-out;
   }
 
-  .vs-home .home-demo-card.is-reduced-motion .home-demo-sound {
-    top: auto;
+  .vs-home .home-demo-audio-toggle {
+    position: absolute;
+    z-index: 3;
+    top: 12px;
+    right: 12px;
+    width: 44px;
+    min-width: 44px;
+    height: 44px;
+    padding: 0;
+    border: 1px solid rgba(255, 255, 255, 0.2);
+    border-radius: 999px;
+    background: rgba(3, 8, 13, 0.84);
+    color: #fff;
+    font-size: 1rem;
+    box-shadow: 0 8px 24px rgba(0, 0, 0, 0.32);
+    backdrop-filter: blur(8px);
+    cursor: pointer;
+  }
+
+  .vs-home .home-demo-watch-again {
+    position: absolute;
+    z-index: 3;
     left: 50%;
-    bottom: 50%;
-    transform: translate(-50%, 50%);
+    top: 50%;
+    min-height: 44px;
+    padding: 0.72rem 1.05rem;
+    border: 1px solid rgba(255, 255, 255, 0.28);
+    border-radius: 999px;
+    background: rgba(3, 8, 13, 0.9);
+    color: #fff;
+    font-weight: 700;
+    transform: translate(-50%, -50%);
+    cursor: pointer;
+  }
+
+  @keyframes homeDemoSoundPulse {
+    0%, 100% { transform: translateX(-50%) scale(1); }
+    45% { transform: translateX(-50%) scale(1.1); box-shadow: 0 0 0 9px rgba(93, 202, 165, 0.14); }
   }
 
   .vs-home .vs-home-flow-section {
@@ -2346,6 +2385,10 @@
       transition: none;
       transform: none;
     }
+
+    .vs-home .home-demo-sound.is-pulsing {
+      animation: none;
+    }
   }
 </style>
 {% endblock %}
@@ -2383,7 +2426,7 @@
         </div>
         </div>
       </div>
-      <div class="home-demo-card" data-home-demo-card>
+      <div class="home-demo-card" data-home-demo-card tabindex="0" role="button" aria-label="Play video with sound">
         <video
           class="home-demo-video"
           data-home-demo-video
@@ -2392,13 +2435,15 @@
           loop
           playsinline
           preload="metadata"
-          poster="{{ url_for('video_shorts_bp.static', filename='motion/maya-demo.jpg') }}?v=3"
+          poster="{{ url_for('video_shorts_bp.static', filename='motion/maya-demo.jpg') }}?v=4"
           aria-label="Minti Studio editor demo"
         >
-          <source src="{{ url_for('video_shorts_bp.static', filename='motion/maya-demo.mp4') }}?v=3" type="video/mp4">
-          <track kind="captions" srclang="en" src="{{ url_for('video_shorts_bp.static', filename='motion/maya-demo.en.vtt') }}?v=4" label="English" default>
+          <source src="{{ url_for('video_shorts_bp.static', filename='motion/maya-demo.mp4') }}?v=4" type="video/mp4">
+          <track kind="captions" srclang="en" src="{{ url_for('video_shorts_bp.static', filename='motion/maya-demo.en.vtt') }}?v=5" label="English" default>
         </video>
-        <button class="home-demo-sound" type="button" data-home-demo-sound data-action="sound">🔊 Tap for sound</button>
+        <button class="home-demo-sound" type="button" data-home-demo-sound>🔊 Tap to hear</button>
+        <button class="home-demo-audio-toggle" type="button" data-home-demo-audio-toggle aria-label="Mute video" hidden>🔇</button>
+        <button class="home-demo-watch-again" type="button" data-home-demo-watch-again hidden>↻ Watch again</button>
       </div>
     </div>
   </section>
@@ -2816,12 +2861,17 @@
     const homeDemoCard = document.querySelector("[data-home-demo-card]");
     const homeDemoVideo = document.querySelector("[data-home-demo-video]");
     const homeDemoSound = document.querySelector("[data-home-demo-sound]");
+    const homeDemoAudioToggle = document.querySelector("[data-home-demo-audio-toggle]");
+    const homeDemoWatchAgain = document.querySelector("[data-home-demo-watch-again]");
     const homeDemoCaptionTrack = homeDemoVideo?.querySelector('track[kind="captions"]');
 
-    if (homeDemoCard && homeDemoVideo && homeDemoSound) {
+    if (homeDemoCard && homeDemoVideo && homeDemoSound && homeDemoAudioToggle && homeDemoWatchAgain) {
       let isInView = false;
       let manualPlaybackStarted = false;
       let unmuteTracked = false;
+      let completedTracked = false;
+      let soundActivated = false;
+      let pulseTimer = null;
 
       const setCaptions = function (mode) {
         Array.from(homeDemoVideo.textTracks || []).forEach(function (track) {
@@ -2844,21 +2894,57 @@
       homeDemoCaptionTrack?.addEventListener("load", positionCaptionCues);
       positionCaptionCues();
 
-      const showSoundAction = function () {
-        homeDemoSound.dataset.action = "sound";
-        homeDemoSound.textContent = "🔊 Tap for sound";
-        homeDemoSound.classList.remove("is-toggle");
+      const trackHeroEvent = function (eventName) {
+        if (typeof trackMintiEvent === "function") {
+          trackMintiEvent(eventName, { page: "home" });
+        }
+      };
+
+      const syncAudioToggle = function () {
+        const isMuted = homeDemoVideo.muted;
+        homeDemoAudioToggle.textContent = isMuted ? "🔊" : "🔇";
+        homeDemoAudioToggle.setAttribute("aria-label", isMuted ? "Unmute video" : "Mute video");
+      };
+
+      const activateSound = function () {
+        soundActivated = true;
+        manualPlaybackStarted = true;
+        homeDemoCard.classList.remove("is-reduced-motion");
+        homeDemoVideo.loop = false;
+        homeDemoVideo.muted = false;
+        homeDemoVideo.currentTime = 0;
+        setCaptions("showing");
+        homeDemoSound.hidden = true;
+        homeDemoAudioToggle.hidden = false;
+        homeDemoWatchAgain.hidden = true;
+        syncAudioToggle();
+        homeDemoVideo.play().catch(function () {});
+        if (!unmuteTracked) {
+          trackHeroEvent("hero_unmute");
+          unmuteTracked = true;
+        }
       };
 
       homeDemoVideo.muted = true;
       setCaptions("showing");
 
+      if (!prefersReducedMotion.matches) {
+        const schedulePulse = function () {
+          if (soundActivated || pulseTimer) return;
+          pulseTimer = window.setTimeout(function () {
+            if (!soundActivated) homeDemoSound.classList.add("is-pulsing");
+          }, 3000);
+        };
+        homeDemoVideo.addEventListener("playing", schedulePulse, { once: true });
+        homeDemoSound.addEventListener("animationend", function () {
+          homeDemoSound.classList.remove("is-pulsing");
+        });
+      }
+
       if (prefersReducedMotion.matches) {
         homeDemoVideo.autoplay = false;
         homeDemoVideo.pause();
         homeDemoCard.classList.add("is-reduced-motion");
-        homeDemoSound.dataset.action = "play";
-        homeDemoSound.textContent = "▶ Play demo";
       }
 
       if ("IntersectionObserver" in window) {
@@ -2877,34 +2963,56 @@
         homeDemoVideo.pause();
       }
 
-      homeDemoSound.addEventListener("click", function () {
-        const action = homeDemoSound.dataset.action;
-        if (action === "play") {
-          manualPlaybackStarted = true;
-          homeDemoCard.classList.remove("is-reduced-motion");
-          showSoundAction();
-          homeDemoVideo.play().catch(function () {});
-          return;
-        }
-
-        if (homeDemoVideo.muted) {
-          homeDemoVideo.muted = false;
+      const handleCardPlayback = function () {
+        if (!soundActivated) {
+          activateSound();
+        } else if (homeDemoVideo.ended || !homeDemoWatchAgain.hidden) {
+          homeDemoWatchAgain.hidden = true;
           homeDemoVideo.currentTime = 0;
-          homeDemoVideo.controls = true;
-          setCaptions("hidden");
-          homeDemoSound.dataset.action = "mute";
-          homeDemoSound.textContent = "🔇 Mute";
-          homeDemoSound.classList.add("is-toggle");
           homeDemoVideo.play().catch(function () {});
-          if (!unmuteTracked && typeof trackMintiEvent === "function") {
-            trackMintiEvent("home_demo_unmute");
-            unmuteTracked = true;
-          }
+        } else if (homeDemoVideo.paused) {
+          homeDemoVideo.play().catch(function () {});
         } else {
-          homeDemoVideo.muted = true;
-          setCaptions("showing");
-          showSoundAction();
-          if (!isInView) homeDemoVideo.pause();
+          homeDemoVideo.pause();
+        }
+      };
+
+      homeDemoCard.addEventListener("click", handleCardPlayback);
+      homeDemoCard.addEventListener("keydown", function (event) {
+        if (event.target !== homeDemoCard || (event.key !== "Enter" && event.key !== " ")) return;
+        event.preventDefault();
+        handleCardPlayback();
+      });
+
+      homeDemoSound.addEventListener("click", function (event) {
+        event.stopPropagation();
+        activateSound();
+      });
+
+      homeDemoAudioToggle.addEventListener("click", function (event) {
+        event.stopPropagation();
+        homeDemoVideo.muted = !homeDemoVideo.muted;
+        homeDemoVideo.loop = homeDemoVideo.muted;
+        setCaptions("showing");
+        syncAudioToggle();
+      });
+
+      homeDemoWatchAgain.addEventListener("click", function (event) {
+        event.stopPropagation();
+        homeDemoVideo.muted = false;
+        homeDemoVideo.loop = false;
+        homeDemoVideo.currentTime = 0;
+        homeDemoWatchAgain.hidden = true;
+        syncAudioToggle();
+        homeDemoVideo.play().catch(function () {});
+      });
+
+      homeDemoVideo.addEventListener("ended", function () {
+        if (homeDemoVideo.muted) return;
+        homeDemoWatchAgain.hidden = false;
+        if (!completedTracked) {
+          trackHeroEvent("hero_completed");
+          completedTracked = true;
         }
       });
     }
