@@ -39,9 +39,88 @@ OUTREACH_ZOHO_FROM_NAME = "Gokhan Saltik"
 OUTREACH_SEQUENCE_MAX_SENDS = 3
 OUTREACH_SEQUENCE_DAY_OFFSETS = {2: 3, 3: 7}
 OUTREACH_SLOT_MINUTES = (0, 7, 15, 22, 30, 37, 45, 52)
-OUTREACH_FIRST_TOUCH_SLOT_HOUR_PT = 9
 OUTREACH_FOLLOWUP_SLOT_HOUR_PT = 10
 OUTREACH_PACIFIC_ZONE = ZoneInfo("America/Los_Angeles")
+OUTREACH_DAILY_NEW_CAP_DEFAULT = 8
+OUTREACH_DAILY_TOTAL_CAP_DEFAULT = 40
+
+
+def _positive_env_int(name: str, default: int) -> int:
+    try:
+        return max(1, int(str(os.getenv(name, default)).strip()))
+    except (TypeError, ValueError):
+        return default
+
+
+def outreach_daily_new_cap() -> int:
+    return _positive_env_int("OUTREACH_DAILY_NEW_CAP", OUTREACH_DAILY_NEW_CAP_DEFAULT)
+
+
+def outreach_daily_total_cap() -> int:
+    return _positive_env_int("OUTREACH_DAILY_TOTAL_CAP", OUTREACH_DAILY_TOTAL_CAP_DEFAULT)
+
+
+def _pacific_day_bounds_utc(now: datetime | None = None) -> tuple[datetime, datetime]:
+    now_utc = _as_utc(now) if now is not None else datetime.now(timezone.utc)
+    now_pacific = (now_utc or datetime.now(timezone.utc)).astimezone(OUTREACH_PACIFIC_ZONE)
+    start_pacific = now_pacific.replace(hour=0, minute=0, second=0, microsecond=0)
+    return start_pacific.astimezone(timezone.utc), (start_pacific + timedelta(days=1)).astimezone(timezone.utc)
+
+
+def load_outreach_daily_send_counts(conn, *, now: datetime | None = None) -> dict[str, int]:
+    """Return scheduled-outreach sends for the current Pacific calendar day."""
+    ensure_outreach_scheduled_email_schema(conn)
+    day_start_utc, day_end_utc = _pacific_day_bounds_utc(now)
+    row = conn.execute(
+        """
+        SELECT
+          COUNT(*) FILTER (
+            WHERE COALESCE(sequence_number, CASE WHEN stage = 'first' THEN 1 ELSE 2 END) = 1
+          ),
+          COUNT(*)
+        FROM outreach_scheduled_emails
+        WHERE status = 'sent'
+          AND sent_at >= ?
+          AND sent_at < ?
+        """,
+        [day_start_utc, day_end_utc],
+    ).fetchone()
+    return {
+        "first": int((row[0] if row else 0) or 0),
+        "total": int((row[1] if row else 0) or 0),
+    }
+
+
+def _reserved_first_touch_count(conn, *, now: datetime | None = None) -> int:
+    """Reserve today's total-cap capacity for first-touch jobs before follow-ups."""
+    _, day_end_utc = _pacific_day_bounds_utc(now)
+    row = conn.execute(
+        """
+        SELECT COUNT(*)
+        FROM outreach_scheduled_emails
+        WHERE status IN ('scheduled', 'processing')
+          AND COALESCE(sequence_number, CASE WHEN stage = 'first' THEN 1 ELSE 2 END) = 1
+          AND scheduled_at < ?
+        """,
+        [day_end_utc],
+    ).fetchone()
+    return int((row[0] if row else 0) or 0)
+
+
+def outreach_send_capacity(
+    *,
+    first_sent: int,
+    total_sent: int,
+    reserved_first: int,
+    new_cap: int,
+    total_cap: int,
+) -> tuple[bool, bool]:
+    """Return whether a first-touch and follow-up may be claimed, respectively."""
+    effective_new_cap = min(max(0, new_cap), max(0, total_cap))
+    first_available = total_sent < total_cap and first_sent < effective_new_cap
+    first_reservation = min(max(0, effective_new_cap - first_sent), max(0, reserved_first))
+    followup_available = total_sent < total_cap and total_sent + first_reservation < total_cap
+    return first_available, followup_available
 
 
 def normalize_outreach_recipient_email(value: object) -> str:
@@ -820,9 +899,30 @@ def cancel_scheduled_outreach_email(conn, *, schedule_id: int, share_link_id: in
 
 def claim_due_scheduled_outreach_email(conn) -> dict[str, Any] | None:
     ensure_outreach_scheduled_email_schema(conn)
+    now_utc = datetime.now(timezone.utc)
+    counts = load_outreach_daily_send_counts(conn, now=now_utc)
+    new_cap = outreach_daily_new_cap()
+    total_cap = outreach_daily_total_cap()
+    first_capacity_available, followup_capacity_available = outreach_send_capacity(
+        first_sent=counts["first"],
+        total_sent=counts["total"],
+        reserved_first=_reserved_first_touch_count(conn, now=now_utc),
+        new_cap=new_cap,
+        total_cap=total_cap,
+    )
+    if not first_capacity_available and not followup_capacity_available:
+        return None
+    stage_filter_sql = """
+      AND (
+        (COALESCE(sequence_number, CASE WHEN stage = 'first' THEN 1 ELSE 2 END) = 1 AND ?)
+        OR
+        (COALESCE(sequence_number, CASE WHEN stage = 'first' THEN 1 ELSE 2 END) >= 2 AND ?)
+      )
+    """
+    stage_filter_params = [first_capacity_available, followup_capacity_available]
     if getattr(conn, "backend_name", "") == "postgres":
         row = conn.execute(
-            """
+            f"""
             UPDATE outreach_scheduled_emails
                SET status = 'processing',
                    updated_at = now()
@@ -831,27 +931,39 @@ def claim_due_scheduled_outreach_email(conn) -> dict[str, Any] | None:
                  FROM outreach_scheduled_emails
                  WHERE status = 'scheduled'
                    AND scheduled_at <= now()
-                 ORDER BY scheduled_at ASC, id ASC
+                   {stage_filter_sql}
+                 ORDER BY
+                   CASE WHEN COALESCE(sequence_number, CASE WHEN stage = 'first' THEN 1 ELSE 2 END) = 1
+                        THEN 0 ELSE 1 END,
+                   scheduled_at ASC,
+                   id ASC
                  FOR UPDATE SKIP LOCKED
                  LIMIT 1
              )
              RETURNING id, share_link_id, stage, language, attempts, max_attempts,
                        recipient_email_override, recipient_name_override,
                        sequence_number, parent_send_id
-            """
+            """,
+            stage_filter_params,
         ).fetchone()
     else:
         row = conn.execute(
-            """
+            f"""
             SELECT id, share_link_id, stage, language, attempts, max_attempts,
                    recipient_email_override, recipient_name_override,
                    sequence_number, parent_send_id
             FROM outreach_scheduled_emails
             WHERE status = 'scheduled'
               AND scheduled_at <= CURRENT_TIMESTAMP
-            ORDER BY scheduled_at ASC, id ASC
+              {stage_filter_sql}
+            ORDER BY
+              CASE WHEN COALESCE(sequence_number, CASE WHEN stage = 'first' THEN 1 ELSE 2 END) = 1
+                   THEN 0 ELSE 1 END,
+              scheduled_at ASC,
+              id ASC
             LIMIT 1
-            """
+            """,
+            stage_filter_params,
         ).fetchone()
         if row:
             conn.execute(

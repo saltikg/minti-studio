@@ -228,6 +228,7 @@ from app.video_shorts.services.outreach_email_send import (
     cancel_scheduled_outreach_email,
     ensure_outreach_scheduled_email_schema,
     is_recipient_declined,
+    outreach_daily_new_cap,
     render_share_link_outreach_email,
     schedule_outreach_email,
     send_share_link_outreach_email,
@@ -8402,8 +8403,10 @@ try:
     DISCOVERY_LEAD_GENERATION_MIN_SCORE = float(os.getenv("DISCOVERY_LEAD_GENERATION_MIN_SCORE", "80") or 80)
 except (TypeError, ValueError):
     DISCOVERY_LEAD_GENERATION_MIN_SCORE = 80.0
-AUTOPILOT_OUTREACH_SLOT_MINUTES = (0, 7, 15, 22, 30, 37, 45, 52)
-AUTOPILOT_OUTREACH_SLOT_HOUR = 9
+AUTOPILOT_OUTREACH_WINDOW_START_HOUR_PT = 7
+AUTOPILOT_OUTREACH_WINDOW_END_HOUR_PT = 16
+AUTOPILOT_OUTREACH_GAP_MINUTES_MIN = 10
+AUTOPILOT_OUTREACH_GAP_MINUTES_MAX = 25
 AUTOPILOT_OUTREACH_STAGE = "first"
 AUTOPILOT_OUTREACH_LANGUAGE = "EN"
 
@@ -9548,22 +9551,27 @@ def allocate_next_outreach_slot(
     *,
     now: datetime,
     scheduled_datetimes: List[datetime],
+    gap_minutes: Optional[int] = None,
 ) -> datetime:
-    """Return the next open outreach slot as UTC, using Pacific business-day slots."""
+    """Return a spaced first-touch slot in the Pacific 07:00–16:00 window."""
     now_utc = _normalize_utc_datetime(now) or datetime.now(timezone.utc)
     now_pacific = now_utc.astimezone(PST_ZONE)
-    occupied = set()
+    scheduled_by_date: Dict[str, List[datetime]] = {}
     for scheduled in scheduled_datetimes or []:
         scheduled_utc = _normalize_utc_datetime(scheduled)
         if not scheduled_utc:
             continue
         scheduled_pacific = scheduled_utc.astimezone(PST_ZONE)
-        occupied.add(
-            (
-                scheduled_pacific.date().isoformat(),
-                scheduled_pacific.hour,
-                scheduled_pacific.minute,
-            )
+        scheduled_by_date.setdefault(scheduled_pacific.date().isoformat(), []).append(scheduled_pacific)
+
+    if gap_minutes is None:
+        gap = AUTOPILOT_OUTREACH_GAP_MINUTES_MIN + secrets.randbelow(
+            AUTOPILOT_OUTREACH_GAP_MINUTES_MAX - AUTOPILOT_OUTREACH_GAP_MINUTES_MIN + 1
+        )
+    else:
+        gap = max(
+            AUTOPILOT_OUTREACH_GAP_MINUTES_MIN,
+            min(AUTOPILOT_OUTREACH_GAP_MINUTES_MAX, int(gap_minutes)),
         )
 
     day_cursor = _next_business_day_pacific(now_pacific)
@@ -9571,20 +9579,26 @@ def allocate_next_outreach_slot(
         if day_cursor.weekday() >= 5:
             day_cursor = _next_business_day_pacific(day_cursor + timedelta(days=1))
             continue
-        for minute in AUTOPILOT_OUTREACH_SLOT_MINUTES:
-            slot_pacific = datetime(
-                day_cursor.year,
-                day_cursor.month,
-                day_cursor.day,
-                AUTOPILOT_OUTREACH_SLOT_HOUR,
-                minute,
-                tzinfo=PST_ZONE,
-            )
-            if slot_pacific <= now_pacific:
-                continue
-            key = (slot_pacific.date().isoformat(), slot_pacific.hour, slot_pacific.minute)
-            if key in occupied:
-                continue
+        day_key = day_cursor.date().isoformat()
+        existing = sorted(scheduled_by_date.get(day_key, []))
+        if len(existing) >= outreach_daily_new_cap():
+            day_cursor = _next_business_day_pacific(day_cursor + timedelta(days=1))
+            continue
+        window_start = day_cursor.replace(
+            hour=AUTOPILOT_OUTREACH_WINDOW_START_HOUR_PT,
+            minute=0,
+            second=0,
+            microsecond=0,
+        )
+        window_end = day_cursor.replace(
+            hour=AUTOPILOT_OUTREACH_WINDOW_END_HOUR_PT,
+            minute=0,
+            second=0,
+            microsecond=0,
+        )
+        anchor = max([window_start, now_pacific, *existing])
+        slot_pacific = anchor + timedelta(minutes=gap)
+        if slot_pacific <= window_end:
             return slot_pacific.astimezone(timezone.utc)
         day_cursor = _next_business_day_pacific(day_cursor + timedelta(days=1))
     raise RuntimeError("No outreach slot found in the next year.")
@@ -10625,8 +10639,11 @@ def _load_active_outreach_schedule_datetimes(conn) -> List[datetime]:
         """
         SELECT scheduled_at
         FROM outreach_scheduled_emails
-        WHERE status IN ('scheduled', 'processing')
-        """
+        WHERE status IN ('scheduled', 'processing', 'sent')
+          AND COALESCE(sequence_number, CASE WHEN stage = 'first' THEN 1 ELSE 2 END) = 1
+          AND scheduled_at >= ?
+        """,
+        [datetime.now(timezone.utc) - timedelta(days=2)],
     ).fetchall()
     values: List[datetime] = []
     for row in rows:
