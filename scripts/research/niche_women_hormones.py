@@ -1,16 +1,18 @@
 #!/usr/bin/env python3
 """Build a one-off YouTube peer report for women's hormone health.
 
-This script is intentionally read-only with respect to the application database.
-It combines selected discovery leads with YouTube search results, enriches every
-channel, classifies the channel with the discovery ICP model, and writes a CSV
-under the git-ignored data/research directory.
+This script reads application data and uses the normal YouTube quota tracker; it
+does not mutate lead or outreach records. It combines selected discovery leads
+with YouTube search results, enriches every channel, classifies the channel with
+the discovery ICP model, and checkpoints under the git-ignored data/research
+directory.
 """
 
 from __future__ import annotations
 
 import argparse
 import csv
+import hashlib
 import json
 import re
 import sys
@@ -36,43 +38,39 @@ from app.video_shorts.services.db import get_db_readonly, table_columns
 
 
 PACIFIC = ZoneInfo("America/Los_Angeles")
-YOUTUBE_QUOTA_LIMIT = 5_000
 YOUTUBE_QUOTA_COSTS = {
     "channels.list": 1,
     "playlistItems.list": 1,
     "search.list": 100,
     "videos.list": 1,
 }
+SEARCH_CALL_LIMIT = 40
+OTHER_UNIT_LIMIT = 3_000
 SHELLEY_MEYER_CHANNEL_ID = "UCx-TX9EAE0NOL9hhG1wnvwg"
-BUCKET_NAMES = {"women_hormones", "obgyn_fertility"}
 
 SEARCH_QUERIES = [
     "menopause doctor",
     "perimenopause symptoms",
-    "menopause weight gain",
-    "hormone replacement therapy",
     "HRT menopause",
+    "menopause weight gain",
     "perimenopause anxiety",
     "menopause brain fog",
-    "menopause sleep",
-    "estrogen women",
-    "progesterone",
-    "testosterone for women",
     "hot flashes treatment",
-    "PCOS doctor",
-    "thyroid women",
-    "women's hormone health",
-    "midlife women health",
-    "menopause nutrition",
-    "bioidentical hormones",
-    "vaginal dryness menopause",
-    "osteoporosis women",
-    "menopause gynecologist",
+    "testosterone for women",
     "menopause specialist",
-    "perimenopause periods",
-    "cortisol women",
-    "hormone imbalance women",
+    "bioidentical hormones",
+    "menopause gynecologist",
+    "women's hormone health",
 ]
+
+WOMEN_HORMONE_TERMS = (
+    "hormone", "menopause", "perimenopause", "estrogen", "progesterone",
+    "hot flash", "pcos", "testosterone",
+)
+OBGYN_FERTILITY_TERMS = (
+    "fertility", "ivf", "conceiv", "obgyn", "gynecolog", "irregular period",
+    "fibroid", "endometri", "ovulat", "vaginal", "pregnan",
+)
 
 CSV_FIELDS = [
     "youtube_channel_id",
@@ -111,19 +109,29 @@ class ResearchError(RuntimeError):
 
 @dataclass
 class QuotaBudget:
-    limit: int = YOUTUBE_QUOTA_LIMIT
-    used: int = 0
+    search_limit: int = SEARCH_CALL_LIMIT
+    other_limit: int = OTHER_UNIT_LIMIT
+    search_calls: int = 0
+    other_units: int = 0
+    app_youtube_user_id: str = ""
     calls: Counter = field(default_factory=Counter)
 
     def charge(self, method: str) -> None:
         cost = YOUTUBE_QUOTA_COSTS[method]
-        # The task requires strictly less than 5,000 units.
-        if self.used + cost >= self.limit:
+        if method == "search.list":
+            if self.search_calls + 1 > self.search_limit:
+                raise ResearchError(
+                    f"YouTube search-call guard stopped before {method}: "
+                    f"{self.search_calls} used of {self.search_limit}."
+                )
+            self.search_calls += 1
+        elif self.other_units + cost > self.other_limit:
             raise ResearchError(
-                f"YouTube quota guard stopped before {method}: "
-                f"{self.used} used and {cost} more would reach/exceed {self.limit}."
+                f"YouTube non-search quota guard stopped before {method}: "
+                f"{self.other_units} used and {cost} more would exceed {self.other_limit}."
             )
-        self.used += cost
+        else:
+            self.other_units += cost
         self.calls[method] += 1
 
 
@@ -190,20 +198,20 @@ def _json_object(value: Any) -> dict[str, Any]:
     return parsed if isinstance(parsed, dict) else {}
 
 
-def _normalized_bucket(value: Any) -> str:
-    return "_".join(re.findall(r"[a-z0-9]+", str(value or "").lower()))
-
-
-def _lead_bucket(row: dict[str, Any]) -> str:
-    values = [row.get("research_category")]
+def _lead_bucket_matches(row: dict[str, Any]) -> list[str]:
     raw = _json_object(row.get("raw_json"))
-    for key in ("keyword_bucket", "bucket", "category", "keyword_category"):
-        values.append(raw.get(key))
-    for value in values:
-        normalized = _normalized_bucket(value)
-        if normalized in BUCKET_NAMES:
-            return normalized
-    return ""
+    recent_titles = raw.get("recent_video_titles") or raw.get("recent_titles") or []
+    if not isinstance(recent_titles, list):
+        recent_titles = []
+    haystack = " ".join(
+        [str(row.get("matched_keyword") or "")] + [str(title) for title in recent_titles[:15]]
+    ).lower()
+    matches = []
+    if any(term in haystack for term in WOMEN_HORMONE_TERMS):
+        matches.append("women_hormones")
+    if any(term in haystack for term in OBGYN_FERTILITY_TERMS):
+        matches.append("obgyn_fertility")
+    return matches
 
 
 def _english_signal(text: str) -> bool:
@@ -253,6 +261,65 @@ def _rows_as_dicts(result: Any) -> list[dict[str, Any]]:
     return [dict(zip(names, row)) for row in result.fetchall()]
 
 
+def load_app_youtube_user_id() -> str:
+    """Return only the admin-owned discovery credential; never a member token."""
+    if discovery_youtube._youtube_api_key():
+        return ""
+    conn = get_db_readonly()
+    try:
+        if not table_columns(conn, "youtube_oauth_tokens_v2"):
+            raise ResearchError("No app-level YouTube API key or OAuth token table is available")
+        row = conn.execute(
+            """
+            SELECT t.user_id
+            FROM youtube_oauth_tokens_v2 t
+            JOIN shorts_users u
+              ON CAST(u.id AS VARCHAR) = split_part(t.user_id, '::', 1)
+            WHERE lower(COALESCE(u.role, '')) = 'admin'
+              AND COALESCE(t.reauth_required, 0) = 0
+            ORDER BY t.updated_at DESC
+            LIMIT 1
+            """
+        ).fetchone()
+    finally:
+        conn.close()
+    app_user_id = str(row[0] or "").strip() if row else ""
+    if not app_user_id:
+        raise ResearchError(
+            "No active admin-owned YouTube credential is available; refusing customer OAuth fallback"
+        )
+    return app_user_id
+
+
+def _load_cached_payload(path: Path, params: dict[str, Any]) -> dict[str, Any] | None:
+    if not path.exists():
+        return None
+    try:
+        cached = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, ValueError, json.JSONDecodeError):
+        return None
+    if not isinstance(cached, dict) or cached.get("params") != params:
+        return None
+    payload = cached.get("payload")
+    return payload if isinstance(payload, dict) else None
+
+
+def _store_cached_payload(path: Path, params: dict[str, Any], payload: dict[str, Any]) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    temporary = path.with_suffix(path.suffix + ".tmp")
+    temporary.write_text(
+        json.dumps({"params": params, "payload": payload}, ensure_ascii=False, sort_keys=True),
+        encoding="utf-8",
+    )
+    temporary.replace(path)
+
+
+def _cache_slug(value: str) -> str:
+    words = "-".join(re.findall(r"[a-z0-9]+", str(value or "").lower()))[:80]
+    digest = hashlib.sha256(str(value).encode("utf-8")).hexdigest()[:10]
+    return f"{words or 'item'}-{digest}"
+
+
 def load_discovery_leads() -> tuple[dict[str, dict[str, Any]], list[dict[str, Any]]]:
     """Load lead metadata and return the two requested bucket subsets."""
     conn = get_db_readonly()
@@ -262,22 +329,18 @@ def load_discovery_leads() -> tuple[dict[str, dict[str, Any]], list[dict[str, An
             raise ResearchError("discovery_leads.youtube_channel_id is unavailable")
         wanted = [
             "id", "youtube_channel_id", "status", "creator_email", "autopilot_lead_id",
-            "is_clinician", "face_check_verdict", "icp_fit", "channel_title", "channel_description", "raw_json",
+            "is_clinician", "face_check_verdict", "icp_fit", "matched_keyword",
+            "channel_title", "channel_description", "raw_json",
         ]
         selections = [f"dl.{name}" for name in wanted if name in lead_columns]
-        can_join_categories = bool(table_columns(conn, "keyword_queue")) and bool(
-            table_columns(conn, "discovery_categories")
-        ) and "matched_keyword" in lead_columns
-        if can_join_categories:
-            selections.append("c.name AS research_category")
-            joins = """
-                LEFT JOIN keyword_queue q ON lower(q.keyword) = lower(dl.matched_keyword)
-                LEFT JOIN discovery_categories c ON c.id = q.category_id
+        result = conn.execute(
+            f"""
+            SELECT {', '.join(selections)}
+            FROM discovery_leads dl
+            WHERE COALESCE(dl.is_clinician, false)
+              AND dl.face_check_verdict IS DISTINCT FROM 'face_fail'
             """
-        else:
-            selections.append("NULL AS research_category")
-            joins = ""
-        result = conn.execute(f"SELECT {', '.join(selections)} FROM discovery_leads dl {joins}")
+        )
         rows = _rows_as_dicts(result)
     finally:
         conn.close()
@@ -290,12 +353,10 @@ def load_discovery_leads() -> tuple[dict[str, dict[str, Any]], list[dict[str, An
         if not channel_id:
             continue
         existing = by_channel.get(channel_id)
-        if existing is None or (not existing.get("research_category") and row.get("research_category")):
+        if existing is None:
             by_channel[channel_id] = row
         if (
-            _lead_bucket(row)
-            and bool(row.get("is_clinician"))
-            and str(row.get("face_check_verdict") or "").strip().lower() != "face_fail"
+            _lead_bucket_matches(row)
             and _lead_is_estimated_english(row)
             and channel_id not in seen_bucket_ids
         ):
@@ -312,16 +373,24 @@ def youtube_get(
     params: dict[str, Any],
 ) -> dict[str, Any]:
     quota.charge(method)
-    # Use the discovery path exactly: optional API key first, then stored OAuth.
-    # Its normal quota recorder writes to the application DB, so disable only
-    # that accounting side effect for this explicitly read-only research run.
-    original_quota_recorder = discovery_youtube.record_youtube_data_api_call
-    discovery_youtube.record_youtube_data_api_call = lambda **_kwargs: None
+    # Keep discovery's app-key/admin-OAuth path, but remove its member-token
+    # fallback for this research run. Normal quota tracking remains enabled.
+    original_candidates = discovery_youtube._candidate_oauth_user_ids
+
+    def app_candidates(preferred_user_id: str | None = None) -> list[str]:
+        if discovery_youtube._youtube_api_key():
+            return []
+        if not quota.app_youtube_user_id or preferred_user_id != quota.app_youtube_user_id:
+            raise ResearchError("Refusing non-admin YouTube OAuth fallback")
+        return [quota.app_youtube_user_id]
+
+    discovery_youtube._candidate_oauth_user_ids = app_candidates
     try:
         payload = discovery_youtube._youtube_get_json(
             endpoint,
             params,
             timeout=30,
+            user_id=quota.app_youtube_user_id or None,
             require_auth=True,
             quota_feature="women_hormones_research",
             quota_method=method,
@@ -329,34 +398,51 @@ def youtube_get(
     except discovery_youtube.YoutubeApiError as exc:
         raise ResearchError(f"YouTube {method} failed: {exc}") from exc
     finally:
-        discovery_youtube.record_youtube_data_api_call = original_quota_recorder
+        discovery_youtube._candidate_oauth_user_ids = original_candidates
     return payload if isinstance(payload, dict) else {}
 
 
-def search_channels(session: requests.Session, quota: QuotaBudget) -> dict[str, list[str]]:
+def cached_youtube_get(
+    session: requests.Session,
+    quota: QuotaBudget,
+    endpoint: str,
+    method: str,
+    params: dict[str, Any],
+    cache_path: Path,
+) -> dict[str, Any]:
+    cached = _load_cached_payload(cache_path, params)
+    if cached is not None:
+        return cached
+    payload = youtube_get(session, quota, endpoint, method, params)
+    _store_cached_payload(cache_path, params, payload)
+    return payload
+
+
+def search_channels(
+    session: requests.Session, quota: QuotaBudget, cache_root: Path
+) -> dict[str, list[str]]:
     found: dict[str, list[str]] = {}
     for index, query in enumerate(SEARCH_QUERIES, start=1):
-        # One mixed search covers direct channel hits and video->channel hits.
-        # Splitting them would cost 5,000 units before any enrichment.
-        payload = youtube_get(
+        params = {
+            "part": "snippet",
+            "q": query,
+            "type": "video",
+            "maxResults": 50,
+            "order": "relevance",
+            "regionCode": "US",
+            "relevanceLanguage": "en",
+        }
+        payload = cached_youtube_get(
             session,
             quota,
             "search",
             "search.list",
-            {
-                "part": "snippet",
-                "q": query,
-                "type": "channel,video",
-                "maxResults": 50,
-                "order": "relevance",
-                "regionCode": "US",
-                "relevanceLanguage": "en",
-            },
+            params,
+            cache_root / "search" / f"{_cache_slug(query)}.json",
         )
         for item in payload.get("items") or []:
-            item_id = item.get("id") or {}
             snippet = item.get("snippet") or {}
-            channel_id = str(item_id.get("channelId") or snippet.get("channelId") or "").strip()
+            channel_id = str(snippet.get("channelId") or "").strip()
             if not channel_id:
                 continue
             found.setdefault(channel_id, [])
@@ -393,7 +479,8 @@ def build_candidates(
     for row in bucket_rows:
         channel_id = str(row.get("youtube_channel_id") or "").strip()
         if channel_id:
-            ensure(channel_id).add_query(f"db:{_lead_bucket(row)}")
+            for bucket in _lead_bucket_matches(row):
+                ensure(channel_id).add_query(f"db:{bucket}")
     for channel_id, queries in search_results.items():
         candidate = ensure(channel_id)
         for query in queries:
@@ -403,34 +490,66 @@ def build_candidates(
 
 
 def fetch_channel_metadata(
-    session: requests.Session, quota: QuotaBudget, channel_ids: Sequence[str]
+    session: requests.Session,
+    quota: QuotaBudget,
+    channel_ids: Sequence[str],
+    cache_root: Path,
 ) -> dict[str, dict[str, Any]]:
     metadata: dict[str, dict[str, Any]] = {}
-    for chunk in batched(channel_ids):
-        payload = youtube_get(
+    missing_ids: list[str] = []
+    item_params = {"part": "snippet,statistics,contentDetails"}
+    for channel_id in channel_ids:
+        cached = _load_cached_payload(cache_root / "channels" / f"{channel_id}.json", item_params)
+        item = (cached or {}).get("item") if cached is not None else None
+        if isinstance(item, dict):
+            metadata[channel_id] = _channel_metadata_from_item(item)
+        elif cached is None:
+            missing_ids.append(channel_id)
+    for chunk in batched(missing_ids):
+        params = {
+            "part": "snippet,statistics,contentDetails",
+            "id": ",".join(chunk),
+            "maxResults": 50,
+        }
+        batch_key = hashlib.sha256(",".join(chunk).encode("utf-8")).hexdigest()[:16]
+        payload = cached_youtube_get(
             session,
             quota,
             "channels",
             "channels.list",
-            {"part": "snippet,statistics,contentDetails", "id": ",".join(chunk), "maxResults": 50},
+            params,
+            cache_root / "channel_batches" / f"{batch_key}.json",
         )
+        returned: dict[str, dict[str, Any]] = {}
         for item in payload.get("items") or []:
             channel_id = str(item.get("id") or "").strip()
-            snippet = item.get("snippet") or {}
-            stats = item.get("statistics") or {}
-            playlists = ((item.get("contentDetails") or {}).get("relatedPlaylists") or {})
-            metadata[channel_id] = {
-                "title": str(snippet.get("title") or ""),
-                "handle": str(snippet.get("customUrl") or ""),
-                "description": str(snippet.get("description") or ""),
-                "country": str(snippet.get("country") or ""),
-                "published_at": str(snippet.get("publishedAt") or ""),
-                "subscriber_count": _optional_int(stats.get("subscriberCount")),
-                "view_count": _optional_int(stats.get("viewCount")),
-                "video_count": _optional_int(stats.get("videoCount")),
-                "uploads_playlist_id": str(playlists.get("uploads") or ""),
-            }
+            if channel_id:
+                returned[channel_id] = item
+                metadata[channel_id] = _channel_metadata_from_item(item)
+        for channel_id in chunk:
+            _store_cached_payload(
+                cache_root / "channels" / f"{channel_id}.json",
+                item_params,
+                {"item": returned.get(channel_id)},
+            )
     return metadata
+
+
+def _channel_metadata_from_item(item: dict[str, Any]) -> dict[str, Any]:
+    snippet = item.get("snippet") or {}
+    stats = item.get("statistics") or {}
+    playlists = ((item.get("contentDetails") or {}).get("relatedPlaylists") or {})
+    return {
+        "title": str(snippet.get("title") or ""),
+        "handle": str(snippet.get("customUrl") or ""),
+        "description": str(snippet.get("description") or ""),
+        "country": str(snippet.get("country") or ""),
+        "published_at": str(snippet.get("publishedAt") or ""),
+        "subscriber_count": _optional_int(stats.get("subscriberCount")),
+        "view_count": _optional_int(stats.get("viewCount")),
+        "video_count": _optional_int(stats.get("videoCount")),
+        "uploads_playlist_id": str(playlists.get("uploads") or ""),
+    }
 
 
 def _parse_timestamp(value: Any) -> datetime | None:
@@ -458,6 +577,8 @@ def fetch_uploads(
     quota: QuotaBudget,
     channels: dict[str, dict[str, Any]],
     cutoff: datetime,
+    cache_root: Path,
+    show_progress: bool = True,
 ) -> tuple[dict[str, list[dict[str, Any]]], dict[str, list[str]]]:
     uploads: dict[str, list[dict[str, Any]]] = {channel_id: [] for channel_id in channels}
     titles: dict[str, list[str]] = {channel_id: [] for channel_id in channels}
@@ -466,6 +587,7 @@ def fetch_uploads(
         if not playlist_id:
             continue
         page_token = ""
+        page_index = 0
         crossed_cutoff = False
         while not crossed_cutoff:
             params: dict[str, Any] = {
@@ -475,7 +597,14 @@ def fetch_uploads(
             }
             if page_token:
                 params["pageToken"] = page_token
-            payload = youtube_get(session, quota, "playlistItems", "playlistItems.list", params)
+            payload = cached_youtube_get(
+                session,
+                quota,
+                "playlistItems",
+                "playlistItems.list",
+                params,
+                cache_root / "uploads" / channel_id / f"page_{page_index:04d}.json",
+            )
             items = payload.get("items") or []
             for item in items:
                 snippet = item.get("snippet") or {}
@@ -494,9 +623,10 @@ def fetch_uploads(
                         {"video_id": video_id, "title": title, "published_at": published_at}
                     )
             page_token = str(payload.get("nextPageToken") or "")
+            page_index += 1
             if not page_token or (crossed_cutoff and len(titles[channel_id]) >= 15):
                 break
-        if index % 50 == 0 or index == len(channels):
+        if show_progress and (index % 50 == 0 or index == len(channels)):
             print(f"uploads: {index}/{len(channels)} channels")
     return uploads, titles
 
@@ -518,16 +648,20 @@ def fetch_video_details(
     session: requests.Session,
     quota: QuotaBudget,
     uploads: dict[str, list[dict[str, Any]]],
+    cache_root: Path,
 ) -> dict[str, dict[str, Any]]:
     video_ids = list(dict.fromkeys(item["video_id"] for values in uploads.values() for item in values))
     details: dict[str, dict[str, Any]] = {}
     for chunk in batched(video_ids):
-        payload = youtube_get(
+        params = {"part": "contentDetails,statistics", "id": ",".join(chunk), "maxResults": 50}
+        batch_key = hashlib.sha256(",".join(chunk).encode("utf-8")).hexdigest()[:16]
+        payload = cached_youtube_get(
             session,
             quota,
             "videos",
             "videos.list",
-            {"part": "contentDetails,statistics", "id": ",".join(chunk), "maxResults": 50},
+            params,
+            cache_root / "video_batches" / f"{batch_key}.json",
         )
         for item in payload.get("items") or []:
             content = item.get("contentDetails") or {}
@@ -730,6 +864,22 @@ def write_csv(rows: list[dict[str, Any]], output_path: Path) -> None:
         writer.writerows(rows)
 
 
+def load_partial_csv(output_path: Path, candidate_ids: set[str]) -> list[dict[str, Any]]:
+    if not output_path.exists():
+        return []
+    try:
+        with output_path.open("r", encoding="utf-8", newline="") as handle:
+            rows = list(csv.DictReader(handle))
+    except (OSError, csv.Error):
+        return []
+    return [
+        row
+        for row in rows
+        if str(row.get("youtube_channel_id") or "") in candidate_ids
+        and str(row.get("in_niche") or "") in {"yes", "partial", "no"}
+    ]
+
+
 def print_summary(
     rows: list[dict[str, Any]], quota: QuotaBudget, llm_usage: LLMUsage, output_path: Path
 ) -> None:
@@ -748,7 +898,8 @@ def print_summary(
     print(f"  Real person: {presenter_counts['real_person']}")
     print("  By credential: " + ", ".join(f"{key}={credential_counts[key]}" for key in sorted(credential_counts)))
     call_summary = ", ".join(f"{key}={quota.calls[key]}" for key in sorted(quota.calls))
-    print(f"  YouTube API units used: {quota.used} ({call_summary})")
+    print(f"  YouTube search calls: {quota.search_calls}/{quota.search_limit}")
+    print(f"  YouTube other units: {quota.other_units}/{quota.other_limit} ({call_summary})")
     if llm_usage.estimated_cost_usd is None:
         cost_text = "unavailable for configured model"
     else:
@@ -765,17 +916,24 @@ def run(output_path: Path) -> list[dict[str, Any]]:
 
     quota = QuotaBudget()
     llm_usage = LLMUsage()
+    cache_root = output_path.parent / "cache"
     session = requests.Session()
     session.headers.update({"User-Agent": "minti-studio-women-hormones-research/1.0"})
 
     all_leads, bucket_rows = load_discovery_leads()
     print(f"database candidates: {len(bucket_rows)}")
-    search_results = search_channels(session, quota)
+    quota.app_youtube_user_id = load_app_youtube_user_id()
+    print(
+        "YouTube auth: app API key"
+        if not quota.app_youtube_user_id
+        else "YouTube auth: admin-owned discovery OAuth only"
+    )
+    search_results = search_channels(session, quota, cache_root)
     candidates = build_candidates(all_leads, bucket_rows, search_results)
     print(f"deduplicated candidates: {len(candidates)}")
 
     channel_ids = list(candidates)
-    channels = fetch_channel_metadata(session, quota, channel_ids)
+    channels = fetch_channel_metadata(session, quota, channel_ids, cache_root)
     missing = [channel_id for channel_id in channel_ids if channel_id not in channels]
     if missing:
         print(
@@ -798,17 +956,31 @@ def run(output_path: Path) -> list[dict[str, Any]]:
     if SHELLEY_MEYER_CHANNEL_ID not in channels:
         raise ResearchError("Required Dr. Shelley Meyer channel was not returned by channels.list")
 
-    cutoff = datetime.now(timezone.utc) - timedelta(days=90)
-    uploads, titles = fetch_uploads(session, quota, channels, cutoff)
-    video_details = fetch_video_details(session, quota, uploads)
     outreach = load_outreach_status(candidates)
-
-    rows: list[dict[str, Any]] = []
+    cutoff = datetime.now(timezone.utc) - timedelta(days=90)
+    rows = load_partial_csv(output_path, set(channel_ids))
+    completed_ids = {str(row.get("youtube_channel_id") or "") for row in rows}
+    write_csv(rows, output_path)
+    if rows:
+        print(f"resuming completed CSV rows: {len(rows)}")
     for index, channel_id in enumerate(channel_ids, start=1):
+        if channel_id in completed_ids:
+            continue
         candidate = candidates[channel_id]
         channel = channels[channel_id]
-        classification = classify_channel(channel, titles.get(channel_id) or [], llm_usage)
-        activity = compute_activity(uploads.get(channel_id) or [], video_details)
+        channel_uploads, channel_titles = fetch_uploads(
+            session,
+            quota,
+            {channel_id: channel},
+            cutoff,
+            cache_root,
+            show_progress=False,
+        )
+        video_details = fetch_video_details(session, quota, channel_uploads, cache_root)
+        classification = classify_channel(
+            channel, channel_titles.get(channel_id) or [], llm_usage
+        )
+        activity = compute_activity(channel_uploads.get(channel_id) or [], video_details)
         rows.append(
             {
                 "youtube_channel_id": channel_id,
@@ -825,11 +997,15 @@ def run(output_path: Path) -> list[dict[str, Any]]:
                 )},
                 **activity,
                 **classification,
-                "last_15_video_titles": " | ".join(titles.get(channel_id) or []),
+                "last_15_video_titles": " | ".join(channel_titles.get(channel_id) or []),
             }
         )
+        write_csv(rows, output_path)
         if index % 25 == 0 or index == len(channel_ids):
-            print(f"classifications: {index}/{len(channel_ids)}")
+            print(
+                f"completed: {len(rows)}/{len(channel_ids)} "
+                f"(search_calls={quota.search_calls}, other_units={quota.other_units})"
+            )
 
     rows.sort(
         key=lambda row: (
