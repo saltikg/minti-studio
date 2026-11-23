@@ -679,6 +679,16 @@
     object-fit: cover;
   }
 
+  .autopilot-page [data-silent-loop] {
+    pointer-events: none;
+  }
+
+  .autopilot-page [data-silent-loop]::-webkit-media-controls-start-playback-button,
+  .autopilot-page [data-silent-loop]::-webkit-media-controls {
+    display: none !important;
+    -webkit-appearance: none;
+  }
+
   .ap-editor-phone::after {
     content: "";
     position: absolute;
@@ -1329,8 +1339,8 @@
         <span class="ap-editor-pill is-music"><i class="bi bi-music-note-beamed"></i> Music</span>
         <span class="ap-editor-pill is-title"><i class="bi bi-type"></i> Titles</span>
         <div class="ap-editor-phone">
-          <video data-ap-phone-preview muted autoplay loop playsinline preload="metadata" poster="{{ url_for('video_shorts_bp.static', filename='motion/real-short-3.jpg') }}?v=2" aria-label="A finished branded coaching Short with captions">
-            <source src="{{ url_for('video_shorts_bp.static', filename='motion/real-short-3-preview.mp4') }}?v=2" type="video/mp4">
+          <video data-ap-phone-preview data-silent-loop autoplay muted loop playsinline webkit-playsinline preload="metadata" poster="{{ url_for('video_shorts_bp.static', filename='motion/real-short-3.jpg') }}?v=2" aria-label="A finished branded coaching Short with captions">
+            <source src="{{ url_for('video_shorts_bp.static', filename='motion/real-short-3-preview.mp4') }}?v=3" type="video/mp4">
           </video>
         </div>
       </div>
@@ -1440,8 +1450,8 @@
       </div>
 
       <figure class="ap-editor-loop-card" data-ap-editor-loop>
-        <video muted autoplay loop playsinline preload="none" poster="{{ url_for('video_shorts_bp.static', filename='motion/tab-styles.jpg') }}?v=2" aria-label="Minti Studio caption style editor with a Short preview">
-          <source data-src="{{ url_for('video_shorts_bp.static', filename='motion/tab-styles.mp4') }}?v=2" type="video/mp4">
+        <video data-silent-loop autoplay muted loop playsinline webkit-playsinline preload="metadata" poster="{{ url_for('video_shorts_bp.static', filename='motion/tab-styles.jpg') }}?v=2" aria-label="Minti Studio caption style editor with a Short preview">
+          <source data-src="{{ url_for('video_shorts_bp.static', filename='motion/tab-styles.mp4') }}?v=3" type="video/mp4">
         </video>
         <figcaption>Your editor does the work. Review, change or remove any Short before it goes live.</figcaption>
       </figure>
@@ -1727,6 +1737,29 @@
     });
   }
 
+  const prepareAutopilotSilentLoop = function (video) {
+    if (!video) return;
+    video.muted = true;
+    video.defaultMuted = true;
+    video.controls = false;
+  };
+
+  const handleAutopilotLoopBlocked = function (video) {
+    prepareAutopilotSilentLoop(video);
+    video.classList.add("is-autoplay-blocked");
+  };
+
+  const playAutopilotSilentLoop = function (video) {
+    prepareAutopilotSilentLoop(video);
+    video.classList.remove("is-autoplay-blocked");
+    const playAttempt = video.play();
+    if (playAttempt?.catch) {
+      playAttempt.catch(function () { handleAutopilotLoopBlocked(video); });
+    }
+  };
+
+  document.querySelectorAll("[data-silent-loop]").forEach(prepareAutopilotSilentLoop);
+
   const reducedMotion = window.matchMedia("(prefers-reduced-motion: reduce)");
   const phonePreviewVideo = document.querySelector("[data-ap-phone-preview]");
 
@@ -1734,7 +1767,7 @@
     const phonePreviewObserver = new IntersectionObserver(function (entries) {
       entries.forEach(function (entry) {
         if (entry.isIntersecting) {
-          phonePreviewVideo.play().catch(function () {});
+          playAutopilotSilentLoop(phonePreviewVideo);
         } else {
           phonePreviewVideo.pause();
         }
@@ -1758,7 +1791,7 @@
             editorLoopSource.src = editorLoopSource.dataset.src;
             editorLoopVideo.load();
           }
-          editorLoopVideo.play().catch(function () {});
+          playAutopilotSilentLoop(editorLoopVideo);
         } else {
           editorLoopVideo.pause();
         }

@@ -630,6 +630,13 @@
     width: 100%;
     height: 100%;
     object-fit: cover;
+    pointer-events: none;
+  }
+
+  .vs-home [data-silent-loop]::-webkit-media-controls-start-playback-button,
+  .vs-home [data-silent-loop]::-webkit-media-controls {
+    display: none !important;
+    -webkit-appearance: none;
   }
 
   @media (hover: hover) {
@@ -693,6 +700,7 @@
     opacity: 0;
     visibility: hidden;
     transition: opacity 320ms ease, visibility 320ms ease;
+    pointer-events: none;
   }
 
   .vs-home .feature-stage-video.is-active {
@@ -2505,28 +2513,28 @@
     <p class="demo-subline">Real Shorts made with Minti Studio — different speakers, layouts and caption styles.</p>
     <div class="sample-shorts-gallery" aria-label="Sample vertical Shorts">
       <article class="sample-short-card">
-        <video muted loop playsinline preload="none" poster="{{ url_for('video_shorts_bp.static', filename='motion/real-short-1.jpg') }}" data-real-short aria-label="Minti Studio Short preview one">
-          <source data-src="{{ url_for('video_shorts_bp.static', filename='motion/real-short-1-preview.mp4') }}" type="video/mp4">
+        <video autoplay muted loop playsinline webkit-playsinline preload="metadata" poster="{{ url_for('video_shorts_bp.static', filename='motion/real-short-1.jpg') }}" data-real-short data-silent-loop aria-label="Minti Studio Short preview one">
+          <source data-src="{{ url_for('video_shorts_bp.static', filename='motion/real-short-1-preview.mp4') }}?v=2" type="video/mp4">
         </video>
       </article>
       <article class="sample-short-card">
-        <video muted loop playsinline preload="none" poster="{{ url_for('video_shorts_bp.static', filename='motion/real-short-2.jpg') }}" data-real-short aria-label="Minti Studio Short preview two">
-          <source data-src="{{ url_for('video_shorts_bp.static', filename='motion/real-short-2-preview.mp4') }}" type="video/mp4">
+        <video autoplay muted loop playsinline webkit-playsinline preload="metadata" poster="{{ url_for('video_shorts_bp.static', filename='motion/real-short-2.jpg') }}" data-real-short data-silent-loop aria-label="Minti Studio Short preview two">
+          <source data-src="{{ url_for('video_shorts_bp.static', filename='motion/real-short-2-preview.mp4') }}?v=2" type="video/mp4">
         </video>
       </article>
       <article class="sample-short-card">
-        <video muted loop playsinline preload="none" poster="{{ url_for('video_shorts_bp.static', filename='motion/real-short-3.jpg') }}" data-real-short aria-label="Minti Studio Short preview three">
-          <source data-src="{{ url_for('video_shorts_bp.static', filename='motion/real-short-3-preview.mp4') }}" type="video/mp4">
+        <video autoplay muted loop playsinline webkit-playsinline preload="metadata" poster="{{ url_for('video_shorts_bp.static', filename='motion/real-short-3.jpg') }}" data-real-short data-silent-loop aria-label="Minti Studio Short preview three">
+          <source data-src="{{ url_for('video_shorts_bp.static', filename='motion/real-short-3-preview.mp4') }}?v=3" type="video/mp4">
         </video>
       </article>
       <article class="sample-short-card">
-        <video muted loop playsinline preload="none" poster="{{ url_for('video_shorts_bp.static', filename='motion/real-short-4.jpg') }}" data-real-short aria-label="Minti Studio Short preview four">
-          <source data-src="{{ url_for('video_shorts_bp.static', filename='motion/real-short-4-preview.mp4') }}" type="video/mp4">
+        <video autoplay muted loop playsinline webkit-playsinline preload="metadata" poster="{{ url_for('video_shorts_bp.static', filename='motion/real-short-4.jpg') }}" data-real-short data-silent-loop aria-label="Minti Studio Short preview four">
+          <source data-src="{{ url_for('video_shorts_bp.static', filename='motion/real-short-4-preview.mp4') }}?v=2" type="video/mp4">
         </video>
       </article>
       <article class="sample-short-card">
-        <video muted loop playsinline preload="none" poster="{{ url_for('video_shorts_bp.static', filename='motion/real-short-5.jpg') }}" data-real-short aria-label="Minti Studio Short preview five">
-          <source data-src="{{ url_for('video_shorts_bp.static', filename='motion/real-short-5-preview.mp4') }}" type="video/mp4">
+        <video autoplay muted loop playsinline webkit-playsinline preload="metadata" poster="{{ url_for('video_shorts_bp.static', filename='motion/real-short-5.jpg') }}" data-real-short data-silent-loop aria-label="Minti Studio Short preview five">
+          <source data-src="{{ url_for('video_shorts_bp.static', filename='motion/real-short-5-preview.mp4') }}?v=2" type="video/mp4">
         </video>
       </article>
     </div>
@@ -2545,10 +2553,12 @@
           autoplay
           loop
           playsinline
+          webkit-playsinline
           preload="metadata"
+          data-silent-loop
           poster="{{ url_for('video_shorts_bp.static', filename='motion/tab-clip.jpg') }}"
           aria-label="Select transcript text to create a Short">
-          <source src="{{ url_for('video_shorts_bp.static', filename='motion/tab-clip.mp4') }}" type="video/mp4">
+          <source src="{{ url_for('video_shorts_bp.static', filename='motion/tab-clip.mp4') }}?v=2" type="video/mp4">
         </video>
         <video
           class="feature-stage-video"
@@ -2557,10 +2567,12 @@
           autoplay
           loop
           playsinline
-          preload="none"
+          webkit-playsinline
+          preload="metadata"
+          data-silent-loop
           poster="{{ url_for('video_shorts_bp.static', filename='motion/tab-styles.jpg') }}"
           aria-label="Choose and save caption styles">
-          <source data-src="{{ url_for('video_shorts_bp.static', filename='motion/tab-styles.mp4') }}" type="video/mp4">
+          <source data-src="{{ url_for('video_shorts_bp.static', filename='motion/tab-styles.mp4') }}?v=3" type="video/mp4">
         </video>
         <video
           class="feature-stage-video"
@@ -2569,10 +2581,12 @@
           autoplay
           loop
           playsinline
-          preload="none"
+          webkit-playsinline
+          preload="metadata"
+          data-silent-loop
           poster="{{ url_for('video_shorts_bp.static', filename='motion/tab-reframe.jpg') }}"
           aria-label="Automatically reframe speakers for vertical video">
-          <source data-src="{{ url_for('video_shorts_bp.static', filename='motion/tab-reframe.mp4') }}" type="video/mp4">
+          <source data-src="{{ url_for('video_shorts_bp.static', filename='motion/tab-reframe.mp4') }}?v=2" type="video/mp4">
         </video>
         <video
           class="feature-stage-video"
@@ -2581,10 +2595,12 @@
           autoplay
           loop
           playsinline
-          preload="none"
+          webkit-playsinline
+          preload="metadata"
+          data-silent-loop
           poster="{{ url_for('video_shorts_bp.static', filename='motion/tab-schedule.jpg') }}"
           aria-label="Schedule a Short to social channels">
-          <source data-src="{{ url_for('video_shorts_bp.static', filename='motion/tab-schedule.mp4') }}" type="video/mp4">
+          <source data-src="{{ url_for('video_shorts_bp.static', filename='motion/tab-schedule.mp4') }}?v=2" type="video/mp4">
         </video>
       </div>
 
@@ -3076,6 +3092,29 @@
       });
     }
 
+    const prepareSilentLoop = function (video) {
+      if (!video) return;
+      video.muted = true;
+      video.defaultMuted = true;
+      video.controls = false;
+    };
+
+    const handleSilentLoopBlocked = function (video) {
+      prepareSilentLoop(video);
+      video.classList.add("is-autoplay-blocked");
+    };
+
+    const playSilentLoop = function (video) {
+      prepareSilentLoop(video);
+      video.classList.remove("is-autoplay-blocked");
+      const playAttempt = video.play();
+      if (playAttempt?.catch) {
+        playAttempt.catch(function () { handleSilentLoopBlocked(video); });
+      }
+    };
+
+    document.querySelectorAll("[data-silent-loop]").forEach(prepareSilentLoop);
+
     const realShortsSection = document.querySelector(".sample-shorts-section");
     const realShortVideos = Array.from(document.querySelectorAll("[data-real-short]"));
 
@@ -3092,7 +3131,7 @@
             source.src = source.dataset.src;
             video.load();
           }
-          video.play().catch(function () {});
+          playSilentLoop(video);
         });
       };
 
@@ -3123,6 +3162,7 @@
       const featureLastTimes = new WeakMap();
 
       const loadFeatureVideo = function (video) {
+        prepareSilentLoop(video);
         const source = video?.querySelector("source[data-src]");
         if (source && !source.src) {
           source.src = source.dataset.src;
@@ -3134,7 +3174,7 @@
         const video = featureVideos[activeFeatureIndex];
         if (!video || !featureStageInView || prefersReducedMotion.matches) return;
         loadFeatureVideo(video);
-        video.play().catch(function () {});
+        playSilentLoop(video);
       };
 
       const activateFeature = function (index, { manual = false } = {}) {
