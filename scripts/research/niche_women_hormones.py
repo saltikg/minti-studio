@@ -465,9 +465,8 @@ def build_candidates(
 ) -> dict[str, Candidate]:
     candidates: dict[str, Candidate] = {}
 
-    def ensure(channel_id: str) -> Candidate:
+    def ensure(channel_id: str, source: str) -> Candidate:
         lead = all_leads.get(channel_id) or {}
-        source = "db" if lead else "search_new"
         candidate = candidates.get(channel_id)
         if candidate is None:
             candidate = Candidate(
@@ -486,12 +485,12 @@ def build_candidates(
         channel_id = str(row.get("youtube_channel_id") or "").strip()
         if channel_id:
             for bucket in _lead_bucket_matches(row):
-                ensure(channel_id).add_query(f"db:{bucket}")
+                ensure(channel_id, "db").add_query(f"db:{bucket}")
     for channel_id, queries in search_results.items():
-        candidate = ensure(channel_id)
+        candidate = ensure(channel_id, "search_new")
         for query in queries:
             candidate.add_query(query)
-    ensure(SHELLEY_MEYER_CHANNEL_ID).add_query("required:Dr. Shelley Meyer")
+    ensure(SHELLEY_MEYER_CHANNEL_ID, "search_new").add_query("required:Dr. Shelley Meyer")
     return candidates
 
 
@@ -1002,6 +1001,10 @@ def run(
 
     channel_ids = list(candidates)
     rows = load_checkpoint_rows(output_path, resume_from, set(channel_ids))
+    for row in rows:
+        candidate = candidates[str(row.get("youtube_channel_id") or "")]
+        row["source"] = candidate.source
+        row["matched_queries"] = " | ".join(candidate.matched_queries)
     completed_ids = {str(row.get("youtube_channel_id") or "") for row in rows}
     if expected_completed is not None and len(completed_ids) != expected_completed:
         raise ResearchError(
