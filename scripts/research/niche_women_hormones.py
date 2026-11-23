@@ -35,6 +35,7 @@ load_dotenv(REPO_ROOT / ".env")
 from app.video_shorts import youtube_api as discovery_youtube
 from app.video_shorts.config import OPENAI_MODEL, _openai_client
 from app.video_shorts.services.db import get_db_readonly, table_columns
+from app.video_shorts.services import youtube_oauth
 
 
 PACIFIC = ZoneInfo("America/Los_Angeles")
@@ -181,6 +182,57 @@ class Candidate:
             self.matched_queries.append(clean)
 
 
+@dataclass(frozen=True)
+class AdminYouTubeCredential:
+    scoped_user_id: str
+    user_id: str
+    brand_id: str
+    scopes: tuple[str, ...]
+    youtube_channel_id: str = ""
+    channel_title: str = ""
+
+
+class AdminOAuthAccessToken:
+    """Refresh and persist only the explicitly verified admin OAuth credential."""
+
+    def __init__(self, credential: AdminYouTubeCredential):
+        self.credential = credential
+        self._credentials: Any = None
+
+    def get(self, user_id: str | None = None) -> str | None:
+        if user_id != self.credential.scoped_user_id:
+            raise ResearchError("Refusing non-admin YouTube OAuth token refresh")
+        now = datetime.now(timezone.utc)
+        expiry = getattr(self._credentials, "expiry", None)
+        if (
+            self._credentials is not None
+            and self._credentials.token
+            and expiry is not None
+            and expiry.replace(tzinfo=expiry.tzinfo or timezone.utc) > now + timedelta(minutes=2)
+        ):
+            return str(self._credentials.token)
+
+        # This is the same refresh path used by get_access_token(). It is called
+        # directly so the refreshed credentials can be persisted for this one,
+        # pre-verified admin owner. No customer/brand token is eligible here.
+        refreshed = youtube_oauth._refresh_credentials(user_id=self.credential.scoped_user_id)
+        if refreshed is None or not refreshed.token:
+            return None
+        refresh_token = str(refreshed.refresh_token or "").strip()
+        if not refresh_token:
+            raise ResearchError("Admin YouTube OAuth refresh returned no refresh token to save")
+        youtube_oauth.store_refresh_token(
+            refresh_token,
+            scopes=list(refreshed.scopes or self.credential.scopes),
+            user_id=self.credential.user_id,
+            brand_id=self.credential.brand_id,
+            youtube_channel_id=self.credential.youtube_channel_id or None,
+            channel_title=self.credential.channel_title or None,
+        )
+        self._credentials = refreshed
+        return str(refreshed.token)
+
+
 def batched(values: Sequence[str], size: int = 50) -> Iterator[Sequence[str]]:
     for start in range(0, len(values), size):
         yield values[start : start + size]
@@ -261,17 +313,18 @@ def _rows_as_dicts(result: Any) -> list[dict[str, Any]]:
     return [dict(zip(names, row)) for row in result.fetchall()]
 
 
-def load_app_youtube_user_id() -> str:
+def load_app_youtube_credential() -> AdminYouTubeCredential | None:
     """Return only the admin-owned discovery credential; never a member token."""
     if discovery_youtube._youtube_api_key():
-        return ""
+        return None
     conn = get_db_readonly()
     try:
         if not table_columns(conn, "youtube_oauth_tokens_v2"):
             raise ResearchError("No app-level YouTube API key or OAuth token table is available")
         row = conn.execute(
             """
-            SELECT t.user_id
+            SELECT t.user_id, COALESCE(t.scopes, ''),
+                   COALESCE(t.youtube_channel_id, ''), COALESCE(t.channel_title, '')
             FROM youtube_oauth_tokens_v2 t
             JOIN shorts_users u
               ON CAST(u.id AS VARCHAR) = split_part(t.user_id, '::', 1)
@@ -283,12 +336,25 @@ def load_app_youtube_user_id() -> str:
         ).fetchone()
     finally:
         conn.close()
-    app_user_id = str(row[0] or "").strip() if row else ""
-    if not app_user_id:
+    scoped_user_id = str(row[0] or "").strip() if row else ""
+    if not scoped_user_id:
         raise ResearchError(
             "No active admin-owned YouTube credential is available; refusing customer OAuth fallback"
         )
-    return app_user_id
+    user_id, brand_id = youtube_oauth.split_scoped_user_id(scoped_user_id)
+    if not user_id or not brand_id:
+        raise ResearchError(
+            "Admin YouTube credential is not explicitly brand-scoped; refusing unsafe OAuth save"
+        )
+    scopes = tuple(scope.strip() for scope in str(row[1] or "").split(",") if scope.strip())
+    return AdminYouTubeCredential(
+        scoped_user_id=scoped_user_id,
+        user_id=user_id,
+        brand_id=brand_id,
+        scopes=scopes,
+        youtube_channel_id=str(row[2] or ""),
+        channel_title=str(row[3] or ""),
+    )
 
 
 def _load_cached_payload(path: Path, params: dict[str, Any]) -> dict[str, Any] | None:
@@ -371,11 +437,13 @@ def youtube_get(
     endpoint: str,
     method: str,
     params: dict[str, Any],
+    oauth_access_token: AdminOAuthAccessToken | None = None,
 ) -> dict[str, Any]:
     quota.charge(method)
     # Keep discovery's app-key/admin-OAuth path, but remove its member-token
     # fallback for this research run. Normal quota tracking remains enabled.
     original_candidates = discovery_youtube._candidate_oauth_user_ids
+    original_get_access_token = discovery_youtube.get_access_token
 
     def app_candidates(preferred_user_id: str | None = None) -> list[str]:
         if discovery_youtube._youtube_api_key():
@@ -385,6 +453,8 @@ def youtube_get(
         return [quota.app_youtube_user_id]
 
     discovery_youtube._candidate_oauth_user_ids = app_candidates
+    if oauth_access_token is not None:
+        discovery_youtube.get_access_token = oauth_access_token.get
     try:
         payload = discovery_youtube._youtube_get_json(
             endpoint,
@@ -399,6 +469,7 @@ def youtube_get(
         raise ResearchError(f"YouTube {method} failed: {exc}") from exc
     finally:
         discovery_youtube._candidate_oauth_user_ids = original_candidates
+        discovery_youtube.get_access_token = original_get_access_token
     return payload if isinstance(payload, dict) else {}
 
 
@@ -409,17 +480,27 @@ def cached_youtube_get(
     method: str,
     params: dict[str, Any],
     cache_path: Path,
+    oauth_access_token: AdminOAuthAccessToken | None = None,
+    cache_only: bool = False,
 ) -> dict[str, Any]:
     cached = _load_cached_payload(cache_path, params)
     if cached is not None:
         return cached
-    payload = youtube_get(session, quota, endpoint, method, params)
+    if cache_only:
+        raise ResearchError(f"Required cached YouTube response is missing: {cache_path}")
+    payload = youtube_get(
+        session, quota, endpoint, method, params, oauth_access_token=oauth_access_token
+    )
     _store_cached_payload(cache_path, params, payload)
     return payload
 
 
 def search_channels(
-    session: requests.Session, quota: QuotaBudget, cache_root: Path
+    session: requests.Session,
+    quota: QuotaBudget,
+    cache_root: Path,
+    oauth_access_token: AdminOAuthAccessToken | None = None,
+    cache_only: bool = False,
 ) -> dict[str, list[str]]:
     found: dict[str, list[str]] = {}
     for index, query in enumerate(SEARCH_QUERIES, start=1):
@@ -439,6 +520,8 @@ def search_channels(
             "search.list",
             params,
             cache_root / "search" / f"{_cache_slug(query)}.json",
+            oauth_access_token=oauth_access_token,
+            cache_only=cache_only,
         )
         for item in payload.get("items") or []:
             snippet = item.get("snippet") or {}
@@ -494,6 +577,7 @@ def fetch_channel_metadata(
     quota: QuotaBudget,
     channel_ids: Sequence[str],
     cache_root: Path,
+    oauth_access_token: AdminOAuthAccessToken | None = None,
 ) -> dict[str, dict[str, Any]]:
     metadata: dict[str, dict[str, Any]] = {}
     missing_ids: list[str] = []
@@ -519,6 +603,7 @@ def fetch_channel_metadata(
             "channels.list",
             params,
             cache_root / "channel_batches" / f"{batch_key}.json",
+            oauth_access_token=oauth_access_token,
         )
         returned: dict[str, dict[str, Any]] = {}
         for item in payload.get("items") or []:
@@ -578,6 +663,7 @@ def fetch_uploads(
     channels: dict[str, dict[str, Any]],
     cutoff: datetime,
     cache_root: Path,
+    oauth_access_token: AdminOAuthAccessToken | None = None,
     show_progress: bool = True,
 ) -> tuple[dict[str, list[dict[str, Any]]], dict[str, list[str]]]:
     uploads: dict[str, list[dict[str, Any]]] = {channel_id: [] for channel_id in channels}
@@ -604,6 +690,7 @@ def fetch_uploads(
                 "playlistItems.list",
                 params,
                 cache_root / "uploads" / channel_id / f"page_{page_index:04d}.json",
+                oauth_access_token=oauth_access_token,
             )
             items = payload.get("items") or []
             for item in items:
@@ -649,6 +736,7 @@ def fetch_video_details(
     quota: QuotaBudget,
     uploads: dict[str, list[dict[str, Any]]],
     cache_root: Path,
+    oauth_access_token: AdminOAuthAccessToken | None = None,
 ) -> dict[str, dict[str, Any]]:
     video_ids = list(dict.fromkeys(item["video_id"] for values in uploads.values() for item in values))
     details: dict[str, dict[str, Any]] = {}
@@ -662,6 +750,7 @@ def fetch_video_details(
             "videos.list",
             params,
             cache_root / "video_batches" / f"{batch_key}.json",
+            oauth_access_token=oauth_access_token,
         )
         for item in payload.get("items") or []:
             content = item.get("contentDetails") or {}
@@ -880,6 +969,21 @@ def load_partial_csv(output_path: Path, candidate_ids: set[str]) -> list[dict[st
     ]
 
 
+def load_checkpoint_rows(
+    output_path: Path,
+    resume_from: Path | None,
+    candidate_ids: set[str],
+) -> list[dict[str, Any]]:
+    """Merge completed rows from the destination and an earlier checkpoint."""
+    merged: dict[str, dict[str, Any]] = {}
+    for path in (resume_from, output_path):
+        if path is None:
+            continue
+        for row in load_partial_csv(path, candidate_ids):
+            merged[str(row["youtube_channel_id"])] = row
+    return list(merged.values())
+
+
 def print_summary(
     rows: list[dict[str, Any]], quota: QuotaBudget, llm_usage: LLMUsage, output_path: Path
 ) -> None:
@@ -910,7 +1014,14 @@ def print_summary(
     )
 
 
-def run(output_path: Path) -> list[dict[str, Any]]:
+def run(
+    output_path: Path,
+    *,
+    resume_from: Path | None = None,
+    cached_search_only: bool = False,
+    expected_completed: int | None = None,
+    expected_total: int | None = None,
+) -> list[dict[str, Any]]:
     if not _openai_client:
         raise ResearchError("OPENAI_API_KEY is required")
 
@@ -922,18 +1033,43 @@ def run(output_path: Path) -> list[dict[str, Any]]:
 
     all_leads, bucket_rows = load_discovery_leads()
     print(f"database candidates: {len(bucket_rows)}")
-    quota.app_youtube_user_id = load_app_youtube_user_id()
+    admin_credential = load_app_youtube_credential()
+    quota.app_youtube_user_id = admin_credential.scoped_user_id if admin_credential else ""
+    oauth_access_token = AdminOAuthAccessToken(admin_credential) if admin_credential else None
     print(
         "YouTube auth: app API key"
         if not quota.app_youtube_user_id
         else "YouTube auth: admin-owned discovery OAuth only"
     )
-    search_results = search_channels(session, quota, cache_root)
+    search_results = search_channels(
+        session,
+        quota,
+        cache_root,
+        oauth_access_token=oauth_access_token,
+        cache_only=cached_search_only,
+    )
     candidates = build_candidates(all_leads, bucket_rows, search_results)
     print(f"deduplicated candidates: {len(candidates)}")
+    if expected_total is not None and len(candidates) != expected_total:
+        raise ResearchError(
+            f"Candidate guard expected {expected_total} total rows, found {len(candidates)}"
+        )
 
     channel_ids = list(candidates)
-    channels = fetch_channel_metadata(session, quota, channel_ids, cache_root)
+    rows = load_checkpoint_rows(output_path, resume_from, set(channel_ids))
+    completed_ids = {str(row.get("youtube_channel_id") or "") for row in rows}
+    if expected_completed is not None and len(completed_ids) != expected_completed:
+        raise ResearchError(
+            f"Checkpoint guard expected {expected_completed} completed rows, found {len(completed_ids)}"
+        )
+    write_csv(rows, output_path)
+    if rows:
+        print(f"resuming completed CSV rows: {len(rows)}")
+    print(f"remaining candidates: {len(channel_ids) - len(completed_ids)}")
+
+    channels = fetch_channel_metadata(
+        session, quota, channel_ids, cache_root, oauth_access_token=oauth_access_token
+    )
     missing = [channel_id for channel_id in channel_ids if channel_id not in channels]
     if missing:
         print(
@@ -958,11 +1094,6 @@ def run(output_path: Path) -> list[dict[str, Any]]:
 
     outreach = load_outreach_status(candidates)
     cutoff = datetime.now(timezone.utc) - timedelta(days=90)
-    rows = load_partial_csv(output_path, set(channel_ids))
-    completed_ids = {str(row.get("youtube_channel_id") or "") for row in rows}
-    write_csv(rows, output_path)
-    if rows:
-        print(f"resuming completed CSV rows: {len(rows)}")
     for index, channel_id in enumerate(channel_ids, start=1):
         if channel_id in completed_ids:
             continue
@@ -974,9 +1105,16 @@ def run(output_path: Path) -> list[dict[str, Any]]:
             {channel_id: channel},
             cutoff,
             cache_root,
+            oauth_access_token=oauth_access_token,
             show_progress=False,
         )
-        video_details = fetch_video_details(session, quota, channel_uploads, cache_root)
+        video_details = fetch_video_details(
+            session,
+            quota,
+            channel_uploads,
+            cache_root,
+            oauth_access_token=oauth_access_token,
+        )
         classification = classify_channel(
             channel, channel_titles.get(channel_id) or [], llm_usage
         )
@@ -1028,9 +1166,35 @@ def main() -> int:
         default=REPO_ROOT / "data" / "research" / f"women_hormones_{default_date}.csv",
         help="CSV output path (default: data/research/women_hormones_<Pacific date>.csv)",
     )
+    parser.add_argument(
+        "--resume-from",
+        type=Path,
+        help="Earlier progressive CSV whose completed rows should seed the output",
+    )
+    parser.add_argument(
+        "--cached-search-only",
+        action="store_true",
+        help="Require all search responses to be cached; never issue search.list",
+    )
+    parser.add_argument(
+        "--expected-completed",
+        type=int,
+        help="Stop unless this many completed checkpoint rows were loaded",
+    )
+    parser.add_argument(
+        "--expected-total",
+        type=int,
+        help="Stop unless this many deduplicated candidates were reconstructed",
+    )
     args = parser.parse_args()
     try:
-        run(args.output.resolve())
+        run(
+            args.output.resolve(),
+            resume_from=args.resume_from.resolve() if args.resume_from else None,
+            cached_search_only=args.cached_search_only,
+            expected_completed=args.expected_completed,
+            expected_total=args.expected_total,
+        )
     except (ResearchError, requests.RequestException) as exc:
         print(f"error: {exc}", file=sys.stderr)
         return 1
