@@ -30,12 +30,12 @@ if str(REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(REPO_ROOT))
 load_dotenv(REPO_ROOT / ".env")
 
-from app.video_shorts.config import OPENAI_MODEL, YOUTUBE_API_KEY, _openai_client
+from app.video_shorts import youtube_api as discovery_youtube
+from app.video_shorts.config import OPENAI_MODEL, _openai_client
 from app.video_shorts.services.db import get_db_readonly, table_columns
 
 
 PACIFIC = ZoneInfo("America/Los_Angeles")
-YOUTUBE_API_BASE = "https://www.googleapis.com/youtube/v3"
 YOUTUBE_QUOTA_LIMIT = 5_000
 YOUTUBE_QUOTA_COSTS = {
     "channels.list": 1,
@@ -125,6 +125,35 @@ class QuotaBudget:
             )
         self.used += cost
         self.calls[method] += 1
+
+
+@dataclass
+class LLMUsage:
+    input_tokens: int = 0
+    output_tokens: int = 0
+
+    def add(self, response: Any) -> None:
+        usage = getattr(response, "usage", None)
+        self.input_tokens += int(
+            getattr(usage, "prompt_tokens", None)
+            or getattr(usage, "input_tokens", None)
+            or 0
+        )
+        self.output_tokens += int(
+            getattr(usage, "completion_tokens", None)
+            or getattr(usage, "output_tokens", None)
+            or 0
+        )
+
+    @property
+    def estimated_cost_usd(self) -> float | None:
+        # Keep parity with the existing discovery backfill cost report.
+        prices = {"gpt-4.1-mini": (0.40, 1.60), "gpt-4o-mini": (0.15, 0.60)}
+        model_prices = prices.get(OPENAI_MODEL)
+        if model_prices is None:
+            return None
+        input_price, output_price = model_prices
+        return (self.input_tokens * input_price + self.output_tokens * output_price) / 1_000_000
 
 
 @dataclass
@@ -283,21 +312,24 @@ def youtube_get(
     params: dict[str, Any],
 ) -> dict[str, Any]:
     quota.charge(method)
-    response = session.get(
-        f"{YOUTUBE_API_BASE}/{endpoint}",
-        params={**params, "key": YOUTUBE_API_KEY},
-        timeout=30,
-    )
+    # Use the discovery path exactly: optional API key first, then stored OAuth.
+    # Its normal quota recorder writes to the application DB, so disable only
+    # that accounting side effect for this explicitly read-only research run.
+    original_quota_recorder = discovery_youtube.record_youtube_data_api_call
+    discovery_youtube.record_youtube_data_api_call = lambda **_kwargs: None
     try:
-        response.raise_for_status()
-    except requests.HTTPError as exc:
-        detail = ""
-        try:
-            detail = str((response.json().get("error") or {}).get("message") or "")
-        except (ValueError, AttributeError):
-            pass
-        raise ResearchError(f"YouTube {method} failed ({response.status_code}): {detail or exc}") from exc
-    payload = response.json()
+        payload = discovery_youtube._youtube_get_json(
+            endpoint,
+            params,
+            timeout=30,
+            require_auth=True,
+            quota_feature="women_hormones_research",
+            quota_method=method,
+        )
+    except discovery_youtube.YoutubeApiError as exc:
+        raise ResearchError(f"YouTube {method} failed: {exc}") from exc
+    finally:
+        discovery_youtube.record_youtube_data_api_call = original_quota_recorder
     return payload if isinstance(payload, dict) else {}
 
 
@@ -557,7 +589,9 @@ def _extract_json(text: str) -> dict[str, Any]:
     return payload
 
 
-def classify_channel(channel: dict[str, Any], video_titles: Sequence[str]) -> dict[str, str]:
+def classify_channel(
+    channel: dict[str, Any], video_titles: Sequence[str], llm_usage: LLMUsage | None = None
+) -> dict[str, str]:
     if not _openai_client:
         raise ResearchError("OPENAI_API_KEY is required for classification")
     prompt = (
@@ -589,6 +623,8 @@ def classify_channel(channel: dict[str, Any], video_titles: Sequence[str]) -> di
         ],
         temperature=0.1,
     )
+    if llm_usage is not None:
+        llm_usage.add(response)
     payload = _extract_json(response.choices[0].message.content or "")
     result = {
         "in_niche": str(payload.get("in_niche") or "").strip().lower(),
@@ -694,7 +730,9 @@ def write_csv(rows: list[dict[str, Any]], output_path: Path) -> None:
         writer.writerows(rows)
 
 
-def print_summary(rows: list[dict[str, Any]], quota: QuotaBudget, output_path: Path) -> None:
+def print_summary(
+    rows: list[dict[str, Any]], quota: QuotaBudget, llm_usage: LLMUsage, output_path: Path
+) -> None:
     source_counts = Counter(row["source"] for row in rows)
     niche_counts = Counter(row["in_niche"] for row in rows)
     presenter_counts = Counter(row["presenter"] for row in rows)
@@ -711,15 +749,22 @@ def print_summary(rows: list[dict[str, Any]], quota: QuotaBudget, output_path: P
     print("  By credential: " + ", ".join(f"{key}={credential_counts[key]}" for key in sorted(credential_counts)))
     call_summary = ", ".join(f"{key}={quota.calls[key]}" for key in sorted(quota.calls))
     print(f"  YouTube API units used: {quota.used} ({call_summary})")
+    if llm_usage.estimated_cost_usd is None:
+        cost_text = "unavailable for configured model"
+    else:
+        cost_text = f"${llm_usage.estimated_cost_usd:.6f} estimated"
+    print(
+        f"  LLM: model={OPENAI_MODEL}, input_tokens={llm_usage.input_tokens}, "
+        f"output_tokens={llm_usage.output_tokens}, cost={cost_text}"
+    )
 
 
 def run(output_path: Path) -> list[dict[str, Any]]:
-    if not YOUTUBE_API_KEY:
-        raise ResearchError("YOUTUBE_API_KEY is required")
     if not _openai_client:
         raise ResearchError("OPENAI_API_KEY is required")
 
     quota = QuotaBudget()
+    llm_usage = LLMUsage()
     session = requests.Session()
     session.headers.update({"User-Agent": "minti-studio-women-hormones-research/1.0"})
 
@@ -762,7 +807,7 @@ def run(output_path: Path) -> list[dict[str, Any]]:
     for index, channel_id in enumerate(channel_ids, start=1):
         candidate = candidates[channel_id]
         channel = channels[channel_id]
-        classification = classify_channel(channel, titles.get(channel_id) or [])
+        classification = classify_channel(channel, titles.get(channel_id) or [], llm_usage)
         activity = compute_activity(uploads.get(channel_id) or [], video_details)
         rows.append(
             {
@@ -794,7 +839,7 @@ def run(output_path: Path) -> list[dict[str, Any]]:
         )
     )
     write_csv(rows, output_path)
-    print_summary(rows, quota, output_path)
+    print_summary(rows, quota, llm_usage, output_path)
     return rows
 
 
