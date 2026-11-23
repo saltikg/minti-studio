@@ -28,27 +28,30 @@
   }
   .niche-card,
   .niche-panel {
-    border: 1px solid #e5e7eb;
-    border-radius: 12px;
-    background: #fff;
+    border: 1px solid rgba(255, 255, 255, 0.08);
+    border-radius: 18px;
+    background: rgba(8, 14, 22, 0.76);
+    box-shadow: 0 24px 48px rgba(0, 0, 0, 0.22);
   }
   .niche-card { padding: 16px; }
-  .niche-card-label { color: #64748b; font-size: 12px; font-weight: 700; letter-spacing: .04em; text-transform: uppercase; }
-  .niche-card-value { color: #0f172a; font-size: 25px; font-weight: 750; line-height: 1.2; margin-top: 7px; }
+  .niche-card-label { color: rgba(255, 255, 255, 0.58); font-size: 12px; font-weight: 700; letter-spacing: .04em; text-transform: uppercase; }
+  .niche-card-value { color: rgba(255, 255, 255, 0.92); font-size: 25px; font-weight: 750; line-height: 1.2; margin-top: 7px; }
   .niche-panel { overflow: hidden; }
-  .niche-panel-head { align-items: center; display: flex; justify-content: space-between; padding: 14px 16px; border-bottom: 1px solid #e5e7eb; }
-  .niche-panel-head h2 { font-size: 16px; margin: 0; }
-  .niche-muted { color: #64748b; font-size: 13px; }
-  .niche-field label { color: #475569; display: block; font-size: 12px; font-weight: 700; margin-bottom: 5px; }
+  .niche-panel-head { align-items: center; display: flex; justify-content: space-between; padding: 14px 16px; border-bottom: 1px solid rgba(255, 255, 255, 0.08); }
+  .niche-panel-head h2 { color: rgba(255, 255, 255, 0.92); font-size: 16px; margin: 0; }
+  .niche-muted { color: rgba(255, 255, 255, 0.62); font-size: 13px; }
+  .niche-field label { color: rgba(255, 255, 255, 0.72); display: block; font-size: 12px; font-weight: 700; margin-bottom: 5px; }
   .niche-field select,
   .niche-note {
     border: 1px solid #cbd5e1;
     border-radius: 8px;
     background: #fff;
+    color: #212529;
     min-height: 38px;
     padding: 8px 10px;
     width: 100%;
   }
+  .niche-field select option { background: #fff; color: #212529; }
   .niche-toggle { align-items: center; display: flex; gap: 8px; min-height: 38px; }
   .niche-button {
     background: #0f172a;
@@ -62,12 +65,12 @@
   }
   .niche-button.secondary { background: #fff; border: 1px solid #cbd5e1; color: #334155; }
   .niche-table-wrap { overflow-x: auto; }
-  .niche-table { border-collapse: collapse; font-size: 13px; min-width: 1260px; width: 100%; }
-  .niche-table th { background: #f8fafc; color: #475569; font-size: 11px; letter-spacing: .03em; padding: 10px; text-align: right; text-transform: uppercase; white-space: nowrap; }
+  .niche-table { border-collapse: collapse; color: rgba(255, 255, 255, 0.92); font-size: 13px; min-width: 1260px; width: 100%; }
+  .niche-table th { background: rgba(255, 255, 255, 0.03); color: rgba(255, 255, 255, 0.58); font-size: 11px; letter-spacing: .03em; padding: 10px; text-align: right; text-transform: uppercase; white-space: nowrap; }
   .niche-table th:nth-child(2), .niche-table th:nth-child(3), .niche-table th:nth-child(10), .niche-table th:nth-child(11) { text-align: left; }
-  .niche-table td { border-top: 1px solid #eef2f7; padding: 11px 10px; text-align: right; vertical-align: middle; }
+  .niche-table td { border-top: 1px solid rgba(255, 255, 255, 0.08); color: rgba(255, 255, 255, 0.92); padding: 11px 10px; text-align: right; vertical-align: middle; }
   .niche-table td:nth-child(2), .niche-table td:nth-child(3), .niche-table td:nth-child(10), .niche-table td:nth-child(11) { text-align: left; }
-  .niche-channel { color: #0f172a; font-weight: 700; text-decoration: none; }
+  .niche-channel { color: #7dd3fc; font-weight: 700; text-decoration: none; }
   .niche-channel:hover { text-decoration: underline; }
   .niche-badge { border-radius: 999px; display: inline-block; font-size: 11px; font-weight: 750; padding: 4px 8px; white-space: nowrap; }
   .niche-badge.customer { background: #dcfce7; color: #166534; }
@@ -79,7 +82,7 @@
   .niche-edit { align-items: center; display: grid; gap: 6px; grid-template-columns: auto minmax(150px, 1fr) auto; }
   .niche-note { font-size: 12px; min-height: 34px; padding: 6px 8px; }
   .niche-save { min-height: 34px; padding: 6px 10px; }
-  .niche-empty { color: #64748b; padding: 40px 20px; text-align: center; }
+  .niche-empty { color: rgba(255, 255, 255, 0.62); padding: 40px 20px; text-align: center; }
   @media (max-width: 900px) {
     .niche-toolbar, .niche-filters, .niche-kpis { grid-template-columns: 1fr 1fr; }
   }
