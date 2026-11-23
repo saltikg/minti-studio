@@ -95,6 +95,7 @@ CSV_FIELDS = [
     "avg_views_long_90d",
     "avg_views_short_90d",
     "last_upload_at",
+    "enrich_status",
     "in_niche",
     "presenter",
     "credential",
@@ -106,6 +107,25 @@ CSV_FIELDS = [
 
 class ResearchError(RuntimeError):
     pass
+
+
+class YouTubeRequestError(ResearchError):
+    def __init__(
+        self,
+        method: str,
+        status_code: int | None,
+        reason: str = "",
+        *,
+        global_failure: bool = False,
+    ):
+        self.method = method
+        self.status_code = status_code
+        self.reason = reason
+        self.global_failure = global_failure
+        detail = f"HTTP {status_code}" if status_code is not None else "request error"
+        if reason:
+            detail += f" ({reason})"
+        super().__init__(f"YouTube {method} key-only request failed: {detail}")
 
 
 @dataclass
@@ -354,10 +374,26 @@ def youtube_get(
         )
         response.raise_for_status()
         payload = response.json() or {}
-    except requests.RequestException as exc:
+    except (requests.RequestException, ValueError) as exc:
         status = getattr(getattr(exc, "response", None), "status_code", None)
-        detail = f"HTTP {status}" if status is not None else exc.__class__.__name__
-        raise ResearchError(f"YouTube {method} key-only request failed: {detail}") from exc
+        reason = ""
+        error_response = getattr(exc, "response", None)
+        if error_response is not None:
+            try:
+                errors = ((error_response.json() or {}).get("error") or {}).get("errors") or []
+                reason = str((errors[0] if errors else {}).get("reason") or "")
+            except (TypeError, ValueError):
+                reason = ""
+        global_reasons = {
+            "accessNotConfigured", "dailyLimitExceeded", "forbidden", "keyInvalid",
+            "quotaExceeded", "rateLimitExceeded", "userRateLimitExceeded",
+        }
+        raise YouTubeRequestError(
+            method,
+            status,
+            reason or (exc.__class__.__name__ if status is None else ""),
+            global_failure=status in {401, 429} or reason in global_reasons,
+        ) from exc
     record_youtube_data_api_call(
         feature="women_hormones_research",
         method=method,
@@ -464,8 +500,9 @@ def fetch_channel_metadata(
     quota: QuotaBudget,
     channel_ids: Sequence[str],
     cache_root: Path,
-) -> dict[str, dict[str, Any]]:
+) -> tuple[dict[str, dict[str, Any]], dict[str, str]]:
     metadata: dict[str, dict[str, Any]] = {}
+    statuses: dict[str, str] = {}
     missing_ids: list[str] = []
     item_params = {"part": "snippet,statistics,contentDetails"}
     for channel_id in channel_ids:
@@ -473,6 +510,9 @@ def fetch_channel_metadata(
         item = (cached or {}).get("item") if cached is not None else None
         if isinstance(item, dict):
             metadata[channel_id] = _channel_metadata_from_item(item)
+            statuses[channel_id] = "ok"
+        elif cached is not None:
+            statuses[channel_id] = "channel_not_found"
         elif cached is None:
             missing_ids.append(channel_id)
     for chunk in batched(missing_ids):
@@ -482,27 +522,45 @@ def fetch_channel_metadata(
             "maxResults": 50,
         }
         batch_key = hashlib.sha256(",".join(chunk).encode("utf-8")).hexdigest()[:16]
-        payload = cached_youtube_get(
-            session,
-            quota,
-            "channels",
-            "channels.list",
-            params,
-            cache_root / "channel_batches" / f"{batch_key}.json",
-        )
+        try:
+            payload = cached_youtube_get(
+                session,
+                quota,
+                "channels",
+                "channels.list",
+                params,
+                cache_root / "channel_batches" / f"{batch_key}.json",
+            )
+        except YouTubeRequestError as exc:
+            if exc.global_failure:
+                raise
+            status = "channel_not_found" if exc.status_code == 404 else "error"
+            print(f"channel batch skipped: {exc}; status={status}")
+            for channel_id in chunk:
+                statuses[channel_id] = status
+                if status == "channel_not_found":
+                    _store_cached_payload(
+                        cache_root / "channels" / f"{channel_id}.json",
+                        item_params,
+                        {"item": None},
+                    )
+            continue
         returned: dict[str, dict[str, Any]] = {}
         for item in payload.get("items") or []:
             channel_id = str(item.get("id") or "").strip()
             if channel_id:
                 returned[channel_id] = item
                 metadata[channel_id] = _channel_metadata_from_item(item)
+                statuses[channel_id] = "ok"
         for channel_id in chunk:
+            if channel_id not in returned:
+                statuses[channel_id] = "channel_not_found"
             _store_cached_payload(
                 cache_root / "channels" / f"{channel_id}.json",
                 item_params,
                 {"item": returned.get(channel_id)},
             )
-    return metadata
+    return metadata, statuses
 
 
 def _channel_metadata_from_item(item: dict[str, Any]) -> dict[str, Any]:
@@ -842,12 +900,19 @@ def load_partial_csv(output_path: Path, candidate_ids: set[str]) -> list[dict[st
             rows = list(csv.DictReader(handle))
     except (OSError, csv.Error):
         return []
-    return [
-        row
-        for row in rows
-        if str(row.get("youtube_channel_id") or "") in candidate_ids
-        and str(row.get("in_niche") or "") in {"yes", "partial", "no"}
-    ]
+    completed = []
+    for row in rows:
+        if str(row.get("youtube_channel_id") or "") not in candidate_ids:
+            continue
+        classification_done = str(row.get("in_niche") or "") in {"yes", "partial", "no"}
+        enrichment_done = str(row.get("enrich_status") or "") in {
+            "ok", "no_public_uploads", "channel_not_found", "error",
+        }
+        if not classification_done and not enrichment_done:
+            continue
+        row["enrich_status"] = str(row.get("enrich_status") or "ok")
+        completed.append(row)
+    return completed
 
 
 def load_checkpoint_rows(
@@ -872,6 +937,7 @@ def print_summary(
     niche_counts = Counter(row["in_niche"] for row in rows)
     presenter_counts = Counter(row["presenter"] for row in rows)
     credential_counts = Counter(row["credential"] for row in rows)
+    enrich_counts = Counter(str(row.get("enrich_status") or "ok") for row in rows)
     print("\nSummary")
     print(f"  CSV: {output_path}")
     print(f"  Total candidates: {len(rows)}")
@@ -881,6 +947,10 @@ def print_summary(
         f"yes={niche_counts['yes']}, partial={niche_counts['partial']}, no={niche_counts['no']}"
     )
     print(f"  Real person: {presenter_counts['real_person']}")
+    print(
+        "  Enrichment: "
+        + ", ".join(f"{key}={enrich_counts[key]}" for key in sorted(enrich_counts))
+    )
     print("  By credential: " + ", ".join(f"{key}={credential_counts[key]}" for key in sorted(credential_counts)))
     call_summary = ", ".join(f"{key}={quota.calls[key]}" for key in sorted(quota.calls))
     print(f"  YouTube search calls: {quota.search_calls}/{quota.search_limit}")
@@ -942,7 +1012,7 @@ def run(
         print(f"resuming completed CSV rows: {len(rows)}")
     print(f"remaining candidates: {len(channel_ids) - len(completed_ids)}")
 
-    channels = fetch_channel_metadata(session, quota, channel_ids, cache_root)
+    channels, channel_statuses = fetch_channel_metadata(session, quota, channel_ids, cache_root)
     missing = [channel_id for channel_id in channel_ids if channel_id not in channels]
     if missing:
         print(
@@ -972,24 +1042,65 @@ def run(
             continue
         candidate = candidates[channel_id]
         channel = channels[channel_id]
-        channel_uploads, channel_titles = fetch_uploads(
-            session,
-            quota,
-            {channel_id: channel},
-            cutoff,
-            cache_root,
-            show_progress=False,
-        )
-        video_details = fetch_video_details(
-            session,
-            quota,
-            channel_uploads,
-            cache_root,
-        )
-        classification = classify_channel(
-            channel, channel_titles.get(channel_id) or [], llm_usage
-        )
+        enrich_status = channel_statuses.get(channel_id, "channel_not_found")
+        channel_uploads: dict[str, list[dict[str, Any]]] = {channel_id: []}
+        channel_titles: dict[str, list[str]] = {channel_id: []}
+        video_details: dict[str, dict[str, Any]] = {}
+        if enrich_status == "ok":
+            try:
+                channel_uploads, channel_titles = fetch_uploads(
+                    session,
+                    quota,
+                    {channel_id: channel},
+                    cutoff,
+                    cache_root,
+                    show_progress=False,
+                )
+                video_details = fetch_video_details(
+                    session,
+                    quota,
+                    channel_uploads,
+                    cache_root,
+                )
+            except YouTubeRequestError as exc:
+                if exc.global_failure:
+                    raise
+                enrich_status = (
+                    "no_public_uploads"
+                    if exc.method == "playlistItems.list" and exc.status_code == 404
+                    else "error"
+                )
+                channel_uploads = {channel_id: []}
+                channel_titles = {channel_id: []}
+                video_details = {}
+                print(f"channel {channel_id} skipped: {exc}; status={enrich_status}")
+            except Exception as exc:
+                enrich_status = "error"
+                channel_uploads = {channel_id: []}
+                channel_titles = {channel_id: []}
+                video_details = {}
+                print(
+                    f"channel {channel_id} skipped: {exc.__class__.__name__}; "
+                    "status=error"
+                )
         activity = compute_activity(channel_uploads.get(channel_id) or [], video_details)
+        classification = {
+            "in_niche": "",
+            "presenter": "",
+            "credential": "",
+            "language": "",
+            "classification_reason": "",
+        }
+        try:
+            classification = classify_channel(
+                channel, channel_titles.get(channel_id) or [], llm_usage
+            )
+        except Exception as exc:
+            enrich_status = "error"
+            print(
+                f"channel {channel_id} classification skipped: {exc.__class__.__name__}; "
+                "status=error"
+            )
         rows.append(
             {
                 "youtube_channel_id": channel_id,
@@ -1005,6 +1116,7 @@ def run(
                     "subscriber_count", "view_count", "video_count",
                 )},
                 **activity,
+                "enrich_status": enrich_status,
                 **classification,
                 "last_15_video_titles": " | ".join(channel_titles.get(channel_id) or []),
             }
