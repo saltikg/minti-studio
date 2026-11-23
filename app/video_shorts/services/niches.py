@@ -139,6 +139,28 @@ def attach_outreach_statuses(conn, rows: list[dict[str, Any]]) -> None:
             row["outreach"] = statuses[_clean(row.get("youtube_channel_id"))]
         return
 
+    user_columns = table_columns(conn, "shorts_users")
+    user_event_columns = table_columns(conn, "user_events")
+    signup_evidence = []
+    if "password_hash" in user_columns:
+        signup_evidence.append("COALESCE(u.password_hash, '') <> ''")
+    if "google_sub" in user_columns:
+        signup_evidence.append("COALESCE(u.google_sub, '') <> ''")
+    if "last_login_at" in user_columns:
+        signup_evidence.append("u.last_login_at IS NOT NULL")
+    if {"user_id", "event_name"}.issubset(user_event_columns):
+        signup_evidence.append(
+            """
+            EXISTS (
+                SELECT 1
+                FROM user_events signup_event
+                WHERE CAST(signup_event.user_id AS VARCHAR) = CAST(u.id AS VARCHAR)
+                  AND signup_event.event_name = 'signup'
+            )
+            """
+        )
+    signup_evidence_sql = " OR ".join(signup_evidence) or "FALSE"
+
     lead_rows = conn.execute(
         f"""
         SELECT CAST(l.id AS VARCHAR) AS lead_id, l.youtube_channel_id,
@@ -146,7 +168,11 @@ def attach_outreach_statuses(conn, rows: list[dict[str, Any]]) -> None:
                CAST(l.brand_id AS VARCHAR) AS brand_id, l.converted_at,
                lower(COALESCE(u.service_mode, '')) AS service_mode,
                CASE WHEN b.id IS NULL THEN FALSE ELSE TRUE END AS brand_exists,
-               CASE WHEN u.id IS NULL THEN FALSE ELSE TRUE END AS user_exists
+               CASE
+                   WHEN u.id IS NULL THEN FALSE
+                   WHEN ({signup_evidence_sql}) THEN TRUE
+                   ELSE FALSE
+               END AS has_real_signup
         FROM autopilot_leads l
         LEFT JOIN shorts_users u ON CAST(u.id AS VARCHAR) = CAST(l.user_id AS VARCHAR)
         LEFT JOIN shorts_brands b ON CAST(b.id AS VARCHAR) = CAST(l.brand_id AS VARCHAR)
@@ -155,19 +181,18 @@ def attach_outreach_statuses(conn, rows: list[dict[str, Any]]) -> None:
         channel_ids,
     ).fetchall()
     lead_to_channel: dict[str, str] = {}
-    channel_leads: dict[str, list[str]] = {}
     for lead in lead_rows:
         lead_id, channel_id = _clean(lead[0]), _clean(lead[1])
         if not lead_id or not channel_id:
             continue
         lead_to_channel[lead_id] = channel_id
-        channel_leads.setdefault(channel_id, []).append(lead_id)
-        statuses[channel_id] = {
-            "key": "lead_not_emailed",
-            "label": OUTREACH_LABELS["lead_not_emailed"],
-            "emailed_at": None,
-        }
-        if bool(lead[7]) and _clean(lead[2]):
+        if statuses[channel_id]["key"] == "not_a_lead":
+            statuses[channel_id] = {
+                "key": "lead_not_emailed",
+                "label": OUTREACH_LABELS["lead_not_emailed"],
+                "emailed_at": None,
+            }
+        if bool(lead[7]) and _clean(lead[2]) and statuses[channel_id]["key"] != "customer":
             statuses[channel_id] = {"key": "signed_up", "label": OUTREACH_LABELS["signed_up"], "emailed_at": None}
         if bool(lead[6]) and lead[4] is not None and _clean(lead[5]) == "autopilot":
             statuses[channel_id] = {"key": "customer", "label": OUTREACH_LABELS["customer"], "emailed_at": None}
@@ -194,7 +219,8 @@ def attach_outreach_statuses(conn, rows: list[dict[str, Any]]) -> None:
             if sent_at:
                 statuses[channel_id] = {"key": "emailed", "label": OUTREACH_LABELS["emailed"], "emailed_at": sent_at}
 
-        if table_columns(conn, "user_events"):
+        clicked_lead_ids: set[str] = set()
+        if user_event_columns:
             share_expr = _metadata_text_sql(conn, "share_link_id")
             token_expr = _metadata_text_sql(conn, "token")
             lead_expr = _metadata_text_sql(conn, "autopilot_lead_id")
@@ -212,10 +238,27 @@ def attach_outreach_statuses(conn, rows: list[dict[str, Any]]) -> None:
                 """,
                 lead_ids,
             ).fetchall()
-            for item in clicked:
-                channel_id = lead_to_channel.get(_clean(item[0]))
-                if channel_id and statuses[channel_id]["key"] not in {"customer", "signed_up"}:
-                    statuses[channel_id] = {"key": "clicked", "label": OUTREACH_LABELS["clicked"], "emailed_at": statuses[channel_id].get("emailed_at")}
+            clicked_lead_ids.update(_clean(item[0]) for item in clicked if _clean(item[0]))
+
+        onboarding_columns = table_columns(conn, "onboarding_magic_links")
+        if {"share_link_id", "used_at"}.issubset(onboarding_columns):
+            used_onboarding = conn.execute(
+                f"""
+                SELECT DISTINCT CAST(sl.autopilot_lead_id AS VARCHAR)
+                FROM short_share_links sl
+                JOIN onboarding_magic_links oml
+                  ON CAST(oml.share_link_id AS VARCHAR) = CAST(sl.id AS VARCHAR)
+                WHERE CAST(sl.autopilot_lead_id AS VARCHAR) IN ({_placeholders(lead_ids)})
+                  AND oml.used_at IS NOT NULL
+                """,
+                lead_ids,
+            ).fetchall()
+            clicked_lead_ids.update(_clean(item[0]) for item in used_onboarding if _clean(item[0]))
+
+        for lead_id in clicked_lead_ids:
+            channel_id = lead_to_channel.get(lead_id)
+            if channel_id and statuses[channel_id]["key"] not in {"customer", "signed_up"}:
+                statuses[channel_id] = {"key": "clicked", "label": OUTREACH_LABELS["clicked"], "emailed_at": statuses[channel_id].get("emailed_at")}
 
     for row in rows:
         row["outreach"] = statuses[_clean(row.get("youtube_channel_id"))]
