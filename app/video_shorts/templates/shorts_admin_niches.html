@@ -1,0 +1,198 @@
+{% extends "vs_admin_base.html" %}
+
+{% block title %}Niches{% endblock %}
+{% block admin_heading %}Niche rankings{% endblock %}
+{% block admin_subheading %}<p>Peer benchmarks and live outreach context.</p>{% endblock %}
+
+{% block extra_styles %}
+<style>
+  .niche-toolbar,
+  .niche-filters,
+  .niche-kpis {
+    display: grid;
+    gap: 12px;
+  }
+  .niche-toolbar {
+    grid-template-columns: minmax(260px, 2fr) minmax(180px, 1fr) auto;
+    align-items: end;
+    margin-bottom: 16px;
+  }
+  .niche-filters {
+    grid-template-columns: repeat(3, minmax(180px, 1fr));
+    align-items: end;
+    margin: 16px 0;
+  }
+  .niche-kpis {
+    grid-template-columns: repeat(4, minmax(150px, 1fr));
+    margin-bottom: 20px;
+  }
+  .niche-card,
+  .niche-panel {
+    border: 1px solid #e5e7eb;
+    border-radius: 12px;
+    background: #fff;
+  }
+  .niche-card { padding: 16px; }
+  .niche-card-label { color: #64748b; font-size: 12px; font-weight: 700; letter-spacing: .04em; text-transform: uppercase; }
+  .niche-card-value { color: #0f172a; font-size: 25px; font-weight: 750; line-height: 1.2; margin-top: 7px; }
+  .niche-panel { overflow: hidden; }
+  .niche-panel-head { align-items: center; display: flex; justify-content: space-between; padding: 14px 16px; border-bottom: 1px solid #e5e7eb; }
+  .niche-panel-head h2 { font-size: 16px; margin: 0; }
+  .niche-muted { color: #64748b; font-size: 13px; }
+  .niche-field label { color: #475569; display: block; font-size: 12px; font-weight: 700; margin-bottom: 5px; }
+  .niche-field select,
+  .niche-note {
+    border: 1px solid #cbd5e1;
+    border-radius: 8px;
+    background: #fff;
+    min-height: 38px;
+    padding: 8px 10px;
+    width: 100%;
+  }
+  .niche-toggle { align-items: center; display: flex; gap: 8px; min-height: 38px; }
+  .niche-button {
+    background: #0f172a;
+    border: 0;
+    border-radius: 8px;
+    color: #fff;
+    cursor: pointer;
+    font-weight: 700;
+    min-height: 38px;
+    padding: 8px 14px;
+  }
+  .niche-button.secondary { background: #fff; border: 1px solid #cbd5e1; color: #334155; }
+  .niche-table-wrap { overflow-x: auto; }
+  .niche-table { border-collapse: collapse; font-size: 13px; min-width: 1260px; width: 100%; }
+  .niche-table th { background: #f8fafc; color: #475569; font-size: 11px; letter-spacing: .03em; padding: 10px; text-align: right; text-transform: uppercase; white-space: nowrap; }
+  .niche-table th:nth-child(2), .niche-table th:nth-child(3), .niche-table th:nth-child(10), .niche-table th:nth-child(11) { text-align: left; }
+  .niche-table td { border-top: 1px solid #eef2f7; padding: 11px 10px; text-align: right; vertical-align: middle; }
+  .niche-table td:nth-child(2), .niche-table td:nth-child(3), .niche-table td:nth-child(10), .niche-table td:nth-child(11) { text-align: left; }
+  .niche-channel { color: #0f172a; font-weight: 700; text-decoration: none; }
+  .niche-channel:hover { text-decoration: underline; }
+  .niche-badge { border-radius: 999px; display: inline-block; font-size: 11px; font-weight: 750; padding: 4px 8px; white-space: nowrap; }
+  .niche-badge.customer { background: #dcfce7; color: #166534; }
+  .niche-badge.signed_up { background: #dbeafe; color: #1d4ed8; }
+  .niche-badge.clicked { background: #fef3c7; color: #92400e; }
+  .niche-badge.emailed { background: #ede9fe; color: #6d28d9; }
+  .niche-badge.lead_not_emailed { background: #f1f5f9; color: #475569; }
+  .niche-badge.not_a_lead { background: #f8fafc; color: #94a3b8; }
+  .niche-edit { align-items: center; display: grid; gap: 6px; grid-template-columns: auto minmax(150px, 1fr) auto; }
+  .niche-note { font-size: 12px; min-height: 34px; padding: 6px 8px; }
+  .niche-save { min-height: 34px; padding: 6px 10px; }
+  .niche-empty { color: #64748b; padding: 40px 20px; text-align: center; }
+  @media (max-width: 900px) {
+    .niche-toolbar, .niche-filters, .niche-kpis { grid-template-columns: 1fr 1fr; }
+  }
+</style>
+{% endblock %}
+
+{% block content %}
+{% if schema_missing %}
+  <div class="niche-panel"><div class="niche-empty">The niche tables have not been installed yet.</div></div>
+{% elif not niches %}
+  <div class="niche-panel"><div class="niche-empty">No niches are available.</div></div>
+{% else %}
+  <form class="niche-toolbar" method="get">
+    <div class="niche-field">
+      <label for="niche">Niche</label>
+      <select id="niche" name="niche" onchange="this.form.submit()">
+        {% for niche in niches %}
+          <option value="{{ niche.slug }}" {% if selected and selected.slug == niche.slug %}selected{% endif %}>{{ niche.name }}</option>
+        {% endfor %}
+      </select>
+    </div>
+    <div class="niche-field">
+      <label for="snapshot">Snapshot</label>
+      <select id="snapshot" name="snapshot" onchange="this.form.submit()">
+        {% for snapshot in snapshot_dates %}
+          <option value="{{ snapshot }}" {% if selected and selected.snapshot_date == snapshot %}selected{% endif %}>{{ snapshot }}</option>
+        {% endfor %}
+      </select>
+    </div>
+    <label class="niche-toggle">
+      <input type="checkbox" name="include_partial" value="1" {% if include_partial %}checked{% endif %} onchange="this.form.submit()">
+      Include partial matches
+    </label>
+  </form>
+
+  <div class="niche-kpis">
+    <div class="niche-card"><div class="niche-card-label">Channels in pool</div><div class="niche-card-value">{{ kpis.channels | int }}</div></div>
+    <div class="niche-card"><div class="niche-card-label">Median subscribers</div><div class="niche-card-value">{{ '{:,}'.format(kpis.median_subscribers | int) }}</div></div>
+    <div class="niche-card"><div class="niche-card-label">Posting Shorts</div><div class="niche-card-value">{{ kpis.shorts_posting_pct | int }}%</div></div>
+    <div class="niche-card"><div class="niche-card-label">Median Shorts / 90d</div><div class="niche-card-value">{{ kpis.median_shorts_90d }}</div></div>
+  </div>
+
+  <form class="niche-filters" method="get">
+    <input type="hidden" name="niche" value="{{ selected.slug }}">
+    <input type="hidden" name="snapshot" value="{{ selected.snapshot_date }}">
+    {% if include_partial %}<input type="hidden" name="include_partial" value="1">{% endif %}
+    <div class="niche-field">
+      <label for="subscriber_band">Subscriber band</label>
+      <select id="subscriber_band" name="subscriber_band">
+        <option value="">All subscribers</option>
+        <option value="1k_10k" {% if subscriber_band == '1k_10k' %}selected{% endif %}>1K–10K</option>
+        <option value="10k_100k" {% if subscriber_band == '10k_100k' %}selected{% endif %}>10K–100K</option>
+        <option value="100k_plus" {% if subscriber_band == '100k_plus' %}selected{% endif %}>100K+</option>
+      </select>
+    </div>
+    <div class="niche-field">
+      <label for="outreach_status">Outreach status</label>
+      <select id="outreach_status" name="outreach_status">
+        <option value="">All statuses</option>
+        {% for key, label in outreach_labels.items() %}
+          <option value="{{ key }}" {% if outreach_status == key %}selected{% endif %}>{{ label }}</option>
+        {% endfor %}
+      </select>
+    </div>
+    <div><button class="niche-button" type="submit">Apply filters</button></div>
+  </form>
+
+  <section class="niche-panel">
+    <div class="niche-panel-head">
+      <h2>{{ selected.name }}</h2>
+      <span class="niche-muted">{{ rows | length }} shown · {{ pool_size }} in pool · Snapshot {{ selected.snapshot_date }}</span>
+    </div>
+    {% if rows %}
+      <div class="niche-table-wrap">
+        <table class="niche-table">
+          <thead><tr>
+            <th>Rank</th><th>Channel</th><th>Credential</th><th>Subscribers</th><th>Long / 90d</th><th>Shorts / 90d</th><th>Avg long views</th><th>Avg Short views</th><th>Source</th><th>Outreach</th><th>Admin follow-up</th>
+          </tr></thead>
+          <tbody>
+          {% for row in rows %}
+            <tr>
+              <td>{{ row.rank }}</td>
+              <td><a class="niche-channel" href="{{ row.channel_url }}" target="_blank" rel="noopener">{{ row.title }}</a></td>
+              <td>{{ row.credential or '—' }}</td>
+              <td>{{ '{:,}'.format(row.subscriber_count | int) if row.subscriber_count is not none else '—' }}</td>
+              <td>{{ row.longform_90d | int }}</td>
+              <td>{{ row.shorts_90d | int }}</td>
+              <td>{{ '{:,}'.format(row.avg_views_long_90d | int) if row.avg_views_long_90d is not none else '—' }}</td>
+              <td>{{ '{:,}'.format(row.avg_views_short_90d | int) if row.avg_views_short_90d is not none else '—' }}</td>
+              <td>{{ row.source }}</td>
+              <td>
+                <span class="niche-badge {{ row.outreach.key }}">{{ row.outreach.label }}</span>
+                {% if row.outreach.emailed_at %}<div class="niche-muted">{{ row.outreach.emailed_at.strftime('%b %-d, %Y') }}</div>{% endif %}
+              </td>
+              <td>
+                <form class="niche-edit" method="post" action="{{ url_for('video_shorts_bp.admin_niche_channel_update') }}">
+                  <input type="hidden" name="niche" value="{{ selected.slug }}">
+                  <input type="hidden" name="youtube_channel_id" value="{{ row.youtube_channel_id }}">
+                  <input type="hidden" name="snapshot_date" value="{{ row.snapshot_date }}">
+                  <input type="hidden" name="return_to" value="{{ request.full_path }}">
+                  <label title="Replied"><input type="checkbox" name="replied" value="1" {% if row.replied %}checked{% endif %}> Replied</label>
+                  <input class="niche-note" name="admin_note" value="{{ row.admin_note or '' }}" maxlength="4000" placeholder="Admin note">
+                  <button class="niche-button niche-save" type="submit">Save</button>
+                </form>
+              </td>
+            </tr>
+          {% endfor %}
+          </tbody>
+        </table>
+      </div>
+    {% else %}
+      <div class="niche-empty">No channels match these filters.</div>
+    {% endif %}
+  </section>
+{% endif %}
+{% endblock %}
