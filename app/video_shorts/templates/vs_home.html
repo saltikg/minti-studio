@@ -2434,6 +2434,7 @@
           autoplay
           loop
           playsinline
+          webkit-playsinline
           preload="metadata"
           poster="{{ url_for('video_shorts_bp.static', filename='motion/maya-demo.jpg') }}?v=4"
           aria-label="Minti Studio editor demo"
@@ -2871,6 +2872,7 @@
       let unmuteTracked = false;
       let completedTracked = false;
       let soundActivated = false;
+      let soundPlayPending = false;
       let pulseTimer = null;
 
       const setCaptions = function (mode) {
@@ -2906,23 +2908,77 @@
         homeDemoAudioToggle.setAttribute("aria-label", isMuted ? "Unmute video" : "Mute video");
       };
 
+      const reportPlayRejection = function (error) {
+        const errorName = String(error?.name || "Error");
+        const errorMessage = String(error?.message || "Unmuted video play rejected");
+        const payload = {
+          error_type: "hero_video_play_rejected",
+          page: "home",
+          source: "hero_video_home",
+          ua: navigator.userAgent,
+          error: { name: errorName, message: errorMessage },
+          error_name: errorName,
+          message: `${errorName}: ${errorMessage}`,
+        };
+        try {
+          const body = JSON.stringify(payload);
+          const endpoint = "{{ url_for('video_shorts_bp.client_error_api') }}";
+          const queued = navigator.sendBeacon
+            ? navigator.sendBeacon(endpoint, new Blob([body], { type: "application/json" }))
+            : false;
+          if (!queued) {
+            fetch(endpoint, {
+              method: "POST",
+              credentials: "same-origin",
+              headers: { "Content-Type": "application/json" },
+              body,
+              keepalive: true,
+            }).catch(function () {});
+          }
+        } catch (beaconError) {
+          // Error reporting must never interfere with video recovery.
+        }
+      };
+
       const activateSound = function () {
-        soundActivated = true;
-        manualPlaybackStarted = true;
-        homeDemoCard.classList.remove("is-reduced-motion");
-        homeDemoVideo.loop = false;
+        if (soundPlayPending) return;
         homeDemoVideo.muted = false;
         homeDemoVideo.currentTime = 0;
-        setCaptions("showing");
-        homeDemoSound.hidden = true;
-        homeDemoAudioToggle.hidden = false;
-        homeDemoWatchAgain.hidden = true;
-        syncAudioToggle();
-        homeDemoVideo.play().catch(function () {});
-        if (!unmuteTracked) {
-          trackHeroEvent("hero_unmute");
-          unmuteTracked = true;
-        }
+        const playAttempt = homeDemoVideo.play();
+        soundPlayPending = true;
+        homeDemoVideo.loop = false;
+
+        Promise.resolve(playAttempt).then(function () {
+          soundPlayPending = false;
+          soundActivated = true;
+          manualPlaybackStarted = true;
+          homeDemoCard.classList.remove("is-reduced-motion");
+          homeDemoVideo.controls = false;
+          setCaptions("showing");
+          homeDemoSound.hidden = true;
+          homeDemoAudioToggle.hidden = false;
+          homeDemoWatchAgain.hidden = true;
+          syncAudioToggle();
+          if (!unmuteTracked) {
+            trackHeroEvent("hero_unmute");
+            unmuteTracked = true;
+          }
+        }).catch(function (error) {
+          soundPlayPending = false;
+          soundActivated = false;
+          manualPlaybackStarted = false;
+          homeDemoVideo.muted = true;
+          homeDemoVideo.loop = true;
+          const fallbackPlay = homeDemoVideo.play();
+          if (fallbackPlay?.catch) fallbackPlay.catch(function () {});
+          homeDemoVideo.controls = true;
+          homeDemoSound.hidden = false;
+          homeDemoSound.textContent = "Tap again for sound";
+          homeDemoSound.classList.remove("is-pulsing");
+          homeDemoAudioToggle.hidden = true;
+          setCaptions("showing");
+          reportPlayRejection(error);
+        });
       };
 
       homeDemoVideo.muted = true;
@@ -2951,6 +3007,9 @@
         const homeDemoObserver = new IntersectionObserver(function (entries) {
           entries.forEach(function (entry) {
             isInView = entry.isIntersecting;
+            if (soundActivated || soundPlayPending) {
+              return;
+            }
             if (!isInView) {
               homeDemoVideo.pause();
             } else if (!prefersReducedMotion.matches || manualPlaybackStarted) {

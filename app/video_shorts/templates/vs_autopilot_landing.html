@@ -1242,6 +1242,7 @@
           loop
           preload="metadata"
           playsinline
+          webkit-playsinline
           poster="{{ url_for('video_shorts_bp.static', filename='motion/autopilot.jpg') }}?v=3"
           aria-label="Minti Studio Autopilot explainer video"
         >
@@ -1522,6 +1523,7 @@
     let autopilotUnmuteTracked = false;
     let autopilotCompletedTracked = false;
     let autopilotSoundActivated = false;
+    let autopilotSoundPlayPending = false;
     let autopilotPulseTimer = null;
 
     const setAutopilotCaptions = function (mode) {
@@ -1557,23 +1559,77 @@
       autopilotVideoAudioToggle.setAttribute("aria-label", isMuted ? "Unmute video" : "Mute video");
     };
 
+    const reportAutopilotPlayRejection = function (error) {
+      const errorName = String(error?.name || "Error");
+      const errorMessage = String(error?.message || "Unmuted video play rejected");
+      const payload = {
+        error_type: "hero_video_play_rejected",
+        page: "autopilot",
+        source: "hero_video_autopilot",
+        ua: navigator.userAgent,
+        error: { name: errorName, message: errorMessage },
+        error_name: errorName,
+        message: `${errorName}: ${errorMessage}`,
+      };
+      try {
+        const body = JSON.stringify(payload);
+        const endpoint = "{{ url_for('video_shorts_bp.client_error_api') }}";
+        const queued = navigator.sendBeacon
+          ? navigator.sendBeacon(endpoint, new Blob([body], { type: "application/json" }))
+          : false;
+        if (!queued) {
+          fetch(endpoint, {
+            method: "POST",
+            credentials: "same-origin",
+            headers: { "Content-Type": "application/json" },
+            body,
+            keepalive: true,
+          }).catch(function () {});
+        }
+      } catch (beaconError) {
+        // Error reporting must never interfere with video recovery.
+      }
+    };
+
     const activateAutopilotSound = function () {
-      autopilotSoundActivated = true;
-      autopilotManualPlaybackStarted = true;
-      autopilotVideoCard.classList.remove("is-reduced-motion");
-      autopilotVideo.loop = false;
+      if (autopilotSoundPlayPending) return;
       autopilotVideo.muted = false;
       autopilotVideo.currentTime = 0;
-      setAutopilotCaptions("showing");
-      autopilotVideoSound.hidden = true;
-      autopilotVideoAudioToggle.hidden = false;
-      autopilotVideoWatchAgain.hidden = true;
-      syncAutopilotAudioToggle();
-      autopilotVideo.play().catch(function () {});
-      if (!autopilotUnmuteTracked) {
-        trackAutopilotHeroEvent("hero_unmute");
-        autopilotUnmuteTracked = true;
-      }
+      const playAttempt = autopilotVideo.play();
+      autopilotSoundPlayPending = true;
+      autopilotVideo.loop = false;
+
+      Promise.resolve(playAttempt).then(function () {
+        autopilotSoundPlayPending = false;
+        autopilotSoundActivated = true;
+        autopilotManualPlaybackStarted = true;
+        autopilotVideoCard.classList.remove("is-reduced-motion");
+        autopilotVideo.controls = false;
+        setAutopilotCaptions("showing");
+        autopilotVideoSound.hidden = true;
+        autopilotVideoAudioToggle.hidden = false;
+        autopilotVideoWatchAgain.hidden = true;
+        syncAutopilotAudioToggle();
+        if (!autopilotUnmuteTracked) {
+          trackAutopilotHeroEvent("hero_unmute");
+          autopilotUnmuteTracked = true;
+        }
+      }).catch(function (error) {
+        autopilotSoundPlayPending = false;
+        autopilotSoundActivated = false;
+        autopilotManualPlaybackStarted = false;
+        autopilotVideo.muted = true;
+        autopilotVideo.loop = true;
+        const fallbackPlay = autopilotVideo.play();
+        if (fallbackPlay?.catch) fallbackPlay.catch(function () {});
+        autopilotVideo.controls = true;
+        autopilotVideoSound.hidden = false;
+        autopilotVideoSound.textContent = "Tap again for sound";
+        autopilotVideoSound.classList.remove("is-pulsing");
+        autopilotVideoAudioToggle.hidden = true;
+        setAutopilotCaptions("showing");
+        reportAutopilotPlayRejection(error);
+      });
     };
 
     autopilotVideo.muted = true;
@@ -1602,6 +1658,9 @@
       const autopilotVideoObserver = new IntersectionObserver(function (entries) {
         entries.forEach(function (entry) {
           autopilotVideoInView = entry.isIntersecting;
+          if (autopilotSoundActivated || autopilotSoundPlayPending) {
+            return;
+          }
           if (!autopilotVideoInView) {
             autopilotVideo.pause();
           } else if (!autopilotReducedMotion.matches || autopilotManualPlaybackStarted) {
