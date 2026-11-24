@@ -10,9 +10,11 @@ import json
 import re
 import sys
 from collections import Counter
-from dataclasses import dataclass
+from concurrent.futures import ThreadPoolExecutor
+from dataclasses import dataclass, field
 from datetime import date, datetime, time, timedelta, timezone
 from pathlib import Path
+from threading import Lock
 from typing import Any
 
 from dotenv import load_dotenv
@@ -57,11 +59,15 @@ class ReclassifyError(RuntimeError):
 class Usage:
     input_tokens: int = 0
     output_tokens: int = 0
+    lock: Lock = field(default_factory=Lock, repr=False)
 
     def add(self, response: Any) -> None:
         usage = getattr(response, "usage", None)
-        self.input_tokens += int(getattr(usage, "prompt_tokens", 0) or getattr(usage, "input_tokens", 0) or 0)
-        self.output_tokens += int(getattr(usage, "completion_tokens", 0) or getattr(usage, "output_tokens", 0) or 0)
+        input_tokens = int(getattr(usage, "prompt_tokens", 0) or getattr(usage, "input_tokens", 0) or 0)
+        output_tokens = int(getattr(usage, "completion_tokens", 0) or getattr(usage, "output_tokens", 0) or 0)
+        with self.lock:
+            self.input_tokens += input_tokens
+            self.output_tokens += output_tokens
 
     def estimated_cost(self) -> float | None:
         prices = {"gpt-4.1-mini": (0.40, 1.60), "gpt-4o-mini": (0.15, 0.60)}
@@ -331,6 +337,7 @@ def main() -> int:
     parser.add_argument("--cache-root", type=Path, default=REPO_ROOT / "data" / "research" / "cache")
     parser.add_argument("--output", type=Path)
     parser.add_argument("--expected-rows", type=int, default=680)
+    parser.add_argument("--workers", type=int, default=6)
     args = parser.parse_args()
 
     csv_path = args.csv_path.expanduser().resolve()
@@ -351,7 +358,8 @@ def main() -> int:
     output_rows: list[dict[str, Any]] = []
     cache_hits = 0
     missing_video_stats = 0
-    for index, row in enumerate(source_rows, start=1):
+
+    def process_row(row: dict[str, Any]) -> tuple[dict[str, Any], bool, int]:
         channel_id = str(row.get("youtube_channel_id") or "").strip()
         titles, views_90d, missing = load_cached_channel_activity(args.cache_root, channel_id, cutoff, video_views)
         if not titles:
@@ -363,9 +371,7 @@ def main() -> int:
             cache_dir=args.cache_root / "strict_reclassifications",
             usage=usage,
         )
-        cache_hits += int(cached)
-        missing_video_stats += missing
-        output_rows.append(
+        return (
             {
                 **row,
                 "primary_niche": result["primary_niche"],
@@ -374,11 +380,21 @@ def main() -> int:
                 "entity": result["entity"],
                 "reclass_reason": result["reclass_reason"],
                 "views_90d": views_90d,
-            }
+            },
+            cached,
+            missing,
         )
-        if index % 10 == 0 or index == len(source_rows):
-            write_checkpoint(output_path, source_fields + OUTPUT_FIELDS, output_rows)
-            print(f"classified {index}/{len(source_rows)} cache_hits={cache_hits}", flush=True)
+
+    worker_count = max(1, min(args.workers, 12))
+    with ThreadPoolExecutor(max_workers=worker_count) as executor:
+        classified_rows = executor.map(process_row, source_rows)
+        for index, (output_row, cached, missing) in enumerate(classified_rows, start=1):
+            output_rows.append(output_row)
+            cache_hits += int(cached)
+            missing_video_stats += missing
+            if index % 10 == 0 or index == len(source_rows):
+                write_checkpoint(output_path, source_fields + OUTPUT_FIELDS, output_rows)
+                print(f"classified {index}/{len(source_rows)} cache_hits={cache_hits}", flush=True)
 
     apply_to_database(output_rows, args.niche_slug, args.snapshot_date)
     niche_counts = Counter(row["primary_niche"] for row in output_rows)
