@@ -456,7 +456,9 @@ def validate_identity(payload: dict[str, Any]) -> dict[str, str]:
     if presenter not in {"real_person", "org", "faceless"}:
         raise GrowthError(f"invalid presenter: {presenter!r}")
     if credential not in {"MD_DO", "NP", "PA", "ND", "RD", "other", "none"}:
-        raise GrowthError(f"invalid credential: {credential!r}")
+        # The niche schema deliberately groups credentials outside its clinician
+        # enum (for example PhD, RN, DPT, DC) under "other".
+        credential = "other"
     return {"presenter": presenter, "credential": credential}
 
 
