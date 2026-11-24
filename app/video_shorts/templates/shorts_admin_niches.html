@@ -48,6 +48,9 @@
   .niche-override-actions { display: flex; gap: 6px; }
   .niche-reason { font-size: 12px; min-height: 34px; padding: 6px 8px; }
   .niche-empty { color: rgba(255,255,255,.62); padding: 40px 20px; text-align: center; }
+  .niche-changes { display: grid; gap: 10px; grid-template-columns: 1fr 1fr; margin-bottom: 16px; }
+  .niche-change-list { color: rgba(255,255,255,.76); font-size: 13px; margin: 8px 0 0; padding-left: 18px; }
+  .niche-change-list a { color: #7dd3fc; }
   @media (max-width: 900px) { .niche-toolbar, .niche-filters, .niche-kpis { grid-template-columns: 1fr 1fr; } }
 </style>
 {% endblock %}
@@ -84,6 +87,21 @@
     <a class="niche-tab {% if tab == 'excluded' %}is-active{% endif %}" href="{{ url_for('video_shorts_bp.admin_niches', niche=selected.slug, snapshot=selected.snapshot_date, clinicians='1' if clinicians_only else '0', tab='excluded') }}">Excluded ({{ excluded_count }})</a>
   </div>
 
+  {% if run_changes.current %}
+  <section class="niche-card" style="margin-bottom:16px">
+    <div class="niche-card-label">Changes vs previous run</div>
+    <div class="niche-muted" style="margin-top:5px">{{ run_changes.current.rule_version }} · {{ run_changes.current.run_at.strftime('%b %-d, %Y %-I:%M %p') }}</div>
+    {% if run_changes.previous %}<div class="niche-changes">
+      <div><div class="niche-subtext">Joined ({{ run_changes.joined | length }})</div>
+        <ul class="niche-change-list">{% for row in run_changes.joined %}<li><a href="{{ row.channel_url }}" target="_blank" rel="noopener">{{ row.title or row.youtube_channel_id }}</a></li>{% else %}<li>None</li>{% endfor %}</ul>
+      </div>
+      <div><div class="niche-subtext">Left ({{ run_changes.left | length }})</div>
+        <ul class="niche-change-list">{% for row in run_changes.left %}<li><a href="{{ row.channel_url }}" target="_blank" rel="noopener">{{ row.title or row.youtube_channel_id }}</a></li>{% else %}<li>None</li>{% endfor %}</ul>
+      </div>
+    </div>{% else %}<div class="niche-muted" style="margin-top:8px">No previous run recorded yet.</div>{% endif %}
+  </section>
+  {% endif %}
+
   <form class="niche-filters" method="get">
     <input type="hidden" name="niche" value="{{ selected.slug }}"><input type="hidden" name="snapshot" value="{{ selected.snapshot_date }}">
     <input type="hidden" name="clinicians" value="{{ '1' if clinicians_only else '0' }}"><input type="hidden" name="tab" value="{{ tab }}">
@@ -111,7 +129,7 @@
     <td>{{ '{:,}'.format(row.subscriber_count | int) if row.subscriber_count is not none else '—' }}</td>
     <td>{{ '{:,}'.format(row.views_90d | int) if row.views_90d is not none else '—' }}</td>
     <td>{{ row.longform_90d | int }}</td><td>{{ row.shorts_90d | int }}</td>
-    <td class="is-left">{{ row.primary_niche or '—' }}<div class="niche-subtext" title="{{ row.reclass_reason or '' }}">{{ row.reclass_reason or '' }}</div></td>
+    <td class="is-left">{{ row.primary_niche or '—' }}<div class="niche-subtext" title="{{ row.reclass_reason or '' }}">{{ row.reclass_reason or '' }}</div><div class="niche-subtext">{{ row.country or 'No country' }} · {{ row.audience_language or 'language pending' }}</div></td>
     <td>{{ row.on_topic_count | int }}/15</td>
     <td class="is-left"><span class="niche-badge {{ row.outreach.key }}">{{ row.outreach.label }}</span>{% if row.outreach.emailed_at %}<div class="niche-subtext">{{ row.outreach.emailed_at.strftime('%b %-d, %Y') }}</div>{% endif %}</td>
     <td class="is-left"><form class="niche-override" method="post" action="{{ url_for('video_shorts_bp.admin_niche_channel_update') }}">

@@ -29,10 +29,18 @@ load_dotenv(REPO_ROOT / ".env")
 
 from app.video_shorts.config import OPENAI_MODEL, _openai_client
 from app.video_shorts.services.db import get_db, table_columns
+from app.video_shorts.services.niches import (
+    NICHE_AUDIENCE_COUNTRIES,
+    NICHE_ON_TOPIC_MIN,
+    clinician_matches,
+    is_final_niche_pool_row,
+)
 from app.video_shorts.services.youtube_quota import record_youtube_data_api_call
 
 
 CLASSIFIER_VERSION = "strict-menopause-longform-v3"
+AUDIENCE_CLASSIFIER_VERSION = "niche-audience-language-v1"
+RULE_VERSION = "strict-menopause-longform-v3-audience-v1"
 PRIMARY_NICHES = {
     "menopause_hormones",
     "fertility_obgyn",
@@ -137,6 +145,11 @@ def load_video_views(cache_root: Path) -> dict[str, int]:
         for video_id, item in load_video_details(cache_root).items()
         if item.get("views") is not None
     }
+
+
+def load_cached_country(cache_root: Path, channel_id: str) -> str:
+    item = _cache_payload(cache_root / "channels" / f"{channel_id}.json").get("item") or {}
+    return str((item.get("snippet") or {}).get("country") or "").strip().upper()
 
 
 def load_cached_channel_activity_ids(
@@ -399,6 +412,84 @@ def classify(
     raise ReclassifyError(f"classification failed for {channel_id}: {last_error}")
 
 
+def _validate_audience_language(payload: dict[str, Any]) -> str:
+    language = str(payload.get("language") or "").strip().lower()
+    if language not in {"english", "mixed", "other"}:
+        raise ReclassifyError(f"invalid audience language: {language!r}")
+    return language
+
+
+def classify_audience_language(
+    *,
+    channel_id: str,
+    titles: list[str],
+    cache_dir: Path,
+    usage: Usage,
+) -> tuple[str, bool]:
+    source = {"titles": titles[:15]}
+    input_hash = hashlib.sha256(
+        json.dumps(source, ensure_ascii=False, sort_keys=True).encode("utf-8")
+    ).hexdigest()
+    cache_path = cache_dir / f"{channel_id}.json"
+    if cache_path.exists():
+        try:
+            cached = json.loads(cache_path.read_text(encoding="utf-8"))
+            if (
+                cached.get("version") == AUDIENCE_CLASSIFIER_VERSION
+                and cached.get("model") == OPENAI_MODEL
+                and cached.get("input_hash") == input_hash
+            ):
+                return _validate_audience_language(cached.get("result") or {}), True
+        except (OSError, ValueError, json.JSONDecodeError, ReclassifyError):
+            pass
+    if not _openai_client:
+        raise ReclassifyError("OPENAI_API_KEY is required")
+    prompt = (
+        "Decide the language of this JSON list of YouTube video titles. Romanized Hindi "
+        "(Hinglish) is not English. Return JSON only as "
+        '{"language":"english|mixed|other"}. Use english only when every supplied title '
+        "is English. Use mixed when English and Hinglish or another language are mixed, "
+        "and other when the titles are primarily non-English.\n\n"
+        f"Titles:\n{json.dumps(titles[:15], ensure_ascii=False)}"
+    )
+    last_error: Exception | None = None
+    for _attempt in range(3):
+        try:
+            response = _openai_client.chat.completions.create(
+                model=OPENAI_MODEL,
+                messages=[
+                    {"role": "system", "content": "You are a strict language classifier. Return valid JSON only."},
+                    {"role": "user", "content": prompt},
+                ],
+                response_format={"type": "json_object"},
+                temperature=0,
+            )
+            usage.add(response)
+            language = _validate_audience_language(
+                _extract_json(response.choices[0].message.content or "")
+            )
+            cache_dir.mkdir(parents=True, exist_ok=True)
+            temporary = cache_path.with_suffix(".json.tmp")
+            temporary.write_text(
+                json.dumps(
+                    {
+                        "version": AUDIENCE_CLASSIFIER_VERSION,
+                        "model": OPENAI_MODEL,
+                        "input_hash": input_hash,
+                        "result": {"language": language},
+                    },
+                    ensure_ascii=False,
+                    sort_keys=True,
+                ),
+                encoding="utf-8",
+            )
+            temporary.replace(cache_path)
+            return language, False
+        except Exception as exc:
+            last_error = exc
+    raise ReclassifyError(f"audience language classification failed for {channel_id}: {last_error}")
+
+
 def write_checkpoint(path: Path, fieldnames: list[str], rows: list[dict[str, Any]]) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     temporary = path.with_suffix(path.suffix + ".tmp")
@@ -451,6 +542,209 @@ def apply_to_database(rows: list[dict[str, Any]], niche_slug: str, snapshot_date
         conn.close()
 
 
+def _pre_audience_core(row: dict[str, Any]) -> bool:
+    try:
+        share = float(row.get("on_topic_share") or 0)
+    except (TypeError, ValueError):
+        share = 0.0
+    original_language = str(row.get("language") or "").strip().lower().replace("_", "-")
+    return (
+        str(row.get("primary_niche") or "").strip().lower() == "menopause_hormones"
+        and share >= NICHE_ON_TOPIC_MIN
+        and str(row.get("entity") or "").strip().lower() == "individual"
+        and str(row.get("presenter") or "").strip().lower() == "real_person"
+        and (original_language == "english" or original_language == "en" or original_language.startswith("en-"))
+    )
+
+
+def _result_dicts(result: Any) -> list[dict[str, Any]]:
+    columns = [str(item[0]) for item in (result.description or [])]
+    return [dict(zip(columns, row)) for row in result.fetchall()]
+
+
+def apply_audience_filter_and_record_run(
+    *,
+    source_rows: list[dict[str, Any]],
+    niche_slug: str,
+    snapshot_date: str,
+    cache_root: Path,
+    video_details: dict[str, dict[str, int | None]],
+    usage: Usage,
+    workers: int,
+) -> dict[str, Any]:
+    conn = get_db()
+    try:
+        required_channel_columns = {"country", "audience_language"}
+        missing = required_channel_columns - table_columns(conn, "niche_channels")
+        if missing:
+            raise ReclassifyError(f"niche_channels schema is missing: {', '.join(sorted(missing))}")
+        if not table_columns(conn, "niche_classification_runs") or not table_columns(
+            conn, "niche_channel_run_results"
+        ):
+            raise ReclassifyError("niche classification history tables are required")
+        niche = conn.execute("SELECT id FROM niches WHERE slug=? LIMIT 1", [niche_slug]).fetchone()
+        if not niche:
+            raise ReclassifyError(f"unknown niche: {niche_slug}")
+        rows = _result_dicts(
+            conn.execute(
+                """
+                SELECT youtube_channel_id, title, credential, primary_niche,
+                       on_topic_share, entity, reclass_reason, presenter, language,
+                       subscriber_count, views_90d, admin_exclude, admin_include,
+                       country, audience_language
+                FROM niche_channels
+                WHERE niche_id=? AND snapshot_date=?
+                ORDER BY youtube_channel_id
+                """,
+                [niche[0], snapshot_date],
+            )
+        )
+        candidates = [
+            row for row in rows if _pre_audience_core(row) or bool(row.get("admin_include"))
+        ]
+        cache_hits = 0
+
+        def classify_candidate(row: dict[str, Any]) -> tuple[str, str, bool]:
+            channel_id = str(row.get("youtube_channel_id") or "").strip()
+            titles = load_cached_longform_titles(cache_root, channel_id, video_details)
+            language, cached = classify_audience_language(
+                channel_id=channel_id,
+                titles=titles,
+                cache_dir=cache_root / "audience_languages",
+                usage=usage,
+            )
+            return channel_id, language, cached
+
+        language_by_id: dict[str, str] = {}
+        with ThreadPoolExecutor(max_workers=max(1, min(workers, 12))) as executor:
+            for channel_id, language, cached in executor.map(classify_candidate, candidates):
+                language_by_id[channel_id] = language
+                cache_hits += int(cached)
+
+        for row in rows:
+            channel_id = str(row.get("youtube_channel_id") or "").strip()
+            row["country"] = load_cached_country(cache_root, channel_id)
+            if channel_id in language_by_id:
+                row["audience_language"] = language_by_id[channel_id]
+            conn.execute(
+                """
+                UPDATE niche_channels
+                SET country=?, audience_language=?, updated_at=now()
+                WHERE niche_id=? AND youtube_channel_id=? AND snapshot_date=?
+                """,
+                [
+                    row["country"],
+                    str(row.get("audience_language") or "").strip().lower() or None,
+                    niche[0],
+                    channel_id,
+                    snapshot_date,
+                ],
+            )
+
+        notes = (
+            "Allowed country: US, CA, GB, AU, NZ, IE, or empty; "
+            "latest long-form title language must be English. Admin overrides applied."
+        )
+        run = conn.execute(
+            """
+            INSERT INTO niche_classification_runs (niche_id, run_at, rule_version, notes)
+            VALUES (?, now(), ?, ?)
+            RETURNING run_id
+            """,
+            [niche[0], RULE_VERSION, notes],
+        ).fetchone()
+        run_id = run[0]
+        for row in rows:
+            conn.execute(
+                """
+                INSERT INTO niche_channel_run_results (
+                    run_id, youtube_channel_id, in_pool, primary_niche,
+                    on_topic_share, reason
+                ) VALUES (?, ?, ?, ?, ?, ?)
+                """,
+                [
+                    run_id,
+                    row["youtube_channel_id"],
+                    is_final_niche_pool_row(row),
+                    row.get("primary_niche"),
+                    float(row.get("on_topic_share") or 0),
+                    row.get("reclass_reason"),
+                ],
+            )
+        conn.commit()
+    except Exception:
+        conn.rollback()
+        raise
+    finally:
+        conn.close()
+
+    final_all = sorted(
+        [row for row in rows if is_final_niche_pool_row(row)],
+        key=lambda row: (-int(row.get("subscriber_count") or 0), str(row.get("title") or "").lower()),
+    )
+    final_clinicians = [row for row in final_all if clinician_matches(row)]
+    removed = [
+        row
+        for row in rows
+        if _pre_audience_core(row)
+        and (
+            str(row.get("country") or "").upper() not in NICHE_AUDIENCE_COUNTRIES
+            or str(row.get("audience_language") or "").lower() != "english"
+        )
+        and not bool(row.get("admin_include"))
+    ]
+    shelley_index = next(
+        (index for index, row in enumerate(final_clinicians) if row["youtube_channel_id"] == "UCx-TX9EAE0NOL9hhG1wnvwg"),
+        None,
+    )
+    neighbors = (
+        final_clinicians[max(0, shelley_index - 2) : shelley_index + 3]
+        if shelley_index is not None
+        else []
+    )
+    return {
+        "run_id": run_id,
+        "candidate_count": len(candidates),
+        "cache_hits": cache_hits,
+        "pool_all": len(final_all),
+        "pool_clinicians": len(final_clinicians),
+        "removed": sorted(removed, key=lambda row: str(row.get("title") or "").lower()),
+        "shelley_rank": shelley_index + 1 if shelley_index is not None else None,
+        "shelley_neighbors": neighbors,
+    }
+
+
+def print_audience_summary(result: dict[str, Any], usage: Usage) -> None:
+    print(
+        f"audience_candidates={result['candidate_count']} cache_hits={result['cache_hits']} "
+        f"new_llm_calls={result['candidate_count'] - result['cache_hits']}"
+    )
+    print(f"pool_clinicians={result['pool_clinicians']} pool_all={result['pool_all']}")
+    print("audience_removed=")
+    for row in result["removed"]:
+        print(
+            "  "
+            + " | ".join(
+                [
+                    str(row.get("title") or ""),
+                    str(row.get("country") or "empty"),
+                    str(row.get("audience_language") or "unknown"),
+                    str(int(row.get("subscriber_count") or 0)),
+                ]
+            )
+        )
+    print(f"shelley_rank={result['shelley_rank']}")
+    for row in result["shelley_neighbors"]:
+        print(
+            f"  neighbor={row.get('title')} subscribers={int(row.get('subscriber_count') or 0)} "
+            f"views_90d={int(row.get('views_90d') or 0)}"
+        )
+    cost = usage.estimated_cost()
+    print(f"audience_llm_model={OPENAI_MODEL} input_tokens={usage.input_tokens} output_tokens={usage.output_tokens}")
+    print(f"audience_llm_cost_usd={cost:.6f}" if cost is not None else "audience_llm_cost_usd=unknown")
+    print(f"classification_run_id={result['run_id']}")
+
+
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("csv_path", type=Path)
@@ -462,6 +756,11 @@ def main() -> int:
     parser.add_argument("--workers", type=int, default=6)
     parser.add_argument("--cached-classifications-only", action="store_true")
     parser.add_argument("--fill-missing-video-stats", action="store_true")
+    parser.add_argument(
+        "--audience-only",
+        action="store_true",
+        help="Use cached channel/video data and classify language only for the current pool",
+    )
     args = parser.parse_args()
 
     csv_path = args.csv_path.expanduser().resolve()
@@ -497,6 +796,21 @@ def main() -> int:
         )
 
     video_details = load_video_details(args.cache_root)
+    if args.audience_only:
+        usage = Usage()
+        result = apply_audience_filter_and_record_run(
+            source_rows=source_rows,
+            niche_slug=args.niche_slug,
+            snapshot_date=args.snapshot_date,
+            cache_root=args.cache_root,
+            video_details=video_details,
+            usage=usage,
+            workers=args.workers,
+        )
+        print("AUDIENCE_FILTER_COMPLETE")
+        print_audience_summary(result, usage)
+        print("youtube_units_used=0")
+        return 0
     video_views = {
         video_id: int(item["views"])
         for video_id, item in video_details.items()
@@ -551,6 +865,16 @@ def main() -> int:
                 print(f"classified {index}/{len(source_rows)} cache_hits={cache_hits}", flush=True)
 
     apply_to_database(output_rows, args.niche_slug, args.snapshot_date)
+    audience_usage = Usage()
+    audience_result = apply_audience_filter_and_record_run(
+        source_rows=source_rows,
+        niche_slug=args.niche_slug,
+        snapshot_date=args.snapshot_date,
+        cache_root=args.cache_root,
+        video_details=video_details,
+        usage=audience_usage,
+        workers=args.workers,
+    )
     niche_counts = Counter(row["primary_niche"] for row in output_rows)
     entity_counts = Counter(row["entity"] for row in output_rows)
     cost = usage.estimated_cost()
@@ -563,6 +887,7 @@ def main() -> int:
     print(f"youtube_units_used={backfill_result['units_used']}")
     print(f"llm_model={OPENAI_MODEL} input_tokens={usage.input_tokens} output_tokens={usage.output_tokens}")
     print(f"llm_cost_usd={cost:.6f}" if cost is not None else "llm_cost_usd=unknown")
+    print_audience_summary(audience_result, audience_usage)
     print(f"output={output_path}")
     return 0
 

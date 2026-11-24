@@ -82,8 +82,8 @@ def import_csv(csv_path: Path, niche_slug: str) -> tuple[int, str]:
                     niche_id, youtube_channel_id, snapshot_date, title, channel_url,
                     credential, in_niche, presenter, language, subscriber_count,
                     longform_90d, shorts_90d, avg_views_long_90d,
-                    avg_views_short_90d, discovery_lead_id, source, updated_at
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, now())
+                    avg_views_short_90d, discovery_lead_id, source, country, updated_at
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, now())
                 ON CONFLICT (niche_id, youtube_channel_id, snapshot_date) DO UPDATE SET
                     title = EXCLUDED.title,
                     channel_url = EXCLUDED.channel_url,
@@ -98,6 +98,7 @@ def import_csv(csv_path: Path, niche_slug: str) -> tuple[int, str]:
                     avg_views_short_90d = EXCLUDED.avg_views_short_90d,
                     discovery_lead_id = EXCLUDED.discovery_lead_id,
                     source = EXCLUDED.source,
+                    country = EXCLUDED.country,
                     updated_at = now()
                 """,
                 [
@@ -117,6 +118,7 @@ def import_csv(csv_path: Path, niche_slug: str) -> tuple[int, str]:
                     _integer(row.get("avg_views_short_90d")),
                     str(row.get("discovery_lead_id") or "").strip() or None,
                     str(row.get("source") or "").strip(),
+                    str(row.get("country") or "").strip().upper(),
                 ],
             )
             imported += 1

@@ -17,6 +17,7 @@ OUTREACH_LABELS = {
 }
 NICHE_ON_TOPIC_MIN = 0.33
 NICHE_CLINICIAN_CREDENTIALS = {"MD_DO", "NP", "PA", "ND"}
+NICHE_AUDIENCE_COUNTRIES = {"", "US", "CA", "GB", "AU", "NZ", "IE"}
 
 
 def _dict_rows(result) -> list[dict[str, Any]]:
@@ -90,7 +91,7 @@ def load_niche_snapshot(conn, niche_slug: str, snapshot_date: str = "") -> tuple
                discovery_lead_id, source, replied, admin_note, updated_at,
                primary_niche, on_topic_share, on_topic_count, entity,
                reclass_reason, views_90d, admin_exclude, admin_include,
-               exclude_reason
+               exclude_reason, country, audience_language
         FROM niche_channels
         WHERE niche_id = ? AND snapshot_date = ?
         ORDER BY subscriber_count DESC NULLS LAST, lower(title) ASC
@@ -277,12 +278,15 @@ def _on_topic_share(row: dict[str, Any]) -> float:
 
 
 def is_base_niche_pool_row(row: dict[str, Any]) -> bool:
+    country = _clean(row.get("country")).upper()
     return (
         _clean(row.get("primary_niche")).lower() == "menopause_hormones"
         and _on_topic_share(row) >= NICHE_ON_TOPIC_MIN
         and _clean(row.get("entity")).lower() == "individual"
         and _clean(row.get("presenter")).lower() == "real_person"
         and _language_is_english(row.get("language"))
+        and country in NICHE_AUDIENCE_COUNTRIES
+        and _clean(row.get("audience_language")).lower() == "english"
     )
 
 
@@ -322,6 +326,67 @@ def near_miss_niche_rows(rows: list[dict[str, Any]], *, clinicians_only: bool) -
         and _on_topic_share(row) < NICHE_ON_TOPIC_MIN
         and (not clinicians_only or clinician_matches(row))
     ]
+
+
+def load_niche_run_changes(conn, niche_id: Any) -> dict[str, Any]:
+    if not table_columns(conn, "niche_classification_runs") or not table_columns(
+        conn, "niche_channel_run_results"
+    ):
+        return {"current": None, "previous": None, "joined": [], "left": []}
+    runs = _dict_rows(
+        conn.execute(
+            """
+            SELECT run_id, run_at, rule_version, notes
+            FROM niche_classification_runs
+            WHERE niche_id = ?
+            ORDER BY run_at DESC, run_id DESC
+            LIMIT 2
+            """,
+            [niche_id],
+        )
+    )
+    if not runs:
+        return {"current": None, "previous": None, "joined": [], "left": []}
+    current = runs[0]
+    previous = runs[1] if len(runs) > 1 else None
+    if previous is None:
+        return {"current": current, "previous": None, "joined": [], "left": []}
+    changed = _dict_rows(
+        conn.execute(
+            """
+            WITH current_run AS (
+                SELECT youtube_channel_id, in_pool
+                FROM niche_channel_run_results
+                WHERE run_id = ?
+            ), previous_run AS (
+                SELECT youtube_channel_id, in_pool
+                FROM niche_channel_run_results
+                WHERE run_id = ?
+            )
+            SELECT COALESCE(c.youtube_channel_id, p.youtube_channel_id) AS youtube_channel_id,
+                   COALESCE(c.in_pool, FALSE) AS current_in_pool,
+                   COALESCE(p.in_pool, FALSE) AS previous_in_pool,
+                   nc.title, nc.channel_url
+            FROM current_run c
+            FULL OUTER JOIN previous_run p USING (youtube_channel_id)
+            LEFT JOIN niche_channels nc
+              ON nc.niche_id = ?
+             AND nc.youtube_channel_id = COALESCE(c.youtube_channel_id, p.youtube_channel_id)
+             AND nc.snapshot_date = (
+                 SELECT MAX(snapshot_date) FROM niche_channels WHERE niche_id = ?
+             )
+            WHERE COALESCE(c.in_pool, FALSE) <> COALESCE(p.in_pool, FALSE)
+            ORDER BY lower(COALESCE(nc.title, COALESCE(c.youtube_channel_id, p.youtube_channel_id)))
+            """,
+            [current["run_id"], previous["run_id"], niche_id, niche_id],
+        )
+    )
+    return {
+        "current": current,
+        "previous": previous,
+        "joined": [row for row in changed if row["current_in_pool"]],
+        "left": [row for row in changed if row["previous_in_pool"]],
+    }
 
 
 def pool_kpis(rows: list[dict[str, Any]]) -> dict[str, Any]:

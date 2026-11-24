@@ -12,6 +12,7 @@ from app.video_shorts.services.niches import (
     excluded_niche_rows,
     final_niche_pool,
     list_niches,
+    load_niche_run_changes,
     load_niche_snapshot,
     load_snapshot_dates,
     near_miss_niche_rows,
@@ -34,6 +35,8 @@ def admin_niches():
         "admin_exclude",
         "admin_include",
         "exclude_reason",
+        "country",
+        "audience_language",
     }
     if (
         not table_columns(conn, "niches")
@@ -79,6 +82,12 @@ def admin_niches():
     outreach_status = str(request.args.get("outreach_status") or "").strip()
     visible_rows = apply_table_filters(tab_rows, subscriber_band, outreach_status)
     snapshot_dates = load_snapshot_dates(conn, selected["id"]) if selected else []
+    run_changes = load_niche_run_changes(conn, selected["id"]) if selected else {
+        "current": None,
+        "previous": None,
+        "joined": [],
+        "left": [],
+    }
     return render_template(
         "shorts_admin_niches.html",
         admin_title="Niches",
@@ -98,6 +107,7 @@ def admin_niches():
         subscriber_band=subscriber_band,
         outreach_status=outreach_status,
         outreach_labels=OUTREACH_LABELS,
+        run_changes=run_changes,
     )
 
 
