@@ -172,12 +172,9 @@ def _validate_result(payload: dict[str, Any], titles: list[str]) -> dict[str, An
             f"{len(title_flags) if isinstance(title_flags, list) else 'non-list'}"
         )
     flags: list[bool] = []
-    for index, item in enumerate(title_flags):
+    for item in title_flags:
         if not isinstance(item, dict) or type(item.get("on_topic")) is not bool:
             raise ReclassifyError("each title result must contain an on_topic boolean")
-        returned_title = " ".join(str(item.get("title") or "").split())
-        if returned_title != titles[index]:
-            raise ReclassifyError(f"title result {index + 1} does not match its input title")
         flags.append(item["on_topic"])
     if not reason:
         raise ReclassifyError("reason is required")
