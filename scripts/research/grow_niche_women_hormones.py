@@ -185,20 +185,30 @@ def extract_guest_names(
         "them as a guest. Return JSON only as {\"names\":[\"Dr. Full Name\"]}. Return an empty list when unsure.\n\n"
         f"Description:\n{description[:5000]}\n\nTitles:\n{json.dumps(titles[:15], ensure_ascii=False)}"
     )
-    response = _openai_client.chat.completions.create(
-        model=OPENAI_MODEL,
-        messages=[
-            {"role": "system", "content": "Extract named health-professional guests. Return valid JSON only."},
-            {"role": "user", "content": prompt},
-        ],
-        response_format={"type": "json_object"},
-        temperature=0,
-    )
-    usage.add(response)
-    payload = strict._extract_json(response.choices[0].message.content or "")
-    raw_names = payload.get("names") or []
-    if not isinstance(raw_names, list):
-        raise GrowthError(f"guest extractor returned non-list for {channel_id}")
+    last_error: Exception | None = None
+    raw_names: list[Any] | None = None
+    for _attempt in range(3):
+        try:
+            response = _openai_client.chat.completions.create(
+                model=OPENAI_MODEL,
+                messages=[
+                    {"role": "system", "content": "Extract named health-professional guests. Return valid JSON only."},
+                    {"role": "user", "content": prompt},
+                ],
+                response_format={"type": "json_object"},
+                temperature=0,
+            )
+            usage.add(response)
+            payload = strict._extract_json(response.choices[0].message.content or "")
+            values = payload.get("names") or []
+            if not isinstance(values, list):
+                raise GrowthError(f"guest extractor returned non-list for {channel_id}")
+            raw_names = values
+            break
+        except Exception as exc:
+            last_error = exc
+    if raw_names is None:
+        raise GrowthError(f"guest extraction failed for {channel_id}: {last_error}")
     names: list[str] = []
     for value in raw_names:
         name = " ".join(str(value or "").split())[:160]
@@ -259,15 +269,21 @@ def discover_candidates(
     candidates: dict[str, dict[str, Any]] = {}
     for index, row in enumerate(pool, start=1):
         channel_id = str(row["youtube_channel_id"])
-        params = {"part": "snippet,contentDetails", "channelId": channel_id, "maxResults": 50}
-        payload = base.cached_youtube_get(
-            session,
-            quota,
-            "channelSections",
-            "channelSections.list",
-            params,
-            cache_root / "growth_v2" / "channel_sections" / f"{channel_id}.json",
-        )
+        params = {"part": "snippet,contentDetails", "channelId": channel_id}
+        try:
+            payload = base.cached_youtube_get(
+                session,
+                quota,
+                "channelSections",
+                "channelSections.list",
+                params,
+                cache_root / "growth_v2" / "channel_sections" / f"{channel_id}.json",
+            )
+        except base.YouTubeRequestError as exc:
+            if exc.global_failure:
+                raise
+            print(f"featured sections skipped {channel_id}: {exc}", flush=True)
+            continue
         for item in payload.get("items") or []:
             if str((item.get("snippet") or {}).get("type") or "") != "multipleChannels":
                 continue
@@ -476,17 +492,26 @@ def classify_identity(
         f"Channel title: {source['title']}\nDescription: {source['description']}\n"
         f"Long-form titles: {json.dumps(titles[:15], ensure_ascii=False)}"
     )
-    response = _openai_client.chat.completions.create(
-        model=OPENAI_MODEL,
-        messages=[
-            {"role": "system", "content": "Classify channel identity. Return valid JSON only."},
-            {"role": "user", "content": prompt},
-        ],
-        response_format={"type": "json_object"},
-        temperature=0,
-    )
-    usage.add(response)
-    result = validate_identity(strict._extract_json(response.choices[0].message.content or ""))
+    last_error: Exception | None = None
+    result: dict[str, str] | None = None
+    for _attempt in range(3):
+        try:
+            response = _openai_client.chat.completions.create(
+                model=OPENAI_MODEL,
+                messages=[
+                    {"role": "system", "content": "Classify channel identity. Return valid JSON only."},
+                    {"role": "user", "content": prompt},
+                ],
+                response_format={"type": "json_object"},
+                temperature=0,
+            )
+            usage.add(response)
+            result = validate_identity(strict._extract_json(response.choices[0].message.content or ""))
+            break
+        except Exception as exc:
+            last_error = exc
+    if result is None:
+        raise GrowthError(f"identity classification failed for {channel_id}: {last_error}")
     cache_path.parent.mkdir(parents=True, exist_ok=True)
     atomic_json(
         cache_path,
