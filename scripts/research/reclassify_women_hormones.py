@@ -599,6 +599,9 @@ def apply_audience_filter_and_record_run(
                 [niche[0], snapshot_date],
             )
         )
+        # Do not hold an open database transaction while the network-bound LLM
+        # classifications run; production enforces an idle-in-transaction timeout.
+        conn.commit()
         candidates = [
             row for row in rows if _pre_audience_core(row) or bool(row.get("admin_include"))
         ]
@@ -673,7 +676,10 @@ def apply_audience_filter_and_record_run(
             )
         conn.commit()
     except Exception:
-        conn.rollback()
+        try:
+            conn.rollback()
+        except Exception:
+            pass
         raise
     finally:
         conn.close()
