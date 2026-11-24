@@ -622,7 +622,7 @@ def insert_rows_and_history(
                     views_90d, admin_exclude, admin_include, exclude_reason, country,
                     audience_language
                 ) VALUES (
-                    ?,?,?,?,?,?,?,?,?,?,?,?,?,?,NULL,?,FALSE,NULL,now(),
+                    ?,?,?,?,?,?,?,?,?,?,?,?,?,?,NULL,?,FALSE,'',now(),
                     ?,?,?,?,?,?,FALSE,FALSE,NULL,?,?
                 )
                 ON CONFLICT (niche_id, youtube_channel_id, snapshot_date) DO UPDATE SET
