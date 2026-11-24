@@ -1121,7 +1121,9 @@ def run(
                 **activity,
                 "enrich_status": enrich_status,
                 **classification,
-                "last_15_video_titles": " | ".join(channel_titles.get(channel_id) or []),
+                "last_15_video_titles": json.dumps(
+                    channel_titles.get(channel_id) or [], ensure_ascii=False
+                ),
             }
         )
         write_csv(rows, output_path)

@@ -32,7 +32,7 @@ from app.video_shorts.services.db import get_db, table_columns
 from app.video_shorts.services.youtube_quota import record_youtube_data_api_call
 
 
-CLASSIFIER_VERSION = "strict-menopause-v2"
+CLASSIFIER_VERSION = "strict-menopause-longform-v3"
 PRIMARY_NICHES = {
     "menopause_hormones",
     "fertility_obgyn",
@@ -102,18 +102,41 @@ def _cache_payload(path: Path) -> dict[str, Any]:
     return payload if isinstance(payload, dict) else {}
 
 
-def load_video_views(cache_root: Path) -> dict[str, int]:
-    views: dict[str, int] = {}
+_DURATION_RE = re.compile(
+    r"^P(?:(?P<days>\d+)D)?(?:T(?:(?P<hours>\d+)H)?(?:(?P<minutes>\d+)M)?(?:(?P<seconds>\d+)S)?)?$"
+)
+
+
+def _duration_seconds(value: Any) -> int | None:
+    match = _DURATION_RE.fullmatch(str(value or "").strip())
+    if not match:
+        return None
+    parts = {name: int(number or 0) for name, number in match.groupdict().items()}
+    return parts["days"] * 86_400 + parts["hours"] * 3_600 + parts["minutes"] * 60 + parts["seconds"]
+
+
+def load_video_details(cache_root: Path) -> dict[str, dict[str, int | None]]:
+    details: dict[str, dict[str, int | None]] = {}
     for path in sorted((cache_root / "video_batches").glob("*.json")):
         for item in _cache_payload(path).get("items") or []:
             video_id = str(item.get("id") or "").strip()
             raw_views = ((item.get("statistics") or {}).get("viewCount"))
+            duration = _duration_seconds((item.get("contentDetails") or {}).get("duration"))
             try:
-                if video_id and raw_views is not None:
-                    views[video_id] = int(raw_views)
+                views = int(raw_views) if raw_views is not None else None
             except (TypeError, ValueError):
-                continue
-    return views
+                views = None
+            if video_id:
+                details[video_id] = {"views": views, "duration_seconds": duration}
+    return details
+
+
+def load_video_views(cache_root: Path) -> dict[str, int]:
+    return {
+        video_id: int(item["views"])
+        for video_id, item in load_video_details(cache_root).items()
+        if item.get("views") is not None
+    }
 
 
 def load_cached_channel_activity_ids(
@@ -136,6 +159,29 @@ def load_cached_channel_activity_ids(
             if video_id and published_at and published_at >= cutoff:
                 recent_ids.add(video_id)
     return titles, recent_ids
+
+
+def load_cached_longform_titles(
+    cache_root: Path,
+    channel_id: str,
+    video_details: dict[str, dict[str, int | None]],
+) -> list[str]:
+    titles: list[str] = []
+    upload_dir = cache_root / "uploads" / channel_id
+    for path in sorted(upload_dir.glob("page_*.json")):
+        for item in _cache_payload(path).get("items") or []:
+            snippet = item.get("snippet") or {}
+            content = item.get("contentDetails") or {}
+            video_id = str(
+                content.get("videoId") or (snippet.get("resourceId") or {}).get("videoId") or ""
+            ).strip()
+            duration = (video_details.get(video_id) or {}).get("duration_seconds")
+            title = " ".join(str(snippet.get("title") or "").split())
+            if title and duration is not None and duration > 180:
+                titles.append(title)
+                if len(titles) == 15:
+                    return titles
+    return titles
 
 
 def load_cached_channel_activity(
@@ -222,10 +268,6 @@ def backfill_missing_video_stats(
     }
 
 
-def _fallback_titles(raw: str) -> list[str]:
-    return [part.strip() for part in str(raw or "").split(" | ") if part.strip()][:15]
-
-
 def _extract_json(text: str) -> dict[str, Any]:
     clean = str(text or "").strip()
     if clean.startswith("```"):
@@ -300,17 +342,18 @@ def classify(
     if not _openai_client:
         raise ReclassifyError("OPENAI_API_KEY is required")
     prompt = (
-        "Classify a YouTube channel using only the channel description and the ordered list of its latest video titles. "
+        "Classify a YouTube channel using only the channel description and the ordered list of its latest long-form video titles. "
         "Judge what the channel is MAINLY about, using the description first. Mentioning menopause in some titles is not enough.\n\n"
         "Return JSON only with exactly these fields:\n"
         '{"primary_niche":"menopause_hormones|fertility_obgyn|womens_fitness|womens_nutrition_fasting|weight_glp1|general_gyn|sexual_health|other",'
         '"titles":[{"title":"exact supplied title","on_topic":true}],'
         '"entity":"individual|company_clinic","reason":"one line"}\n\n'
         "The titles array must contain exactly one object for each supplied title, in the same order, and copy each title exactly. "
-        "A title is on_topic true only when "
-        "the video is mainly about perimenopause, menopause, HRT, or female sex hormones (estrogen, progesterone, or testosterone "
-        "in women). Diet, workouts, GLP-1, fertility, pregnancy, thyroid alone, and general wellness are false, even when the title "
-        "says women over 40. Telehealth brands, clinics, hospitals, and product companies are company_clinic.\n\n"
+        "A title is on_topic true when the video is mainly about perimenopause, menopause, HRT, female sex hormones "
+        "(estrogen, progesterone, or testosterone in women), OR midlife women's health that menopause/hormone clinicians "
+        "commonly cover: bone density, heart health, sleep, brain or mood, skin, sexual health, or weight/metabolism in women "
+        "40+. Pregnancy, fertility, general fitness, diet or fasting programs, non-women-specific health, and unrelated "
+        "specialties are false. Telehealth brands, clinics, hospitals, and product companies are company_clinic.\n\n"
         f"Channel description:\n{source['description']}\n\n"
         f"Ordered titles ({len(titles)}):\n{json.dumps(titles, ensure_ascii=False)}"
     )
@@ -453,17 +496,24 @@ def main() -> int:
             flush=True,
         )
 
-    video_views = load_video_views(args.cache_root)
+    video_details = load_video_details(args.cache_root)
+    video_views = {
+        video_id: int(item["views"])
+        for video_id, item in video_details.items()
+        if item.get("views") is not None
+    }
     usage = Usage()
     output_rows: list[dict[str, Any]] = []
     cache_hits = 0
     missing_video_stats = 0
+    channels_with_pipe_titles = 0
 
-    def process_row(row: dict[str, Any]) -> tuple[dict[str, Any], bool, int]:
+    def process_row(row: dict[str, Any]) -> tuple[dict[str, Any], bool, int, bool]:
         channel_id = str(row.get("youtube_channel_id") or "").strip()
-        titles, views_90d, missing = load_cached_channel_activity(args.cache_root, channel_id, cutoff, video_views)
-        if not titles:
-            titles = _fallback_titles(str(row.get("last_15_video_titles") or ""))
+        _recent_titles, views_90d, missing = load_cached_channel_activity(
+            args.cache_root, channel_id, cutoff, video_views
+        )
+        titles = load_cached_longform_titles(args.cache_root, channel_id, video_details)
         result, cached = classify(
             channel_id=channel_id,
             description=str(row.get("description") or ""),
@@ -481,18 +531,21 @@ def main() -> int:
                 "entity": result["entity"],
                 "reclass_reason": result["reclass_reason"],
                 "views_90d": views_90d,
+                "last_15_video_titles": json.dumps(titles, ensure_ascii=False),
             },
             cached,
             missing,
+            any(" | " in title for title in titles),
         )
 
     worker_count = max(1, min(args.workers, 12))
     with ThreadPoolExecutor(max_workers=worker_count) as executor:
         classified_rows = executor.map(process_row, source_rows)
-        for index, (output_row, cached, missing) in enumerate(classified_rows, start=1):
+        for index, (output_row, cached, missing, has_pipe_title) in enumerate(classified_rows, start=1):
             output_rows.append(output_row)
             cache_hits += int(cached)
             missing_video_stats += missing
+            channels_with_pipe_titles += int(has_pipe_title)
             if index % 10 == 0 or index == len(source_rows):
                 write_checkpoint(output_path, source_fields + OUTPUT_FIELDS, output_rows)
                 print(f"classified {index}/{len(source_rows)} cache_hits={cache_hits}", flush=True)
@@ -506,6 +559,7 @@ def main() -> int:
     print("primary_niche=" + ",".join(f"{key}:{niche_counts[key]}" for key in sorted(niche_counts)))
     print("entity=" + ",".join(f"{key}:{entity_counts[key]}" for key in sorted(entity_counts)))
     print(f"missing_cached_video_stats={missing_video_stats}")
+    print(f"channels_with_pipe_titles={channels_with_pipe_titles}")
     print(f"youtube_units_used={backfill_result['units_used']}")
     print(f"llm_model={OPENAI_MODEL} input_tokens={usage.input_tokens} output_tokens={usage.output_tokens}")
     print(f"llm_cost_usd={cost:.6f}" if cost is not None else "llm_cost_usd=unknown")
