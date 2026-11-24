@@ -15,7 +15,7 @@ OUTREACH_LABELS = {
     "lead_not_emailed": "Lead not emailed",
     "not_a_lead": "Not a lead",
 }
-NICHE_ON_TOPIC_MIN = 0.5
+NICHE_ON_TOPIC_MIN = 0.33
 NICHE_CLINICIAN_CREDENTIALS = {"MD_DO", "NP", "PA", "ND"}
 
 

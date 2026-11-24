@@ -7,6 +7,7 @@ import argparse
 import csv
 import hashlib
 import json
+import os
 import re
 import sys
 from collections import Counter
@@ -17,6 +18,7 @@ from pathlib import Path
 from threading import Lock
 from typing import Any
 
+import requests
 from dotenv import load_dotenv
 
 
@@ -27,6 +29,7 @@ load_dotenv(REPO_ROOT / ".env")
 
 from app.video_shorts.config import OPENAI_MODEL, _openai_client
 from app.video_shorts.services.db import get_db, table_columns
+from app.video_shorts.services.youtube_quota import record_youtube_data_api_call
 
 
 CLASSIFIER_VERSION = "strict-menopause-v2"
@@ -113,15 +116,13 @@ def load_video_views(cache_root: Path) -> dict[str, int]:
     return views
 
 
-def load_cached_channel_activity(
+def load_cached_channel_activity_ids(
     cache_root: Path,
     channel_id: str,
     cutoff: datetime,
-    video_views: dict[str, int],
-) -> tuple[list[str], int, int]:
+) -> tuple[list[str], set[str]]:
     titles: list[str] = []
     recent_ids: set[str] = set()
-    missing_view_count = 0
     upload_dir = cache_root / "uploads" / channel_id
     for path in sorted(upload_dir.glob("page_*.json")):
         for item in _cache_payload(path).get("items") or []:
@@ -134,6 +135,17 @@ def load_cached_channel_activity(
             published_at = _parse_timestamp(details.get("videoPublishedAt") or snippet.get("publishedAt"))
             if video_id and published_at and published_at >= cutoff:
                 recent_ids.add(video_id)
+    return titles, recent_ids
+
+
+def load_cached_channel_activity(
+    cache_root: Path,
+    channel_id: str,
+    cutoff: datetime,
+    video_views: dict[str, int],
+) -> tuple[list[str], int, int]:
+    titles, recent_ids = load_cached_channel_activity_ids(cache_root, channel_id, cutoff)
+    missing_view_count = 0
     views_90d = 0
     for video_id in recent_ids:
         if video_id in video_views:
@@ -141,6 +153,73 @@ def load_cached_channel_activity(
         else:
             missing_view_count += 1
     return titles, views_90d, missing_view_count
+
+
+def _store_youtube_cache(path: Path, params: dict[str, Any], payload: dict[str, Any]) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    temporary = path.with_suffix(path.suffix + ".tmp")
+    temporary.write_text(
+        json.dumps({"params": params, "payload": payload}, ensure_ascii=False, sort_keys=True),
+        encoding="utf-8",
+    )
+    temporary.replace(path)
+
+
+def backfill_missing_video_stats(
+    *,
+    source_rows: list[dict[str, Any]],
+    cache_root: Path,
+    cutoff: datetime,
+) -> dict[str, int]:
+    existing_views = load_video_views(cache_root)
+    missing_by_channel: dict[str, set[str]] = {}
+    for row in source_rows:
+        channel_id = str(row.get("youtube_channel_id") or "").strip()
+        _titles, recent_ids = load_cached_channel_activity_ids(cache_root, channel_id, cutoff)
+        missing = {video_id for video_id in recent_ids if video_id not in existing_views}
+        if missing:
+            missing_by_channel[channel_id] = missing
+    missing_ids = sorted(set().union(*missing_by_channel.values())) if missing_by_channel else []
+    api_key = str(os.getenv("YOUTUBE_API_KEY") or "").strip()
+    if missing_ids and not api_key:
+        raise ReclassifyError("YOUTUBE_API_KEY is required to fill missing video statistics")
+
+    units_used = 0
+    session = requests.Session()
+    for offset in range(0, len(missing_ids), 50):
+        chunk = missing_ids[offset : offset + 50]
+        params = {"part": "contentDetails,statistics", "id": ",".join(chunk), "maxResults": 50}
+        units_used += 1
+        response = session.get(
+            "https://www.googleapis.com/youtube/v3/videos",
+            params={**params, "key": api_key},
+            timeout=30,
+        )
+        try:
+            response.raise_for_status()
+            payload = response.json() or {}
+        except (requests.RequestException, ValueError) as exc:
+            raise ReclassifyError(
+                f"videos.list backfill failed at batch {offset // 50 + 1}: HTTP {response.status_code}"
+            ) from exc
+        if not isinstance(payload, dict):
+            raise ReclassifyError("videos.list backfill returned a non-object response")
+        record_youtube_data_api_call(feature="women_hormones_research", method="videos.list")
+        batch_key = hashlib.sha256(",".join(chunk).encode("utf-8")).hexdigest()[:16]
+        _store_youtube_cache(cache_root / "video_batches" / f"{batch_key}.json", params, payload)
+
+    refreshed_views = load_video_views(cache_root)
+    unresolved_ids = {video_id for video_id in missing_ids if video_id not in refreshed_views}
+    affected_channels = sum(
+        1 for ids in missing_by_channel.values() if any(video_id in refreshed_views for video_id in ids)
+    )
+    return {
+        "missing_before": len(missing_ids),
+        "resolved": len(missing_ids) - len(unresolved_ids),
+        "unresolved": len(unresolved_ids),
+        "affected_channels": affected_channels,
+        "units_used": units_used,
+    }
 
 
 def _fallback_titles(raw: str) -> list[str]:
@@ -196,6 +275,7 @@ def classify(
     titles: list[str],
     cache_dir: Path,
     usage: Usage,
+    cached_only: bool = False,
 ) -> tuple[dict[str, Any], bool]:
     source = {
         "description": str(description or "")[:5000],
@@ -215,6 +295,8 @@ def classify(
         except (OSError, ValueError, json.JSONDecodeError, ReclassifyError):
             pass
 
+    if cached_only:
+        raise ReclassifyError(f"strict classification cache is missing or stale for {channel_id}")
     if not _openai_client:
         raise ReclassifyError("OPENAI_API_KEY is required")
     prompt = (
@@ -335,6 +417,8 @@ def main() -> int:
     parser.add_argument("--output", type=Path)
     parser.add_argument("--expected-rows", type=int, default=680)
     parser.add_argument("--workers", type=int, default=6)
+    parser.add_argument("--cached-classifications-only", action="store_true")
+    parser.add_argument("--fill-missing-video-stats", action="store_true")
     args = parser.parse_args()
 
     csv_path = args.csv_path.expanduser().resolve()
@@ -349,6 +433,25 @@ def main() -> int:
         raise ReclassifyError(f"row guard expected {args.expected_rows}, found {len(source_rows)}")
     if len({str(row.get('youtube_channel_id') or '').strip() for row in source_rows}) != len(source_rows):
         raise ReclassifyError("CSV channel IDs are missing or duplicated")
+
+    backfill_result = {
+        "missing_before": 0,
+        "resolved": 0,
+        "unresolved": 0,
+        "affected_channels": 0,
+        "units_used": 0,
+    }
+    if args.fill_missing_video_stats:
+        backfill_result = backfill_missing_video_stats(
+            source_rows=source_rows,
+            cache_root=args.cache_root,
+            cutoff=cutoff,
+        )
+        print(
+            "video_stats_backfill "
+            + " ".join(f"{key}={value}" for key, value in backfill_result.items()),
+            flush=True,
+        )
 
     video_views = load_video_views(args.cache_root)
     usage = Usage()
@@ -367,6 +470,7 @@ def main() -> int:
             titles=titles,
             cache_dir=args.cache_root / "strict_reclassifications",
             usage=usage,
+            cached_only=args.cached_classifications_only,
         )
         return (
             {
@@ -402,6 +506,7 @@ def main() -> int:
     print("primary_niche=" + ",".join(f"{key}:{niche_counts[key]}" for key in sorted(niche_counts)))
     print("entity=" + ",".join(f"{key}:{entity_counts[key]}" for key in sorted(entity_counts)))
     print(f"missing_cached_video_stats={missing_video_stats}")
+    print(f"youtube_units_used={backfill_result['units_used']}")
     print(f"llm_model={OPENAI_MODEL} input_tokens={usage.input_tokens} output_tokens={usage.output_tokens}")
     print(f"llm_cost_usd={cost:.6f}" if cost is not None else "llm_cost_usd=unknown")
     print(f"output={output_path}")
