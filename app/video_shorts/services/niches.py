@@ -15,6 +15,8 @@ OUTREACH_LABELS = {
     "lead_not_emailed": "Lead not emailed",
     "not_a_lead": "Not a lead",
 }
+NICHE_ON_TOPIC_MIN = 0.5
+NICHE_CLINICIAN_CREDENTIALS = {"MD_DO", "NP", "PA", "ND"}
 
 
 def _dict_rows(result) -> list[dict[str, Any]]:
@@ -85,7 +87,10 @@ def load_niche_snapshot(conn, niche_slug: str, snapshot_date: str = "") -> tuple
         SELECT youtube_channel_id, snapshot_date, title, channel_url, credential,
                in_niche, presenter, language, subscriber_count, longform_90d,
                shorts_90d, avg_views_long_90d, avg_views_short_90d,
-               discovery_lead_id, source, replied, admin_note, updated_at
+               discovery_lead_id, source, replied, admin_note, updated_at,
+               primary_niche, on_topic_share, on_topic_count, entity,
+               reclass_reason, views_90d, admin_exclude, admin_include,
+               exclude_reason
         FROM niche_channels
         WHERE niche_id = ? AND snapshot_date = ?
         ORDER BY subscriber_count DESC NULLS LAST, lower(title) ASC
@@ -264,14 +269,58 @@ def attach_outreach_statuses(conn, rows: list[dict[str, Any]]) -> None:
         row["outreach"] = statuses[_clean(row.get("youtube_channel_id"))]
 
 
-def default_pool(rows: list[dict[str, Any]], include_partial: bool = False) -> list[dict[str, Any]]:
-    allowed = {"yes", "partial"} if include_partial else {"yes"}
+def _on_topic_share(row: dict[str, Any]) -> float:
+    try:
+        return float(row.get("on_topic_share") or 0)
+    except (TypeError, ValueError):
+        return 0.0
+
+
+def is_base_niche_pool_row(row: dict[str, Any]) -> bool:
+    return (
+        _clean(row.get("primary_niche")).lower() == "menopause_hormones"
+        and _on_topic_share(row) >= NICHE_ON_TOPIC_MIN
+        and _clean(row.get("entity")).lower() == "individual"
+        and _clean(row.get("presenter")).lower() == "real_person"
+        and _language_is_english(row.get("language"))
+    )
+
+
+def is_final_niche_pool_row(row: dict[str, Any]) -> bool:
+    return not bool(row.get("admin_exclude")) and (
+        bool(row.get("admin_include")) or is_base_niche_pool_row(row)
+    )
+
+
+def clinician_matches(row: dict[str, Any]) -> bool:
+    return _clean(row.get("credential")) in NICHE_CLINICIAN_CREDENTIALS
+
+
+def final_niche_pool(rows: list[dict[str, Any]], *, clinicians_only: bool) -> list[dict[str, Any]]:
     return [
         row
         for row in rows
-        if _clean(row.get("in_niche")).lower() in allowed
-        and _clean(row.get("presenter")).lower() == "real_person"
-        and _language_is_english(row.get("language"))
+        if is_final_niche_pool_row(row) and (not clinicians_only or clinician_matches(row))
+    ]
+
+
+def excluded_niche_rows(rows: list[dict[str, Any]], *, clinicians_only: bool) -> list[dict[str, Any]]:
+    return [
+        row
+        for row in rows
+        if bool(row.get("admin_exclude")) and (not clinicians_only or clinician_matches(row))
+    ]
+
+
+def near_miss_niche_rows(rows: list[dict[str, Any]], *, clinicians_only: bool) -> list[dict[str, Any]]:
+    return [
+        row
+        for row in rows
+        if not bool(row.get("admin_exclude"))
+        and not bool(row.get("admin_include"))
+        and _clean(row.get("primary_niche")).lower() == "menopause_hormones"
+        and _on_topic_share(row) < NICHE_ON_TOPIC_MIN
+        and (not clinicians_only or clinician_matches(row))
     ]
 
 

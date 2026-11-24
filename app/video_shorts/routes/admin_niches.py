@@ -9,10 +9,12 @@ from app.video_shorts.services.niches import (
     OUTREACH_LABELS,
     apply_table_filters,
     attach_outreach_statuses,
-    default_pool,
+    excluded_niche_rows,
+    final_niche_pool,
     list_niches,
     load_niche_snapshot,
     load_snapshot_dates,
+    near_miss_niche_rows,
     pool_kpis,
 )
 
@@ -21,7 +23,23 @@ from app.video_shorts.services.niches import (
 @require_admin
 def admin_niches():
     conn = get_db_readonly()
-    if not table_columns(conn, "niches") or not table_columns(conn, "niche_channels"):
+    niche_channel_columns = table_columns(conn, "niche_channels")
+    strict_columns = {
+        "primary_niche",
+        "on_topic_share",
+        "on_topic_count",
+        "entity",
+        "reclass_reason",
+        "views_90d",
+        "admin_exclude",
+        "admin_include",
+        "exclude_reason",
+    }
+    if (
+        not table_columns(conn, "niches")
+        or not niche_channel_columns
+        or not strict_columns.issubset(niche_channel_columns)
+    ):
         return render_template(
             "shorts_admin_niches.html",
             admin_title="Niches",
@@ -38,14 +56,28 @@ def admin_niches():
         selected, rows = load_niche_snapshot(conn, niches[0]["slug"])
         selected_slug = niches[0]["slug"]
 
-    include_partial = request.args.get("include_partial") == "1"
-    pool = default_pool(rows, include_partial=include_partial)
-    attach_outreach_statuses(conn, pool)
-    for rank, row in enumerate(pool, start=1):
+    clinicians_only = request.args.get("clinicians", "1") != "0"
+    tab = str(request.args.get("tab") or "pool").strip().lower()
+    if tab not in {"pool", "excluded", "near_misses"}:
+        tab = "pool"
+    pool_all = final_niche_pool(rows, clinicians_only=False)
+    pool_clinicians = final_niche_pool(rows, clinicians_only=True)
+    pool = pool_clinicians if clinicians_only else pool_all
+    if tab == "excluded":
+        tab_rows = excluded_niche_rows(rows, clinicians_only=clinicians_only)
+    elif tab == "near_misses":
+        tab_rows = near_miss_niche_rows(rows, clinicians_only=clinicians_only)
+    else:
+        tab_rows = pool
+    tab_rows.sort(
+        key=lambda row: (-int(row.get("subscriber_count") or 0), str(row.get("title") or "").lower())
+    )
+    attach_outreach_statuses(conn, tab_rows)
+    for rank, row in enumerate(tab_rows, start=1):
         row["rank"] = rank
     subscriber_band = str(request.args.get("subscriber_band") or "").strip()
     outreach_status = str(request.args.get("outreach_status") or "").strip()
-    visible_rows = apply_table_filters(pool, subscriber_band, outreach_status)
+    visible_rows = apply_table_filters(tab_rows, subscriber_band, outreach_status)
     snapshot_dates = load_snapshot_dates(conn, selected["id"]) if selected else []
     return render_template(
         "shorts_admin_niches.html",
@@ -56,8 +88,13 @@ def admin_niches():
         snapshot_dates=snapshot_dates,
         rows=visible_rows,
         pool_size=len(pool),
+        pool_size_all=len(pool_all),
+        pool_size_clinicians=len(pool_clinicians),
         kpis=pool_kpis(pool),
-        include_partial=include_partial,
+        clinicians_only=clinicians_only,
+        tab=tab,
+        excluded_count=len(excluded_niche_rows(rows, clinicians_only=clinicians_only)),
+        near_miss_count=len(near_miss_niche_rows(rows, clinicians_only=clinicians_only)),
         subscriber_band=subscriber_band,
         outreach_status=outreach_status,
         outreach_labels=OUTREACH_LABELS,
@@ -72,23 +109,33 @@ def admin_niche_channel_update():
     snapshot_date = str(request.form.get("snapshot_date") or "").strip()
     if not niche_slug or not channel_id or not snapshot_date:
         abort(400)
-    note = str(request.form.get("admin_note") or "").strip()
-    if len(note) > 4000:
+    action = str(request.form.get("action") or "").strip().lower()
+    reason = str(request.form.get("reason") or "").strip()
+    if action not in {"exclude", "include", "clear"}:
         abort(400)
-    replied = request.form.get("replied") == "1"
+    if len(reason) > 1000 or (action in {"exclude", "include"} and not reason):
+        flash("Add a reason before applying an override.", "warning")
+        return_to = str(request.form.get("return_to") or "").strip()
+        if not return_to.startswith("/video_shorts/admin/niches"):
+            return_to = url_for("video_shorts_bp.admin_niches", niche=niche_slug)
+        return redirect(return_to)
+    admin_exclude = action == "exclude"
+    admin_include = action == "include"
+    stored_reason = reason if action != "clear" else ""
     conn = get_db()
     try:
         result = conn.execute(
             """
             UPDATE niche_channels nc
-            SET replied = ?, admin_note = ?, updated_at = CURRENT_TIMESTAMP
+            SET admin_exclude = ?, admin_include = ?, exclude_reason = ?,
+                updated_at = CURRENT_TIMESTAMP
             FROM niches n
             WHERE nc.niche_id = n.id
               AND n.slug = ?
               AND nc.youtube_channel_id = ?
               AND nc.snapshot_date = ?
             """,
-            [replied, note, niche_slug, channel_id, snapshot_date],
+            [admin_exclude, admin_include, stored_reason, niche_slug, channel_id, snapshot_date],
         )
         if result.rowcount != 1:
             conn.rollback()
@@ -96,7 +143,7 @@ def admin_niche_channel_update():
         conn.commit()
     finally:
         conn.close()
-    flash("Niche channel updated.", "success")
+    flash("Niche override updated.", "success")
     return_to = str(request.form.get("return_to") or "").strip()
     if not return_to.startswith("/video_shorts/admin/niches"):
         return_to = url_for("video_shorts_bp.admin_niches", niche=niche_slug)
