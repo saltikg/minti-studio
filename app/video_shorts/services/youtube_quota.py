@@ -1,8 +1,8 @@
 from __future__ import annotations
 
 import os
-from datetime import datetime
-from typing import Optional
+from datetime import datetime, timezone
+from typing import Any, Optional
 from zoneinfo import ZoneInfo
 
 from flask import current_app, has_app_context
@@ -14,6 +14,10 @@ PACIFIC_TZ = ZoneInfo("America/Los_Angeles")
 TABLE_NAME = "youtube_data_api_unit_usage"
 DEFAULT_RESEARCH_DAILY_CAP = 2000
 DISCOVERY_QUOTA_FEATURES = {"discovery_search", "discovery_enrichment"}
+YOUTUBE_SEARCH_DAILY_LIMIT = 100
+DISCOVERY_SEARCH_DAILY_CAP = 70
+RESEARCH_SEARCH_DAILY_CAP = 20
+OTHER_SEARCH_DAILY_CAP = 10
 
 YOUTUBE_DATA_API_UNIT_COSTS = {
     "channels.list": 1,
@@ -30,8 +34,16 @@ YOUTUBE_DATA_API_UNIT_COSTS = {
 }
 
 
+def quota_date_pt(now: Optional[datetime] = None) -> str:
+    """Return the YouTube quota day, which resets at midnight Pacific time."""
+    instant = now or datetime.now(timezone.utc)
+    if instant.tzinfo is None:
+        instant = instant.replace(tzinfo=timezone.utc)
+    return instant.astimezone(PACIFIC_TZ).date().isoformat()
+
+
 def today_pt() -> str:
-    return datetime.now(PACIFIC_TZ).date().isoformat()
+    return quota_date_pt()
 
 
 def unit_cost(method: str) -> int:
@@ -158,36 +170,139 @@ def research_units_for_date(conn, date_pt: Optional[str] = None) -> int:
     return int((row or [0])[0] or 0)
 
 
+def search_calls_for_date(
+    conn,
+    date_pt: Optional[str] = None,
+    *,
+    include_features: Optional[set[str]] = None,
+) -> int:
+    if not table_columns(conn, TABLE_NAME):
+        return 0
+    included = sorted(str(item).strip() for item in (include_features or set()) if str(item).strip())
+    inclusion_sql = ""
+    params: list[Any] = [date_pt or quota_date_pt()]
+    if included:
+        inclusion_sql = f" AND feature IN ({', '.join(['?'] * len(included))})"
+        params.extend(included)
+    row = conn.execute(
+        f"""
+        SELECT COALESCE(SUM(calls), 0)
+        FROM {TABLE_NAME}
+        WHERE date_pt = ?
+          AND method = 'search.list'
+          {inclusion_sql}
+        """,
+        params,
+    ).fetchone()
+    return int((row or [0])[0] or 0)
+
+
+def _is_research_feature(feature: str) -> bool:
+    clean_feature = str(feature or "other").strip().lower()
+    return clean_feature == "research" or clean_feature.endswith("_research")
+
+
+def _search_share(feature: str) -> tuple[str, int]:
+    clean_feature = str(feature or "other").strip().lower()
+    if clean_feature in DISCOVERY_QUOTA_FEATURES:
+        return "discovery", DISCOVERY_SEARCH_DAILY_CAP
+    if _is_research_feature(clean_feature):
+        return "research", RESEARCH_SEARCH_DAILY_CAP
+    return "other", OTHER_SEARCH_DAILY_CAP
+
+
+def search_calls_for_share(conn, share: str, date_pt: Optional[str] = None) -> int:
+    if not table_columns(conn, TABLE_NAME):
+        return 0
+    clean_share = str(share or "other").strip().lower()
+    params: list[Any] = [date_pt or quota_date_pt()]
+    if clean_share == "discovery":
+        features = sorted(DISCOVERY_QUOTA_FEATURES)
+        predicate = f"feature IN ({', '.join(['?'] * len(features))})"
+        params.extend(features)
+    elif clean_share == "research":
+        predicate = "(feature = 'research' OR feature LIKE '%%_research')"
+    else:
+        features = sorted(DISCOVERY_QUOTA_FEATURES)
+        predicate = (
+            f"feature NOT IN ({', '.join(['?'] * len(features))}) "
+            "AND feature <> 'research' AND feature NOT LIKE '%%_research'"
+        )
+        params.extend(features)
+    row = conn.execute(
+        f"""
+        SELECT COALESCE(SUM(calls), 0)
+        FROM {TABLE_NAME}
+        WHERE date_pt = ?
+          AND method = 'search.list'
+          AND {predicate}
+        """,
+        params,
+    ).fetchone()
+    return int((row or [0])[0] or 0)
+
+
 def require_youtube_quota_available(*, feature: str, method: str, calls: int = 1) -> None:
     clean_feature = str(feature or "other").strip().lower()
-    if clean_feature != "research" and not clean_feature.endswith("_research"):
+    clean_method = str(method or "unknown").strip()
+    requested_calls = max(0, int(calls or 0))
+    if requested_calls <= 0:
         return
-    cap = research_daily_cap()
-    requested = max(0, int(calls or 0)) * unit_cost(method)
+    is_research = _is_research_feature(clean_feature)
+    if clean_method != "search.list" and not is_research:
+        return
     conn = get_db()
     try:
         ensure_youtube_quota_table(conn)
-        used = research_units_for_date(conn)
+        if clean_method == "search.list":
+            share_name, search_cap = _search_share(clean_feature)
+            search_used = search_calls_for_share(conn, share_name)
+            total_search_used = search_calls_for_date(conn)
+            if search_used + requested_calls > search_cap:
+                raise YoutubeQuotaCapExceeded(
+                    f"YouTube {share_name} search quota reached: used={search_used} "
+                    f"requested={requested_calls} cap={search_cap} date_pt={quota_date_pt()}"
+                )
+            if total_search_used + requested_calls > YOUTUBE_SEARCH_DAILY_LIMIT:
+                raise YoutubeQuotaCapExceeded(
+                    f"YouTube total search quota reached: used={total_search_used} "
+                    f"requested={requested_calls} cap={YOUTUBE_SEARCH_DAILY_LIMIT} date_pt={quota_date_pt()}"
+                )
+        if is_research:
+            cap = research_daily_cap()
+            used = research_units_for_date(conn)
+            requested_units = requested_calls * unit_cost(clean_method)
+            if cap and used + requested_units > cap:
+                raise YoutubeQuotaCapExceeded(
+                    f"YouTube research quota cap reached: used={used} requested={requested_units} "
+                    f"cap={cap} date_pt={quota_date_pt()}"
+                )
         conn.commit()
     finally:
         conn.close()
-    if cap and used + requested > cap:
-        raise YoutubeQuotaCapExceeded(
-            f"YouTube research quota cap reached: used={used} requested={requested} cap={cap} date_pt={today_pt()}"
-        )
 
 
-def youtube_quota_runtime_budgets(conn=None, *, discovery_budget: int = 4000) -> dict[str, int]:
+def youtube_quota_runtime_budgets(conn=None, *, discovery_budget: int = 4000) -> dict[str, Any]:
     owns_conn = conn is None
     if owns_conn:
         conn = get_db()
     try:
         ensure_youtube_quota_table(conn)
         payload = {
+            "date_pt": quota_date_pt(),
+            "total_units_used": total_units_for_date(conn),
             "discovery_budget": max(0, int(discovery_budget)),
             "discovery_used": total_units_for_date(conn, include_features=DISCOVERY_QUOTA_FEATURES),
+            "discovery_search_cap": DISCOVERY_SEARCH_DAILY_CAP,
+            "discovery_search_used": search_calls_for_date(conn, include_features=DISCOVERY_QUOTA_FEATURES),
             "research_cap": research_daily_cap(),
             "research_used": research_units_for_date(conn),
+            "research_search_cap": RESEARCH_SEARCH_DAILY_CAP,
+            "research_search_used": search_calls_for_share(conn, "research"),
+            "other_search_cap": OTHER_SEARCH_DAILY_CAP,
+            "other_search_used": search_calls_for_share(conn, "other"),
+            "total_search_cap": YOUTUBE_SEARCH_DAILY_LIMIT,
+            "total_search_used": search_calls_for_date(conn),
         }
         if owns_conn:
             conn.commit()

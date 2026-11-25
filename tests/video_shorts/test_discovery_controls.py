@@ -58,6 +58,7 @@ def test_discovery_quota_uses_only_reserved_discovery_features(monkeypatch):
         return 1200
 
     monkeypatch.setattr(discovery_automation, "total_units_for_date", total)
+    monkeypatch.setattr(discovery_automation, "search_calls_for_date", lambda *_args, **_kwargs: 12)
     status = discovery_automation._discovery_quota_budget_status(
         object(),
         {
@@ -70,16 +71,78 @@ def test_discovery_quota_uses_only_reserved_discovery_features(monkeypatch):
 
     assert captured["include_features"] == youtube_quota.DISCOVERY_QUOTA_FEATURES
     assert status["used"] == 1200
+    assert status["search_used"] == 12
+    assert status["search_budget"] == 70
     assert status["would_exceed"] is False
+
+
+def test_quota_day_changes_at_midnight_pacific():
+    assert youtube_quota.quota_date_pt(datetime(2026, 11, 25, 7, 59, tzinfo=timezone.utc)) == "2026-11-24"
+    assert youtube_quota.quota_date_pt(datetime(2026, 11, 25, 8, 0, tzinfo=timezone.utc)) == "2026-11-25"
+
+
+def test_discovery_catchup_schedule_uses_requested_pacific_hours():
+    next_slot = discovery_automation._next_offpeak_slot_utc(
+        datetime(2026, 11, 24, 18, 0, tzinfo=timezone.utc),
+        discovery_automation.DEFAULT_DISCOVERY_RUN_HOURS_PT,
+        4,
+    )
+    assert next_slot == datetime(2026, 11, 24, 21, 0)
+
+
+def test_search_shares_are_counted_separately(monkeypatch):
+    raw_conn = duckdb.connect(":memory:")
+    youtube_quota.ensure_youtube_quota_table(raw_conn)
+    raw_conn.execute(
+        """
+        INSERT INTO youtube_data_api_unit_usage
+            (date_pt, feature, method, calls, units)
+        VALUES
+            (?, 'discovery_search', 'search.list', 70, 7000),
+            (?, 'research', 'search.list', 8, 800),
+            (?, 'women_hormones_research', 'search.list', 12, 1200),
+            (?, 'publish', 'search.list', 6, 600),
+            (?, 'other', 'search.list', 4, 400)
+        """,
+        [youtube_quota.today_pt()] * 5,
+    )
+
+    class Conn:
+        def execute(self, sql, params=None):
+            return raw_conn.execute(sql, params or [])
+
+        def commit(self):
+            raw_conn.commit()
+
+        def close(self):
+            pass
+
+    monkeypatch.setattr(youtube_quota, "get_db", Conn)
+    monkeypatch.setattr(youtube_quota, "ensure_youtube_quota_table", lambda _conn: None)
+    monkeypatch.setattr(
+        youtube_quota,
+        "table_columns",
+        lambda *_args: {"date_pt", "feature", "method", "calls", "units"},
+    )
+
+    with pytest.raises(youtube_quota.YoutubeQuotaCapExceeded, match="discovery search quota"):
+        youtube_quota.require_youtube_quota_available(feature="discovery_search", method="search.list")
+    with pytest.raises(youtube_quota.YoutubeQuotaCapExceeded, match="research search quota"):
+        youtube_quota.require_youtube_quota_available(feature="new_topic_research", method="search.list")
+    with pytest.raises(youtube_quota.YoutubeQuotaCapExceeded, match="other search quota"):
+        youtube_quota.require_youtube_quota_available(feature="publish", method="search.list")
 
 
 def test_research_cap_blocks_before_next_request(monkeypatch):
     class Conn:
-        def execute(self, _sql, _params=None):
+        value = 0
+
+        def execute(self, sql, _params=None):
+            self.value = 0 if "SUM(calls)" in sql else 1950
             return self
 
         def fetchone(self):
-            return (1950,)
+            return (self.value,)
 
         def commit(self):
             pass

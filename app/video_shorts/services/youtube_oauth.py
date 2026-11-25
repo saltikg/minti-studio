@@ -17,7 +17,10 @@ from app.video_shorts.config import (
     YOUTUBE_OAUTH_SCOPES,
     YOUTUBE_REDIRECT_URI,
 )
-from app.video_shorts.services.youtube_quota import record_youtube_data_api_call
+from app.video_shorts.services.youtube_quota import (
+    record_youtube_data_api_call,
+    require_youtube_quota_available,
+)
 
 DEFAULT_SCOPES = [
     "https://www.googleapis.com/auth/youtube.upload",
@@ -446,6 +449,7 @@ def find_exact_title_video(
     youtube = build_authenticated_youtube(user_id=user_id, brand_id=brand_id)
     if not youtube:
         raise ValueError("No refresh token is available for YouTube duplicate check.")
+    require_youtube_quota_available(feature="publish", method="search.list")
     response = youtube.search().list(
         part="snippet",
         channelId=clean_channel_id,

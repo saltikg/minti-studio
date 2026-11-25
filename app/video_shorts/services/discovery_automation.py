@@ -9,8 +9,10 @@ from flask import current_app
 
 from app.video_shorts.services.db import get_db, table_columns
 from app.video_shorts.services.youtube_quota import (
+    DISCOVERY_SEARCH_DAILY_CAP,
     DISCOVERY_QUOTA_FEATURES,
     ensure_youtube_quota_table,
+    search_calls_for_date,
     today_pt,
     total_units_for_date,
 )
@@ -23,6 +25,7 @@ SUMMARY_TABLE = "discovery_keyword_generation_summaries"
 DEFAULT_LOCK_MINUTES = 45
 AUTO_GENERATE_COLUMN = "last_keyword_auto_generated_at"
 DEFAULT_DISCOVERY_DAILY_YOUTUBE_UNIT_BUDGET = 4000
+DEFAULT_DISCOVERY_RUN_HOURS_PT = [1, 9, 13, 17]
 
 
 def _utc_now() -> datetime:
@@ -51,7 +54,7 @@ def _parse_offpeak_hours(value: Any) -> List[int]:
                 continue
             if 0 <= hour <= 23 and hour not in hours:
                 hours.append(hour)
-    return sorted(hours) or [1, 2, 3, 4]
+    return sorted(hours) or list(DEFAULT_DISCOVERY_RUN_HOURS_PT)
 
 
 def _json_hours(hours: List[int]) -> str:
@@ -212,11 +215,21 @@ def _discovery_quota_budget_status(conn, control: Dict[str, Any]) -> Dict[str, A
     # usage must never consume the discovery automation budget.
     used = total_units_for_date(conn, today_pt(), include_features=DISCOVERY_QUOTA_FEATURES)
     estimate = _estimate_discovery_run_youtube_units(control)
+    search_used = search_calls_for_date(conn, today_pt(), include_features=DISCOVERY_QUOTA_FEATURES)
+    search_estimate = _parse_int(control.get("max_keywords_per_cycle"), 1, minimum=1, maximum=10)
     return {
         "budget": budget,
         "used": used,
         "estimate": estimate,
-        "would_exceed": bool(budget and used + estimate > budget),
+        "search_budget": DISCOVERY_SEARCH_DAILY_CAP,
+        "search_used": search_used,
+        "search_estimate": search_estimate,
+        "would_exceed_units": bool(budget and used + estimate > budget),
+        "would_exceed_searches": bool(search_used + search_estimate > DISCOVERY_SEARCH_DAILY_CAP),
+        "would_exceed": bool(
+            (budget and used + estimate > budget)
+            or search_used + search_estimate > DISCOVERY_SEARCH_DAILY_CAP
+        ),
     }
 
 
@@ -428,7 +441,9 @@ def update_discovery_automation_control(updates: Dict[str, Any]) -> Dict[str, An
         enabled = bool(updates.get("enabled")) if "enabled" in updates else bool(current.get("enabled"))
         paused_reason = str(updates.get("paused_reason", current.get("paused_reason") or "") or "").strip()[:500]
         runs_per_day = _parse_int(updates.get("runs_per_day", current.get("runs_per_day")), 1, minimum=1, maximum=24)
-        hours = _parse_offpeak_hours(updates.get("offpeak_hours_pt", current.get("offpeak_hours_pt") or [1, 2, 3, 4]))
+        hours = _parse_offpeak_hours(
+            updates.get("offpeak_hours_pt", current.get("offpeak_hours_pt") or DEFAULT_DISCOVERY_RUN_HOURS_PT)
+        )
         max_keywords = _parse_int(updates.get("max_keywords_per_cycle", current.get("max_keywords_per_cycle")), 1, minimum=1, maximum=10)
         max_results = _parse_int(updates.get("max_results_per_keyword", current.get("max_results_per_keyword")), 15, minimum=1, maximum=50)
         max_channels = _parse_int(
@@ -598,10 +613,14 @@ def run_discovery_automation_cycle(*, manual: bool = False, require_enabled: boo
         quota_status = _discovery_quota_budget_status(conn, control)
         if quota_status.get("would_exceed"):
             current_app.logger.warning(
-                "discovery skipped: quota budget used=%s estimate=%s budget=%s date_pt=%s",
+                "discovery skipped: unit_used=%s unit_estimate=%s unit_budget=%s "
+                "search_used=%s search_estimate=%s search_budget=%s date_pt=%s",
                 quota_status.get("used"),
                 quota_status.get("estimate"),
                 quota_status.get("budget"),
+                quota_status.get("search_used"),
+                quota_status.get("search_estimate"),
+                quota_status.get("search_budget"),
                 today_pt(),
             )
             _mark_control_finished(conn)
