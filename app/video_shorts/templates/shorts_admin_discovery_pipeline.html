@@ -118,7 +118,7 @@
     }
     .discovery-frame-review {
       display: grid;
-      grid-template-columns: minmax(180px, 280px) minmax(600px, 1fr);
+      grid-template-columns: minmax(180px, 240px) minmax(0, 1fr);
       gap: 14px;
       align-items: start;
     }
@@ -129,8 +129,10 @@
     }
     .discovery-frame-strip {
       display: grid;
-      grid-template-columns: repeat(5, minmax(112px, 1fr));
+      grid-template-columns: repeat(5, minmax(150px, 213px));
       gap: 7px;
+      overflow-x: auto;
+      padding-bottom: 2px;
     }
     .discovery-frame-link {
       position: relative;
@@ -143,7 +145,7 @@
     .discovery-frame-link img {
       display: block;
       width: 100%;
-      aspect-ratio: 16 / 9;
+      height: 120px;
       object-fit: cover;
     }
     .discovery-frame-time {
@@ -162,7 +164,6 @@
     .discovery-keyboard-help { margin-left: auto; }
     @media (max-width: 1100px) {
       .discovery-frame-review { grid-template-columns: 1fr; }
-      .discovery-frame-strip { min-width: 650px; }
     }
     .discovery-greeting-preview {
       display: flex;
@@ -1053,7 +1054,7 @@
               <tr class="discovery-frame-review-row" data-frame-review-lead-id="{{ lead.id }}" data-channel-url="{{ lead.channel_url or ('https://www.youtube.com/channel/' ~ lead.youtube_channel_id) }}" tabindex="0">
                 <td colspan="21">
                   <div class="discovery-frame-review" data-frame-review-content="{{ lead.id }}">
-                    <div class="discovery-frame-meta">Preparing real video frames…</div>
+                    <div class="discovery-frame-meta">Frames pending</div>
                   </div>
                 </td>
               </tr>
@@ -1537,11 +1538,11 @@
         }
         const status = String((review || {}).status || 'pending');
         if (status === 'frames_failed') {
-          panel.innerHTML = `<div class="discovery-frame-meta"><strong>Frames unavailable.</strong><div class="discovery-muted">${escapeHtml(review.error || 'Frame extraction failed.')}</div><a href="${escapeHtml(row.getAttribute('data-channel-url') || '#')}" target="_blank" rel="noopener">Open on YouTube</a></div>`;
+          panel.innerHTML = `<div class="discovery-frame-meta"><strong>${escapeHtml(review.error || 'Frames unavailable')}</strong> · <a href="${escapeHtml(row.getAttribute('data-channel-url') || '#')}" target="_blank" rel="noopener">Open on YouTube</a></div>`;
           return;
         }
         if (status !== 'completed' || !(review.frames || []).length) {
-          panel.innerHTML = '<div class="discovery-frame-meta">Preparing real video frames…</div>';
+          panel.innerHTML = '<div class="discovery-frame-meta">Frames pending</div>';
           return;
         }
         const duration = Number(review.duration_seconds || 0);

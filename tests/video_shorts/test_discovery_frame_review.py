@@ -49,11 +49,44 @@ def test_extract_frames_seeks_before_input_and_creates_five(monkeypatch, tmp_pat
     frames = review._extract_frames(
         {"video_id": "video-1", "duration_seconds": 1000},
         tmp_path,
-        review.time.monotonic() + 60,
+        review.time.monotonic() + 90,
     )
     assert [item["percentage"] for item in frames] == [10, 30, 50, 70, 90]
     assert all(command.index("-ss") < command.index("-i") for command in commands)
-    assert all("scale=480:-2:force_original_aspect_ratio=decrease" in command for command in commands)
+    assert all("scale=240:-2:force_original_aspect_ratio=decrease" in command for command in commands)
+    assert len(commands) == 5
+
+
+def test_stream_info_uses_ingest_proxy_cookies_and_bgutil(monkeypatch, tmp_path):
+    captured = {}
+    cookie_file = tmp_path / "cookies.txt"
+    cookie_file.write_text("cookies")
+    monkeypatch.setenv("INGEST_PROXY_URL", "http://user:pass@proxy.test:823")
+    monkeypatch.setenv("INGEST_PROXY_COOKIES", str(cookie_file))
+    monkeypatch.setattr(review.secrets, "token_hex", lambda _size: "session123")
+
+    class YoutubeDL:
+        def __init__(self, options):
+            captured.update(options)
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *_args):
+            return None
+
+        def extract_info(self, _url, download=False):
+            assert download is False
+            return {"url": "https://stream.test/video", "http_headers": {"User-Agent": "test"}}
+
+    monkeypatch.setattr(review, "yt_dlp", SimpleNamespace(YoutubeDL=YoutubeDL))
+    stream_url, headers, proxy = review._stream_info("video-1")
+    assert stream_url == "https://stream.test/video"
+    assert headers == {"User-Agent": "test"}
+    assert ";sessid.session123" in proxy
+    assert captured["proxy"] == proxy
+    assert captured["cookiefile"] == str(cookie_file)
+    assert captured["extractor_args"]["youtubepot-bgutilhttp"]["base_url"] == ["http://127.0.0.1:4416"]
 
 
 def test_ai_review_normalizes_dont_promote(monkeypatch, tmp_path):
@@ -69,6 +102,8 @@ def test_ai_review_normalizes_dont_promote(monkeypatch, tmp_path):
     )
 
     class Client:
+        request = None
+
         def with_options(self, **_kwargs):
             return self
 
@@ -80,15 +115,19 @@ def test_ai_review_normalizes_dont_promote(monkeypatch, tmp_path):
         def completions(self):
             return self
 
-        def create(self, **_kwargs):
+        def create(self, **kwargs):
+            self.request = kwargs
             return response
 
-    monkeypatch.setattr(review, "_openai_client", Client())
+    client = Client()
+    monkeypatch.setattr(review, "_openai_client", client)
     monkeypatch.setattr(review, "OPENAI_MODEL", "gpt-4.1-mini")
     result = review._ai_review(paths, review.time.monotonic() + 30)
     assert result["label"] == "DON'T PROMOTE"
     assert result["reason"] == "Only slides."
     assert result["cost_usd"] > 0
+    content = client.request["messages"][0]["content"]
+    assert len([item for item in content if item["type"] == "image_url"]) == 5
 
 
 def test_safe_error_redacts_stream_and_proxy_urls():
@@ -100,3 +139,11 @@ def test_safe_error_redacts_stream_and_proxy_urls():
     assert "proxy.test" not in message
     assert "googlevideo.test" not in message
     assert message.count("[redacted-url]") == 2
+
+
+def test_public_errors_are_short_and_categorized():
+    assert review._error_code("Sign in to confirm you're not a bot") == "bot_check"
+    assert review._error_code("ffmpeg timed out") == "timeout"
+    assert review._public_error("bot_check") == "Frames unavailable (bot check)"
+    assert review._public_error("timeout") == "Frames unavailable (timeout)"
+    assert review._public_error("extraction") == "Frames unavailable"

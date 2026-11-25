@@ -15,17 +15,30 @@ if str(ROOT) not in sys.path:
 load_dotenv(ROOT / ".env")
 
 from app import create_app
-from app.video_shorts.services.discovery_frame_review import process_next_discovery_frame_review
+from app.video_shorts.services.discovery_frame_review import (
+    process_next_discovery_frame_review,
+    requeue_failed_frame_reviews,
+    resize_cached_frame_reviews,
+)
 
 
 def main() -> int:
     parser = argparse.ArgumentParser()
     parser.add_argument("--count", type=int, default=1)
+    parser.add_argument("--requeue-failed", action="store_true")
+    parser.add_argument("--resize-existing", action="store_true")
+    parser.add_argument("--maintenance-limit", type=int, default=1000)
     args = parser.parse_args()
     app = create_app()
     results = []
     with app.app_context():
-        for _ in range(max(1, min(100, args.count))):
+        if args.resize_existing:
+            resized = resize_cached_frame_reviews(limit=args.maintenance_limit)
+            print(json.dumps({"resize_existing": resized}, sort_keys=True), flush=True)
+        if args.requeue_failed:
+            requeued = requeue_failed_frame_reviews(limit=args.maintenance_limit)
+            print(json.dumps({"requeued_failed": requeued}, sort_keys=True), flush=True)
+        for _ in range(max(0, min(100, args.count))):
             result = process_next_discovery_frame_review()
             if not result:
                 break

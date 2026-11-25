@@ -10,6 +10,7 @@ import shutil
 import subprocess
 import tempfile
 import time
+from concurrent.futures import ThreadPoolExecutor, TimeoutError as FuturesTimeoutError, as_completed
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any, Dict, Iterable, Optional
@@ -35,8 +36,10 @@ DECISION_TABLE = "discovery_lead_review_decisions"
 FRAME_PERCENTAGES = (10, 30, 50, 70, 90)
 MIN_DURATION_SECONDS = 5 * 60
 MAX_DURATION_SECONDS = 60 * 60
-LEAD_TIMEOUT_SECONDS = 60
+LEAD_TIMEOUT_SECONDS = 90
 CACHE_DAYS = 14
+FRAME_WIDTH = 240
+FRAME_TARGET_BYTES = 15 * 1024
 VISION_PROMPT = """Inspect these five real frames from one YouTube video. Is the same person talking to camera in most frames? Interviews and podcasts with visible speakers count. Slides-only, b-roll, faceless videos, gameplay, and crafts close-ups do not.
 
 Return strict JSON only: {"label":"PROMOTE|DON'T PROMOTE","reason":"one short reason"}."""
@@ -47,6 +50,22 @@ def _safe_error(error: Any) -> str:
     message = re.sub(r"https?://\S+", "[redacted-url]", message)
     message = re.sub(r"(?i)(proxy|authorization|cookie)(?:=|:)[^\s,;]+", r"\1=[redacted]", message)
     return message[:800]
+
+
+def _error_code(error: Any) -> str:
+    message = str(error or "").lower()
+    if "sign in to confirm" in message or "not a bot" in message:
+        return "bot_check"
+    if "timeout" in message or "timed out" in message or "exceeded" in message:
+        return "timeout"
+    return "extraction"
+
+
+def _public_error(error_code: str) -> str:
+    return {
+        "bot_check": "Frames unavailable (bot check)",
+        "timeout": "Frames unavailable (timeout)",
+    }.get(str(error_code or ""), "Frames unavailable")
 
 
 def ensure_frame_review_schema(conn) -> None:
@@ -75,6 +94,9 @@ def ensure_frame_review_schema(conn) -> None:
             started_at TIMESTAMP,
             completed_at TIMESTAMP,
             expires_at TIMESTAMP,
+            retry_after TIMESTAMP,
+            error_code VARCHAR,
+            frame_width INTEGER,
             created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
             updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
         )
@@ -214,7 +236,7 @@ def _claim_next_review() -> Optional[Dict[str, Any]]:
                 SELECT r.lead_id
                 FROM {REVIEW_TABLE} r
                 JOIN discovery_leads d ON d.id = r.lead_id
-                WHERE r.status = 'pending'
+                WHERE (r.status = 'pending' OR (r.status = 'retry_wait' AND r.retry_after <= CURRENT_TIMESTAMP))
                   AND {_ready_predicate('d')}
                 ORDER BY d.last_discovered_at DESC NULLS LAST, d.id DESC
                 LIMIT 1
@@ -225,7 +247,7 @@ def _claim_next_review() -> Optional[Dict[str, Any]]:
                 started_at = CURRENT_TIMESTAMP, error = NULL, updated_at = CURRENT_TIMESTAMP
             FROM candidate
             WHERE r.lead_id = candidate.lead_id
-            RETURNING r.lead_id
+            RETURNING r.lead_id, r.attempts
             """
         ).fetchone()
         if not row:
@@ -246,6 +268,7 @@ def _claim_next_review() -> Optional[Dict[str, Any]]:
             "youtube_channel_id": str(lead[1] or ""),
             "channel_url": str(lead[2] or ""),
             "raw_json": lead[3],
+            "attempts": int(row[1] or 0),
         }
     except Exception:
         conn.rollback()
@@ -361,12 +384,15 @@ def _stream_info(video_id: str) -> tuple[str, Dict[str, str], str]:
         "no_warnings": True,
         "skip_download": True,
         "socket_timeout": 10,
-        "retries": 1,
-        "fragment_retries": 1,
-        "extractor_retries": 1,
+        "retries": 5,
+        "fragment_retries": 5,
+        "extractor_retries": 3,
         "legacy_server_connect": True,
         "nocheckcertificate": True,
-        "extractor_args": {"youtube": {"player_client": ["mweb", "default"]}},
+        "extractor_args": {
+            "youtube": {"player_client": ["mweb", "default"]},
+            "youtubepot-bgutilhttp": {"base_url": ["http://127.0.0.1:4416"]},
+        },
         "js_runtimes": {"node": {}},
     }
     cookies_path = str(os.getenv("INGEST_PROXY_COOKIES") or "").strip()
@@ -387,11 +413,10 @@ def _extract_frames(video: Dict[str, Any], work_dir: Path, deadline: float) -> l
     duration = int(video.get("duration_seconds") or 0)
     stream_url, headers, proxy_url = _stream_info(str(video.get("video_id") or ""))
     header_blob = "".join(f"{key}: {value}\r\n" for key, value in headers.items())
-    frames: list[Dict[str, Any]] = []
-    for percentage in FRAME_PERCENTAGES:
+    def extract_one(percentage: int) -> Dict[str, Any]:
         remaining = deadline - time.monotonic()
         if remaining <= 1:
-            raise TimeoutError("frame extraction exceeded 60 seconds")
+            raise TimeoutError("frame extraction exceeded 90 seconds")
         timestamp = max(1, min(duration - 1, int(round(duration * percentage / 100.0))))
         output = work_dir / f"frame_{percentage}.jpg"
         command = [FFMPEG_BIN, "-hide_banner", "-loglevel", "error", "-ss", str(timestamp)]
@@ -401,8 +426,8 @@ def _extract_frames(video: Dict[str, Any], work_dir: Path, deadline: float) -> l
             command.extend(["-headers", header_blob])
         command.extend([
             "-i", stream_url, "-frames:v", "1",
-            "-vf", "scale=480:-2:force_original_aspect_ratio=decrease",
-            "-q:v", "5", "-y", str(output),
+            "-vf", f"scale={FRAME_WIDTH}:-2:force_original_aspect_ratio=decrease",
+            "-q:v", "7", "-y", str(output),
         ])
         try:
             completed = subprocess.run(command, capture_output=True, timeout=max(1, int(remaining)), check=False)
@@ -411,8 +436,138 @@ def _extract_frames(video: Dict[str, Any], work_dir: Path, deadline: float) -> l
         if completed.returncode != 0 or not output.exists() or output.stat().st_size <= 0:
             error = completed.stderr.decode("utf-8", errors="replace")[-300:]
             raise RuntimeError(f"ffmpeg frame {percentage}% failed: {error}")
-        frames.append({"percentage": percentage, "timestamp": timestamp, "path": output})
-    return frames
+        _shrink_jpeg_to_target(output, deadline)
+        return {"percentage": percentage, "timestamp": timestamp, "path": output}
+
+    frames: list[Dict[str, Any]] = []
+    with ThreadPoolExecutor(max_workers=len(FRAME_PERCENTAGES), thread_name_prefix="discovery-frame") as executor:
+        futures = {executor.submit(extract_one, percentage): percentage for percentage in FRAME_PERCENTAGES}
+        try:
+            for future in as_completed(futures, timeout=max(1, deadline - time.monotonic())):
+                frames.append(future.result())
+        except FuturesTimeoutError as exc:
+            raise TimeoutError("frame extraction exceeded 90 seconds") from exc
+    return sorted(frames, key=lambda item: FRAME_PERCENTAGES.index(int(item["percentage"])))
+
+
+def _shrink_jpeg_to_target(path: Path, deadline: float) -> None:
+    if path.stat().st_size <= FRAME_TARGET_BYTES:
+        return
+    for quality in (10, 14):
+        remaining = deadline - time.monotonic()
+        if remaining <= 1:
+            raise TimeoutError("JPEG compression exceeded the lead timeout")
+        smaller = path.with_name(f"{path.stem}_small.jpg")
+        completed = subprocess.run(
+            [FFMPEG_BIN, "-hide_banner", "-loglevel", "error", "-i", str(path),
+             "-vf", f"scale={FRAME_WIDTH}:-2:force_original_aspect_ratio=decrease",
+             "-q:v", str(quality), "-y", str(smaller)],
+            capture_output=True,
+            timeout=max(1, int(remaining)),
+            check=False,
+        )
+        if completed.returncode != 0 or not smaller.exists():
+            break
+        smaller.replace(path)
+        if path.stat().st_size <= FRAME_TARGET_BYTES:
+            break
+
+
+def _resize_cached_jpeg(source: Path, output: Path, deadline: float) -> None:
+    remaining = deadline - time.monotonic()
+    if remaining <= 1:
+        raise TimeoutError("cached frame resize timed out")
+    completed = subprocess.run(
+        [FFMPEG_BIN, "-hide_banner", "-loglevel", "error", "-i", str(source),
+         "-vf", f"scale={FRAME_WIDTH}:-2:force_original_aspect_ratio=decrease",
+         "-q:v", "7", "-y", str(output)],
+        capture_output=True,
+        timeout=max(1, int(remaining)),
+        check=False,
+    )
+    if completed.returncode != 0 or not output.exists() or output.stat().st_size <= 0:
+        raise RuntimeError("cached frame resize failed")
+    _shrink_jpeg_to_target(output, deadline)
+
+
+def resize_cached_frame_reviews(*, limit: int = 100) -> Dict[str, int]:
+    conn = get_db()
+    try:
+        rows = conn.execute(
+            f"""
+            SELECT lead_id, frame_keys, storage_backend
+            FROM {REVIEW_TABLE}
+            WHERE status = 'completed' AND COALESCE(frame_width, 0) <> ?
+            ORDER BY completed_at DESC NULLS LAST
+            LIMIT ?
+            """,
+            [FRAME_WIDTH, max(1, min(1000, int(limit or 100)))],
+        ).fetchall()
+    finally:
+        conn.close()
+    resized = 0
+    failed = 0
+    for lead_id, raw_keys, backend in rows:
+        storage = get_media_storage(str(backend or "local"))
+        keys = _json_value(raw_keys, [])
+        work_dir = Path(tempfile.mkdtemp(prefix=f"resize_discovery_frames_{lead_id}_"))
+        deadline = time.monotonic() + LEAD_TIMEOUT_SECONDS
+        total_size = 0
+        try:
+            for index, key in enumerate(keys):
+                source = work_dir / f"source_{index}.jpg"
+                output = work_dir / f"frame_{index}.jpg"
+                source.write_bytes(storage.read_bytes(str(key)))
+                _resize_cached_jpeg(source, output, deadline)
+                storage.put_file(output, str(key))
+                total_size += output.stat().st_size
+            update_conn = get_db()
+            try:
+                update_conn.execute(
+                    f"UPDATE {REVIEW_TABLE} SET frame_width = ?, size_bytes = ?, updated_at = CURRENT_TIMESTAMP WHERE lead_id = ?",
+                    [FRAME_WIDTH, total_size, lead_id],
+                )
+                update_conn.commit()
+            finally:
+                update_conn.close()
+            resized += 1
+        except Exception as exc:
+            logger.error("Cached discovery frame resize failed lead_id=%s error=%s", lead_id, _safe_error(exc))
+            failed += 1
+        finally:
+            shutil.rmtree(work_dir, ignore_errors=True)
+    return {"selected": len(rows), "resized": resized, "failed": failed}
+
+
+def requeue_failed_frame_reviews(*, limit: int = 1000) -> int:
+    conn = get_db()
+    try:
+        result = conn.execute(
+            f"""
+            UPDATE {REVIEW_TABLE} r
+            SET status = 'pending', attempts = 0, retry_after = NULL, error = NULL,
+                error_code = NULL, completed_at = NULL, updated_at = CURRENT_TIMESTAMP
+            FROM discovery_leads d
+            WHERE d.id = r.lead_id
+              AND r.status = 'frames_failed'
+              AND {_ready_predicate('d')}
+              AND r.lead_id IN (
+                  SELECT r2.lead_id FROM {REVIEW_TABLE} r2
+                  WHERE r2.status = 'frames_failed'
+                  ORDER BY r2.updated_at DESC
+                  LIMIT ?
+              )
+            """,
+            [max(1, min(5000, int(limit or 1000)))],
+        )
+        count = max(0, int(getattr(result, "rowcount", 0) or 0))
+        conn.commit()
+        return count
+    except Exception:
+        conn.rollback()
+        raise
+    finally:
+        conn.close()
 
 
 def _frame_data_url(path: Path) -> str:
@@ -483,7 +638,8 @@ def _store_success(lead_id: int, video: Dict[str, Any], frames: list[Dict[str, A
                 published_at = ?, frame_keys = ?, frame_timestamps = ?, storage_backend = ?,
                 size_bytes = ?, elapsed_seconds = ?, ai_label = ?, ai_reason = ?, ai_model = ?,
                 ai_input_tokens = ?, ai_output_tokens = ?, ai_cost_usd = ?, error = NULL,
-                completed_at = CURRENT_TIMESTAMP, expires_at = ?, updated_at = CURRENT_TIMESTAMP
+                completed_at = CURRENT_TIMESTAMP, expires_at = ?, retry_after = NULL,
+                error_code = NULL, frame_width = ?, updated_at = CURRENT_TIMESTAMP
             WHERE lead_id = ?
             """,
             [
@@ -491,7 +647,7 @@ def _store_success(lead_id: int, video: Dict[str, Any], frames: list[Dict[str, A
                 video.get("published_at") or None, json.dumps(frame_keys), json.dumps(timestamps),
                 storage.backend_name, size_bytes, elapsed, ai.get("label"), ai.get("reason"), ai.get("model"),
                 ai.get("input_tokens", 0), ai.get("output_tokens", 0), ai.get("cost_usd", 0),
-                (datetime.now(timezone.utc) + timedelta(days=CACHE_DAYS)).replace(tzinfo=None), lead_id,
+                (datetime.now(timezone.utc) + timedelta(days=CACHE_DAYS)).replace(tzinfo=None), FRAME_WIDTH, lead_id,
             ],
         )
         conn.commit()
@@ -511,23 +667,28 @@ def _store_success(lead_id: int, video: Dict[str, Any], frames: list[Dict[str, A
     }
 
 
-def _store_failure(lead_id: int, error: Exception, elapsed: float) -> Dict[str, Any]:
-    message = _safe_error(error)
+def _store_failure(lead_id: int, error: Exception, elapsed: float, *, attempts: int) -> Dict[str, Any]:
+    error_code = _error_code(error)
+    retry_later = error_code == "bot_check" and attempts < 2
+    status = "retry_wait" if retry_later else "frames_failed"
+    message = _public_error(error_code)
     conn = get_db()
     try:
         conn.execute(
             f"""
             UPDATE {REVIEW_TABLE}
-            SET status = 'frames_failed', error = ?, elapsed_seconds = ?,
-                completed_at = CURRENT_TIMESTAMP, updated_at = CURRENT_TIMESTAMP
+            SET status = ?, error = ?, error_code = ?, elapsed_seconds = ?,
+                retry_after = CASE WHEN ? THEN CURRENT_TIMESTAMP + INTERVAL '1 hour' ELSE NULL END,
+                completed_at = CASE WHEN ? THEN NULL ELSE CURRENT_TIMESTAMP END,
+                updated_at = CURRENT_TIMESTAMP
             WHERE lead_id = ?
             """,
-            [message, elapsed, lead_id],
+            [status, message, error_code, elapsed, retry_later, retry_later, lead_id],
         )
         conn.commit()
     finally:
         conn.close()
-    return {"lead_id": lead_id, "status": "frames_failed", "error": message, "elapsed_seconds": elapsed}
+    return {"lead_id": lead_id, "status": status, "error": message, "elapsed_seconds": elapsed}
 
 
 def process_next_discovery_frame_review() -> Optional[Dict[str, Any]]:
@@ -545,11 +706,13 @@ def process_next_discovery_frame_review() -> Optional[Dict[str, Any]]:
         ai = _ai_review(frames, deadline)
         elapsed = round(time.monotonic() - started, 3)
         if elapsed > LEAD_TIMEOUT_SECONDS:
-            raise TimeoutError("frame review exceeded 60 seconds")
+            raise TimeoutError("frame review exceeded 90 seconds")
         return _store_success(int(lead["id"]), video, frames, ai, elapsed)
     except Exception as exc:
         logger.error("Discovery frame review failed lead_id=%s error=%s", lead.get("id"), _safe_error(exc))
-        return _store_failure(int(lead["id"]), exc, round(time.monotonic() - started, 3))
+        return _store_failure(
+            int(lead["id"]), exc, round(time.monotonic() - started, 3), attempts=int(lead.get("attempts") or 1)
+        )
     finally:
         shutil.rmtree(work_dir, ignore_errors=True)
 
@@ -563,7 +726,7 @@ def load_frame_reviews(conn, lead_ids: Iterable[int]) -> Dict[int, Dict[str, Any
         f"""
         SELECT lead_id, status, video_id, video_title, duration_seconds, frame_keys,
                frame_timestamps, storage_backend, size_bytes, elapsed_seconds,
-               ai_label, ai_reason, ai_model, ai_cost_usd, error, expires_at
+               ai_label, ai_reason, ai_model, ai_cost_usd, error_code, expires_at, updated_at
         FROM {REVIEW_TABLE} WHERE lead_id IN ({placeholders})
         """,
         ids,
@@ -579,7 +742,7 @@ def load_frame_reviews(conn, lead_ids: Iterable[int]) -> Dict[int, Dict[str, Any
         for index, key in enumerate(keys):
             meta = timestamps[index] if index < len(timestamps) and isinstance(timestamps[index], dict) else {}
             frames.append({
-                "url": storage.public_url(str(key), version=str(row[15] or "")),
+                "url": storage.public_url(str(key), version=str(row[16] or row[15] or "")),
                 "timestamp": int(meta.get("timestamp") or 0),
                 "percentage": int(meta.get("percentage") or 0),
             })
@@ -590,7 +753,7 @@ def load_frame_reviews(conn, lead_ids: Iterable[int]) -> Dict[int, Dict[str, Any
             "size_bytes": int(row[8] or 0), "elapsed_seconds": float(row[9] or 0),
             "ai_label": str(row[10] or ""), "ai_reason": str(row[11] or ""),
             "ai_model": str(row[12] or ""), "ai_cost_usd": float(row[13] or 0),
-            "error": str(row[14] or ""),
+            "error": _public_error(str(row[14] or "")),
         }
     if table_columns(conn, DECISION_TABLE):
         decisions = conn.execute(
