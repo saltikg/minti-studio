@@ -36,6 +36,7 @@ from app.video_shorts.services.discovery_blocklist import (
     discovery_lead_blocked_sql,
     discovery_blocklist_prompt_text,
     discovery_text_is_blocked,
+    refresh_discovery_lead_categories,
 )
 from app.video_shorts.services.transcript_service import _normalize_segments_for_use
 from app.video_shorts.services.user_events import prepare_transcript_completed_transition, track_event
@@ -1417,6 +1418,7 @@ def backfill_discovery_keyword_categories() -> Dict[str, Any]:
           AND s.category_id IS NULL
         """
     )
+        refresh_discovery_lead_categories(write_conn)
         write_conn.commit()
         return {"assigned": assigned, "category_counts": category_counts, "errors": []}
     except Exception:
@@ -2399,6 +2401,16 @@ def _persist_discovery_lead(row: Dict[str, Any]) -> str:
         if "last_upload_at" in columns and row.get("last_upload_at"):
             optional_updates.append("last_upload_at = ?")
             optional_params.append(row.get("last_upload_at"))
+        if "category" in columns:
+            category = str(row.get("category") or row.get("niche") or "").strip()
+            optional_updates.append("category = COALESCE(NULLIF(?, ''), category, '')")
+            optional_params.append(category)
+        if "is_blocklisted" in columns:
+            category = str(row.get("category") or row.get("niche") or "").strip()
+            optional_updates.append("is_blocklisted = ?")
+            optional_params.append(
+                discovery_text_is_blocked(row.get("matched_keyword"), category)
+            )
         for column in (
             "face_check_verdict",
             "face_check_presenter_type",

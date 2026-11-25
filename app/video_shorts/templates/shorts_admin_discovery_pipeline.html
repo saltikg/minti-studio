@@ -611,17 +611,19 @@
       <a href="{{ url_for('video_shorts_bp.admin_discovery_lead_pipeline', export='no_email') }}" class="btn btn-sm btn-outline-info">Export no-email leads (CSV)</a>
     </div>
 
-    <div class="discovery-trend-panel">
-      <div class="discovery-trend-canvas">
-        <canvas id="discoveryTrendChart" aria-label="Discovery trend chart"></canvas>
+    {% if active_pipeline_tab == 'daily' %}
+      <div class="discovery-trend-panel">
+        <div class="discovery-trend-canvas">
+          <canvas id="discoveryTrendChart" aria-label="Discovery trend chart"></canvas>
+        </div>
       </div>
-    </div>
+    {% endif %}
 
     <div class="discovery-main-tabs" role="tablist" aria-label="Discovery pipeline sections">
-      <button type="button" class="discovery-main-tab" data-pipeline-tab="daily">Daily</button>
-      <button type="button" class="discovery-main-tab" data-pipeline-tab="keywords">Keywords</button>
-      <button type="button" class="discovery-main-tab" data-pipeline-tab="leads">Leads</button>
-      <button type="button" class="discovery-main-tab" data-pipeline-tab="settings">Settings &amp; Runs</button>
+      <a href="{{ url_for('video_shorts_bp.admin_discovery_lead_pipeline', tab='daily') }}" class="discovery-main-tab" data-pipeline-tab="daily">Daily</a>
+      <a href="{{ url_for('video_shorts_bp.admin_discovery_lead_pipeline', tab='keywords') }}" class="discovery-main-tab" data-pipeline-tab="keywords">Keywords</a>
+      <a href="{{ url_for('video_shorts_bp.admin_discovery_lead_pipeline', tab='leads', filter=lead_filter, face_verdict=face_verdict, per_page=per_page, lead_sort=lead_sort, lead_dir=lead_dir) }}" class="discovery-main-tab" data-pipeline-tab="leads">Leads</a>
+      <a href="{{ url_for('video_shorts_bp.admin_discovery_lead_pipeline', tab='settings') }}" class="discovery-main-tab" data-pipeline-tab="settings">Settings &amp; Runs</a>
     </div>
 
     <div data-pipeline-panel="daily">
@@ -1059,7 +1061,7 @@
       const tabButtons = Array.from(document.querySelectorAll('[data-pipeline-tab]'));
       const panels = Array.from(document.querySelectorAll('[data-pipeline-panel]'));
 
-      function showTab(tabName, updateUrl) {
+      function showTab(tabName) {
         const resolved = ['daily', 'keywords', 'leads', 'settings'].includes(tabName) ? tabName : 'daily';
         tabButtons.forEach((button) => {
           const isActive = button.getAttribute('data-pipeline-tab') === resolved;
@@ -1069,17 +1071,9 @@
         panels.forEach((panel) => {
           panel.classList.toggle('is-active', panel.getAttribute('data-pipeline-panel') === resolved);
         });
-        if (updateUrl && window.history && window.URL) {
-          const url = new URL(window.location.href);
-          url.searchParams.set('tab', resolved);
-          window.history.replaceState({}, '', url.toString());
-        }
       }
 
-      tabButtons.forEach((button) => {
-        button.addEventListener('click', () => showTab(button.getAttribute('data-pipeline-tab'), true));
-      });
-      showTab(activeTab, false);
+      showTab(activeTab);
     })();
 
     (function () {

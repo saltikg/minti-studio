@@ -26660,7 +26660,7 @@ def admin_discovery_lead_pipeline():
         daily_approved_by_keyword: Dict[str, Dict[str, int]] = {day.isoformat(): {} for day in daily_dates}
         daily_new_categories: Dict[str, List[Dict[str, Any]]] = {day.isoformat(): [] for day in daily_dates}
 
-        if has_discovery:
+        if has_discovery and (active_pipeline_tab == "leads" or wants_csv):
             has_promotion_columns = "autopilot_lead_id" in discovery_columns
             sweetspot_score_sql = "sweetspot_score" if "sweetspot_score" in discovery_columns else "NULL"
             best_source_video_minutes_sql = "best_source_video_minutes" if "best_source_video_minutes" in discovery_columns else "NULL"
@@ -26699,7 +26699,7 @@ def admin_discovery_lead_pipeline():
                 rows = conn.execute(
                     f"""
                     SELECT channel_title, channel_url, subscriber_count,
-                           COALESCE(raw_json->>'category', raw_json->>'niche', '') AS category,
+                           COALESCE(NULLIF(category, ''), raw_json->>'category', raw_json->>'niche', '') AS category,
                            matched_keyword, {last_upload_at_sql} AS last_upload_at,
                            website, email_source_url, {already_posting_shorts_sql} AS already_posting_shorts
                     FROM discovery_leads
@@ -26720,9 +26720,9 @@ def admin_discovery_lead_pipeline():
             if has_promotion_columns:
                 ready_to_promote_sql = f"""
                 WHERE icp_fit IS TRUE
-                  AND COALESCE(creator_email, '') <> ''
-                  AND COALESCE(autopilot_lead_id, '') = ''
-                  AND COALESCE(status, '') NOT IN ('already_lead', 'dismissed')
+                  AND creator_email IS NOT NULL AND creator_email <> ''
+                  AND (autopilot_lead_id IS NULL OR CAST(autopilot_lead_id AS VARCHAR) = '')
+                  AND (status IS NULL OR status NOT IN ('already_lead', 'dismissed'))
                   AND NOT ({discovery_blocked_sql})
                   AND NOT EXISTS (
                       SELECT 1
@@ -26733,8 +26733,8 @@ def admin_discovery_lead_pipeline():
             else:
                 ready_to_promote_sql = f"""
                 WHERE icp_fit IS TRUE
-                  AND COALESCE(creator_email, '') <> ''
-                  AND COALESCE(status, '') NOT IN ('already_lead', 'dismissed')
+                  AND creator_email IS NOT NULL AND creator_email <> ''
+                  AND (status IS NULL OR status NOT IN ('already_lead', 'dismissed'))
                   AND NOT ({discovery_blocked_sql})
                   AND NOT EXISTS (
                       SELECT 1
@@ -26780,44 +26780,7 @@ def admin_discovery_lead_pipeline():
                 "pending_email_enrichment": int(total_row[3] or 0),
             }
             seed_summary["promoted_leads"] = int(total_row[4] or 0)
-            ready_to_promote_row = conn.execute(f"SELECT COUNT(*) FROM discovery_leads {ready_to_promote_sql}").fetchone()
-            ready_to_promote_count = int((ready_to_promote_row[0] if ready_to_promote_row else 0) or 0)
-            if "first_seen_at" in discovery_columns and "icp_fit" in discovery_columns:
-                for row in conn.execute(
-                    """
-                    SELECT CAST(first_seen_at AS DATE), COUNT(*)
-                    FROM discovery_leads
-                    WHERE first_seen_at >= ?
-                      AND icp_fit IS TRUE
-                    GROUP BY 1
-                    """,
-                    [trend_start],
-                ).fetchall():
-                    if row[0]:
-                        trend_qualified[str(row[0])] = int(row[1] or 0)
-            if "first_seen_at" in discovery_columns:
-                for row in conn.execute(
-                    """
-                    SELECT
-                        CAST(first_seen_at AS DATE),
-                        COALESCE(NULLIF(matched_keyword, ''), 'unknown'),
-                        COUNT(*),
-                        SUM(CASE WHEN icp_fit IS TRUE THEN 1 ELSE 0 END)
-                    FROM discovery_leads
-                    WHERE first_seen_at >= ?
-                    GROUP BY 1, 2
-                    """,
-                    [daily_start],
-                ).fetchall():
-                    day_key = str(row[0]) if row[0] else ""
-                    if day_key in daily_found_by_keyword:
-                        keyword = str(row[1] or "unknown")
-                        daily_found_by_keyword[day_key][keyword] = int(row[2] or 0)
-                        daily_found_icp_by_keyword[day_key][keyword] = int(row[3] or 0)
-            filtered_row = conn.execute(f"SELECT COUNT(*) FROM discovery_leads {ready_filter_sql}").fetchone()
-            filtered_total = int((filtered_row[0] if filtered_row else 0) or 0)
-            total_pages = max(1, int(math.ceil(filtered_total / per_page))) if filtered_total else 1
-            row_limit = filtered_total if wants_csv else per_page
+            row_limit = 1000000 if wants_csv else per_page
             row_offset = 0 if wants_csv else offset
             lead_sort_sql_map = {
                 "found": "first_seen_at",
@@ -26832,6 +26795,62 @@ def admin_discovery_lead_pipeline():
             lead_order_direction = "ASC" if lead_dir == "asc" else "DESC"
             lead_nulls = "NULLS FIRST" if lead_dir == "asc" else "NULLS LAST"
             lead_tie_order = "last_discovered_at DESC NULLS LAST, last_seen_at DESC NULLS LAST, id DESC"
+            if lead_filter == "ready_to_promote":
+                eligibility_rows = conn.execute(
+                    f"""
+                    WITH eligible AS MATERIALIZED (
+                        SELECT id, {lead_order_column} AS order_value,
+                               last_discovered_at, last_seen_at
+                        FROM discovery_leads
+                        {ready_filter_sql}
+                    ),
+                    totals AS (
+                        SELECT COUNT(*) AS total FROM eligible
+                    ),
+                    page_ids AS (
+                        SELECT id, ROW_NUMBER() OVER () AS ordinal
+                        FROM (
+                            SELECT id
+                            FROM eligible
+                            ORDER BY order_value {lead_order_direction} {lead_nulls},
+                                     last_discovered_at DESC NULLS LAST,
+                                     last_seen_at DESC NULLS LAST,
+                                     id DESC
+                            LIMIT ? OFFSET ?
+                        ) ordered_ids
+                    )
+                    SELECT totals.total, page_ids.id
+                    FROM totals
+                    LEFT JOIN page_ids ON TRUE
+                    ORDER BY page_ids.ordinal
+                    """,
+                    [row_limit, row_offset],
+                ).fetchall()
+                filtered_total = int((eligibility_rows[0][0] if eligibility_rows else 0) or 0)
+                ready_to_promote_count = filtered_total
+                lead_ids = [row[1] for row in eligibility_rows if row[1] is not None]
+            else:
+                ready_row = conn.execute(
+                    f"SELECT COUNT(*) FROM discovery_leads {ready_to_promote_sql}"
+                ).fetchone()
+                ready_to_promote_count = int((ready_row[0] if ready_row else 0) or 0)
+                filtered_row = conn.execute(
+                    f"SELECT COUNT(*) FROM discovery_leads {ready_filter_sql}"
+                ).fetchone()
+                filtered_total = int((filtered_row[0] if filtered_row else 0) or 0)
+                id_rows = conn.execute(
+                    f"""
+                    SELECT id
+                    FROM discovery_leads
+                    {ready_filter_sql}
+                    ORDER BY {lead_order_column} {lead_order_direction} {lead_nulls}, {lead_tie_order}
+                    LIMIT ? OFFSET ?
+                    """,
+                    [row_limit, row_offset],
+                ).fetchall()
+                lead_ids = [row[0] for row in id_rows]
+            total_pages = max(1, int(math.ceil(filtered_total / per_page))) if filtered_total else 1
+            lead_id_placeholders = ",".join(["?"] * len(lead_ids)) or "NULL"
             rows = conn.execute(
                 f"""
                 SELECT
@@ -26880,12 +26899,12 @@ def admin_discovery_lead_pipeline():
                     , {already_posting_shorts_sql} AS already_posting_shorts
                     , {last_upload_at_sql} AS last_upload_at
                 FROM discovery_leads
-                {ready_filter_sql}
-                ORDER BY {lead_order_column} {lead_order_direction} {lead_nulls}, {lead_tie_order}
-                LIMIT ? OFFSET ?
+                WHERE id IN ({lead_id_placeholders})
                 """,
-                [row_limit, row_offset],
+                lead_ids,
             ).fetchall()
+            row_by_id = {row[0]: row for row in rows}
+            rows = [row_by_id[lead_id] for lead_id in lead_ids if lead_id in row_by_id]
             leads = []
             for row in rows:
                 raw_payload: Dict[str, Any] = {}
@@ -26969,7 +26988,7 @@ def admin_discovery_lead_pipeline():
                 current_app.logger.exception("Could not load discovery promote queue statuses")
                 promote_queue_count_value = 0
 
-        if has_keywords:
+        if has_keywords and active_pipeline_tab == "keywords" and not wants_csv:
             keyword_sort_sql_map = {
                 "keyword": "lower(keyword)",
                 "status": "lower(COALESCE(status, ''))",
@@ -27023,7 +27042,38 @@ def admin_discovery_lead_pipeline():
                 for row in keyword_rows
             ]
 
-        if table_columns(conn, "discovery_automation_runs"):
+        if active_pipeline_tab == "daily" and has_discovery and "first_seen_at" in discovery_columns:
+            if "icp_fit" in discovery_columns:
+                for row in conn.execute(
+                    """
+                    SELECT CAST(first_seen_at AS DATE), COUNT(*)
+                    FROM discovery_leads
+                    WHERE first_seen_at >= ? AND icp_fit IS TRUE
+                    GROUP BY 1
+                    """,
+                    [trend_start],
+                ).fetchall():
+                    if row[0]:
+                        trend_qualified[str(row[0])] = int(row[1] or 0)
+            for row in conn.execute(
+                """
+                SELECT CAST(first_seen_at AS DATE),
+                       COALESCE(NULLIF(matched_keyword, ''), 'unknown'),
+                       COUNT(*),
+                       SUM(CASE WHEN icp_fit IS TRUE THEN 1 ELSE 0 END)
+                FROM discovery_leads
+                WHERE first_seen_at >= ?
+                GROUP BY 1, 2
+                """,
+                [daily_start],
+            ).fetchall():
+                day_key = str(row[0]) if row[0] else ""
+                if day_key in daily_found_by_keyword:
+                    keyword = str(row[1] or "unknown")
+                    daily_found_by_keyword[day_key][keyword] = int(row[2] or 0)
+                    daily_found_icp_by_keyword[day_key][keyword] = int(row[3] or 0)
+
+        if active_pipeline_tab == "daily" and table_columns(conn, "discovery_automation_runs"):
             for row in conn.execute(
                 """
                 SELECT CAST(started_at AS DATE), COALESCE(SUM(search_calls), 0)
@@ -27052,9 +27102,14 @@ def admin_discovery_lead_pipeline():
                     clean_keyword = keyword.strip()
                     if clean_keyword:
                         daily_keyword_searches[day_key].add(clean_keyword)
-        category_columns = table_columns(conn, "discovery_categories")
-        keyword_stats_columns = table_columns(conn, "discovery_run_keyword_stats")
-        if category_columns and keyword_stats_columns and {"created_at", "source"}.issubset(category_columns):
+        category_columns = table_columns(conn, "discovery_categories") if active_pipeline_tab == "daily" else set()
+        keyword_stats_columns = table_columns(conn, "discovery_run_keyword_stats") if active_pipeline_tab == "daily" else set()
+        if (
+            active_pipeline_tab == "daily"
+            and category_columns
+            and keyword_stats_columns
+            and {"created_at", "source"}.issubset(category_columns)
+        ):
             if getattr(conn, "backend_name", "") == "postgres":
                 category_day_sql = "(c.created_at AT TIME ZONE 'UTC' AT TIME ZONE 'America/Los_Angeles')::date"
                 run_day_sql = "(s.run_started_at AT TIME ZONE 'UTC' AT TIME ZONE 'America/Los_Angeles')::date"
@@ -27091,7 +27146,12 @@ def admin_discovery_lead_pipeline():
         trend_series["keyword_searches"] = [trend_searches[day] for day in trend_series["dates"]]
         trend_series["qualified_leads"] = [trend_qualified[day] for day in trend_series["dates"]]
 
-        if has_discovery and "autopilot_lead_id" in discovery_columns and table_columns(conn, "lead_pipeline_events"):
+        if (
+            active_pipeline_tab == "daily"
+            and has_discovery
+            and "autopilot_lead_id" in discovery_columns
+            and table_columns(conn, "lead_pipeline_events")
+        ):
             for row in conn.execute(
                 """
                 SELECT
@@ -27114,7 +27174,7 @@ def admin_discovery_lead_pipeline():
                     keyword = str(row[1] or "unknown")
                     daily_approved_by_keyword[day_key][keyword] = int(row[2] or 0)
 
-        for day in reversed(daily_dates):
+        for day in reversed(daily_dates) if active_pipeline_tab == "daily" else []:
             day_key = day.isoformat()
             found_keywords = daily_found_by_keyword[day_key]
             found_icp_keywords = daily_found_icp_by_keyword[day_key]
@@ -27138,11 +27198,13 @@ def admin_discovery_lead_pipeline():
                 }
             )
 
-        if table_columns(conn, "seed_channel_profiles"):
+        if active_pipeline_tab == "settings" and table_columns(conn, "seed_channel_profiles"):
             seed_row = conn.execute("SELECT COUNT(*) FROM seed_channel_profiles").fetchone()
             seed_summary["seed_profiles"] = int((seed_row[0] if seed_row else 0) or 0)
 
         try:
+            if active_pipeline_tab != "settings":
+                raise LookupError("inactive settings tab")
             automation = load_discovery_automation_dashboard()
             control = automation.get("control") or {}
             for key in ("next_run_at", "last_started_at", "last_finished_at", "lock_expires_at", "updated_at"):
@@ -27151,10 +27213,14 @@ def admin_discovery_lead_pipeline():
             for run in automation.get("runs") or []:
                 run["started_at_label"] = _format_datetime_pst(run.get("started_at"))
                 run["finished_at_label"] = _format_datetime_pst(run.get("finished_at"))
+        except LookupError:
+            pass
         except Exception:
             current_app.logger.exception("Could not load discovery automation dashboard")
             automation = {"has_automation": False, "control": {}, "runs": []}
         try:
+            if active_pipeline_tab != "settings":
+                raise LookupError("inactive settings tab")
             control = automation.get("control") or {}
             trakk_usage["daily_cap"] = int(control.get("max_trakk_per_day") if control.get("max_trakk_per_day") is not None else 50)
             if has_discovery and "enrichment_attempted_at" in discovery_columns:
@@ -27168,6 +27234,8 @@ def admin_discovery_lead_pipeline():
                     [datetime.now(timezone.utc).replace(hour=0, minute=0, second=0, microsecond=0, tzinfo=None)],
                 ).fetchone()
                 trakk_usage["used_today"] = int((used_row[0] if used_row else 0) or 0)
+        except LookupError:
+            pass
         except Exception:
             current_app.logger.exception("Could not load trakk daily usage")
 

@@ -80,16 +80,7 @@ def ensure_backlog_enrichment_schema(conn) -> None:
 
 
 def _category_sql(alias: str = "d") -> str:
-    return f"""
-        COALESCE((
-            SELECT dc.name
-            FROM keyword_queue kq
-            JOIN discovery_categories dc ON dc.id = kq.category_id
-            WHERE lower(kq.keyword) = lower(COALESCE({alias}.matched_keyword, ''))
-            ORDER BY kq.updated_at DESC NULLS LAST, kq.id DESC
-            LIMIT 1
-        ), 'Uncategorized')
-    """
+    return f"COALESCE(NULLIF({alias}.category, ''), 'Uncategorized')"
 
 
 def _priority_case(category_expression: str) -> str:
@@ -117,7 +108,7 @@ def _claim_candidates(conn, *, run_id: str, limit: int) -> List[Dict[str, Any]]:
     if limit <= 0:
         return []
     category_expression = _category_sql("d")
-    blocked = discovery_blocklist_sql(["d.matched_keyword", category_expression])
+    blocked = "COALESCE(d.is_blocklisted, FALSE)"
     priority = _priority_case(category_expression)
     job_assignment = ", email_enrichment_job_id = ?" if "email_enrichment_job_id" in table_columns(conn, "discovery_leads") else ""
     job_params = [run_id] if job_assignment else []

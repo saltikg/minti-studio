@@ -68,17 +68,51 @@ def discovery_blocklist_sql(expressions: Iterable[str]) -> str:
 
 
 def discovery_lead_blocked_sql(alias: str = "discovery_leads") -> str:
-    category_expression = f"""
-        COALESCE((
-            SELECT dc.name
-            FROM keyword_queue kq
-            JOIN discovery_categories dc ON dc.id = kq.category_id
-            WHERE lower(kq.keyword) = lower(COALESCE({alias}.matched_keyword, ''))
-            ORDER BY kq.updated_at DESC NULLS LAST, kq.id DESC
-            LIMIT 1
-        ), '')
-    """
-    return discovery_blocklist_sql([f"{alias}.matched_keyword", category_expression])
+    return f"{alias}.is_blocklisted IS TRUE"
+
+
+def refresh_discovery_lead_categories(conn) -> dict[str, int]:
+    """Materialize keyword category and blocklist eligibility on discovery leads."""
+    from app.video_shorts.services.db import table_columns
+
+    lead_columns = table_columns(conn, "discovery_leads")
+    if not {"category", "is_blocklisted"}.issubset(lead_columns):
+        return {"lead_categories_updated": 0, "leads_blocklisted": 0}
+
+    category_result = conn.execute(
+        """
+        UPDATE discovery_leads AS d
+        SET category = COALESCE(
+            NULLIF((
+                SELECT dc.name
+                FROM keyword_queue kq
+                JOIN discovery_categories dc ON dc.id = kq.category_id
+                WHERE lower(kq.keyword) = lower(COALESCE(d.matched_keyword, ''))
+                ORDER BY kq.updated_at DESC NULLS LAST, kq.id DESC
+                LIMIT 1
+            ), ''),
+            NULLIF(d.category, ''),
+            NULLIF(d.raw_json->>'category', ''),
+            NULLIF(d.raw_json->>'niche', ''),
+            ''
+        )
+        """
+    )
+    blocked_predicate = discovery_blocklist_sql(["d.matched_keyword", "d.category"])
+    conn.execute(
+        f"""
+        UPDATE discovery_leads AS d
+        SET is_blocklisted = {blocked_predicate}
+        WHERE is_blocklisted IS DISTINCT FROM ({blocked_predicate})
+        """
+    )
+    blocked_row = conn.execute(
+        "SELECT COUNT(*) FROM discovery_leads WHERE is_blocklisted IS TRUE"
+    ).fetchone()
+    return {
+        "lead_categories_updated": max(0, int(getattr(category_result, "rowcount", 0) or 0)),
+        "leads_blocklisted": int((blocked_row or [0])[0] or 0),
+    }
 
 
 def apply_discovery_blocklist(conn) -> dict[str, int]:
@@ -112,8 +146,10 @@ def apply_discovery_blocklist(conn) -> dict[str, int]:
           AND {discovery_blocklist_sql(['q.keyword'])}
         """
     )
+    lead_result = refresh_discovery_lead_categories(conn)
     return {
         "categories_excluded": max(0, int(getattr(category_result, "rowcount", 0) or 0)),
         "keywords_excluded": max(0, int(getattr(keyword_result, "rowcount", 0) or 0))
         + max(0, int(getattr(uncategorized_result, "rowcount", 0) or 0)),
+        **lead_result,
     }
