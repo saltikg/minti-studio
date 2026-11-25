@@ -91,8 +91,8 @@ def test_manifest_narrated_video_has_controls_and_no_autoplay():
     )
 
     assert '<video controls playsinline preload="none"' in rendered
-    assert 'poster="/video_shorts/static/motion/autopilot.jpg"' in rendered
-    assert 'src="/video_shorts/static/motion/autopilot.mp4"' in rendered
+    assert 'poster="/video_shorts/static/motion/autopilot.jpg?v=4"' in rendered
+    assert 'src="/video_shorts/static/motion/autopilot.mp4?v=4"' in rendered
     assert " autoplay" not in rendered
 
 

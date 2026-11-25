@@ -186,12 +186,14 @@ def _motion_html(name: str, caption: str) -> str:
                 flags=re.I,
             ).strip()
             motion_caption = f"Example Short: {motion_caption}" if motion_caption else "Example Short"
+        version = str(manifest_video.get("version") or "").strip()
+        version_suffix = f"?v={version}" if version else ""
         video_url = escape(
-            url_for("video_shorts_bp.static", filename=str(manifest_video["filename"])),
+            url_for("video_shorts_bp.static", filename=str(manifest_video["filename"])) + version_suffix,
             quote=True,
         )
         poster_url = escape(
-            url_for("video_shorts_bp.static", filename=str(manifest_video["poster"])),
+            url_for("video_shorts_bp.static", filename=str(manifest_video["poster"])) + version_suffix,
             quote=True,
         )
         safe_caption = escape(motion_caption)
