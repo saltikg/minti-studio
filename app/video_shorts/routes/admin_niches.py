@@ -59,17 +59,14 @@ def admin_niches():
         selected, rows = load_niche_snapshot(conn, niches[0]["slug"])
         selected_slug = niches[0]["slug"]
 
-    clinicians_only = request.args.get("clinicians", "1") != "0"
     tab = str(request.args.get("tab") or "pool").strip().lower()
     if tab not in {"pool", "excluded", "near_misses"}:
         tab = "pool"
-    pool_all = final_niche_pool(rows, clinicians_only=False)
-    pool_clinicians = final_niche_pool(rows, clinicians_only=True)
-    pool = pool_clinicians if clinicians_only else pool_all
+    pool = final_niche_pool(rows, clinicians_only=False)
     if tab == "excluded":
-        tab_rows = excluded_niche_rows(rows, clinicians_only=clinicians_only)
+        tab_rows = excluded_niche_rows(rows, clinicians_only=False)
     elif tab == "near_misses":
-        tab_rows = near_miss_niche_rows(rows, clinicians_only=clinicians_only)
+        tab_rows = near_miss_niche_rows(rows, clinicians_only=False)
     else:
         tab_rows = pool
     tab_rows.sort(
@@ -97,13 +94,10 @@ def admin_niches():
         snapshot_dates=snapshot_dates,
         rows=visible_rows,
         pool_size=len(pool),
-        pool_size_all=len(pool_all),
-        pool_size_clinicians=len(pool_clinicians),
         kpis=pool_kpis(pool),
-        clinicians_only=clinicians_only,
         tab=tab,
-        excluded_count=len(excluded_niche_rows(rows, clinicians_only=clinicians_only)),
-        near_miss_count=len(near_miss_niche_rows(rows, clinicians_only=clinicians_only)),
+        excluded_count=len(excluded_niche_rows(rows, clinicians_only=False)),
+        near_miss_count=len(near_miss_niche_rows(rows, clinicians_only=False)),
         subscriber_band=subscriber_band,
         outreach_status=outreach_status,
         outreach_labels=OUTREACH_LABELS,

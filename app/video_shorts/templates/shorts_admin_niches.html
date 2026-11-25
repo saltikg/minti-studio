@@ -7,7 +7,7 @@
 {% block extra_styles %}
 <style>
   .niche-toolbar, .niche-filters, .niche-kpis { display: grid; gap: 12px; }
-  .niche-toolbar { grid-template-columns: minmax(260px, 2fr) minmax(180px, 1fr) auto; align-items: end; margin-bottom: 16px; }
+  .niche-toolbar { grid-template-columns: minmax(260px, 2fr) minmax(180px, 1fr); align-items: end; margin-bottom: 16px; }
   .niche-filters { grid-template-columns: repeat(3, minmax(180px, 1fr)); align-items: end; margin: 16px 0; }
   .niche-kpis { grid-template-columns: repeat(4, minmax(150px, 1fr)); margin-bottom: 18px; }
   .niche-card, .niche-panel { border: 1px solid rgba(255,255,255,.08); border-radius: 18px; background: rgba(8,14,22,.76); box-shadow: 0 24px 48px rgba(0,0,0,.22); }
@@ -21,7 +21,6 @@
   .niche-field label { color: rgba(255,255,255,.72); display: block; font-size: 12px; font-weight: 700; margin-bottom: 5px; }
   .niche-field select, .niche-reason { border: 1px solid #cbd5e1; border-radius: 8px; background: #fff; color: #212529; min-height: 38px; padding: 8px 10px; width: 100%; }
   .niche-field select option { background: #fff; color: #212529; }
-  .niche-toggle { align-items: center; color: rgba(255,255,255,.9); display: flex; gap: 8px; min-height: 38px; }
   .niche-button { background: #0f172a; border: 1px solid rgba(255,255,255,.18); border-radius: 8px; color: #fff; cursor: pointer; font-weight: 700; min-height: 36px; padding: 7px 12px; }
   .niche-button.include { background: rgba(45,212,191,.14); border-color: rgba(45,212,191,.35); color: #8ff3d8; }
   .niche-button.exclude { background: rgba(239,68,68,.14); border-color: rgba(248,113,113,.4); color: #fca5a5; }
@@ -69,9 +68,6 @@
     <div class="niche-field"><label for="snapshot">Snapshot</label><select id="snapshot" name="snapshot" onchange="this.form.submit()">
       {% for snapshot in snapshot_dates %}<option value="{{ snapshot }}" {% if selected and selected.snapshot_date == snapshot %}selected{% endif %}>{{ snapshot }}</option>{% endfor %}
     </select></div>
-    <label class="niche-toggle"><input id="clinicians-value" type="hidden" name="clinicians" value="{{ '1' if clinicians_only else '0' }}">
-      <input type="checkbox" {% if clinicians_only %}checked{% endif %} onchange="document.getElementById('clinicians-value').value=this.checked?'1':'0';this.form.submit()"> Clinicians only
-    </label>
   </form>
 
   <div class="niche-kpis">
@@ -82,9 +78,9 @@
   </div>
 
   <div class="niche-tabs">
-    <a class="niche-tab {% if tab == 'pool' %}is-active{% endif %}" href="{{ url_for('video_shorts_bp.admin_niches', niche=selected.slug, snapshot=selected.snapshot_date, clinicians='1' if clinicians_only else '0', tab='pool') }}">Pool ({{ pool_size }})</a>
-    <a class="niche-tab {% if tab == 'near_misses' %}is-active{% endif %}" href="{{ url_for('video_shorts_bp.admin_niches', niche=selected.slug, snapshot=selected.snapshot_date, clinicians='1' if clinicians_only else '0', tab='near_misses') }}">Near misses ({{ near_miss_count }})</a>
-    <a class="niche-tab {% if tab == 'excluded' %}is-active{% endif %}" href="{{ url_for('video_shorts_bp.admin_niches', niche=selected.slug, snapshot=selected.snapshot_date, clinicians='1' if clinicians_only else '0', tab='excluded') }}">Excluded ({{ excluded_count }})</a>
+    <a class="niche-tab {% if tab == 'pool' %}is-active{% endif %}" href="{{ url_for('video_shorts_bp.admin_niches', niche=selected.slug, snapshot=selected.snapshot_date, tab='pool') }}">Pool ({{ pool_size }})</a>
+    <a class="niche-tab {% if tab == 'near_misses' %}is-active{% endif %}" href="{{ url_for('video_shorts_bp.admin_niches', niche=selected.slug, snapshot=selected.snapshot_date, tab='near_misses') }}">Near misses ({{ near_miss_count }})</a>
+    <a class="niche-tab {% if tab == 'excluded' %}is-active{% endif %}" href="{{ url_for('video_shorts_bp.admin_niches', niche=selected.slug, snapshot=selected.snapshot_date, tab='excluded') }}">Excluded ({{ excluded_count }})</a>
   </div>
 
   {% if run_changes.current %}
@@ -104,7 +100,7 @@
 
   <form class="niche-filters" method="get">
     <input type="hidden" name="niche" value="{{ selected.slug }}"><input type="hidden" name="snapshot" value="{{ selected.snapshot_date }}">
-    <input type="hidden" name="clinicians" value="{{ '1' if clinicians_only else '0' }}"><input type="hidden" name="tab" value="{{ tab }}">
+    <input type="hidden" name="tab" value="{{ tab }}">
     <div class="niche-field"><label for="subscriber_band">Subscriber band</label><select id="subscriber_band" name="subscriber_band">
       <option value="">All subscribers</option><option value="1k_10k" {% if subscriber_band == '1k_10k' %}selected{% endif %}>1K–10K</option>
       <option value="10k_100k" {% if subscriber_band == '10k_100k' %}selected{% endif %}>10K–100K</option><option value="100k_plus" {% if subscriber_band == '100k_plus' %}selected{% endif %}>100K+</option>
@@ -117,7 +113,7 @@
 
   <section class="niche-panel"><div class="niche-panel-head">
     <h2>{{ selected.name }} · {{ tab | replace('_', ' ') | title }}</h2>
-    <span class="niche-muted">{{ rows | length }} shown · {{ pool_size_clinicians }} clinicians / {{ pool_size_all }} all · Snapshot {{ selected.snapshot_date }}</span>
+    <span class="niche-muted">{{ rows | length }} shown · {{ pool_size }} in pool · Snapshot {{ selected.snapshot_date }}</span>
   </div>
   {% if rows %}<div class="niche-table-wrap"><table class="niche-table"><thead><tr>
     <th>Rank</th><th class="is-left">Channel</th><th class="is-left">Credential</th><th>Subscribers</th><th>Views / 90d</th><th>Long / 90d</th><th>Shorts / 90d</th><th class="is-left">Primary niche</th><th>On-topic</th><th class="is-left">Outreach</th><th class="is-left">Override</th>
