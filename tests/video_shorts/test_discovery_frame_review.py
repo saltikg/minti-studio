@@ -89,3 +89,14 @@ def test_ai_review_normalizes_dont_promote(monkeypatch, tmp_path):
     assert result["label"] == "DON'T PROMOTE"
     assert result["reason"] == "Only slides."
     assert result["cost_usd"] > 0
+
+
+def test_safe_error_redacts_stream_and_proxy_urls():
+    message = review._safe_error(
+        "ffmpeg -http_proxy http://user:secret@proxy.test:823 "
+        "-i https://googlevideo.test/videoplayback?sig=secret"
+    )
+    assert "secret" not in message
+    assert "proxy.test" not in message
+    assert "googlevideo.test" not in message
+    assert message.count("[redacted-url]") == 2

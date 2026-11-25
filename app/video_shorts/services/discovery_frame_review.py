@@ -4,6 +4,7 @@ import base64
 import json
 import logging
 import os
+import re
 import secrets
 import shutil
 import subprocess
@@ -39,6 +40,13 @@ CACHE_DAYS = 14
 VISION_PROMPT = """Inspect these five real frames from one YouTube video. Is the same person talking to camera in most frames? Interviews and podcasts with visible speakers count. Slides-only, b-roll, faceless videos, gameplay, and crafts close-ups do not.
 
 Return strict JSON only: {"label":"PROMOTE|DON'T PROMOTE","reason":"one short reason"}."""
+
+
+def _safe_error(error: Any) -> str:
+    message = " ".join(str(error or "Frame generation failed").split())
+    message = re.sub(r"https?://\S+", "[redacted-url]", message)
+    message = re.sub(r"(?i)(proxy|authorization|cookie)(?:=|:)[^\s,;]+", r"\1=[redacted]", message)
+    return message[:800]
 
 
 def ensure_frame_review_schema(conn) -> None:
@@ -396,7 +404,10 @@ def _extract_frames(video: Dict[str, Any], work_dir: Path, deadline: float) -> l
             "-vf", "scale=480:-2:force_original_aspect_ratio=decrease",
             "-q:v", "5", "-y", str(output),
         ])
-        completed = subprocess.run(command, capture_output=True, timeout=max(1, int(remaining)), check=False)
+        try:
+            completed = subprocess.run(command, capture_output=True, timeout=max(1, int(remaining)), check=False)
+        except subprocess.TimeoutExpired as exc:
+            raise TimeoutError(f"ffmpeg frame {percentage}% exceeded the lead timeout") from exc
         if completed.returncode != 0 or not output.exists() or output.stat().st_size <= 0:
             error = completed.stderr.decode("utf-8", errors="replace")[-300:]
             raise RuntimeError(f"ffmpeg frame {percentage}% failed: {error}")
@@ -501,7 +512,7 @@ def _store_success(lead_id: int, video: Dict[str, Any], frames: list[Dict[str, A
 
 
 def _store_failure(lead_id: int, error: Exception, elapsed: float) -> Dict[str, Any]:
-    message = " ".join(str(error or "Frame generation failed").split())[:800]
+    message = _safe_error(error)
     conn = get_db()
     try:
         conn.execute(
@@ -537,7 +548,7 @@ def process_next_discovery_frame_review() -> Optional[Dict[str, Any]]:
             raise TimeoutError("frame review exceeded 60 seconds")
         return _store_success(int(lead["id"]), video, frames, ai, elapsed)
     except Exception as exc:
-        logger.exception("Discovery frame review failed lead_id=%s", lead.get("id"))
+        logger.error("Discovery frame review failed lead_id=%s error=%s", lead.get("id"), _safe_error(exc))
         return _store_failure(int(lead["id"]), exc, round(time.monotonic() - started, 3))
     finally:
         shutil.rmtree(work_dir, ignore_errors=True)
