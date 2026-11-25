@@ -57,3 +57,19 @@ def test_publish_loop_claims_only_publish_short(monkeypatch):
             False,
         )
     ]
+
+
+def test_maintenance_loop_runs_weekly_niche_refresh(monkeypatch):
+    app = Flask("scheduler-maintenance-test")
+    stop = Event()
+    calls = []
+
+    def refresh():
+        calls.append(True)
+        stop.set()
+        return None
+
+    monkeypatch.setattr(scheduler_worker.niche_outliers, "run_weekly_refresh_if_due", refresh)
+    scheduler_worker._maintenance_loop(app, stop)
+
+    assert calls == [True]

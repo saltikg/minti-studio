@@ -17,7 +17,7 @@ from app.video_shorts.config import (
     DISCOVERY_IDLE_MEM_AVAILABLE_MB_MIN,
     JOB_POLL_INTERVAL_SECONDS,
 )
-from app.video_shorts.services import scheduler_reachability, youtube_scheduling
+from app.video_shorts.services import niche_outliers, scheduler_reachability, youtube_scheduling
 from app.video_shorts.services.db import get_db, get_db_readonly
 from app.video_shorts.services.render_jobs import JOB_TYPE_PUBLISH_SHORT
 
@@ -25,6 +25,10 @@ from app.video_shorts.services.render_jobs import JOB_TYPE_PUBLISH_SHORT
 logger = logging.getLogger(__name__)
 SCHEDULER_ADVISORY_LOCK_ID = 746192442
 TICK_INTERVAL_SECONDS = max(2.0, min(5.0, float(os.getenv("SCHEDULER_TICK_SECONDS", "3") or "3")))
+MAINTENANCE_INTERVAL_SECONDS = max(
+    30.0,
+    float(os.getenv("SCHEDULER_MAINTENANCE_SECONDS", "60") or "60"),
+)
 
 
 def _mem_available_mb() -> int:
@@ -111,6 +115,24 @@ def _publish_loop(app, stop_event: threading.Event, worker_id: str) -> None:
             stop_event.wait(JOB_POLL_INTERVAL_SECONDS)
 
 
+def _maintenance_loop(app, stop_event: threading.Event) -> None:
+    while not stop_event.is_set():
+        try:
+            result = niche_outliers.run_weekly_refresh_if_due()
+            if result:
+                app.logger.info(
+                    "Weekly niche outlier refresh complete as_of=%s units=%s "
+                    "eligible_channels=%s outliers=%s",
+                    result.get("as_of"),
+                    result.get("units_used"),
+                    result.get("channels_with_3_shorts"),
+                    result.get("outlier_count"),
+                )
+        except Exception:
+            app.logger.exception("Weekly niche outlier refresh failed")
+        stop_event.wait(MAINTENANCE_INTERVAL_SECONDS)
+
+
 def run_tick_loop(
     app,
     stop_event: threading.Event,
@@ -159,6 +181,7 @@ def run_scheduler_service(*, stop_event: Optional[threading.Event] = None) -> No
         _mem_available_mb(),
     )
     publish_thread = None
+    maintenance_thread = None
     try:
         try:
             scheduler_reachability.run_startup_check(trigger="scheduler_start")
@@ -171,11 +194,20 @@ def run_scheduler_service(*, stop_event: Optional[threading.Event] = None) -> No
             daemon=False,
         )
         publish_thread.start()
+        maintenance_thread = threading.Thread(
+            target=_maintenance_loop,
+            args=(app, stop_event),
+            name="minti-scheduler-maintenance",
+            daemon=False,
+        )
+        maintenance_thread.start()
         run_tick_loop(app, stop_event, singleton_conn=lock_conn)
     finally:
         stop_event.set()
         if publish_thread is not None:
             publish_thread.join()
+        if maintenance_thread is not None:
+            maintenance_thread.join()
         try:
             if getattr(lock_conn, "backend_name", "") == "postgres":
                 lock_conn.execute(

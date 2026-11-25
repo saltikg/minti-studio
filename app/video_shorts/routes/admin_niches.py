@@ -5,6 +5,7 @@ from flask import abort, flash, redirect, render_template, request, url_for
 from app.video_shorts import video_shorts_bp
 from app.video_shorts.routes.auth import require_admin
 from app.video_shorts.services.db import get_db, get_db_readonly, table_columns
+from app.video_shorts.services.niche_outliers import load_latest_niche_outliers
 from app.video_shorts.services.niches import (
     OUTREACH_LABELS,
     apply_table_filters,
@@ -12,7 +13,6 @@ from app.video_shorts.services.niches import (
     excluded_niche_rows,
     final_niche_pool,
     list_niches,
-    load_niche_run_changes,
     load_niche_snapshot,
     load_snapshot_dates,
     near_miss_niche_rows,
@@ -60,10 +60,32 @@ def admin_niches():
         selected_slug = niches[0]["slug"]
 
     tab = str(request.args.get("tab") or "pool").strip().lower()
-    if tab not in {"pool", "excluded", "near_misses"}:
+    if tab not in {"pool", "top_shorts", "excluded", "near_misses"}:
         tab = "pool"
     pool = final_niche_pool(rows, clinicians_only=False)
-    if tab == "excluded":
+    pool_by_channel = {
+        str(row.get("youtube_channel_id") or ""): row
+        for row in pool
+    }
+    outlier_as_of, outlier_rows = load_latest_niche_outliers(
+        conn,
+        selected["id"] if selected else None,
+    )
+    outlier_rows = [
+        row for row in outlier_rows
+        if str(row.get("youtube_channel_id") or "") in pool_by_channel
+    ]
+    best_by_channel = {}
+    for rank, outlier in enumerate(outlier_rows, start=1):
+        channel = pool_by_channel[str(outlier.get("youtube_channel_id") or "")]
+        outlier["rank"] = rank
+        outlier["channel_title"] = channel.get("title")
+        outlier["credential"] = channel.get("credential")
+        best_by_channel.setdefault(str(outlier.get("youtube_channel_id") or ""), outlier)
+
+    if tab == "top_shorts":
+        tab_rows = []
+    elif tab == "excluded":
         tab_rows = excluded_niche_rows(rows, clinicians_only=False)
     elif tab == "near_misses":
         tab_rows = near_miss_niche_rows(rows, clinicians_only=False)
@@ -75,16 +97,14 @@ def admin_niches():
     attach_outreach_statuses(conn, tab_rows)
     for rank, row in enumerate(tab_rows, start=1):
         row["rank"] = rank
+        if tab == "pool":
+            row["best_short_30d"] = best_by_channel.get(
+                str(row.get("youtube_channel_id") or "")
+            )
     subscriber_band = str(request.args.get("subscriber_band") or "").strip()
     outreach_status = str(request.args.get("outreach_status") or "").strip()
     visible_rows = apply_table_filters(tab_rows, subscriber_band, outreach_status)
     snapshot_dates = load_snapshot_dates(conn, selected["id"]) if selected else []
-    run_changes = load_niche_run_changes(conn, selected["id"]) if selected else {
-        "current": None,
-        "previous": None,
-        "joined": [],
-        "left": [],
-    }
     return render_template(
         "shorts_admin_niches.html",
         admin_title="Niches",
@@ -101,7 +121,8 @@ def admin_niches():
         subscriber_band=subscriber_band,
         outreach_status=outreach_status,
         outreach_labels=OUTREACH_LABELS,
-        run_changes=run_changes,
+        outlier_as_of=outlier_as_of,
+        outlier_rows=outlier_rows,
     )
 
 
