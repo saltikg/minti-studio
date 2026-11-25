@@ -151,7 +151,7 @@ def research_units_for_date(conn, date_pt: Optional[str] = None) -> int:
         SELECT COALESCE(SUM(units), 0)
         FROM {TABLE_NAME}
         WHERE date_pt = ?
-          AND (feature = 'research' OR feature LIKE '%_research')
+          AND (feature = 'research' OR feature LIKE '%%_research')
         """,
         [date_pt or today_pt()],
     ).fetchone()
