@@ -35,7 +35,11 @@ from app.video_shorts.services.niches import (
     clinician_matches,
     is_final_niche_pool_row,
 )
-from app.video_shorts.services.youtube_quota import record_youtube_data_api_call
+from app.video_shorts.services.youtube_quota import (
+    YoutubeQuotaCapExceeded,
+    record_youtube_data_api_call,
+    require_youtube_quota_available,
+)
 
 
 CLASSIFIER_VERSION = "strict-menopause-longform-v3"
@@ -249,6 +253,11 @@ def backfill_missing_video_stats(
         chunk = missing_ids[offset : offset + 50]
         params = {"part": "contentDetails,statistics", "id": ",".join(chunk), "maxResults": 50}
         units_used += 1
+        try:
+            require_youtube_quota_available(feature="women_hormones_research", method="videos.list")
+        except YoutubeQuotaCapExceeded as exc:
+            print(f"WARNING: research request skipped: {exc}", file=sys.stderr)
+            raise ReclassifyError(str(exc)) from exc
         response = session.get(
             "https://www.googleapis.com/youtube/v3/videos",
             params={**params, "key": api_key},

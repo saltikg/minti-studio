@@ -10,6 +10,7 @@ from zoneinfo import ZoneInfo
 
 from app.video_shorts.services.db import get_db, get_db_readonly
 from app.video_shorts.services.discovery_health import evaluate_discovery_health
+from app.video_shorts.services.discovery_blocklist import discovery_lead_blocked_sql
 from app.video_shorts.services.email_verification import send_resend_email
 
 
@@ -312,15 +313,17 @@ def collect_outreach_report(*, now: Optional[datetime] = None) -> Dict[str, Any]
             if created_at and created_at >= attribution_start and (source == "outreach" or landing.startswith("/w/")):
                 counts["signups_outreach"][day_key] += 1
 
+        discovery_blocked = discovery_lead_blocked_sql("dl")
         ready_pool = int(
             conn.execute(
-                """
+                f"""
                 SELECT COUNT(*)
                 FROM discovery_leads dl
                 WHERE dl.icp_fit IS TRUE
                   AND COALESCE(dl.creator_email, '') <> ''
                   AND COALESCE(CAST(dl.autopilot_lead_id AS VARCHAR), '') = ''
                   AND COALESCE(dl.status, '') NOT IN ('already_lead', 'dismissed')
+                  AND NOT ({discovery_blocked})
                   AND NOT EXISTS (
                     SELECT 1 FROM autopilot_leads al
                     WHERE al.youtube_channel_id = dl.youtube_channel_id
@@ -359,9 +362,23 @@ def collect_outreach_report(*, now: Optional[datetime] = None) -> Dict[str, Any]
               COUNT(*) FILTER (
                 WHERE COALESCE(latest.last_event_at, l.created_at) <= ?
                   AND COALESCE(latest.last_event_at, l.created_at) > ?
+                  AND COALESCE(l.pipeline_state, 'new') NOT IN ('new', 'awaiting_approval')
+                  AND NOT EXISTS (
+                    SELECT 1
+                    FROM short_share_links sl
+                    JOIN outreach_scheduled_emails ose ON ose.share_link_id = sl.id
+                    WHERE CAST(sl.autopilot_lead_id AS VARCHAR) = CAST(l.id AS VARCHAR)
+                      AND lower(COALESCE(ose.status, '')) IN ('scheduled', 'processing')
+                      AND ose.scheduled_at > CURRENT_TIMESTAMP
+                  )
               ),
               COUNT(*) FILTER (
                 WHERE COALESCE(latest.last_event_at, l.created_at) <= ?
+              ),
+              COUNT(*) FILTER (
+                WHERE COALESCE(latest.last_event_at, l.created_at) <= ?
+                  AND COALESCE(latest.last_event_at, l.created_at) > ?
+                  AND COALESCE(l.pipeline_state, 'new') IN ('new', 'awaiting_approval')
               )
             FROM autopilot_leads l
             LEFT JOIN LATERAL (
@@ -372,10 +389,11 @@ def collect_outreach_report(*, now: Optional[datetime] = None) -> Dict[str, Any]
             WHERE COALESCE(l.pipeline_state, 'new') NOT IN ('sent', 'failed')
               AND {lead_filter}
             """,
-            [stuck_cutoff, legacy_cutoff, legacy_cutoff],
+            [stuck_cutoff, legacy_cutoff, legacy_cutoff, stuck_cutoff, legacy_cutoff],
         ).fetchone()
         stuck_last_30d = int((stuck_row[0] if stuck_row else 0) or 0)
         legacy_stale = int((stuck_row[1] if stuck_row else 0) or 0)
+        needs_your_action = int((stuck_row[2] if stuck_row else 0) or 0)
         first_queue_row = conn.execute(
             """
             SELECT COUNT(*) FROM outreach_scheduled_emails
@@ -436,6 +454,7 @@ def collect_outreach_report(*, now: Optional[datetime] = None) -> Dict[str, Any]
             "discovery_jobs_queued": discovery_queued,
             "discovery_jobs_processing": discovery_processing,
             "leads_stuck_over_48h_last_30d": stuck_last_30d,
+            "needs_your_action": needs_your_action,
             "legacy_stale_over_30d": legacy_stale,
             "root_disk_pct": int(health.get("disk_usage_pct") or 0),
             "first_email_queue": first_email_queue,
@@ -468,6 +487,7 @@ def render_outreach_report(report: Dict[str, Any]) -> Dict[str, str]:
             f"Awaiting email enrichment: {status['awaiting_email_enrichment']}",
             f"Discovery jobs: {status['discovery_jobs_queued']} queued / {status['discovery_jobs_processing']} processing",
             f"Stuck >48h (last 30 days): {status['leads_stuck_over_48h_last_30d']}",
+            f"Needs your action: {status.get('needs_your_action', 0)}",
             f"Legacy stale (state unchanged >30 days): {status['legacy_stale_over_30d']}",
             f"Root disk: {status['root_disk_pct']}%",
             "",
@@ -501,6 +521,7 @@ def render_outreach_report(report: Dict[str, Any]) -> Dict[str, str]:
             ("Awaiting email enrichment", status["awaiting_email_enrichment"]),
             ("Discovery jobs", f"{status['discovery_jobs_queued']} queued / {status['discovery_jobs_processing']} processing"),
             ("Stuck >48h (last 30 days)", status["leads_stuck_over_48h_last_30d"]),
+            ("Needs your action", status.get("needs_your_action", 0)),
             ("Legacy stale (state unchanged >30 days)", status["legacy_stale_over_30d"]),
             ("Root disk", f"{status['root_disk_pct']}%"),
         )

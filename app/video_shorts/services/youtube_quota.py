@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import os
 from datetime import datetime
 from typing import Optional
 from zoneinfo import ZoneInfo
@@ -11,6 +12,8 @@ from app.video_shorts.services.db import get_db, table_columns
 
 PACIFIC_TZ = ZoneInfo("America/Los_Angeles")
 TABLE_NAME = "youtube_data_api_unit_usage"
+DEFAULT_RESEARCH_DAILY_CAP = 2000
+DISCOVERY_QUOTA_FEATURES = {"discovery_search", "discovery_enrichment"}
 
 YOUTUBE_DATA_API_UNIT_COSTS = {
     "channels.list": 1,
@@ -33,6 +36,17 @@ def today_pt() -> str:
 
 def unit_cost(method: str) -> int:
     return int(YOUTUBE_DATA_API_UNIT_COSTS.get(str(method or "").strip(), 1))
+
+
+class YoutubeQuotaCapExceeded(RuntimeError):
+    pass
+
+
+def research_daily_cap() -> int:
+    try:
+        return max(0, int(os.getenv("YT_QUOTA_RESEARCH_CAP", str(DEFAULT_RESEARCH_DAILY_CAP)) or 0))
+    except (TypeError, ValueError):
+        return DEFAULT_RESEARCH_DAILY_CAP
 
 
 def ensure_youtube_quota_table(conn) -> None:
@@ -99,7 +113,13 @@ def record_youtube_data_api_call(
                 pass
 
 
-def total_units_for_date(conn, date_pt: Optional[str] = None, *, exclude_features: Optional[set[str]] = None) -> int:
+def total_units_for_date(
+    conn,
+    date_pt: Optional[str] = None,
+    *,
+    exclude_features: Optional[set[str]] = None,
+    include_features: Optional[set[str]] = None,
+) -> int:
     if not table_columns(conn, TABLE_NAME):
         return 0
     excluded = sorted(str(item).strip() for item in (exclude_features or set()) if str(item).strip())
@@ -108,11 +128,70 @@ def total_units_for_date(conn, date_pt: Optional[str] = None, *, exclude_feature
     if excluded:
         exclusion_sql = f" AND feature NOT IN ({', '.join(['?'] * len(excluded))})"
         params.extend(excluded)
+    included = sorted(str(item).strip() for item in (include_features or set()) if str(item).strip())
+    inclusion_sql = ""
+    if included:
+        inclusion_sql = f" AND feature IN ({', '.join(['?'] * len(included))})"
+        params.extend(included)
     row = conn.execute(
-        f"SELECT COALESCE(SUM(units), 0) FROM {TABLE_NAME} WHERE date_pt = ?{exclusion_sql}",
+        f"SELECT COALESCE(SUM(units), 0) FROM {TABLE_NAME} WHERE date_pt = ?{exclusion_sql}{inclusion_sql}",
         params,
     ).fetchone()
     try:
         return int((row or [0])[0] or 0)
     except Exception:
         return 0
+
+
+def research_units_for_date(conn, date_pt: Optional[str] = None) -> int:
+    if not table_columns(conn, TABLE_NAME):
+        return 0
+    row = conn.execute(
+        f"""
+        SELECT COALESCE(SUM(units), 0)
+        FROM {TABLE_NAME}
+        WHERE date_pt = ?
+          AND (feature = 'research' OR feature LIKE '%_research')
+        """,
+        [date_pt or today_pt()],
+    ).fetchone()
+    return int((row or [0])[0] or 0)
+
+
+def require_youtube_quota_available(*, feature: str, method: str, calls: int = 1) -> None:
+    clean_feature = str(feature or "other").strip().lower()
+    if clean_feature != "research" and not clean_feature.endswith("_research"):
+        return
+    cap = research_daily_cap()
+    requested = max(0, int(calls or 0)) * unit_cost(method)
+    conn = get_db()
+    try:
+        ensure_youtube_quota_table(conn)
+        used = research_units_for_date(conn)
+        conn.commit()
+    finally:
+        conn.close()
+    if cap and used + requested > cap:
+        raise YoutubeQuotaCapExceeded(
+            f"YouTube research quota cap reached: used={used} requested={requested} cap={cap} date_pt={today_pt()}"
+        )
+
+
+def youtube_quota_runtime_budgets(conn=None, *, discovery_budget: int = 4000) -> dict[str, int]:
+    owns_conn = conn is None
+    if owns_conn:
+        conn = get_db()
+    try:
+        ensure_youtube_quota_table(conn)
+        payload = {
+            "discovery_budget": max(0, int(discovery_budget)),
+            "discovery_used": total_units_for_date(conn, include_features=DISCOVERY_QUOTA_FEATURES),
+            "research_cap": research_daily_cap(),
+            "research_used": research_units_for_date(conn),
+        }
+        if owns_conn:
+            conn.commit()
+        return payload
+    finally:
+        if owns_conn:
+            conn.close()

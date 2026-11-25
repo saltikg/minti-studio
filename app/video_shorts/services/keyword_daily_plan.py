@@ -6,6 +6,7 @@ from typing import Any, Dict, Iterable, List, Optional
 from zoneinfo import ZoneInfo
 
 from app.video_shorts.services.db import get_db
+from app.video_shorts.services.discovery_blocklist import apply_discovery_blocklist
 
 
 PACIFIC_TZ = ZoneInfo("America/Los_Angeles")
@@ -81,6 +82,7 @@ def plan_daily_keywords(
 
     conn = get_db()
     try:
+        apply_discovery_blocklist(conn)
         planned_rows = conn.execute(
             """
             SELECT q.id, q.keyword, q.source, q.category_id, COALESCE(c.name, '')

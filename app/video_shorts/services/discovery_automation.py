@@ -9,6 +9,7 @@ from flask import current_app
 
 from app.video_shorts.services.db import get_db, table_columns
 from app.video_shorts.services.youtube_quota import (
+    DISCOVERY_QUOTA_FEATURES,
     ensure_youtube_quota_table,
     today_pt,
     total_units_for_date,
@@ -207,7 +208,9 @@ def _discovery_quota_budget_status(conn, control: Dict[str, Any]) -> Dict[str, A
         minimum=0,
         maximum=10000,
     )
-    used = total_units_for_date(conn, today_pt(), exclude_features={"backfill"})
+    # Discovery owns this reserved ledger; unrelated publish/research/metrics
+    # usage must never consume the discovery automation budget.
+    used = total_units_for_date(conn, today_pt(), include_features=DISCOVERY_QUOTA_FEATURES)
     estimate = _estimate_discovery_run_youtube_units(control)
     return {
         "budget": budget,

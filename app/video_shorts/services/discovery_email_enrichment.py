@@ -60,12 +60,18 @@ def _auto_trakk_remaining(conn) -> tuple[bool, int, int, int]:
     if "enrichment_attempted_at" not in lead_columns:
         return enabled, daily_cap, 0, daily_cap
     discovery_used = 0
+    backlog_exclusion = (
+        "AND COALESCE(email_enrichment_lane, '') <> 'backlog'"
+        if "email_enrichment_lane" in lead_columns
+        else ""
+    )
     used_row = conn.execute(
-        """
+        f"""
         SELECT COUNT(*)
         FROM discovery_leads
         WHERE enrichment_attempted_at >= ?
           AND COALESCE(email_source, '') IN ('', 'trakk')
+          {backlog_exclusion}
         """,
         [_utc_day_start()],
     ).fetchone()

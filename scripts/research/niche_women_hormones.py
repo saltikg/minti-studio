@@ -35,7 +35,11 @@ load_dotenv(REPO_ROOT / ".env")
 from app.video_shorts import youtube_api as discovery_youtube
 from app.video_shorts.config import OPENAI_MODEL, _openai_client
 from app.video_shorts.services.db import get_db_readonly, table_columns
-from app.video_shorts.services.youtube_quota import record_youtube_data_api_call
+from app.video_shorts.services.youtube_quota import (
+    YoutubeQuotaCapExceeded,
+    record_youtube_data_api_call,
+    require_youtube_quota_available,
+)
 
 
 PACIFIC = ZoneInfo("America/Los_Angeles")
@@ -363,6 +367,11 @@ def youtube_get(
     params: dict[str, Any],
 ) -> dict[str, Any]:
     quota.charge(method)
+    try:
+        require_youtube_quota_available(feature="women_hormones_research", method=method)
+    except YoutubeQuotaCapExceeded as exc:
+        print(f"WARNING: research request skipped: {exc}", file=sys.stderr)
+        raise ResearchError(str(exc)) from exc
     api_key = discovery_youtube._youtube_api_key()
     if not api_key:
         raise ResearchError("YOUTUBE_API_KEY is required; OAuth fallback is disabled")

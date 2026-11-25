@@ -12,7 +12,11 @@ from google.auth.exceptions import RefreshError
 
 from app.video_shorts.config import COMMENT_FETCH_MAX_PAGES
 from app.video_shorts.services.youtube_oauth import get_access_token, list_stored_refresh_tokens
-from app.video_shorts.services.youtube_quota import record_youtube_data_api_call
+from app.video_shorts.services.youtube_quota import (
+    YoutubeQuotaCapExceeded,
+    record_youtube_data_api_call,
+    require_youtube_quota_available,
+)
 
 YOUTUBE_API_BASE = "https://www.googleapis.com/youtube/v3"
 logger = logging.getLogger(__name__)
@@ -202,6 +206,15 @@ def _youtube_get_json(
     last_error: Optional[Exception] = None
     url = f"{YOUTUBE_API_BASE}/{endpoint}"
     method = quota_method or f"{endpoint}.list"
+    try:
+        require_youtube_quota_available(feature=quota_feature, method=method)
+    except YoutubeQuotaCapExceeded:
+        logger.warning(
+            "YouTube workload skipped by quota cap feature=%s method=%s",
+            quota_feature,
+            method,
+        )
+        raise
 
     if api_key:
         try:

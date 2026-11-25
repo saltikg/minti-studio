@@ -9,6 +9,7 @@ from flask import current_app
 
 from app.video_shorts.config import OPENAI_MODEL, _openai_client
 from app.video_shorts.services.db import get_db, table_columns
+from app.video_shorts.services.discovery_blocklist import discovery_lead_blocked_sql
 from app.video_shorts.youtube_api import fetch_playlist_items_batch, get_channel_metadata
 
 
@@ -697,6 +698,7 @@ def _execute_promote_request(lead_id: int, *, selected_source_video_id: str = ""
     try:
         lead_columns = table_columns(conn, "discovery_leads")
         outreach_first_name_sql = "outreach_first_name" if "outreach_first_name" in lead_columns else "NULL"
+        promotion_blocked_sql = discovery_lead_blocked_sql("discovery_leads")
         row = conn.execute(
             f"""
             SELECT id, youtube_channel_id, channel_title, channel_description,
@@ -704,6 +706,7 @@ def _execute_promote_request(lead_id: int, *, selected_source_video_id: str = ""
                    autopilot_lead_id, {outreach_first_name_sql} AS outreach_first_name
             FROM discovery_leads
             WHERE id = ?
+              AND NOT ({promotion_blocked_sql})
             LIMIT 1
             """,
             [int(lead_id)],

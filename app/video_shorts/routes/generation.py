@@ -414,6 +414,7 @@ from app.video_shorts.services.lead_pipeline import (
     source_video_ready_for_planning,
 )
 from app.video_shorts.services.discovery_automation import load_discovery_automation_dashboard
+from app.video_shorts.services.discovery_blocklist import discovery_lead_blocked_sql
 from app.video_shorts.services.discovery_email_enrichment import _auto_trakk_remaining
 from app.video_shorts.services.outreach_reporting import (
     outreach_account_filter_sql,
@@ -26715,12 +26716,14 @@ def admin_discovery_lead_pipeline():
                 response = current_app.response_class("\n".join(lines), mimetype="text/csv")
                 response.headers["Content-Disposition"] = "attachment; filename=discovery-no-email-leads.csv"
                 return response
+            discovery_blocked_sql = discovery_lead_blocked_sql("discovery_leads")
             if has_promotion_columns:
-                ready_to_promote_sql = """
+                ready_to_promote_sql = f"""
                 WHERE icp_fit IS TRUE
                   AND COALESCE(creator_email, '') <> ''
                   AND COALESCE(autopilot_lead_id, '') = ''
                   AND COALESCE(status, '') NOT IN ('already_lead', 'dismissed')
+                  AND NOT ({discovery_blocked_sql})
                   AND NOT EXISTS (
                       SELECT 1
                       FROM autopilot_leads al
@@ -26728,10 +26731,11 @@ def admin_discovery_lead_pipeline():
                   )
                 """
             else:
-                ready_to_promote_sql = """
+                ready_to_promote_sql = f"""
                 WHERE icp_fit IS TRUE
                   AND COALESCE(creator_email, '') <> ''
                   AND COALESCE(status, '') NOT IN ('already_lead', 'dismissed')
+                  AND NOT ({discovery_blocked_sql})
                   AND NOT EXISTS (
                       SELECT 1
                       FROM autopilot_leads al

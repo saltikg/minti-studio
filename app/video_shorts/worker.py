@@ -109,6 +109,7 @@ from app.video_shorts.services.storage import put_file_for_owner
 from app.video_shorts.services.autopilot_email_enrichment import enrich_autopilot_discovery_email_batch
 from app.video_shorts.services.discovery_email_enrichment import enrich_discovery_email_batch
 from app.video_shorts.services.discovery_automation import process_due_discovery_automation_cycle
+from app.video_shorts.services.discovery_backlog_enrichment import process_due_backlog_enrichment
 from app.video_shorts.services.discovery_promote_queue import customer_job_waiting, process_next_discovery_promote_request
 from app.video_shorts.services.instagram_comment_webhook import process_instagram_comment_webhook_job
 from app.video_shorts.services.lead_pipeline import record_lead_pipeline_event_for_scope
@@ -2875,6 +2876,11 @@ def run_worker_loop() -> None:
                 except Exception:
                     app.logger.exception("YouTube publish reconcile polling failed")
             if mode in {"all", "discovery"}:
+                try:
+                    if process_due_backlog_enrichment():
+                        processed_any = True
+                except Exception:
+                    app.logger.exception("Discovery backlog email enrichment polling failed")
                 if mode == "discovery" and _discovery_worker_should_wait(app):
                     continue
                 try:

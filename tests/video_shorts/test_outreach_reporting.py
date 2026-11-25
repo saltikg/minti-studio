@@ -21,6 +21,7 @@ def _report():
             "discovery_jobs_queued": 1,
             "discovery_jobs_processing": 0,
             "leads_stuck_over_48h_last_30d": 1,
+            "needs_your_action": 2,
             "legacy_stale_over_30d": 4,
             "root_disk_pct": 61,
             "first_email_queue": 0,
@@ -37,6 +38,7 @@ def test_render_outreach_report_has_html_and_plain_text():
     assert "Metric | Thu 19 | Wed 18 | Tue 17 | Mon 16 | Sun 15 | Sat 14 | Fri 13 | 7 days" in rendered["text"]
     assert "Channels discovered | 7 | 6 | 5 | 4 | 3 | 2 | 1 | 28" in rendered["text"]
     assert "A Doctor — Doctors" in rendered["text"]
+    assert "Needs your action: 2" in rendered["text"]
     assert rendered["html"].index("Thu 19") < rendered["html"].index("Fri 13")
     assert "Legacy stale (state unchanged &gt;30 days)" in rendered["html"]
     assert "overflow-x:auto" in rendered["html"]

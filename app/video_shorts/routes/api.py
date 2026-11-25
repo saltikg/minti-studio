@@ -32,6 +32,11 @@ from app.video_shorts.services.discovery_promote_queue import (
     store_outreach_first_name_if_needed,
 )
 from app.video_shorts.services.discovery_face_check import check_face_on_camera
+from app.video_shorts.services.discovery_blocklist import (
+    discovery_lead_blocked_sql,
+    discovery_blocklist_prompt_text,
+    discovery_text_is_blocked,
+)
 from app.video_shorts.services.transcript_service import _normalize_segments_for_use
 from app.video_shorts.services.user_events import prepare_transcript_completed_transition, track_event
 from app.video_shorts.services.usage_metering import add_transcription_minutes, get_usage_snapshot
@@ -101,7 +106,7 @@ DISCOVERY_STARTING_CATEGORIES = [
     "Health & wellness coaching",
 ]
 DISCOVERY_CATEGORY_ACTIVE_STATUSES = {"active", "testing", "kept"}
-DISCOVERY_CATEGORY_BLOCKED_STATUSES = {"dropped", "saturated"}
+DISCOVERY_CATEGORY_BLOCKED_STATUSES = {"dropped", "saturated", "excluded"}
 DISCOVERY_KEYWORD_LANE_TARGETS = {
     "seed": 0,
     "icp_exploration": 5,
@@ -731,7 +736,7 @@ def _normalize_discovery_keywords(raw_keywords: Any) -> List[str]:
     seen = set()
     for value in values:
         keyword = " ".join(str(value or "").strip().split())
-        if not keyword:
+        if not keyword or discovery_text_is_blocked(keyword):
             continue
         key = keyword.lower()
         if key in seen:
@@ -1597,7 +1602,7 @@ def _normalize_category_keyword_items(raw_items: Any, *, limit: int = 20) -> Lis
             keyword = " ".join(str(raw or "").strip().split())[:120]
             category = ""
         lowered = keyword.lower()
-        if not keyword or lowered in seen:
+        if not keyword or lowered in seen or discovery_text_is_blocked(keyword, category):
             continue
         seen.add(lowered)
         items.append({"keyword": keyword, "category": category})
@@ -2476,12 +2481,18 @@ def _trakk_daily_usage(conn) -> Dict[str, Any]:
             cycle_cap = 5
     used = 0
     if "enrichment_attempted_at" in lead_columns:
+        backlog_exclusion = (
+            "AND COALESCE(email_enrichment_lane, '') <> 'backlog'"
+            if "email_enrichment_lane" in lead_columns
+            else ""
+        )
         used_row = conn.execute(
-            """
+            f"""
             SELECT COUNT(*)
             FROM discovery_leads
             WHERE enrichment_attempted_at >= ?
               AND COALESCE(email_source, '') IN ('', 'trakk')
+              {backlog_exclusion}
             """,
             [_utc_day_start_naive()],
         ).fetchone()
@@ -2723,7 +2734,7 @@ def _normalize_seed_search_keywords(raw_keywords: Any, *, limit: int = 20) -> Li
         if not keyword:
             continue
         lowered = keyword.lower()
-        if lowered in seen or any(term == lowered for term in blocked):
+        if lowered in seen or any(term == lowered for term in blocked) or discovery_text_is_blocked(keyword):
             continue
         seen.add(lowered)
         keywords.append(keyword[:120])
@@ -2779,6 +2790,7 @@ def _generate_seed_search_keyword_items(
             )
         except Exception:
             _log_discovery_exception("Could not load discovery category metrics for seed keyword generation")
+    hard_blocklist = discovery_blocklist_prompt_text()
     prompt = (
         "These are real creator channels we target. Produce 20 YouTube search queries that find MORE individual creators who "
         "talk to camera under their own name. Target doctors, physical therapists, therapists/LCSWs, coaches, and people telling "
@@ -2792,6 +2804,7 @@ def _generate_seed_search_keyword_items(
         "Strongly favor doctors, physical therapists, therapists, menopause, men's health, neurology, midlife/retirement lifestyle "
         "stories, and broadly useful coaching. Keep financial advisors at normal weight. Reduce crafts/textile/DIY, narrow medical "
         "subspecialties, and business/marketing coaching. Cover health specialties, menopause, men's health, mental health, "
+        f"Never propose hobby/craft/DIY categories. Hard blocklist (keyword and category): {hard_blocklist}. "
         "midlife/retirement life, and coaching in every response. NON-NEGOTIABLE OUTPUT CONTRACT: return exactly 20 objects with "
         "20 DISTINCT category values—never use the same category twice in one response. Use stable, specific category names from "
         "the supplied metrics/reference; do not invent synonym category names to evade this rule. One category per response means "
@@ -2857,6 +2870,7 @@ def _generate_icp_definition_keyword_items(discovery_context: Dict[str, Any], *,
         else "Favor proven health, midlife/retirement, mental-health, and broadly useful coaching categories while moving into "
         "fresh long-tail viewer problems."
     )
+    hard_blocklist = discovery_blocklist_prompt_text()
     prompt = (
         f"You are generating YouTube discovery keywords for Minti's {lane_name} lane. "
         "Do NOT use seed channel examples. Use only the ICP definition and performance signals below.\n\n"
@@ -2872,7 +2886,8 @@ def _generate_icp_definition_keyword_items(discovery_context: Dict[str, Any], *,
         "6 of the 20 queries (30%); most queries must contain no profession. Never use the verbs 'discusses', 'shares', or "
         "'talks about', and never use the pattern 'coach on ...' or 'therapist on ...'. Do not use rare disease names, procedure "
         "jargon, or long title-style phrases. "
-        f"{focus_instruction} Reduce crafts/textile/DIY and business/marketing coaching. "
+        f"{focus_instruction} Never propose hobby/craft/DIY categories. Hard blocklist (keyword and category): {hard_blocklist}. "
+        "Also reduce business/marketing coaching. "
         "Every category must be a genuinely NEW creator vertical absent "
         "from the forbidden queue-category list below; do not rename, narrow, or paraphrase an existing category. "
         "NON-NEGOTIABLE OUTPUT CONTRACT: return exactly 20 objects with "
@@ -4540,6 +4555,7 @@ def admin_discovery_promote_to_lead():
         current_user = getattr(g, "vs_current_user", {}) or {}
         requested_by = str((current_user or {}).get("id") or "admin").strip()
         ensure_discovery_promote_queue_schema(conn)
+        promotion_blocked_sql = discovery_lead_blocked_sql("discovery_leads")
         for lead_id in lead_ids:
             try:
                 row = conn.execute(
@@ -4549,8 +4565,9 @@ def admin_discovery_promote_to_lead():
                            autopilot_lead_id
                     FROM discovery_leads
                     WHERE id = ?
+                      AND NOT ({promotion_blocked_sql})
                     LIMIT 1
-                    """,
+                    """.format(promotion_blocked_sql=promotion_blocked_sql),
                     [lead_id],
                 ).fetchone()
                 if not row:
