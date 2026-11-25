@@ -641,7 +641,13 @@ def diagnose_channel(
             duration_value = 0
         thumbnail_url = str((stats_map.get(video_id) or {}).get("thumbnail_url") or "").strip()
         if duration_value >= 300 and len(face_check_video_samples) < 6:
-            face_check_video_samples.append({"video_id": video_id, "thumbnail_url": thumbnail_url})
+            face_check_video_samples.append({
+                "video_id": video_id,
+                "thumbnail_url": thumbnail_url,
+                "title": str((stats_map.get(video_id) or {}).get("title") or item.get("title") or "").strip(),
+                "duration_seconds": duration_value,
+                "published_at": str(item.get("published_at") or "").strip(),
+            })
         if duration_value <= short_max_seconds and (duration_value > 0 or count_unknown_as_short):
             if published_at and (latest_short_dt is None or published_at > latest_short_dt):
                 latest_short_dt = published_at
@@ -4697,6 +4703,56 @@ def admin_discovery_promote_status():
     finally:
         conn.close()
     return jsonify(payload)
+
+
+@video_shorts_bp.route("/api/admin/discovery-frame-reviews", methods=["GET"])
+def admin_discovery_frame_reviews():
+    auth_error = _admin_json_auth_error()
+    if auth_error:
+        payload, status = auth_error
+        return jsonify(payload), status
+    lead_ids: List[int] = []
+    for chunk in str(request.args.get("lead_ids") or request.args.get("ids") or "").split(","):
+        try:
+            lead_id = int(chunk.strip())
+        except (TypeError, ValueError):
+            continue
+        if lead_id > 0 and lead_id not in lead_ids:
+            lead_ids.append(lead_id)
+        if len(lead_ids) >= 100:
+            break
+    from app.video_shorts.services.discovery_frame_review import load_frame_reviews
+
+    conn = get_db_readonly()
+    try:
+        reviews = load_frame_reviews(conn, lead_ids)
+    finally:
+        conn.close()
+    return jsonify({"success": True, "reviews": {str(key): value for key, value in reviews.items()}})
+
+
+@video_shorts_bp.route("/api/admin/discovery-frame-review-decision", methods=["POST"])
+def admin_discovery_frame_review_decision():
+    auth_error = _admin_json_auth_error()
+    if auth_error:
+        payload, status = auth_error
+        return jsonify(payload), status
+    payload = request.get_json(silent=True) or {}
+    try:
+        lead_id = int(payload.get("lead_id") or 0)
+    except (TypeError, ValueError):
+        lead_id = 0
+    action = str(payload.get("action") or "").strip().lower()
+    if lead_id <= 0 or action not in {"promote", "skip"}:
+        return jsonify({"success": False, "error": "Provide a valid lead_id and promote/skip action."}), 400
+    from app.video_shorts.services.discovery_frame_review import record_review_decision
+
+    try:
+        decision = record_review_decision(lead_id, action)
+    except Exception as exc:
+        current_app.logger.exception("Could not record discovery frame review decision lead_id=%s", lead_id)
+        return jsonify({"success": False, "error": str(exc) or "Decision could not be recorded."}), 500
+    return jsonify({"success": True, "decision": decision})
 
 
 @video_shorts_bp.route("/api/admin/seed-generate-keywords", methods=["POST"])

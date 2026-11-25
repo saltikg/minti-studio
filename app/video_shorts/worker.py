@@ -111,6 +111,7 @@ from app.video_shorts.services.discovery_email_enrichment import enrich_discover
 from app.video_shorts.services.discovery_automation import process_due_discovery_automation_cycle
 from app.video_shorts.services.discovery_backlog_enrichment import process_due_backlog_enrichment
 from app.video_shorts.services.discovery_promote_queue import customer_job_waiting, process_next_discovery_promote_request
+from app.video_shorts.services.discovery_frame_review import process_next_discovery_frame_review
 from app.video_shorts.services.instagram_comment_webhook import process_instagram_comment_webhook_job
 from app.video_shorts.services.lead_pipeline import record_lead_pipeline_event_for_scope
 from app.video_shorts.services.discovery_health import (
@@ -2910,6 +2911,12 @@ def run_worker_loop() -> None:
                     processed_any = True
                 else:
                     break
+            if mode == "discovery" and not processed_any:
+                try:
+                    if process_next_discovery_frame_review():
+                        processed_any = True
+                except Exception:
+                    app.logger.exception("Discovery frame review polling failed")
             if not processed_any:
                 time.sleep(JOB_POLL_INTERVAL_SECONDS)
     finally:

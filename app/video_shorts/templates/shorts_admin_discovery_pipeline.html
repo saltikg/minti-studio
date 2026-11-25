@@ -107,6 +107,63 @@
       text-decoration: none;
       font-weight: 800;
     }
+    .discovery-frame-review-row td {
+      padding: 10px 14px 18px;
+      white-space: normal;
+      background: rgba(15, 23, 42, 0.38);
+    }
+    .discovery-frame-review-row.is-active td {
+      box-shadow: inset 3px 0 0 #2dd4bf;
+      background: rgba(45, 212, 191, 0.08);
+    }
+    .discovery-frame-review {
+      display: grid;
+      grid-template-columns: minmax(180px, 280px) minmax(600px, 1fr);
+      gap: 14px;
+      align-items: start;
+    }
+    .discovery-frame-meta {
+      color: rgba(255, 255, 255, 0.78);
+      font-size: .84rem;
+      line-height: 1.4;
+    }
+    .discovery-frame-strip {
+      display: grid;
+      grid-template-columns: repeat(5, minmax(112px, 1fr));
+      gap: 7px;
+    }
+    .discovery-frame-link {
+      position: relative;
+      display: block;
+      overflow: hidden;
+      border: 1px solid rgba(255, 255, 255, .13);
+      border-radius: 7px;
+      background: #05070b;
+    }
+    .discovery-frame-link img {
+      display: block;
+      width: 100%;
+      aspect-ratio: 16 / 9;
+      object-fit: cover;
+    }
+    .discovery-frame-time {
+      position: absolute;
+      right: 5px;
+      bottom: 5px;
+      padding: 2px 5px;
+      border-radius: 4px;
+      color: white;
+      background: rgba(0, 0, 0, .78);
+      font-size: .68rem;
+      font-weight: 800;
+    }
+    .discovery-ai-badge.promote { color: #bbf7d0; border-color: rgba(34,197,94,.45); }
+    .discovery-ai-badge.dont-promote { color: #fecaca; border-color: rgba(248,113,113,.45); }
+    .discovery-keyboard-help { margin-left: auto; }
+    @media (max-width: 1100px) {
+      .discovery-frame-review { grid-template-columns: 1fr; }
+      .discovery-frame-strip { min-width: 650px; }
+    }
     .discovery-greeting-preview {
       display: flex;
       flex-wrap: wrap;
@@ -810,6 +867,7 @@
       {% endif %}
       <button id="bulkPromoteButton" type="button" class="btn btn-sm btn-outline-info">Promote selected</button>
       <span id="bulkPromoteStatus" class="discovery-muted"></span>
+      <span class="discovery-muted discovery-keyboard-help">P promote · S skip today · ↑/↓ move</span>
     </div>
 
     <div class="discovery-table-wrap">
@@ -841,7 +899,7 @@
         </thead>
         <tbody>
           {% for lead in leads %}
-            <tr>
+            <tr class="discovery-lead-row" data-discovery-lead-id="{{ lead.id }}">
               <td class="discovery-select-cell">
                 {% if lead.status == 'email_enriched' and lead.creator_email and not lead.is_seed %}
                   <input class="seed-lead-checkbox" type="checkbox" value="{{ lead.id }}">
@@ -991,6 +1049,15 @@
                 <div class="discovery-muted">{{ lead.last_discovered_at or '' }}</div>
               </td>
             </tr>
+            {% if not lead.autopilot_lead_id and lead.creator_email and lead.icp_fit is true and lead.status not in ['already_lead', 'dismissed'] %}
+              <tr class="discovery-frame-review-row" data-frame-review-lead-id="{{ lead.id }}" data-channel-url="{{ lead.channel_url or ('https://www.youtube.com/channel/' ~ lead.youtube_channel_id) }}" tabindex="0">
+                <td colspan="21">
+                  <div class="discovery-frame-review" data-frame-review-content="{{ lead.id }}">
+                    <div class="discovery-frame-meta">Preparing real video frames…</div>
+                  </div>
+                </td>
+              </tr>
+            {% endif %}
           {% else %}
             <tr>
               <td colspan="21" class="text-center text-white-50 py-4">No discovery leads yet.</td>
@@ -1414,6 +1481,131 @@
 	          .replace(/"/g, '&quot;');
 	      }
 
+      const frameReviewsUrl = '{{ url_for("video_shorts_bp.admin_discovery_frame_reviews") }}';
+      const frameDecisionUrl = '{{ url_for("video_shorts_bp.admin_discovery_frame_review_decision") }}';
+      const frameReviewRows = Array.from(document.querySelectorAll('.discovery-frame-review-row[data-frame-review-lead-id]'));
+      let activeFrameReviewRow = null;
+
+      function formatReviewTime(totalSeconds) {
+        const seconds = Math.max(0, Number(totalSeconds || 0));
+        const minutes = Math.floor(seconds / 60);
+        return `${minutes}:${String(Math.floor(seconds % 60)).padStart(2, '0')}`;
+      }
+
+      function setActiveFrameReview(row, shouldScroll = true) {
+        if (!row || row.style.display === 'none') return;
+        frameReviewRows.forEach((candidate) => candidate.classList.toggle('is-active', candidate === row));
+        activeFrameReviewRow = row;
+        row.focus({ preventScroll: true });
+        if (shouldScroll) row.scrollIntoView({ behavior: 'smooth', block: 'center' });
+      }
+
+      function visibleFrameReviewRows() {
+        return frameReviewRows.filter((row) => row.style.display !== 'none');
+      }
+
+      function moveFrameReview(direction) {
+        const visible = visibleFrameReviewRows();
+        if (!visible.length) return;
+        const index = Math.max(0, visible.indexOf(activeFrameReviewRow));
+        setActiveFrameReview(visible[Math.max(0, Math.min(visible.length - 1, index + direction))]);
+      }
+
+      function hideFrameReviewLead(leadId) {
+        const reviewRow = document.querySelector(`.discovery-frame-review-row[data-frame-review-lead-id="${leadId}"]`);
+        const leadRow = document.querySelector(`.discovery-lead-row[data-discovery-lead-id="${leadId}"]`);
+        const visible = visibleFrameReviewRows();
+        const index = reviewRow ? visible.indexOf(reviewRow) : -1;
+        if (leadRow) leadRow.style.display = 'none';
+        if (reviewRow) reviewRow.style.display = 'none';
+        const remaining = visibleFrameReviewRows();
+        if (remaining.length) setActiveFrameReview(remaining[Math.min(Math.max(index, 0), remaining.length - 1)]);
+        else activeFrameReviewRow = null;
+      }
+
+      async function recordFrameDecision(leadId, action) {
+        return postJson(frameDecisionUrl, { lead_id: Number(leadId), action });
+      }
+
+      function renderFrameReview(leadId, review) {
+        const row = document.querySelector(`.discovery-frame-review-row[data-frame-review-lead-id="${leadId}"]`);
+        const panel = document.querySelector(`[data-frame-review-content="${leadId}"]`);
+        if (!row || !panel) return;
+        if (review && review.skipped_today) {
+          hideFrameReviewLead(leadId);
+          return;
+        }
+        const status = String((review || {}).status || 'pending');
+        if (status === 'frames_failed') {
+          panel.innerHTML = `<div class="discovery-frame-meta"><strong>Frames unavailable.</strong><div class="discovery-muted">${escapeHtml(review.error || 'Frame extraction failed.')}</div><a href="${escapeHtml(row.getAttribute('data-channel-url') || '#')}" target="_blank" rel="noopener">Open on YouTube</a></div>`;
+          return;
+        }
+        if (status !== 'completed' || !(review.frames || []).length) {
+          panel.innerHTML = '<div class="discovery-frame-meta">Preparing real video frames…</div>';
+          return;
+        }
+        const duration = Number(review.duration_seconds || 0);
+        const label = String(review.ai_label || 'AI pending');
+        const badgeClass = label === 'PROMOTE' ? 'promote' : (label.includes("DON'T") ? 'dont-promote' : '');
+        const videoId = encodeURIComponent(String(review.video_id || ''));
+        const frames = (review.frames || []).map((frame) => {
+          const timestamp = Number(frame.timestamp || 0);
+          const watchUrl = `https://www.youtube.com/watch?v=${videoId}&t=${timestamp}s`;
+          return `<a class="discovery-frame-link" href="${watchUrl}" target="_blank" rel="noopener" title="Open at ${formatReviewTime(timestamp)}"><img src="${escapeHtml(frame.url || '')}" alt="Video frame at ${Number(frame.percentage || 0)}%" loading="lazy"><span class="discovery-frame-time">${formatReviewTime(timestamp)}</span></a>`;
+        }).join('');
+        panel.innerHTML = `
+          <div class="discovery-frame-meta">
+            <strong>${escapeHtml(review.video_title || review.video_id || 'Selected video')}</strong>
+            <div>${formatReviewTime(duration)} · ${escapeHtml(review.video_id || '')}</div>
+            <div class="mt-2"><span class="discovery-status discovery-ai-badge ${badgeClass}">${escapeHtml(label)}</span></div>
+            <div class="discovery-muted">${escapeHtml(review.ai_reason || '')}</div>
+          </div>
+          <div class="discovery-frame-strip">${frames}</div>`;
+      }
+
+      async function loadFrameReviews() {
+        const leadIds = frameReviewRows.map((row) => row.getAttribute('data-frame-review-lead-id')).filter(Boolean);
+        if (!leadIds.length) return;
+        try {
+          const response = await fetch(`${frameReviewsUrl}?lead_ids=${encodeURIComponent(leadIds.join(','))}`, {
+            headers: { 'Accept': 'application/json' }, credentials: 'same-origin'
+          });
+          const data = await response.json();
+          if (!response.ok || data.success === false) return;
+          const reviews = data.reviews || {};
+          leadIds.forEach((leadId) => renderFrameReview(leadId, reviews[leadId] || {}));
+          if (!activeFrameReviewRow) {
+            const first = visibleFrameReviewRows()[0];
+            if (first) setActiveFrameReview(first, false);
+          }
+        } catch (error) {
+          // The normal promote controls remain available if preview loading fails.
+        }
+      }
+
+      frameReviewRows.forEach((row) => row.addEventListener('click', () => setActiveFrameReview(row, false)));
+
+      document.addEventListener('keydown', async (event) => {
+        if (!frameReviewRows.length || sourcePickerModal?.classList.contains('is-open')) return;
+        const tag = String((event.target || {}).tagName || '').toLowerCase();
+        if (['input', 'textarea', 'select', 'button'].includes(tag) || event.ctrlKey || event.metaKey || event.altKey) return;
+        if (event.key === 'ArrowDown' || event.key === 'ArrowUp') {
+          event.preventDefault();
+          moveFrameReview(event.key === 'ArrowDown' ? 1 : -1);
+          return;
+        }
+        if (!activeFrameReviewRow) return;
+        const leadId = activeFrameReviewRow.getAttribute('data-frame-review-lead-id');
+        if (event.key.toLowerCase() === 'p') {
+          event.preventDefault();
+          await promoteSingleLead(leadId);
+        } else if (event.key.toLowerCase() === 's') {
+          event.preventDefault();
+          await recordFrameDecision(leadId, 'skip');
+          hideFrameReviewLead(leadId);
+        }
+      });
+
 	      function sourceCandidateLabel(candidate) {
 	        const minutes = Number(candidate.minutes || 0);
 	        const score = candidate.score === null || candidate.score === undefined ? 'ignored' : `score ${candidate.score}`;
@@ -1428,6 +1620,7 @@
 	      async function promoteSingleLead(leadId, sourceVideoId = '') {
 	        const rowStatus = document.querySelector(`.promote-real-lead-status[data-lead-id="${leadId}"]`);
 	        const button = document.querySelector(`.promote-real-lead-button[data-lead-id="${leadId}"]`);
+	        if (button && button.disabled) return false;
 	        if (button) button.disabled = true;
 	        if (rowStatus) rowStatus.textContent = 'Kuyruğa alınıyor...';
 	        try {
@@ -1441,7 +1634,10 @@
 	            const status = item.status || 'queued';
 	            applyPromoteStatus(leadId, { status, label: status === 'done' ? 'Hazır' : 'Sırada' });
 	            if (rowStatus) rowStatus.textContent = item.reason === 'already_a_lead_linked' ? `Linked existing lead ${item.autopilot_lead_id}.` : 'Sırada';
+	            try { await recordFrameDecision(leadId, 'promote'); } catch (decisionError) { console.warn('Decision logging failed', decisionError); }
+	            hideFrameReviewLead(leadId);
 	            refreshPromoteStatuses();
+	            return true;
 	          } else if (skipped.length) {
 	            if (rowStatus) rowStatus.textContent = `Skipped: ${skipped[0].reason}`;
 	            if (button) button.disabled = false;
@@ -1453,6 +1649,7 @@
 	          if (rowStatus) rowStatus.textContent = error.message || 'Promotion failed.';
 	          if (button) button.disabled = false;
 	        }
+	        return false;
 	      }
 
 	      function openSourcePickerModal(leadId) {
@@ -1565,6 +1762,8 @@
             const queued = data.queued || [];
             const skipped = data.skipped || [];
             queued.forEach((item) => applyPromoteStatus(String(item.id), { status: item.status || 'queued', label: item.status === 'done' ? 'Hazır' : 'Sırada' }));
+            await Promise.allSettled(queued.map((item) => recordFrameDecision(String(item.id), 'promote')));
+            queued.forEach((item) => hideFrameReviewLead(String(item.id)));
             bulkPromoteStatus.textContent = `Queued ${queued.length}; skipped ${skipped.length}.`;
             refreshPromoteStatuses();
           } catch (error) {
@@ -1577,6 +1776,8 @@
 
       refreshPromoteStatuses();
       window.setInterval(refreshPromoteStatuses, 10000);
+      loadFrameReviews();
+      window.setInterval(loadFrameReviews, 15000);
 
       document.querySelectorAll('.dismiss-discovery-lead-button').forEach((button) => {
         button.addEventListener('click', async function () {
