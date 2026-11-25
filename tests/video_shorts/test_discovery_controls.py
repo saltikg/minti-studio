@@ -81,6 +81,10 @@ def test_quota_day_changes_at_midnight_pacific():
     assert youtube_quota.quota_date_pt(datetime(2026, 11, 25, 8, 0, tzinfo=timezone.utc)) == "2026-11-25"
 
 
+def test_search_calls_do_not_consume_general_query_units():
+    assert youtube_quota.unit_cost("search.list") == 0
+
+
 def test_discovery_catchup_schedule_uses_requested_pacific_hours():
     next_slot = discovery_automation._next_offpeak_slot_utc(
         datetime(2026, 11, 24, 18, 0, tzinfo=timezone.utc),
@@ -138,7 +142,7 @@ def test_research_cap_blocks_before_next_request(monkeypatch):
         value = 0
 
         def execute(self, sql, _params=None):
-            self.value = 0 if "SUM(calls)" in sql else 1950
+            self.value = 0 if "SUM(calls)" in sql else 2000
             return self
 
         def fetchone(self):
@@ -157,7 +161,7 @@ def test_research_cap_blocks_before_next_request(monkeypatch):
 
     with pytest.raises(youtube_quota.YoutubeQuotaCapExceeded):
         youtube_quota.require_youtube_quota_available(
-            feature="women_hormones_research", method="search.list"
+            feature="women_hormones_research", method="videos.list"
         )
 
 

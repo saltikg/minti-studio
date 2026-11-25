@@ -26,7 +26,8 @@ YOUTUBE_DATA_API_UNIT_COSTS = {
     "comments.insert": 50,
     "comments.setModerationStatus": 50,
     "playlistItems.list": 1,
-    "search.list": 100,
+    # Google accounts search.list in its separate 100-search daily bucket.
+    "search.list": 0,
     "videos.insert": 1600,
     "videos.list": 1,
     "videos.delete": 50,
