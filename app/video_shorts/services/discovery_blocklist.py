@@ -62,8 +62,8 @@ def discovery_blocklist_sql(expressions: Iterable[str]) -> str:
             continue
         for term in discovery_blocklist():
             escaped = term.replace("'", "''").replace("%", "%%")
-            checks.append(f"lower(COALESCE({clean_expression}, '')) LIKE '%{escaped}%'")
-        checks.append(f"lower(COALESCE({clean_expression}, '')) LIKE '%craft%'")
+            checks.append(f"lower(COALESCE({clean_expression}, '')) LIKE '%%{escaped}%%'")
+        checks.append(f"lower(COALESCE({clean_expression}, '')) LIKE '%%craft%%'")
     return "(" + " OR ".join(checks) + ")" if checks else "FALSE"
 
 

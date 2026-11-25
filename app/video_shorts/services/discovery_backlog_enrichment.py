@@ -94,11 +94,11 @@ def _category_sql(alias: str = "d") -> str:
 
 def _priority_case(category_expression: str) -> str:
     medical = " OR ".join(
-        f"lower({category_expression}) LIKE '%{term.replace(chr(39), chr(39) * 2)}%'"
+        f"lower({category_expression}) LIKE '%%{term.replace(chr(39), chr(39) * 2)}%%'"
         for term in MEDICAL_CATEGORY_TERMS
     )
     secondary = " OR ".join(
-        f"lower({category_expression}) LIKE '%{term.replace(chr(39), chr(39) * 2)}%'"
+        f"lower({category_expression}) LIKE '%%{term.replace(chr(39), chr(39) * 2)}%%'"
         for term in SECONDARY_CATEGORY_TERMS
     )
     return f"CASE WHEN ({medical}) THEN 0 WHEN ({secondary}) THEN 1 ELSE 2 END"
