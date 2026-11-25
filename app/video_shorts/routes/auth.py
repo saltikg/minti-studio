@@ -694,7 +694,7 @@ def _create_or_grant_magic_link_user(
     recipient_email: str,
     recipient_name: str = "",
     existing_user_id: Optional[str] = None,
-) -> tuple[str, Optional[str]]:
+) -> tuple[str, Optional[str], bool]:
     normalized_email = _normalize_auth_email(recipient_email)
     if not normalized_email:
         raise ValueError("recipient_email is required")
@@ -716,6 +716,7 @@ def _create_or_grant_magic_link_user(
             [normalized_email, normalized_email],
         ).fetchone()
         resolved_existing_user_id = str(existing_user[0] or "").strip() if existing_user else ""
+    created_new_user = not bool(resolved_existing_user_id)
     if resolved_existing_user_id:
         user_id = resolved_existing_user_id
         conn.execute(
@@ -767,7 +768,20 @@ def _create_or_grant_magic_link_user(
             ],
         )
     brand = ensure_brand_for_user(conn, user_id=user_id, user_name=desired_name)
-    return user_id, brand["id"] if brand else None
+    return user_id, brand["id"] if brand else None, created_new_user
+
+
+def _magic_link_events_to_record(
+    *,
+    created_new_user: bool,
+    existing_event_names: set[str],
+) -> list[str]:
+    events: list[str] = []
+    if created_new_user and "signup" not in existing_event_names:
+        events.append("signup")
+    if "magic_link_activated" not in existing_event_names:
+        events.append("magic_link_activated")
+    return events
 
 
 def _client_ip() -> str:
@@ -2630,7 +2644,7 @@ def redeem_onboarding_magic_link(token: str):
         # have no password. They get a set-password link only after conversion.
         needs_password_setup = not bool(existing_user[4] if existing_user else None)
 
-        user_id, brand_id = _create_or_grant_magic_link_user(
+        user_id, brand_id, created_new_user = _create_or_grant_magic_link_user(
             conn,
             recipient_email=recipient_email,
             recipient_name=recipient_name,
@@ -2720,16 +2734,27 @@ def redeem_onboarding_magic_link(token: str):
             pass
 
     _establish_authenticated_session(user_id=user_id, brand_id=brand_id)
-    signup_exists_conn = get_db_readonly()
+    existing_events_conn = get_db_readonly()
     try:
-        signup_exists = signup_exists_conn.execute(
-            "SELECT 1 FROM user_events WHERE CAST(user_id AS VARCHAR) = ? AND event_name = 'signup' LIMIT 1",
-            [str(user_id)],
-        ).fetchone()
+        existing_event_names = {
+            str(row[0] or "").strip()
+            for row in existing_events_conn.execute(
+                """
+                SELECT DISTINCT event_name
+                FROM user_events
+                WHERE CAST(user_id AS VARCHAR) = ?
+                  AND event_name IN ('signup', 'magic_link_activated')
+                """,
+                [str(user_id)],
+            ).fetchall()
+        }
     finally:
-        signup_exists_conn.close()
-    if not signup_exists:
-        track_event(user_id, "signup", metadata={"method": "magic_link"})
+        existing_events_conn.close()
+    for event_name in _magic_link_events_to_record(
+        created_new_user=created_new_user,
+        existing_event_names=existing_event_names,
+    ):
+        track_event(user_id, event_name, metadata={"method": "magic_link"})
     record_successful_login(user_id, "magic_link")
     if autopilot_requested:
         if lead_share_link_unresolved:

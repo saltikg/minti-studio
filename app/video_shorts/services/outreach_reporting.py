@@ -140,6 +140,7 @@ def collect_outreach_report(*, now: Optional[datetime] = None) -> Dict[str, Any]
         "unique_link_clicks": _empty_counts(days),
         "signups_all": _empty_counts(days),
         "signups_outreach": _empty_counts(days),
+        "magic_link_activated": _empty_counts(days),
     }
     conn = get_db_readonly()
     try:
@@ -313,6 +314,29 @@ def collect_outreach_report(*, now: Optional[datetime] = None) -> Dict[str, Any]
             if created_at and created_at >= attribution_start and (source == "outreach" or landing.startswith("/w/")):
                 counts["signups_outreach"][day_key] += 1
 
+        activation_rows = conn.execute(
+            f"""
+            SELECT CAST(ue.user_id AS VARCHAR), ue.created_at
+            FROM user_events ue
+            JOIN shorts_users u ON CAST(u.id AS VARCHAR) = CAST(ue.user_id AS VARCHAR)
+            WHERE ue.event_name = 'magic_link_activated'
+              AND ue.created_at >= ? AND ue.created_at < ?
+              AND lower(COALESCE(u.role, '')) <> 'admin'
+              AND {user_filter}
+            ORDER BY ue.created_at ASC
+            """,
+            [start_utc, end_utc],
+        ).fetchall()
+        seen_activations: set[str] = set()
+        for row in activation_rows:
+            user_id = str(row[0])
+            if user_id in seen_activations:
+                continue
+            seen_activations.add(user_id)
+            day_key = _date_key(row[1])
+            if day_key in counts["magic_link_activated"]:
+                counts["magic_link_activated"][day_key] += 1
+
         discovery_blocked = discovery_lead_blocked_sql("dl")
         ready_pool = int(
             conn.execute(
@@ -434,6 +458,7 @@ def collect_outreach_report(*, now: Optional[datetime] = None) -> Dict[str, Any]
         ("Unique link clicks", "unique_link_clicks"),
         ("Signups — all", "signups_all"),
         ("Signups — from outreach", "signups_outreach"),
+        ("Magic link activated", "magic_link_activated"),
     ]
     return {
         "generated_at": now_utc.isoformat(),

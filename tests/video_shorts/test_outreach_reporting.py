@@ -45,6 +45,23 @@ def test_render_outreach_report_has_html_and_plain_text():
     assert "<td" in rendered["html"]
 
 
+def test_render_outreach_report_labels_magic_link_activations():
+    report = _report()
+    report["rows"].append(
+        {
+            "label": "Magic link activated",
+            "key": "magic_link_activated",
+            "values": [0, 0, 0, 0, 0, 0, 1],
+            "total": 1,
+        }
+    )
+
+    rendered = outreach_reporting.render_outreach_report(report)
+
+    assert "Magic link activated | 1 | 0 | 0 | 0 | 0 | 0 | 0 | 1" in rendered["text"]
+    assert "Magic link activated" in rendered["html"]
+
+
 def test_render_outreach_report_shows_none_when_no_clicks():
     report = _report()
     report["clicked_today"] = []
