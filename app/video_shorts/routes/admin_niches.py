@@ -76,12 +76,36 @@ def admin_niches():
         if str(row.get("youtube_channel_id") or "") in pool_by_channel
     ]
     best_by_channel = {}
-    for rank, outlier in enumerate(outlier_rows, start=1):
+    for outlier in outlier_rows:
         channel = pool_by_channel[str(outlier.get("youtube_channel_id") or "")]
-        outlier["rank"] = rank
         outlier["channel_title"] = channel.get("title")
         outlier["credential"] = channel.get("credential")
         best_by_channel.setdefault(str(outlier.get("youtube_channel_id") or ""), outlier)
+    short_sort = str(request.args.get("short_sort") or "views").strip().lower()
+    if short_sort not in {"views", "ratio"}:
+        short_sort = "views"
+    shorts_show_all = str(request.args.get("shorts_all") or "") == "1"
+    outlier_rows.sort(
+        key=lambda row: (
+            int(row.get("views") or 0)
+            if short_sort == "views"
+            else float(row.get("outlier_ratio") or 0)
+        ),
+        reverse=True,
+    )
+    outlier_total_count = len(outlier_rows)
+    if not shorts_show_all:
+        channel_counts = {}
+        capped_rows = []
+        for outlier in outlier_rows:
+            channel_id = str(outlier.get("youtube_channel_id") or "")
+            if channel_counts.get(channel_id, 0) >= 2:
+                continue
+            capped_rows.append(outlier)
+            channel_counts[channel_id] = channel_counts.get(channel_id, 0) + 1
+        outlier_rows = capped_rows
+    for rank, outlier in enumerate(outlier_rows, start=1):
+        outlier["rank"] = rank
 
     if tab == "top_shorts":
         tab_rows = []
@@ -123,6 +147,9 @@ def admin_niches():
         outreach_labels=OUTREACH_LABELS,
         outlier_as_of=outlier_as_of,
         outlier_rows=outlier_rows,
+        outlier_total_count=outlier_total_count,
+        short_sort=short_sort,
+        shorts_show_all=shorts_show_all,
     )
 
 

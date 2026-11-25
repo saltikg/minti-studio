@@ -27,6 +27,8 @@ QUOTA_FEATURE = "niche_outlier_research"
 DEFAULT_MAX_UNITS = 500
 DEFAULT_NICHE_SLUG = "menopause_hormones"
 SCHEDULER_STATE_NAME = "niche_outliers:menopause_hormones"
+EXCLUDED_TITLE_TERMS = ("#duet", "duet with", "#stitch", "stitch with", "repost")
+MIN_SHORT_DURATION_SECONDS = 15
 REPO_ROOT = Path(__file__).resolve().parents[3]
 DEFAULT_CACHE_ROOT = REPO_ROOT / "data" / "research" / "cache"
 
@@ -102,6 +104,17 @@ def _optional_int(value: Any) -> int | None:
         return int(value) if value is not None else None
     except (TypeError, ValueError):
         return None
+
+
+def _is_excluded_short(title: Any, duration_s: Any) -> bool:
+    try:
+        duration = int(duration_s)
+    except (TypeError, ValueError):
+        return True
+    normalized_title = str(title or "").casefold()
+    return duration < MIN_SHORT_DURATION_SECONDS or any(
+        term in normalized_title for term in EXCLUDED_TITLE_TERMS
+    )
 
 
 def _atomic_json(path: Path, payload: dict[str, Any]) -> None:
@@ -316,6 +329,7 @@ def compute_niche_outlier_shorts(
             if (
                 window_start <= published_pt <= settled_through
                 and int(duration) <= 180
+                and not _is_excluded_short(upload.get("title"), duration)
             ):
                 shorts.append({**upload, **details, "published_at_value": published_at})
         if len(shorts) < 3:

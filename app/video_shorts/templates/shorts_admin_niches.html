@@ -98,8 +98,12 @@
 
   {% if tab == 'top_shorts' %}
   <section class="niche-panel"><div class="niche-panel-head">
-    <h2>{{ selected.name }} · Top Shorts (last 30 days)</h2>
-    <span class="niche-muted">Updated: {{ outlier_as_of or 'Not yet computed' }}</span>
+    <div><h2>{{ selected.name }} · Top Shorts (last 30 days)</h2><div class="niche-muted" style="margin-top:4px">Updated: {{ outlier_as_of or 'Not yet computed' }} · Showing {{ outlier_rows | length }} of {{ outlier_total_count }}</div></div>
+    <div class="niche-tabs" style="margin-bottom:0">
+      <a class="niche-tab {% if short_sort == 'views' %}is-active{% endif %}" href="{{ url_for('video_shorts_bp.admin_niches', niche=selected.slug, snapshot=selected.snapshot_date, tab='top_shorts', short_sort='views', shorts_all='1' if shorts_show_all else '0') }}">Views</a>
+      <a class="niche-tab {% if short_sort == 'ratio' %}is-active{% endif %}" href="{{ url_for('video_shorts_bp.admin_niches', niche=selected.slug, snapshot=selected.snapshot_date, tab='top_shorts', short_sort='ratio', shorts_all='1' if shorts_show_all else '0') }}">Ratio</a>
+      <a class="niche-tab {% if shorts_show_all %}is-active{% endif %}" href="{{ url_for('video_shorts_bp.admin_niches', niche=selected.slug, snapshot=selected.snapshot_date, tab='top_shorts', short_sort=short_sort, shorts_all='0' if shorts_show_all else '1') }}">{{ 'Top 2 per channel' if shorts_show_all else 'Show all' }}</a>
+    </div>
   </div>
   {% if outlier_rows %}<div class="niche-table-wrap"><table class="niche-table"><thead><tr>
     <th>Rank</th><th class="is-left">Channel</th><th class="is-left">Credential</th><th class="is-left">Short</th><th>Published</th><th>Views</th><th>×Ratio</th><th>Channel's normal</th><th>Duration</th><th>Engagement</th>
