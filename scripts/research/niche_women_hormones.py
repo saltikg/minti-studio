@@ -407,7 +407,7 @@ def youtube_get(
             status,
             reason or (exc.__class__.__name__ if status is None else ""),
             global_failure=status in {401, 429} or reason in global_reasons,
-        ) from exc
+        ) from None
     record_youtube_data_api_call(
         feature=QUOTA_FEATURE,
         method=method,

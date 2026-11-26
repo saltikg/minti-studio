@@ -62,13 +62,21 @@ def _refresh_titles(cap: int) -> int:
         "playlistId": f"UU{CHANNEL_ID[2:]}",
         "maxResults": 50,
     }
-    response = requests.get(
-        f"{YOUTUBE_API_BASE}/playlistItems",
-        params={**params, "key": api_key},
-        timeout=30,
-    )
-    response.raise_for_status()
-    payload = response.json()
+    response = None
+    try:
+        response = requests.get(
+            f"{YOUTUBE_API_BASE}/playlistItems",
+            params={**params, "key": api_key},
+            timeout=30,
+        )
+        response.raise_for_status()
+        payload = response.json()
+    except (requests.RequestException, ValueError):
+        status = getattr(response, "status_code", None)
+        raise RuntimeError(
+            f"playlistItems.list failed: "
+            f"{'HTTP ' + str(status) if status is not None else 'request error'}"
+        ) from None
     cache_dir = CACHE_ROOT / "uploads" / CHANNEL_ID
     cache_dir.mkdir(parents=True, exist_ok=True)
     destination = cache_dir / "page_seed_refresh.json"

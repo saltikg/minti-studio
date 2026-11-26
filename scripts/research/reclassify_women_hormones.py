@@ -271,7 +271,7 @@ def backfill_missing_video_stats(
         except (requests.RequestException, ValueError) as exc:
             raise ReclassifyError(
                 f"videos.list backfill failed at batch {offset // 50 + 1}: HTTP {response.status_code}"
-            ) from exc
+            ) from None
         if not isinstance(payload, dict):
             raise ReclassifyError("videos.list backfill returned a non-object response")
         record_youtube_data_api_call(feature="women_hormones_research_project", method="videos.list")

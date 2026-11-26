@@ -118,13 +118,28 @@ class SeedRunner:
             api_key = research_youtube_api_key()
         except RuntimeError as exc:
             raise SeedError(str(exc)) from exc
-        response = self.session.get(
-            f"{youtube_api.YOUTUBE_API_BASE}/{endpoint}",
-            params={**params, "key": api_key},
-            timeout=30,
-        )
-        response.raise_for_status()
-        payload = response.json() or {}
+        response = None
+        try:
+            response = self.session.get(
+                f"{youtube_api.YOUTUBE_API_BASE}/{endpoint}",
+                params={**params, "key": api_key},
+                timeout=30,
+            )
+            response.raise_for_status()
+            payload = response.json() or {}
+        except (requests.RequestException, ValueError):
+            reason = ""
+            try:
+                error = ((response.json() if response is not None else {}) or {}).get("error") or {}
+                errors = error.get("errors") or []
+                reason = str((errors[0] if errors else {}).get("reason") or "")
+            except (TypeError, ValueError):
+                reason = ""
+            status = getattr(response, "status_code", None)
+            detail = f"HTTP {status}" if status is not None else "request error"
+            if reason:
+                detail += f" ({reason})"
+            raise SeedError(f"{method} failed: {detail}") from None
         if not isinstance(payload, dict):
             payload = {}
         record_youtube_data_api_call(feature=FEATURE, method=method)
@@ -202,7 +217,7 @@ class SeedRunner:
             CACHE_ROOT / self.niche_slug / "admin_seeds" / "name_search" / f"{key}.json",
         )
         output = []
-        for item in payload.get("items") or []:
+        for item in (payload.get("items") or [])[:3]:
             snippet = item.get("snippet") or {}
             channel_id = str((item.get("id") or {}).get("channelId") or snippet.get("channelId") or "")
             channel_item = self._channels_lookup(channel_id=channel_id) if channel_id else None

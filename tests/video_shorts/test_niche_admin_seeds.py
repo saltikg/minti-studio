@@ -1,4 +1,7 @@
-from app.video_shorts.services.niche_admin_seeds import SeedRunner, _clean_name
+import pytest
+import requests
+
+from app.video_shorts.services.niche_admin_seeds import SeedError, SeedRunner, _clean_name
 
 
 def test_clean_name_matches_case_accents_and_spacing():
@@ -35,3 +38,38 @@ def test_plain_name_requires_exact_normalized_title(monkeypatch):
 
     assert channel_id == ""
     assert item is None
+
+
+def test_youtube_errors_never_include_request_url_or_key(monkeypatch, tmp_path):
+    class Response:
+        status_code = 404
+
+        def raise_for_status(self):
+            raise requests.HTTPError("https://example.test?key=secret-value")
+
+        def json(self):
+            return {"error": {"errors": [{"reason": "playlistNotFound"}]}}
+
+    runner = SeedRunner.__new__(SeedRunner)
+    runner.session = type("Session", (), {"get": lambda *_args, **_kwargs: Response()})()
+    runner.calls = {}
+    runner.units_used = 0
+    runner.searches = 0
+    monkeypatch.setattr(
+        "app.video_shorts.services.niche_admin_seeds._cache_read",
+        lambda *_args: None,
+    )
+    monkeypatch.setattr(
+        "app.video_shorts.services.niche_admin_seeds.require_youtube_quota_available",
+        lambda **_kwargs: None,
+    )
+    monkeypatch.setattr(
+        "app.video_shorts.services.niche_admin_seeds.research_youtube_api_key",
+        lambda: "secret-value",
+    )
+
+    with pytest.raises(SeedError) as caught:
+        runner.youtube_get("playlistItems", "playlistItems.list", {}, tmp_path / "x.json")
+
+    assert str(caught.value) == "playlistItems.list failed: HTTP 404 (playlistNotFound)"
+    assert "secret-value" not in str(caught.value)

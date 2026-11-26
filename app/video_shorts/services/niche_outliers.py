@@ -156,6 +156,7 @@ def _youtube_get(
     except RuntimeError as exc:
         raise NicheOutlierError(str(exc)) from exc
     quota.reserve(method)
+    response = None
     try:
         response = session.get(
             f"{YOUTUBE_API_BASE}/{endpoint}",
@@ -164,8 +165,19 @@ def _youtube_get(
         )
         response.raise_for_status()
         payload = response.json() or {}
-    except (requests.RequestException, ValueError) as exc:
-        raise NicheOutlierError(f"{method} failed: {exc}") from exc
+    except (requests.RequestException, ValueError):
+        reason = ""
+        try:
+            error = ((response.json() if response is not None else {}) or {}).get("error") or {}
+            errors = error.get("errors") or []
+            reason = str((errors[0] if errors else {}).get("reason") or "")
+        except (TypeError, ValueError):
+            reason = ""
+        status = getattr(response, "status_code", None)
+        detail = f"HTTP {status}" if status is not None else "request error"
+        if reason:
+            detail += f" ({reason})"
+        raise NicheOutlierError(f"{method} failed: {detail}") from None
     record_youtube_data_api_call(feature=QUOTA_FEATURE, method=method)
     return payload if isinstance(payload, dict) else {}
 

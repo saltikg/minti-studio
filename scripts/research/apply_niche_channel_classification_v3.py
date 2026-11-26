@@ -196,11 +196,19 @@ def _store_cache(path: Path, params: dict[str, Any], payload: dict[str, Any]) ->
 def _youtube_get(session, quota: RunQuota, endpoint: str, method: str, params: dict[str, Any]):
     api_key = research_youtube_api_key()
     quota.reserve(method)
-    response = session.get(
-        f"{YOUTUBE_API_BASE}/{endpoint}", params={**params, "key": api_key}, timeout=30
-    )
-    response.raise_for_status()
-    payload = response.json() or {}
+    response = None
+    try:
+        response = session.get(
+            f"{YOUTUBE_API_BASE}/{endpoint}",
+            params={**params, "key": api_key},
+            timeout=30,
+        )
+        response.raise_for_status()
+        payload = response.json() or {}
+    except (requests.RequestException, ValueError):
+        status = getattr(response, "status_code", None)
+        detail = f"HTTP {status}" if status is not None else "request error"
+        raise RuntimeError(f"{method} failed: {detail}") from None
     record_youtube_data_api_call(feature=FEATURE, method=method)
     return payload
 
