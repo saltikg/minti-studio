@@ -4,10 +4,27 @@ import pytest
 import requests
 
 from app.video_shorts.services.niche_admin_seeds import SeedError, SeedRunner, _clean_name
+from app.video_shorts.services.niche_definitions import parse_title_core_flags
 
 
 def test_clean_name_matches_case_accents_and_spacing():
     assert _clean_name("Nûr Neva Hizmetten") == _clean_name("nur-neva hizmetten")
+
+
+def test_title_core_flags_accept_title_keyed_llm_object():
+    titles = [{"title": "Sohbet one"}, {"title": "News item"}]
+
+    assert parse_title_core_flags(
+        {"Sohbet one": True, "News item": False}, titles
+    ) == [True, False]
+
+
+def test_title_core_flags_accept_ordered_array():
+    titles = [{"title": "One"}, {"title": "Two"}]
+
+    assert parse_title_core_flags(
+        [{"core_topic": True}, {"core_topic": False}], titles
+    ) == [True, False]
 
 
 def test_resolve_channel_url_uses_channels_lookup(monkeypatch):

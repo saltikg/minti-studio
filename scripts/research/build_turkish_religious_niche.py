@@ -30,7 +30,10 @@ import niche_women_hormones as base
 import reclassify_women_hormones as legacy
 from app.video_shorts.config import _openai_client
 from app.video_shorts.services.db import get_db, get_db_readonly, table_columns
-from app.video_shorts.services.niche_definitions import load_niche_definition
+from app.video_shorts.services.niche_definitions import (
+    load_niche_definition,
+    parse_title_core_flags,
+)
 from app.video_shorts.services.niches import final_niche_pool, is_final_niche_pool_row, load_niche_snapshot
 
 
@@ -261,9 +264,7 @@ def classify_one(definition: dict[str, Any], source: dict[str, Any]) -> tuple[di
     presenter = str(raw.get("presenter") or "").casefold()
     if presenter not in {"real_person", "org", "faceless"}:
         presenter = "real_person" if entity == "individual" else "org"
-    title_results = raw.get("title_results") if isinstance(raw.get("title_results"), list) else []
-    flags = [bool(item.get("core_topic")) if isinstance(item, dict) else bool(item) for item in title_results]
-    flags = (flags + [False] * len(source["titles"]))[:len(source["titles"])]
+    flags = parse_title_core_flags(raw.get("title_results"), source["titles"])
     usage = response.usage
     return {
         "primary_focus": focus, "language": language,

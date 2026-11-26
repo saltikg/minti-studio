@@ -15,7 +15,10 @@ import requests
 from app.video_shorts import youtube_api
 from app.video_shorts.config import _openai_client
 from app.video_shorts.services.db import get_db, get_db_readonly
-from app.video_shorts.services.niche_definitions import load_niche_definition
+from app.video_shorts.services.niche_definitions import (
+    load_niche_definition,
+    parse_title_core_flags,
+)
 from app.video_shorts.services.niches import is_final_niche_pool_row, load_niche_snapshot
 from app.video_shorts.services.youtube_quota import (
     YoutubeQuotaCapExceeded,
@@ -106,9 +109,10 @@ class SeedRunner:
         self.session.close()
 
     def youtube_get(
-        self, endpoint: str, method: str, params: dict[str, Any], cache_path: Path
+        self, endpoint: str, method: str, params: dict[str, Any], cache_path: Path,
+        *, force_refresh: bool = False,
     ) -> dict[str, Any]:
-        cached = _cache_read(cache_path, params)
+        cached = None if force_refresh else _cache_read(cache_path, params)
         if cached is not None:
             return cached
         if method == "search.list" and self.searches >= MAX_NAME_SEARCHES:
@@ -150,8 +154,10 @@ class SeedRunner:
         _cache_write(cache_path, params, payload)
         return payload
 
-    def _channels_lookup(self, *, channel_id: str = "", handle: str = "") -> dict[str, Any] | None:
-        if channel_id:
+    def _channels_lookup(
+        self, *, channel_id: str = "", handle: str = "", force_refresh: bool = False
+    ) -> dict[str, Any] | None:
+        if channel_id and not force_refresh:
             cached_path = CACHE_ROOT / "channels" / f"{channel_id}.json"
             try:
                 cached_wrapper = json.loads(cached_path.read_text(encoding="utf-8"))
@@ -171,6 +177,7 @@ class SeedRunner:
         payload = self.youtube_get(
             "channels", "channels.list", params,
             CACHE_ROOT / self.niche_slug / "admin_seeds" / "resolve" / f"{cache_key}.json",
+            force_refresh=force_refresh,
         )
         items = payload.get("items") or []
         return items[0] if items else None
@@ -256,8 +263,13 @@ class SeedRunner:
         parts = {key: int(number or 0) for key, number in match.groupdict().items()}
         return parts["days"] * 86400 + parts["hours"] * 3600 + parts["minutes"] * 60 + parts["seconds"]
 
-    def enrich(self, channel_id: str, channel_item: dict[str, Any] | None = None) -> dict[str, Any]:
-        item = channel_item or self._channels_lookup(channel_id=channel_id)
+    def enrich(
+        self, channel_id: str, channel_item: dict[str, Any] | None = None,
+        *, force_refresh: bool = False,
+    ) -> dict[str, Any]:
+        item = channel_item or self._channels_lookup(
+            channel_id=channel_id, force_refresh=force_refresh
+        )
         if not item:
             raise SeedError(f"Channel not found: {channel_id}")
         metadata = self._channel_metadata(item)
@@ -275,6 +287,7 @@ class SeedRunner:
             payload = self.youtube_get(
                 "playlistItems", "playlistItems.list", params,
                 CACHE_ROOT / "uploads" / channel_id / f"page_{page:04d}.json",
+                force_refresh=force_refresh,
             )
             crossed = False
             for upload in payload.get("items") or []:
@@ -305,6 +318,7 @@ class SeedRunner:
             key = hashlib.sha256(joined.encode()).hexdigest()[:16]
             payload = self.youtube_get(
                 "videos", "videos.list", params, CACHE_ROOT / "video_batches" / f"{key}.json",
+                force_refresh=force_refresh,
             )
             for video in payload.get("items") or []:
                 stats = video.get("statistics") or {}
@@ -330,6 +344,7 @@ class SeedRunner:
             (short_views if detail["duration"] <= 180 else long_views).append(int(detail.get("views") or 0))
         return {
             "channel": metadata, "titles": titles,
+            "latest_upload_at": uploads[0]["published"] if uploads else "",
             "longform_90d": len(long_views), "shorts_90d": len(short_views),
             "avg_views_long_90d": round(sum(long_views) / len(long_views)) if long_views else None,
             "avg_views_short_90d": round(sum(short_views) / len(short_views)) if short_views else None,
@@ -358,7 +373,8 @@ class SeedRunner:
                     f"primary_focus is one of {focus_keys}. language is a short ISO key, mixed, or other. "
                     "entity is individual or company_clinic; presenter is real_person, org, or faceless. "
                     f"channel_type is one of {type_keys} when options exist, otherwise null. title_results must "
-                    "have one core_topic boolean per supplied title. Judge MAIN channel focus, description first. "
+                    "be either an array with one {core_topic: boolean} object per supplied title in order, "
+                    "or an object mapping each exact supplied title to a boolean. Judge MAIN channel focus, description first. "
                     "A target channel must TEACH or EXPLAIN its niche. Channels mainly offering workouts, yoga, "
                     "exercise classes, recipes, meal plans, or general lifestyle/mindset use the appropriate "
                     "neighbour focus even if titles mention the niche. Follow the configured exclusions and "
@@ -384,9 +400,7 @@ class SeedRunner:
             channel_type = "other" if "other" in type_keys else type_keys[-1]
         if not type_keys:
             channel_type = None
-        results = raw.get("title_results") if isinstance(raw.get("title_results"), list) else []
-        flags = [(bool(item.get("core_topic")) if isinstance(item, dict) else bool(item)) for item in results]
-        flags = (flags + [False] * len(enriched["titles"]))[:len(enriched["titles"])]
+        flags = parse_title_core_flags(raw.get("title_results"), enriched["titles"])
         return {
             "primary_focus": focus, "language": language, "entity": entity,
             "presenter": presenter, "channel_type": channel_type,

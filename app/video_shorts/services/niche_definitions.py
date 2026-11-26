@@ -124,6 +124,26 @@ def definition_prompt(definition: dict[str, Any]) -> str:
     )
 
 
+def parse_title_core_flags(value: Any, titles: list[dict[str, Any]]) -> list[bool]:
+    """Accept both the documented array and the model's title-keyed object form."""
+    if isinstance(value, list):
+        flags = [
+            bool(item.get("core_topic")) if isinstance(item, dict) else bool(item)
+            for item in value
+        ]
+        return (flags + [False] * len(titles))[:len(titles)]
+    if isinstance(value, dict):
+        output = []
+        for item in titles:
+            title = str(item.get("title") or "")
+            result = value.get(title, False)
+            output.append(
+                bool(result.get("core_topic")) if isinstance(result, dict) else bool(result)
+            )
+        return output
+    return [False] * len(titles)
+
+
 def parse_topic_lines(value: Any) -> list[str]:
     lines = str(value or "").replace(",", "\n").splitlines()
     return list(dict.fromkeys(" ".join(line.split()) for line in lines if line.strip()))
