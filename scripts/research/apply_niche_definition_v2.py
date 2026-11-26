@@ -4,6 +4,7 @@ from __future__ import annotations
 import argparse
 import json
 import sys
+from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 from typing import Any
 
@@ -140,11 +141,24 @@ def _classify_channel(definition: dict[str, Any], row: dict[str, Any], video_det
         ],
     )
     result = _json_result(response)
-    relevance = int(result.get("relevance"))
-    entity = str(result.get("entity") or "")
+    try:
+        relevance = max(0, min(100, int(float(result.get("relevance")))))
+    except (TypeError, ValueError) as exc:
+        raise RuntimeError(
+            f"invalid relevance for {channel_id}: {result!r}"
+        ) from exc
+    raw_entity = str(result.get("entity") or "").strip().casefold()
+    if raw_entity == "individual":
+        entity = "individual"
+    elif raw_entity in {"company", "clinic", "company/clinic", "company_clinic"}:
+        entity = "company_clinic"
+    else:
+        entity = "company_clinic" if any(
+            term in raw_entity for term in ("company", "clinic", "organization")
+        ) else "individual"
     reason = " ".join(str(result.get("reason") or "").split())[:500]
-    if not 0 <= relevance <= 100 or entity not in {"individual", "company_clinic"} or not reason:
-        raise RuntimeError(f"invalid channel classification for {channel_id}")
+    if not reason:
+        reason = f"Model classified this channel as {entity.replace('_', '/')} at {relevance}% relevance."
     return {"relevance": relevance, "entity": entity, "reason": reason}, _usage(response, 0.4, 1.6)
 
 
@@ -170,13 +184,17 @@ def main() -> int:
     }
     channel_results = {}
     channel_usage = {"input_tokens": 0, "output_tokens": 0, "cost_usd": 0.0}
-    for index, row in enumerate(rows, start=1):
-        channel_id = str(row.get("youtube_channel_id") or "")
-        result, usage = _classify_channel(definition, row, video_details)
-        channel_results[channel_id] = result
-        for key in channel_usage:
-            channel_usage[key] += usage[key]
-        print(f"classified {index}/{len(rows)} {channel_id}", file=sys.stderr)
+    def classify_row(row):
+        return row, *_classify_channel(definition, row, video_details)
+
+    with ThreadPoolExecutor(max_workers=8) as executor:
+        classifications = executor.map(classify_row, rows)
+        for index, (row, result, usage) in enumerate(classifications, start=1):
+            channel_id = str(row.get("youtube_channel_id") or "")
+            channel_results[channel_id] = result
+            for key in channel_usage:
+                channel_usage[key] += usage[key]
+            print(f"classified {index}/{len(rows)} {channel_id}", file=sys.stderr)
 
     conn = get_db()
     try:
