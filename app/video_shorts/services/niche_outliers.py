@@ -338,6 +338,15 @@ def compute_niche_outlier_shorts(
         baseline = float(median(int(item["views"]) for item in shorts))
         if baseline <= 0:
             continue
+        engagement_values = [
+            (int(item.get("likes") or 0) + int(item.get("comments") or 0))
+            / int(item["views"])
+            for item in shorts
+            if int(item["views"]) > 0
+        ]
+        baseline_engagement = (
+            float(median(engagement_values)) if engagement_values else 0.0
+        )
         for item in shorts:
             views = int(item["views"])
             ratio = views / baseline
@@ -358,6 +367,7 @@ def compute_niche_outlier_shorts(
                     "baseline": baseline,
                     "outlier_ratio": ratio,
                     "engagement": (likes + comments) / views,
+                    "baseline_engagement": baseline_engagement,
                 }
             )
     output.sort(key=lambda row: float(row["outlier_ratio"]), reverse=True)
@@ -386,14 +396,15 @@ def persist_niche_outlier_shorts(result: dict[str, Any]) -> None:
                 INSERT INTO niche_outlier_shorts (
                     niche_id, as_of, youtube_channel_id, video_id, title,
                     published_at, duration_s, views, baseline, outlier_ratio,
-                    engagement, computed_at
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)
+                    engagement, baseline_engagement, computed_at
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)
                 """,
                 [
                     row["niche_id"], row["as_of"], row["youtube_channel_id"],
                     row["video_id"], row["title"], row["published_at"],
                     row["duration_s"], row["views"], row["baseline"],
                     row["outlier_ratio"], row["engagement"],
+                    row["baseline_engagement"],
                 ],
             )
         conn.commit()
@@ -435,7 +446,8 @@ def load_latest_niche_outliers(conn, niche_id: Any) -> tuple[str, list[dict[str,
     result = conn.execute(
         """
         SELECT youtube_channel_id, video_id, title, published_at, duration_s,
-               views, baseline, outlier_ratio, engagement, computed_at
+               views, baseline, outlier_ratio, engagement, baseline_engagement,
+               computed_at
         FROM niche_outlier_shorts
         WHERE niche_id = ? AND as_of = ?
         ORDER BY outlier_ratio DESC, views DESC, video_id ASC

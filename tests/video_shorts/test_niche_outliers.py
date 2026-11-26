@@ -63,6 +63,7 @@ def test_compute_niche_outliers_uses_settled_window_median(monkeypatch, tmp_path
     assert result["rows"][0]["baseline"] == 100
     assert result["rows"][0]["outlier_ratio"] == 10
     assert result["rows"][0]["engagement"] == 0.05
+    assert result["rows"][0]["baseline_engagement"] == 0.01
 
 
 @pytest.mark.parametrize(

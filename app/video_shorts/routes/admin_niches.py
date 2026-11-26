@@ -80,18 +80,32 @@ def admin_niches():
         channel = pool_by_channel[str(outlier.get("youtube_channel_id") or "")]
         outlier["channel_title"] = channel.get("title")
         outlier["credential"] = channel.get("credential")
+        engagement = float(outlier.get("engagement") or 0)
+        normal_engagement = float(outlier.get("baseline_engagement") or 0)
+        if normal_engagement > 0 and engagement >= 2 * normal_engagement:
+            outlier["engagement_badge"] = "high_engagement"
+        elif normal_engagement > 0 and engagement < normal_engagement / 3:
+            outlier["engagement_badge"] = "possibly_promoted"
+        else:
+            outlier["engagement_badge"] = ""
         best_by_channel.setdefault(str(outlier.get("youtube_channel_id") or ""), outlier)
     short_sort = str(request.args.get("short_sort") or "views").strip().lower()
-    if short_sort not in {"views", "ratio"}:
+    sort_fields = {
+        "published": "published_at",
+        "views": "views",
+        "ratio": "outlier_ratio",
+        "engagement": "engagement",
+        "duration": "duration_s",
+    }
+    if short_sort not in sort_fields:
         short_sort = "views"
+    short_dir = str(request.args.get("short_dir") or "desc").strip().lower()
+    if short_dir not in {"asc", "desc"}:
+        short_dir = "desc"
     shorts_show_all = str(request.args.get("shorts_all") or "") == "1"
     outlier_rows.sort(
-        key=lambda row: (
-            int(row.get("views") or 0)
-            if short_sort == "views"
-            else float(row.get("outlier_ratio") or 0)
-        ),
-        reverse=True,
+        key=lambda row: row.get(sort_fields[short_sort]),
+        reverse=short_dir == "desc",
     )
     outlier_total_count = len(outlier_rows)
     if not shorts_show_all:
@@ -149,6 +163,7 @@ def admin_niches():
         outlier_rows=outlier_rows,
         outlier_total_count=outlier_total_count,
         short_sort=short_sort,
+        short_dir=short_dir,
         shorts_show_all=shorts_show_all,
     )
 
