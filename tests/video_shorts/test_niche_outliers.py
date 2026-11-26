@@ -170,3 +170,16 @@ def test_topic_classification_uses_one_call_per_short(monkeypatch, tmp_path):
     assert "Menopause clinic" in calls[0]["messages"][1]["content"]
     assert usage["input_tokens"] == 100
     assert usage["output_tokens"] == 10
+
+
+def test_pattern_sentence_normalizes_and_adds_required_range():
+    sentence = niche_outliers._pattern_sentence(
+        "Estrogen cream and bladder symptoms led. HRT patches also performed well.",
+        "33–134s",
+    )
+
+    assert sentence == (
+        "Estrogen cream and bladder symptoms led; HRT patches also performed well; "
+        "winners ran 33–134s."
+    )
+    assert len(sentence.split()) <= 30

@@ -477,10 +477,16 @@ def _pattern_sentence(value: Any, required_duration_range: str = "") -> str:
     sentence = " ".join(str(value or "").strip().strip('"').split())
     if not sentence:
         raise NicheOutlierError("pattern response was empty")
-    first_sentence = re.split(r"(?<=[.!?])\s+", sentence, maxsplit=1)[0]
+    first_sentence = re.sub(r"[.!?]+\s+", "; ", sentence).rstrip(".!?;: ")
+    if required_duration_range and required_duration_range not in first_sentence:
+        first_sentence += f"; winners ran {required_duration_range}"
     words = first_sentence.split()
     if len(words) > 30:
-        first_sentence = " ".join(words[:30]).rstrip(".,;:!?") + "."
+        suffix = f"; winners ran {required_duration_range}" if required_duration_range else ""
+        suffix_words = suffix.split()
+        first_sentence = (
+            " ".join(words[: 30 - len(suffix_words)]).rstrip(".,;:!?") + suffix + "."
+        )
     elif first_sentence[-1] not in ".!?":
         first_sentence += "."
     forbidden = FORBIDDEN_PATTERN_WORDS.intersection(
@@ -490,8 +496,6 @@ def _pattern_sentence(value: Any, required_duration_range: str = "") -> str:
         raise NicheOutlierError(
             f"pattern response used forbidden word(s): {', '.join(sorted(forbidden))}"
         )
-    if required_duration_range and required_duration_range not in first_sentence:
-        raise NicheOutlierError("pattern response omitted the required duration range")
     return first_sentence
 
 
