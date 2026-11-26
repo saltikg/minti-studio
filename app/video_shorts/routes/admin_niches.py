@@ -43,6 +43,7 @@ def admin_niches():
         "audience_language",
         "relevance",
         "relevance_reason",
+        "primary_focus",
     }
     if (
         not table_columns(conn, "niches")

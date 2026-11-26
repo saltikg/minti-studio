@@ -97,7 +97,7 @@ def load_niche_snapshot(conn, niche_slug: str, snapshot_date: str = "") -> tuple
                primary_niche, on_topic_share, on_topic_count, entity,
                reclass_reason, views_90d, admin_exclude, admin_include,
                exclude_reason, country, audience_language,
-               relevance, relevance_reason
+               relevance, relevance_reason, primary_focus
         FROM niche_channels
         WHERE niche_id = ? AND snapshot_date = ?
         ORDER BY subscriber_count DESC NULLS LAST, lower(title) ASC
@@ -290,15 +290,18 @@ def _on_topic_share(row: dict[str, Any]) -> float:
 
 def is_base_niche_pool_row(row: dict[str, Any]) -> bool:
     country = _clean(row.get("country")).upper()
-    relevance = row.get("relevance")
-    relevance_match = (
-        int(relevance) >= 60
-        if relevance is not None
-        else _clean(row.get("primary_niche")).lower() == "menopause_hormones"
-        and _on_topic_share(row) >= NICHE_ON_TOPIC_MIN
-    )
+    if "primary_focus" in row:
+        topic_match = (
+            _clean(row.get("primary_focus")).lower() == "hormones_midlife_health"
+            and _on_topic_share(row) >= NICHE_ON_TOPIC_MIN
+        )
+    else:
+        topic_match = (
+            _clean(row.get("primary_niche")).lower() == "menopause_hormones"
+            and _on_topic_share(row) >= NICHE_ON_TOPIC_MIN
+        )
     return (
-        relevance_match
+        topic_match
         and _clean(row.get("entity")).lower() == "individual"
         and _clean(row.get("presenter")).lower() == "real_person"
         and _language_is_english(row.get("language"))
@@ -339,8 +342,8 @@ def near_miss_niche_rows(rows: list[dict[str, Any]], *, clinicians_only: bool) -
         for row in rows
         if not bool(row.get("admin_exclude"))
         and not bool(row.get("admin_include"))
-        and row.get("relevance") is not None
-        and 45 <= int(row.get("relevance") or 0) <= 59
+        and _clean(row.get("primary_focus")).lower() == "hormones_midlife_health"
+        and _on_topic_share(row) < NICHE_ON_TOPIC_MIN
         and (not clinicians_only or clinician_matches(row))
     ]
 

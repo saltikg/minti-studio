@@ -24,7 +24,10 @@ def test_suggestion_index_ranks_pool_and_near_misses():
     rows = [
         _row("UC1", "Larger", 2000),
         _row("UC2", "Shelley", 1000),
-        _row("UC3", "Near miss", 500, relevance=59),
+        _row(
+            "UC3", "Near miss", 500,
+            primary_focus="hormones_midlife_health", on_topic_share=0.2,
+        ),
     ]
     suggestions = brand_niches.build_niche_suggestion_index(
         [({"id": 7, "name": "Menopause hormones"}, rows)]
@@ -42,11 +45,11 @@ def test_suggestion_index_ranks_pool_and_near_misses():
     assert suggestions["UC3"]["group"] == "near_miss"
 
 
-def test_relevance_drives_pool_and_near_misses_when_present():
+def test_strict_focus_drives_pool_and_near_misses():
     rows = [
-        _row("UC1", "Strong fit", 2000, relevance=84),
-        _row("UC2", "Near miss", 1000, relevance=59),
-        _row("UC3", "Low fit", 500, relevance=44),
+        _row("UC1", "Strong fit", 2000, primary_focus="hormones_midlife_health"),
+        _row("UC2", "Near miss", 1000, primary_focus="hormones_midlife_health", on_topic_share=0.2),
+        _row("UC3", "Fitness", 500, primary_focus="fitness_training", relevance=99),
     ]
     suggestions = brand_niches.build_niche_suggestion_index(
         [({"id": 7, "name": "Women's Hormones & Midlife Health"}, rows)]
@@ -55,6 +58,19 @@ def test_relevance_drives_pool_and_near_misses_when_present():
     assert suggestions["UC1"]["group"] == "pool"
     assert suggestions["UC2"]["group"] == "near_miss"
     assert "UC3" not in suggestions
+
+
+def test_admin_include_and_exclude_override_strict_channel_focus():
+    rows = [
+        _row("UC1", "Included fitness", 2000, primary_focus="fitness_training", admin_include=True),
+        _row("UC2", "Excluded hormones", 1000, primary_focus="hormones_midlife_health", admin_exclude=True),
+    ]
+    suggestions = brand_niches.build_niche_suggestion_index(
+        [({"id": 7, "name": "Women's Hormones & Midlife Health"}, rows)]
+    )
+
+    assert suggestions["UC1"]["group"] == "pool"
+    assert "UC2" not in suggestions
 
 
 class _UpdateConnection:
