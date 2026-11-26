@@ -35,6 +35,14 @@ def test_title_core_flags_accept_ordered_array():
     ) == [True, False]
 
 
+def test_title_core_flags_accept_array_of_title_keyed_objects():
+    titles = [{"title": "First exact title"}, {"title": "Second exact title"}]
+
+    assert parse_title_core_flags(
+        [{"First exact title": True}, {"Second exact title": False}], titles
+    ) == [True, False]
+
+
 def test_resolve_channel_url_uses_channels_lookup(monkeypatch):
     runner = SeedRunner.__new__(SeedRunner)
     expected = {"id": "UC123"}

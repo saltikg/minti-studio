@@ -128,10 +128,22 @@ def definition_prompt(definition: dict[str, Any]) -> str:
 def parse_title_core_flags(value: Any, titles: list[dict[str, Any]]) -> list[bool]:
     """Accept both the documented array and the model's title-keyed object form."""
     if isinstance(value, list):
-        flags = [
-            bool(item.get("core_topic")) if isinstance(item, dict) else bool(item)
-            for item in value
-        ]
+        flags = []
+        for item in value:
+            if isinstance(item, dict):
+                if "core_topic" in item:
+                    result = item.get("core_topic")
+                elif len(item) == 1:
+                    # JSON mode sometimes wraps each title-keyed result in its
+                    # own array item: [{"Exact title": true}, ...].
+                    result = next(iter(item.values()))
+                else:
+                    result = False
+                if isinstance(result, dict):
+                    result = result.get("core_topic", False)
+                flags.append(bool(result))
+            else:
+                flags.append(bool(item))
         return (flags + [False] * len(titles))[:len(titles)]
     if isinstance(value, dict):
         def key(text: Any) -> str:
