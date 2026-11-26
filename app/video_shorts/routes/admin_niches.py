@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from collections import Counter
+
 from flask import abort, flash, redirect, render_template, request, url_for
 
 from app.video_shorts import video_shorts_bp
@@ -8,6 +10,8 @@ from app.video_shorts.services.db import get_db, get_db_readonly, table_columns
 from app.video_shorts.services.niche_outliers import load_latest_niche_outliers
 from app.video_shorts.services.niche_definitions import (
     parse_focus_options,
+    parse_optional_focus_options,
+    parse_optional_key_list,
     parse_topic_lines,
     update_niche_definition,
 )
@@ -48,9 +52,13 @@ def admin_niches():
         "primary_focus",
         "classification_status",
         "classification_title_count",
+        "channel_type",
     }
     if (
-        not {"language", "target_focus", "focus_options", "search_queries", "status"}.issubset(niche_columns)
+        not {
+            "language", "target_focus", "focus_options", "search_queries", "status",
+            "channel_type_options", "allowed_channel_types",
+        }.issubset(niche_columns)
         or not niche_channel_columns
         or not strict_columns.issubset(niche_channel_columns)
     ):
@@ -71,26 +79,37 @@ def admin_niches():
         selected_slug = niches[0]["slug"]
 
     tab = str(request.args.get("tab") or "pool").strip().lower()
-    if tab not in {"pool", "top_shorts", "excluded", "near_misses"}:
+    channel_type_enabled = bool(selected and selected.get("channel_type_options") is not None)
+    if tab not in {"pool", "top_shorts", "excluded", "near_misses", "faceless_story"}:
+        tab = "pool"
+    if tab == "faceless_story" and not channel_type_enabled:
         tab = "pool"
     pool = final_niche_pool(rows, clinicians_only=False, niche=selected)
     pool_by_channel = {
         str(row.get("youtube_channel_id") or ""): row
         for row in pool
     }
+    all_by_channel = {
+        str(row.get("youtube_channel_id") or ""): row
+        for row in rows
+    }
     outlier_as_of, outlier_rows = load_latest_niche_outliers(
         conn,
         selected["id"] if selected else None,
     )
+    shorts_show_all = str(request.args.get("shorts_all") or "") == "1"
     outlier_rows = [
         row for row in outlier_rows
-        if str(row.get("youtube_channel_id") or "") in pool_by_channel
+        if str(row.get("youtube_channel_id") or "") in all_by_channel
     ]
     best_by_channel = {}
     for outlier in outlier_rows:
-        channel = pool_by_channel[str(outlier.get("youtube_channel_id") or "")]
+        channel_id = str(outlier.get("youtube_channel_id") or "")
+        channel = all_by_channel[channel_id]
         outlier["channel_title"] = channel.get("title")
         outlier["credential"] = channel.get("credential")
+        outlier["channel_type"] = channel.get("channel_type")
+        outlier["channel_in_pool"] = channel_id in pool_by_channel
         engagement = float(outlier.get("engagement") or 0)
         normal_engagement = float(outlier.get("baseline_engagement") or 0)
         if normal_engagement > 0 and engagement >= 2 * normal_engagement:
@@ -102,8 +121,8 @@ def admin_niches():
         outlier["topic_badge"] = (
             "off_topic" if outlier.get("topic_status") == "off_topic" else ""
         )
-        if outlier.get("topic_status") != "off_topic":
-            best_by_channel.setdefault(str(outlier.get("youtube_channel_id") or ""), outlier)
+        if outlier["channel_in_pool"] and outlier.get("topic_status") != "off_topic":
+            best_by_channel.setdefault(channel_id, outlier)
     short_sort = str(request.args.get("short_sort") or "views").strip().lower()
     sort_fields = {
         "published": "published_at",
@@ -117,7 +136,8 @@ def admin_niches():
     short_dir = str(request.args.get("short_dir") or "desc").strip().lower()
     if short_dir not in {"asc", "desc"}:
         short_dir = "desc"
-    shorts_show_all = str(request.args.get("shorts_all") or "") == "1"
+    if not shorts_show_all:
+        outlier_rows = [row for row in outlier_rows if row.get("channel_in_pool")]
     outlier_rows.sort(
         key=lambda row: row.get(sort_fields[short_sort]),
         reverse=short_dir == "desc",
@@ -141,6 +161,8 @@ def admin_niches():
 
     if tab == "top_shorts":
         tab_rows = []
+    elif tab == "faceless_story":
+        tab_rows = [row for row in rows if row.get("channel_type") == "faceless_story"]
     elif tab == "excluded":
         tab_rows = excluded_niche_rows(rows, clinicians_only=False)
     elif tab == "near_misses":
@@ -159,7 +181,16 @@ def admin_niches():
             )
     subscriber_band = str(request.args.get("subscriber_band") or "").strip()
     outreach_status = str(request.args.get("outreach_status") or "").strip()
+    channel_type_filter = str(request.args.get("channel_type") or "").strip()
     visible_rows = apply_table_filters(tab_rows, subscriber_band, outreach_status)
+    channel_type_counts = Counter(
+        str(row.get("channel_type") or "other") for row in tab_rows
+    )
+    if channel_type_enabled and channel_type_filter:
+        visible_rows = [
+            row for row in visible_rows
+            if str(row.get("channel_type") or "other") == channel_type_filter
+        ]
     snapshot_dates = load_snapshot_dates(conn, selected["id"]) if selected else []
     return render_template(
         "shorts_admin_niches.html",
@@ -174,9 +205,13 @@ def admin_niches():
         tab=tab,
         excluded_count=len(excluded_niche_rows(rows, clinicians_only=False)),
         near_miss_count=len(near_miss_niche_rows(rows, clinicians_only=False, niche=selected)),
+        faceless_story_count=sum(row.get("channel_type") == "faceless_story" for row in rows),
         subscriber_band=subscriber_band,
         outreach_status=outreach_status,
         outreach_labels=OUTREACH_LABELS,
+        channel_type_enabled=channel_type_enabled,
+        channel_type_filter=channel_type_filter,
+        channel_type_counts=channel_type_counts,
         outlier_as_of=outlier_as_of,
         outlier_rows=outlier_rows,
         outlier_total_count=outlier_total_count,
@@ -206,6 +241,12 @@ def admin_niche_definition_update():
             target_focus=str(request.form.get("target_focus") or ""),
             focus_options=parse_focus_options(request.form.get("focus_options")),
             search_queries=parse_topic_lines(request.form.get("search_queries")),
+            channel_type_options=parse_optional_focus_options(
+                request.form.get("channel_type_options")
+            ),
+            allowed_channel_types=parse_optional_key_list(
+                request.form.get("allowed_channel_types")
+            ),
         )
         conn.commit()
     except ValueError as exc:

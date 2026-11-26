@@ -91,6 +91,38 @@ def test_generic_pool_uses_niche_language_and_ignores_country():
     assert not is_final_niche_pool_row(mixed, niche)
 
 
+def test_optional_channel_type_rule_filters_pool_but_admin_include_wins():
+    niche = {
+        "language": "tr",
+        "target_focus": "religious_spiritual_talks",
+        "allowed_channel_types": ["own_speaker", "clip_compilation", "media_brand"],
+    }
+    allowed = _row(
+        "UC1", "Speaker", 1000, primary_focus="religious_spiritual_talks",
+        language="Turkish", channel_type="own_speaker",
+    )
+    faceless = _row(
+        "UC2", "Stories", 900, primary_focus="religious_spiritual_talks",
+        language="Turkish", channel_type="faceless_story",
+    )
+    included = {**faceless, "youtube_channel_id": "UC3", "admin_include": True}
+
+    assert is_final_niche_pool_row(allowed, niche)
+    assert not is_final_niche_pool_row(faceless, niche)
+    assert is_final_niche_pool_row(included, niche)
+
+
+def test_null_channel_type_rule_leaves_existing_pool_unchanged():
+    niche = {
+        "language": "en",
+        "target_focus": "hormones_midlife_health",
+        "allowed_channel_types": None,
+    }
+    row = _row("UC1", "Clinician", 1000, channel_type=None)
+
+    assert is_final_niche_pool_row(row, niche)
+
+
 def test_missing_language_never_falls_back_to_legacy_status():
     niche = {"language": "en", "target_focus": "hormones_midlife_health"}
     row = _row("UC1", "Known pool member", 1000, language="", in_niche=True, country="IN")

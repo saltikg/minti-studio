@@ -50,6 +50,8 @@
   .niche-badge.possibly_promoted { background: #fef3c7; color: #92400e; margin-left: 5px; }
   .niche-badge.off_topic { background: #fee2e2; color: #991b1b; margin-left: 5px; }
   .niche-badge.draft { background: #fef3c7; color: #92400e; margin-left: 5px; }
+  .niche-badge.channel_type { background: #e0f2fe; color: #075985; margin-left: 5px; }
+  .niche-type-chips { display: flex; flex-wrap: wrap; gap: 7px; margin: -4px 0 14px; }
   .niche-topic-override { display: inline; margin-left: 5px; }
   .niche-topic-button { background: transparent; border: 1px solid rgba(255,255,255,.28); border-radius: 999px; color: #e2e8f0; cursor: pointer; font-size: 10px; padding: 3px 7px; }
   .niche-sort { color: inherit; text-decoration: none; }
@@ -81,6 +83,8 @@
       <div class="niche-field"><label>Language</label><input name="language" value="{{ selected.language }}" required></div>
       <div class="niche-field"><label>Target focus key</label><input name="target_focus" value="{{ selected.target_focus }}" required></div>
       <div class="niche-field"><label>Focus options (JSON)</label><textarea name="focus_options" required>{{ selected.focus_options | tojson(indent=2) }}</textarea></div>
+      <div class="niche-field"><label>Channel type options (JSON or null)</label><textarea name="channel_type_options">{{ selected.channel_type_options | tojson(indent=2) }}</textarea></div>
+      <div class="niche-field"><label>Allowed channel types (JSON or null)</label><textarea name="allowed_channel_types">{{ selected.allowed_channel_types | tojson(indent=2) }}</textarea></div>
       <div class="niche-field"><label>Discovery search queries (one per line)</label><textarea name="search_queries">{{ selected.search_queries | join('\n') }}</textarea></div>
       <div class="niche-field"><label>Description (150–250 words)</label><textarea name="description" required>{{ selected.description }}</textarea></div>
       <div class="niche-field"><label>Core topics (one per line)</label><textarea name="core_topics" required>{{ selected.core_topics | join('\n') }}</textarea></div>
@@ -110,6 +114,7 @@
     <a class="niche-tab {% if tab == 'pool' %}is-active{% endif %}" href="{{ url_for('video_shorts_bp.admin_niches', niche=selected.slug, snapshot=selected.snapshot_date, tab='pool') }}">Pool ({{ pool_size }})</a>
     <a class="niche-tab {% if tab == 'top_shorts' %}is-active{% endif %}" href="{{ url_for('video_shorts_bp.admin_niches', niche=selected.slug, snapshot=selected.snapshot_date, tab='top_shorts') }}">Top Shorts (last 30 days)</a>
     <a class="niche-tab {% if tab == 'near_misses' %}is-active{% endif %}" href="{{ url_for('video_shorts_bp.admin_niches', niche=selected.slug, snapshot=selected.snapshot_date, tab='near_misses') }}">Near misses ({{ near_miss_count }})</a>
+    {% if channel_type_enabled %}<a class="niche-tab {% if tab == 'faceless_story' %}is-active{% endif %}" href="{{ url_for('video_shorts_bp.admin_niches', niche=selected.slug, snapshot=selected.snapshot_date, tab='faceless_story') }}">Faceless story ({{ faceless_story_count }})</a>{% endif %}
     <a class="niche-tab {% if tab == 'excluded' %}is-active{% endif %}" href="{{ url_for('video_shorts_bp.admin_niches', niche=selected.slug, snapshot=selected.snapshot_date, tab='excluded') }}">Excluded ({{ excluded_count }})</a>
   </div>
 
@@ -126,6 +131,10 @@
     </select></div>
     <div><button class="niche-button" type="submit">Apply filters</button></div>
   </form>
+  {% if channel_type_enabled %}<div class="niche-type-chips">
+    <a class="niche-tab {% if not channel_type_filter %}is-active{% endif %}" href="{{ url_for('video_shorts_bp.admin_niches', niche=selected.slug, snapshot=selected.snapshot_date, tab=tab, subscriber_band=subscriber_band, outreach_status=outreach_status) }}">All types</a>
+    {% for option in selected.channel_type_options %}<a class="niche-tab {% if channel_type_filter == option.key %}is-active{% endif %}" href="{{ url_for('video_shorts_bp.admin_niches', niche=selected.slug, snapshot=selected.snapshot_date, tab=tab, subscriber_band=subscriber_band, outreach_status=outreach_status, channel_type=option.key) }}">{{ option.key | replace('_', ' ') | title }} ({{ channel_type_counts.get(option.key, 0) }})</a>{% endfor %}
+  </div>{% endif %}
   {% endif %}
 
   {% if tab == 'top_shorts' %}
@@ -145,7 +154,7 @@
     <td>{{ row.rank }}</td>
     <td class="is-left niche-channel-title" title="{{ row.channel_title }}">{{ row.channel_title[:20] }}{% if row.channel_title | length > 20 %}...{% endif %}</td>
     <td class="is-left">{{ row.credential or '—' }}</td>
-    <td class="is-left niche-short-title"><a class="niche-channel" href="https://youtube.com/shorts/{{ row.video_id }}" target="_blank" rel="noopener" title="{{ row.title }}">{{ row.title[:25] }}{% if row.title | length > 25 %}...{% endif %}</a>{% if row.topic_badge == 'off_topic' %}<span class="niche-badge off_topic">Off-topic</span>{% endif %}{% if row.engagement_badge == 'high_engagement' %}<span class="niche-badge high_engagement">High engagement</span>{% elif row.engagement_badge == 'possibly_promoted' %}<span class="niche-badge possibly_promoted" title="Views high but likes/comments low — may include paid views">Possibly promoted</span>{% endif %}{% if shorts_show_all %}<form class="niche-topic-override" method="post" action="{{ url_for('video_shorts_bp.admin_niche_short_topic_update') }}"><input type="hidden" name="niche" value="{{ selected.slug }}"><input type="hidden" name="video_id" value="{{ row.video_id }}"><input type="hidden" name="return_to" value="{{ request.full_path }}"><button class="niche-topic-button" type="submit" name="action" value="{{ 'mark_on_topic' if row.topic_status == 'off_topic' else 'mark_off_topic' }}">{{ 'Mark on-topic' if row.topic_status == 'off_topic' else 'Mark off-topic' }}</button></form>{% endif %}</td>
+    <td class="is-left niche-short-title"><a class="niche-channel" href="https://youtube.com/shorts/{{ row.video_id }}" target="_blank" rel="noopener" title="{{ row.title }}">{{ row.title[:25] }}{% if row.title | length > 25 %}...{% endif %}</a>{% if shorts_show_all and channel_type_enabled %}<span class="niche-badge channel_type">{{ (row.channel_type or 'other') | replace('_', ' ') }}</span>{% endif %}{% if row.topic_badge == 'off_topic' %}<span class="niche-badge off_topic">Off-topic</span>{% endif %}{% if row.engagement_badge == 'high_engagement' %}<span class="niche-badge high_engagement">High engagement</span>{% elif row.engagement_badge == 'possibly_promoted' %}<span class="niche-badge possibly_promoted" title="Views high but likes/comments low — may include paid views">Possibly promoted</span>{% endif %}{% if shorts_show_all %}<form class="niche-topic-override" method="post" action="{{ url_for('video_shorts_bp.admin_niche_short_topic_update') }}"><input type="hidden" name="niche" value="{{ selected.slug }}"><input type="hidden" name="video_id" value="{{ row.video_id }}"><input type="hidden" name="return_to" value="{{ request.full_path }}"><button class="niche-topic-button" type="submit" name="action" value="{{ 'mark_on_topic' if row.topic_status == 'off_topic' else 'mark_off_topic' }}">{{ 'Mark on-topic' if row.topic_status == 'off_topic' else 'Mark off-topic' }}</button></form>{% endif %}</td>
     <td>{{ row.published_at.strftime('%b %-d, %Y') }}</td>
     <td>{{ '{:,}'.format(row.views | int) }}</td>
     <td>{{ '%.1f'|format(row.outlier_ratio) }}×</td>
@@ -161,13 +170,14 @@
     <span class="niche-muted">{{ rows | length }} shown · {{ pool_size }} in pool · Snapshot {{ selected.snapshot_date }}</span>
   </div>
   {% if rows %}<div class="niche-table-wrap"><table class="niche-table"><thead><tr>
-    <th>Rank</th><th class="is-left">Channel</th><th class="is-left">Credential</th><th class="is-left">Primary focus</th><th>Core titles</th><th>Relevance ref.</th><th>Subscribers</th><th>Views / 90d</th><th>Long / 90d</th><th>Shorts / 90d</th>{% if tab == 'pool' %}<th class="is-left">Best Short (30d)</th>{% endif %}<th class="is-left">Reason</th><th class="is-left">Outreach</th><th class="is-left">Override</th>
+    <th>Rank</th><th class="is-left">Channel</th><th class="is-left">Credential</th><th class="is-left">Primary focus</th>{% if channel_type_enabled %}<th class="is-left">Channel type</th>{% endif %}<th>Core titles</th><th>Relevance ref.</th><th>Subscribers</th><th>Views / 90d</th><th>Long / 90d</th><th>Shorts / 90d</th>{% if tab == 'pool' %}<th class="is-left">Best Short (30d)</th>{% endif %}<th class="is-left">Reason</th><th class="is-left">Outreach</th><th class="is-left">Override</th>
   </tr></thead><tbody>
   {% for row in rows %}<tr>
     <td>{{ row.rank }}</td>
     <td class="is-left"><a class="niche-channel" href="{{ row.channel_url }}" target="_blank" rel="noopener">{{ row.title }}</a>{% if row.admin_include %}<div class="niche-subtext">Manually included</div>{% endif %}</td>
     <td class="is-left">{{ row.credential or '—' }}</td>
     <td class="is-left">{{ row.primary_focus | replace('_', ' ') if row.primary_focus else '—' }}</td>
+    {% if channel_type_enabled %}<td class="is-left"><span class="niche-badge channel_type">{{ (row.channel_type or 'other') | replace('_', ' ') }}</span></td>{% endif %}
     <td>core {{ row.on_topic_count | int }}/{{ row.classification_title_count | int }}</td>
     <td>{{ row.relevance if row.relevance is not none else '—' }}</td>
     <td>{{ '{:,}'.format(row.subscriber_count | int) if row.subscriber_count is not none else '—' }}</td>

@@ -322,11 +322,16 @@ def compute_niche_outlier_shorts(
     as_of: date | datetime | str | None = None,
     *,
     cache_root: Path | None = None,
+    include_non_pool: bool = False,
 ) -> dict[str, Any]:
     as_of_date = _as_of_date(as_of)
     manifest = _load_manifest(str(niche), as_of_date, cache_root)
     niche_row, pool = _current_pool(str(niche))
-    allowed_ids = {str(row.get("youtube_channel_id") or "") for row in pool}
+    allowed_ids = (
+        {str(channel_id) for channel_id in (manifest.get("uploads") or {})}
+        if include_non_pool
+        else {str(row.get("youtube_channel_id") or "") for row in pool}
+    )
     window_start = datetime.combine(as_of_date - timedelta(days=30), time.min, tzinfo=PACIFIC)
     settled_through = datetime.combine(as_of_date - timedelta(days=3), time.min, tzinfo=PACIFIC)
     videos = manifest.get("videos") or {}

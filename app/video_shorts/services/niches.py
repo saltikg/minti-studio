@@ -61,7 +61,10 @@ def list_niches(conn) -> list[dict[str, Any]]:
     if not table_columns(conn, "niches"):
         return []
     columns = table_columns(conn, "niches")
-    optional = [name for name in ("language", "target_focus", "focus_options", "status") if name in columns]
+    optional = [name for name in (
+        "language", "target_focus", "focus_options", "status",
+        "channel_type_options", "allowed_channel_types",
+    ) if name in columns]
     return _dict_rows(conn.execute(
         f"SELECT id, slug, name, category, created_at{''.join(', ' + name for name in optional)} "
         "FROM niches ORDER BY name ASC"
@@ -75,6 +78,7 @@ def load_niche_snapshot(conn, niche_slug: str, snapshot_date: str = "") -> tuple
             "description", "core_topics", "adjacent_topics", "excluded_topics",
             "definition_version", "language", "target_focus", "focus_options", "status",
             "search_queries",
+            "channel_type_options", "allowed_channel_types",
         ) if name in niche_columns
     ]
     result = conn.execute(
@@ -97,6 +101,8 @@ def load_niche_snapshot(conn, niche_slug: str, snapshot_date: str = "") -> tuple
         "target_focus": _clean(niche.get("target_focus")) or "hormones_midlife_health",
         "focus_options": niche.get("focus_options") or [],
         "search_queries": niche.get("search_queries") or [],
+        "channel_type_options": niche.get("channel_type_options"),
+        "allowed_channel_types": niche.get("allowed_channel_types"),
         "status": _clean(niche.get("status")) or "active",
         "snapshot_date": "",
     }
@@ -110,8 +116,11 @@ def load_niche_snapshot(conn, niche_slug: str, snapshot_date: str = "") -> tuple
     if not selected_date:
         return selected, []
 
+    channel_type_column = (
+        ", channel_type" if "channel_type" in table_columns(conn, "niche_channels") else ""
+    )
     result = conn.execute(
-        """
+        f"""
         SELECT youtube_channel_id, snapshot_date, title, channel_url, credential,
                in_niche, presenter, language, subscriber_count, longform_90d,
                shorts_90d, avg_views_long_90d, avg_views_short_90d,
@@ -120,7 +129,7 @@ def load_niche_snapshot(conn, niche_slug: str, snapshot_date: str = "") -> tuple
                reclass_reason, views_90d, admin_exclude, admin_include,
                exclude_reason, country, audience_language,
                relevance, relevance_reason, primary_focus, classification_status,
-               classification_title_count
+               classification_title_count{channel_type_column}
         FROM niche_channels
         WHERE niche_id = ? AND snapshot_date = ?
         ORDER BY subscriber_count DESC NULLS LAST, lower(title) ASC
@@ -317,11 +326,18 @@ def is_base_niche_pool_row(row: dict[str, Any], niche: dict[str, Any] | None = N
         and _clean(row.get("primary_focus")).casefold() == target_focus.casefold()
     )
     language_match = _language_matches_niche(row.get("language"), niche_language)
+    allowed_channel_types = (niche or {}).get("allowed_channel_types")
+    channel_type_match = (
+        True if allowed_channel_types is None
+        else _clean(row.get("channel_type")).casefold()
+        in {_clean(value).casefold() for value in allowed_channel_types}
+    )
     return (
         topic_match
         and _clean(row.get("entity")).lower() == "individual"
         and _clean(row.get("presenter")).lower() == "real_person"
         and language_match is True
+        and channel_type_match
     )
 
 
