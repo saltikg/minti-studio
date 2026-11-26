@@ -125,6 +125,11 @@ class SeedRunner:
                 params={**params, "key": api_key},
                 timeout=30,
             )
+            record_youtube_data_api_call(feature=FEATURE, method=method)
+            self.calls[method] += 1
+            self.units_used += unit_cost(method)
+            if method == "search.list":
+                self.searches += 1
             response.raise_for_status()
             payload = response.json() or {}
         except (requests.RequestException, ValueError):
@@ -142,11 +147,6 @@ class SeedRunner:
             raise SeedError(f"{method} failed: {detail}") from None
         if not isinstance(payload, dict):
             payload = {}
-        record_youtube_data_api_call(feature=FEATURE, method=method)
-        self.calls[method] += 1
-        self.units_used += unit_cost(method)
-        if method == "search.list":
-            self.searches += 1
         _cache_write(cache_path, params, payload)
         return payload
 

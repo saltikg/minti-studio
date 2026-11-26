@@ -265,6 +265,9 @@ def backfill_missing_video_stats(
             params={**params, "key": api_key},
             timeout=30,
         )
+        record_youtube_data_api_call(
+            feature="women_hormones_research_project", method="videos.list"
+        )
         try:
             response.raise_for_status()
             payload = response.json() or {}
@@ -274,7 +277,6 @@ def backfill_missing_video_stats(
             ) from None
         if not isinstance(payload, dict):
             raise ReclassifyError("videos.list backfill returned a non-object response")
-        record_youtube_data_api_call(feature="women_hormones_research_project", method="videos.list")
         batch_key = hashlib.sha256(",".join(chunk).encode("utf-8")).hexdigest()[:16]
         _store_youtube_cache(cache_root / "video_batches" / f"{batch_key}.json", params, payload)
 

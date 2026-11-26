@@ -1,3 +1,5 @@
+from collections import Counter
+
 import pytest
 import requests
 
@@ -52,7 +54,7 @@ def test_youtube_errors_never_include_request_url_or_key(monkeypatch, tmp_path):
 
     runner = SeedRunner.__new__(SeedRunner)
     runner.session = type("Session", (), {"get": lambda *_args, **_kwargs: Response()})()
-    runner.calls = {}
+    runner.calls = Counter()
     runner.units_used = 0
     runner.searches = 0
     monkeypatch.setattr(
@@ -66,6 +68,10 @@ def test_youtube_errors_never_include_request_url_or_key(monkeypatch, tmp_path):
     monkeypatch.setattr(
         "app.video_shorts.services.niche_admin_seeds.research_youtube_api_key",
         lambda: "secret-value",
+    )
+    monkeypatch.setattr(
+        "app.video_shorts.services.niche_admin_seeds.record_youtube_data_api_call",
+        lambda **_kwargs: None,
     )
 
     with pytest.raises(SeedError) as caught:

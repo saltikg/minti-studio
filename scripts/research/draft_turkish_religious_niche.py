@@ -69,6 +69,7 @@ def _refresh_titles(cap: int) -> int:
             params={**params, "key": api_key},
             timeout=30,
         )
+        record_youtube_data_api_call(feature=FEATURE, method=method)
         response.raise_for_status()
         payload = response.json()
     except (requests.RequestException, ValueError):
@@ -86,7 +87,6 @@ def _refresh_titles(cap: int) -> int:
         encoding="utf-8",
     )
     temporary.replace(destination)
-    record_youtube_data_api_call(feature=FEATURE, method=method)
     return cost
 
 

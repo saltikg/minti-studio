@@ -386,6 +386,7 @@ def youtube_get(
             params={**params, "key": api_key},
             timeout=30,
         )
+        record_youtube_data_api_call(feature=QUOTA_FEATURE, method=method)
         response.raise_for_status()
         payload = response.json() or {}
     except (requests.RequestException, ValueError) as exc:
@@ -408,10 +409,6 @@ def youtube_get(
             reason or (exc.__class__.__name__ if status is None else ""),
             global_failure=status in {401, 429} or reason in global_reasons,
         ) from None
-    record_youtube_data_api_call(
-        feature=QUOTA_FEATURE,
-        method=method,
-    )
     return payload if isinstance(payload, dict) else {}
 
 

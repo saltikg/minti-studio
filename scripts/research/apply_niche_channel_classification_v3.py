@@ -203,13 +203,13 @@ def _youtube_get(session, quota: RunQuota, endpoint: str, method: str, params: d
             params={**params, "key": api_key},
             timeout=30,
         )
+        record_youtube_data_api_call(feature=FEATURE, method=method)
         response.raise_for_status()
         payload = response.json() or {}
     except (requests.RequestException, ValueError):
         status = getattr(response, "status_code", None)
         detail = f"HTTP {status}" if status is not None else "request error"
         raise RuntimeError(f"{method} failed: {detail}") from None
-    record_youtube_data_api_call(feature=FEATURE, method=method)
     return payload
 
 
