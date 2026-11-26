@@ -383,6 +383,7 @@ def enrich_channel(
     quota: base.QuotaBudget,
     cache_root: Path,
     cutoff: datetime,
+    scan_past_cutoff_for_long_titles: bool = True,
 ) -> dict[str, Any]:
     playlist_id = str(channel.get("uploads_playlist_id") or "").strip()
     if not playlist_id:
@@ -433,7 +434,10 @@ def enrich_channel(
                 recent_uploads.append(upload)
         page_token = str(payload.get("nextPageToken") or "")
         page_index += 1
-        if not page_token or (crossed_cutoff and len(long_titles) >= 15):
+        if not page_token or (
+            crossed_cutoff
+            and (len(long_titles) >= 15 or not scan_past_cutoff_for_long_titles)
+        ):
             break
     activity = base.compute_activity(recent_uploads, details_by_id)
     views_90d = sum(

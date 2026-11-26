@@ -194,6 +194,7 @@ def enrich_pending(
             enriched = grow.enrich_channel(
                 channel_id=channel_id, channel=channel, session=session, quota=quota,
                 cache_root=CACHE_ROOT, cutoff=cutoff,
+                scan_past_cutoff_for_long_titles=False,
             )
         except Exception as exc:
             enriched = {"enrich_status": "error", "error": str(exc), "long_titles": [], "activity": {}, "views_90d": 0}
