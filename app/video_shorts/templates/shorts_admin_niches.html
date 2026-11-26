@@ -95,7 +95,7 @@
   </details>
   <form class="niche-toolbar" method="get">
     <input type="hidden" name="tab" value="{{ tab }}">
-    <div class="niche-field"><label for="niche">Niche</label><select id="niche" name="niche" onchange="this.form.submit()">
+    <div class="niche-field"><label for="niche">Niche</label><select id="niche" name="niche" onchange="window.location.href='{{ url_for('video_shorts_bp.admin_niches') }}?niche=' + encodeURIComponent(this.value)">
       {% for niche in niches %}<option value="{{ niche.slug }}" {% if selected and selected.slug == niche.slug %}selected{% endif %}>{{ niche.name }}{% if niche.status == 'draft' %} — Draft{% endif %}</option>{% endfor %}
     </select></div>
     <div class="niche-field"><label for="snapshot">Snapshot</label><select id="snapshot" name="snapshot" onchange="this.form.submit()">

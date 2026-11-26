@@ -106,13 +106,26 @@ def load_niche_snapshot(conn, niche_slug: str, snapshot_date: str = "") -> tuple
         "status": _clean(niche.get("status")) or "active",
         "snapshot_date": "",
     }
-    selected_date = _clean(snapshot_date)
-    if not selected_date:
-        latest = conn.execute(
-            "SELECT MAX(snapshot_date) FROM niche_channels WHERE niche_id = ?",
-            [niche["id"]],
+    requested_date = _clean(snapshot_date)
+    latest = conn.execute(
+        "SELECT MAX(snapshot_date) FROM niche_channels WHERE niche_id = ?",
+        [niche["id"]],
+    ).fetchone()
+    latest_date = str(latest[0]) if latest and latest[0] else ""
+    selected_date = requested_date
+    if requested_date:
+        exists = conn.execute(
+            """
+            SELECT 1 FROM niche_channels
+            WHERE niche_id = ? AND snapshot_date = ?
+            LIMIT 1
+            """,
+            [niche["id"], requested_date],
         ).fetchone()
-        selected_date = str(latest[0]) if latest and latest[0] else ""
+        if not exists:
+            selected_date = latest_date
+    else:
+        selected_date = latest_date
     if not selected_date:
         return selected, []
 
