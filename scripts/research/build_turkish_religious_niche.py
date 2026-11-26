@@ -336,6 +336,13 @@ def discovery_lead_ids(channel_ids: list[str]) -> dict[str, str]:
         conn.close()
 
 
+def optional_int(value: Any) -> int | None:
+    try:
+        return int(value) if value not in (None, "") else None
+    except (TypeError, ValueError):
+        return None
+
+
 def persist(definition: dict[str, Any], checkpoint: dict[str, Any]) -> int:
     snapshot_date = datetime.now(PACIFIC).date().isoformat()
     lead_ids = discovery_lead_ids(list(checkpoint["rows"]))
@@ -378,9 +385,9 @@ def persist(definition: dict[str, Any], checkpoint: dict[str, Any]) -> int:
                     f"https://www.youtube.com/channel/{channel_id}",
                     "yes" if result["classification_status"] == "classified" else "no",
                     result["presenter"],"Turkish" if result["language"] == "tr" else result["language"],
-                    channel.get("subscriber_count"),int(activity.get("longform_90d") or 0),
-                    int(activity.get("shorts_90d") or 0),activity.get("avg_views_long_90d"),
-                    activity.get("avg_views_short_90d"),lead_ids.get(channel_id),",".join(sources),
+                    optional_int(channel.get("subscriber_count")),int(activity.get("longform_90d") or 0),
+                    int(activity.get("shorts_90d") or 0),optional_int(activity.get("avg_views_long_90d")),
+                    optional_int(activity.get("avg_views_short_90d")),lead_ids.get(channel_id),",".join(sources),
                     SLUG,result["core_share"],result["core_count"],result["entity"],result["reason"],
                     int(row.get("views_90d") or 0),str(channel.get("country") or "").upper(),
                     "turkish" if result["language"] == "tr" else result["language"],result["primary_focus"],
