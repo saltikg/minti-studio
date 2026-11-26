@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import json
+import argparse
 import sys
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
@@ -189,10 +190,13 @@ def audit_big_zero_view_channels(
 
 
 def main() -> int:
+    parser = argparse.ArgumentParser()
+    parser.add_argument("--admin-only", action="store_true")
+    args = parser.parse_args()
     runners = {slug: SeedRunner(slug) for slug in SLUGS}
     try:
         backfill = backfill_admin_rows(runners)
-        audit = audit_big_zero_view_channels(runners)
+        audit = [] if args.admin_only else audit_big_zero_view_channels(runners)
         youtube = {
             "units_used": sum(runner.units_used for runner in runners.values()),
             "calls": {

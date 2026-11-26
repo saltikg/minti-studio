@@ -19,6 +19,14 @@ def test_title_core_flags_accept_title_keyed_llm_object():
     ) == [True, False]
 
 
+def test_title_core_flags_normalize_unicode_and_preserve_object_order():
+    titles = [{"title": "İstiğfar"}, {"title": "İmanî hakikat"}]
+
+    assert parse_title_core_flags(
+        {"I\u0307stiğfar": True, "İmanî hakikat": True}, titles
+    ) == [True, True]
+
+
 def test_title_core_flags_accept_ordered_array():
     titles = [{"title": "One"}, {"title": "Two"}]
 

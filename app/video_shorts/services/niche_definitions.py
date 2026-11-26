@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import unicodedata
 from typing import Any
 
 from app.video_shorts.services.db import table_columns
@@ -133,13 +134,23 @@ def parse_title_core_flags(value: Any, titles: list[dict[str, Any]]) -> list[boo
         ]
         return (flags + [False] * len(titles))[:len(titles)]
     if isinstance(value, dict):
+        def key(text: Any) -> str:
+            normalized = unicodedata.normalize("NFKC", str(text or "")).casefold()
+            return " ".join(normalized.split())
+
+        normalized_results = {key(title): result for title, result in value.items()}
         output = []
         for item in titles:
             title = str(item.get("title") or "")
-            result = value.get(title, False)
+            result = value.get(title, normalized_results.get(key(title), False))
             output.append(
                 bool(result.get("core_topic")) if isinstance(result, dict) else bool(result)
             )
+        if not any(output) and len(value) == len(titles):
+            output = [
+                bool(result.get("core_topic")) if isinstance(result, dict) else bool(result)
+                for result in value.values()
+            ]
         return output
     return [False] * len(titles)
 
