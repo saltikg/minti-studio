@@ -30,6 +30,8 @@
   .niche-tab.is-active { background: rgba(45,212,191,.14); border-color: rgba(45,212,191,.3); color: #8ff3d8; }
   .niche-table-wrap { overflow-x: auto; }
   .niche-table { border-collapse: collapse; color: rgba(255,255,255,.92); font-size: 13px; min-width: 1500px; width: 100%; }
+  .niche-table.is-shorts { min-width: 0; }
+  .niche-short-title { white-space: nowrap; }
   .niche-table th { background: rgba(255,255,255,.03); color: rgba(255,255,255,.58); font-size: 11px; letter-spacing: .03em; padding: 10px; text-align: right; text-transform: uppercase; white-space: nowrap; }
   .niche-table td { border-top: 1px solid rgba(255,255,255,.08); color: rgba(255,255,255,.92); padding: 11px 10px; text-align: right; vertical-align: middle; }
   .niche-table .is-left { text-align: left; }
@@ -107,7 +109,7 @@
       <a class="niche-tab {% if shorts_show_all %}is-active{% endif %}" href="{{ url_for('video_shorts_bp.admin_niches', niche=selected.slug, snapshot=selected.snapshot_date, tab='top_shorts', short_sort=short_sort, short_dir=short_dir, shorts_all='0' if shorts_show_all else '1') }}">{{ 'Top 2 per channel' if shorts_show_all else 'Show all' }}</a>
     </div>
   </div>
-  {% if outlier_rows %}<div class="niche-table-wrap"><table class="niche-table"><thead><tr>
+  {% if outlier_rows %}<div class="niche-table-wrap"><table class="niche-table is-shorts"><thead><tr>
     <th>Rank</th><th class="is-left">Channel</th><th class="is-left">Credential</th><th class="is-left">Short</th>
     {% for key, label in [('published', 'Published'), ('views', 'Views'), ('ratio', '×Ratio')] %}<th><a class="niche-sort {% if short_sort == key %}is-active{% endif %}" href="{{ url_for('video_shorts_bp.admin_niches', niche=selected.slug, snapshot=selected.snapshot_date, tab='top_shorts', short_sort=key, short_dir='asc' if short_sort == key and short_dir == 'desc' else 'desc', shorts_all='1' if shorts_show_all else '0') }}">{{ label }}{% if short_sort == key %} {{ '↓' if short_dir == 'desc' else '↑' }}{% endif %}</a></th>{% endfor %}
     <th>Channel's normal</th>
@@ -117,7 +119,7 @@
     <td>{{ row.rank }}</td>
     <td class="is-left">{{ row.channel_title }}</td>
     <td class="is-left">{{ row.credential or '—' }}</td>
-    <td class="is-left"><a class="niche-channel" href="https://youtube.com/shorts/{{ row.video_id }}" target="_blank" rel="noopener">{{ row.title }}</a>{% if row.engagement_badge == 'high_engagement' %}<span class="niche-badge high_engagement">High engagement</span>{% elif row.engagement_badge == 'possibly_promoted' %}<span class="niche-badge possibly_promoted" title="Views high but likes/comments low — may include paid views">Possibly promoted</span>{% endif %}</td>
+    <td class="is-left niche-short-title"><a class="niche-channel" href="https://youtube.com/shorts/{{ row.video_id }}" target="_blank" rel="noopener" title="{{ row.title }}">{{ row.title[:25] }}{% if row.title | length > 25 %}...{% endif %}</a>{% if row.engagement_badge == 'high_engagement' %}<span class="niche-badge high_engagement">High engagement</span>{% elif row.engagement_badge == 'possibly_promoted' %}<span class="niche-badge possibly_promoted" title="Views high but likes/comments low — may include paid views">Possibly promoted</span>{% endif %}</td>
     <td>{{ row.published_at.strftime('%b %-d, %Y') }}</td>
     <td>{{ '{:,}'.format(row.views | int) }}</td>
     <td>{{ '%.1f'|format(row.outlier_ratio) }}×</td>
