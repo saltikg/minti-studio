@@ -65,6 +65,10 @@
   .niche-definition-grid { display: grid; gap: 12px; margin-top: 14px; }
   .niche-definition textarea, .niche-definition input { background: #fff; border: 1px solid #cbd5e1; border-radius: 8px; color: #212529; padding: 9px 10px; width: 100%; }
   .niche-definition textarea { min-height: 90px; }
+  .niche-add-channels { margin-bottom: 16px; padding: 16px; }
+  .niche-add-channels h2 { color: rgba(255,255,255,.92); font-size: 16px; margin: 0 0 5px; }
+  .niche-add-channels form { align-items: end; display: grid; gap: 12px; grid-template-columns: 1fr auto; margin-top: 12px; }
+  .niche-add-channels textarea { background: #fff; border: 1px solid #cbd5e1; border-radius: 8px; color: #212529; min-height: 94px; padding: 9px 10px; width: 100%; }
   @media (max-width: 900px) { .niche-toolbar, .niche-filters, .niche-kpis { grid-template-columns: 1fr 1fr; } }
 </style>
 {% endblock %}
@@ -93,6 +97,15 @@
       <div><button class="niche-button include" type="submit">Save definition</button></div>
     </form>
   </details>
+  <section class="niche-panel niche-add-channels">
+    <h2>Add channels</h2>
+    <div class="niche-muted">One YouTube URL, @handle, channel ID, or exact channel name per line. Added channels are manually included; featured channels are classified normally.</div>
+    <form method="post" action="{{ url_for('video_shorts_bp.admin_niche_add_channels') }}">
+      <input type="hidden" name="niche" value="{{ selected.slug }}">
+      <div class="niche-field"><label for="channels">Channels</label><textarea id="channels" name="channels" required placeholder="@handle&#10;https://youtube.com/channel/UC...&#10;Exact channel name"></textarea></div>
+      <button class="niche-button include" type="submit">Add &amp; classify</button>
+    </form>
+  </section>
   <form class="niche-toolbar" method="get">
     <input type="hidden" name="tab" value="{{ tab }}">
     <div class="niche-field"><label for="niche">Niche</label><select id="niche" name="niche" onchange="window.location.href='{{ url_for('video_shorts_bp.admin_niches') }}?niche=' + encodeURIComponent(this.value)">

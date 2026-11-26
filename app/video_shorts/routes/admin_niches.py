@@ -27,6 +27,7 @@ from app.video_shorts.services.niches import (
     near_miss_niche_rows,
     pool_kpis,
 )
+from app.video_shorts.services.niche_admin_seeds import add_niche_channels
 
 
 @video_shorts_bp.route("/admin/niches", methods=["GET"])
@@ -361,3 +362,34 @@ def admin_niche_channel_update():
     if not return_to.startswith("/video_shorts/admin/niches"):
         return_to = url_for("video_shorts_bp.admin_niches", niche=niche_slug)
     return redirect(return_to)
+
+
+@video_shorts_bp.route("/admin/niches/add-channels", methods=["POST"])
+@require_admin
+def admin_niche_add_channels():
+    niche_slug = str(request.form.get("niche") or "").strip()
+    lines = [
+        " ".join(line.split())
+        for line in str(request.form.get("channels") or "").splitlines()
+        if line.strip()
+    ]
+    if not niche_slug or not lines:
+        abort(400)
+    if len(lines) > 50:
+        flash("Add at most 50 channels per submit.", "warning")
+        return redirect(url_for("video_shorts_bp.admin_niches", niche=niche_slug))
+    report = add_niche_channels(niche_slug, lines)
+    resolved = report.get("resolved") or []
+    snowball = report.get("snowball") or []
+    flash(
+        f"Added {len(resolved)} channel(s); found {len(snowball)} new featured candidate(s).",
+        "success",
+    )
+    unresolved = report.get("unresolved") or []
+    if unresolved:
+        flash("Unresolved: " + ", ".join(unresolved), "warning")
+    if report.get("stopped_reason"):
+        remaining = report.get("remaining") or []
+        suffix = f" Remaining: {', '.join(remaining)}" if remaining else ""
+        flash(f"Stopped: {report['stopped_reason']}.{suffix}", "warning")
+    return redirect(url_for("video_shorts_bp.admin_niches", niche=niche_slug))
