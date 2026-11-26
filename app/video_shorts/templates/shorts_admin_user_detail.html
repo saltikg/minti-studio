@@ -386,6 +386,30 @@
                 <span class="vs-admin-muted">Effective now: {{ user_detail.export_resolution_effective_label }}</span>
               </form>
             </dd>
+
+            <dt>Niche</dt>
+            <dd>
+              {% for brand in brand_niche_settings.brands %}
+                <form
+                  method="post"
+                  action="{{ url_for('video_shorts_bp.admin_update_brand_niche', user_id=user_detail.id, brand_id=brand.id) }}"
+                  class="admin-service-mode-form mb-2">
+                  <span class="vs-admin-muted">{{ brand.name }}</span>
+                  <select name="niche_id" class="form-select form-select-sm admin-service-mode-select" aria-label="Niche for {{ brand.name }}">
+                    <option value="" {% if not brand.niche_id %}selected{% endif %}>None</option>
+                    {% for niche in brand_niche_settings.niches %}
+                      <option value="{{ niche.id }}" {% if brand.niche_id == niche.id %}selected{% endif %}>{{ niche.name }}</option>
+                    {% endfor %}
+                  </select>
+                  <button type="submit" class="btn btn-sm btn-primary">Update</button>
+                  {% if brand.suggestion %}
+                    <span class="vs-admin-muted">Suggested: {{ brand.suggestion.niche_name }} (rank #{{ brand.suggestion.rank }} of {{ brand.suggestion.total }})</span>
+                  {% endif %}
+                </form>
+              {% else %}
+                <span class="vs-admin-muted">No brands found.</span>
+              {% endfor %}
+            </dd>
           </dl>
         </div>
         <div class="admin-detail-account-column">
