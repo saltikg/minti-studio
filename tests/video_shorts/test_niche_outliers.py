@@ -97,7 +97,7 @@ def test_weekly_refresh_due_monday_after_four_pacific():
     assert not niche_outliers.weekly_refresh_due(due, "2026-11-30T12:01:00Z")
 
 
-def test_pattern_generation_uses_one_call_and_caps_sentence(monkeypatch):
+def test_pattern_generation_uses_customer_top_six_and_builds_sentence(monkeypatch):
     monkeypatch.setattr(niche_outliers, "OPENAI_MODEL", "gpt-4.1-mini")
     calls = []
 
@@ -107,7 +107,7 @@ def test_pattern_generation_uses_one_call_and_caps_sentence(monkeypatch):
             message = type(
                 "Message",
                 (),
-                {"content": "Estrogen cream, bladder symptoms, and HRT patch updates led this week; winners ran 22–31s."},
+                {"content": json.dumps({"topics": ["estrogen cream", "bladder symptoms", "hrt patches"]})},
             )()
             choice = type("Choice", (), {"message": message})()
             usage = type("Usage", (), {"prompt_tokens": 100, "completion_tokens": 20})()
@@ -118,8 +118,17 @@ def test_pattern_generation_uses_one_call_and_caps_sentence(monkeypatch):
         "niche_id": 1,
         "as_of": "2026-11-25",
         "rows": [
-            {"video_id": str(index), "title": f"Title {index}", "duration_s": 20 + index, "views": 1000 + index, "on_topic": True}
-            for index in range(12)
+            {
+                "youtube_channel_id": f"channel-{index}",
+                "video_id": str(index),
+                "title": f"Title {index}",
+                "duration_s": 20 + index,
+                "views": 10_000 + index,
+                "engagement": 0.02,
+                "baseline_engagement": 0.02,
+                "topic_status": "on_topic",
+            }
+            for index in range(8)
         ],
     }
 
@@ -127,11 +136,13 @@ def test_pattern_generation_uses_one_call_and_caps_sentence(monkeypatch):
 
     assert len(calls) == 1
     assert calls[0]["model"] == "gpt-4.1-mini"
-    assert calls[0]["messages"][1]["content"].count("\n-") == 10
-    assert pattern["source_count"] == 10
-    assert len(pattern["pattern_sentence"].split()) <= 30
+    assert calls[0]["messages"][1]["content"].count("\n-") == 6
+    assert pattern["source_count"] == 6
+    assert pattern["pattern_sentence"] == (
+        "Most-watched this week: estrogen cream, bladder symptoms, hrt patches. "
+        "Most winners ran 23–26s."
+    )
     assert pattern["estimated_cost_usd"] == 0.000072
-    assert "Required duration range: 22–31s" in calls[0]["messages"][1]["content"]
 
 
 def test_topic_classification_uses_one_call_per_short(monkeypatch, tmp_path):
@@ -143,12 +154,38 @@ def test_topic_classification_uses_one_call_per_short(monkeypatch, tmp_path):
         encoding="utf-8",
     )
     calls = []
+    video_path = tmp_path / "niche_expansion" / "pool_video_details" / "batch.json"
+    video_path.parent.mkdir(parents=True)
+    video_path.write_text(
+        json.dumps(
+            {
+                "payload": {
+                    "items": [
+                        {
+                            "id": "a",
+                            "snippet": {
+                                "description": "Estrogen cream details #menopause" * 30,
+                                "tags": ["HRT"],
+                            },
+                        }
+                    ]
+                }
+            }
+        ),
+        encoding="utf-8",
+    )
 
     class Completions:
         def create(self, **kwargs):
             calls.append(kwargs)
-            on_topic = "First" in kwargs["messages"][1]["content"]
-            message = type("Message", (), {"content": json.dumps({"on_topic": on_topic})})()
+            status = (
+                "on_topic"
+                if "First" in kwargs["messages"][1]["content"]
+                else "adjacent"
+            )
+            message = type(
+                "Message", (), {"content": json.dumps({"topic_status": status})}
+            )()
             choice = type("Choice", (), {"message": message})()
             usage = type("Usage", (), {"prompt_tokens": 50, "completion_tokens": 5})()
             return type("Response", (), {"choices": [choice], "usage": usage})()
@@ -166,20 +203,21 @@ def test_topic_classification_uses_one_call_per_short(monkeypatch, tmp_path):
     )
 
     assert len(calls) == 2
-    assert [row["on_topic"] for row in result["rows"]] == [True, False]
+    assert [row["topic_status"] for row in result["rows"]] == ["on_topic", "adjacent"]
     assert "Menopause clinic" in calls[0]["messages"][1]["content"]
+    assert "Video description: " in calls[0]["messages"][1]["content"]
+    assert "Hashtags: HRT, #menopause" in calls[0]["messages"][1]["content"]
+    description_line = next(
+        line for line in calls[0]["messages"][1]["content"].splitlines()
+        if line.startswith("Video description:")
+    )
+    assert len(description_line.removeprefix("Video description: ")) == 500
     assert usage["input_tokens"] == 100
     assert usage["output_tokens"] == 10
 
 
-def test_pattern_sentence_normalizes_and_adds_required_range():
-    sentence = niche_outliers._pattern_sentence(
-        "Estrogen cream and bladder symptoms led. HRT patches also performed well.",
-        "33–134s",
-    )
+def test_whole_percentile_interpolates():
+    durations = [33, 39, 58, 80, 95, 134]
 
-    assert sentence == (
-        "Estrogen cream and bladder symptoms led; HRT patches also performed well; "
-        "winners ran 33–134s."
-    )
-    assert len(sentence.split()) <= 30
+    assert niche_outliers._whole_percentile(durations, 0.25) == 44
+    assert niche_outliers._whole_percentile(durations, 0.75) == 91

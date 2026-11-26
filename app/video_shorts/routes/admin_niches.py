@@ -88,8 +88,10 @@ def admin_niches():
             outlier["engagement_badge"] = "possibly_promoted"
         else:
             outlier["engagement_badge"] = ""
-        outlier["topic_badge"] = "off_topic" if outlier.get("on_topic") is False else ""
-        if outlier.get("on_topic") is True:
+        outlier["topic_badge"] = (
+            "off_topic" if outlier.get("topic_status") == "off_topic" else ""
+        )
+        if outlier.get("topic_status") != "off_topic":
             best_by_channel.setdefault(str(outlier.get("youtube_channel_id") or ""), outlier)
     short_sort = str(request.args.get("short_sort") or "views").strip().lower()
     sort_fields = {
@@ -111,7 +113,9 @@ def admin_niches():
     )
     outlier_total_count = len(outlier_rows)
     if not shorts_show_all:
-        outlier_rows = [row for row in outlier_rows if row.get("on_topic") is True]
+        outlier_rows = [
+            row for row in outlier_rows if row.get("topic_status") != "off_topic"
+        ]
         channel_counts = {}
         capped_rows = []
         for outlier in outlier_rows:
@@ -169,6 +173,58 @@ def admin_niches():
         short_dir=short_dir,
         shorts_show_all=shorts_show_all,
     )
+
+
+@video_shorts_bp.route("/admin/niches/short-topic", methods=["POST"])
+@require_admin
+def admin_niche_short_topic_update():
+    niche_slug = str(request.form.get("niche") or "").strip()
+    video_id = str(request.form.get("video_id") or "").strip()
+    action = str(request.form.get("action") or "").strip()
+    if not niche_slug or not video_id or action not in {"mark_on_topic", "mark_off_topic"}:
+        abort(400)
+    topic_status = "on_topic" if action == "mark_on_topic" else "off_topic"
+    conn = get_db()
+    try:
+        if not table_columns(conn, "niche_outlier_short_topic_overrides"):
+            abort(503)
+        exists = conn.execute(
+            """
+            SELECT 1
+            FROM niche_outlier_shorts outlier
+            JOIN niches niche ON niche.id = outlier.niche_id
+            WHERE niche.slug = ? AND outlier.video_id = ?
+            LIMIT 1
+            """,
+            [niche_slug, video_id],
+        ).fetchone()
+        if not exists:
+            abort(404)
+        conn.execute(
+            """
+            INSERT INTO niche_outlier_short_topic_overrides (
+                niche_id, video_id, topic_status, updated_at
+            )
+            SELECT id, ?, ?, CURRENT_TIMESTAMP FROM niches WHERE slug = ?
+            ON CONFLICT (niche_id, video_id) DO UPDATE SET
+                topic_status = EXCLUDED.topic_status,
+                updated_at = CURRENT_TIMESTAMP
+            """,
+            [video_id, topic_status, niche_slug],
+        )
+        conn.commit()
+    except Exception:
+        conn.rollback()
+        raise
+    finally:
+        conn.close()
+    flash("Short topic override updated.", "success")
+    return_to = str(request.form.get("return_to") or "").strip()
+    if not return_to.startswith("/video_shorts/admin/niches"):
+        return_to = url_for(
+            "video_shorts_bp.admin_niches", niche=niche_slug, tab="top_shorts"
+        )
+    return redirect(return_to)
 
 
 @video_shorts_bp.route("/admin/niches/channel", methods=["POST"])

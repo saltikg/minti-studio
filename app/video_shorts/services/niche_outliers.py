@@ -5,6 +5,7 @@ import json
 import logging
 import os
 import re
+import math
 from collections import defaultdict
 from datetime import date, datetime, time, timedelta, timezone
 from pathlib import Path
@@ -40,7 +41,7 @@ ON_TOPIC_DEFINITION = (
     "fertility, general fitness, diet or fasting programs, non-women-specific health, and "
     "unrelated specialties are off-topic."
 )
-FORBIDDEN_PATTERN_WORDS = {"educational", "informative", "concise", "various"}
+TOPIC_STATUSES = {"on_topic", "adjacent", "off_topic"}
 REPO_ROOT = Path(__file__).resolve().parents[3]
 DEFAULT_CACHE_ROOT = REPO_ROOT / "data" / "research" / "cache"
 logger = logging.getLogger(__name__)
@@ -259,7 +260,7 @@ def refresh_niche_outlier_cache(
         for offset in range(0, len(video_ids), 50):
             chunk = video_ids[offset : offset + 50]
             params = {
-                "part": "contentDetails,statistics",
+                "part": "snippet,contentDetails,statistics",
                 "id": ",".join(chunk),
                 "maxResults": 50,
             }
@@ -268,11 +269,14 @@ def refresh_niche_outlier_cache(
             _store_api_cache(root / "video_batches" / f"{batch_key}.json", params, payload)
             for item in payload.get("items") or []:
                 statistics = item.get("statistics") or {}
+                snippet = item.get("snippet") or {}
                 videos[str(item.get("id") or "")] = {
                     "duration_s": _duration_seconds((item.get("contentDetails") or {}).get("duration")),
                     "views": _optional_int(statistics.get("viewCount")),
                     "likes": _optional_int(statistics.get("likeCount")),
                     "comments": _optional_int(statistics.get("commentCount")),
+                    "description": str(snippet.get("description") or "")[:500],
+                    "tags": [str(tag) for tag in (snippet.get("tags") or [])[:30]],
                 }
     finally:
         if owns_session:
@@ -381,6 +385,8 @@ def compute_niche_outlier_shorts(
                     "outlier_ratio": ratio,
                     "engagement": (likes + comments) / views,
                     "baseline_engagement": baseline_engagement,
+                    "video_description": str(item.get("description") or "")[:500],
+                    "hashtags": list(item.get("tags") or []),
                 }
             )
     output.sort(key=lambda row: float(row["outlier_ratio"]), reverse=True)
@@ -457,46 +463,46 @@ def load_latest_niche_outliers(conn, niche_id: Any) -> tuple[str, list[dict[str,
     as_of = str(latest[0]) if latest and latest[0] else ""
     if not as_of:
         return "", []
-    topic_column = "on_topic" if "on_topic" in outlier_columns else "NULL AS on_topic"
+    if "topic_status" in outlier_columns:
+        llm_topic_column = "outlier.topic_status AS llm_topic_status"
+    elif "on_topic" in outlier_columns:
+        llm_topic_column = (
+            "CASE WHEN outlier.on_topic IS TRUE THEN 'on_topic' "
+            "WHEN outlier.on_topic IS FALSE THEN 'off_topic' END AS llm_topic_status"
+        )
+    else:
+        llm_topic_column = "NULL AS llm_topic_status"
+    has_overrides = bool(table_columns(conn, "niche_outlier_short_topic_overrides"))
+    override_join = (
+        "LEFT JOIN niche_outlier_short_topic_overrides topic_override "
+        "ON topic_override.niche_id = outlier.niche_id "
+        "AND topic_override.video_id = outlier.video_id"
+        if has_overrides else ""
+    )
+    override_column = (
+        "topic_override.topic_status AS topic_override"
+        if has_overrides else "NULL AS topic_override"
+    )
     result = conn.execute(
         f"""
-        SELECT youtube_channel_id, video_id, title, published_at, duration_s,
+        SELECT outlier.youtube_channel_id, outlier.video_id, outlier.title,
+               outlier.published_at, outlier.duration_s,
                views, baseline, outlier_ratio, engagement, baseline_engagement,
-               computed_at, {topic_column}
-        FROM niche_outlier_shorts
-        WHERE niche_id = ? AND as_of = ?
-        ORDER BY outlier_ratio DESC, views DESC, video_id ASC
+               computed_at, {llm_topic_column}, {override_column}
+        FROM niche_outlier_shorts outlier
+        {override_join}
+        WHERE outlier.niche_id = ? AND outlier.as_of = ?
+        ORDER BY outlier_ratio DESC, views DESC, outlier.video_id ASC
         """,
         [niche_id, as_of],
     )
     columns = [str(item[0]) for item in (result.description or [])]
-    return as_of, [dict(zip(columns, row)) for row in result.fetchall()]
-
-
-def _pattern_sentence(value: Any, required_duration_range: str = "") -> str:
-    sentence = " ".join(str(value or "").strip().strip('"').split())
-    if not sentence:
-        raise NicheOutlierError("pattern response was empty")
-    first_sentence = re.sub(r"[.!?]+\s+", "; ", sentence).rstrip(".!?;: ")
-    if required_duration_range and required_duration_range not in first_sentence:
-        first_sentence += f"; winners ran {required_duration_range}"
-    words = first_sentence.split()
-    if len(words) > 30:
-        suffix = f"; winners ran {required_duration_range}" if required_duration_range else ""
-        suffix_words = suffix.split()
-        first_sentence = (
-            " ".join(words[: 30 - len(suffix_words)]).rstrip(".,;:!?") + suffix + "."
-        )
-    elif first_sentence[-1] not in ".!?":
-        first_sentence += "."
-    forbidden = FORBIDDEN_PATTERN_WORDS.intersection(
-        re.findall(r"[a-z]+", first_sentence.casefold())
-    )
-    if forbidden:
-        raise NicheOutlierError(
-            f"pattern response used forbidden word(s): {', '.join(sorted(forbidden))}"
-        )
-    return first_sentence
+    rows = [dict(zip(columns, row)) for row in result.fetchall()]
+    for row in rows:
+        status = str(row.get("topic_override") or row.get("llm_topic_status") or "adjacent")
+        row["topic_status"] = status if status in TOPIC_STATUSES else "adjacent"
+        row["on_topic"] = row["topic_status"] != "off_topic"
+    return as_of, rows
 
 
 def _pattern_cost_usd(model: str, input_tokens: int, output_tokens: int) -> float:
@@ -508,45 +514,102 @@ def _pattern_cost_usd(model: str, input_tokens: int, output_tokens: int) -> floa
     return (input_tokens * input_price + output_tokens * output_price) / 1_000_000
 
 
+def customer_visible_outlier_rows(rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    eligible = []
+    for row in rows:
+        status = row.get("topic_status")
+        if status is None and row.get("on_topic") is False:
+            status = "off_topic"
+        if status == "off_topic" or int(row.get("views") or 0) < 5_000:
+            continue
+        engagement = float(row.get("engagement") or 0)
+        baseline_engagement = float(row.get("baseline_engagement") or 0)
+        if baseline_engagement > 0 and engagement < baseline_engagement / 3:
+            continue
+        eligible.append(row)
+    eligible.sort(
+        key=lambda row: (-int(row.get("views") or 0), str(row.get("video_id") or ""))
+    )
+    channel_counts: dict[str, int] = {}
+    output = []
+    for row in eligible:
+        channel_id = str(row.get("youtube_channel_id") or "")
+        if channel_counts.get(channel_id, 0) >= 2:
+            continue
+        channel_counts[channel_id] = channel_counts.get(channel_id, 0) + 1
+        output.append(row)
+        if len(output) == 6:
+            break
+    return output
+
+
+def _whole_percentile(values: list[int], percentile: float) -> int:
+    ordered = sorted(int(value) for value in values)
+    if not ordered:
+        raise NicheOutlierError("cannot calculate a percentile without values")
+    position = (len(ordered) - 1) * percentile
+    lower = math.floor(position)
+    upper = math.ceil(position)
+    if lower == upper:
+        return ordered[lower]
+    interpolated = ordered[lower] + (ordered[upper] - ordered[lower]) * (position - lower)
+    return int(round(interpolated))
+
+
+def _pattern_topics(value: Any, titles: list[str]) -> list[str]:
+    text = str(value or "").strip()
+    if text.startswith("```"):
+        text = re.sub(r"^```(?:json)?\s*|\s*```$", "", text, flags=re.IGNORECASE)
+    try:
+        parsed = json.loads(text)
+    except (TypeError, ValueError, json.JSONDecodeError) as exc:
+        raise NicheOutlierError("pattern generator returned invalid JSON") from exc
+    topics = parsed.get("topics") if isinstance(parsed, dict) else None
+    if not isinstance(topics, list) or not 2 <= len(topics) <= 3:
+        raise NicheOutlierError("pattern generator must return 2–3 topic labels")
+    cleaned = [" ".join(str(topic).strip().split()) for topic in topics]
+    if any(topic != topic.casefold() or not 2 <= len(topic.split()) <= 4 for topic in cleaned):
+        raise NicheOutlierError("pattern topic labels must be lowercase and 2–4 words")
+    return cleaned
+
+
 def generate_niche_outlier_pattern(
     result: dict[str, Any],
     *,
     client=None,
 ) -> dict[str, Any] | None:
-    source_rows = sorted(
-        [row for row in (result.get("rows") or []) if row.get("on_topic") is True],
-        key=lambda row: (-int(row.get("views") or 0), str(row.get("video_id") or "")),
-    )[:10]
+    source_input = (
+        result.get("pattern_rows") if "pattern_rows" in result else result.get("rows")
+    )
+    source_rows = customer_visible_outlier_rows(source_input or [])
     if not source_rows:
         return None
     selected_client = client or _openai_client
     if selected_client is None:
         raise NicheOutlierError("OpenAI client is not configured")
-    title_lines = "\n".join(
-        f"- {str(row.get('title') or '').strip()} ({int(row.get('duration_s') or 0)}s)"
-        for row in source_rows
-    )
+    titles = [str(row.get("title") or "").strip() for row in source_rows]
+    title_lines = "\n".join(f"- {title}" for title in titles)
     durations = [int(row.get("duration_s") or 0) for row in source_rows]
-    duration_range = f"{min(durations)}–{max(durations)}s"
+    p25 = _whole_percentile(durations, 0.25)
+    p75 = _whole_percentile(durations, 0.75)
     response = selected_client.chat.completions.create(
         model=OPENAI_MODEL,
-        temperature=0.2,
-        max_tokens=80,
+        temperature=0,
+        max_tokens=60,
+        response_format={"type": "json_object"},
         messages=[
             {
                 "role": "system",
                 "content": (
-                    "Return exactly one plain-English sentence of 30 words or fewer. Name 2–3 "
-                    "concrete topics found in the supplied titles and include the exact supplied "
-                    "duration range. Do not give medical advice, recommendations, or diagnoses. "
-                    "Never use these words: educational, informative, concise, various."
+                    "Return JSON only with exactly this shape: {\"topics\":[\"label one\","
+                    "\"label two\"]}. Return 2–3 topic labels, each lowercase and 2–4 words, "
+                    "taken from the supplied titles. Do not return sentences or medical advice."
                 ),
             },
             {
                 "role": "user",
                 "content": (
-                    f"Required duration range: {duration_range}\n"
-                    f"Top on-topic outlier Short titles and durations:\n{title_lines}"
+                    f"Customer-page outlier Short titles:\n{title_lines}"
                 ),
             },
         ],
@@ -559,10 +622,14 @@ def generate_niche_outlier_pattern(
     output_tokens = int(
         getattr(usage, "completion_tokens", 0) or getattr(usage, "output_tokens", 0) or 0
     )
+    topics = _pattern_topics(content, titles)
     return {
         "niche_id": result["niche_id"],
         "as_of": result["as_of"],
-        "pattern_sentence": _pattern_sentence(content, duration_range),
+        "pattern_sentence": (
+            f"Most-watched this week: {', '.join(topics)}. "
+            f"Most winners ran {p25}–{p75}s."
+        ),
         "model": OPENAI_MODEL,
         "input_tokens": input_tokens,
         "output_tokens": output_tokens,
@@ -582,7 +649,31 @@ def _cached_channel_description(channel_id: str, cache_root: Path | None = None)
     return " ".join(str((item.get("snippet") or {}).get("description") or "").split())[:5000]
 
 
-def _topic_boolean(value: Any) -> bool:
+def _cached_video_snippets(
+    video_ids: set[str], cache_root: Path | None = None
+) -> dict[str, dict[str, Any]]:
+    root = _cache_root(cache_root)
+    paths = [
+        *sorted((root / "video_batches").glob("*.json")),
+        *sorted((root / "niche_expansion" / "pool_video_details").glob("*.json")),
+        *sorted((root / "videos").glob("*.json")),
+    ]
+    snippets: dict[str, dict[str, Any]] = {}
+    for path in paths:
+        try:
+            raw = json.loads(path.read_text(encoding="utf-8"))
+        except (OSError, ValueError, json.JSONDecodeError):
+            continue
+        payload = raw.get("payload") if isinstance(raw, dict) else {}
+        for item in (payload or {}).get("items") or []:
+            video_id = str(item.get("id") or "")
+            snippet = item.get("snippet") or {}
+            if video_id in video_ids and snippet:
+                snippets[video_id] = snippet
+    return snippets
+
+
+def _topic_status(value: Any) -> str:
     text = str(value or "").strip()
     if text.startswith("```"):
         text = re.sub(r"^```(?:json)?\s*|\s*```$", "", text, flags=re.IGNORECASE)
@@ -590,9 +681,30 @@ def _topic_boolean(value: Any) -> bool:
         parsed = json.loads(text)
     except (TypeError, ValueError, json.JSONDecodeError) as exc:
         raise NicheOutlierError("topic classifier returned invalid JSON") from exc
-    if not isinstance(parsed, dict) or type(parsed.get("on_topic")) is not bool:
-        raise NicheOutlierError("topic classifier must return an on_topic boolean")
-    return parsed["on_topic"]
+    status = parsed.get("topic_status") if isinstance(parsed, dict) else None
+    if status not in TOPIC_STATUSES:
+        raise NicheOutlierError("topic classifier must return a valid topic_status")
+    return str(status)
+
+
+def _topic_overrides(niche_id: Any) -> dict[str, str]:
+    if niche_id is None:
+        return {}
+    conn = get_db_readonly()
+    try:
+        if not table_columns(conn, "niche_outlier_short_topic_overrides"):
+            return {}
+        rows = conn.execute(
+            """
+            SELECT video_id, topic_status
+            FROM niche_outlier_short_topic_overrides
+            WHERE niche_id = ?
+            """,
+            [niche_id],
+        ).fetchall()
+        return {str(row[0]): str(row[1]) for row in rows}
+    finally:
+        conn.close()
 
 
 def classify_niche_outlier_topics(
@@ -607,8 +719,29 @@ def classify_niche_outlier_topics(
     decisions = []
     input_tokens = 0
     output_tokens = 0
-    for row in result.get("rows") or []:
+    rows = result.get("rows") or []
+    snippets = _cached_video_snippets(
+        {str(row.get("video_id") or "") for row in rows}, cache_root
+    )
+    overrides = _topic_overrides(result.get("niche_id"))
+    for row in rows:
         channel_id = str(row.get("youtube_channel_id") or "")
+        video_id = str(row.get("video_id") or "")
+        snippet = snippets.get(video_id) or {}
+        video_description = str(
+            row.get("video_description") or snippet.get("description") or ""
+        ).strip()[:500]
+        tag_values = [
+            str(tag).strip() for tag in (row.get("hashtags") or snippet.get("tags") or [])
+            if str(tag).strip()
+        ]
+        extracted = re.findall(
+            r"(?<!\w)#[\w-]+",
+            f"{row.get('title') or ''} {video_description}",
+            flags=re.UNICODE,
+        )
+        hashtags = list(dict.fromkeys([*tag_values, *extracted]))[:30]
+        channel_description = _cached_channel_description(channel_id, cache_root)
         response = selected_client.chat.completions.create(
             model=OPENAI_MODEL,
             temperature=0,
@@ -619,21 +752,41 @@ def classify_niche_outlier_topics(
                     "role": "system",
                     "content": (
                         "You are a strict YouTube niche taxonomy classifier. Return JSON only, "
-                        "with exactly one boolean field: on_topic. " + ON_TOPIC_DEFINITION
+                        "with exactly one field whose value is on_topic, adjacent, or off_topic: "
+                        "{\"topic_status\":\"on_topic|adjacent|off_topic\"}. If unsure, answer "
+                        "adjacent. Bias toward keeping a Short unless it is clearly off-topic. "
+                        + ON_TOPIC_DEFINITION
                     ),
                 },
                 {
                     "role": "user",
                     "content": (
                         f"Short title: {str(row.get('title') or '').strip()}\n"
-                        f"Channel description: {_cached_channel_description(channel_id, cache_root)}"
+                        + (f"Video description: {video_description}\n" if video_description else "")
+                        + (f"Hashtags: {', '.join(hashtags)}\n" if hashtags else "")
+                        + f"Channel description: {channel_description}"
                     ),
                 },
             ],
         )
         content = response.choices[0].message.content if response.choices else ""
-        on_topic = _topic_boolean(content)
-        row["on_topic"] = on_topic
+        llm_status = _topic_status(content)
+        previous_status = str(
+            row.get("topic_status")
+            or (
+                "on_topic"
+                if row.get("on_topic") is True
+                else "off_topic"
+                if row.get("on_topic") is False
+                else "adjacent"
+            )
+        )
+        override = str(row.get("topic_override") or overrides.get(video_id) or "")
+        effective_status = override if override in {"on_topic", "off_topic"} else llm_status
+        row["llm_topic_status"] = llm_status
+        row["topic_override"] = override or None
+        row["topic_status"] = effective_status
+        row["on_topic"] = effective_status != "off_topic"
         usage = getattr(response, "usage", None)
         input_tokens += int(
             getattr(usage, "prompt_tokens", 0) or getattr(usage, "input_tokens", 0) or 0
@@ -643,9 +796,12 @@ def classify_niche_outlier_topics(
         )
         decisions.append(
             {
-                "video_id": str(row.get("video_id") or ""),
+                "video_id": video_id,
                 "title": str(row.get("title") or ""),
-                "on_topic": on_topic,
+                "previous_status": previous_status,
+                "llm_topic_status": llm_status,
+                "topic_override": override or None,
+                "topic_status": effective_status,
             }
         )
     return {
@@ -659,16 +815,20 @@ def classify_niche_outlier_topics(
 def persist_niche_outlier_topics(result: dict[str, Any]) -> None:
     conn = get_db()
     try:
-        if "on_topic" not in table_columns(conn, "niche_outlier_shorts"):
-            raise NicheOutlierError("niche_outlier_shorts.on_topic migration has not been applied")
+        columns = table_columns(conn, "niche_outlier_shorts")
+        if "topic_status" not in columns:
+            raise NicheOutlierError("niche_outlier_shorts.topic_status migration has not been applied")
         for row in result.get("rows") or []:
             conn.execute(
                 """
                 UPDATE niche_outlier_shorts
-                SET on_topic = ?
+                SET topic_status = ?, on_topic = ?
                 WHERE niche_id = ? AND as_of = ? AND video_id = ?
                 """,
-                [row.get("on_topic"), result["niche_id"], result["as_of"], row["video_id"]],
+                [
+                    row.get("llm_topic_status"), row.get("on_topic"), result["niche_id"],
+                    result["as_of"], row["video_id"],
+                ],
             )
         conn.commit()
     except Exception:
@@ -699,6 +859,12 @@ def classify_and_persist_latest_topics(
     result = {"niche": niche, "niche_id": niche_row[0], "as_of": as_of, "rows": rows}
     usage = classify_niche_outlier_topics(result, cache_root=cache_root, client=client)
     persist_niche_outlier_topics(result)
+    _niche_row, pool = _current_pool(niche)
+    pool_ids = {str(row.get("youtube_channel_id") or "") for row in pool}
+    result["pattern_rows"] = [
+        row for row in rows
+        if str(row.get("youtube_channel_id") or "") in pool_ids
+    ]
     return result, usage
 
 
@@ -753,8 +919,18 @@ def generate_and_persist_latest_pattern(
         conn.close()
     if not as_of:
         return None
+    _niche_row, pool = _current_pool(niche)
+    pool_ids = {str(row.get("youtube_channel_id") or "") for row in pool}
     pattern = generate_niche_outlier_pattern(
-        {"niche_id": niche_row[0], "as_of": as_of, "rows": rows},
+        {
+            "niche_id": niche_row[0],
+            "as_of": as_of,
+            "rows": rows,
+            "pattern_rows": [
+                row for row in rows
+                if str(row.get("youtube_channel_id") or "") in pool_ids
+            ],
+        },
         client=client,
     )
     if pattern:

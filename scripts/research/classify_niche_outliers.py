@@ -38,8 +38,20 @@ def main() -> int:
         "niche": args.niche,
         "as_of": result["as_of"],
         "classified": len(topic_usage["decisions"]),
-        "off_topic": [
-            item for item in topic_usage["decisions"] if not item["on_topic"]
+        "status_counts": {
+            status: sum(
+                1 for item in topic_usage["decisions"] if item["topic_status"] == status
+            )
+            for status in ("on_topic", "adjacent", "off_topic")
+        },
+        "changed": [
+            item for item in topic_usage["decisions"]
+            if item["previous_status"] != item["topic_status"]
+        ],
+        "came_back": [
+            item for item in topic_usage["decisions"]
+            if item["previous_status"] == "off_topic"
+            and item["topic_status"] != "off_topic"
         ],
         "topic_usage": topic_usage,
         "pattern": pattern,

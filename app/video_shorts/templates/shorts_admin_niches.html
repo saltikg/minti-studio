@@ -49,6 +49,8 @@
   .niche-badge.high_engagement { background: #dcfce7; color: #166534; margin-left: 5px; }
   .niche-badge.possibly_promoted { background: #fef3c7; color: #92400e; margin-left: 5px; }
   .niche-badge.off_topic { background: #fee2e2; color: #991b1b; margin-left: 5px; }
+  .niche-topic-override { display: inline; margin-left: 5px; }
+  .niche-topic-button { background: transparent; border: 1px solid rgba(255,255,255,.28); border-radius: 999px; color: #e2e8f0; cursor: pointer; font-size: 10px; padding: 3px 7px; }
   .niche-sort { color: inherit; text-decoration: none; }
   .niche-sort.is-active { color: #8ff3d8; }
   .niche-override { display: grid; gap: 6px; min-width: 310px; }
@@ -121,7 +123,7 @@
     <td>{{ row.rank }}</td>
     <td class="is-left niche-channel-title" title="{{ row.channel_title }}">{{ row.channel_title[:20] }}{% if row.channel_title | length > 20 %}...{% endif %}</td>
     <td class="is-left">{{ row.credential or '—' }}</td>
-    <td class="is-left niche-short-title"><a class="niche-channel" href="https://youtube.com/shorts/{{ row.video_id }}" target="_blank" rel="noopener" title="{{ row.title }}">{{ row.title[:25] }}{% if row.title | length > 25 %}...{% endif %}</a>{% if row.topic_badge == 'off_topic' %}<span class="niche-badge off_topic">Off-topic</span>{% endif %}{% if row.engagement_badge == 'high_engagement' %}<span class="niche-badge high_engagement">High engagement</span>{% elif row.engagement_badge == 'possibly_promoted' %}<span class="niche-badge possibly_promoted" title="Views high but likes/comments low — may include paid views">Possibly promoted</span>{% endif %}</td>
+    <td class="is-left niche-short-title"><a class="niche-channel" href="https://youtube.com/shorts/{{ row.video_id }}" target="_blank" rel="noopener" title="{{ row.title }}">{{ row.title[:25] }}{% if row.title | length > 25 %}...{% endif %}</a>{% if row.topic_badge == 'off_topic' %}<span class="niche-badge off_topic">Off-topic</span>{% endif %}{% if row.engagement_badge == 'high_engagement' %}<span class="niche-badge high_engagement">High engagement</span>{% elif row.engagement_badge == 'possibly_promoted' %}<span class="niche-badge possibly_promoted" title="Views high but likes/comments low — may include paid views">Possibly promoted</span>{% endif %}{% if shorts_show_all %}<form class="niche-topic-override" method="post" action="{{ url_for('video_shorts_bp.admin_niche_short_topic_update') }}"><input type="hidden" name="niche" value="{{ selected.slug }}"><input type="hidden" name="video_id" value="{{ row.video_id }}"><input type="hidden" name="return_to" value="{{ request.full_path }}"><button class="niche-topic-button" type="submit" name="action" value="{{ 'mark_on_topic' if row.topic_status == 'off_topic' else 'mark_off_topic' }}">{{ 'Mark on-topic' if row.topic_status == 'off_topic' else 'Mark off-topic' }}</button></form>{% endif %}</td>
     <td>{{ row.published_at.strftime('%b %-d, %Y') }}</td>
     <td>{{ '{:,}'.format(row.views | int) }}</td>
     <td>{{ '%.1f'|format(row.outlier_ratio) }}×</td>

@@ -20,8 +20,6 @@
   .customer-niche-page .customer-niche-table td { background: transparent !important; color: #E8EDF2; }
   .customer-niche-page .customer-niche-table td, .customer-niche-page .customer-niche-table th { border-color: rgba(255,255,255,.1); padding: .8rem .75rem; vertical-align: middle; }
   .customer-niche-page .customer-niche-table tr.is-you td { background: rgba(45,212,191,.13) !important; color: #E8EDF2; font-weight: 700; }
-  .customer-niche-page .customer-niche-all summary { color: #7dd3fc; cursor: pointer; font-weight: 700; list-style: none; }
-  .customer-niche-page .customer-niche-all summary::-webkit-details-marker { display: none; }
   .customer-niche-page .customer-niche-cards { display: grid; gap: 16px; grid-template-columns: repeat(3, minmax(0, 1fr)); }
   .customer-niche-page .customer-niche-short { border: 1px solid rgba(255,255,255,.14); border-radius: 18px; color: #E8EDF2; display: flex; flex-direction: column; min-height: 210px; padding: 20px; text-decoration: none; transition: transform .15s ease, border-color .15s ease; }
   .customer-niche-page .customer-niche-short:hover { border-color: rgba(125,211,252,.7); color: #E8EDF2; transform: translateY(-2px); }
@@ -59,15 +57,6 @@
             <tbody>{% for row in niche_page.place.neighbors %}<tr class="{% if row.is_you %}is-you{% endif %}"><td>#{{ row.rank }}</td><td>{{ row.channel_name }}{% if row.is_you %} <span class="badge text-bg-info ms-1">You</span>{% endif %}</td><td class="text-end">{{ row.subscribers_display }}</td><td class="text-end">{{ row.views_90d_display }}</td></tr>{% endfor %}</tbody>
           </table>
         </div>
-        <details class="customer-niche-all">
-          <summary>See all {{ niche_page.place.total }} channels</summary>
-          <div class="table-responsive mt-3">
-            <table class="table customer-niche-table">
-              <thead><tr><th>Rank</th><th>Channel</th><th class="text-end">Subscribers</th><th class="text-end">Views on videos posted in the last 90 days</th></tr></thead>
-              <tbody>{% for row in niche_page.place.all_rows %}<tr class="{% if row.is_you %}is-you{% endif %}"><td>#{{ row.rank }}</td><td>{{ row.channel_name }}{% if row.is_you %} <span class="badge text-bg-info ms-1">You</span>{% endif %}</td><td class="text-end">{{ row.subscribers_display }}</td><td class="text-end">{{ row.views_90d_display }}</td></tr>{% endfor %}</tbody>
-            </table>
-          </div>
-        </details>
       {% else %}
         <p class="customer-niche-muted mb-0">Your channel isn't ranked in this niche yet.</p>
       {% endif %}

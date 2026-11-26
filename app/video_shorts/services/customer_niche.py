@@ -6,7 +6,10 @@ from typing import Any
 
 from app.video_shorts.services.brand_niches import brand_youtube_channel_ids
 from app.video_shorts.services.db import table_columns
-from app.video_shorts.services.niche_outliers import load_latest_niche_outliers
+from app.video_shorts.services.niche_outliers import (
+    customer_visible_outlier_rows,
+    load_latest_niche_outliers,
+)
 from app.video_shorts.services.niches import final_niche_pool, load_niche_snapshot
 
 
@@ -50,30 +53,15 @@ def _top_outlier_cards(
     pool_by_channel: dict[str, dict[str, Any]],
     own_channel_ids: set[str],
 ) -> list[dict[str, Any]]:
-    eligible = []
-    for row in rows:
-        channel_id = str(row.get("youtube_channel_id") or "")
-        if (
-            channel_id not in pool_by_channel
-            or row.get("on_topic") is not True
-            or int(row.get("views") or 0) < 5_000
-        ):
-            continue
-        engagement = float(row.get("engagement") or 0)
-        baseline_engagement = float(row.get("baseline_engagement") or 0)
-        if baseline_engagement > 0 and engagement < baseline_engagement / 3:
-            continue
-        eligible.append(row)
-    eligible.sort(
-        key=lambda row: (-int(row.get("views") or 0), str(row.get("video_id") or ""))
+    eligible = customer_visible_outlier_rows(
+        [
+            row for row in rows
+            if str(row.get("youtube_channel_id") or "") in pool_by_channel
+        ]
     )
-    channel_counts: dict[str, int] = {}
     cards = []
     for row in eligible:
         channel_id = str(row.get("youtube_channel_id") or "")
-        if channel_counts.get(channel_id, 0) >= 2:
-            continue
-        channel_counts[channel_id] = channel_counts.get(channel_id, 0) + 1
         cards.append(
             {
                 "video_id": str(row.get("video_id") or ""),
@@ -90,8 +78,6 @@ def _top_outlier_cards(
                 "duration_s": int(row.get("duration_s") or 0),
             }
         )
-        if len(cards) == 6:
-            break
     return cards
 
 
@@ -142,7 +128,6 @@ def load_customer_niche_page(
                 0.0 if total <= 1 else round((rank - 1) * 100 / (total - 1), 2)
             ),
             "neighbors": ranked_rows[max(0, own_index - 2) : own_index + 3],
-            "all_rows": ranked_rows,
         }
 
     as_of, outlier_rows = load_latest_niche_outliers(conn, niche["id"])
