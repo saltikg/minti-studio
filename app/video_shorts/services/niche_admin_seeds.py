@@ -20,12 +20,13 @@ from app.video_shorts.services.niches import is_final_niche_pool_row, load_niche
 from app.video_shorts.services.youtube_quota import (
     YoutubeQuotaCapExceeded,
     record_youtube_data_api_call,
+    research_youtube_api_key,
     require_youtube_quota_available,
     unit_cost,
 )
 
 
-FEATURE = "niche_admin_seeds_research"
+FEATURE = "niche_admin_seeds_research_project"
 MODEL = "gpt-4.1-mini"
 MAX_NAME_SEARCHES = 5
 CACHE_ROOT = Path(__file__).resolve().parents[3] / "data" / "research" / "cache"
@@ -113,9 +114,10 @@ class SeedRunner:
         if method == "search.list" and self.searches >= MAX_NAME_SEARCHES:
             raise SeedError("Submit limit reached: at most 5 plain-name searches are allowed.")
         require_youtube_quota_available(feature=FEATURE, method=method)
-        api_key = youtube_api._youtube_api_key()
-        if not api_key:
-            raise SeedError("YOUTUBE_API_KEY is not configured.")
+        try:
+            api_key = research_youtube_api_key()
+        except RuntimeError as exc:
+            raise SeedError(str(exc)) from exc
         response = self.session.get(
             f"{youtube_api.YOUTUBE_API_BASE}/{endpoint}",
             params={**params, "key": api_key},
@@ -134,6 +136,16 @@ class SeedRunner:
         return payload
 
     def _channels_lookup(self, *, channel_id: str = "", handle: str = "") -> dict[str, Any] | None:
+        if channel_id:
+            cached_path = CACHE_ROOT / "channels" / f"{channel_id}.json"
+            try:
+                cached_wrapper = json.loads(cached_path.read_text(encoding="utf-8"))
+            except (OSError, ValueError):
+                cached_wrapper = {}
+            cached_payload = cached_wrapper.get("payload") or {}
+            cached_item = cached_payload.get("item")
+            if isinstance(cached_item, dict):
+                return cached_item
         params = {"part": "snippet,statistics,contentDetails", "maxResults": 1}
         if channel_id:
             params["id"] = channel_id
@@ -180,6 +192,28 @@ class SeedRunner:
         found_id = str(((item.get("id") or {}).get("channelId")) or snippet.get("channelId") or "")
         channel = self._channels_lookup(channel_id=found_id) if found_id else None
         return found_id, channel
+
+    def name_candidates(self, value: str) -> list[dict[str, Any]]:
+        name = str(value or "").strip().lstrip("@")
+        params = {"part": "snippet", "q": name, "type": "channel", "maxResults": 3}
+        key = hashlib.sha256(("fallback:" + name.casefold()).encode()).hexdigest()[:16]
+        payload = self.youtube_get(
+            "search", "search.list", params,
+            CACHE_ROOT / self.niche_slug / "admin_seeds" / "name_search" / f"{key}.json",
+        )
+        output = []
+        for item in payload.get("items") or []:
+            snippet = item.get("snippet") or {}
+            channel_id = str((item.get("id") or {}).get("channelId") or snippet.get("channelId") or "")
+            channel_item = self._channels_lookup(channel_id=channel_id) if channel_id else None
+            metadata = self._channel_metadata(channel_item or {})
+            output.append({
+                "title": metadata["title"] or str(snippet.get("title") or ""),
+                "handle": str(((channel_item or {}).get("snippet") or {}).get("customUrl") or ""),
+                "subscribers": metadata["subscriber_count"],
+                "channel_id": channel_id,
+            })
+        return output
 
     @staticmethod
     def _channel_metadata(item: dict[str, Any]) -> dict[str, Any]:
@@ -361,7 +395,7 @@ class SeedRunner:
 
     def persist_channel(
         self, channel_id: str, enriched: dict[str, Any], result: dict[str, Any],
-        *, source: str, admin_include: bool,
+        *, source: str, admin_include: bool, admin_reason: str = "added by admin",
     ) -> None:
         channel = enriched["channel"]
         in_niche = result["classification_status"] == "classified"
@@ -404,7 +438,7 @@ class SeedRunner:
                     enriched["avg_views_long_90d"], enriched["avg_views_short_90d"], source,
                     self.niche_slug, result["core_share"], result["core_count"], result["entity"],
                     result["reason"], enriched["views_90d"], admin_include,
-                    "added by admin" if admin_include else None, channel["country"].upper(),
+                    admin_reason if admin_include else None, channel["country"].upper(),
                     result["language"], result["primary_focus"], result["classification_status"],
                     result["title_count"], result["channel_type"],
                 ],
@@ -442,10 +476,16 @@ class SeedRunner:
         finally:
             conn.close()
 
-    def run(self, lines: list[str], *, featured_seed_ids: list[str] | None = None) -> dict[str, Any]:
+    def run(
+        self,
+        lines: list[str],
+        *,
+        featured_seed_ids: list[str] | None = None,
+        admin_reason: str = "added by admin",
+    ) -> dict[str, Any]:
         report: dict[str, Any] = {
             "resolved": [], "unresolved": [], "snowball": [], "remaining": [],
-            "stopped_reason": "",
+            "unresolved_candidates": {}, "stopped_reason": "",
         }
         explicit_ids: list[str] = []
         try:
@@ -453,10 +493,15 @@ class SeedRunner:
                 channel_id, item = self.resolve(line)
                 if not channel_id or not item:
                     report["unresolved"].append(line)
+                    if line.startswith("@"):
+                        report["unresolved_candidates"][line] = self.name_candidates(line)
                     continue
                 enriched = self.enrich(channel_id, item)
                 result = self.classify(enriched)
-                self.persist_channel(channel_id, enriched, result, source="admin_seed", admin_include=True)
+                self.persist_channel(
+                    channel_id, enriched, result, source="admin_seed",
+                    admin_include=True, admin_reason=admin_reason,
+                )
                 explicit_ids.append(channel_id)
                 report["resolved"].append({
                     "input": line, "channel_id": channel_id, "title": enriched["channel"]["title"],
@@ -516,12 +561,102 @@ class SeedRunner:
         }
         return report
 
+    def fill_missing_data(self) -> dict[str, Any]:
+        conn = get_db_readonly()
+        try:
+            selected, rows = load_niche_snapshot(
+                conn, self.niche_slug, self.selected["snapshot_date"]
+            )
+        finally:
+            conn.close()
+        targets = [
+            row for row in rows
+            if int(row.get("views_90d") or 0) == 0
+            or not any((CACHE_ROOT / "uploads" / str(row.get("youtube_channel_id") or "")).glob("page_*.json"))
+        ]
+        filled = []
+        still_zero = []
+        stopped_reason = ""
+        for index, row in enumerate(targets):
+            channel_id = str(row.get("youtube_channel_id") or "")
+            try:
+                enriched = self.enrich(channel_id)
+                conn = get_db()
+                try:
+                    conn.execute(
+                        """
+                        UPDATE niche_channels
+                        SET views_90d=?, longform_90d=?, shorts_90d=?,
+                            avg_views_long_90d=?, avg_views_short_90d=?,
+                            updated_at=CURRENT_TIMESTAMP
+                        WHERE niche_id=? AND snapshot_date=? AND youtube_channel_id=?
+                        """,
+                        [
+                            enriched["views_90d"], enriched["longform_90d"],
+                            enriched["shorts_90d"], enriched["avg_views_long_90d"],
+                            enriched["avg_views_short_90d"], self.definition["id"],
+                            self.selected["snapshot_date"], channel_id,
+                        ],
+                    )
+                    conn.commit()
+                finally:
+                    conn.close()
+                if int(enriched["views_90d"] or 0) > 0:
+                    filled.append({
+                        "channel_id": channel_id, "title": enriched["channel"]["title"],
+                        "views_90d": int(enriched["views_90d"]),
+                    })
+                else:
+                    reason = (
+                        "no public uploads playlist"
+                        if not enriched["channel"].get("uploads_playlist_id")
+                        else "no views on videos posted in the last 90 days"
+                    )
+                    still_zero.append({
+                        "channel_id": channel_id,
+                        "title": enriched["channel"]["title"] or row.get("title"),
+                        "reason": reason,
+                    })
+            except YoutubeQuotaCapExceeded as exc:
+                stopped_reason = str(exc)
+                for remaining in targets[index:]:
+                    still_zero.append({
+                        "channel_id": remaining.get("youtube_channel_id"),
+                        "title": remaining.get("title"), "reason": "quota cap reached",
+                    })
+                break
+            except Exception as exc:
+                still_zero.append({
+                    "channel_id": channel_id, "title": row.get("title"),
+                    "reason": str(exc)[:300],
+                })
+        return {
+            "targets": len(targets), "filled": filled, "still_zero": still_zero,
+            "stopped_reason": stopped_reason,
+        }
+
 
 def add_niche_channels(
-    niche_slug: str, lines: list[str], *, featured_seed_ids: list[str] | None = None
+    niche_slug: str,
+    lines: list[str],
+    *,
+    featured_seed_ids: list[str] | None = None,
+    admin_reason: str = "added by admin",
+    fill_missing: bool = False,
 ) -> dict[str, Any]:
     runner = SeedRunner(niche_slug)
     try:
-        return runner.run(lines, featured_seed_ids=featured_seed_ids)
+        report = runner.run(
+            lines,
+            featured_seed_ids=featured_seed_ids,
+            admin_reason=admin_reason,
+        )
+        if fill_missing:
+            report["missing_data"] = runner.fill_missing_data()
+            report["youtube"] = {
+                "calls": dict(runner.calls), "units_used": runner.units_used,
+                "name_searches": runner.searches,
+            }
+        return report
     finally:
         runner.close()

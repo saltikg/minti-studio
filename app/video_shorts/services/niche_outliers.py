@@ -21,6 +21,7 @@ from app.video_shorts.services.niches import final_niche_pool, load_niche_snapsh
 from app.video_shorts.services.niche_definitions import definition_prompt, load_niche_definition
 from app.video_shorts.services.youtube_quota import (
     record_youtube_data_api_call,
+    research_youtube_api_key,
     require_youtube_quota_available,
     unit_cost,
 )
@@ -28,7 +29,7 @@ from app.video_shorts.services.youtube_quota import (
 
 PACIFIC = ZoneInfo("America/Los_Angeles")
 YOUTUBE_API_BASE = "https://www.googleapis.com/youtube/v3"
-QUOTA_FEATURE = "niche_outlier_research"
+QUOTA_FEATURE = "niche_outlier_research_project"
 DEFAULT_MAX_UNITS = 500
 DEFAULT_NICHE_SLUG = "menopause_hormones"
 SCHEDULER_STATE_NAME = "niche_outliers:menopause_hormones"
@@ -150,9 +151,10 @@ def _youtube_get(
     method: str,
     params: dict[str, Any],
 ) -> dict[str, Any]:
-    api_key = str(os.getenv("YOUTUBE_API_KEY") or "").strip()
-    if not api_key:
-        raise NicheOutlierError("YOUTUBE_API_KEY is required")
+    try:
+        api_key = research_youtube_api_key()
+    except RuntimeError as exc:
+        raise NicheOutlierError(str(exc)) from exc
     quota.reserve(method)
     try:
         response = session.get(

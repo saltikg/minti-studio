@@ -38,6 +38,7 @@ from app.video_shorts.services.niches import (
 from app.video_shorts.services.youtube_quota import (
     YoutubeQuotaCapExceeded,
     record_youtube_data_api_call,
+    research_youtube_api_key,
     require_youtube_quota_available,
 )
 
@@ -243,9 +244,10 @@ def backfill_missing_video_stats(
         if missing:
             missing_by_channel[channel_id] = missing
     missing_ids = sorted(set().union(*missing_by_channel.values())) if missing_by_channel else []
-    api_key = str(os.getenv("YOUTUBE_API_KEY") or "").strip()
-    if missing_ids and not api_key:
-        raise ReclassifyError("YOUTUBE_API_KEY is required to fill missing video statistics")
+    try:
+        api_key = research_youtube_api_key() if missing_ids else ""
+    except RuntimeError as exc:
+        raise ReclassifyError(str(exc)) from exc
 
     units_used = 0
     session = requests.Session()
@@ -254,7 +256,7 @@ def backfill_missing_video_stats(
         params = {"part": "contentDetails,statistics", "id": ",".join(chunk), "maxResults": 50}
         units_used += 1
         try:
-            require_youtube_quota_available(feature="women_hormones_research", method="videos.list")
+            require_youtube_quota_available(feature="women_hormones_research_project", method="videos.list")
         except YoutubeQuotaCapExceeded as exc:
             print(f"WARNING: research request skipped: {exc}", file=sys.stderr)
             raise ReclassifyError(str(exc)) from exc
@@ -272,7 +274,7 @@ def backfill_missing_video_stats(
             ) from exc
         if not isinstance(payload, dict):
             raise ReclassifyError("videos.list backfill returned a non-object response")
-        record_youtube_data_api_call(feature="women_hormones_research", method="videos.list")
+        record_youtube_data_api_call(feature="women_hormones_research_project", method="videos.list")
         batch_key = hashlib.sha256(",".join(chunk).encode("utf-8")).hexdigest()[:16]
         _store_youtube_cache(cache_root / "video_batches" / f"{batch_key}.json", params, payload)
 

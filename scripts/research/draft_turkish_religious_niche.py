@@ -22,6 +22,7 @@ from app.video_shorts.config import _openai_client
 from app.video_shorts.services.db import get_db
 from app.video_shorts.services.youtube_quota import (
     record_youtube_data_api_call,
+    research_youtube_api_key,
     require_youtube_quota_available,
     unit_cost,
 )
@@ -33,7 +34,7 @@ BRAND_NAME = "Hocaefendiden Kisa Kisa"
 SLUG = "turkish_religious_talks"
 TARGET_FOCUS = "religious_spiritual_talks"
 CACHE_ROOT = REPO_ROOT / "data" / "research" / "cache"
-FEATURE = "turkish_religious_talks_research"
+FEATURE = "turkish_religious_talks_research_project"
 YOUTUBE_API_BASE = "https://www.googleapis.com/youtube/v3"
 
 
@@ -54,9 +55,7 @@ def _refresh_titles(cap: int) -> int:
     cost = unit_cost(method)
     if cost > cap:
         raise RuntimeError(f"YouTube cap {cap} is below the {cost}-unit request cost")
-    api_key = str(os.getenv("YOUTUBE_API_KEY") or "").strip()
-    if not api_key:
-        raise RuntimeError("YOUTUBE_API_KEY is required to fill the seed cache")
+    api_key = research_youtube_api_key()
     require_youtube_quota_available(feature=FEATURE, method=method)
     params = {
         "part": "snippet,contentDetails",

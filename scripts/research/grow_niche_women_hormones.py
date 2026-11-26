@@ -757,8 +757,10 @@ def main() -> int:
     )
     parser.add_argument("--workers", type=int, default=6)
     args = parser.parse_args()
-    if not os.getenv("YOUTUBE_API_KEY", "").strip():
-        raise GrowthError("YOUTUBE_API_KEY is required; OAuth is not allowed")
+    try:
+        base.research_youtube_api_key()
+    except RuntimeError as exc:
+        raise GrowthError(str(exc)) from exc
     if not _openai_client:
         raise GrowthError("OPENAI_API_KEY is required")
 

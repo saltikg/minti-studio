@@ -27,8 +27,10 @@ from classify_turkish_niche_channel_types import recompute_top_shorts
 def main() -> int:
     report = add_niche_channels(
         "turkish_religious_talks",
-        ["Herkul", "VideonTR", "Sakirtmen57", "nurnevahizmetten"],
+        ["@herkul", "@VideonTR", "@Sakirtmen57", "@nurnevahizmetten"],
         featured_seed_ids=["UCpZTTbddOVYPvQj02Zu8x_A"],
+        admin_reason="Admin seed – Hizmet channel",
+        fill_missing=True,
     )
     conn = get_db_readonly()
     try:

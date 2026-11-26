@@ -36,7 +36,7 @@ from app.video_shorts.services.niches import final_niche_pool, is_final_niche_po
 
 SLUG = "turkish_religious_talks"
 SEED_CHANNEL_ID = "UCpZTTbddOVYPvQj02Zu8x_A"
-FEATURE = "turkish_religious_talks_research"
+FEATURE = "turkish_religious_talks_research_project"
 CHECKPOINT_VERSION = "turkish-religious-talks-v1"
 CACHE_ROOT = REPO_ROOT / "data" / "research" / "cache"
 CHECKPOINT_PATH = REPO_ROOT / "data" / "research" / "turkish_religious_talks_checkpoint.json"

@@ -38,6 +38,7 @@ from app.video_shorts.services.db import get_db_readonly, table_columns
 from app.video_shorts.services.youtube_quota import (
     YoutubeQuotaCapExceeded,
     record_youtube_data_api_call,
+    research_youtube_api_key,
     require_youtube_quota_available,
 )
 
@@ -113,7 +114,7 @@ class ResearchError(RuntimeError):
     pass
 
 
-QUOTA_FEATURE = "women_hormones_research"
+QUOTA_FEATURE = "women_hormones_research_project"
 
 
 class YouTubeRequestError(ResearchError):
@@ -375,9 +376,10 @@ def youtube_get(
     except YoutubeQuotaCapExceeded as exc:
         print(f"WARNING: research request skipped: {exc}", file=sys.stderr)
         raise ResearchError(str(exc)) from exc
-    api_key = discovery_youtube._youtube_api_key()
-    if not api_key:
-        raise ResearchError("YOUTUBE_API_KEY is required; OAuth fallback is disabled")
+    try:
+        api_key = research_youtube_api_key()
+    except RuntimeError as exc:
+        raise ResearchError(str(exc)) from exc
     try:
         response = session.get(
             f"{discovery_youtube.YOUTUBE_API_BASE}/{endpoint}",
@@ -995,8 +997,10 @@ def run(
 
     all_leads, bucket_rows = load_discovery_leads()
     print(f"database candidates: {len(bucket_rows)}")
-    if not discovery_youtube._youtube_api_key():
-        raise ResearchError("YOUTUBE_API_KEY is required; OAuth fallback is disabled")
+    try:
+        research_youtube_api_key()
+    except RuntimeError as exc:
+        raise ResearchError(str(exc)) from exc
     print("YouTube auth: API key only (OAuth fallback disabled)")
     search_results = search_channels(
         session,

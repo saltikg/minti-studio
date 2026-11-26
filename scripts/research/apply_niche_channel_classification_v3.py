@@ -33,6 +33,7 @@ from app.video_shorts.services.niches import (
 )
 from app.video_shorts.services.youtube_quota import (
     record_youtube_data_api_call,
+    research_youtube_api_key,
     require_youtube_quota_available,
     unit_cost,
 )
@@ -41,7 +42,7 @@ from scripts.research import reclassify_women_hormones as legacy
 
 NICHE_SLUG = "menopause_hormones"
 CACHE_ROOT = REPO_ROOT / "data" / "research" / "cache"
-FEATURE = "women_hormones_research"
+FEATURE = "women_hormones_research_project"
 YOUTUBE_API_BASE = "https://www.googleapis.com/youtube/v3"
 TEACH_RULE = (
     "The channel must TEACH or EXPLAIN hormones/menopause/midlife health (education, "
@@ -193,9 +194,7 @@ def _store_cache(path: Path, params: dict[str, Any], payload: dict[str, Any]) ->
 
 
 def _youtube_get(session, quota: RunQuota, endpoint: str, method: str, params: dict[str, Any]):
-    api_key = str(os.getenv("YOUTUBE_API_KEY") or "").strip()
-    if not api_key:
-        raise RuntimeError("YOUTUBE_API_KEY is required")
+    api_key = research_youtube_api_key()
     quota.reserve(method)
     response = session.get(
         f"{YOUTUBE_API_BASE}/{endpoint}", params={**params, "key": api_key}, timeout=30

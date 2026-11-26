@@ -13,10 +13,12 @@ from app.video_shorts.services.db import get_db, table_columns
 PACIFIC_TZ = ZoneInfo("America/Los_Angeles")
 TABLE_NAME = "youtube_data_api_unit_usage"
 DEFAULT_RESEARCH_DAILY_CAP = 2000
+DEFAULT_RESEARCH_PROJECT_DAILY_CAP = 8000
 DISCOVERY_QUOTA_FEATURES = {"discovery_search", "discovery_enrichment"}
 YOUTUBE_SEARCH_DAILY_LIMIT = 100
 DISCOVERY_SEARCH_DAILY_CAP = 70
 RESEARCH_SEARCH_DAILY_CAP = 20
+RESEARCH_PROJECT_SEARCH_DAILY_CAP = 80
 OTHER_SEARCH_DAILY_CAP = 10
 
 YOUTUBE_DATA_API_UNIT_COSTS = {
@@ -60,6 +62,32 @@ def research_daily_cap() -> int:
         return max(0, int(os.getenv("YT_QUOTA_RESEARCH_CAP", str(DEFAULT_RESEARCH_DAILY_CAP)) or 0))
     except (TypeError, ValueError):
         return DEFAULT_RESEARCH_DAILY_CAP
+
+
+def research_project_daily_cap() -> int:
+    try:
+        return max(
+            0,
+            int(
+                os.getenv(
+                    "YT_QUOTA_RESEARCH_PROJECT_CAP",
+                    str(DEFAULT_RESEARCH_PROJECT_DAILY_CAP),
+                )
+                or 0
+            ),
+        )
+    except (TypeError, ValueError):
+        return DEFAULT_RESEARCH_PROJECT_DAILY_CAP
+
+
+def research_youtube_api_key() -> str:
+    key = str(os.getenv("YOUTUBE_RESEARCH_API_KEY") or "").strip()
+    if not key:
+        raise RuntimeError(
+            "YOUTUBE_RESEARCH_API_KEY is required for niche/research YouTube traffic; "
+            "YOUTUBE_API_KEY fallback is disabled"
+        )
+    return key
 
 
 def ensure_youtube_quota_table(conn) -> None:
@@ -164,7 +192,24 @@ def research_units_for_date(conn, date_pt: Optional[str] = None) -> int:
         SELECT COALESCE(SUM(units), 0)
         FROM {TABLE_NAME}
         WHERE date_pt = ?
+          AND (feature = 'research_project' OR feature LIKE '%%_research_project')
+        """,
+        [date_pt or today_pt()],
+    ).fetchone()
+    return int((row or [0])[0] or 0)
+
+
+def legacy_research_units_for_date(conn, date_pt: Optional[str] = None) -> int:
+    if not table_columns(conn, TABLE_NAME):
+        return 0
+    row = conn.execute(
+        f"""
+        SELECT COALESCE(SUM(units), 0)
+        FROM {TABLE_NAME}
+        WHERE date_pt = ?
           AND (feature = 'research' OR feature LIKE '%%_research')
+          AND feature <> 'research_project'
+          AND feature NOT LIKE '%%_research_project'
         """,
         [date_pt or today_pt()],
     ).fetchone()
@@ -203,12 +248,21 @@ def _is_research_feature(feature: str) -> bool:
     return clean_feature == "research" or clean_feature.endswith("_research")
 
 
+def _is_research_project_feature(feature: str) -> bool:
+    clean_feature = str(feature or "other").strip().lower()
+    return clean_feature == "research_project" or clean_feature.endswith(
+        "_research_project"
+    )
+
+
 def _search_share(feature: str) -> tuple[str, int]:
     clean_feature = str(feature or "other").strip().lower()
     if clean_feature in DISCOVERY_QUOTA_FEATURES:
         return "discovery", DISCOVERY_SEARCH_DAILY_CAP
+    if _is_research_project_feature(clean_feature):
+        return "research", RESEARCH_PROJECT_SEARCH_DAILY_CAP
     if _is_research_feature(clean_feature):
-        return "research", RESEARCH_SEARCH_DAILY_CAP
+        return "legacy_research", RESEARCH_SEARCH_DAILY_CAP
     return "other", OTHER_SEARCH_DAILY_CAP
 
 
@@ -222,12 +276,18 @@ def search_calls_for_share(conn, share: str, date_pt: Optional[str] = None) -> i
         predicate = f"feature IN ({', '.join(['?'] * len(features))})"
         params.extend(features)
     elif clean_share == "research":
-        predicate = "(feature = 'research' OR feature LIKE '%%_research')"
+        predicate = "(feature = 'research_project' OR feature LIKE '%%_research_project')"
+    elif clean_share == "legacy_research":
+        predicate = (
+            "(feature = 'research' OR feature LIKE '%%_research') "
+            "AND feature <> 'research_project' AND feature NOT LIKE '%%_research_project'"
+        )
     else:
         features = sorted(DISCOVERY_QUOTA_FEATURES)
         predicate = (
             f"feature NOT IN ({', '.join(['?'] * len(features))}) "
-            "AND feature <> 'research' AND feature NOT LIKE '%%_research'"
+            "AND feature <> 'research' AND feature NOT LIKE '%%_research' "
+            "AND feature <> 'research_project' AND feature NOT LIKE '%%_research_project'"
         )
         params.extend(features)
     row = conn.execute(
@@ -243,14 +303,38 @@ def search_calls_for_share(conn, share: str, date_pt: Optional[str] = None) -> i
     return int((row or [0])[0] or 0)
 
 
+def search_calls_for_api_project(
+    conn, *, research_project: bool, date_pt: Optional[str] = None
+) -> int:
+    if not table_columns(conn, TABLE_NAME):
+        return 0
+    project_predicate = (
+        "(feature = 'research_project' OR feature LIKE '%%_research_project')"
+        if research_project
+        else "feature <> 'research_project' AND feature NOT LIKE '%%_research_project'"
+    )
+    row = conn.execute(
+        f"""
+        SELECT COALESCE(SUM(calls), 0)
+        FROM {TABLE_NAME}
+        WHERE date_pt = ?
+          AND method = 'search.list'
+          AND {project_predicate}
+        """,
+        [date_pt or quota_date_pt()],
+    ).fetchone()
+    return int((row or [0])[0] or 0)
+
+
 def require_youtube_quota_available(*, feature: str, method: str, calls: int = 1) -> None:
     clean_feature = str(feature or "other").strip().lower()
     clean_method = str(method or "unknown").strip()
     requested_calls = max(0, int(calls or 0))
     if requested_calls <= 0:
         return
-    is_research = _is_research_feature(clean_feature)
-    if clean_method != "search.list" and not is_research:
+    is_research_project = _is_research_project_feature(clean_feature)
+    is_legacy_research = _is_research_feature(clean_feature)
+    if clean_method != "search.list" and not is_research_project and not is_legacy_research:
         return
     conn = get_db()
     try:
@@ -258,7 +342,9 @@ def require_youtube_quota_available(*, feature: str, method: str, calls: int = 1
         if clean_method == "search.list":
             share_name, search_cap = _search_share(clean_feature)
             search_used = search_calls_for_share(conn, share_name)
-            total_search_used = search_calls_for_date(conn)
+            total_search_used = search_calls_for_api_project(
+                conn, research_project=is_research_project
+            )
             if search_used + requested_calls > search_cap:
                 raise YoutubeQuotaCapExceeded(
                     f"YouTube {share_name} search quota reached: used={search_used} "
@@ -266,12 +352,22 @@ def require_youtube_quota_available(*, feature: str, method: str, calls: int = 1
                 )
             if total_search_used + requested_calls > YOUTUBE_SEARCH_DAILY_LIMIT:
                 raise YoutubeQuotaCapExceeded(
-                    f"YouTube total search quota reached: used={total_search_used} "
+                    f"YouTube {'research' if is_research_project else 'app'} project total "
+                    f"search quota reached: used={total_search_used} "
                     f"requested={requested_calls} cap={YOUTUBE_SEARCH_DAILY_LIMIT} date_pt={quota_date_pt()}"
                 )
-        if is_research:
-            cap = research_daily_cap()
+        if is_research_project:
+            cap = research_project_daily_cap()
             used = research_units_for_date(conn)
+            requested_units = requested_calls * unit_cost(clean_method)
+            if cap and used + requested_units > cap:
+                raise YoutubeQuotaCapExceeded(
+                    f"YouTube research-project quota cap reached: used={used} "
+                    f"requested={requested_units} cap={cap} date_pt={quota_date_pt()}"
+                )
+        elif is_legacy_research:
+            cap = research_daily_cap()
+            used = legacy_research_units_for_date(conn)
             requested_units = requested_calls * unit_cost(clean_method)
             if cap and used + requested_units > cap:
                 raise YoutubeQuotaCapExceeded(
@@ -296,14 +392,24 @@ def youtube_quota_runtime_budgets(conn=None, *, discovery_budget: int = 4000) ->
             "discovery_used": total_units_for_date(conn, include_features=DISCOVERY_QUOTA_FEATURES),
             "discovery_search_cap": DISCOVERY_SEARCH_DAILY_CAP,
             "discovery_search_used": search_calls_for_date(conn, include_features=DISCOVERY_QUOTA_FEATURES),
-            "research_cap": research_daily_cap(),
+            "research_cap": research_project_daily_cap(),
             "research_used": research_units_for_date(conn),
-            "research_search_cap": RESEARCH_SEARCH_DAILY_CAP,
+            "research_search_cap": RESEARCH_PROJECT_SEARCH_DAILY_CAP,
             "research_search_used": search_calls_for_share(conn, "research"),
+            "legacy_research_cap": research_daily_cap(),
+            "legacy_research_used": legacy_research_units_for_date(conn),
+            "legacy_research_search_cap": RESEARCH_SEARCH_DAILY_CAP,
+            "legacy_research_search_used": search_calls_for_share(conn, "legacy_research"),
             "other_search_cap": OTHER_SEARCH_DAILY_CAP,
             "other_search_used": search_calls_for_share(conn, "other"),
             "total_search_cap": YOUTUBE_SEARCH_DAILY_LIMIT,
-            "total_search_used": search_calls_for_date(conn),
+            "total_search_used": search_calls_for_api_project(
+                conn, research_project=False
+            ),
+            "research_total_search_cap": YOUTUBE_SEARCH_DAILY_LIMIT,
+            "research_total_search_used": search_calls_for_api_project(
+                conn, research_project=True
+            ),
         }
         if owns_conn:
             conn.commit()

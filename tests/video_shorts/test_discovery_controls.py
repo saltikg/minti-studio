@@ -103,8 +103,8 @@ def test_search_shares_are_counted_separately(monkeypatch):
             (date_pt, feature, method, calls, units)
         VALUES
             (?, 'discovery_search', 'search.list', 70, 7000),
-            (?, 'research', 'search.list', 8, 800),
-            (?, 'women_hormones_research', 'search.list', 12, 1200),
+            (?, 'research_project', 'search.list', 40, 4000),
+            (?, 'women_hormones_research_project', 'search.list', 40, 4000),
             (?, 'publish', 'search.list', 6, 600),
             (?, 'other', 'search.list', 4, 400)
         """,
@@ -132,7 +132,9 @@ def test_search_shares_are_counted_separately(monkeypatch):
     with pytest.raises(youtube_quota.YoutubeQuotaCapExceeded, match="discovery search quota"):
         youtube_quota.require_youtube_quota_available(feature="discovery_search", method="search.list")
     with pytest.raises(youtube_quota.YoutubeQuotaCapExceeded, match="research search quota"):
-        youtube_quota.require_youtube_quota_available(feature="new_topic_research", method="search.list")
+        youtube_quota.require_youtube_quota_available(
+            feature="new_topic_research_project", method="search.list"
+        )
     with pytest.raises(youtube_quota.YoutubeQuotaCapExceeded, match="other search quota"):
         youtube_quota.require_youtube_quota_available(feature="publish", method="search.list")
 
@@ -163,6 +165,42 @@ def test_research_cap_blocks_before_next_request(monkeypatch):
         youtube_quota.require_youtube_quota_available(
             feature="women_hormones_research", method="videos.list"
         )
+
+
+def test_research_project_key_never_falls_back_to_app_key(monkeypatch):
+    monkeypatch.delenv("YOUTUBE_RESEARCH_API_KEY", raising=False)
+    monkeypatch.setenv("YOUTUBE_API_KEY", "app-key-must-not-be-used")
+
+    with pytest.raises(RuntimeError, match="fallback is disabled"):
+        youtube_quota.research_youtube_api_key()
+
+
+def test_research_project_defaults_to_separate_caps(monkeypatch):
+    monkeypatch.delenv("YT_QUOTA_RESEARCH_PROJECT_CAP", raising=False)
+
+    assert youtube_quota.research_project_daily_cap() == 8000
+    assert youtube_quota.RESEARCH_PROJECT_SEARCH_DAILY_CAP == 80
+
+
+def test_search_totals_are_separate_per_api_project():
+    conn = duckdb.connect(":memory:")
+    youtube_quota.ensure_youtube_quota_table(conn)
+    conn.execute(
+        """
+        INSERT INTO youtube_data_api_unit_usage
+            (date_pt, feature, method, calls, units)
+        VALUES (?, 'discovery_search', 'search.list', 70, 0),
+               (?, 'topic_research_project', 'search.list', 25, 0)
+        """,
+        [youtube_quota.today_pt(), youtube_quota.today_pt()],
+    )
+
+    assert youtube_quota.search_calls_for_api_project(
+        conn, research_project=False
+    ) == 70
+    assert youtube_quota.search_calls_for_api_project(
+        conn, research_project=True
+    ) == 25
 
 
 def test_backlog_next_run_respects_pacific_window():
