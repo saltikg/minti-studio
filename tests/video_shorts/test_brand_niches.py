@@ -26,7 +26,7 @@ def test_suggestion_index_ranks_pool_and_near_misses():
         _row("UC2", "Shelley", 1000),
         _row(
             "UC3", "Near miss", 500,
-            primary_focus="hormones_midlife_health", on_topic_share=0.2,
+            primary_focus="fitness_training", on_topic_share=0.8,
         ),
     ]
     suggestions = brand_niches.build_niche_suggestion_index(
@@ -45,7 +45,7 @@ def test_suggestion_index_ranks_pool_and_near_misses():
     assert suggestions["UC3"]["group"] == "near_miss"
 
 
-def test_strict_focus_drives_pool_and_near_misses():
+def test_primary_focus_drives_pool_without_core_share_threshold():
     rows = [
         _row("UC1", "Strong fit", 2000, primary_focus="hormones_midlife_health"),
         _row("UC2", "Near miss", 1000, primary_focus="hormones_midlife_health", on_topic_share=0.2),
@@ -56,8 +56,8 @@ def test_strict_focus_drives_pool_and_near_misses():
     )
 
     assert suggestions["UC1"]["group"] == "pool"
-    assert suggestions["UC2"]["group"] == "near_miss"
-    assert "UC3" not in suggestions
+    assert suggestions["UC2"]["group"] == "pool"
+    assert suggestions["UC3"]["group"] == "near_miss"
 
 
 def test_admin_include_and_exclude_override_strict_channel_focus():

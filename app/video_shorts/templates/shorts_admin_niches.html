@@ -156,14 +156,14 @@
     <span class="niche-muted">{{ rows | length }} shown · {{ pool_size }} in pool · Snapshot {{ selected.snapshot_date }}</span>
   </div>
   {% if rows %}<div class="niche-table-wrap"><table class="niche-table"><thead><tr>
-    <th>Rank</th><th class="is-left">Channel</th><th class="is-left">Credential</th><th class="is-left">Primary focus</th><th>Core share</th><th>Relevance ref.</th><th>Subscribers</th><th>Views / 90d</th><th>Long / 90d</th><th>Shorts / 90d</th>{% if tab == 'pool' %}<th class="is-left">Best Short (30d)</th>{% endif %}<th class="is-left">Reason</th><th class="is-left">Outreach</th><th class="is-left">Override</th>
+    <th>Rank</th><th class="is-left">Channel</th><th class="is-left">Credential</th><th class="is-left">Primary focus</th><th>Core titles</th><th>Relevance ref.</th><th>Subscribers</th><th>Views / 90d</th><th>Long / 90d</th><th>Shorts / 90d</th>{% if tab == 'pool' %}<th class="is-left">Best Short (30d)</th>{% endif %}<th class="is-left">Reason</th><th class="is-left">Outreach</th><th class="is-left">Override</th>
   </tr></thead><tbody>
   {% for row in rows %}<tr>
     <td>{{ row.rank }}</td>
     <td class="is-left"><a class="niche-channel" href="{{ row.channel_url }}" target="_blank" rel="noopener">{{ row.title }}</a>{% if row.admin_include %}<div class="niche-subtext">Manually included</div>{% endif %}</td>
     <td class="is-left">{{ row.credential or '—' }}</td>
     <td class="is-left">{{ row.primary_focus | replace('_', ' ') if row.primary_focus else '—' }}</td>
-    <td>{{ '%.0f%%'|format((row.on_topic_share or 0) * 100) }}</td>
+    <td>core {{ row.on_topic_count | int }}/15</td>
     <td>{{ row.relevance if row.relevance is not none else '—' }}</td>
     <td>{{ '{:,}'.format(row.subscriber_count | int) if row.subscriber_count is not none else '—' }}</td>
     <td>{{ '{:,}'.format(row.views_90d | int) if row.views_90d is not none else '—' }}</td>

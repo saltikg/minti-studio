@@ -291,10 +291,7 @@ def _on_topic_share(row: dict[str, Any]) -> float:
 def is_base_niche_pool_row(row: dict[str, Any]) -> bool:
     country = _clean(row.get("country")).upper()
     if "primary_focus" in row:
-        topic_match = (
-            _clean(row.get("primary_focus")).lower() == "hormones_midlife_health"
-            and _on_topic_share(row) >= NICHE_ON_TOPIC_MIN
-        )
+        topic_match = _clean(row.get("primary_focus")).lower() == "hormones_midlife_health"
     else:
         topic_match = (
             _clean(row.get("primary_niche")).lower() == "menopause_hormones"
@@ -340,10 +337,11 @@ def near_miss_niche_rows(rows: list[dict[str, Any]], *, clinicians_only: bool) -
     return [
         row
         for row in rows
-        if not bool(row.get("admin_exclude"))
+        if not is_final_niche_pool_row(row)
+        and not bool(row.get("admin_exclude"))
         and not bool(row.get("admin_include"))
-        and _clean(row.get("primary_focus")).lower() == "hormones_midlife_health"
-        and _on_topic_share(row) < NICHE_ON_TOPIC_MIN
+        and _clean(row.get("primary_focus")).lower() != "hormones_midlife_health"
+        and _on_topic_share(row) >= NICHE_ON_TOPIC_MIN
         and (not clinicians_only or clinician_matches(row))
     ]
 
