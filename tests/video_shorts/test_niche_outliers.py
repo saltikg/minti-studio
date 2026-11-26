@@ -107,7 +107,7 @@ def test_pattern_generation_uses_one_call_and_caps_sentence(monkeypatch):
             message = type(
                 "Message",
                 (),
-                {"content": "Quick hormone explainers pair direct questions with concise talking-head answers and practical demonstrations."},
+                {"content": "Estrogen cream, bladder symptoms, and HRT patch updates led this week; winners ran 22–31s."},
             )()
             choice = type("Choice", (), {"message": message})()
             usage = type("Usage", (), {"prompt_tokens": 100, "completion_tokens": 20})()
@@ -118,7 +118,7 @@ def test_pattern_generation_uses_one_call_and_caps_sentence(monkeypatch):
         "niche_id": 1,
         "as_of": "2026-11-25",
         "rows": [
-            {"video_id": str(index), "title": f"Title {index}", "duration_s": 20 + index, "views": 1000 + index}
+            {"video_id": str(index), "title": f"Title {index}", "duration_s": 20 + index, "views": 1000 + index, "on_topic": True}
             for index in range(12)
         ],
     }
@@ -131,3 +131,42 @@ def test_pattern_generation_uses_one_call_and_caps_sentence(monkeypatch):
     assert pattern["source_count"] == 10
     assert len(pattern["pattern_sentence"].split()) <= 30
     assert pattern["estimated_cost_usd"] == 0.000072
+    assert "Required duration range: 22–31s" in calls[0]["messages"][1]["content"]
+
+
+def test_topic_classification_uses_one_call_per_short(monkeypatch, tmp_path):
+    monkeypatch.setattr(niche_outliers, "OPENAI_MODEL", "gpt-4.1-mini")
+    channel_path = tmp_path / "channels" / "UC1.json"
+    channel_path.parent.mkdir(parents=True)
+    channel_path.write_text(
+        json.dumps({"payload": {"item": {"snippet": {"description": "Menopause clinic"}}}}),
+        encoding="utf-8",
+    )
+    calls = []
+
+    class Completions:
+        def create(self, **kwargs):
+            calls.append(kwargs)
+            on_topic = "First" in kwargs["messages"][1]["content"]
+            message = type("Message", (), {"content": json.dumps({"on_topic": on_topic})})()
+            choice = type("Choice", (), {"message": message})()
+            usage = type("Usage", (), {"prompt_tokens": 50, "completion_tokens": 5})()
+            return type("Response", (), {"choices": [choice], "usage": usage})()
+
+    client = type("Client", (), {"chat": type("Chat", (), {"completions": Completions()})()})()
+    result = {
+        "rows": [
+            {"youtube_channel_id": "UC1", "video_id": "a", "title": "First title"},
+            {"youtube_channel_id": "UC1", "video_id": "b", "title": "Second title"},
+        ]
+    }
+
+    usage = niche_outliers.classify_niche_outlier_topics(
+        result, cache_root=tmp_path, client=client
+    )
+
+    assert len(calls) == 2
+    assert [row["on_topic"] for row in result["rows"]] == [True, False]
+    assert "Menopause clinic" in calls[0]["messages"][1]["content"]
+    assert usage["input_tokens"] == 100
+    assert usage["output_tokens"] == 10

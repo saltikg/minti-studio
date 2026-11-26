@@ -88,7 +88,9 @@ def admin_niches():
             outlier["engagement_badge"] = "possibly_promoted"
         else:
             outlier["engagement_badge"] = ""
-        best_by_channel.setdefault(str(outlier.get("youtube_channel_id") or ""), outlier)
+        outlier["topic_badge"] = "off_topic" if outlier.get("on_topic") is False else ""
+        if outlier.get("on_topic") is True:
+            best_by_channel.setdefault(str(outlier.get("youtube_channel_id") or ""), outlier)
     short_sort = str(request.args.get("short_sort") or "views").strip().lower()
     sort_fields = {
         "published": "published_at",
@@ -109,6 +111,7 @@ def admin_niches():
     )
     outlier_total_count = len(outlier_rows)
     if not shorts_show_all:
+        outlier_rows = [row for row in outlier_rows if row.get("on_topic") is True]
         channel_counts = {}
         capped_rows = []
         for outlier in outlier_rows:

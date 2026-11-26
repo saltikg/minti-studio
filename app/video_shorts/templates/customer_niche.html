@@ -4,31 +4,33 @@
 
 {% block extra_styles %}
 <style>
-  .customer-niche-page { max-width: 1240px; margin: 0 auto; }
-  .customer-niche-eyebrow { color: var(--vs-text-muted); font-size: .82rem; font-weight: 700; letter-spacing: .08em; text-transform: uppercase; }
-  .customer-niche-title { color: var(--vs-text); font-size: clamp(2rem, 4vw, 3.2rem); font-weight: 800; letter-spacing: -.04em; }
-  .customer-niche-subtitle, .customer-niche-muted { color: var(--vs-text-muted); }
-  .customer-niche-section-title { color: var(--vs-text); font-size: 1.35rem; font-weight: 750; }
-  .customer-niche-rank { color: var(--vs-text); font-size: clamp(2.5rem, 7vw, 5rem); font-weight: 850; letter-spacing: -.06em; line-height: 1; }
-  .customer-niche-rank span { color: var(--vs-text-muted); font-size: .35em; letter-spacing: -.02em; }
-  .customer-niche-top { color: #5eead4; font-size: 1.05rem; font-weight: 750; }
-  .customer-niche-position { height: 12px; border-radius: 999px; background: rgba(255,255,255,.1); position: relative; }
-  .customer-niche-position::before { content: ""; position: absolute; inset: 0 auto 0 0; width: var(--position); border-radius: inherit; background: linear-gradient(90deg, #2dd4bf, #38bdf8); }
-  .customer-niche-position::after { content: ""; position: absolute; top: 50%; left: var(--position); width: 20px; height: 20px; border: 4px solid #0f172a; border-radius: 50%; background: #7dd3fc; transform: translate(-50%, -50%); }
-  .customer-niche-table { color: var(--vs-text); margin-bottom: 0; }
-  .customer-niche-table th { color: var(--vs-text-muted); font-size: .76rem; letter-spacing: .04em; text-transform: uppercase; }
-  .customer-niche-table td, .customer-niche-table th { border-color: rgba(255,255,255,.08); padding: .8rem .75rem; vertical-align: middle; }
-  .customer-niche-table tr.is-you td { background: rgba(45,212,191,.1); color: #ccfbf1; font-weight: 700; }
-  .customer-niche-all summary { color: #7dd3fc; cursor: pointer; font-weight: 700; list-style: none; }
-  .customer-niche-all summary::-webkit-details-marker { display: none; }
-  .customer-niche-cards { display: grid; gap: 16px; grid-template-columns: repeat(3, minmax(0, 1fr)); }
-  .customer-niche-short { border: 1px solid rgba(255,255,255,.1); border-radius: 18px; color: inherit; display: flex; flex-direction: column; min-height: 210px; padding: 20px; text-decoration: none; transition: transform .15s ease, border-color .15s ease; }
-  .customer-niche-short:hover { border-color: rgba(125,211,252,.55); color: inherit; transform: translateY(-2px); }
-  .customer-niche-short-ratio { color: #5eead4; font-size: 1.5rem; font-weight: 850; }
-  .customer-niche-short-title { color: var(--vs-text); font-size: 1rem; font-weight: 750; line-height: 1.35; }
-  .customer-niche-pattern { border-left: 3px solid #2dd4bf; color: var(--vs-text-muted); padding-left: 14px; }
-  @media (max-width: 991px) { .customer-niche-cards { grid-template-columns: repeat(2, minmax(0, 1fr)); } }
-  @media (max-width: 575px) { .customer-niche-cards { grid-template-columns: 1fr; } }
+  .customer-niche-page { color: #E8EDF2; max-width: 1240px; margin: 0 auto; }
+  .customer-niche-page .customer-niche-eyebrow { color: #A9B4C0; font-size: .82rem; font-weight: 700; letter-spacing: .08em; text-transform: uppercase; }
+  .customer-niche-page .customer-niche-title { color: #E8EDF2; font-size: clamp(2rem, 4vw, 3.2rem); font-weight: 800; letter-spacing: -.04em; }
+  .customer-niche-page .customer-niche-subtitle, .customer-niche-page .customer-niche-muted { color: #A9B4C0; }
+  .customer-niche-page .customer-niche-section-title { color: #E8EDF2; font-size: 1.35rem; font-weight: 750; }
+  .customer-niche-page .customer-niche-rank { color: #5EEAD4; font-size: clamp(2.5rem, 7vw, 5rem); font-weight: 850; letter-spacing: -.06em; line-height: 1; }
+  .customer-niche-page .customer-niche-rank span { color: #A9B4C0; font-size: .35em; letter-spacing: -.02em; }
+  .customer-niche-page .customer-niche-top { color: #5EEAD4; font-size: 1.05rem; font-weight: 750; }
+  .customer-niche-page .customer-niche-position { height: 12px; border-radius: 999px; background: rgba(255,255,255,.1); position: relative; }
+  .customer-niche-page .customer-niche-position::before { content: ""; position: absolute; inset: 0 auto 0 0; width: var(--position); border-radius: inherit; background: linear-gradient(90deg, #2dd4bf, #38bdf8); }
+  .customer-niche-page .customer-niche-position::after { content: ""; position: absolute; top: 50%; left: var(--position); width: 20px; height: 20px; border: 4px solid #0f172a; border-radius: 50%; background: #7dd3fc; transform: translate(-50%, -50%); }
+  .customer-niche-page .customer-niche-table { --bs-table-bg: transparent; --bs-table-color: #E8EDF2; --bs-table-border-color: rgba(255,255,255,.1); color: #E8EDF2; margin-bottom: 0; }
+  .customer-niche-page .customer-niche-table th { background: rgba(255,255,255,.025) !important; color: #A9B4C0; font-size: .76rem; letter-spacing: .04em; text-transform: uppercase; }
+  .customer-niche-page .customer-niche-table td { background: transparent !important; color: #E8EDF2; }
+  .customer-niche-page .customer-niche-table td, .customer-niche-page .customer-niche-table th { border-color: rgba(255,255,255,.1); padding: .8rem .75rem; vertical-align: middle; }
+  .customer-niche-page .customer-niche-table tr.is-you td { background: rgba(45,212,191,.13) !important; color: #E8EDF2; font-weight: 700; }
+  .customer-niche-page .customer-niche-all summary { color: #7dd3fc; cursor: pointer; font-weight: 700; list-style: none; }
+  .customer-niche-page .customer-niche-all summary::-webkit-details-marker { display: none; }
+  .customer-niche-page .customer-niche-cards { display: grid; gap: 16px; grid-template-columns: repeat(3, minmax(0, 1fr)); }
+  .customer-niche-page .customer-niche-short { border: 1px solid rgba(255,255,255,.14); border-radius: 18px; color: #E8EDF2; display: flex; flex-direction: column; min-height: 210px; padding: 20px; text-decoration: none; transition: transform .15s ease, border-color .15s ease; }
+  .customer-niche-page .customer-niche-short:hover { border-color: rgba(125,211,252,.7); color: #E8EDF2; transform: translateY(-2px); }
+  .customer-niche-page .customer-niche-short-ratio { color: #5EEAD4; font-size: 1.5rem; font-weight: 850; }
+  .customer-niche-page .customer-niche-short-title { color: #E8EDF2; font-size: 1rem; font-weight: 750; line-height: 1.35; }
+  .customer-niche-page .customer-niche-pattern { border-left: 3px solid #2dd4bf; color: #A9B4C0; padding-left: 14px; }
+  .customer-niche-page .customer-niche-pattern strong { color: #E8EDF2; }
+  @media (max-width: 991px) { .customer-niche-page .customer-niche-cards { grid-template-columns: repeat(2, minmax(0, 1fr)); } }
+  @media (max-width: 575px) { .customer-niche-page .customer-niche-cards { grid-template-columns: 1fr; } }
 </style>
 {% endblock %}
 

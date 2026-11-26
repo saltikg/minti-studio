@@ -17,26 +17,37 @@ def test_top_outlier_cards_filters_promoted_and_caps_channels():
             "youtube_channel_id": "UC1", "video_id": "one", "title": "One",
             "views": 20_000, "outlier_ratio": 5, "duration_s": 30,
             "engagement": 0.02, "baseline_engagement": 0.02,
+            "on_topic": True,
         },
         {
             "youtube_channel_id": "UC1", "video_id": "two", "title": "Two",
             "views": 18_000, "outlier_ratio": 4, "duration_s": 40,
             "engagement": 0.02, "baseline_engagement": 0.02,
+            "on_topic": True,
         },
         {
             "youtube_channel_id": "UC1", "video_id": "three", "title": "Three",
             "views": 17_000, "outlier_ratio": 3.5, "duration_s": 50,
             "engagement": 0.02, "baseline_engagement": 0.02,
+            "on_topic": True,
         },
         {
             "youtube_channel_id": "UC2", "video_id": "promoted", "title": "Promoted",
             "views": 50_000, "outlier_ratio": 8, "duration_s": 20,
             "engagement": 0.002, "baseline_engagement": 0.01,
+            "on_topic": True,
         },
         {
             "youtube_channel_id": "UC2", "video_id": "small", "title": "Small",
             "views": 4_999, "outlier_ratio": 6, "duration_s": 25,
             "engagement": 0.02, "baseline_engagement": 0.01,
+            "on_topic": True,
+        },
+        {
+            "youtube_channel_id": "UC2", "video_id": "off-topic", "title": "First Aid",
+            "views": 100_000, "outlier_ratio": 10, "duration_s": 45,
+            "engagement": 0.02, "baseline_engagement": 0.01,
+            "on_topic": False,
         },
     ]
 

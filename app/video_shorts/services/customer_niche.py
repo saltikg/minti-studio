@@ -53,7 +53,11 @@ def _top_outlier_cards(
     eligible = []
     for row in rows:
         channel_id = str(row.get("youtube_channel_id") or "")
-        if channel_id not in pool_by_channel or int(row.get("views") or 0) < 5_000:
+        if (
+            channel_id not in pool_by_channel
+            or row.get("on_topic") is not True
+            or int(row.get("views") or 0) < 5_000
+        ):
             continue
         engagement = float(row.get("engagement") or 0)
         baseline_engagement = float(row.get("baseline_engagement") or 0)
