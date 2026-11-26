@@ -48,7 +48,7 @@ def load_niche_definition(conn, *, niche_id: Any = None, slug: str = "") -> dict
         where, value = "id = ?", niche_id
     else:
         where, value = "slug = ?", slug
-    config_columns = [name for name in ("language", "target_focus", "focus_options", "status") if name in columns]
+    config_columns = [name for name in ("language", "target_focus", "focus_options", "search_queries", "status") if name in columns]
     row = conn.execute(
         f"""
         SELECT id, slug, name, description, core_topics, adjacent_topics,
@@ -73,6 +73,7 @@ def load_niche_definition(conn, *, niche_id: Any = None, slug: str = "") -> dict
     result["language"] = str(result.get("language") or "en")
     result["target_focus"] = str(result.get("target_focus") or "hormones_midlife_health")
     result["focus_options"] = _focus_options(result.get("focus_options"))
+    result["search_queries"] = _list_value(result.get("search_queries"))
     result["status"] = str(result.get("status") or "active")
     return result
 
@@ -89,6 +90,7 @@ def definition_prompt(definition: dict[str, Any]) -> str:
             "language": definition.get("language"),
             "target_focus": definition.get("target_focus"),
             "focus_options": definition.get("focus_options") or [],
+            "search_queries": definition.get("search_queries") or [],
         },
         ensure_ascii=False,
     )
@@ -124,6 +126,7 @@ def update_niche_definition(
     language: str = "en",
     target_focus: str = "",
     focus_options: list[dict[str, str]] | None = None,
+    search_queries: list[str] | None = None,
 ) -> int:
     if not name.strip() or not 150 <= len(description.split()) <= 250:
         raise ValueError("Name is required and description must contain 150–250 words.")
@@ -144,14 +147,14 @@ def update_niche_definition(
         """
         UPDATE niches
         SET name = ?, description = ?, core_topics = ?, adjacent_topics = ?,
-            excluded_topics = ?, language = ?, target_focus = ?, focus_options = ?,
+            excluded_topics = ?, language = ?, target_focus = ?, focus_options = ?, search_queries = ?,
             definition_version = ?
         WHERE slug = ?
         """,
         [
             name.strip(), description.strip(), json.dumps(core_topics),
             json.dumps(adjacent_topics), json.dumps(excluded_topics), clean_language,
-            clean_target, json.dumps(clean_options), version, slug,
+            clean_target, json.dumps(clean_options), json.dumps(search_queries or []), version, slug,
         ],
     )
     return version

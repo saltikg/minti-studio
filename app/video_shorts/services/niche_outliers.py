@@ -994,18 +994,34 @@ def run_weekly_refresh_if_due(now: datetime | None = None) -> dict[str, Any] | N
         conn.commit()
     finally:
         conn.close()
-    result = refresh_compute_and_persist(DEFAULT_NICHE_SLUG, as_of)
+    conn = get_db_readonly()
     try:
-        topic_usage = classify_niche_outlier_topics(result)
-        persist_niche_outlier_topics(result)
-        result["topic_classification"] = topic_usage
-        pattern = generate_niche_outlier_pattern(result)
-        if pattern:
-            persist_niche_outlier_pattern(pattern)
-            result["pattern"] = pattern
-    except Exception as exc:
-        logger.exception("Weekly niche outlier pattern generation failed: %s", exc)
-        result["pattern_error"] = str(exc)
+        niche_slugs = [
+            str(row[0]) for row in conn.execute(
+                """
+                SELECT n.slug FROM niches n
+                WHERE EXISTS (SELECT 1 FROM niche_channels nc WHERE nc.niche_id = n.id)
+                ORDER BY n.id
+                """
+            ).fetchall()
+        ]
+    finally:
+        conn.close()
+    results: dict[str, Any] = {}
+    for niche_slug in niche_slugs:
+        try:
+            result = refresh_compute_and_persist(niche_slug, as_of)
+            topic_usage = classify_niche_outlier_topics(result)
+            persist_niche_outlier_topics(result)
+            result["topic_classification"] = topic_usage
+            pattern = generate_niche_outlier_pattern(result)
+            if pattern:
+                persist_niche_outlier_pattern(pattern)
+                result["pattern"] = pattern
+            results[niche_slug] = result
+        except Exception as exc:
+            logger.exception("Weekly niche outlier refresh failed niche=%s: %s", niche_slug, exc)
+            results[niche_slug] = {"error": str(exc)}
     conn = get_db()
     try:
         conn.execute(
@@ -1022,4 +1038,4 @@ def run_weekly_refresh_if_due(now: datetime | None = None) -> dict[str, Any] | N
         conn.commit()
     finally:
         conn.close()
-    return result
+    return {"as_of": as_of.isoformat(), "niches": results}

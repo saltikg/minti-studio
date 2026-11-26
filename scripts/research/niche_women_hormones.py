@@ -113,6 +113,9 @@ class ResearchError(RuntimeError):
     pass
 
 
+QUOTA_FEATURE = "women_hormones_research"
+
+
 class YouTubeRequestError(ResearchError):
     def __init__(
         self,
@@ -368,7 +371,7 @@ def youtube_get(
 ) -> dict[str, Any]:
     quota.charge(method)
     try:
-        require_youtube_quota_available(feature="women_hormones_research", method=method)
+        require_youtube_quota_available(feature=QUOTA_FEATURE, method=method)
     except YoutubeQuotaCapExceeded as exc:
         print(f"WARNING: research request skipped: {exc}", file=sys.stderr)
         raise ResearchError(str(exc)) from exc
@@ -404,7 +407,7 @@ def youtube_get(
             global_failure=status in {401, 429} or reason in global_reasons,
         ) from exc
     record_youtube_data_api_call(
-        feature="women_hormones_research",
+        feature=QUOTA_FEATURE,
         method=method,
     )
     return payload if isinstance(payload, dict) else {}

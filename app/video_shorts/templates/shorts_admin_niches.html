@@ -81,6 +81,7 @@
       <div class="niche-field"><label>Language</label><input name="language" value="{{ selected.language }}" required></div>
       <div class="niche-field"><label>Target focus key</label><input name="target_focus" value="{{ selected.target_focus }}" required></div>
       <div class="niche-field"><label>Focus options (JSON)</label><textarea name="focus_options" required>{{ selected.focus_options | tojson(indent=2) }}</textarea></div>
+      <div class="niche-field"><label>Discovery search queries (one per line)</label><textarea name="search_queries">{{ selected.search_queries | join('\n') }}</textarea></div>
       <div class="niche-field"><label>Description (150–250 words)</label><textarea name="description" required>{{ selected.description }}</textarea></div>
       <div class="niche-field"><label>Core topics (one per line)</label><textarea name="core_topics" required>{{ selected.core_topics | join('\n') }}</textarea></div>
       <div class="niche-field"><label>Adjacent topics (one per line)</label><textarea name="adjacent_topics" required>{{ selected.adjacent_topics | join('\n') }}</textarea></div>

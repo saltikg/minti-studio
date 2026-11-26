@@ -74,6 +74,7 @@ def load_niche_snapshot(conn, niche_slug: str, snapshot_date: str = "") -> tuple
         name for name in (
             "description", "core_topics", "adjacent_topics", "excluded_topics",
             "definition_version", "language", "target_focus", "focus_options", "status",
+            "search_queries",
         ) if name in niche_columns
     ]
     result = conn.execute(
@@ -95,6 +96,7 @@ def load_niche_snapshot(conn, niche_slug: str, snapshot_date: str = "") -> tuple
         "language": _clean(niche.get("language")) or "en",
         "target_focus": _clean(niche.get("target_focus")) or "hormones_midlife_health",
         "focus_options": niche.get("focus_options") or [],
+        "search_queries": niche.get("search_queries") or [],
         "status": _clean(niche.get("status")) or "active",
         "snapshot_date": "",
     }

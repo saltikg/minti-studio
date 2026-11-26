@@ -50,7 +50,7 @@ def admin_niches():
         "classification_title_count",
     }
     if (
-        not {"language", "target_focus", "focus_options", "status"}.issubset(niche_columns)
+        not {"language", "target_focus", "focus_options", "search_queries", "status"}.issubset(niche_columns)
         or not niche_channel_columns
         or not strict_columns.issubset(niche_channel_columns)
     ):
@@ -205,6 +205,7 @@ def admin_niche_definition_update():
             language=str(request.form.get("language") or ""),
             target_focus=str(request.form.get("target_focus") or ""),
             focus_options=parse_focus_options(request.form.get("focus_options")),
+            search_queries=parse_topic_lines(request.form.get("search_queries")),
         )
         conn.commit()
     except ValueError as exc:
