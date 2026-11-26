@@ -310,21 +310,16 @@ def _language_matches_niche(value: Any, niche_language: str) -> bool | None:
 def is_base_niche_pool_row(row: dict[str, Any], niche: dict[str, Any] | None = None) -> bool:
     target_focus = _clean((niche or {}).get("target_focus")) or "hormones_midlife_health"
     niche_language = _clean((niche or {}).get("language")) or "en"
-    if "primary_focus" in row:
-        topic_match = _clean(row.get("primary_focus")).lower() == target_focus.casefold()
-    else:
-        topic_match = (
-            _clean(row.get("primary_niche")).lower() == "menopause_hormones"
-            and _on_topic_share(row) >= NICHE_ON_TOPIC_MIN
-        )
+    topic_match = (
+        _clean(row.get("classification_status")).casefold() == "classified"
+        and _clean(row.get("primary_focus")).casefold() == target_focus.casefold()
+    )
     language_match = _language_matches_niche(row.get("language"), niche_language)
-    if language_match is None:
-        language_match = bool(row.get("in_niche"))
     return (
         topic_match
         and _clean(row.get("entity")).lower() == "individual"
         and _clean(row.get("presenter")).lower() == "real_person"
-        and language_match
+        and language_match is True
     )
 
 

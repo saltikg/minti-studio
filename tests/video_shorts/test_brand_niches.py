@@ -8,6 +8,8 @@ def _row(channel_id, title, subscribers, **overrides):
         "title": title,
         "subscriber_count": subscribers,
         "primary_niche": "menopause_hormones",
+        "primary_focus": "hormones_midlife_health",
+        "classification_status": "classified",
         "on_topic_share": 0.8,
         "entity": "individual",
         "presenter": "real_person",
@@ -89,11 +91,21 @@ def test_generic_pool_uses_niche_language_and_ignores_country():
     assert not is_final_niche_pool_row(mixed, niche)
 
 
-def test_missing_language_preserves_existing_status():
+def test_missing_language_never_falls_back_to_legacy_status():
     niche = {"language": "en", "target_focus": "hormones_midlife_health"}
     row = _row("UC1", "Known pool member", 1000, language="", in_niche=True, country="IN")
 
-    assert is_final_niche_pool_row(row, niche)
+    assert not is_final_niche_pool_row(row, niche)
+
+
+def test_no_titles_never_uses_preserved_focus_label():
+    niche = {"language": "en", "target_focus": "hormones_midlife_health"}
+    row = _row(
+        "UC1", "Stale focus", 1000,
+        classification_status="no_titles", primary_focus="hormones_midlife_health",
+    )
+
+    assert not is_final_niche_pool_row(row, niche)
 
 
 class _UpdateConnection:
