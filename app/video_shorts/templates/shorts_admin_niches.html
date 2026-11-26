@@ -49,6 +49,7 @@
   .niche-badge.high_engagement { background: #dcfce7; color: #166534; margin-left: 5px; }
   .niche-badge.possibly_promoted { background: #fef3c7; color: #92400e; margin-left: 5px; }
   .niche-badge.off_topic { background: #fee2e2; color: #991b1b; margin-left: 5px; }
+  .niche-badge.draft { background: #fef3c7; color: #92400e; margin-left: 5px; }
   .niche-topic-override { display: inline; margin-left: 5px; }
   .niche-topic-button { background: transparent; border: 1px solid rgba(255,255,255,.28); border-radius: 999px; color: #e2e8f0; cursor: pointer; font-size: 10px; padding: 3px 7px; }
   .niche-sort { color: inherit; text-decoration: none; }
@@ -73,10 +74,13 @@
   <div class="niche-panel"><div class="niche-empty">No niches are available.</div></div>
 {% else %}
   <details class="niche-panel niche-definition">
-    <summary>{{ selected.name }} definition · v{{ selected.definition_version }}</summary>
+    <summary>{{ selected.name }} definition · v{{ selected.definition_version }}{% if selected.status == 'draft' %}<span class="niche-badge draft">Draft</span>{% endif %}</summary>
     <form class="niche-definition-grid" method="post" action="{{ url_for('video_shorts_bp.admin_niche_definition_update') }}">
       <input type="hidden" name="niche" value="{{ selected.slug }}">
       <div class="niche-field"><label>Name</label><input name="name" value="{{ selected.name }}" required></div>
+      <div class="niche-field"><label>Language</label><input name="language" value="{{ selected.language }}" required></div>
+      <div class="niche-field"><label>Target focus key</label><input name="target_focus" value="{{ selected.target_focus }}" required></div>
+      <div class="niche-field"><label>Focus options (JSON)</label><textarea name="focus_options" required>{{ selected.focus_options | tojson(indent=2) }}</textarea></div>
       <div class="niche-field"><label>Description (150–250 words)</label><textarea name="description" required>{{ selected.description }}</textarea></div>
       <div class="niche-field"><label>Core topics (one per line)</label><textarea name="core_topics" required>{{ selected.core_topics | join('\n') }}</textarea></div>
       <div class="niche-field"><label>Adjacent topics (one per line)</label><textarea name="adjacent_topics" required>{{ selected.adjacent_topics | join('\n') }}</textarea></div>
@@ -87,7 +91,7 @@
   <form class="niche-toolbar" method="get">
     <input type="hidden" name="tab" value="{{ tab }}">
     <div class="niche-field"><label for="niche">Niche</label><select id="niche" name="niche" onchange="this.form.submit()">
-      {% for niche in niches %}<option value="{{ niche.slug }}" {% if selected and selected.slug == niche.slug %}selected{% endif %}>{{ niche.name }}</option>{% endfor %}
+      {% for niche in niches %}<option value="{{ niche.slug }}" {% if selected and selected.slug == niche.slug %}selected{% endif %}>{{ niche.name }}{% if niche.status == 'draft' %} — Draft{% endif %}</option>{% endfor %}
     </select></div>
     <div class="niche-field"><label for="snapshot">Snapshot</label><select id="snapshot" name="snapshot" onchange="this.form.submit()">
       {% for snapshot in snapshot_dates %}<option value="{{ snapshot }}" {% if selected and selected.snapshot_date == snapshot %}selected{% endif %}>{{ snapshot }}</option>{% endfor %}

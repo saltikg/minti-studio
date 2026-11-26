@@ -19,6 +19,7 @@ def test_normalize_result_computes_core_share_from_per_title_flags():
             {"title": "Workout for women over 50", "format": "long"},
             {"title": "Strength training", "format": "short"},
         ],
+        {"hormones_midlife_health", "fitness_training", "other"},
     )
 
     assert result["primary_focus"] == "fitness_training"

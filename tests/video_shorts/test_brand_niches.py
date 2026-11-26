@@ -1,4 +1,5 @@
 from app.video_shorts.services import brand_niches
+from app.video_shorts.services.niches import is_final_niche_pool_row
 
 
 def _row(channel_id, title, subscribers, **overrides):
@@ -71,6 +72,28 @@ def test_admin_include_and_exclude_override_strict_channel_focus():
 
     assert suggestions["UC1"]["group"] == "pool"
     assert "UC2" not in suggestions
+
+
+def test_generic_pool_uses_niche_language_and_ignores_country():
+    niche = {"language": "tr", "target_focus": "religious_spiritual_talks"}
+    turkish = _row(
+        "UC1", "Turkish speaker", 1000,
+        primary_focus="religious_spiritual_talks", language="Turkish", country="DE",
+    )
+    mixed = _row(
+        "UC2", "Mixed speaker", 900,
+        primary_focus="religious_spiritual_talks", language="mixed", country="TR",
+    )
+
+    assert is_final_niche_pool_row(turkish, niche)
+    assert not is_final_niche_pool_row(mixed, niche)
+
+
+def test_missing_language_preserves_existing_status():
+    niche = {"language": "en", "target_focus": "hormones_midlife_health"}
+    row = _row("UC1", "Known pool member", 1000, language="", in_niche=True, country="IN")
+
+    assert is_final_niche_pool_row(row, niche)
 
 
 class _UpdateConnection:

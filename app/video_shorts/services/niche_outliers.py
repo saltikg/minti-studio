@@ -174,7 +174,7 @@ def _current_pool(niche_slug: str) -> tuple[dict[str, Any], list[dict[str, Any]]
         niche, rows = load_niche_snapshot(conn, niche_slug)
         if not niche:
             raise NicheOutlierError(f"unknown niche: {niche_slug}")
-        return niche, final_niche_pool(rows, clinicians_only=False)
+        return niche, final_niche_pool(rows, clinicians_only=False, niche=niche)
     finally:
         conn.close()
 

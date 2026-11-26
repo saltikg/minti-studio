@@ -7,6 +7,7 @@ from app.video_shorts.routes.auth import require_admin
 from app.video_shorts.services.db import get_db, get_db_readonly, table_columns
 from app.video_shorts.services.niche_outliers import load_latest_niche_outliers
 from app.video_shorts.services.niche_definitions import (
+    parse_focus_options,
     parse_topic_lines,
     update_niche_definition,
 )
@@ -29,6 +30,7 @@ from app.video_shorts.services.niches import (
 def admin_niches():
     conn = get_db_readonly()
     niche_channel_columns = table_columns(conn, "niche_channels")
+    niche_columns = table_columns(conn, "niches")
     strict_columns = {
         "primary_niche",
         "on_topic_share",
@@ -48,7 +50,7 @@ def admin_niches():
         "classification_title_count",
     }
     if (
-        not table_columns(conn, "niches")
+        not {"language", "target_focus", "focus_options", "status"}.issubset(niche_columns)
         or not niche_channel_columns
         or not strict_columns.issubset(niche_channel_columns)
     ):
@@ -71,7 +73,7 @@ def admin_niches():
     tab = str(request.args.get("tab") or "pool").strip().lower()
     if tab not in {"pool", "top_shorts", "excluded", "near_misses"}:
         tab = "pool"
-    pool = final_niche_pool(rows, clinicians_only=False)
+    pool = final_niche_pool(rows, clinicians_only=False, niche=selected)
     pool_by_channel = {
         str(row.get("youtube_channel_id") or ""): row
         for row in pool
@@ -142,7 +144,7 @@ def admin_niches():
     elif tab == "excluded":
         tab_rows = excluded_niche_rows(rows, clinicians_only=False)
     elif tab == "near_misses":
-        tab_rows = near_miss_niche_rows(rows, clinicians_only=False)
+        tab_rows = near_miss_niche_rows(rows, clinicians_only=False, niche=selected)
     else:
         tab_rows = pool
     tab_rows.sort(
@@ -171,7 +173,7 @@ def admin_niches():
         kpis=pool_kpis(pool),
         tab=tab,
         excluded_count=len(excluded_niche_rows(rows, clinicians_only=False)),
-        near_miss_count=len(near_miss_niche_rows(rows, clinicians_only=False)),
+        near_miss_count=len(near_miss_niche_rows(rows, clinicians_only=False, niche=selected)),
         subscriber_band=subscriber_band,
         outreach_status=outreach_status,
         outreach_labels=OUTREACH_LABELS,
@@ -200,6 +202,9 @@ def admin_niche_definition_update():
             core_topics=parse_topic_lines(request.form.get("core_topics")),
             adjacent_topics=parse_topic_lines(request.form.get("adjacent_topics")),
             excluded_topics=parse_topic_lines(request.form.get("excluded_topics")),
+            language=str(request.form.get("language") or ""),
+            target_focus=str(request.form.get("target_focus") or ""),
+            focus_options=parse_focus_options(request.form.get("focus_options")),
         )
         conn.commit()
     except ValueError as exc:

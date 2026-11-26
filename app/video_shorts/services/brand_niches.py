@@ -34,8 +34,8 @@ def build_niche_suggestion_index(
     suggestions: dict[str, dict[str, Any]] = {}
     for niche, rows in niches_with_rows:
         for group, ranked_rows in (
-            ("pool", _ranked(final_niche_pool(rows, clinicians_only=False))),
-            ("near_miss", _ranked(near_miss_niche_rows(rows, clinicians_only=False))),
+            ("pool", _ranked(final_niche_pool(rows, clinicians_only=False, niche=niche))),
+            ("near_miss", _ranked(near_miss_niche_rows(rows, clinicians_only=False, niche=niche))),
         ):
             total = len(ranked_rows)
             for rank, row in enumerate(ranked_rows, start=1):
@@ -143,7 +143,7 @@ def load_admin_brand_niche_settings(conn, owner_user_id: str) -> dict[str, Any]:
         "brands": brands,
         "niches": [
             {"id": _clean(niche["id"]), "name": _clean(niche["name"])}
-            for niche in niches
+            for niche in niches if _clean(niche.get("status")) != "draft"
         ],
     }
 

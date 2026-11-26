@@ -29,6 +29,7 @@ from app.video_shorts.services.niches import (
     final_niche_pool,
     is_final_niche_pool_row,
     load_niche_snapshot,
+    near_miss_niche_rows,
 )
 from app.video_shorts.services.youtube_quota import (
     record_youtube_data_api_call,
@@ -40,14 +41,6 @@ from scripts.research import reclassify_women_hormones as legacy
 
 NICHE_SLUG = "menopause_hormones"
 CACHE_ROOT = REPO_ROOT / "data" / "research" / "cache"
-PRIMARY_FOCUSES = {
-    "hormones_midlife_health",
-    "fitness_training",
-    "nutrition_diet",
-    "general_health_wellness",
-    "fertility_pregnancy",
-    "other",
-}
 FEATURE = "women_hormones_research"
 YOUTUBE_API_BASE = "https://www.googleapis.com/youtube/v3"
 TEACH_RULE = (
@@ -83,11 +76,16 @@ def _usage(response) -> dict[str, Any]:
     }
 
 
-def _normalize_result(raw: dict[str, Any], title_inputs: list[dict[str, str]]) -> dict[str, Any]:
+def _normalize_result(
+    raw: dict[str, Any],
+    title_inputs: list[dict[str, str]],
+    focus_keys: set[str] | None = None,
+) -> dict[str, Any]:
     titles = [item["title"] for item in title_inputs]
     primary_focus = str(raw.get("primary_focus") or "").strip().casefold()
-    if primary_focus not in PRIMARY_FOCUSES:
-        primary_focus = "other"
+    allowed_focuses = focus_keys or {"other"}
+    if primary_focus not in allowed_focuses:
+        primary_focus = "other" if "other" in allowed_focuses else sorted(allowed_focuses)[0]
 
     raw_entity = str(raw.get("entity") or "").strip().casefold()
     entity = "individual" if raw_entity == "individual" else "company_clinic"
@@ -279,7 +277,7 @@ def _admin_precedents(rows: list[dict[str, Any]]) -> list[dict[str, str]]:
 
 
 def _classify_channel(
-    core_topics: list[str],
+    definition: dict[str, Any],
     admin_precedents: list[dict[str, str]],
     row: dict[str, Any],
     video_details,
@@ -288,6 +286,8 @@ def _classify_channel(
     title_inputs = load_mixed_titles(channel_id, video_details)
     if not title_inputs:
         return None, None
+    focus_options = definition.get("focus_options") or []
+    focus_keys = {str(item.get("key") or "") for item in focus_options if isinstance(item, dict)}
     response = _openai_client.chat.completions.create(
         model="gpt-4.1-mini",
         temperature=0,
@@ -299,15 +299,11 @@ def _classify_channel(
                 "content": (
                     "Classify the channel's MAIN focus, judging the channel description first. "
                     "Return JSON only with exactly: primary_focus, title_results, entity, reason. "
-                    "primary_focus must be exactly one of hormones_midlife_health, fitness_training, "
-                    "nutrition_diet, general_health_wellness, fertility_pregnancy, other. entity must "
+                    f"primary_focus must be exactly one of {', '.join(sorted(focus_keys))}. entity must "
                     "be individual or company_clinic. title_results must contain one object per input "
                     "title in the same order: {\"title\":\"exact input title\",\"core_topic\":true}. "
-                    "A title is core_topic=true ONLY when it is mainly about perimenopause/menopause, "
-                    "HRT, estrogen/progesterone/testosterone in women, menopause symptoms, hormone "
-                    "labs, bladder/UTI/genitourinary symptoms, breast cancer and HRT safety, or HRT "
-                    "news/access/supply. Adjacent topics are false. Workouts for women 50+ are "
-                    "fitness_training; foods for menopause on a diet channel are nutrition_diet. "
+                    "A title is core_topic=true ONLY when it is mainly about one of the supplied stored "
+                    "core topics. Adjacent topics are false. "
                     f"reason must be one line. {TEACH_RULE} Follow the supplied Admin decisions "
                     "as precedent for similar channels."
                 ),
@@ -317,13 +313,43 @@ def _classify_channel(
                 "content": (
                     f"Channel description: {_channel_description(channel_id)}\n"
                     f"Recent titles with format: {json.dumps(title_inputs, ensure_ascii=False)}\n"
-                    f"Stored core_topics: {json.dumps(core_topics, ensure_ascii=False)}\n"
+                    f"Target focus: {definition.get('target_focus')}\n"
+                    f"Focus options: {json.dumps(focus_options, ensure_ascii=False)}\n"
+                    f"Stored core_topics: {json.dumps(definition.get('core_topics') or [], ensure_ascii=False)}\n"
                     f"Admin decisions: {json.dumps(admin_precedents, ensure_ascii=False)}"
                 ),
             },
         ],
     )
-    return _normalize_result(_json_result(response), title_inputs), _usage(response)
+    return _normalize_result(_json_result(response), title_inputs, focus_keys), _usage(response)
+
+
+def _classification_scope(conn, niche: dict[str, Any], rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    run = conn.execute(
+        "SELECT run_id FROM niche_classification_runs WHERE niche_id=? ORDER BY run_at DESC, run_id DESC LIMIT 1",
+        [niche["id"]],
+    ).fetchone()
+    if not run:
+        return rows
+    prior_ids = {
+        str(item[0]) for item in conn.execute(
+            "SELECT youtube_channel_id FROM niche_channel_run_results WHERE run_id=?", [run[0]]
+        ).fetchall()
+    }
+    pool_ids = {
+        str(item[0]) for item in conn.execute(
+            "SELECT youtube_channel_id FROM niche_channel_run_results WHERE run_id=? AND in_pool", [run[0]]
+        ).fetchall()
+    }
+    near_ids = {
+        str(row.get("youtube_channel_id") or "")
+        for row in near_miss_niche_rows(rows, clinicians_only=False, niche=niche)
+    }
+    return [
+        row for row in rows
+        if str(row.get("youtube_channel_id") or "") in pool_ids | near_ids
+        or str(row.get("youtube_channel_id") or "") not in prior_ids
+    ]
 
 
 def _previous_pool_ids(conn, niche_id: Any) -> set[str]:
@@ -356,12 +382,13 @@ def main() -> int:
         niche, rows = load_niche_snapshot(conn, NICHE_SLUG)
         definition = load_niche_definition(conn, niche_id=niche["id"])
         previous_ids = _previous_pool_ids(conn, niche["id"])
+        classification_rows = _classification_scope(conn, niche, rows)
     finally:
         conn.close()
     if not definition:
         raise RuntimeError("Stored niche definition is required")
 
-    backfill = backfill_zero_upload_channels(rows, args.youtube_cap)
+    backfill = backfill_zero_upload_channels(classification_rows, args.youtube_cap)
     video_details = legacy.load_video_details(CACHE_ROOT)
     precedents = _admin_precedents(rows)
 
@@ -370,22 +397,22 @@ def main() -> int:
 
     def classify_row(row):
         return row, *_classify_channel(
-            definition["core_topics"], precedents, row, video_details
+            definition, precedents, row, video_details
         )
 
     with ThreadPoolExecutor(max_workers=max(1, min(args.workers, 12))) as executor:
-        classifications = executor.map(classify_row, rows)
+        classifications = executor.map(classify_row, classification_rows)
         for index, (row, result, usage) in enumerate(classifications, start=1):
             channel_id = str(row.get("youtube_channel_id") or "")
             if result is None:
                 channel_results[channel_id] = {"classification_status": "no_titles"}
-                print(f"no_titles {index}/{len(rows)} {channel_id}", file=sys.stderr)
+                print(f"no_titles {index}/{len(classification_rows)} {channel_id}", file=sys.stderr)
                 continue
             result["classification_status"] = "classified"
             channel_results[channel_id] = result
             for key in total_usage:
                 total_usage[key] += usage[key]
-            print(f"classified {index}/{len(rows)} {channel_id}", file=sys.stderr)
+            print(f"classified {index}/{len(classification_rows)} {channel_id}", file=sys.stderr)
 
     conn = get_db()
     try:
@@ -449,7 +476,7 @@ def main() -> int:
                 VALUES (?, ?, ?, ?, ?, ?)
                 """,
                 [
-                    run_id, row["youtube_channel_id"], is_final_niche_pool_row(row),
+                    run_id, row["youtube_channel_id"], is_final_niche_pool_row(row, niche),
                     row.get("primary_focus"), float(row.get("on_topic_share") or 0),
                     row.get("reclass_reason"),
                 ],
@@ -462,7 +489,7 @@ def main() -> int:
         conn.close()
 
     current_pool = sorted(
-        final_niche_pool(current_rows, clinicians_only=False),
+        final_niche_pool(current_rows, clinicians_only=False, niche=niche),
         key=lambda row: (
             -int(row.get("subscriber_count") or 0),
             str(row.get("title") or "").casefold(),
@@ -496,7 +523,7 @@ def main() -> int:
             "primary_focus": row.get("primary_focus"),
             "core_share": float(row.get("on_topic_share") or 0),
             "entity": row.get("entity"),
-            "in_pool": is_final_niche_pool_row(row),
+            "in_pool": is_final_niche_pool_row(row, niche),
             "admin_include": bool(row.get("admin_include")),
             "admin_exclude": bool(row.get("admin_exclude")),
             "reason": row.get("reclass_reason"),
@@ -530,6 +557,7 @@ def main() -> int:
                     for result in channel_results.values()
                 ),
                 "run_id": run_id,
+                "classified_scope": len(classification_rows),
             },
             ensure_ascii=False,
             indent=2,

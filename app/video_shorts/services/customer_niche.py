@@ -23,9 +23,9 @@ def compact_number(value: Any) -> str:
     return f"{number:,}"
 
 
-def _ranked_pool(rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
+def _ranked_pool(rows: list[dict[str, Any]], niche: dict[str, Any]) -> list[dict[str, Any]]:
     return sorted(
-        final_niche_pool(rows, clinicians_only=False),
+        final_niche_pool(rows, clinicians_only=False, niche=niche),
         key=lambda row: (
             -int(row.get("subscriber_count") or 0),
             str(row.get("title") or "").lower(),
@@ -103,7 +103,7 @@ def load_customer_niche_page(
     niche, snapshot_rows = load_niche_snapshot(conn, str(brand[3]))
     if not niche:
         return None
-    ranked_pool = _ranked_pool(snapshot_rows)
+    ranked_pool = _ranked_pool(snapshot_rows, niche)
     own_channel_ids = brand_youtube_channel_ids(conn, owner_user_id, brand_id)
     pool_by_channel = {
         str(row.get("youtube_channel_id") or ""): row for row in ranked_pool

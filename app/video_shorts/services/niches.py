@@ -17,6 +17,11 @@ OUTREACH_LABELS = {
 }
 NICHE_ON_TOPIC_MIN = 0.33
 NICHE_CLINICIAN_CREDENTIALS = {"MD_DO", "NP", "PA", "ND"}
+NICHE_LANGUAGE_LABELS = {
+    "en": {"en", "english"},
+    "tr": {"tr", "turkish", "türkçe", "turkce"},
+}
+# Legacy research scripts still import this while their historical reports remain reproducible.
 NICHE_AUDIENCE_COUNTRIES = {"", "US", "CA", "GB", "AU", "NZ", "IE"}
 
 
@@ -55,38 +60,53 @@ def _language_is_english(value: Any) -> bool:
 def list_niches(conn) -> list[dict[str, Any]]:
     if not table_columns(conn, "niches"):
         return []
-    return _dict_rows(
-        conn.execute(
-            """
-            SELECT id, slug, name, category, created_at
-            FROM niches
-            ORDER BY name ASC
-            """
-        )
-    )
+    columns = table_columns(conn, "niches")
+    optional = [name for name in ("language", "target_focus", "focus_options", "status") if name in columns]
+    return _dict_rows(conn.execute(
+        f"SELECT id, slug, name, category, created_at{''.join(', ' + name for name in optional)} "
+        "FROM niches ORDER BY name ASC"
+    ))
 
 
 def load_niche_snapshot(conn, niche_slug: str, snapshot_date: str = "") -> tuple[dict[str, Any] | None, list[dict[str, Any]]]:
     niche_columns = table_columns(conn, "niches")
-    definition_select = (
-        ", description, core_topics, adjacent_topics, excluded_topics, definition_version"
-        if "definition_version" in niche_columns else ""
-    )
-    niche = conn.execute(
-        f"SELECT id, slug, name, category{definition_select} FROM niches WHERE slug = ? LIMIT 1",
+    optional = [
+        name for name in (
+            "description", "core_topics", "adjacent_topics", "excluded_topics",
+            "definition_version", "language", "target_focus", "focus_options", "status",
+        ) if name in niche_columns
+    ]
+    result = conn.execute(
+        f"SELECT id, slug, name, category{''.join(', ' + name for name in optional)} "
+        "FROM niches WHERE slug = ? LIMIT 1",
         [niche_slug],
-    ).fetchone()
+    )
+    niche_rows = _dict_rows(result)
+    niche = niche_rows[0] if niche_rows else None
     if not niche:
         return None, []
+    selected = {
+        **niche,
+        "description": str(niche.get("description") or ""),
+        "core_topics": niche.get("core_topics") or [],
+        "adjacent_topics": niche.get("adjacent_topics") or [],
+        "excluded_topics": niche.get("excluded_topics") or [],
+        "definition_version": int(niche.get("definition_version") or 1),
+        "language": _clean(niche.get("language")) or "en",
+        "target_focus": _clean(niche.get("target_focus")) or "hormones_midlife_health",
+        "focus_options": niche.get("focus_options") or [],
+        "status": _clean(niche.get("status")) or "active",
+        "snapshot_date": "",
+    }
     selected_date = _clean(snapshot_date)
     if not selected_date:
         latest = conn.execute(
             "SELECT MAX(snapshot_date) FROM niche_channels WHERE niche_id = ?",
-            [niche[0]],
+            [niche["id"]],
         ).fetchone()
         selected_date = str(latest[0]) if latest and latest[0] else ""
     if not selected_date:
-        return {"id": niche[0], "slug": niche[1], "name": niche[2], "category": niche[3], "snapshot_date": ""}, []
+        return selected, []
 
     result = conn.execute(
         """
@@ -103,21 +123,11 @@ def load_niche_snapshot(conn, niche_slug: str, snapshot_date: str = "") -> tuple
         WHERE niche_id = ? AND snapshot_date = ?
         ORDER BY subscriber_count DESC NULLS LAST, lower(title) ASC
         """,
-        [niche[0], selected_date],
+        [niche["id"], selected_date],
     )
     rows = _dict_rows(result)
-    return {
-        "id": niche[0],
-        "slug": niche[1],
-        "name": niche[2],
-        "category": niche[3],
-        "snapshot_date": selected_date,
-        "description": str(niche[4] or "") if len(niche) > 4 else "",
-        "core_topics": niche[5] if len(niche) > 5 else [],
-        "adjacent_topics": niche[6] if len(niche) > 6 else [],
-        "excluded_topics": niche[7] if len(niche) > 7 else [],
-        "definition_version": int(niche[8] or 1) if len(niche) > 8 else 1,
-    }, rows
+    selected["snapshot_date"] = selected_date
+    return selected, rows
 
 
 def load_snapshot_dates(conn, niche_id: Any) -> list[str]:
@@ -289,28 +299,38 @@ def _on_topic_share(row: dict[str, Any]) -> float:
         return 0.0
 
 
-def is_base_niche_pool_row(row: dict[str, Any]) -> bool:
-    country = _clean(row.get("country")).upper()
+def _language_matches_niche(value: Any, niche_language: str) -> bool | None:
+    label = _clean(value).casefold()
+    if not label:
+        return None
+    expected = _clean(niche_language).casefold()
+    return label in NICHE_LANGUAGE_LABELS.get(expected, {expected})
+
+
+def is_base_niche_pool_row(row: dict[str, Any], niche: dict[str, Any] | None = None) -> bool:
+    target_focus = _clean((niche or {}).get("target_focus")) or "hormones_midlife_health"
+    niche_language = _clean((niche or {}).get("language")) or "en"
     if "primary_focus" in row:
-        topic_match = _clean(row.get("primary_focus")).lower() == "hormones_midlife_health"
+        topic_match = _clean(row.get("primary_focus")).lower() == target_focus.casefold()
     else:
         topic_match = (
             _clean(row.get("primary_niche")).lower() == "menopause_hormones"
             and _on_topic_share(row) >= NICHE_ON_TOPIC_MIN
         )
+    language_match = _language_matches_niche(row.get("language"), niche_language)
+    if language_match is None:
+        language_match = bool(row.get("in_niche"))
     return (
         topic_match
         and _clean(row.get("entity")).lower() == "individual"
         and _clean(row.get("presenter")).lower() == "real_person"
-        and _language_is_english(row.get("language"))
-        and country in NICHE_AUDIENCE_COUNTRIES
-        and _clean(row.get("audience_language")).lower() == "english"
+        and language_match
     )
 
 
-def is_final_niche_pool_row(row: dict[str, Any]) -> bool:
+def is_final_niche_pool_row(row: dict[str, Any], niche: dict[str, Any] | None = None) -> bool:
     return not bool(row.get("admin_exclude")) and (
-        bool(row.get("admin_include")) or is_base_niche_pool_row(row)
+        bool(row.get("admin_include")) or is_base_niche_pool_row(row, niche)
     )
 
 
@@ -318,11 +338,11 @@ def clinician_matches(row: dict[str, Any]) -> bool:
     return _clean(row.get("credential")) in NICHE_CLINICIAN_CREDENTIALS
 
 
-def final_niche_pool(rows: list[dict[str, Any]], *, clinicians_only: bool) -> list[dict[str, Any]]:
+def final_niche_pool(rows: list[dict[str, Any]], *, clinicians_only: bool, niche: dict[str, Any] | None = None) -> list[dict[str, Any]]:
     return [
         row
         for row in rows
-        if is_final_niche_pool_row(row) and (not clinicians_only or clinician_matches(row))
+        if is_final_niche_pool_row(row, niche) and (not clinicians_only or clinician_matches(row))
     ]
 
 
@@ -334,14 +354,15 @@ def excluded_niche_rows(rows: list[dict[str, Any]], *, clinicians_only: bool) ->
     ]
 
 
-def near_miss_niche_rows(rows: list[dict[str, Any]], *, clinicians_only: bool) -> list[dict[str, Any]]:
+def near_miss_niche_rows(rows: list[dict[str, Any]], *, clinicians_only: bool, niche: dict[str, Any] | None = None) -> list[dict[str, Any]]:
+    target_focus = _clean((niche or {}).get("target_focus")) or "hormones_midlife_health"
     return [
         row
         for row in rows
-        if not is_final_niche_pool_row(row)
+        if not is_final_niche_pool_row(row, niche)
         and not bool(row.get("admin_exclude"))
         and not bool(row.get("admin_include"))
-        and _clean(row.get("primary_focus")).lower() != "hormones_midlife_health"
+        and _clean(row.get("primary_focus")).lower() != target_focus.casefold()
         and _on_topic_share(row) >= NICHE_ON_TOPIC_MIN
         and (not clinicians_only or clinician_matches(row))
     ]
