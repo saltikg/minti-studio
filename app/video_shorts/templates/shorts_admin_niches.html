@@ -31,6 +31,7 @@
   .niche-table-wrap { overflow-x: auto; }
   .niche-table { border-collapse: collapse; color: rgba(255,255,255,.92); font-size: 13px; min-width: 1500px; width: 100%; }
   .niche-table.is-shorts { min-width: 0; }
+  .niche-channel-title { white-space: nowrap; }
   .niche-short-title { white-space: nowrap; }
   .niche-table th { background: rgba(255,255,255,.03); color: rgba(255,255,255,.58); font-size: 11px; letter-spacing: .03em; padding: 10px; text-align: right; text-transform: uppercase; white-space: nowrap; }
   .niche-table td { border-top: 1px solid rgba(255,255,255,.08); color: rgba(255,255,255,.92); padding: 11px 10px; text-align: right; vertical-align: middle; }
@@ -117,7 +118,7 @@
   </tr></thead><tbody>
   {% for row in outlier_rows %}<tr>
     <td>{{ row.rank }}</td>
-    <td class="is-left">{{ row.channel_title }}</td>
+    <td class="is-left niche-channel-title" title="{{ row.channel_title }}">{{ row.channel_title[:20] }}{% if row.channel_title | length > 20 %}...{% endif %}</td>
     <td class="is-left">{{ row.credential or '—' }}</td>
     <td class="is-left niche-short-title"><a class="niche-channel" href="https://youtube.com/shorts/{{ row.video_id }}" target="_blank" rel="noopener" title="{{ row.title }}">{{ row.title[:25] }}{% if row.title | length > 25 %}...{% endif %}</a>{% if row.engagement_badge == 'high_engagement' %}<span class="niche-badge high_engagement">High engagement</span>{% elif row.engagement_badge == 'possibly_promoted' %}<span class="niche-badge possibly_promoted" title="Views high but likes/comments low — may include paid views">Possibly promoted</span>{% endif %}</td>
     <td>{{ row.published_at.strftime('%b %-d, %Y') }}</td>
