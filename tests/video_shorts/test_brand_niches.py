@@ -24,7 +24,7 @@ def test_suggestion_index_ranks_pool_and_near_misses():
     rows = [
         _row("UC1", "Larger", 2000),
         _row("UC2", "Shelley", 1000),
-        _row("UC3", "Near miss", 500, on_topic_share=0.2),
+        _row("UC3", "Near miss", 500, relevance=59),
     ]
     suggestions = brand_niches.build_niche_suggestion_index(
         [({"id": 7, "name": "Menopause hormones"}, rows)]
@@ -40,6 +40,21 @@ def test_suggestion_index_ranks_pool_and_near_misses():
     assert suggestions["UC3"]["rank"] == 1
     assert suggestions["UC3"]["total"] == 1
     assert suggestions["UC3"]["group"] == "near_miss"
+
+
+def test_relevance_drives_pool_and_near_misses_when_present():
+    rows = [
+        _row("UC1", "Strong fit", 2000, relevance=84),
+        _row("UC2", "Near miss", 1000, relevance=59),
+        _row("UC3", "Low fit", 500, relevance=44),
+    ]
+    suggestions = brand_niches.build_niche_suggestion_index(
+        [({"id": 7, "name": "Women's Hormones & Midlife Health"}, rows)]
+    )
+
+    assert suggestions["UC1"]["group"] == "pool"
+    assert suggestions["UC2"]["group"] == "near_miss"
+    assert "UC3" not in suggestions
 
 
 class _UpdateConnection:

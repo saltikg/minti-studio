@@ -18,6 +18,7 @@ import requests
 from app.video_shorts.config import OPENAI_MODEL, _openai_client
 from app.video_shorts.services.db import get_db, get_db_readonly, table_columns
 from app.video_shorts.services.niches import final_niche_pool, load_niche_snapshot
+from app.video_shorts.services.niche_definitions import definition_prompt, load_niche_definition
 from app.video_shorts.services.youtube_quota import (
     record_youtube_data_api_call,
     require_youtube_quota_available,
@@ -463,15 +464,20 @@ def load_latest_niche_outliers(conn, niche_id: Any) -> tuple[str, list[dict[str,
     as_of = str(latest[0]) if latest and latest[0] else ""
     if not as_of:
         return "", []
-    if "topic_status" in outlier_columns:
-        llm_topic_column = "outlier.topic_status AS llm_topic_status"
+    if "in_category" in outlier_columns:
+        llm_topic_column = "outlier.in_category AS llm_in_category"
+    elif "topic_status" in outlier_columns:
+        llm_topic_column = (
+            "CASE WHEN outlier.topic_status = 'off_topic' THEN FALSE "
+            "WHEN outlier.topic_status IS NOT NULL THEN TRUE END AS llm_in_category"
+        )
     elif "on_topic" in outlier_columns:
         llm_topic_column = (
-            "CASE WHEN outlier.on_topic IS TRUE THEN 'on_topic' "
-            "WHEN outlier.on_topic IS FALSE THEN 'off_topic' END AS llm_topic_status"
+            "CASE WHEN outlier.on_topic IS TRUE THEN TRUE "
+            "WHEN outlier.on_topic IS FALSE THEN FALSE END AS llm_in_category"
         )
     else:
-        llm_topic_column = "NULL AS llm_topic_status"
+        llm_topic_column = "NULL AS llm_in_category"
     has_overrides = bool(table_columns(conn, "niche_outlier_short_topic_overrides"))
     override_join = (
         "LEFT JOIN niche_outlier_short_topic_overrides topic_override "
@@ -499,9 +505,14 @@ def load_latest_niche_outliers(conn, niche_id: Any) -> tuple[str, list[dict[str,
     columns = [str(item[0]) for item in (result.description or [])]
     rows = [dict(zip(columns, row)) for row in result.fetchall()]
     for row in rows:
-        status = str(row.get("topic_override") or row.get("llm_topic_status") or "adjacent")
-        row["topic_status"] = status if status in TOPIC_STATUSES else "adjacent"
-        row["on_topic"] = row["topic_status"] != "off_topic"
+        override = str(row.get("topic_override") or "")
+        if override in {"on_topic", "off_topic"}:
+            in_category = override == "on_topic"
+        else:
+            in_category = row.get("llm_in_category") is not False
+        row["in_category"] = in_category
+        row["on_topic"] = in_category
+        row["topic_status"] = "on_topic" if in_category else "off_topic"
     return as_of, rows
 
 
@@ -517,10 +528,7 @@ def _pattern_cost_usd(model: str, input_tokens: int, output_tokens: int) -> floa
 def customer_visible_outlier_rows(rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
     eligible = []
     for row in rows:
-        status = row.get("topic_status")
-        if status is None and row.get("on_topic") is False:
-            status = "off_topic"
-        if status == "off_topic" or int(row.get("views") or 0) < 5_000:
+        if row.get("in_category", row.get("on_topic")) is False or int(row.get("views") or 0) < 5_000:
             continue
         engagement = float(row.get("engagement") or 0)
         baseline_engagement = float(row.get("baseline_engagement") or 0)
@@ -673,7 +681,7 @@ def _cached_video_snippets(
     return snippets
 
 
-def _topic_status(value: Any) -> str:
+def _in_category(value: Any) -> bool:
     text = str(value or "").strip()
     if text.startswith("```"):
         text = re.sub(r"^```(?:json)?\s*|\s*```$", "", text, flags=re.IGNORECASE)
@@ -681,10 +689,10 @@ def _topic_status(value: Any) -> str:
         parsed = json.loads(text)
     except (TypeError, ValueError, json.JSONDecodeError) as exc:
         raise NicheOutlierError("topic classifier returned invalid JSON") from exc
-    status = parsed.get("topic_status") if isinstance(parsed, dict) else None
-    if status not in TOPIC_STATUSES:
-        raise NicheOutlierError("topic classifier must return a valid topic_status")
-    return str(status)
+    result = parsed.get("in_category") if isinstance(parsed, dict) else None
+    if type(result) is not bool:
+        raise NicheOutlierError("topic classifier must return an in_category boolean")
+    return result
 
 
 def _topic_overrides(niche_id: Any) -> dict[str, str]:
@@ -724,6 +732,16 @@ def classify_niche_outlier_topics(
         {str(row.get("video_id") or "") for row in rows}, cache_root
     )
     overrides = _topic_overrides(result.get("niche_id"))
+    definition = result.get("definition")
+    if definition is None and result.get("niche_id") is not None:
+        conn = get_db_readonly()
+        try:
+            definition = load_niche_definition(conn, niche_id=result["niche_id"])
+        finally:
+            conn.close()
+    if not definition:
+        raise NicheOutlierError("stored niche definition is required")
+    stored_definition = definition_prompt(definition)
     for row in rows:
         channel_id = str(row.get("youtube_channel_id") or "")
         video_id = str(row.get("video_id") or "")
@@ -741,7 +759,6 @@ def classify_niche_outlier_topics(
             flags=re.UNICODE,
         )
         hashtags = list(dict.fromkeys([*tag_values, *extracted]))[:30]
-        channel_description = _cached_channel_description(channel_id, cache_root)
         response = selected_client.chat.completions.create(
             model=OPENAI_MODEL,
             temperature=0,
@@ -751,11 +768,9 @@ def classify_niche_outlier_topics(
                 {
                     "role": "system",
                     "content": (
-                        "You are a strict YouTube niche taxonomy classifier. Return JSON only, "
-                        "with exactly one field whose value is on_topic, adjacent, or off_topic: "
-                        "{\"topic_status\":\"on_topic|adjacent|off_topic\"}. If unsure, answer "
-                        "adjacent. Bias toward keeping a Short unless it is clearly off-topic. "
-                        + ON_TOPIC_DEFINITION
+                        "Decide whether this Short belongs in the supplied category definition. "
+                        "Return JSON only: {\"in_category\":true|false}. Use the definition as "
+                        "the sole taxonomy source; core and adjacent topics count as in-category."
                     ),
                 },
                 {
@@ -764,29 +779,25 @@ def classify_niche_outlier_topics(
                         f"Short title: {str(row.get('title') or '').strip()}\n"
                         + (f"Video description: {video_description}\n" if video_description else "")
                         + (f"Hashtags: {', '.join(hashtags)}\n" if hashtags else "")
-                        + f"Channel description: {channel_description}"
+                        + f"Stored category definition: {stored_definition}"
                     ),
                 },
             ],
         )
         content = response.choices[0].message.content if response.choices else ""
-        llm_status = _topic_status(content)
-        previous_status = str(
-            row.get("topic_status")
-            or (
-                "on_topic"
-                if row.get("on_topic") is True
-                else "off_topic"
-                if row.get("on_topic") is False
-                else "adjacent"
-            )
-        )
+        llm_in_category = _in_category(content)
+        previous_in_category = row.get("in_category", row.get("on_topic")) is not False
         override = str(row.get("topic_override") or overrides.get(video_id) or "")
-        effective_status = override if override in {"on_topic", "off_topic"} else llm_status
-        row["llm_topic_status"] = llm_status
+        effective_in_category = (
+            override == "on_topic"
+            if override in {"on_topic", "off_topic"}
+            else llm_in_category
+        )
+        row["llm_in_category"] = llm_in_category
         row["topic_override"] = override or None
-        row["topic_status"] = effective_status
-        row["on_topic"] = effective_status != "off_topic"
+        row["in_category"] = effective_in_category
+        row["on_topic"] = effective_in_category
+        row["topic_status"] = "on_topic" if effective_in_category else "off_topic"
         usage = getattr(response, "usage", None)
         input_tokens += int(
             getattr(usage, "prompt_tokens", 0) or getattr(usage, "input_tokens", 0) or 0
@@ -798,10 +809,10 @@ def classify_niche_outlier_topics(
             {
                 "video_id": video_id,
                 "title": str(row.get("title") or ""),
-                "previous_status": previous_status,
-                "llm_topic_status": llm_status,
+                "previous_in_category": previous_in_category,
+                "llm_in_category": llm_in_category,
                 "topic_override": override or None,
-                "topic_status": effective_status,
+                "in_category": effective_in_category,
             }
         )
     return {
@@ -816,17 +827,18 @@ def persist_niche_outlier_topics(result: dict[str, Any]) -> None:
     conn = get_db()
     try:
         columns = table_columns(conn, "niche_outlier_shorts")
-        if "topic_status" not in columns:
-            raise NicheOutlierError("niche_outlier_shorts.topic_status migration has not been applied")
+        if "in_category" not in columns:
+            raise NicheOutlierError("niche_outlier_shorts.in_category migration has not been applied")
         for row in result.get("rows") or []:
             conn.execute(
                 """
                 UPDATE niche_outlier_shorts
-                SET topic_status = ?, on_topic = ?
+                SET in_category = ?, on_topic = ?, topic_status = ?
                 WHERE niche_id = ? AND as_of = ? AND video_id = ?
                 """,
                 [
-                    row.get("llm_topic_status"), row.get("on_topic"), result["niche_id"],
+                    row.get("llm_in_category"), row.get("on_topic"),
+                    "on_topic" if row.get("llm_in_category") else "off_topic", result["niche_id"],
                     result["as_of"], row["video_id"],
                 ],
             )

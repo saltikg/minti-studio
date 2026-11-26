@@ -126,7 +126,7 @@ def test_pattern_generation_uses_customer_top_six_and_builds_sentence(monkeypatc
                 "views": 10_000 + index,
                 "engagement": 0.02,
                 "baseline_engagement": 0.02,
-                "topic_status": "on_topic",
+                "in_category": True,
             }
             for index in range(8)
         ],
@@ -178,13 +178,9 @@ def test_topic_classification_uses_one_call_per_short(monkeypatch, tmp_path):
     class Completions:
         def create(self, **kwargs):
             calls.append(kwargs)
-            status = (
-                "on_topic"
-                if "First" in kwargs["messages"][1]["content"]
-                else "adjacent"
-            )
+            in_category = "First" in kwargs["messages"][1]["content"]
             message = type(
-                "Message", (), {"content": json.dumps({"topic_status": status})}
+                "Message", (), {"content": json.dumps({"in_category": in_category})}
             )()
             choice = type("Choice", (), {"message": message})()
             usage = type("Usage", (), {"prompt_tokens": 50, "completion_tokens": 5})()
@@ -192,6 +188,14 @@ def test_topic_classification_uses_one_call_per_short(monkeypatch, tmp_path):
 
     client = type("Client", (), {"chat": type("Chat", (), {"completions": Completions()})()})()
     result = {
+        "definition": {
+            "name": "Women's Hormones & Midlife Health",
+            "description": "A stored category definition.",
+            "core_topics": ["menopause"],
+            "adjacent_topics": ["midlife mood"],
+            "excluded_topics": ["male health"],
+            "definition_version": 2,
+        },
         "rows": [
             {"youtube_channel_id": "UC1", "video_id": "a", "title": "First title"},
             {"youtube_channel_id": "UC1", "video_id": "b", "title": "Second title"},
@@ -203,8 +207,9 @@ def test_topic_classification_uses_one_call_per_short(monkeypatch, tmp_path):
     )
 
     assert len(calls) == 2
-    assert [row["topic_status"] for row in result["rows"]] == ["on_topic", "adjacent"]
-    assert "Menopause clinic" in calls[0]["messages"][1]["content"]
+    assert [row["in_category"] for row in result["rows"]] == [True, False]
+    assert "Stored category definition:" in calls[0]["messages"][1]["content"]
+    assert "Menopause clinic" not in calls[0]["messages"][1]["content"]
     assert "Video description: " in calls[0]["messages"][1]["content"]
     assert "Hashtags: HRT, #menopause" in calls[0]["messages"][1]["content"]
     description_line = next(

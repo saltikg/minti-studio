@@ -40,18 +40,14 @@ def main() -> int:
         "classified": len(topic_usage["decisions"]),
         "status_counts": {
             status: sum(
-                1 for item in topic_usage["decisions"] if item["topic_status"] == status
+                1 for item in topic_usage["decisions"]
+                if item["in_category"] is (status == "in_category")
             )
-            for status in ("on_topic", "adjacent", "off_topic")
+            for status in ("in_category", "out_of_category")
         },
         "changed": [
             item for item in topic_usage["decisions"]
-            if item["previous_status"] != item["topic_status"]
-        ],
-        "came_back": [
-            item for item in topic_usage["decisions"]
-            if item["previous_status"] == "off_topic"
-            and item["topic_status"] != "off_topic"
+            if item["previous_in_category"] != item["in_category"]
         ],
         "topic_usage": topic_usage,
         "pattern": pattern,

@@ -1,0 +1,50 @@
+{
+  "category_description": "This creator category consists of individual, credentialed health professionals—primarily physicians and registered dietitians—who teach on camera about perimenopause and menopause health for women over 40. Their core content focuses on evidence-based education about hormonal changes (estrogen, progesterone, testosterone), symptom management (anxiety, sleep disruption, brain fog, fatigue, weight gain, libido, vaginal dryness), and the interplay between hormones, metabolism, gut health, and mental well-being during midlife. These creators regularly review lab testing, hormone replacement therapy (HRT), non-hormonal interventions, supplements, and lifestyle strategies tailored to women navigating perimenopause and menopause. Adjacent topics often include metabolic health, blood sugar regulation, strength training, skin changes, and the impact of hormonal shifts on relationships and emotional health. The intended audience is women aged 40 and above seeking practical, science-backed guidance to understand and manage the physical and emotional transitions of midlife. NOT in this category: Pregnancy/fertility-focused channels, general fitness or diet-program channels, creators whose primary content is not women-specific or not centered on perimenopause/menopause, and non-health-professional influencers. Channels focused on general wellness, weight loss for all ages, or male/family health are also excluded.",
+  "name_suggestions": [
+    "Perimenopause & Menopause MDs",
+    "Midlife Women's Hormone Experts",
+    "Menopause Health Educators"
+  ],
+  "core_topics": [
+    "perimenopause symptoms",
+    "menopause symptoms",
+    "hormone replacement therapy",
+    "estrogen",
+    "progesterone",
+    "testosterone in women",
+    "brain fog",
+    "sleep disruption",
+    "anxiety",
+    "fatigue",
+    "weight gain",
+    "vaginal dryness",
+    "libido changes",
+    "lab testing for hormones",
+    "supplements for midlife women",
+    "metabolic health in perimenopause",
+    "gut health and hormones"
+  ],
+  "adjacent_topics": [
+    "strength training for women 40+",
+    "skin changes in menopause",
+    "relationship changes in midlife",
+    "blood sugar regulation",
+    "osteoporosis prevention",
+    "mental health in menopause",
+    "hair changes",
+    "joint pain",
+    "dietary strategies for hormone balance"
+  ],
+  "excluded_topics": [
+    "pregnancy",
+    "fertility",
+    "general fitness",
+    "weight loss programs for all ages",
+    "male health",
+    "child or family health",
+    "general wellness influencers",
+    "non-health-professional creators",
+    "diet programs not specific to midlife women",
+    "channels focused on pregnancy or postpartum"
+  ]
+}

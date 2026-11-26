@@ -67,8 +67,13 @@ def list_niches(conn) -> list[dict[str, Any]]:
 
 
 def load_niche_snapshot(conn, niche_slug: str, snapshot_date: str = "") -> tuple[dict[str, Any] | None, list[dict[str, Any]]]:
+    niche_columns = table_columns(conn, "niches")
+    definition_select = (
+        ", description, core_topics, adjacent_topics, excluded_topics, definition_version"
+        if "definition_version" in niche_columns else ""
+    )
     niche = conn.execute(
-        "SELECT id, slug, name, category FROM niches WHERE slug = ? LIMIT 1",
+        f"SELECT id, slug, name, category{definition_select} FROM niches WHERE slug = ? LIMIT 1",
         [niche_slug],
     ).fetchone()
     if not niche:
@@ -91,7 +96,8 @@ def load_niche_snapshot(conn, niche_slug: str, snapshot_date: str = "") -> tuple
                discovery_lead_id, source, replied, admin_note, updated_at,
                primary_niche, on_topic_share, on_topic_count, entity,
                reclass_reason, views_90d, admin_exclude, admin_include,
-               exclude_reason, country, audience_language
+               exclude_reason, country, audience_language,
+               relevance, relevance_reason
         FROM niche_channels
         WHERE niche_id = ? AND snapshot_date = ?
         ORDER BY subscriber_count DESC NULLS LAST, lower(title) ASC
@@ -105,6 +111,11 @@ def load_niche_snapshot(conn, niche_slug: str, snapshot_date: str = "") -> tuple
         "name": niche[2],
         "category": niche[3],
         "snapshot_date": selected_date,
+        "description": str(niche[4] or "") if len(niche) > 4 else "",
+        "core_topics": niche[5] if len(niche) > 5 else [],
+        "adjacent_topics": niche[6] if len(niche) > 6 else [],
+        "excluded_topics": niche[7] if len(niche) > 7 else [],
+        "definition_version": int(niche[8] or 1) if len(niche) > 8 else 1,
     }, rows
 
 
@@ -279,9 +290,15 @@ def _on_topic_share(row: dict[str, Any]) -> float:
 
 def is_base_niche_pool_row(row: dict[str, Any]) -> bool:
     country = _clean(row.get("country")).upper()
-    return (
-        _clean(row.get("primary_niche")).lower() == "menopause_hormones"
+    relevance = row.get("relevance")
+    relevance_match = (
+        int(relevance) >= 60
+        if relevance is not None
+        else _clean(row.get("primary_niche")).lower() == "menopause_hormones"
         and _on_topic_share(row) >= NICHE_ON_TOPIC_MIN
+    )
+    return (
+        relevance_match
         and _clean(row.get("entity")).lower() == "individual"
         and _clean(row.get("presenter")).lower() == "real_person"
         and _language_is_english(row.get("language"))
@@ -322,8 +339,8 @@ def near_miss_niche_rows(rows: list[dict[str, Any]], *, clinicians_only: bool) -
         for row in rows
         if not bool(row.get("admin_exclude"))
         and not bool(row.get("admin_include"))
-        and _clean(row.get("primary_niche")).lower() == "menopause_hormones"
-        and _on_topic_share(row) < NICHE_ON_TOPIC_MIN
+        and row.get("relevance") is not None
+        and 45 <= int(row.get("relevance") or 0) <= 59
         and (not clinicians_only or clinician_matches(row))
     ]
 

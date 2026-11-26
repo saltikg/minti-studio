@@ -6,6 +6,10 @@ from app.video_shorts import video_shorts_bp
 from app.video_shorts.routes.auth import require_admin
 from app.video_shorts.services.db import get_db, get_db_readonly, table_columns
 from app.video_shorts.services.niche_outliers import load_latest_niche_outliers
+from app.video_shorts.services.niche_definitions import (
+    parse_topic_lines,
+    update_niche_definition,
+)
 from app.video_shorts.services.niches import (
     OUTREACH_LABELS,
     apply_table_filters,
@@ -37,6 +41,8 @@ def admin_niches():
         "exclude_reason",
         "country",
         "audience_language",
+        "relevance",
+        "relevance_reason",
     }
     if (
         not table_columns(conn, "niches")
@@ -173,6 +179,37 @@ def admin_niches():
         short_dir=short_dir,
         shorts_show_all=shorts_show_all,
     )
+
+
+@video_shorts_bp.route("/admin/niches/definition", methods=["POST"])
+@require_admin
+def admin_niche_definition_update():
+    niche_slug = str(request.form.get("niche") or "").strip()
+    if not niche_slug:
+        abort(400)
+    conn = get_db()
+    try:
+        version = update_niche_definition(
+            conn,
+            slug=niche_slug,
+            name=str(request.form.get("name") or ""),
+            description=str(request.form.get("description") or ""),
+            core_topics=parse_topic_lines(request.form.get("core_topics")),
+            adjacent_topics=parse_topic_lines(request.form.get("adjacent_topics")),
+            excluded_topics=parse_topic_lines(request.form.get("excluded_topics")),
+        )
+        conn.commit()
+    except ValueError as exc:
+        conn.rollback()
+        flash(str(exc), "warning")
+        return redirect(url_for("video_shorts_bp.admin_niches", niche=niche_slug))
+    except Exception:
+        conn.rollback()
+        raise
+    finally:
+        conn.close()
+    flash(f"Niche definition saved as version {version}.", "success")
+    return redirect(url_for("video_shorts_bp.admin_niches", niche=niche_slug))
 
 
 @video_shorts_bp.route("/admin/niches/short-topic", methods=["POST"])
