@@ -2,7 +2,9 @@ from __future__ import annotations
 
 import hashlib
 import json
+import logging
 import os
+import re
 from collections import defaultdict
 from datetime import date, datetime, time, timedelta, timezone
 from pathlib import Path
@@ -12,6 +14,7 @@ from zoneinfo import ZoneInfo
 
 import requests
 
+from app.video_shorts.config import OPENAI_MODEL, _openai_client
 from app.video_shorts.services.db import get_db, get_db_readonly, table_columns
 from app.video_shorts.services.niches import final_niche_pool, load_niche_snapshot
 from app.video_shorts.services.youtube_quota import (
@@ -31,6 +34,7 @@ EXCLUDED_TITLE_TERMS = ("#duet", "duet with", "#stitch", "stitch with", "repost"
 MIN_SHORT_DURATION_SECONDS = 15
 REPO_ROOT = Path(__file__).resolve().parents[3]
 DEFAULT_CACHE_ROOT = REPO_ROOT / "data" / "research" / "cache"
+logger = logging.getLogger(__name__)
 
 
 class NicheOutlierError(RuntimeError):
@@ -458,6 +462,144 @@ def load_latest_niche_outliers(conn, niche_id: Any) -> tuple[str, list[dict[str,
     return as_of, [dict(zip(columns, row)) for row in result.fetchall()]
 
 
+def _pattern_sentence(value: Any) -> str:
+    sentence = " ".join(str(value or "").strip().strip('"').split())
+    if not sentence:
+        raise NicheOutlierError("pattern response was empty")
+    first_sentence = re.split(r"(?<=[.!?])\s+", sentence, maxsplit=1)[0]
+    words = first_sentence.split()
+    if len(words) > 30:
+        first_sentence = " ".join(words[:30]).rstrip(".,;:!?") + "."
+    elif first_sentence[-1] not in ".!?":
+        first_sentence += "."
+    return first_sentence
+
+
+def _pattern_cost_usd(model: str, input_tokens: int, output_tokens: int) -> float:
+    prices = {
+        "gpt-4.1-mini": (0.40, 1.60),
+        "gpt-4o-mini": (0.15, 0.60),
+    }
+    input_price, output_price = prices.get(model, (0.0, 0.0))
+    return (input_tokens * input_price + output_tokens * output_price) / 1_000_000
+
+
+def generate_niche_outlier_pattern(
+    result: dict[str, Any],
+    *,
+    client=None,
+) -> dict[str, Any] | None:
+    source_rows = sorted(
+        result.get("rows") or [],
+        key=lambda row: (-int(row.get("views") or 0), str(row.get("video_id") or "")),
+    )[:10]
+    if not source_rows:
+        return None
+    selected_client = client or _openai_client
+    if selected_client is None:
+        raise NicheOutlierError("OpenAI client is not configured")
+    title_lines = "\n".join(
+        f"- {str(row.get('title') or '').strip()} ({int(row.get('duration_s') or 0)}s)"
+        for row in source_rows
+    )
+    response = selected_client.chat.completions.create(
+        model=OPENAI_MODEL,
+        temperature=0.2,
+        max_tokens=80,
+        messages=[
+            {
+                "role": "system",
+                "content": (
+                    "Describe the shared topics or video format in one plain-English sentence of "
+                    "30 words or fewer. Do not give medical advice, recommendations, or diagnoses."
+                ),
+            },
+            {
+                "role": "user",
+                "content": f"Top outlier Short titles and durations:\n{title_lines}",
+            },
+        ],
+    )
+    content = response.choices[0].message.content if response.choices else ""
+    usage = getattr(response, "usage", None)
+    input_tokens = int(
+        getattr(usage, "prompt_tokens", 0) or getattr(usage, "input_tokens", 0) or 0
+    )
+    output_tokens = int(
+        getattr(usage, "completion_tokens", 0) or getattr(usage, "output_tokens", 0) or 0
+    )
+    return {
+        "niche_id": result["niche_id"],
+        "as_of": result["as_of"],
+        "pattern_sentence": _pattern_sentence(content),
+        "model": OPENAI_MODEL,
+        "input_tokens": input_tokens,
+        "output_tokens": output_tokens,
+        "estimated_cost_usd": _pattern_cost_usd(OPENAI_MODEL, input_tokens, output_tokens),
+        "source_count": len(source_rows),
+    }
+
+
+def persist_niche_outlier_pattern(pattern: dict[str, Any]) -> None:
+    conn = get_db()
+    try:
+        if not table_columns(conn, "niche_outlier_patterns"):
+            raise NicheOutlierError("niche_outlier_patterns migration has not been applied")
+        conn.execute(
+            """
+            INSERT INTO niche_outlier_patterns (
+                niche_id, as_of, pattern_sentence, model, input_tokens,
+                output_tokens, estimated_cost_usd, computed_at
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)
+            ON CONFLICT (niche_id, as_of) DO UPDATE SET
+                pattern_sentence = EXCLUDED.pattern_sentence,
+                model = EXCLUDED.model,
+                input_tokens = EXCLUDED.input_tokens,
+                output_tokens = EXCLUDED.output_tokens,
+                estimated_cost_usd = EXCLUDED.estimated_cost_usd,
+                computed_at = CURRENT_TIMESTAMP
+            """,
+            [
+                pattern["niche_id"], pattern["as_of"], pattern["pattern_sentence"],
+                pattern["model"], pattern["input_tokens"], pattern["output_tokens"],
+                pattern["estimated_cost_usd"],
+            ],
+        )
+        conn.commit()
+    except Exception:
+        conn.rollback()
+        raise
+    finally:
+        conn.close()
+
+
+def generate_and_persist_latest_pattern(
+    niche: str = DEFAULT_NICHE_SLUG,
+    *,
+    client=None,
+) -> dict[str, Any] | None:
+    conn = get_db_readonly()
+    try:
+        niche_row = conn.execute(
+            "SELECT id FROM niches WHERE slug = ? LIMIT 1",
+            [niche],
+        ).fetchone()
+        if not niche_row:
+            raise NicheOutlierError(f"unknown niche: {niche}")
+        as_of, rows = load_latest_niche_outliers(conn, niche_row[0])
+    finally:
+        conn.close()
+    if not as_of:
+        return None
+    pattern = generate_niche_outlier_pattern(
+        {"niche_id": niche_row[0], "as_of": as_of, "rows": rows},
+        client=client,
+    )
+    if pattern:
+        persist_niche_outlier_pattern(pattern)
+    return pattern
+
+
 def weekly_refresh_due(now: datetime | None = None, last_completed_at: Any = None) -> bool:
     instant = now or datetime.now(timezone.utc)
     if instant.tzinfo is None:
@@ -503,6 +645,14 @@ def run_weekly_refresh_if_due(now: datetime | None = None) -> dict[str, Any] | N
     finally:
         conn.close()
     result = refresh_compute_and_persist(DEFAULT_NICHE_SLUG, as_of)
+    try:
+        pattern = generate_niche_outlier_pattern(result)
+        if pattern:
+            persist_niche_outlier_pattern(pattern)
+            result["pattern"] = pattern
+    except Exception as exc:
+        logger.exception("Weekly niche outlier pattern generation failed: %s", exc)
+        result["pattern_error"] = str(exc)
     conn = get_db()
     try:
         conn.execute(

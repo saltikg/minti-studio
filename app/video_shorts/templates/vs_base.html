@@ -635,6 +635,16 @@
             <span>Dashboard</span>
           </a>
 
+          {% if vs_niche_available %}
+            <a href="{{ vs_niche_url }}"
+               class="list-group-item list-group-item-action d-flex align-items-center gap-2 vs-sidebar-link
+                      {% if request.path == '/video_shorts/niche' %}active{% endif %}">
+              <span class="material-symbols-outlined">leaderboard</span>
+              <span>Your Niche</span>
+              <span class="badge rounded-pill text-bg-warning ms-auto">NEW</span>
+            </a>
+          {% endif %}
+
           <a href="{{ url_for('video_shorts_bp.video_analytics_page') }}"
              class="list-group-item list-group-item-action d-flex align-items-center gap-2 vs-sidebar-link
                     {% if '/video_shorts/video-analytics' in request.path %}active{% endif %}">

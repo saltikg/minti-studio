@@ -52,7 +52,7 @@ def build_niche_suggestion_index(
     return suggestions
 
 
-def _brand_channel_ids(conn, owner_user_id: str, brand_id: str) -> set[str]:
+def brand_youtube_channel_ids(conn, owner_user_id: str, brand_id: str) -> set[str]:
     channel_ids: set[str] = set()
     token_columns = table_columns(conn, "youtube_oauth_tokens_v2")
     if {"user_id", "youtube_channel_id"}.issubset(token_columns):
@@ -126,7 +126,7 @@ def load_admin_brand_niche_settings(conn, owner_user_id: str) -> dict[str, Any]:
     brands = []
     for row in brand_rows:
         brand_id = _clean(row[0])
-        channel_ids = _brand_channel_ids(conn, owner_user_id, brand_id)
+        channel_ids = brand_youtube_channel_ids(conn, owner_user_id, brand_id)
         suggestion = next(
             (suggestion_index[channel_id] for channel_id in channel_ids if channel_id in suggestion_index),
             None,

@@ -95,3 +95,39 @@ def test_weekly_refresh_due_monday_after_four_pacific():
     assert not niche_outliers.weekly_refresh_due(before)
     assert niche_outliers.weekly_refresh_due(due)
     assert not niche_outliers.weekly_refresh_due(due, "2026-11-30T12:01:00Z")
+
+
+def test_pattern_generation_uses_one_call_and_caps_sentence(monkeypatch):
+    monkeypatch.setattr(niche_outliers, "OPENAI_MODEL", "gpt-4.1-mini")
+    calls = []
+
+    class Completions:
+        def create(self, **kwargs):
+            calls.append(kwargs)
+            message = type(
+                "Message",
+                (),
+                {"content": "Quick hormone explainers pair direct questions with concise talking-head answers and practical demonstrations."},
+            )()
+            choice = type("Choice", (), {"message": message})()
+            usage = type("Usage", (), {"prompt_tokens": 100, "completion_tokens": 20})()
+            return type("Response", (), {"choices": [choice], "usage": usage})()
+
+    client = type("Client", (), {"chat": type("Chat", (), {"completions": Completions()})()})()
+    result = {
+        "niche_id": 1,
+        "as_of": "2026-11-25",
+        "rows": [
+            {"video_id": str(index), "title": f"Title {index}", "duration_s": 20 + index, "views": 1000 + index}
+            for index in range(12)
+        ],
+    }
+
+    pattern = niche_outliers.generate_niche_outlier_pattern(result, client=client)
+
+    assert len(calls) == 1
+    assert calls[0]["model"] == "gpt-4.1-mini"
+    assert calls[0]["messages"][1]["content"].count("\n-") == 10
+    assert pattern["source_count"] == 10
+    assert len(pattern["pattern_sentence"].split()) <= 30
+    assert pattern["estimated_cost_usd"] == 0.000072

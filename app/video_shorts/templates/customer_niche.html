@@ -1,0 +1,96 @@
+{% extends "vs_base.html" %}
+
+{% block title %}Your Niche{% endblock %}
+
+{% block extra_styles %}
+<style>
+  .customer-niche-page { max-width: 1240px; margin: 0 auto; }
+  .customer-niche-eyebrow { color: var(--vs-text-muted); font-size: .82rem; font-weight: 700; letter-spacing: .08em; text-transform: uppercase; }
+  .customer-niche-title { color: var(--vs-text); font-size: clamp(2rem, 4vw, 3.2rem); font-weight: 800; letter-spacing: -.04em; }
+  .customer-niche-subtitle, .customer-niche-muted { color: var(--vs-text-muted); }
+  .customer-niche-section-title { color: var(--vs-text); font-size: 1.35rem; font-weight: 750; }
+  .customer-niche-rank { color: var(--vs-text); font-size: clamp(2.5rem, 7vw, 5rem); font-weight: 850; letter-spacing: -.06em; line-height: 1; }
+  .customer-niche-rank span { color: var(--vs-text-muted); font-size: .35em; letter-spacing: -.02em; }
+  .customer-niche-top { color: #5eead4; font-size: 1.05rem; font-weight: 750; }
+  .customer-niche-position { height: 12px; border-radius: 999px; background: rgba(255,255,255,.1); position: relative; }
+  .customer-niche-position::before { content: ""; position: absolute; inset: 0 auto 0 0; width: var(--position); border-radius: inherit; background: linear-gradient(90deg, #2dd4bf, #38bdf8); }
+  .customer-niche-position::after { content: ""; position: absolute; top: 50%; left: var(--position); width: 20px; height: 20px; border: 4px solid #0f172a; border-radius: 50%; background: #7dd3fc; transform: translate(-50%, -50%); }
+  .customer-niche-table { color: var(--vs-text); margin-bottom: 0; }
+  .customer-niche-table th { color: var(--vs-text-muted); font-size: .76rem; letter-spacing: .04em; text-transform: uppercase; }
+  .customer-niche-table td, .customer-niche-table th { border-color: rgba(255,255,255,.08); padding: .8rem .75rem; vertical-align: middle; }
+  .customer-niche-table tr.is-you td { background: rgba(45,212,191,.1); color: #ccfbf1; font-weight: 700; }
+  .customer-niche-all summary { color: #7dd3fc; cursor: pointer; font-weight: 700; list-style: none; }
+  .customer-niche-all summary::-webkit-details-marker { display: none; }
+  .customer-niche-cards { display: grid; gap: 16px; grid-template-columns: repeat(3, minmax(0, 1fr)); }
+  .customer-niche-short { border: 1px solid rgba(255,255,255,.1); border-radius: 18px; color: inherit; display: flex; flex-direction: column; min-height: 210px; padding: 20px; text-decoration: none; transition: transform .15s ease, border-color .15s ease; }
+  .customer-niche-short:hover { border-color: rgba(125,211,252,.55); color: inherit; transform: translateY(-2px); }
+  .customer-niche-short-ratio { color: #5eead4; font-size: 1.5rem; font-weight: 850; }
+  .customer-niche-short-title { color: var(--vs-text); font-size: 1rem; font-weight: 750; line-height: 1.35; }
+  .customer-niche-pattern { border-left: 3px solid #2dd4bf; color: var(--vs-text-muted); padding-left: 14px; }
+  @media (max-width: 991px) { .customer-niche-cards { grid-template-columns: repeat(2, minmax(0, 1fr)); } }
+  @media (max-width: 575px) { .customer-niche-cards { grid-template-columns: 1fr; } }
+</style>
+{% endblock %}
+
+{% block content %}
+<div class="customer-niche-page">
+  {% if niche_admin_operation %}<div class="alert alert-info py-2">Viewing {{ niche_page.brand_name }}'s niche (admin)</div>{% endif %}
+  <header class="mb-4">
+    <div class="customer-niche-eyebrow mb-2">Your Niche</div>
+    <h1 class="customer-niche-title mb-2">{{ niche_page.niche_name }}</h1>
+    <div class="customer-niche-subtitle">{{ niche_page.pool_size }} creators Minti follows, checked by hand</div>
+    <div class="customer-niche-muted small mt-1">Updated {{ niche_page.as_of_display }} · refreshes every Monday</div>
+  </header>
+
+  <section class="card shadow-sm vs-card mb-4">
+    <div class="card-body p-4">
+      <h2 class="customer-niche-section-title mb-3">Your place</h2>
+      {% if niche_page.place %}
+        <div class="d-flex flex-wrap align-items-end justify-content-between gap-3 mb-3">
+          <div class="customer-niche-rank">#{{ niche_page.place.rank }} <span>of {{ niche_page.place.total }}</span></div>
+          <div class="customer-niche-top">Top {{ niche_page.place.top_percent }}% of your niche</div>
+        </div>
+        <div class="customer-niche-position mb-4" style="--position: {{ niche_page.place.position_percent }}%" aria-label="Rank {{ niche_page.place.rank }} of {{ niche_page.place.total }}"></div>
+        <div class="table-responsive mb-3">
+          <table class="table customer-niche-table">
+            <thead><tr><th>Rank</th><th>Channel</th><th class="text-end">Subscribers</th><th class="text-end">Views on videos posted in the last 90 days</th></tr></thead>
+            <tbody>{% for row in niche_page.place.neighbors %}<tr class="{% if row.is_you %}is-you{% endif %}"><td>#{{ row.rank }}</td><td>{{ row.channel_name }}{% if row.is_you %} <span class="badge text-bg-info ms-1">You</span>{% endif %}</td><td class="text-end">{{ row.subscribers_display }}</td><td class="text-end">{{ row.views_90d_display }}</td></tr>{% endfor %}</tbody>
+          </table>
+        </div>
+        <details class="customer-niche-all">
+          <summary>See all {{ niche_page.place.total }} channels</summary>
+          <div class="table-responsive mt-3">
+            <table class="table customer-niche-table">
+              <thead><tr><th>Rank</th><th>Channel</th><th class="text-end">Subscribers</th><th class="text-end">Views on videos posted in the last 90 days</th></tr></thead>
+              <tbody>{% for row in niche_page.place.all_rows %}<tr class="{% if row.is_you %}is-you{% endif %}"><td>#{{ row.rank }}</td><td>{{ row.channel_name }}{% if row.is_you %} <span class="badge text-bg-info ms-1">You</span>{% endif %}</td><td class="text-end">{{ row.subscribers_display }}</td><td class="text-end">{{ row.views_90d_display }}</td></tr>{% endfor %}</tbody>
+            </table>
+          </div>
+        </details>
+      {% else %}
+        <p class="customer-niche-muted mb-0">Your channel isn't ranked in this niche yet.</p>
+      {% endif %}
+    </div>
+  </section>
+
+  <section class="card shadow-sm vs-card mb-4">
+    <div class="card-body p-4">
+      <h2 class="customer-niche-section-title mb-1">What's working in your niche right now</h2>
+      <p class="customer-niche-muted mb-4">Standout Shorts from creators in your niche.</p>
+      {% if niche_page.cards %}
+        <div class="customer-niche-cards">
+          {% for card in niche_page.cards %}
+            <a class="customer-niche-short" href="{{ card.url }}" target="_blank" rel="noopener noreferrer">
+              <div class="d-flex justify-content-between align-items-start gap-2 mb-3"><span class="customer-niche-short-ratio">{{ '%.1f'|format(card.ratio) }}×</span><span class="customer-niche-muted small">{{ card.views_display }} views · {{ card.duration_s }}s</span></div>
+              <div class="customer-niche-short-title mb-3">{{ card.title }}</div>
+              <div class="customer-niche-muted small mt-auto">{{ card.channel_name }}</div>
+            </a>
+          {% endfor %}
+        </div>
+      {% else %}
+        <p class="customer-niche-muted">No standout Shorts are available this week.</p>
+      {% endif %}
+      {% if niche_page.pattern %}<p class="customer-niche-pattern mt-4 mb-0"><strong>Pattern this week:</strong> {{ niche_page.pattern }}</p>{% endif %}
+    </div>
+  </section>
+</div>
+{% endblock %}

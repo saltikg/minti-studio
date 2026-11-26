@@ -13034,6 +13034,7 @@ def _activate_admin_operation_editor_context() -> None:
             "video_shorts_bp.stats_top_videos",
             "video_shorts_bp.stats_report_page",
             "video_shorts_bp.stats_report_pdf",
+            "video_shorts_bp.customer_niche_page",
         }
         abort(403 if request.endpoint in dashboard_endpoints else 404)
 
@@ -13065,6 +13066,7 @@ def _activate_admin_operation_editor_context() -> None:
         "video_shorts_bp.stats_top_videos",
         "video_shorts_bp.stats_report_page",
         "video_shorts_bp.stats_report_pdf",
+        "video_shorts_bp.customer_niche_page",
     }
     if scoped_dashboard_endpoint:
         scoped_brand_endpoint = True

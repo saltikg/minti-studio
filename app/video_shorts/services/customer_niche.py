@@ -1,0 +1,178 @@
+from __future__ import annotations
+
+import math
+from datetime import date
+from typing import Any
+
+from app.video_shorts.services.brand_niches import brand_youtube_channel_ids
+from app.video_shorts.services.db import table_columns
+from app.video_shorts.services.niche_outliers import load_latest_niche_outliers
+from app.video_shorts.services.niches import final_niche_pool, load_niche_snapshot
+
+
+def compact_number(value: Any) -> str:
+    number = int(value or 0)
+    for divisor, suffix in ((1_000_000_000, "B"), (1_000_000, "M"), (1_000, "K")):
+        if abs(number) >= divisor:
+            compact = number / divisor
+            precision = 0 if compact >= 100 else 1
+            return f"{compact:.{precision}f}".rstrip("0").rstrip(".") + suffix
+    return f"{number:,}"
+
+
+def _ranked_pool(rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    return sorted(
+        final_niche_pool(rows, clinicians_only=False),
+        key=lambda row: (
+            -int(row.get("subscriber_count") or 0),
+            str(row.get("title") or "").lower(),
+        ),
+    )
+
+
+def _display_rank_row(row: dict[str, Any], rank: int, own_channel_ids: set[str]) -> dict[str, Any]:
+    channel_id = str(row.get("youtube_channel_id") or "")
+    return {
+        "rank": rank,
+        "youtube_channel_id": channel_id,
+        "channel_name": str(row.get("title") or "Untitled channel"),
+        "subscribers": int(row.get("subscriber_count") or 0),
+        "subscribers_display": compact_number(row.get("subscriber_count")),
+        "views_90d": int(row.get("views_90d") or 0),
+        "views_90d_display": compact_number(row.get("views_90d")),
+        "is_you": channel_id in own_channel_ids,
+    }
+
+
+def _top_outlier_cards(
+    rows: list[dict[str, Any]],
+    *,
+    pool_by_channel: dict[str, dict[str, Any]],
+    own_channel_ids: set[str],
+) -> list[dict[str, Any]]:
+    eligible = []
+    for row in rows:
+        channel_id = str(row.get("youtube_channel_id") or "")
+        if channel_id not in pool_by_channel or int(row.get("views") or 0) < 5_000:
+            continue
+        engagement = float(row.get("engagement") or 0)
+        baseline_engagement = float(row.get("baseline_engagement") or 0)
+        if baseline_engagement > 0 and engagement < baseline_engagement / 3:
+            continue
+        eligible.append(row)
+    eligible.sort(
+        key=lambda row: (-int(row.get("views") or 0), str(row.get("video_id") or ""))
+    )
+    channel_counts: dict[str, int] = {}
+    cards = []
+    for row in eligible:
+        channel_id = str(row.get("youtube_channel_id") or "")
+        if channel_counts.get(channel_id, 0) >= 2:
+            continue
+        channel_counts[channel_id] = channel_counts.get(channel_id, 0) + 1
+        cards.append(
+            {
+                "video_id": str(row.get("video_id") or ""),
+                "url": f"https://youtube.com/shorts/{row.get('video_id')}",
+                "title": str(row.get("title") or "Untitled Short"),
+                "channel_name": (
+                    "You"
+                    if channel_id in own_channel_ids
+                    else str(pool_by_channel[channel_id].get("title") or "Untitled channel")
+                ),
+                "views": int(row.get("views") or 0),
+                "views_display": compact_number(row.get("views")),
+                "ratio": float(row.get("outlier_ratio") or 0),
+                "duration_s": int(row.get("duration_s") or 0),
+            }
+        )
+        if len(cards) == 6:
+            break
+    return cards
+
+
+def load_customer_niche_page(
+    conn,
+    *,
+    owner_user_id: str,
+    brand_id: str,
+) -> dict[str, Any] | None:
+    brand = conn.execute(
+        """
+        SELECT CAST(b.id AS VARCHAR), b.name, n.id, n.slug, n.name
+        FROM shorts_brands b
+        JOIN niches n ON n.id = b.niche_id
+        WHERE CAST(b.id AS VARCHAR) = CAST(? AS VARCHAR)
+          AND CAST(b.owner_user_id AS VARCHAR) = CAST(? AS VARCHAR)
+        LIMIT 1
+        """,
+        [brand_id, owner_user_id],
+    ).fetchone()
+    if not brand:
+        return None
+    niche, snapshot_rows = load_niche_snapshot(conn, str(brand[3]))
+    if not niche:
+        return None
+    ranked_pool = _ranked_pool(snapshot_rows)
+    own_channel_ids = brand_youtube_channel_ids(conn, owner_user_id, brand_id)
+    pool_by_channel = {
+        str(row.get("youtube_channel_id") or ""): row for row in ranked_pool
+    }
+    ranked_rows = [
+        _display_rank_row(row, rank, own_channel_ids)
+        for rank, row in enumerate(ranked_pool, start=1)
+    ]
+    own_index = next(
+        (index for index, row in enumerate(ranked_rows) if row["is_you"]),
+        None,
+    )
+    place = None
+    if own_index is not None:
+        rank = own_index + 1
+        total = len(ranked_rows)
+        place = {
+            "rank": rank,
+            "total": total,
+            "top_percent": max(1, math.ceil(rank * 100 / total)) if total else 0,
+            "position_percent": (
+                0.0 if total <= 1 else round((rank - 1) * 100 / (total - 1), 2)
+            ),
+            "neighbors": ranked_rows[max(0, own_index - 2) : own_index + 3],
+            "all_rows": ranked_rows,
+        }
+
+    as_of, outlier_rows = load_latest_niche_outliers(conn, niche["id"])
+    cards = _top_outlier_cards(
+        outlier_rows,
+        pool_by_channel=pool_by_channel,
+        own_channel_ids=own_channel_ids,
+    )
+    pattern = ""
+    if as_of and table_columns(conn, "niche_outlier_patterns"):
+        row = conn.execute(
+            """
+            SELECT pattern_sentence
+            FROM niche_outlier_patterns
+            WHERE niche_id = ? AND as_of = ?
+            LIMIT 1
+            """,
+            [niche["id"], as_of],
+        ).fetchone()
+        pattern = str((row[0] if row else "") or "").strip()
+    return {
+        "brand_id": str(brand[0]),
+        "brand_name": str(brand[1] or "Customer"),
+        "niche_id": niche["id"],
+        "niche_slug": niche["slug"],
+        "niche_name": niche["name"],
+        "pool_size": len(ranked_rows),
+        "as_of": as_of,
+        "as_of_display": (
+            date.fromisoformat(as_of).strftime("%b %d, %Y").replace(" 0", " ")
+            if as_of
+            else "pending"
+        ),
+        "place": place,
+        "cards": cards,
+        "pattern": pattern,
+    }

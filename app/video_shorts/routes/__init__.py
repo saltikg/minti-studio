@@ -28,3 +28,4 @@ from . import email_sequence  # noqa: F401
 from . import admin_reports  # noqa: F401
 from . import admin_niches  # noqa: F401
 from . import admin_brand_niches  # noqa: F401
+from . import customer_niche  # noqa: F401
