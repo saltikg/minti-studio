@@ -163,7 +163,7 @@
     <td class="is-left"><a class="niche-channel" href="{{ row.channel_url }}" target="_blank" rel="noopener">{{ row.title }}</a>{% if row.admin_include %}<div class="niche-subtext">Manually included</div>{% endif %}</td>
     <td class="is-left">{{ row.credential or '—' }}</td>
     <td class="is-left">{{ row.primary_focus | replace('_', ' ') if row.primary_focus else '—' }}</td>
-    <td>core {{ row.on_topic_count | int }}/15</td>
+    <td>core {{ row.on_topic_count | int }}/{{ row.classification_title_count | int }}</td>
     <td>{{ row.relevance if row.relevance is not none else '—' }}</td>
     <td>{{ '{:,}'.format(row.subscriber_count | int) if row.subscriber_count is not none else '—' }}</td>
     <td>{{ '{:,}'.format(row.views_90d | int) if row.views_90d is not none else '—' }}</td>

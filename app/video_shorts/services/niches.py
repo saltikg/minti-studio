@@ -97,7 +97,8 @@ def load_niche_snapshot(conn, niche_slug: str, snapshot_date: str = "") -> tuple
                primary_niche, on_topic_share, on_topic_count, entity,
                reclass_reason, views_90d, admin_exclude, admin_include,
                exclude_reason, country, audience_language,
-               relevance, relevance_reason, primary_focus
+               relevance, relevance_reason, primary_focus, classification_status,
+               classification_title_count
         FROM niche_channels
         WHERE niche_id = ? AND snapshot_date = ?
         ORDER BY subscriber_count DESC NULLS LAST, lower(title) ASC

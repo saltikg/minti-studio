@@ -2,11 +2,16 @@
 from __future__ import annotations
 
 import argparse
+import hashlib
 import json
+import os
 import sys
 from concurrent.futures import ThreadPoolExecutor
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
+
+import requests
 
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
@@ -25,6 +30,11 @@ from app.video_shorts.services.niches import (
     is_final_niche_pool_row,
     load_niche_snapshot,
 )
+from app.video_shorts.services.youtube_quota import (
+    record_youtube_data_api_call,
+    require_youtube_quota_available,
+    unit_cost,
+)
 from scripts.research import reclassify_women_hormones as legacy
 
 
@@ -38,6 +48,15 @@ PRIMARY_FOCUSES = {
     "fertility_pregnancy",
     "other",
 }
+FEATURE = "women_hormones_research"
+YOUTUBE_API_BASE = "https://www.googleapis.com/youtube/v3"
+TEACH_RULE = (
+    "The channel must TEACH or EXPLAIN hormones/menopause/midlife health (education, "
+    "talking to camera). Channels that mainly OFFER workouts, yoga or exercise classes, "
+    "recipes/meal plans, or general lifestyle/mindset content for women in midlife are "
+    "fitness_training, nutrition_diet or general_health_wellness — even if every title "
+    "mentions menopause."
+)
 
 
 def _channel_description(channel_id: str) -> str:
@@ -64,7 +83,8 @@ def _usage(response) -> dict[str, Any]:
     }
 
 
-def _normalize_result(raw: dict[str, Any], titles: list[str]) -> dict[str, Any]:
+def _normalize_result(raw: dict[str, Any], title_inputs: list[dict[str, str]]) -> dict[str, Any]:
+    titles = [item["title"] for item in title_inputs]
     primary_focus = str(raw.get("primary_focus") or "").strip().casefold()
     if primary_focus not in PRIMARY_FOCUSES:
         primary_focus = "other"
@@ -103,6 +123,7 @@ def _normalize_result(raw: dict[str, Any], titles: list[str]) -> dict[str, Any]:
         "reason": reason,
         "core_count": core_count,
         "core_share": core_share,
+        "title_count": len(titles),
         "title_results": [
             {"title": title, "core_topic": flag}
             for title, flag in zip(titles, flags)
@@ -110,9 +131,163 @@ def _normalize_result(raw: dict[str, Any], titles: list[str]) -> dict[str, Any]:
     }
 
 
-def _classify_channel(core_topics: list[str], row: dict[str, Any], video_details):
+def _cached_uploads(channel_id: str) -> list[dict[str, Any]]:
+    uploads = []
+    for path in sorted((CACHE_ROOT / "uploads" / channel_id).glob("page_*.json")):
+        for item in legacy._cache_payload(path).get("items") or []:
+            snippet = item.get("snippet") or {}
+            content = item.get("contentDetails") or {}
+            video_id = str(
+                content.get("videoId")
+                or (snippet.get("resourceId") or {}).get("videoId")
+                or ""
+            ).strip()
+            title = " ".join(str(snippet.get("title") or "").split())
+            published_at = str(content.get("videoPublishedAt") or snippet.get("publishedAt") or "")
+            if video_id and title:
+                uploads.append({"video_id": video_id, "title": title, "published_at": published_at})
+    uploads.sort(key=lambda item: item["published_at"], reverse=True)
+    return uploads
+
+
+def load_mixed_titles(channel_id: str, video_details) -> list[dict[str, str]]:
+    uploads = _cached_uploads(channel_id)
+    long_titles = []
+    short_titles = []
+    for upload in uploads:
+        duration = (video_details.get(upload["video_id"]) or {}).get("duration_seconds")
+        if duration is None:
+            continue
+        item = {
+            "title": upload["title"],
+            "format": "long" if int(duration) > 180 else "short",
+        }
+        (long_titles if item["format"] == "long" else short_titles).append(item)
+    selected = long_titles[:15]
+    if len(selected) < 15:
+        selected.extend(short_titles[: 15 - len(selected)])
+    return selected
+
+
+class RunQuota:
+    def __init__(self, cap: int):
+        self.cap = int(cap)
+        self.units = 0
+        self.calls: dict[str, int] = {}
+
+    def reserve(self, method: str) -> None:
+        cost = unit_cost(method)
+        if self.units + cost > self.cap:
+            raise RuntimeError(f"YouTube run cap reached: {self.units}/{self.cap}")
+        require_youtube_quota_available(feature=FEATURE, method=method)
+        self.units += cost
+        self.calls[method] = self.calls.get(method, 0) + 1
+
+
+def _store_cache(path: Path, params: dict[str, Any], payload: dict[str, Any]) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    temporary = path.with_suffix(path.suffix + ".tmp")
+    temporary.write_text(
+        json.dumps({"params": params, "payload": payload}, ensure_ascii=False),
+        encoding="utf-8",
+    )
+    temporary.replace(path)
+
+
+def _youtube_get(session, quota: RunQuota, endpoint: str, method: str, params: dict[str, Any]):
+    api_key = str(os.getenv("YOUTUBE_API_KEY") or "").strip()
+    if not api_key:
+        raise RuntimeError("YOUTUBE_API_KEY is required")
+    quota.reserve(method)
+    response = session.get(
+        f"{YOUTUBE_API_BASE}/{endpoint}", params={**params, "key": api_key}, timeout=30
+    )
+    response.raise_for_status()
+    payload = response.json() or {}
+    record_youtube_data_api_call(feature=FEATURE, method=method)
+    return payload
+
+
+def backfill_zero_upload_channels(rows: list[dict[str, Any]], cap: int) -> dict[str, Any]:
+    before = [
+        str(row.get("youtube_channel_id") or "")
+        for row in rows
+        if not _cached_uploads(str(row.get("youtube_channel_id") or ""))
+    ]
+    quota = RunQuota(cap)
+    fetched_ids = []
+    all_video_ids = []
+    with requests.Session() as session:
+        # One playlist call can yield 50 videos and therefore up to one videos.list call.
+        # Half the cap is reserved for the detail batches.
+        for channel_id in before[: cap // 2]:
+            params = {
+                "part": "snippet,contentDetails",
+                "playlistId": "UU" + channel_id[2:],
+                "maxResults": 50,
+            }
+            try:
+                payload = _youtube_get(
+                    session, quota, "playlistItems", "playlistItems.list", params
+                )
+            except requests.RequestException:
+                continue
+            _store_cache(CACHE_ROOT / "uploads" / channel_id / "page_0000.json", params, payload)
+            fetched_ids.append(channel_id)
+            for item in payload.get("items") or []:
+                snippet = item.get("snippet") or {}
+                content = item.get("contentDetails") or {}
+                video_id = str(
+                    content.get("videoId")
+                    or (snippet.get("resourceId") or {}).get("videoId")
+                    or ""
+                ).strip()
+                if video_id:
+                    all_video_ids.append(video_id)
+        unique_ids = list(dict.fromkeys(all_video_ids))
+        for offset in range(0, len(unique_ids), 50):
+            chunk = unique_ids[offset : offset + 50]
+            params = {
+                "part": "snippet,contentDetails,statistics",
+                "id": ",".join(chunk),
+                "maxResults": 50,
+            }
+            payload = _youtube_get(session, quota, "videos", "videos.list", params)
+            key = hashlib.sha256(",".join(chunk).encode()).hexdigest()[:16]
+            _store_cache(CACHE_ROOT / "video_batches" / f"{key}.json", params, payload)
+    after = [channel_id for channel_id in before if _cached_uploads(channel_id)]
+    return {
+        "zero_uploads_before": before,
+        "zero_uploads_now_with_data": after,
+        "units_used": quota.units,
+        "calls": quota.calls,
+    }
+
+
+def _admin_precedents(rows: list[dict[str, Any]]) -> list[dict[str, str]]:
+    decided = [row for row in rows if row.get("admin_include") or row.get("admin_exclude")]
+    decided.sort(key=lambda row: str(row.get("updated_at") or ""), reverse=True)
+    return [
+        {
+            "channel": str(row.get("title") or ""),
+            "description": _channel_description(str(row.get("youtube_channel_id") or ""))[:500],
+            "decision": "include" if row.get("admin_include") else "exclude",
+            "reason": str(row.get("exclude_reason") or "")[:500],
+        }
+        for row in decided[:20]
+    ]
+
+
+def _classify_channel(
+    core_topics: list[str],
+    admin_precedents: list[dict[str, str]],
+    row: dict[str, Any],
+    video_details,
+):
     channel_id = str(row.get("youtube_channel_id") or "")
-    titles = legacy.load_cached_longform_titles(CACHE_ROOT, channel_id, video_details)
+    title_inputs = load_mixed_titles(channel_id, video_details)
+    if not title_inputs:
+        return None, None
     response = _openai_client.chat.completions.create(
         model="gpt-4.1-mini",
         temperature=0,
@@ -133,20 +308,22 @@ def _classify_channel(core_topics: list[str], row: dict[str, Any], video_details
                     "labs, bladder/UTI/genitourinary symptoms, breast cancer and HRT safety, or HRT "
                     "news/access/supply. Adjacent topics are false. Workouts for women 50+ are "
                     "fitness_training; foods for menopause on a diet channel are nutrition_diet. "
-                    "reason must be one line."
+                    f"reason must be one line. {TEACH_RULE} Follow the supplied Admin decisions "
+                    "as precedent for similar channels."
                 ),
             },
             {
                 "role": "user",
                 "content": (
                     f"Channel description: {_channel_description(channel_id)}\n"
-                    f"Last 15 long-form titles: {json.dumps(titles, ensure_ascii=False)}\n"
-                    f"Stored core_topics: {json.dumps(core_topics, ensure_ascii=False)}"
+                    f"Recent titles with format: {json.dumps(title_inputs, ensure_ascii=False)}\n"
+                    f"Stored core_topics: {json.dumps(core_topics, ensure_ascii=False)}\n"
+                    f"Admin decisions: {json.dumps(admin_precedents, ensure_ascii=False)}"
                 ),
             },
         ],
     )
-    return _normalize_result(_json_result(response), titles), _usage(response)
+    return _normalize_result(_json_result(response), title_inputs), _usage(response)
 
 
 def _previous_pool_ids(conn, niche_id: Any) -> set[str]:
@@ -171,6 +348,7 @@ def _previous_pool_ids(conn, niche_id: Any) -> set[str]:
 def main() -> int:
     parser = argparse.ArgumentParser()
     parser.add_argument("--workers", type=int, default=8)
+    parser.add_argument("--youtube-cap", type=int, default=300)
     args = parser.parse_args()
     video_details = legacy.load_video_details(CACHE_ROOT)
     conn = get_db_readonly()
@@ -183,16 +361,27 @@ def main() -> int:
     if not definition:
         raise RuntimeError("Stored niche definition is required")
 
+    backfill = backfill_zero_upload_channels(rows, args.youtube_cap)
+    video_details = legacy.load_video_details(CACHE_ROOT)
+    precedents = _admin_precedents(rows)
+
     channel_results: dict[str, dict[str, Any]] = {}
     total_usage = {"input_tokens": 0, "output_tokens": 0, "cost_usd": 0.0}
 
     def classify_row(row):
-        return row, *_classify_channel(definition["core_topics"], row, video_details)
+        return row, *_classify_channel(
+            definition["core_topics"], precedents, row, video_details
+        )
 
     with ThreadPoolExecutor(max_workers=max(1, min(args.workers, 12))) as executor:
         classifications = executor.map(classify_row, rows)
         for index, (row, result, usage) in enumerate(classifications, start=1):
             channel_id = str(row.get("youtube_channel_id") or "")
+            if result is None:
+                channel_results[channel_id] = {"classification_status": "no_titles"}
+                print(f"no_titles {index}/{len(rows)} {channel_id}", file=sys.stderr)
+                continue
+            result["classification_status"] = "classified"
             channel_results[channel_id] = result
             for key in total_usage:
                 total_usage[key] += usage[key]
@@ -200,17 +389,39 @@ def main() -> int:
 
     conn = get_db()
     try:
+        description = str(definition.get("description") or "").strip()
+        if TEACH_RULE not in description:
+            description = f"{description} {TEACH_RULE}".strip()
+            conn.execute(
+                """
+                UPDATE niches SET description=?, definition_version=definition_version+1
+                WHERE id=?
+                """,
+                [description, niche["id"]],
+            )
         for channel_id, result in channel_results.items():
+            if result["classification_status"] == "no_titles":
+                conn.execute(
+                    """
+                    UPDATE niche_channels SET classification_status='no_titles',
+                        updated_at=CURRENT_TIMESTAMP
+                    WHERE niche_id=? AND youtube_channel_id=? AND snapshot_date=?
+                    """,
+                    [niche["id"], channel_id, niche["snapshot_date"]],
+                )
+                continue
             conn.execute(
                 """
                 UPDATE niche_channels
-                SET primary_focus=?, on_topic_share=?, on_topic_count=?, entity=?,
+                SET primary_focus=?, on_topic_share=?, on_topic_count=?,
+                    classification_title_count=?, entity=?,
+                    classification_status='classified',
                     reclass_reason=?, updated_at=CURRENT_TIMESTAMP
                 WHERE niche_id=? AND youtube_channel_id=? AND snapshot_date=?
                 """,
                 [
                     result["primary_focus"], result["core_share"], result["core_count"],
-                    result["entity"], result["reason"], niche["id"], channel_id,
+                    result["title_count"], result["entity"], result["reason"], niche["id"], channel_id,
                     niche["snapshot_date"],
                 ],
             )
@@ -225,7 +436,10 @@ def main() -> int:
             INSERT INTO niche_classification_runs (niche_id, run_at, rule_version, notes)
             VALUES (?, CURRENT_TIMESTAMP, ?, ?) RETURNING run_id
             """,
-            [niche["id"], "strict-channel-focus-v3", "v3 strict channel focus"],
+            [
+                niche["id"], "titles-teach-admin-precedent-v3.1",
+                "v3.1 titles fix + teach rule + admin precedent",
+            ],
         ).fetchone()[0]
         for row in current_rows:
             conn.execute(
@@ -288,10 +502,15 @@ def main() -> int:
             "reason": row.get("reclass_reason"),
         }
 
+    requested_titles = {
+        "yourself yoga for menopause",
+        "gorgeously green",
+        "natalie jill fitness",
+        "honest hrt doc",
+    }
     status_rows = [
         row for row in current_rows
-        if "frances pitsilis" in str(row.get("title") or "").casefold()
-        or "dardur gynecology" in str(row.get("title") or "").casefold()
+        if str(row.get("title") or "").strip().casefold() in requested_titles
     ]
     print(
         json.dumps(
@@ -305,6 +524,11 @@ def main() -> int:
                 "shelley_rank": shelley_index + 1 if shelley_index is not None else None,
                 "shelley_neighbors": neighbors,
                 "usage": total_usage,
+                "youtube": backfill,
+                "no_titles": sum(
+                    result.get("classification_status") == "no_titles"
+                    for result in channel_results.values()
+                ),
                 "run_id": run_id,
             },
             ensure_ascii=False,

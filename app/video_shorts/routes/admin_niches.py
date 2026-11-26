@@ -44,6 +44,8 @@ def admin_niches():
         "relevance",
         "relevance_reason",
         "primary_focus",
+        "classification_status",
+        "classification_title_count",
     }
     if (
         not table_columns(conn, "niches")
