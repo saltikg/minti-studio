@@ -188,7 +188,7 @@
     <td class="is-left"><strong>{{ topic.label }}</strong></td>
     <td>{{ 'Breakout' if topic.is_breakout else topic.channel_count }}</td><td>{{ '{:,}'.format(topic.total_views | int) }}</td>
     <td class="is-left">{% for example in topic.examples %}<div><a class="niche-channel" href="{{ example.url }}" target="_blank" rel="noopener">{{ example.title }}</a><div class="niche-subtext">{{ example.channel }} · {{ '{:,}'.format(example.views | int) }} views</div></div>{% endfor %}</td>
-    <td class="is-left">{% for match in topic.matches %}<div style="margin-bottom:8px"><strong>{{ match.brand_name }}</strong> · <span class="niche-badge customer">{{ match.status_label }}</span>{% if match.evidence %}<div class="niche-subtext">{{ match.evidence }}</div>{% endif %}</div>{% else %}—{% endfor %}</td>
+    <td class="is-left">{% for match in topic.matches %}<div style="margin-bottom:8px"><strong>{{ match.brand_name }}</strong> · <span class="niche-badge customer">{{ match.status_label }}</span>{% if match.evidence %}<div class="niche-subtext">{% if match.archive_timestamp %}{{ match.archive_timestamp }} · {% endif %}{{ match.evidence }}</div>{% endif %}</div>{% else %}—{% endfor %}</td>
   </tr>{% endfor %}
   </tbody></table></div>{% else %}<div class="niche-empty">No rising topics have been computed for this niche yet.</div>{% endif %}
   </section>

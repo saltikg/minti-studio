@@ -29,6 +29,7 @@ CREATE TABLE IF NOT EXISTS main.niche_rising_topic_brand_matches (
     status VARCHAR NOT NULL,
     evidence TEXT,
     archive_video_id BIGINT,
+    archive_start_seconds DOUBLE PRECISION,
     archive_url TEXT,
     model VARCHAR NOT NULL,
     input_tokens INTEGER NOT NULL DEFAULT 0,
@@ -40,6 +41,9 @@ CREATE TABLE IF NOT EXISTS main.niche_rising_topic_brand_matches (
         REFERENCES main.niche_rising_topics(niche_id, as_of, topic_key)
         ON DELETE CASCADE
 );
+
+ALTER TABLE main.niche_rising_topic_brand_matches
+    ADD COLUMN IF NOT EXISTS archive_start_seconds DOUBLE PRECISION;
 
 CREATE INDEX IF NOT EXISTS idx_niche_rising_matches_brand
     ON main.niche_rising_topic_brand_matches(brand_id, niche_id, as_of);

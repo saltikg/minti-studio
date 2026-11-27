@@ -25,12 +25,12 @@ def test_eligible_rows_excludes_off_topic_and_possibly_promoted():
     assert [row["video_id"] for row in niche_rising_topics._eligible_rows(rows)] == ["keep"]
 
 
-def test_aggregate_adds_highest_ratio_breakout_when_fewer_than_three_rising_topics():
+def test_aggregate_fills_with_highest_ratio_breakout_and_uses_clean_angle_titles():
     rows = [
         {"video_id": "a", "youtube_channel_id": "UC1", "title": "A", "views": 10},
         {"video_id": "b", "youtube_channel_id": "UC2", "title": "B", "views": 30},
         {"video_id": "c", "youtube_channel_id": "UC1", "title": "C", "views": 20},
-        {"video_id": "d", "youtube_channel_id": "UC1", "title": "D", "views": 99, "outlier_ratio": 12},
+        {"video_id": "d", "youtube_channel_id": "UC1", "title": "D #menopause", "views": 99, "outlier_ratio": 12},
     ]
     merged = [
         {"label": "estrogen cream use", "video_ids": ["a", "b", "c"]},
@@ -38,7 +38,7 @@ def test_aggregate_adds_highest_ratio_breakout_when_fewer_than_three_rising_topi
     ]
 
     topics = niche_rising_topics._aggregate_topics(
-        merged, rows, {"UC1": "One", "UC2": "Two"}
+        merged, rows, {"UC1": "One", "UC2": "Two"}, {"d": "bladder symptom relief #health"}
     )
 
     assert len(topics) == 2
@@ -48,6 +48,7 @@ def test_aggregate_adds_highest_ratio_breakout_when_fewer_than_three_rising_topi
     assert topics[1]["label"] == "bladder symptom relief"
     assert topics[1]["is_breakout"] is True
     assert topics[1]["max_outlier_ratio"] == 12
+    assert topics[1]["examples"][0]["title"] == "bladder symptom relief"
 
 
 def test_truncate_evidence_caps_at_twenty_words():
@@ -91,41 +92,42 @@ def test_brand_match_rejects_short_with_only_broad_subject_overlap():
     assert matches[0]["status"] == niche_rising_topics.STATUS_IDEA
 
 
-def test_merge_rejects_broad_parent_group_and_keeps_specific_labels_separate():
+def test_merge_groups_specific_angles_into_middle_level_theme():
     payload = (
-        '{"topics":[{"label":"Hormone therapy issues and safety","video_ids":["a","b"]}]}'
+        '{"topics":[{"label":"Duanın kabul olması","video_ids":["a","b"]}]}'
     )
     labels = {
-        "a": "HRT after sixty fracture prevention",
-        "b": "Premarin discontinued in Canada",
+        "a": "Kabul olmayan dua sanmak",
+        "b": "Duanın kapıları açması",
     }
 
     topics, _, _ = niche_rising_topics._merge_labels(labels, "en", _Client(payload))
 
-    assert topics == [
-        {"label": labels["a"], "video_ids": ["a"]},
-        {"label": labels["b"], "video_ids": ["b"]},
-    ]
+    assert topics == [{"label": "Duanın kabul olması", "video_ids": ["a", "b"]}]
 
 
 def test_archive_match_requires_verbatim_transcript_evidence():
     topics = [{"topic_key": "age-60", "label": "HRT after age 60"}]
     archive = [{
         "id": 7, "title": "Long HRT discussion",
-        "transcript": "Starting hormone therapy after age 60 needs an individual risk discussion.",
+        "segments": [{
+            "start_seconds": 90, "end_seconds": 125,
+            "text": "Starting hormone therapy after age 60 needs an individual risk discussion.",
+        }],
     }]
     accepted = _Client(
         '{"matches":[{"topic_key":"age-60","short_id":null,"archive_video_id":7,'
-        '"evidence":"hormone therapy after age 60"}]}'
+        '"segment_start_seconds":90,"evidence":"hormone therapy after age 60"}]}'
     )
     rejected = _Client(
         '{"matches":[{"topic_key":"age-60","short_id":null,"archive_video_id":7,'
-        '"evidence":"a made up broad match"}]}'
+        '"segment_start_seconds":90,"evidence":"a made up broad match"}]}'
     )
 
     matches, _, _ = niche_rising_topics._match_brand(topics, [], archive, accepted)
     assert matches[0]["status"] == niche_rising_topics.STATUS_ARCHIVE
     assert matches[0]["evidence"] == "hormone therapy after age 60"
+    assert matches[0]["archive_start_seconds"] == 90
 
     matches, _, _ = niche_rising_topics._match_brand(topics, [], archive, rejected)
     assert matches[0]["status"] == niche_rising_topics.STATUS_IDEA
@@ -135,10 +137,14 @@ def test_archive_match_rejects_broad_transcript_excerpt_without_specific_topic_t
     topics = [{"topic_key": "nervous-system", "label": "Nervous system regulation for midlife"}]
     archive = [{
         "id": 7, "title": "Midlife energy",
-        "transcript": "Estrogen influences blood sugar regulation and the mitochondria in our cells.",
+        "segments": [{
+            "start_seconds": 30, "end_seconds": 65,
+            "text": "Estrogen influences blood sugar regulation and the mitochondria in our cells.",
+        }],
     }]
     client = _Client(
         '{"matches":[{"topic_key":"nervous-system","short_id":null,"archive_video_id":7,'
+        '"segment_start_seconds":30,'
         '"evidence":"Estrogen influences blood sugar regulation and the mitochondria"}]}'
     )
 
@@ -151,3 +157,24 @@ def test_clean_label_rejects_broad_and_requires_three_to_seven_words():
     assert niche_rising_topics._clean_label("Aile ve İlişkiler") == ""
     assert niche_rising_topics._clean_label("HRT after age 60") == "HRT after age 60"
     assert niche_rising_topics._clean_label("HRT issues") == ""
+
+
+def test_clean_theme_requires_middle_level_label():
+    assert niche_rising_topics._clean_theme("Dua") == ""
+    assert niche_rising_topics._clean_theme("Duanın kabul olması") == "Duanın kabul olması"
+
+
+def test_segment_windows_builds_timestamped_thirty_second_chunks():
+    segments = [
+        {"start": index * 10, "end": (index + 1) * 10, "text": f"part {index}"}
+        for index in range(6)
+    ]
+
+    windows = niche_rising_topics._segment_windows(segments)
+
+    assert [(item["start_seconds"], item["end_seconds"]) for item in windows] == [(0.0, 30.0), (30.0, 60.0)]
+    assert windows[0]["text"] == "part 0 part 1 part 2"
+
+
+def test_format_seconds_for_archive_evidence():
+    assert niche_rising_topics._format_seconds(125.2) == "2:05"
