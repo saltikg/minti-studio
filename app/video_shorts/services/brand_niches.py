@@ -62,7 +62,7 @@ def brand_publishing_channel_id(conn, owner_user_id: str, brand_id: str) -> str:
             SELECT youtube_channel_id
             FROM youtube_oauth_tokens_v2
             WHERE user_id = ?
-              AND youtube_channel_id LIKE 'UC%'
+              AND youtube_channel_id LIKE 'UC%%'
             ORDER BY {token_order}
             LIMIT 1
             """,
@@ -87,7 +87,7 @@ def brand_publishing_channel_id(conn, owner_user_id: str, brand_id: str) -> str:
             WHERE CAST(user_id AS VARCHAR) = CAST(? AS VARCHAR)
               AND CAST(brand_id AS VARCHAR) = CAST(? AS VARCHAR)
               AND youtube_channel_connected_at IS NOT NULL
-              AND youtube_channel_id LIKE 'UC%'
+              AND youtube_channel_id LIKE 'UC%%'
             ORDER BY {lead_order}
             LIMIT 1
             """,
