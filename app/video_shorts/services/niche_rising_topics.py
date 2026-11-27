@@ -224,9 +224,11 @@ def _brand_content(conn: Any, owner_user_id: str, brand_id: str) -> tuple[list[d
             """
             SELECT v.id, v.title, COALESCE(t.full_text, t.full_text_en, '')
             FROM youtube_videos v
+            LEFT JOIN youtube_channels c ON c.channel_id = v.channel_id
             LEFT JOIN youtube_transcripts t ON t.video_id = v.video_id
             WHERE CAST(v.brand_id AS VARCHAR) = CAST(? AS VARCHAR)
               AND CAST(v.owner_user_id AS VARCHAR) = CAST(? AS VARCHAR)
+              AND (v.channel_id IS NULL OR lower(COALESCE(c.channel_url, '')) = 'local://uploads')
               AND COALESCE(v.duration_seconds, v.media_duration_seconds, 0) > 180
               AND v.deleted_at IS NULL
             ORDER BY COALESCE(v.published_at, v.created_at) DESC NULLS LAST
@@ -260,8 +262,11 @@ def _match_brand(
         messages=[
             {"role": "system", "content": (
                 "For every topic, decide whether the creator covered it in a published Short. If not, decide "
-                "whether a long archive video substantially discusses it. Use semantic yes/no matching, not loose "
-                "word overlap. Short wins over archive. Return JSON only: {\"matches\":[{\"topic_key\":\"...\","
+                "whether a long archive video substantially and explicitly discusses the same specific topic. "
+                "Broadly belonging to the same niche is not a match. The evidence must directly mention the "
+                "topic's central concept or an unambiguous synonym; if uncertain, answer no. Use semantic yes/no "
+                "matching, not loose word overlap. Short wins over archive. Return JSON only: "
+                "{\"matches\":[{\"topic_key\":\"...\","
                 "\"short_match\":true|false,\"archive_video_id\":null|integer,\"evidence\":\"...\"}]}. "
                 "Evidence must quote or closely excerpt a matched title/transcript and be no more than 20 words."
             )},
