@@ -186,7 +186,7 @@
   </tr></thead><tbody>
   {% for topic in rising_topics %}<tr>
     <td class="is-left"><strong>{{ topic.label }}</strong></td>
-    <td>{{ topic.channel_count }}</td><td>{{ '{:,}'.format(topic.total_views | int) }}</td>
+    <td>{{ 'Breakout' if topic.is_breakout else topic.channel_count }}</td><td>{{ '{:,}'.format(topic.total_views | int) }}</td>
     <td class="is-left">{% for example in topic.examples %}<div><a class="niche-channel" href="{{ example.url }}" target="_blank" rel="noopener">{{ example.title }}</a><div class="niche-subtext">{{ example.channel }} · {{ '{:,}'.format(example.views | int) }} views</div></div>{% endfor %}</td>
     <td class="is-left">{% for match in topic.matches %}<div style="margin-bottom:8px"><strong>{{ match.brand_name }}</strong> · <span class="niche-badge customer">{{ match.status_label }}</span>{% if match.evidence %}<div class="niche-subtext">{{ match.evidence }}</div>{% endif %}</div>{% else %}—{% endfor %}</td>
   </tr>{% endfor %}

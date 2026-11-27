@@ -5,7 +5,6 @@ import re
 import unicodedata
 from datetime import date, datetime, timedelta, timezone
 from typing import Any
-from urllib.parse import quote_plus
 
 from app.video_shorts.config import _openai_client
 from app.video_shorts.services.db import get_db, get_db_readonly, table_columns
@@ -26,6 +25,9 @@ STATUS_LABELS = {
 }
 GENERIC_LABELS = {
     "menopause", "hormones", "health", "din", "islam", "islâm", "sohbet",
+    "menopause symptoms and management", "hormone replacement therapy issues",
+    "women's health advocacy and guidelines", "aile ve ilişkiler", "dua ve kabulü",
+    "symptoms", "management", "issues", "advocacy", "genel",
 }
 
 
@@ -66,7 +68,7 @@ def _key(value: Any) -> str:
 
 def _clean_label(value: Any) -> str:
     label = " ".join(str(value or "").strip().split()).strip(" .,:;!?-–—")
-    if not 2 <= len(label.split()) <= 5 or _key(label) in {_key(item) for item in GENERIC_LABELS}:
+    if not 3 <= len(label.split()) <= 7 or _key(label) in {_key(item) for item in GENERIC_LABELS}:
         return ""
     return label
 
@@ -98,7 +100,12 @@ def _label_rows(
         response_format={"type": "json_object"},
         messages=[
             {"role": "system", "content": (
-                "Label every Short with exactly one specific topic of 2–5 words in the niche language. "
+                "Label every Short with exactly one specific question, claim, or angle of 3–7 words in the "
+                "niche language. The label must describe something a creator could make ONE video about, not "
+                "a category or broad area. Good examples: 'Vaginal estrogen cream for dryness', 'HRT after "
+                "age 60', 'Premarin vs bioidentical estrogen', 'Kabul olmayan dua sanmak', 'Ayetle Müslüman "
+                "olan profesör'. Bad examples: 'Menopause Symptoms and Management', 'HRT issues', "
+                "'Aile ve İlişkiler', 'Dua ve Kabulü', or any label containing only a broad subject. "
                 "Return JSON only: {\"labels\":[{\"video_id\":\"...\",\"label\":\"...\"}]}. "
                 "Do not use a generic label equal to the niche itself. Forbidden standalone labels: "
                 "menopause, hormones, health, din, İslam, sohbet. Preserve every supplied video_id."
@@ -136,8 +143,10 @@ def _merge_labels(
         response_format={"type": "json_object"},
         messages=[
             {"role": "system", "content": (
-                "Merge labels that express the same specific idea. Keep different ideas separate. "
-                "Use a specific 2–5 word label in the supplied language. Return JSON only: "
+                "Merge labels ONLY when they express the SAME specific question, claim, action, and angle. "
+                "Shared broad subjects are not enough. Never merge sibling ideas into a broader parent topic. "
+                "If a merged label would become more generic than either input, keep the inputs separate. "
+                "Use a specific 3–7 word label in the supplied language that could title ONE video. Return JSON only: "
                 "{\"topics\":[{\"label\":\"...\",\"video_ids\":[\"...\"]}]}. "
                 "Every input video_id must appear exactly once. Generic niche labels are forbidden."
             )},
@@ -177,8 +186,6 @@ def _aggregate_topics(
         members = [by_video[video_id] for video_id in item["video_ids"] if video_id in by_video]
         channel_ids = {str(row.get("youtube_channel_id") or "") for row in members}
         channel_ids.discard("")
-        if len(channel_ids) < 2:
-            continue
         examples = []
         for row in sorted(members, key=lambda value: -int(value.get("views") or 0))[:2]:
             channel_id = str(row.get("youtube_channel_id") or "")
@@ -193,13 +200,24 @@ def _aggregate_topics(
             "topic_key": _key(label), "label": label,
             "channel_count": len(channel_ids),
             "total_views": sum(int(row.get("views") or 0) for row in members),
+            "max_outlier_ratio": max((float(row.get("outlier_ratio") or 0) for row in members), default=0),
+            "is_breakout": len(channel_ids) == 1,
             "examples": examples,
         })
-    topics.sort(key=lambda item: (-item["channel_count"], -item["total_views"], item["label"].casefold()))
-    return topics
+    rising = [topic for topic in topics if topic["channel_count"] >= 2]
+    rising.sort(key=lambda item: (-item["channel_count"], -item["total_views"], item["label"].casefold()))
+    if len(rising) < 3:
+        breakouts = [topic for topic in topics if topic["channel_count"] == 1]
+        breakouts.sort(
+            key=lambda item: (-item["max_outlier_ratio"], -item["total_views"], item["label"].casefold())
+        )
+        rising.extend(breakouts[:max(0, 5 - len(rising))])
+    return rising
 
 
-def _brand_content(conn: Any, owner_user_id: str, brand_id: str) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
+def _brand_content(
+    conn: Any, owner_user_id: str, brand_id: str,
+) -> tuple[list[dict[str, Any]], list[dict[str, Any]], dict[str, int]]:
     shorts = []
     if table_columns(conn, "shorts_generated_videos"):
         rows = conn.execute(
@@ -237,15 +255,26 @@ def _brand_content(conn: Any, owner_user_id: str, brand_id: str) -> tuple[list[d
             [brand_id, owner_user_id],
         ).fetchall()
         archive = [
-            {"id": int(row[0]), "title": str(row[1] or ""), "transcript": str(row[2] or "")[:1200]}
+            {"id": int(row[0]), "title": str(row[1] or ""), "transcript": str(row[2] or "")[:3000]}
             for row in rows if str(row[1] or "").strip()
         ]
-    return shorts, archive
+    content_counts = {
+        "long_videos": len(archive),
+        "transcripts": sum(1 for item in archive if item["transcript"].strip()),
+    }
+    return shorts, [item for item in archive if item["transcript"].strip()], content_counts
 
 
 def _truncate_evidence(value: Any) -> str:
     words = " ".join(str(value or "").split()).split()
     return " ".join(words[:20])
+
+
+def _verified_transcript_evidence(value: Any, transcript: Any) -> str:
+    evidence = _truncate_evidence(value)
+    normalized_evidence = " ".join(evidence.casefold().split())
+    normalized_transcript = " ".join(str(transcript or "").casefold().split())
+    return evidence if normalized_evidence and normalized_evidence in normalized_transcript else ""
 
 
 def _match_brand(
@@ -261,14 +290,14 @@ def _match_brand(
         response_format={"type": "json_object"},
         messages=[
             {"role": "system", "content": (
-                "For every topic, decide whether the creator covered it in a published Short. If not, decide "
-                "whether a long archive video substantially and explicitly discusses the same specific topic. "
-                "Broadly belonging to the same niche is not a match. The evidence must directly mention the "
-                "topic's central concept or an unambiguous synonym; if uncertain, answer no. Use semantic yes/no "
-                "matching, not loose word overlap. Short wins over archive. Return JSON only: "
+                "For every topic, follow this strict order. First, find a published Short title about the SAME "
+                "specific question, claim, or angle. Broad subject overlap is not a match. If none exists, inspect "
+                "the TRANSCRIPT (not merely the title) of each long archive video and match only when it explicitly "
+                "discusses that same specific angle. If uncertain, do not match. Short wins over archive. Return JSON only: "
                 "{\"matches\":[{\"topic_key\":\"...\","
-                "\"short_match\":true|false,\"archive_video_id\":null|integer,\"evidence\":\"...\"}]}. "
-                "Evidence must quote or closely excerpt a matched title/transcript and be no more than 20 words."
+                "\"short_id\":null|integer,\"archive_video_id\":null|integer,\"evidence\":\"...\"}]}. "
+                "For a Short match, evidence is its exact title. For archive, evidence must be a VERBATIM transcript "
+                "quote of no more than 20 words."
             )},
             {"role": "user", "content": json.dumps({
                 "topics": [{"topic_key": item["topic_key"], "label": item["label"]} for item in topics],
@@ -279,6 +308,7 @@ def _match_brand(
     )
     parsed = _json_response(response)
     valid_topics = {item["topic_key"] for item in topics}
+    shorts_by_id = {item["id"]: item for item in shorts}
     archive_by_id = {item["id"]: item for item in archive}
     by_key = {}
     for item in parsed.get("matches") or []:
@@ -290,18 +320,27 @@ def _match_brand(
             archive_id = int(archive_id) if archive_id is not None else None
         except (TypeError, ValueError):
             archive_id = None
-        if bool(item.get("short_match")):
+        short_id = item.get("short_id")
+        try:
+            short_id = int(short_id) if short_id is not None else None
+        except (TypeError, ValueError):
+            short_id = None
+        transcript_evidence = (
+            _verified_transcript_evidence(item.get("evidence"), archive_by_id[archive_id]["transcript"])
+            if archive_id in archive_by_id else ""
+        )
+        if short_id in shorts_by_id:
             status, archive_id = STATUS_COVERED, None
-        elif archive_id in archive_by_id:
+            evidence = _truncate_evidence(shorts_by_id[short_id]["title"])
+        elif archive_id in archive_by_id and transcript_evidence:
             status = STATUS_ARCHIVE
+            evidence = transcript_evidence
         else:
             status, archive_id = STATUS_IDEA, None
+            evidence = ""
         by_key[topic_key] = {
             "topic_key": topic_key, "status": status,
-            "evidence": (
-                _truncate_evidence(item.get("evidence"))
-                if status != STATUS_IDEA else ""
-            ),
+            "evidence": evidence,
             "archive_video_id": archive_id,
             "archive_title": (
                 archive_by_id[archive_id]["title"]
@@ -362,17 +401,21 @@ def compute_and_persist_rising_topics(
     total_output += used_out
     topics = _aggregate_topics(merged, eligible, channel_titles)
     brand_matches: dict[str, list[dict[str, Any]]] = {}
+    brand_content_counts: dict[str, dict[str, Any]] = {}
     match_usage: dict[str, tuple[int, int]] = {}
     conn = get_db_readonly()
     try:
         for brand_id, owner_user_id, brand_name in brand_rows:
-            shorts, archive = _brand_content(conn, str(owner_user_id), str(brand_id))
+            shorts, archive, content_counts = _brand_content(conn, str(owner_user_id), str(brand_id))
             matches, used_in, used_out = _match_brand(topics, shorts, archive, selected_client)
             total_input += used_in
             total_output += used_out
             for match in matches:
                 match["brand_name"] = str(brand_name or "")
             brand_matches[str(brand_id)] = matches
+            brand_content_counts[str(brand_id)] = {
+                "brand_name": str(brand_name or ""), **content_counts,
+            }
             match_usage[str(brand_id)] = (used_in, used_out)
     finally:
         conn.close()
@@ -388,12 +431,14 @@ def compute_and_persist_rising_topics(
             conn.execute(
                 f"""
                 INSERT INTO {TOPICS_TABLE}
-                (niche_id,as_of,topic_key,label,channel_count,total_views,examples_json,model,
+                (niche_id,as_of,topic_key,label,channel_count,total_views,is_breakout,max_outlier_ratio,
+                 examples_json,model,
                  input_tokens,output_tokens,estimated_cost_usd,computed_at)
-                VALUES (?,?,?,?,?,?,?::jsonb,?,?,?,?,CURRENT_TIMESTAMP)
+                VALUES (?,?,?,?,?,?,?,?,?::jsonb,?,?,?,?,CURRENT_TIMESTAMP)
                 """,
                 [definition["id"], as_of, topic["topic_key"], topic["label"],
-                 topic["channel_count"], topic["total_views"], json.dumps(topic["examples"], ensure_ascii=False),
+                 topic["channel_count"], topic["total_views"], topic["is_breakout"],
+                 topic["max_outlier_ratio"], json.dumps(topic["examples"], ensure_ascii=False),
                  MODEL, topic_input, topic_output, _cost(topic_input, topic_output)],
             )
         for brand_id, matches in brand_matches.items():
@@ -401,7 +446,7 @@ def compute_and_persist_rising_topics(
             for match in matches:
                 archive_id = match.get("archive_video_id")
                 archive_url = (
-                    f"/video_shorts/my-videos?q={quote_plus(match.get('archive_title') or match['evidence'])}"
+                    f"/video_shorts/generate/{archive_id}"
                     if archive_id else None
                 )
                 conn.execute(
@@ -424,6 +469,7 @@ def compute_and_persist_rising_topics(
     return {
         "niche": niche_slug, "niche_id": definition["id"], "as_of": as_of,
         "eligible_shorts": len(eligible), "topics": topics, "brand_matches": brand_matches,
+        "brand_content_counts": brand_content_counts,
         "input_tokens": total_input, "output_tokens": total_output,
         "estimated_cost_usd": _cost(total_input, total_output),
     }
@@ -448,11 +494,14 @@ def load_rising_topics(conn: Any, niche_id: Any, *, brand_id: str = "") -> tuple
         params = [brand_id, niche_id, as_of]
     result = conn.execute(
         f"""
-        SELECT t.topic_key,t.label,t.channel_count,t.total_views,t.examples_json,
+        SELECT t.topic_key,t.label,t.channel_count,t.total_views,t.is_breakout,t.max_outlier_ratio,
+               t.examples_json,
                {match_columns}
         FROM {TOPICS_TABLE} t {match_join}
         WHERE t.niche_id=? AND t.as_of=?
-        ORDER BY t.channel_count DESC,t.total_views DESC,lower(t.label)
+        ORDER BY t.is_breakout ASC,t.channel_count DESC,
+                 CASE WHEN t.is_breakout THEN t.max_outlier_ratio ELSE 0 END DESC,
+                 t.total_views DESC,lower(t.label)
         """,
         params,
     )

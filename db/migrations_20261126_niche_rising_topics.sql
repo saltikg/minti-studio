@@ -5,6 +5,8 @@ CREATE TABLE IF NOT EXISTS main.niche_rising_topics (
     label TEXT NOT NULL,
     channel_count INTEGER NOT NULL,
     total_views BIGINT NOT NULL,
+    is_breakout BOOLEAN NOT NULL DEFAULT FALSE,
+    max_outlier_ratio DOUBLE PRECISION NOT NULL DEFAULT 0,
     examples_json JSONB NOT NULL DEFAULT '[]'::jsonb,
     model VARCHAR NOT NULL,
     input_tokens INTEGER NOT NULL DEFAULT 0,
@@ -13,6 +15,11 @@ CREATE TABLE IF NOT EXISTS main.niche_rising_topics (
     computed_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
     PRIMARY KEY (niche_id, as_of, topic_key)
 );
+
+ALTER TABLE main.niche_rising_topics
+    ADD COLUMN IF NOT EXISTS is_breakout BOOLEAN NOT NULL DEFAULT FALSE;
+ALTER TABLE main.niche_rising_topics
+    ADD COLUMN IF NOT EXISTS max_outlier_ratio DOUBLE PRECISION NOT NULL DEFAULT 0;
 
 CREATE TABLE IF NOT EXISTS main.niche_rising_topic_brand_matches (
     niche_id BIGINT NOT NULL REFERENCES main.niches(id) ON DELETE CASCADE,
