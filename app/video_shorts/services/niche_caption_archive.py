@@ -33,8 +33,9 @@ from app.video_shorts.services.niche_outliers import (
 
 ARCHIVE_TABLE = "niche_brand_video_archive"
 UPLOADS_TABLE = "niche_brand_channel_uploads"
-CAPTION_LOOKBACK_DAYS = 365
+CAPTION_LOOKBACK_DAYS = 183
 MIN_LONG_SECONDS = 180
+WHISPER_USD_PER_MINUTE = 0.006
 logger = logging.getLogger(__name__)
 
 
@@ -78,6 +79,16 @@ def _safe_failure(exc: BaseException) -> str:
 
 def _sleep_between_requests() -> None:
     time.sleep(random.uniform(2.0, 5.0))
+
+
+def _sleep_before_audio_download() -> None:
+    time.sleep(random.uniform(3.0, 8.0))
+
+
+def _subtitles_enabled() -> bool:
+    return str(os.getenv("NICHE_CAPTION_SUBTITLES_ENABLED") or "").strip().casefold() in {
+        "1", "true", "yes", "on",
+    }
 
 
 def _parse_json3(path: Path) -> list[dict[str, Any]]:
@@ -331,9 +342,16 @@ def _whisper_fallback(video_id: str, brand_id: str) -> list[dict[str, Any]]:
 
     audio_path = None
     try:
-        audio_path, _proxy_used, _cookies = _download_youtube_audio_with_proxy(
-            f"https://www.youtube.com/watch?v={video_id}", video_id,
-        )
+        _sleep_before_audio_download()
+        try:
+            audio_path, _proxy_used, _cookies = _download_youtube_audio_with_proxy(
+                f"https://www.youtube.com/watch?v={video_id}", video_id,
+            )
+        except Exception as exc:
+            reason = _safe_failure(exc)
+            if reason in {"rate_limited", "bot_check"}:
+                raise CaptionArchiveBlocked(reason) from None
+            raise CaptionArchiveError("audio_download_failed") from None
         _full_text, segments, _language, _full_text_en, _segments_en = _brand_transcript_tracks(
             audio_path, video_id=video_id, brand_id=brand_id,
         )
@@ -386,20 +404,41 @@ def backfill_brand_caption_archive(
         pending = pending[:max(0, int(max_videos))]
     tried = captions = whisper_count = failed = 0
     whisper_spend = 0.0
+    whisper_minutes = 0.0
     results = []
     for video in pending:
         tried += 1
         try:
-            segments, caption_kind = fetch_caption_segments(video["youtube_video_id"], context["language"])
-            source = "captions"
+            segments: list[dict[str, Any]] = []
+            caption_kind = ""
+            source = "whisper"
+            if _subtitles_enabled():
+                segments, caption_kind = fetch_caption_segments(
+                    video["youtube_video_id"], context["language"]
+                )
+                source = "captions"
             if not segments:
-                if whisper_spend >= whisper_budget_usd:
-                    results.append({"video_id": video["youtube_video_id"], "status": "whisper_budget_exhausted"})
-                    failed += 1
-                    continue
+                duration_minutes = float(video.get("duration_s") or 0) / 60.0
+                estimated_cost = duration_minutes * WHISPER_USD_PER_MINUTE
+                if whisper_spend + estimated_cost > whisper_budget_usd:
+                    results.append({
+                        "video_id": video["youtube_video_id"],
+                        "status": "whisper_budget_exhausted",
+                    })
+                    return {
+                        **context, "stopped": "whisper_budget_exhausted",
+                        "eligible_long_videos": len(long_videos),
+                        "already_archived": len(archived), "tried": tried,
+                        "caption_successes": captions, "whisper_fallbacks": whisper_count,
+                        "whisper_minutes": round(whisper_minutes, 2),
+                        "whisper_spend_usd": round(whisper_spend, 4),
+                        "failed": failed, "youtube_units": youtube_units, "results": results,
+                    }
                 segments = _whisper_fallback(video["youtube_video_id"], brand_id)
                 source, caption_kind = "whisper", ""
                 whisper_count += 1
+                whisper_minutes += duration_minutes
+                whisper_spend += estimated_cost
             if not segments:
                 failed += 1
                 results.append({"video_id": video["youtube_video_id"], "status": "no_transcript"})
@@ -414,7 +453,8 @@ def backfill_brand_caption_archive(
             results.append({"video_id": video["youtube_video_id"], "status": str(exc)})
             return {
                 **context, "stopped": str(exc), "tried": tried, "caption_successes": captions,
-                "whisper_fallbacks": whisper_count, "whisper_spend_usd": whisper_spend,
+                "whisper_fallbacks": whisper_count, "whisper_minutes": round(whisper_minutes, 2),
+                "whisper_spend_usd": round(whisper_spend, 4),
                 "failed": failed, "youtube_units": youtube_units, "results": results,
             }
         except Exception:
@@ -424,7 +464,9 @@ def backfill_brand_caption_archive(
     return {
         **context, "stopped": "", "eligible_long_videos": len(long_videos), "already_archived": len(archived),
         "tried": tried, "caption_successes": captions, "whisper_fallbacks": whisper_count,
-        "whisper_spend_usd": whisper_spend, "failed": failed, "youtube_units": youtube_units,
+        "whisper_minutes": round(whisper_minutes, 2),
+        "whisper_spend_usd": round(whisper_spend, 4), "failed": failed,
+        "youtube_units": youtube_units,
         "results": results,
     }
 

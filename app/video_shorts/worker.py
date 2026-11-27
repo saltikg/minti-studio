@@ -1127,7 +1127,7 @@ def _log_exit_ip(proxy_url: str, video_id: str) -> None:
         logger.warning("INGEST exit IP check failed for %s: %s", video_id, e)
 
 def _download_youtube_audio_with_proxy(video_url: str, video_id: str) -> tuple[Path, bool, bool]:
-    """Download only the source audio into a disposable worker directory."""
+    """Download lowest-bitrate source audio using the Video-from-URL proxy path."""
     if yt_dlp is None:
         raise PermanentRenderJobError("yt_dlp is not installed on the worker.")
     work_dir = Path(tempfile.mkdtemp(prefix=f"vs_proxy_audio_{video_id}_"))
@@ -1135,11 +1135,19 @@ def _download_youtube_audio_with_proxy(video_url: str, video_id: str) -> tuple[P
     cookies_path = str(os.getenv("INGEST_PROXY_COOKIES") or "").strip()
     opts = {
         "outtmpl": str(work_dir / f"{video_id}.%(ext)s"),
-        "format": "bestaudio/best",
+        "format": "worstaudio[protocol!*=m3u8]/worstaudio/bestaudio[abr<=64]/bestaudio",
         "quiet": True,
         "noprogress": True,
+        "legacy_server_connect": True,
+        "nocheckcertificate": True,
+        "retries": 0,
+        "fragment_retries": 0,
+        "extractor_retries": 0,
+        "extractor_args": {"youtube": {"player_client": ["mweb", "default"]}},
+        "js_runtimes": {"node": {}},
     }
     if proxy_url:
+        proxy_url = _inject_sessid(proxy_url, secrets.token_hex(4))
         opts["proxy"] = proxy_url
     if cookies_path:
         opts["cookiefile"] = cookies_path

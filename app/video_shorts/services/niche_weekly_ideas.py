@@ -201,6 +201,12 @@ def _decode_json(value: Any, fallback: Any) -> Any:
         return fallback
 
 
+def _json_safe(value: Any) -> Any:
+    if isinstance(value, (datetime, date)):
+        return value.isoformat()
+    return value
+
+
 def _sync_minti_archive(conn: Any, brand_id: str, owner_user_id: str, language: str) -> None:
     transcript_columns = table_columns(conn, "youtube_transcripts")
     segment_names = [name for name in ("whisper_segments_json", "segments_json", "segments_en_json") if name in transcript_columns]
@@ -294,7 +300,7 @@ def _archive_matches(
             key=lambda window: -_cosine(list(embedding_item.embedding), list(window["embedding"])),
         )[:5]
         candidates[str(idea.get("video_id"))] = [{
-            key: value for key, value in window.items() if key != "embedding"
+            key: _json_safe(value) for key, value in window.items() if key != "embedding"
         } | {"similarity": _cosine(list(embedding_item.embedding), list(window["embedding"]))} for window in ranked]
     response = client.chat.completions.create(
         model=CHAT_MODEL, temperature=0, max_tokens=max(700, len(ideas) * 220),

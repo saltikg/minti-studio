@@ -59,3 +59,19 @@ def test_vtt_parser_preserves_timestamps(tmp_path):
         {"start": 1.0, "end": 4.0, "text": "First line"},
         {"start": 4.0, "end": 7.5, "text": "Second line"},
     ]
+
+
+def test_caption_archive_uses_six_month_scope_and_audio_by_default(monkeypatch):
+    monkeypatch.delenv("NICHE_CAPTION_SUBTITLES_ENABLED", raising=False)
+    assert niche_caption_archive.CAPTION_LOOKBACK_DAYS == 183
+    assert niche_caption_archive._subtitles_enabled() is False
+
+
+def test_caption_subtitles_can_be_explicitly_enabled(monkeypatch):
+    monkeypatch.setenv("NICHE_CAPTION_SUBTITLES_ENABLED", "true")
+    assert niche_caption_archive._subtitles_enabled() is True
+
+
+def test_archive_candidate_datetime_is_json_safe():
+    value = datetime(2026, 11, 26, 12, 30, tzinfo=PACIFIC)
+    assert niche_weekly_ideas._json_safe(value) == value.isoformat()
