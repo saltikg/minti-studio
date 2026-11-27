@@ -693,6 +693,16 @@ def _snap_keep_range_boundaries_to_audio(
     """Snap every cut to low energy without leaving its transcript-word gap."""
     if not ranges:
         return ranges
+
+    def chronological_neighbors(left_index: int, right_index: int) -> bool:
+        if left_index < 0 or right_index >= len(ranges):
+            return False
+        left = ranges[left_index]
+        right = ranges[right_index]
+        if left.get("role") == "hook" or right.get("role") == "hook":
+            return False
+        return float(left["end"]) <= float(right["start"])
+
     contexts = transcript_word_gap_contexts(ranges, transcript_words)
     windows: list[Tuple[str, int, float, float]] = []
     short_gap_searches: dict[int, tuple[float, float]] = {}
@@ -828,11 +838,11 @@ def _snap_keep_range_boundaries_to_audio(
         elif kind == "end":
             lower = max(float(ranges[index]["start"]) + 0.001, search_start)
             upper = search_end
-            if index < len(ranges) - 1:
+            if chronological_neighbors(index, index + 1):
                 upper = min(upper, float(ranges[index + 1]["start"]) - 0.001)
         else:
             lower = search_start
-            if index > 0:
+            if chronological_neighbors(index - 1, index):
                 lower = max(lower, float(adjusted[index - 1]["end"]) + 0.001)
             upper = min(float(ranges[index]["end"]) - 0.001, search_end)
         if synthetic_pause is not None:
@@ -840,7 +850,7 @@ def _snap_keep_range_boundaries_to_audio(
             pass
         elif verified_pause is not None:
             candidate, pause_fade = verified_pause
-            if index < len(ranges) - 1:
+            if chronological_neighbors(index, index + 1):
                 candidate = min(candidate, float(ranges[index + 1]["start"]) - 0.001)
             lower = float(ranges[index]["start"]) + 0.001
             upper = max(lower, short_gap_searches[index][1])

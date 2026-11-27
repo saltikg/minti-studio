@@ -286,3 +286,32 @@ def test_face_samples_follow_hook_then_normal_output_timeline(monkeypatch):
         (1.0, 0),
         (3.0, 4),
     ]
+
+
+def test_audio_snap_does_not_constrain_out_of_order_hook_to_normal_part(monkeypatch):
+    ranges = [
+        {"start": 14.7, "end": 15.24, "start_word_index": 40, "end_word_index": 41,
+         "role": "hook", "transition": "flash"},
+        {"start": 0.0, "end": 9.1, "start_word_index": 0, "end_word_index": 25},
+    ]
+    words = [
+        {"index": index, "start": index * 0.36, "end": (index * 0.36) + 0.30,
+         "timing_source": "whisper_word"}
+        for index in range(50)
+    ]
+    monkeypatch.setattr(compositor, "_extract_mono_pcm_window", lambda *args, **kwargs: np.zeros(320000))
+    monkeypatch.setattr(
+        compositor,
+        "_lowest_energy_time_in_pcm_window",
+        lambda _pcm, *, search_start, search_end, **kwargs: (search_start + search_end) / 2.0,
+    )
+
+    snapped = compositor._snap_keep_range_boundaries_to_audio(
+        Path("/tmp/not-read.mp4"),
+        ranges,
+        transcript_words=words,
+    )
+
+    assert snapped[0]["role"] == "hook"
+    assert snapped[0]["end"] > snapped[0]["start"] > snapped[1]["start"]
+    assert snapped[1]["end"] > snapped[1]["start"]
