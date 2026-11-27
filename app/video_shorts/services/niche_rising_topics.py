@@ -29,6 +29,11 @@ GENERIC_LABELS = {
     "women's health advocacy and guidelines", "aile ve ilişkiler", "dua ve kabulü",
     "symptoms", "management", "issues", "advocacy", "genel",
 }
+MATCH_STOPWORDS = {
+    "about", "after", "before", "from", "into", "with", "without", "your", "yourself",
+    "this", "that", "what", "when", "where", "which", "whose", "women", "midlife",
+    "icin", "için", "ile", "ve", "veya", "bir", "bu", "su", "şu", "olan", "olarak",
+}
 
 
 class RisingTopicsError(RuntimeError):
@@ -277,6 +282,25 @@ def _verified_transcript_evidence(value: Any, transcript: Any) -> str:
     return evidence if normalized_evidence and normalized_evidence in normalized_transcript else ""
 
 
+def _match_terms(value: Any) -> set[str]:
+    normalized = unicodedata.normalize("NFKD", str(value or "").casefold())
+    normalized = "".join(char for char in normalized if not unicodedata.combining(char))
+    normalized = re.sub(r"\bhrt\b", "hormone therapy", normalized)
+    terms = set()
+    for token in re.findall(r"[\w]+", normalized, flags=re.UNICODE):
+        if len(token) < 3 or token in MATCH_STOPWORDS:
+            continue
+        terms.add(token[:6] if len(token) > 6 else token)
+    return terms
+
+
+def _evidence_matches_specific_topic(topic_label: Any, evidence: Any) -> bool:
+    topic_terms = _match_terms(topic_label)
+    evidence_terms = _match_terms(evidence)
+    required = min(2, len(topic_terms))
+    return required > 0 and len(topic_terms & evidence_terms) >= required
+
+
 def _match_brand(
     topics: list[dict[str, Any]], shorts: list[dict[str, Any]], archive: list[dict[str, Any]], client: Any,
 ) -> tuple[list[dict[str, Any]], int, int]:
@@ -332,7 +356,14 @@ def _match_brand(
         if short_id in shorts_by_id:
             status, archive_id = STATUS_COVERED, None
             evidence = _truncate_evidence(shorts_by_id[short_id]["title"])
-        elif archive_id in archive_by_id and transcript_evidence:
+        elif (
+            archive_id in archive_by_id
+            and transcript_evidence
+            and _evidence_matches_specific_topic(
+                next(topic["label"] for topic in topics if topic["topic_key"] == topic_key),
+                transcript_evidence,
+            )
+        ):
             status = STATUS_ARCHIVE
             evidence = transcript_evidence
         else:

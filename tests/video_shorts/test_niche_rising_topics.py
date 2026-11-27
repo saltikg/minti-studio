@@ -98,6 +98,22 @@ def test_archive_match_requires_verbatim_transcript_evidence():
     assert matches[0]["status"] == niche_rising_topics.STATUS_IDEA
 
 
+def test_archive_match_rejects_broad_transcript_excerpt_without_specific_topic_terms():
+    topics = [{"topic_key": "nervous-system", "label": "Nervous system regulation for midlife"}]
+    archive = [{
+        "id": 7, "title": "Midlife energy",
+        "transcript": "Estrogen influences blood sugar regulation and the mitochondria in our cells.",
+    }]
+    client = _Client(
+        '{"matches":[{"topic_key":"nervous-system","short_id":null,"archive_video_id":7,'
+        '"evidence":"Estrogen influences blood sugar regulation and the mitochondria"}]}'
+    )
+
+    matches, _, _ = niche_rising_topics._match_brand(topics, [], archive, client)
+
+    assert matches[0]["status"] == niche_rising_topics.STATUS_IDEA
+
+
 def test_clean_label_rejects_broad_and_requires_three_to_seven_words():
     assert niche_rising_topics._clean_label("Aile ve İlişkiler") == ""
     assert niche_rising_topics._clean_label("HRT after age 60") == "HRT after age 60"
