@@ -55,7 +55,7 @@ def _display_rank_row(row: dict[str, Any], rank: int, own_channel_ids: set[str])
 
 def display_short_title(value: Any) -> str:
     original = " ".join(str(value or "").split())
-    cleaned = re.sub(r"(?<!\w)#[\w-]+", " ", original, flags=re.UNICODE)
+    cleaned = re.sub(r"#[\w-]+", " ", original, flags=re.UNICODE)
     cleaned = " ".join(cleaned.split()).rstrip(" .,:;!?-–—|/")
     return cleaned or original
 

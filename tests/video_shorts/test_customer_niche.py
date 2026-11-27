@@ -47,6 +47,7 @@ def test_compact_number():
 
 def test_display_short_title_strips_hashtags_and_keeps_nonempty_fallback():
     assert customer_niche.display_short_title("Estrogen facts #menopause #HRT!!!") == "Estrogen facts"
+    assert customer_niche.display_short_title("A secret #faith#prayer") == "A secret"
     assert customer_niche.display_short_title("#menopause #HRT") == "#menopause #HRT"
 
 
