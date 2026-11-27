@@ -7550,6 +7550,7 @@ def _normalize_edit_keep_ranges(
     max_ranges: int = 20,
 ) -> List[Dict[str, Any]]:
     cleaned: List[Dict[str, Any]] = []
+    hook: Optional[Dict[str, Any]] = None
     for item in ranges or []:
         if not isinstance(item, dict):
             continue
@@ -7569,7 +7570,16 @@ def _normalize_edit_keep_ranges(
         if first_index >= 0 and last_index >= first_index:
             normalized["start_word_index"] = first_index
             normalized["end_word_index"] = last_index
-        cleaned.append(normalized)
+        if str(item.get("role") or "").strip().lower() == "hook":
+            normalized["role"] = "hook"
+            normalized["transition"] = (
+                "none"
+                if str(item.get("transition") or "").strip().lower() == "none"
+                else "flash"
+            )
+            hook = normalized
+        else:
+            cleaned.append(normalized)
     cleaned.sort(key=lambda item: (item["start"], item["end"]))
     merged: List[Dict[str, float]] = []
     for item in cleaned:
@@ -7599,7 +7609,10 @@ def _normalize_edit_keep_ranges(
     for index in range(1, len(normalized)):
         if normalized[index]["start"] < normalized[index - 1]["end"]:
             normalized[index]["start"] = normalized[index - 1]["end"]
-    return [item for item in normalized if item["end"] > item["start"]]
+    normal_ranges = [item for item in normalized if item["end"] > item["start"]]
+    if hook and hook["end"] - hook["start"] >= min_fragment_seconds:
+        return [hook, *normal_ranges[: max(0, max_ranges - 1)]]
+    return normal_ranges
 
 
 def _canonicalize_indexed_keep_ranges(
@@ -7844,17 +7857,36 @@ def _remap_transcript_segments_to_keep_ranges(
         return segments
     remapped: List[Dict[str, Any]] = []
     output_offset = 0.0
+    indexed_words: Dict[int, Dict[str, Any]] = {}
+    unindexed_words: List[Dict[str, Any]] = []
+    for word in _transcript_words_with_sentence_indexes(segments):
+        try:
+            word_index = int(word.get("index"))
+        except (TypeError, ValueError):
+            unindexed_words.append(word)
+        else:
+            indexed_words.setdefault(word_index, word)
+    source_words = [indexed_words[index] for index in sorted(indexed_words)] or unindexed_words
     for range_item in ranges:
         range_start = float(range_item["start"])
         range_end = float(range_item["end"])
         segment_words: List[Dict[str, Any]] = []
         selected_words: List[Dict[str, Any]] = []
-        for word in _transcript_words_with_sentence_indexes(segments):
+        first_index = range_item.get("start_word_index")
+        last_index = range_item.get("end_word_index")
+        for word in source_words:
             word_start = _to_float(word.get("start"))
             word_end = _to_float(word.get("end"))
             if word_start is None or word_end is None:
                 continue
-            if word_end <= range_start or word_start >= range_end:
+            if isinstance(first_index, int) and isinstance(last_index, int):
+                try:
+                    word_index = int(word.get("index"))
+                except (TypeError, ValueError):
+                    continue
+                if word_index < first_index or word_index > last_index:
+                    continue
+            elif word_end <= range_start or word_start >= range_end:
                 continue
             text = str(word.get("text") or "").strip()
             if not text:
@@ -29516,8 +29548,10 @@ def _resolve_video_clip_ranges(
             ranges_to_resolve = _canonicalize_indexed_keep_ranges(ranges_to_resolve, transcript_words)
             if keep_ranges:
                 keep_ranges = ranges_to_resolve
-            start = ranges_to_resolve[0]["start"]
-            end = ranges_to_resolve[-1]["end"]
+            normal_ranges = [item for item in ranges_to_resolve if item.get("role") != "hook"]
+            bounds = normal_ranges or ranges_to_resolve
+            start = bounds[0]["start"]
+            end = bounds[-1]["end"]
         if (len(keep_ranges) > 1 or transcript_words) and resolved_source is None:
             resolved_source, resolved_source_is_temp = _resolve_source_video(video_id, video_pk=video_pk)
         media_duration = get_or_backfill_media_duration_seconds(
@@ -29539,8 +29573,10 @@ def _resolve_video_clip_ranges(
                 return ClipRangeResolution(False, 0.0, 0.0, [], str(exc)), media_duration
             if keep_ranges:
                 keep_ranges = snapped_ranges
-            start = snapped_ranges[0]["start"]
-            end = snapped_ranges[-1]["end"]
+            normal_ranges = [item for item in snapped_ranges if item.get("role") != "hook"]
+            bounds = normal_ranges or snapped_ranges
+            start = bounds[0]["start"]
+            end = bounds[-1]["end"]
         resolution = resolve_clip_ranges(
             start=start,
             end=end,
@@ -29652,8 +29688,10 @@ def add_clip_section(video_pk):
     if isinstance(parsed_keep_ranges, list):
         requested_keep_ranges = _normalize_edit_keep_ranges(parsed_keep_ranges)
     if requested_keep_ranges:
-        start_time_raw = str(requested_keep_ranges[0]["start"])
-        end_time_raw = str(requested_keep_ranges[-1]["end"])
+        normal_ranges = [item for item in requested_keep_ranges if item.get("role") != "hook"]
+        bounds = normal_ranges or requested_keep_ranges
+        start_time_raw = str(bounds[0]["start"])
+        end_time_raw = str(bounds[-1]["end"])
 
     if not start_time_raw or not end_time_raw:
         return _respond("Start and End are required.", status=400, category="warning")

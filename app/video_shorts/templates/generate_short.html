@@ -3309,6 +3309,41 @@
     background: rgba(45, 212, 191, 0.18);
     color: #dffdf8;
   }
+  .generate-v2-text-word.is-hook {
+    background: rgba(250, 204, 21, 0.25);
+    color: #fef3c7;
+    box-shadow: inset 0 -2px 0 rgba(250, 204, 21, 0.72);
+  }
+  .generate-v2-text-word.is-hook.is-added {
+    background: linear-gradient(180deg, rgba(250, 204, 21, 0.25), rgba(45, 212, 191, 0.2));
+  }
+  .generate-v2-text-hook-controls {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    color: #fde68a;
+    font-size: 0.76rem;
+    font-weight: 800;
+  }
+  .generate-v2-text-hook-hint {
+    color: #fbbf24;
+    font-size: 0.72rem;
+  }
+  .generate-v2-hook-flash {
+    position: absolute;
+    inset: 0;
+    z-index: 30;
+    background: #fff;
+    opacity: 0;
+    pointer-events: none;
+  }
+  .generate-v2-hook-flash.is-active {
+    animation: generate-v2-hook-flash 200ms ease-in-out;
+  }
+  @keyframes generate-v2-hook-flash {
+    0%, 100% { opacity: 0; }
+    50% { opacity: 1; }
+  }
   .generate-v2-text-word.is-editing {
     background: rgba(45, 212, 191, 0.16);
   }
@@ -7163,6 +7198,7 @@
                 <div class="generate-v2-text-toolbar" id="generate-v2-text-toolbar" role="toolbar" aria-label="Text selection actions">
                   <button type="button" class="btn btn-sm btn-outline-light" data-generate-v2-text-preview>▶ Preview</button>
                   <span class="generate-v2-text-toolbar-duration" data-generate-v2-text-duration>0:00</span>
+                  <button type="button" class="btn btn-sm btn-warning" data-generate-v2-text-hook>⚡ Hook</button>
                   <button type="button" class="btn btn-sm btn-primary" data-generate-v2-text-add>+ Add</button>
                 </div>
                 <div class="generate-v2-text-parts-bar" data-generate-v2-text-parts-bar aria-live="polite">
@@ -7177,6 +7213,16 @@
                     <span class="generate-v2-text-preview-progress-fill" data-generate-v2-text-preview-progress-fill></span>
                   </div>
                   <span class="generate-v2-text-parts-summary" data-generate-v2-text-parts-summary></span>
+                  <span class="generate-v2-text-hook-controls d-none" data-generate-v2-text-hook-controls>
+                    <label>Hook transition
+                      <select class="form-select form-select-sm d-inline-block w-auto" data-generate-v2-hook-transition>
+                        <option value="flash">Flash</option>
+                        <option value="none">None</option>
+                      </select>
+                    </label>
+                    <button type="button" class="btn btn-sm btn-outline-warning" data-generate-v2-remove-hook>Remove hook</button>
+                  </span>
+                  <span class="generate-v2-text-hook-hint d-none" data-generate-v2-hook-hint></span>
                   <label class="generate-v2-text-title-wrap" data-generate-v2-text-title-wrap>
                     <span class="visually-hidden">Clip title</span>
                     <input type="text"
@@ -14235,6 +14281,7 @@ const wordBelongsToClipPart = (word, part) => {
 };
 
 const normalizeClipKeepRanges = (ranges) => {
+  let hook = null;
   const cleaned = (Array.isArray(ranges) ? ranges : [])
     .map((range) => {
       const normalized = {
@@ -14247,9 +14294,18 @@ const normalizeClipKeepRanges = (ranges) => {
         normalized.start_word_index = first;
         normalized.end_word_index = last;
       }
+      if (String(range?.role || "").toLowerCase() === "hook") {
+        normalized.role = "hook";
+        normalized.transition = String(range?.transition || "").toLowerCase() === "none" ? "none" : "flash";
+      }
       return normalized;
     })
     .filter((range) => Number.isFinite(range.start) && Number.isFinite(range.end) && range.end > range.start)
+    .filter((range) => {
+      if (range.role !== "hook") return true;
+      hook = range;
+      return false;
+    })
     .sort((a, b) => (a.start - b.start) || (a.end - b.end));
   const merged = [];
   cleaned.forEach((range) => {
@@ -14266,7 +14322,7 @@ const normalizeClipKeepRanges = (ranges) => {
       merged.push({ ...range });
     }
   });
-  return merged
+  const normalParts = merged
     .filter((range) => (range.end - range.start) >= 0.4)
     .slice(0, 20)
     .map((range) => {
@@ -14277,6 +14333,18 @@ const normalizeClipKeepRanges = (ranges) => {
       }
       return normalized;
     });
+  if (!hook || (hook.end - hook.start) < 0.4) return normalParts;
+  const normalizedHook = {
+    start: Number(hook.start.toFixed(3)),
+    end: Number(hook.end.toFixed(3)),
+    role: "hook",
+    transition: hook.transition === "none" ? "none" : "flash",
+  };
+  if (Number.isInteger(hook.start_word_index) && Number.isInteger(hook.end_word_index)) {
+    normalizedHook.start_word_index = hook.start_word_index;
+    normalizedHook.end_word_index = hook.end_word_index;
+  }
+  return [normalizedHook, ...normalParts.slice(0, 19)];
 };
 
 const getClipKeepRangesFromForm = (form, words = getGenerateV2WordTimestamps()) => {
@@ -14441,9 +14509,11 @@ const rangesFromWordIndexes = (words, indexes) => {
 const clipKeepRangesTiming = (ranges) => {
   const normalized = normalizeClipKeepRanges(ranges);
   if (!normalized.length) return null;
+  const normalParts = normalized.filter((range) => range.role !== "hook");
+  const bounds = normalParts.length ? normalParts : normalized;
   return {
-    start: normalized[0].start,
-    end: normalized[normalized.length - 1].end,
+    start: bounds[0].start,
+    end: bounds[bounds.length - 1].end,
     duration: normalized.reduce((total, range) => total + Math.max(0, range.end - range.start), 0),
   };
 };
@@ -14929,10 +14999,15 @@ window.initGenerateV2TextTranscript = () => {
   const words = getGenerateV2TranscriptWords();
   const toolbar = document.getElementById("generate-v2-text-toolbar");
   const previewBtn = toolbar?.querySelector("[data-generate-v2-text-preview]");
+  const hookBtn = toolbar?.querySelector("[data-generate-v2-text-hook]");
   const addBtn = toolbar?.querySelector("[data-generate-v2-text-add]");
   const durationEl = toolbar?.querySelector("[data-generate-v2-text-duration]");
   const partsBar = shell.querySelector("[data-generate-v2-text-parts-bar]");
   const partsSummary = shell.querySelector("[data-generate-v2-text-parts-summary]");
+  const hookControls = shell.querySelector("[data-generate-v2-text-hook-controls]");
+  const hookTransition = shell.querySelector("[data-generate-v2-hook-transition]");
+  const removeHookBtn = shell.querySelector("[data-generate-v2-remove-hook]");
+  const hookHint = shell.querySelector("[data-generate-v2-hook-hint]");
   const previewAllBtn = shell.querySelector("[data-generate-v2-text-preview-all]");
   const previewControls = shell.querySelector("[data-generate-v2-text-preview-controls]");
   const previewToggleBtn = shell.querySelector("[data-generate-v2-text-preview-toggle]");
@@ -15017,11 +15092,23 @@ window.initGenerateV2TextTranscript = () => {
     state.parts = normalizedParts;
     window.__generateV2TextParts = state.parts.slice();
     const total = partsDuration();
-    const valid = total >= CLIP_MIN_DURATION_SECONDS && total <= CLIP_MAX_DURATION_SECONDS;
+    const hook = normalizedParts.find((part) => part.role === "hook");
+    const normalParts = normalizedParts.filter((part) => part.role !== "hook");
+    const valid = normalParts.length > 0 && total >= CLIP_MIN_DURATION_SECONDS && total <= CLIP_MAX_DURATION_SECONDS;
     partsBar?.classList.toggle("is-visible", normalizedParts.length > 0);
     if (partsSummary) {
-      partsSummary.textContent = `${normalizedParts.length} part${normalizedParts.length === 1 ? "" : "s"} · ${formatClipDurationLabel(total)}`;
+      partsSummary.textContent = hook
+        ? `Hook ${formatClipDurationLabel(hook.end - hook.start)} + ${normalParts.length} part${normalParts.length === 1 ? "" : "s"} · ${formatClipDurationLabel(total)}`
+        : `${normalParts.length} part${normalParts.length === 1 ? "" : "s"} · ${formatClipDurationLabel(total)}`;
     }
+    hookControls?.classList.toggle("d-none", !hook);
+    if (hookTransition && hook) hookTransition.value = hook.transition === "none" ? "none" : "flash";
+    const hookDuration = hook ? hook.end - hook.start : 0;
+    const hint = hook && hookDuration < 1.5
+      ? "A hook under 1.5s may feel abrupt."
+      : hook && hookDuration > 8 ? "A hook over 8s may delay the clip." : "";
+    if (hookHint) hookHint.textContent = hint;
+    hookHint?.classList.toggle("d-none", !hint);
     partsWarning?.classList.toggle("d-none", !normalizedParts.length || valid);
     if (createBtn) {
       createBtn.disabled = !normalizedParts.length || !valid;
@@ -15041,6 +15128,22 @@ window.initGenerateV2TextTranscript = () => {
       start_word_index: range.start_word_index,
       end_word_index: range.end_word_index,
     }]);
+    window.getSelection?.()?.removeAllRanges?.();
+    hideToolbar();
+    render();
+  };
+  const setHook = (range) => {
+    if (!range) return;
+    stopPreview();
+    const normalParts = state.parts.filter((part) => part.role !== "hook");
+    state.parts = normalizeTranscriptParts([{
+      start: range.start,
+      end: range.end,
+      start_word_index: range.start_word_index,
+      end_word_index: range.end_word_index,
+      role: "hook",
+      transition: "flash",
+    }, ...normalParts]);
     window.getSelection?.()?.removeAllRanges?.();
     hideToolbar();
     render();
@@ -15197,6 +15300,43 @@ window.initGenerateV2TextTranscript = () => {
     updatePreviewStatus(target);
     syncPreviewMusic(target, false);
     setPreviewControls(true);
+    const previous = state.preview.ranges[safeIndex - 1];
+    if (safeIndex === 1 && previous?.role === "hook" && previous.transition !== "none") {
+      const frame = document.getElementById("trs-player-frame");
+      let flash = frame?.querySelector(".generate-v2-hook-flash");
+      if (frame && !flash) {
+        flash = document.createElement("span");
+        flash.className = "generate-v2-hook-flash";
+        frame.appendChild(flash);
+      }
+      if (flash) {
+        flash.classList.remove("is-active");
+        void flash.offsetWidth;
+        flash.classList.add("is-active");
+      }
+      try {
+        const AudioContextClass = window.AudioContext || window.webkitAudioContext;
+        const context = AudioContextClass ? new AudioContextClass() : null;
+        if (context) {
+          const length = Math.floor(context.sampleRate * 0.3);
+          const buffer = context.createBuffer(1, length, context.sampleRate);
+          const data = buffer.getChannelData(0);
+          for (let i = 0; i < length; i += 1) {
+            const envelope = Math.sin(Math.PI * i / length);
+            data[i] = (Math.random() * 2 - 1) * envelope * 0.08;
+          }
+          const source = context.createBufferSource();
+          const filter = context.createBiquadFilter();
+          filter.type = "bandpass";
+          filter.frequency.setValueAtTime(700, context.currentTime);
+          filter.frequency.exponentialRampToValueAtTime(4800, context.currentTime + 0.3);
+          source.buffer = buffer;
+          source.connect(filter).connect(context.destination);
+          source.start();
+          source.onended = () => context.close();
+        }
+      } catch (_) {}
+    }
     const ok = await window.__trsClipSelectorController?.seekAndWait?.(seekTarget, shouldPlay);
     if (!state.preview.active || state.preview.seekToken !== seekToken || ok === false) return;
     if (shouldPlay) {
@@ -15240,7 +15380,10 @@ window.initGenerateV2TextTranscript = () => {
       const payload = await response.json().catch(() => ({}));
       if (!response.ok || payload.success === false) throw new Error(payload.message || "Could not prepare preview.");
       const resolved = (Array.isArray(payload.ranges) ? payload.ranges : [])
-        .map((part) => ({ start: Number(part?.start), end: Number(part?.end) }))
+        .map((part) => ({
+          start: Number(part?.start), end: Number(part?.end),
+          ...(part?.role === "hook" ? { role: "hook", transition: part?.transition === "none" ? "none" : "flash" } : {}),
+        }))
         .filter((part) => Number.isFinite(part.start) && Number.isFinite(part.end) && part.end > part.start);
       if (!resolved.length) throw new Error("The selected parts have no playable duration.");
       state.preview.active = true;
@@ -15331,6 +15474,10 @@ window.initGenerateV2TextTranscript = () => {
       addBtn.disabled = range.duration <= 0;
       addBtn.title = "Add part";
     }
+    if (hookBtn) {
+      hookBtn.disabled = range.duration <= 0;
+      hookBtn.title = "Use selection as the opening hook";
+    }
     const selection = window.getSelection?.();
     const rect = selection?.rangeCount ? selection.getRangeAt(0).getBoundingClientRect() : null;
     if (rect) {
@@ -15377,10 +15524,13 @@ window.initGenerateV2TextTranscript = () => {
         span.className = "generate-v2-text-word";
         const wordStart = Number(word.start || 0);
         const wordEnd = Number(word.end || wordStart);
-        const partIndex = state.parts.findIndex((part) => wordBelongsToClipPart(word, part));
-        if (partIndex >= 0) {
+        const hookPartIndex = state.parts.findIndex((part) => part.role === "hook" && wordBelongsToClipPart(word, part));
+        const normalPartIndex = state.parts.findIndex((part) => part.role !== "hook" && wordBelongsToClipPart(word, part));
+        const partIndex = normalPartIndex >= 0 ? normalPartIndex : hookPartIndex;
+        if (normalPartIndex >= 0) {
           span.classList.add("is-added");
         }
+        if (hookPartIndex >= 0) span.classList.add("is-hook");
         span.dataset.wordIndex = String(word.index);
         const isFirstVisibleWord = !p.querySelector(".generate-v2-text-word");
         const leadingSpace = isFirstVisibleWord || word.join_left ? "" : " ";
@@ -15396,6 +15546,17 @@ window.initGenerateV2TextTranscript = () => {
           startWordEdit(span, word);
         });
         p.appendChild(span);
+        if (hookPartIndex >= 0) {
+          const hookPart = state.parts[hookPartIndex];
+          const previousWord = words[Number(word.index) - 1];
+          const isHookStart = !previousWord || !wordBelongsToClipPart(previousWord, hookPart);
+          if (isHookStart) {
+            const label = document.createElement("span");
+            label.className = "badge text-bg-warning ms-1";
+            label.textContent = "⚡ Hook";
+            p.insertBefore(label, span);
+          }
+        }
         if (partIndex >= 0) {
           const part = state.parts[partIndex];
           const nextWord = words[Number(word.index) + 1];
@@ -15433,6 +15594,22 @@ window.initGenerateV2TextTranscript = () => {
     const range = selectionRange();
     if (!range || addBtn.disabled) return;
     addPart(range);
+  });
+  hookBtn?.addEventListener("click", () => {
+    const range = selectionRange();
+    if (!range || hookBtn.disabled) return;
+    setHook(range);
+  });
+  removeHookBtn?.addEventListener("click", () => {
+    stopPreview();
+    state.parts = normalizeTranscriptParts(state.parts.filter((part) => part.role !== "hook"));
+    render();
+  });
+  hookTransition?.addEventListener("change", () => {
+    state.parts = normalizeTranscriptParts(state.parts.map((part) => (
+      part.role === "hook" ? { ...part, transition: hookTransition.value === "none" ? "none" : "flash" } : part
+    )));
+    render();
   });
   previewAllBtn?.addEventListener("click", () => {
     window.__videoMusicPreview?.prepare?.();
@@ -15511,9 +15688,10 @@ window.initGenerateV2TextTranscript = () => {
     stopPreview();
     createBtn.disabled = true;
     try {
+      const timing = clipKeepRangesTiming(ranges);
       await window.__generateV2CreateClipFromTranscript?.({
-        startTime: String(Number(ranges[0].start || 0).toFixed(3)),
-        endTime: String(Number(ranges[ranges.length - 1].end || 0).toFixed(3)),
+        startTime: String(Number(timing?.start || 0).toFixed(3)),
+        endTime: String(Number(timing?.end || 0).toFixed(3)),
         keepRanges: ranges,
         title: String(titleInput?.value || "").trim(),
       });

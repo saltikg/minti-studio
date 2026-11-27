@@ -86,6 +86,7 @@ def _flatten_words(segments: Iterable[Mapping[str, Any]]) -> list[tuple[float, f
 
 def _normalize_keep_ranges(raw_ranges: Any) -> list[tuple[float, float]]:
     normalized: list[tuple[float, float]] = []
+    hook: tuple[float, float] | None = None
     if not isinstance(raw_ranges, Sequence) or isinstance(raw_ranges, (str, bytes)):
         return normalized
     for item in raw_ranges:
@@ -95,9 +96,13 @@ def _normalize_keep_ranges(raw_ranges: Any) -> list[tuple[float, float]]:
         end = _number(item.get("end"))
         if start is None or end is None or end <= start:
             continue
-        normalized.append((max(0.0, start), max(0.0, end)))
+        parsed = (max(0.0, start), max(0.0, end))
+        if str(item.get("role") or "").strip().lower() == "hook":
+            hook = parsed
+        else:
+            normalized.append(parsed)
     normalized.sort()
-    return normalized
+    return ([hook] if hook else []) + normalized
 
 
 def build_final_timeline_speech_ranges(

@@ -232,6 +232,46 @@ def _assert_make_clip_add_keeps_exact_word_indexes(page: Page, variant: str) -> 
     page.wait_for_function("() => window.__generateV2EditModeActive === true")
 
 
+def _assert_make_clip_hook_is_first(page: Page, variant: str) -> None:
+    page.evaluate("() => window.setGenerateV2ActiveTab('transcript', {persist: false})")
+    page.wait_for_selector("[data-generate-v2-text-document] .generate-v2-text-word")
+    result = page.evaluate(
+        """() => {
+          const editor = document.querySelector('[data-generate-v2-text-document]');
+          const initialWords = Array.from(editor?.querySelectorAll('.generate-v2-text-word') || []);
+          if (initialWords.length < 8) return {error: 'not enough transcript words for hook smoke'};
+          const selectAndClick = (first, last, selector) => {
+            const words = Array.from(editor.querySelectorAll('.generate-v2-text-word'));
+            const selection = window.getSelection();
+            const range = document.createRange();
+            range.setStart(words[first].firstChild, 0);
+            range.setEnd(words[last].firstChild, words[last].firstChild.textContent.length);
+            selection.removeAllRanges();
+            selection.addRange(range);
+            editor.dispatchEvent(new MouseEvent('mouseup', {bubbles: true}));
+            const button = document.querySelector(selector);
+            if (!button || button.disabled) throw new Error(`${selector} unavailable`);
+            button.click();
+          };
+          selectAndClick(5, 7, '[data-generate-v2-text-hook]');
+          selectAndClick(0, 3, '[data-generate-v2-text-add]');
+          const parts = window.__generateV2TextParts || [];
+          const liveWords = Array.from(editor.querySelectorAll('.generate-v2-text-word'));
+          return {
+            parts,
+            hookHighlighted: liveWords.slice(5, 8).every(word => word.classList.contains('is-hook')),
+            summary: document.querySelector('[data-generate-v2-text-parts-summary]')?.textContent || '',
+          };
+        }"""
+    )
+    assert not result.get("error"), result
+    assert result["parts"] and result["parts"][0].get("role") == "hook", result
+    assert result["parts"][0].get("transition") == "flash", result
+    assert result["hookHighlighted"], result
+    assert result["summary"].startswith("Hook "), result
+    _print_pass(variant, "Make a Clip hook part is first in preview order")
+
+
 def _assert_trim_selection_keeps_exact_first_word(page: Page, variant: str) -> None:
     result = page.evaluate(
         """() => {
@@ -239,7 +279,7 @@ def _assert_trim_selection_keeps_exact_first_word(page: Page, variant: str) -> N
             ? getGenerateV2WordTimestamps() : [];
           if (words.length < 3) return {skipped: 'no transcript words'};
           const first = 1;
-          const last = Math.min(words.length - 1, 2);
+          const last = Math.min(words.length - 1, 3);
           const ranges = typeof selectionToClipKeepRanges === 'function'
             ? selectionToClipKeepRanges(words, [{
             start: Number(words[0].start), end: Number(words[last].end)
@@ -973,12 +1013,13 @@ def _run_variant(browser: Browser, *, base_url: str, cookie_name: str,
             _assert_auto_layout_caption_drag_persists(page, variant, 1280)
         if width == 1920 and height == 1080 and dpr == 1:
             _assert_auto_layout_caption_drag_persists(page, variant, 1920)
+        _assert_make_clip_hook_is_first(page, variant)
         print(f"VARIANT_OK {variant}")
     finally:
         context.close()
 
 
-def run(video_id: int | None, headed: bool) -> None:
+def run(video_id: int | None, headed: bool, *, hook_only: bool = False) -> None:
     app = create_app()
     selected_video, user_id, brand_id = _admin_video_context(video_id)
     client = app.test_client()
@@ -993,6 +1034,19 @@ def run(video_id: int | None, headed: bool) -> None:
     with _test_server(app) as base_url, sync_playwright() as playwright:
         browser = playwright.chromium.launch(headless=not headed)
         try:
+            if hook_only:
+                context = browser.new_context(viewport={"width": 1280, "height": 720})
+                try:
+                    context.add_cookies([{"name": cookie_name, "value": cookie.value, "url": base_url}])
+                    page = context.new_page()
+                    page.goto(f"{base_url}/video_shorts/generate/{selected_video}", wait_until="domcontentloaded")
+                    page.wait_for_selector("#clip-workbench-shell[data-generate-v2='1']", timeout=15_000)
+                    _ensure_smoke_active_clip(page)
+                    _assert_make_clip_hook_is_first(page, "hook-only")
+                finally:
+                    context.close()
+                print(f"HOOK_SMOKE_OK video={selected_video} user={user_id} brand={brand_id}")
+                return
             for width, height in VIEWPORTS:
                 for dpr in DPRS:
                     _run_variant(browser, base_url=base_url, cookie_name=cookie.key,
@@ -1007,8 +1061,9 @@ def main() -> None:
     parser = argparse.ArgumentParser()
     parser.add_argument("--video-id", type=int, help="Transcript-ready video owned by an admin user")
     parser.add_argument("--headed", action="store_true")
+    parser.add_argument("--hook-only", action="store_true", help="Run the Make a Clip hook ordering smoke only")
     args = parser.parse_args()
-    run(args.video_id, args.headed)
+    run(args.video_id, args.headed, hook_only=args.hook_only)
 
 
 if __name__ == "__main__":

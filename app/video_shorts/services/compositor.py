@@ -306,6 +306,7 @@ def _format_loadavg(loadavg: tuple[float, float, float] | None) -> str:
 
 def _normalize_keep_ranges_for_trim(keep_ranges: Optional[list[Dict[str, Any]]]) -> list[dict[str, Any]]:
     ranges: list[dict[str, Any]] = []
+    hook: Optional[dict[str, Any]] = None
     for item in keep_ranges or []:
         if not isinstance(item, dict):
             continue
@@ -332,9 +333,18 @@ def _normalize_keep_ranges_for_trim(keep_ranges: Optional[list[Dict[str, Any]]])
                 pass
         if item.get("audio_verified_pause_end") is True:
             normalized["audio_verified_pause_end"] = True
-        ranges.append(normalized)
+        if str(item.get("role") or "").strip().lower() == "hook":
+            normalized["role"] = "hook"
+            normalized["transition"] = (
+                "none"
+                if str(item.get("transition") or "").strip().lower() == "none"
+                else "flash"
+            )
+            hook = normalized
+        else:
+            ranges.append(normalized)
     ranges.sort(key=lambda item: (item["start"], item["end"]))
-    return ranges
+    return ([hook] if hook else []) + ranges
 
 
 def _log_multi_range_boundary_warning(message: str, *args: Any) -> None:
@@ -1247,38 +1257,40 @@ def _trim_source_to_keep_ranges(
                 continue
             keep_ranges[index]["start"] = item["start"]
             keep_ranges[index]["end"] = item["end"]
-    first_start = float(ranges[0].get("start") or 0.0)
+    first_start = min(float(item.get("start") or 0.0) for item in ranges)
     seek_offset = max(0.0, first_start - 2.0)
     cmd = [resolved_ffmpeg, "-y", "-stats_period", "1"]
     if seek_offset > 0:
         cmd.extend(["-ss", f"{seek_offset:.6f}", "-copyts"])
     cmd.extend(["-i", str(src_path)])
-    select_terms: list[str] = []
-    gap_terms: list[str] = []
-    total_duration = 0.0
-    previous_end: Optional[float] = None
-    for item in ranges:
+    total_duration = sum(max(0.001, float(item["end"]) - float(item["start"])) for item in ranges)
+    video_sources = "".join(f"[trim_v_src_{index}]" for index in range(len(ranges)))
+    filter_parts = [f"[0:v]split={len(ranges)}{video_sources}"]
+    if has_audio:
+        audio_sources = "".join(f"[trim_a_src_{index}]" for index in range(len(ranges)))
+        filter_parts.append(f"[0:a]asplit={len(ranges)}{audio_sources}")
+    concat_inputs: list[str] = []
+    for index, item in enumerate(ranges):
         start = float(item["start"])
         end = float(item["end"])
-        if previous_end is not None:
-            gap = max(0.0, start - previous_end)
-            if gap > 0:
-                gap_terms.append(f"gte(T\\,{start:.6f})*{gap:.6f}")
-        duration = max(0.001, end - start)
-        total_duration += duration
-        select_terms.append(f"(gte(t\\,{start:.6f})*lt(t\\,{end:.6f}))")
-        previous_end = end
-    select_expr = "+".join(select_terms)
-    gap_expr = "+".join(gap_terms) if gap_terms else "0"
-    origin_expr = f"{first_start:.6f}+({gap_expr})"
-    filter_parts = [
-        f"[0:v]settb=AVTB,select='{select_expr}',setpts='PTS-({origin_expr})/TB',fps=fps={source_fps:.6f}:start_time=0,settb=AVTB[v]",
-    ]
-    if has_audio:
         filter_parts.append(
-            f"[0:a]asettb=AVTB,asetnsamples=n=480,aselect='{select_expr}',asetpts='PTS-({origin_expr})/TB',"
-            f"asettb=AVTB,aresample=async=1:first_pts=0,{_audio_edge_fade_filter(total_duration)}[a]"
+            f"[trim_v_src_{index}]trim=start={start:.6f}:end={end:.6f},"
+            f"setpts=PTS-STARTPTS,fps=fps={source_fps:.6f}:start_time=0,settb=AVTB[trim_v_{index}]"
         )
+        concat_inputs.append(f"[trim_v_{index}]")
+        if has_audio:
+            range_duration = max(0.001, end - start)
+            filter_parts.append(
+                f"[trim_a_src_{index}]atrim=start={start:.6f}:end={end:.6f},"
+                f"asetpts=PTS-STARTPTS,aresample=async=1:first_pts=0,"
+                f"{_audio_edge_fade_filter(range_duration)}[trim_a_{index}]"
+            )
+            concat_inputs.append(f"[trim_a_{index}]")
+    filter_parts.append(
+        "".join(concat_inputs)
+        + f"concat=n={len(ranges)}:v=1:a={1 if has_audio else 0}[v]"
+        + ("[a]" if has_audio else "")
+    )
     cmd.extend(["-filter_complex", ";".join(filter_parts), "-map", "[v]"])
     if has_audio:
         cmd.extend(["-map", "[a]"])
@@ -1351,9 +1363,11 @@ def resolve_keep_ranges_for_trim(
         # guard last so no audio heuristic can cross into an unselected word.
         ranges = _guard_keep_ranges_from_unselected_words(ranges, transcript_words)
     if ranges:
+        normal_ranges = [item for item in ranges if item.get("role") != "hook"]
+        bounds = normal_ranges or ranges
         resolution = resolve_clip_ranges(
-            start=ranges[0]["start"],
-            end=ranges[-1]["end"],
+            start=bounds[0]["start"],
+            end=bounds[-1]["end"],
             keep_ranges=ranges,
             media_duration_seconds=media_duration_seconds,
             fallback_duration_seconds=fallback_duration_seconds,
@@ -4809,10 +4823,10 @@ def _compose_trimmed_with_background(
     direct_source_ranges = direct_keep_ranges or [
         {"start": max(0.0, float(start)), "end": max(float(start), float(end))}
     ]
-    direct_source_seek = float(direct_source_ranges[0]["start"])
+    direct_source_seek = min(float(item["start"]) for item in direct_source_ranges)
     direct_source_input_duration = max(
         0.001,
-        float(direct_source_ranges[-1]["end"]) - direct_source_seek,
+        max(float(item["end"]) for item in direct_source_ranges) - direct_source_seek,
     )
 
     if direct_source_timeline:
@@ -5493,7 +5507,7 @@ def _compose_trimmed_with_background(
                 "end": max(0.0, float(item["end"]) - direct_source_seek),
                 **{
                     key: item[key]
-                    for key in ("audio_fade_in_seconds", "audio_fade_out_seconds")
+                    for key in ("audio_fade_in_seconds", "audio_fade_out_seconds", "role", "transition")
                     if key in item
                 },
             }
@@ -5586,6 +5600,28 @@ def _compose_trimmed_with_background(
                     )
                     direct_timeline_audio_label = "[clip_base_a]"
         clip_input_label = "[clip_direct_v]"
+        hook_range = next((item for item in direct_source_ranges if item.get("role") == "hook"), None)
+        hook_transition = str((hook_range or {}).get("transition") or "flash").strip().lower()
+        if hook_range and len(direct_source_ranges) > 1 and hook_transition != "none":
+            hook_cut = max(0.0, float(hook_range["end"]) - float(hook_range["start"]))
+            flash_out_start = max(0.0, hook_cut - 0.1)
+            flash_end = min(duration, hook_cut + 0.1)
+            filter_parts.append(
+                f"color=c=white:s=16x16:d={duration:.6f},format=rgba,"
+                "geq=r='255':g='255':b='255':"
+                f"a='255*if(between(T\\,{flash_out_start:.6f}\\,{hook_cut:.6f})\\,"
+                f"(T-{flash_out_start:.6f})/0.1\\,if(between(T\\,{hook_cut:.6f}\\,{flash_end:.6f})\\,"
+                f"({flash_end:.6f}-T)/0.1\\,0))'[clip_hook_flash_src]"
+            )
+            filter_parts.append(
+                f"[clip_hook_flash_src]{clip_input_label}scale2ref=w=iw:h=ih"
+                "[clip_hook_flash][clip_hook_flash_base]"
+            )
+            filter_parts.append(
+                "[clip_hook_flash_base][clip_hook_flash]"
+                "overlay=eof_action=pass:shortest=0[clip_hook_flash_v]"
+            )
+            clip_input_label = "[clip_hook_flash_v]"
     clip_source_fps = source_fps
     if clip_source_fps > 60.01:
         filter_parts.append(f"{clip_input_label}fps=60[clip_fps_limited]")
@@ -6662,6 +6698,21 @@ def _compose_trimmed_with_background(
         if not edge_audio_source and clip_video_source and _has_audio_stream(clip_video_source):
             edge_audio_source = "[1:a]"
         if edge_audio_source:
+            hook_range = next((item for item in direct_source_ranges if item.get("role") == "hook"), None)
+            hook_transition = str((hook_range or {}).get("transition") or "flash").strip().lower()
+            if hook_range and len(direct_source_ranges) > 1 and hook_transition != "none":
+                hook_cut = max(0.0, float(hook_range["end"]) - float(hook_range["start"]))
+                whoosh_delay_ms = max(0, int(round((hook_cut - 0.15) * 1000)))
+                filter_parts.append(
+                    "anoisesrc=color=pink:amplitude=0.12:duration=0.300:sample_rate=48000,"
+                    "highpass=f=350,lowpass=f=6500,afade=t=in:st=0:d=0.060,"
+                    f"afade=t=out:st=0.180:d=0.120,adelay={whoosh_delay_ms}|{whoosh_delay_ms}[hook_whoosh]"
+                )
+                filter_parts.append(
+                    f"{edge_audio_source}[hook_whoosh]amix=inputs=2:duration=first:"
+                    "dropout_transition=0:normalize=0[hook_audio_mix]"
+                )
+                edge_audio_source = "[hook_audio_mix]"
             edge_fade_in = direct_source_ranges[0].get("audio_fade_in_seconds") if direct_source_ranges else None
             edge_fade_out = direct_source_ranges[-1].get("audio_fade_out_seconds") if direct_source_ranges else None
             filter_parts.append(
@@ -6953,9 +7004,9 @@ def _cut_clip(
     out_path.parent.mkdir(parents=True, exist_ok=True)
     resolved_ffmpeg = _resolve_ffmpeg()
     has_audio = _has_audio_stream(src)
-    seek_start = float(keep_ranges[0]["start"]) if keep_ranges else max(0.0, float(start))
+    seek_start = min(float(item["start"]) for item in keep_ranges) if keep_ranges else max(0.0, float(start))
     input_duration = (
-        max(0.001, float(keep_ranges[-1]["end"]) - seek_start)
+        max(0.001, max(float(item["end"]) for item in keep_ranges) - seek_start)
         if keep_ranges
         else duration
     )
@@ -7007,8 +7058,23 @@ def _cut_clip(
                 "".join(concat_inputs)
                 + f"concat=n={len(relative_ranges)}:v=1:a=1[cut_v][cut_a_raw]"
             )
+            cut_audio_source = "[cut_a_raw]"
+            hook_range = next((item for item in keep_ranges if item.get("role") == "hook"), None)
+            if hook_range and len(keep_ranges) > 1 and hook_range.get("transition") != "none":
+                hook_cut = max(0.0, float(hook_range["end"]) - float(hook_range["start"]))
+                whoosh_delay_ms = max(0, int(round((hook_cut - 0.15) * 1000)))
+                filter_parts.append(
+                    "anoisesrc=color=pink:amplitude=0.12:duration=0.300:sample_rate=48000,"
+                    "highpass=f=350,lowpass=f=6500,afade=t=in:st=0:d=0.060,"
+                    f"afade=t=out:st=0.180:d=0.120,adelay={whoosh_delay_ms}|{whoosh_delay_ms}[cut_hook_whoosh]"
+                )
+                filter_parts.append(
+                    f"{cut_audio_source}[cut_hook_whoosh]amix=inputs=2:duration=first:"
+                    "dropout_transition=0:normalize=0[cut_hook_audio]"
+                )
+                cut_audio_source = "[cut_hook_audio]"
             filter_parts.append(
-                f"[cut_a_raw]{_audio_edge_fade_filter(duration)}[cut_a]"
+                f"{cut_audio_source}{_audio_edge_fade_filter(duration)}[cut_a]"
             )
             audio_map = "[cut_a]"
         else:
@@ -7017,6 +7083,27 @@ def _cut_clip(
                 + f"concat=n={len(relative_ranges)}:v=1:a=0[cut_v]"
             )
         video_map = "[cut_v]"
+        hook_range = next((item for item in keep_ranges if item.get("role") == "hook"), None)
+        if hook_range and len(keep_ranges) > 1 and hook_range.get("transition") != "none":
+            hook_cut = max(0.0, float(hook_range["end"]) - float(hook_range["start"]))
+            flash_start = max(0.0, hook_cut - 0.1)
+            flash_end = min(duration, hook_cut + 0.1)
+            filter_parts.append(
+                f"color=c=white:s=16x16:d={duration:.6f},format=rgba,"
+                "geq=r='255':g='255':b='255':"
+                f"a='255*if(between(T\\,{flash_start:.6f}\\,{hook_cut:.6f})\\,"
+                f"(T-{flash_start:.6f})/0.1\\,if(between(T\\,{hook_cut:.6f}\\,{flash_end:.6f})\\,"
+                f"({flash_end:.6f}-T)/0.1\\,0))'[cut_hook_flash_src]"
+            )
+            filter_parts.append(
+                f"[cut_hook_flash_src]{video_map}scale2ref=w=iw:h=ih"
+                "[cut_hook_flash][cut_hook_flash_base]"
+            )
+            filter_parts.append(
+                "[cut_hook_flash_base][cut_hook_flash]"
+                "overlay=eof_action=pass:shortest=0[cut_hook_flash_v]"
+            )
+            video_map = "[cut_hook_flash_v]"
     elif has_audio:
         filter_parts.append(f"[0:a]{_audio_edge_fade_filter(duration)}[cut_a]")
         audio_map = "[cut_a]"

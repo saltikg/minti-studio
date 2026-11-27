@@ -1,3 +1,5 @@
+from pathlib import Path
+
 import numpy as np
 
 from app.video_shorts.routes import generation
@@ -220,3 +222,67 @@ def test_indexed_caption_text_excludes_unselected_neighbors():
 
     assert [word["word"] for word in remapped[0]["words"]] == ["selected"]
     assert remapped[0]["text"] == "selected"
+
+
+def test_hook_range_stays_first_and_overlapping_normal_part_is_preserved():
+    normalized = generation._normalize_edit_keep_ranges([
+        {"start": 20.0, "end": 25.0},
+        {"start": 20.0, "end": 24.0, "role": "hook", "transition": "flash",
+         "start_word_index": 20, "end_word_index": 24},
+        {"start": 2.0, "end": 10.0},
+    ])
+
+    assert normalized == [
+        {"start": 20.0, "end": 24.0, "start_word_index": 20, "end_word_index": 24,
+         "role": "hook", "transition": "flash"},
+        {"start": 2.0, "end": 10.0},
+        {"start": 20.0, "end": 25.0},
+    ]
+
+
+def test_caption_remap_duplicates_hook_words_on_output_timeline():
+    segments = [{
+        "start": 0.0,
+        "end": 6.0,
+        "text": "zero one two three four five",
+        "words": [
+            {"word": value, "start": float(index), "end": float(index) + 0.8}
+            for index, value in enumerate(("zero", "one", "two", "three", "four", "five"))
+        ],
+    }]
+    ranges = [
+        {"start": 4.0, "end": 5.0, "start_word_index": 4, "end_word_index": 4,
+         "role": "hook", "transition": "flash"},
+        {"start": 1.0, "end": 5.0, "start_word_index": 1, "end_word_index": 4},
+    ]
+
+    remapped = generation._remap_transcript_segments_to_keep_ranges(segments, ranges)
+
+    assert [segment["text"] for segment in remapped] == ["four", "one two three four"]
+    assert remapped[0]["words"][0]["start"] == 0.0
+    assert remapped[1]["words"][-1]["start"] == 4.0
+
+
+def test_face_samples_follow_hook_then_normal_output_timeline(monkeypatch):
+    def fake_cached_samples(**kwargs):
+        start = float(kwargs["start_seconds"])
+        return [{"t": 0.0, "source_t": start, "face_count": int(start)}]
+
+    monkeypatch.setattr(generation, "_cached_face_samples_for_range", fake_cached_samples)
+    samples = generation._sample_face_presence_for_layout(
+        video_id="hook-smoke",
+        source_path=Path("/tmp/not-read.mp4"),
+        start_seconds=0.0,
+        end_seconds=5.0,
+        source_keep_ranges=[
+            {"start": 4.0, "end": 5.0, "role": "hook", "transition": "flash"},
+            {"start": 0.0, "end": 2.0},
+            {"start": 4.0, "end": 5.0},
+        ],
+    )
+
+    assert [(sample["t"], sample["face_count"]) for sample in samples] == [
+        (0.0, 4),
+        (1.0, 0),
+        (3.0, 4),
+    ]

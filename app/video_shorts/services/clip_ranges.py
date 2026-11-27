@@ -55,6 +55,7 @@ def clip_timing(
 ) -> Optional[ClipTiming]:
     """Return the displayed/rendered timing contract for a clip."""
     parsed_ranges: list[tuple[float, float]] = []
+    normal_ranges: list[tuple[float, float]] = []
     for item in keep_ranges or []:
         if not isinstance(item, dict):
             continue
@@ -62,12 +63,16 @@ def clip_timing(
         range_end = _as_float(item.get("end"))
         if range_start is None or range_end is None or range_end <= range_start:
             continue
-        parsed_ranges.append((max(0.0, range_start), max(0.0, range_end)))
+        parsed = (max(0.0, range_start), max(0.0, range_end))
+        parsed_ranges.append(parsed)
+        if str(item.get("role") or "").strip().lower() != "hook":
+            normal_ranges.append(parsed)
     if parsed_ranges:
         parsed_ranges.sort(key=lambda item: (item[0], item[1]))
+        bounds = sorted(normal_ranges or parsed_ranges, key=lambda item: (item[0], item[1]))
         return ClipTiming(
-            start=parsed_ranges[0][0],
-            end=parsed_ranges[-1][1],
+            start=bounds[0][0],
+            end=bounds[-1][1],
             duration=sum(range_end - range_start for range_start, range_end in parsed_ranges),
         )
     parsed_start = _as_float(start)
@@ -122,6 +127,9 @@ def resolve_clip_ranges(
                 pass
         if item.get("audio_verified_pause_end") is True:
             parsed["audio_verified_pause_end"] = True
+        if str(item.get("role") or "").strip().lower() == "hook":
+            parsed["role"] = "hook"
+            parsed["transition"] = "none" if str(item.get("transition") or "").strip().lower() == "none" else "flash"
         raw_ranges.append(parsed)
     if not raw_ranges:
         raw_ranges = [{"start": parsed_start, "end": parsed_end}]
@@ -157,16 +165,21 @@ def resolve_clip_ranges(
                 parsed[key] = item[key]
         if item.get("audio_verified_pause_end") is True:
             parsed["audio_verified_pause_end"] = True
+        if item.get("role") == "hook":
+            parsed["role"] = "hook"
+            parsed["transition"] = item.get("transition", "flash")
         resolved.append(parsed)
 
     if not resolved:
         message = RANGE_END_ERROR if media_end is not None else "The selected clip has no usable duration."
         return ClipRangeResolution(False, 0.0, 0.0, [], message, clamped)
 
+    normal_ranges = [item for item in resolved if item.get("role") != "hook"]
+    bounds = normal_ranges or resolved
     return ClipRangeResolution(
         True,
-        resolved[0]["start"],
-        resolved[-1]["end"],
+        bounds[0]["start"],
+        bounds[-1]["end"],
         resolved,
         clamped=clamped,
     )
