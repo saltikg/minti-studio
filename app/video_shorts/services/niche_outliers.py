@@ -1037,6 +1037,10 @@ def run_weekly_refresh_if_due(now: datetime | None = None) -> dict[str, Any] | N
             if pattern:
                 persist_niche_outlier_pattern(pattern)
                 result["pattern"] = pattern
+            from app.video_shorts.services.niche_rising_topics import (
+                compute_and_persist_rising_topics,
+            )
+            result["rising_topics"] = compute_and_persist_rising_topics(niche_slug)
             results[niche_slug] = result
         except Exception as exc:
             logger.exception("Weekly niche outlier refresh failed niche=%s: %s", niche_slug, exc)

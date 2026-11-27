@@ -126,12 +126,13 @@
   <div class="niche-tabs">
     <a class="niche-tab {% if tab == 'pool' %}is-active{% endif %}" href="{{ url_for('video_shorts_bp.admin_niches', niche=selected.slug, snapshot=selected.snapshot_date, tab='pool') }}">Pool ({{ pool_size }})</a>
     <a class="niche-tab {% if tab == 'top_shorts' %}is-active{% endif %}" href="{{ url_for('video_shorts_bp.admin_niches', niche=selected.slug, snapshot=selected.snapshot_date, tab='top_shorts') }}">Top Shorts (last 30 days)</a>
+    <a class="niche-tab {% if tab == 'rising_topics' %}is-active{% endif %}" href="{{ url_for('video_shorts_bp.admin_niches', niche=selected.slug, snapshot=selected.snapshot_date, tab='rising_topics') }}">Rising topics</a>
     <a class="niche-tab {% if tab == 'near_misses' %}is-active{% endif %}" href="{{ url_for('video_shorts_bp.admin_niches', niche=selected.slug, snapshot=selected.snapshot_date, tab='near_misses') }}">Near misses ({{ near_miss_count }})</a>
     {% if channel_type_enabled %}<a class="niche-tab {% if tab == 'faceless_story' %}is-active{% endif %}" href="{{ url_for('video_shorts_bp.admin_niches', niche=selected.slug, snapshot=selected.snapshot_date, tab='faceless_story') }}">Faceless story ({{ faceless_story_count }})</a>{% endif %}
     <a class="niche-tab {% if tab == 'excluded' %}is-active{% endif %}" href="{{ url_for('video_shorts_bp.admin_niches', niche=selected.slug, snapshot=selected.snapshot_date, tab='excluded') }}">Excluded ({{ excluded_count }})</a>
   </div>
 
-  {% if tab != 'top_shorts' %}
+  {% if tab not in ['top_shorts', 'rising_topics'] %}
   <form class="niche-filters" method="get">
     <input type="hidden" name="niche" value="{{ selected.slug }}"><input type="hidden" name="snapshot" value="{{ selected.snapshot_date }}">
     <input type="hidden" name="tab" value="{{ tab }}">
@@ -175,6 +176,21 @@
     <td>{{ '%.2f'|format(row.engagement * 100) }}%</td>
   </tr>{% endfor %}
   </tbody></table></div>{% else %}<div class="niche-empty">No outlier Shorts have been computed for this niche yet.</div>{% endif %}
+  </section>
+  {% elif tab == 'rising_topics' %}
+  <section class="niche-panel"><div class="niche-panel-head">
+    <div><h2>{{ selected.name }} · Rising topics</h2><div class="niche-muted" style="margin-top:4px">Updated: {{ rising_as_of or 'Not yet computed' }}</div></div>
+  </div>
+  {% if rising_topics %}<div class="niche-table-wrap"><table class="niche-table is-shorts"><thead><tr>
+    <th class="is-left">Topic</th><th>Creators</th><th>Outlier views</th><th class="is-left">Examples</th><th class="is-left">Brand matches &amp; evidence</th>
+  </tr></thead><tbody>
+  {% for topic in rising_topics %}<tr>
+    <td class="is-left"><strong>{{ topic.label }}</strong></td>
+    <td>{{ topic.channel_count }}</td><td>{{ '{:,}'.format(topic.total_views | int) }}</td>
+    <td class="is-left">{% for example in topic.examples %}<div><a class="niche-channel" href="{{ example.url }}" target="_blank" rel="noopener">{{ example.title }}</a><div class="niche-subtext">{{ example.channel }} · {{ '{:,}'.format(example.views | int) }} views</div></div>{% endfor %}</td>
+    <td class="is-left">{% for match in topic.matches %}<div style="margin-bottom:8px"><strong>{{ match.brand_name }}</strong> · <span class="niche-badge customer">{{ match.status_label }}</span>{% if match.evidence %}<div class="niche-subtext">{{ match.evidence }}</div>{% endif %}</div>{% else %}—{% endfor %}</td>
+  </tr>{% endfor %}
+  </tbody></table></div>{% else %}<div class="niche-empty">No rising topics have been computed for this niche yet.</div>{% endif %}
   </section>
   {% else %}
   <section class="niche-panel"><div class="niche-panel-head">

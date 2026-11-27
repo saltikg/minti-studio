@@ -20,6 +20,7 @@
   .customer-niche-page .customer-niche-table td { background: transparent !important; color: #E8EDF2; }
   .customer-niche-page .customer-niche-table td, .customer-niche-page .customer-niche-table th { border-color: rgba(255,255,255,.1); padding: .8rem .75rem; vertical-align: middle; }
   .customer-niche-page .customer-niche-table tr.is-you td { background: rgba(45,212,191,.13) !important; color: #E8EDF2; font-weight: 700; }
+  .customer-niche-page .customer-niche-best-ratio { color: #5EEAD4 !important; font-weight: 800; }
   .customer-niche-page .customer-niche-cards { display: grid; gap: 16px; grid-template-columns: repeat(3, minmax(0, 1fr)); }
   .customer-niche-page .customer-niche-short { border: 1px solid rgba(255,255,255,.14); border-radius: 18px; color: #E8EDF2; display: flex; flex-direction: column; min-height: 210px; padding: 20px; text-decoration: none; transition: transform .15s ease, border-color .15s ease; }
   .customer-niche-page .customer-niche-short:hover { border-color: rgba(125,211,252,.7); color: #E8EDF2; transform: translateY(-2px); }
@@ -46,15 +47,14 @@
     <div class="card-body p-4">
       <h2 class="customer-niche-section-title mb-3">Your place</h2>
       {% if niche_page.place %}
-        <div class="d-flex flex-wrap align-items-end justify-content-between gap-3 mb-3">
+        <div class="d-flex flex-wrap align-items-end gap-3 mb-3">
           <div class="customer-niche-rank">#{{ niche_page.place.rank }} <span>of {{ niche_page.place.total }}</span></div>
-          <div class="customer-niche-top">Top {{ niche_page.place.top_percent }}% of your niche</div>
         </div>
         <div class="customer-niche-position mb-4" style="--position: {{ niche_page.place.position_percent }}%" aria-label="Rank {{ niche_page.place.rank }} of {{ niche_page.place.total }}"></div>
         <div class="table-responsive mb-3">
           <table class="table customer-niche-table">
-            <thead><tr><th>Rank</th><th>Channel</th><th class="text-end">Subscribers</th><th class="text-end">Views on videos posted in the last 90 days</th></tr></thead>
-            <tbody>{% for row in niche_page.place.neighbors %}<tr class="{% if row.is_you %}is-you{% endif %}"><td>#{{ row.rank }}</td><td>{{ row.channel_name }}{% if row.is_you %} <span class="badge text-bg-info ms-1">You</span>{% endif %}</td><td class="text-end">{{ row.subscribers_display }}</td><td class="text-end">{{ row.views_90d_display }}</td></tr>{% endfor %}</tbody>
+            <thead><tr><th>Rank</th><th>Channel</th><th class="text-end">Subscribers</th><th class="text-end">Views on videos posted in the last 90 days</th><th class="text-end" title="Views on videos posted in the last 90 days, divided by subscribers">Views / subscriber</th></tr></thead>
+            <tbody>{% for row in niche_page.place.neighbors %}<tr class="{% if row.is_you %}is-you{% endif %}"><td>#{{ row.rank }}</td><td>{{ row.channel_name }}{% if row.is_you %} <span class="badge text-bg-info ms-1">You</span>{% endif %}</td><td class="text-end">{{ row.subscribers_display }}</td><td class="text-end">{{ row.views_90d_display }}</td><td class="text-end {% if row.best_views_per_subscriber %}customer-niche-best-ratio{% endif %}">{{ '%.1f'|format(row.views_per_subscriber) if row.views_per_subscriber is not none else '—' }}</td></tr>{% endfor %}</tbody>
           </table>
         </div>
       {% elif not niche_page.publishing_channel_id %}
@@ -83,6 +83,28 @@
         <p class="customer-niche-muted">No standout Shorts are available this week.</p>
       {% endif %}
       {% if niche_page.pattern %}<p class="customer-niche-pattern mt-4 mb-0"><strong>Pattern this week:</strong> {{ niche_page.pattern }}</p>{% endif %}
+    </div>
+  </section>
+
+  <section class="card shadow-sm vs-card mb-4">
+    <div class="card-body p-4">
+      <h2 class="customer-niche-section-title mb-1">Rising topics in your niche</h2>
+      <p class="customer-niche-muted mb-4">Specific ideas gaining traction across multiple creators.</p>
+      {% if niche_page.rising_topics %}
+        <div class="d-grid gap-3">
+          {% for topic in niche_page.rising_topics %}
+            <div class="border-bottom border-secondary-subtle pb-3">
+              <div class="d-flex flex-wrap justify-content-between gap-2 align-items-start">
+                <div><div class="customer-niche-short-title">{{ topic.label }}</div><div class="customer-niche-muted small">{{ topic.channel_count }} creators · {{ '{:,}'.format(topic.total_views | int) }} views</div></div>
+                {% if topic.status == 'archive' and topic.archive_url %}<a class="badge text-bg-info text-decoration-none" href="{{ topic.archive_url }}">{{ topic.status_label }}</a>{% else %}<span class="badge text-bg-info">{{ topic.status_label }}</span>{% endif %}
+              </div>
+              {% if topic.examples %}<a class="customer-niche-muted small d-inline-block mt-2" href="{{ topic.examples[0].url }}" target="_blank" rel="noopener noreferrer">Example: {{ topic.examples[0].title }}</a>{% endif %}
+            </div>
+          {% endfor %}
+        </div>
+      {% else %}
+        <p class="customer-niche-muted mb-0">No rising topics are available this week.</p>
+      {% endif %}
     </div>
   </section>
 </div>

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import math
+import re
 from datetime import date
 from typing import Any
 
@@ -10,6 +11,7 @@ from app.video_shorts.services.niche_outliers import (
     customer_visible_outlier_rows,
     load_latest_niche_outliers,
 )
+from app.video_shorts.services.niche_rising_topics import load_rising_topics
 from app.video_shorts.services.niches import final_niche_pool, load_niche_snapshot
 
 
@@ -35,16 +37,27 @@ def _ranked_pool(rows: list[dict[str, Any]], niche: dict[str, Any]) -> list[dict
 
 def _display_rank_row(row: dict[str, Any], rank: int, own_channel_ids: set[str]) -> dict[str, Any]:
     channel_id = str(row.get("youtube_channel_id") or "")
+    subscribers = int(row.get("subscriber_count") or 0)
+    views_90d = int(row.get("views_90d") or 0)
     return {
         "rank": rank,
         "youtube_channel_id": channel_id,
         "channel_name": str(row.get("title") or "Untitled channel"),
-        "subscribers": int(row.get("subscriber_count") or 0),
+        "subscribers": subscribers,
         "subscribers_display": compact_number(row.get("subscriber_count")),
-        "views_90d": int(row.get("views_90d") or 0),
+        "views_90d": views_90d,
         "views_90d_display": compact_number(row.get("views_90d")),
+        "views_per_subscriber": (views_90d / subscribers) if subscribers > 0 else None,
+        "best_views_per_subscriber": False,
         "is_you": channel_id in own_channel_ids,
     }
+
+
+def display_short_title(value: Any) -> str:
+    original = " ".join(str(value or "").split())
+    cleaned = re.sub(r"(?<!\w)#[\w-]+", " ", original, flags=re.UNICODE)
+    cleaned = " ".join(cleaned.split()).rstrip(" .,:;!?-–—|/")
+    return cleaned or original
 
 
 def _top_outlier_cards(
@@ -66,7 +79,7 @@ def _top_outlier_cards(
             {
                 "video_id": str(row.get("video_id") or ""),
                 "url": f"https://youtube.com/shorts/{row.get('video_id')}",
-                "title": str(row.get("title") or "Untitled Short"),
+                "title": display_short_title(row.get("title") or "Untitled Short"),
                 "channel_name": (
                     "You"
                     if channel_id in own_channel_ids
@@ -121,6 +134,15 @@ def load_customer_niche_page(
     if own_index is not None:
         rank = own_index + 1
         total = len(ranked_rows)
+        neighbors = ranked_rows[max(0, own_index - 2) : own_index + 3]
+        ratios = [
+            row["views_per_subscriber"] for row in neighbors
+            if row["views_per_subscriber"] is not None
+        ]
+        if ratios:
+            best_ratio = max(ratios)
+            for row in neighbors:
+                row["best_views_per_subscriber"] = row["views_per_subscriber"] == best_ratio
         place = {
             "rank": rank,
             "total": total,
@@ -128,7 +150,7 @@ def load_customer_niche_page(
             "position_percent": (
                 0.0 if total <= 1 else round((rank - 1) * 100 / (total - 1), 2)
             ),
-            "neighbors": ranked_rows[max(0, own_index - 2) : own_index + 3],
+            "neighbors": neighbors,
         }
 
     as_of, outlier_rows = load_latest_niche_outliers(conn, niche["id"])
@@ -149,6 +171,9 @@ def load_customer_niche_page(
             [niche["id"], as_of],
         ).fetchone()
         pattern = str((row[0] if row else "") or "").strip()
+    rising_as_of, rising_topics = load_rising_topics(
+        conn, niche["id"], brand_id=brand_id
+    )
     return {
         "brand_id": str(brand[0]),
         "brand_name": str(brand[1] or "Customer"),
@@ -166,4 +191,6 @@ def load_customer_niche_page(
         "place": place,
         "cards": cards,
         "pattern": pattern,
+        "rising_as_of": rising_as_of,
+        "rising_topics": rising_topics[:5],
     }
