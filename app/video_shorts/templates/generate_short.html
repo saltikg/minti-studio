@@ -3168,6 +3168,53 @@
     background: rgba(45, 212, 191, 0.2);
     color: #e6fffb;
   }
+  .clip-text-trim-word.is-hook {
+    background: rgba(250, 204, 21, 0.24);
+    color: #fef3c7;
+    box-shadow: inset 0 -2px 0 rgba(250, 204, 21, 0.72);
+    text-decoration: none;
+  }
+  .clip-text-trim-word.is-hook:not(.is-muted) {
+    background: linear-gradient(180deg, rgba(250, 204, 21, 0.24), rgba(45, 212, 191, 0.16));
+  }
+  .clip-text-trim-hook-block {
+    display: grid;
+    gap: 6px;
+    margin: 0 0 10px;
+    padding: 10px;
+    border: 1px solid rgba(250, 204, 21, 0.4);
+    border-radius: 10px;
+    background: rgba(120, 53, 15, 0.2);
+    color: #fef3c7;
+  }
+  .clip-text-trim-hook-head,
+  .clip-text-trim-hook-actions {
+    display: flex;
+    align-items: center;
+    flex-wrap: wrap;
+    gap: 8px;
+  }
+  .clip-text-trim-hook-chip {
+    font-size: 0.76rem;
+    font-weight: 900;
+  }
+  .clip-text-trim-hook-time {
+    color: rgba(254, 243, 199, 0.72);
+    font-size: 0.72rem;
+  }
+  .clip-text-trim-hook-copy {
+    font-size: 0.82rem;
+    line-height: 1.4;
+  }
+  .clip-text-trim-hook-actions label {
+    display: inline-flex;
+    align-items: center;
+    gap: 5px;
+    margin: 0;
+    color: #fde68a;
+    font-size: 0.72rem;
+    font-weight: 800;
+  }
   .clip-text-trim-more {
     display: inline-flex;
     margin: 0 0 6px;
@@ -15850,14 +15897,18 @@ const renderClipTextTrimEditor = (form, options = {}) => {
   const previousScrollTop = editor.scrollTop;
   const words = getGenerateV2WordTimestamps();
   const keepRanges = getClipKeepRangesFromForm(form, words);
+  const hook = keepRanges.find((range) => range.role === "hook") || null;
+  const normalKeepRanges = keepRanges.filter((range) => range.role !== "hook");
   const start = keepRanges[0]?.start ?? Number(startInput.value || form.dataset.initialStart || 0);
   const end = keepRanges[keepRanges.length - 1]?.end ?? Number(endInput.value || form.dataset.initialEnd || 0);
-  const keptIndexes = Array.from(rangesToWordIndexSet(words, keepRanges));
-  if (!keptIndexes.length) {
+  const normalKeptIndexes = Array.from(rangesToWordIndexSet(words, normalKeepRanges));
+  const hookIndexes = Array.from(rangesToWordIndexSet(words, hook ? [hook] : []));
+  const visibleKeptIndexes = Array.from(new Set([...normalKeptIndexes, ...hookIndexes]));
+  if (!visibleKeptIndexes.length) {
     editor.textContent = "Word timestamps are not available for this clip.";
     return;
   }
-  const keptSentences = keptIndexes.map((index) => Number(words[index]?.sentence || 0));
+  const keptSentences = visibleKeptIndexes.map((index) => Number(words[index]?.sentence || 0));
   const minSentence = Math.min(...keptSentences);
   const maxSentence = Math.max(...keptSentences);
   const beforeCount = Number(form.dataset.contextBefore || 3);
@@ -15865,14 +15916,71 @@ const renderClipTextTrimEditor = (form, options = {}) => {
   const visibleMinSentence = minSentence - beforeCount;
   const visibleMaxSentence = maxSentence + afterCount;
   const fragment = document.createDocumentFragment();
+  if (hook) {
+    const hookBlock = document.createElement("div");
+    hookBlock.className = "clip-text-trim-hook-block";
+    hookBlock.dataset.clipTrimHookBlock = "1";
+    const head = document.createElement("div");
+    head.className = "clip-text-trim-hook-head";
+    const chip = document.createElement("span");
+    chip.className = "clip-text-trim-hook-chip";
+    chip.textContent = "⚡ Hook";
+    const time = document.createElement("span");
+    time.className = "clip-text-trim-hook-time";
+    time.textContent = `${formatClipDurationLabel(hook.start)} – ${formatClipDurationLabel(hook.end)}`;
+    head.append(chip, time);
+    const copy = document.createElement("div");
+    copy.className = "clip-text-trim-hook-copy";
+    copy.textContent = hookIndexes
+      .map((index) => String(words[index]?.text || "").trim())
+      .filter(Boolean)
+      .join(" ");
+    const actions = document.createElement("div");
+    actions.className = "clip-text-trim-hook-actions";
+    const transitionLabel = document.createElement("label");
+    transitionLabel.textContent = "Hook transition";
+    const transition = document.createElement("select");
+    transition.className = "form-select form-select-sm d-inline-block w-auto";
+    transition.dataset.editHookTransition = "1";
+    transition.disabled = form.dataset.readonly === "1";
+    [["flash", "Flash"], ["none", "None"]].forEach(([value, label]) => {
+      const option = document.createElement("option");
+      option.value = value;
+      option.textContent = label;
+      transition.appendChild(option);
+    });
+    transition.value = hook.transition === "none" ? "none" : "flash";
+    transition.addEventListener("change", () => {
+      keepRangesInput.value = JSON.stringify([
+        { ...hook, transition: transition.value === "none" ? "none" : "flash" },
+        ...normalKeepRanges,
+      ]);
+      renderClipTextTrimEditor(form, { preserveScroll: true });
+    });
+    transitionLabel.appendChild(transition);
+    const remove = document.createElement("button");
+    remove.type = "button";
+    remove.className = "btn btn-sm btn-outline-warning";
+    remove.dataset.editRemoveHook = "1";
+    remove.textContent = "Remove hook";
+    remove.disabled = form.dataset.readonly === "1";
+    remove.addEventListener("click", () => {
+      keepRangesInput.value = JSON.stringify(normalKeepRanges);
+      renderClipTextTrimEditor(form, { preserveScroll: true });
+    });
+    actions.append(transitionLabel, remove);
+    hookBlock.append(head, copy, actions);
+    fragment.appendChild(hookBlock);
+  }
   words.forEach((word, index) => {
     const sentence = Number(word.sentence || 0);
     if (sentence < visibleMinSentence || sentence > visibleMaxSentence) return;
     const span = document.createElement("span");
     span.className = "clip-text-trim-word";
-    if (!keptIndexes.includes(index)) {
+    if (!normalKeptIndexes.includes(index)) {
       span.classList.add("is-muted");
     }
+    if (hookIndexes.includes(index)) span.classList.add("is-hook");
     span.dataset.wordIndex = String(index);
     span.textContent = `${word.text || ""} `;
     span.addEventListener("mousedown", (event) => {
@@ -15953,7 +16061,9 @@ const applyClipTextTrimSelection = (form, action) => {
   const endInput = form.querySelector("[data-edit-end-input]");
   const selectedIndexes = normalizeWordSelection(form);
   const currentRanges = getClipKeepRangesFromForm(form, words);
-  const nextRange = selectionToClipKeepRanges(words, currentRanges, selectedIndexes, action);
+  const hook = currentRanges.find((range) => range.role === "hook") || null;
+  const normalRanges = currentRanges.filter((range) => range.role !== "hook");
+  const nextRange = selectionToClipKeepRanges(words, normalRanges, selectedIndexes, action);
   if (!selectedIndexes.length) {
     setClipEditError(form, "Select clip text first.");
     return;
@@ -15962,7 +16072,8 @@ const applyClipTextTrimSelection = (form, action) => {
     setClipEditError(form, "That edit could not be applied.");
     return;
   }
-  const duration = clipKeepRangesDuration(nextRange.ranges);
+  const nextRanges = normalizeClipKeepRanges([...(hook ? [hook] : []), ...nextRange.ranges]);
+  const duration = clipKeepRangesDuration(nextRanges);
   if (duration < CLIP_MIN_DURATION_SECONDS || duration > CLIP_MAX_DURATION_SECONDS) {
     setClipEditError(
       form,
@@ -15973,11 +16084,12 @@ const applyClipTextTrimSelection = (form, action) => {
     return;
   }
   setClipEditError(form, "");
-  startInput.value = String(nextRange.start);
-  endInput.value = String(nextRange.end);
+  const timing = clipKeepRangesTiming(nextRanges);
+  startInput.value = String(timing?.start ?? nextRange.start);
+  endInput.value = String(timing?.end ?? nextRange.end);
   const keepRangesInput = form.querySelector("[data-edit-keep-ranges-input]");
   if (keepRangesInput) {
-    keepRangesInput.value = JSON.stringify(nextRange.ranges);
+    keepRangesInput.value = JSON.stringify(nextRanges);
   }
   const selectionSourceInput = form.querySelector("input[name='selection_source']");
   if (selectionSourceInput) {
@@ -16075,7 +16187,8 @@ const initGenerateV2ClipTitleTimeEditors = () => {
       }
       const words = getGenerateV2WordTimestamps();
       const currentRanges = getClipKeepRangesFromForm(form, words);
-      const includesRemoved = selectedIndexes.some((index) => !wordIndexInRanges(words[index], currentRanges));
+      const normalRanges = currentRanges.filter((range) => range.role !== "hook");
+      const includesRemoved = selectedIndexes.some((index) => !wordIndexInRanges(words[index], normalRanges));
       if (includesRemoved) {
         toolbar.querySelector("[data-trim-action='restore']")?.classList.remove("d-none");
       } else {

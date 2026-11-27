@@ -4,6 +4,7 @@ from pathlib import Path
 import pytest
 from PIL import Image, ImageFont
 
+from app.video_shorts.routes import generation
 from app.video_shorts.config import SUBTITLE_PRESETS
 from app.video_shorts.services.compositor import _overlay_position_enable_expr
 from app.video_shorts.services import compositor, transcript_service
@@ -273,3 +274,57 @@ def test_caption_path_encodes_exactly_once_before_compositor(monkeypatch):
         for path in cleanup:
             if path.is_dir():
                 shutil.rmtree(path, ignore_errors=True)
+
+
+def test_hook_caption_frames_cover_hook_and_natural_occurrence() -> None:
+    words = [
+        {"word": f"word-{index}", "start": float(index), "end": float(index) + 0.7, "index": index}
+        for index in range(12)
+    ]
+    segments = [{
+        "start": 0.0,
+        "end": 12.0,
+        "text": " ".join(item["word"] for item in words),
+        "words": words,
+    }]
+    ranges = [
+        {
+            "start": 4.0, "end": 8.0, "start_word_index": 4, "end_word_index": 7,
+            "role": "hook", "transition": "flash",
+        },
+        {"start": 0.0, "end": 12.0, "start_word_index": 0, "end_word_index": 11},
+    ]
+
+    remapped = generation._remap_transcript_segments_to_keep_ranges(segments, ranges)
+    assert [len(segment["words"]) for segment in remapped] == [4, 12]
+    repeated = [f"word-{index}" for index in range(4, 8)]
+    assert [word["word"] for word in remapped[0]["words"]] == repeated
+    assert [word["word"] for word in remapped[1]["words"]][4:8] == repeated
+    assert remapped[0]["words"][0]["start"] == pytest.approx(0.0)
+    assert remapped[1]["words"][4]["start"] == pytest.approx(8.0)
+
+    _overlay, cleanup, meta = transcript_service._build_word_highlight_caption_overlay(
+        remapped,
+        0.0,
+        16.0,
+        subtitle_font_size=40,
+        subtitle_margin=300,
+        subtitle_preset="podcast",
+        subtitle_font_key="montserrat_black_italic",
+        subtitle_effect="outline_shadow",
+        target_width=720,
+        target_height=1280,
+        defer_overlay_video=True,
+    )
+    try:
+        specs = meta.get("specs") or []
+        assert any(float(spec["start"]) < 4.0 for spec in specs)
+        assert any(4.0 <= float(spec["start"]) < 16.0 for spec in specs)
+        assert all(Path(spec["path"]).exists() for spec in specs)
+    finally:
+        for path in cleanup:
+            path = Path(path)
+            if path.is_dir():
+                shutil.rmtree(path, ignore_errors=True)
+            else:
+                path.unlink(missing_ok=True)

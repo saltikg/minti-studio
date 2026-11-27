@@ -73,6 +73,36 @@ def _admin_video_context(video_id: int | None) -> tuple[int, str, str]:
         conn.close()
 
 
+def _latest_saved_hook_plan(video_id: int) -> dict:
+    conn = get_db_readonly()
+    try:
+        rows = conn.execute(
+            """
+            SELECT gv.raw_plan_entry_json
+            FROM shorts_generated_videos gv
+            JOIN youtube_videos v ON CAST(v.video_id AS VARCHAR) = CAST(gv.source_video_id AS VARCHAR)
+            WHERE v.id = ?
+            ORDER BY gv.updated_at DESC
+            LIMIT 20
+            """,
+            [video_id],
+        ).fetchall()
+        for (raw_entry,) in rows:
+            entry = raw_entry if isinstance(raw_entry, dict) else json.loads(raw_entry or "{}")
+            ranges = entry.get("edit_keep_ranges") or []
+            if any(isinstance(part, dict) and part.get("role") == "hook" for part in ranges):
+                return {
+                    "plan_index": int(entry.get("plan_index") or 0),
+                    "title": str(entry.get("title") or "Hook smoke"),
+                    "start": float(entry.get("start") or 0),
+                    "end": float(entry.get("end") or 0),
+                    "ranges": ranges,
+                }
+    finally:
+        conn.close()
+    raise RuntimeError(f"No saved hook plan found for video {video_id}")
+
+
 @contextmanager
 def _test_server(app):
     server = make_server("127.0.0.1", 0, app, threaded=True)
@@ -311,6 +341,99 @@ def _assert_make_clip_hook_is_first(page: Page, variant: str) -> None:
     assert len(resolved_ranges) == 2 and resolved_ranges[0].get("role") == "hook", preview
     assert resolved_ranges[0]["start"] > resolved_ranges[1]["start"], preview
     _print_pass(variant, "Make a Clip hook copies into normal flow and previews hook then 305-343")
+
+
+def _assert_saved_hook_trim_preserves_hook(page: Page, variant: str, saved_plan: dict) -> None:
+    result = page.evaluate(
+        """savedPlan => {
+          const forms = Array.from(document.querySelectorAll('[data-edit-title-time-form]'));
+          let form = forms.find(candidate => {
+            try {
+              return JSON.parse(candidate.dataset.initialKeepRanges || '[]')
+                .some(part => part?.role === 'hook');
+            } catch (_) {
+              return false;
+            }
+          });
+          if (!form) {
+            form = document.createElement('form');
+            form.dataset.editTitleTimeForm = '1';
+            form.dataset.planIndex = String(savedPlan.plan_index);
+            form.dataset.editUrl = `/smoke/edit/${savedPlan.plan_index}`;
+            form.dataset.initialStart = String(savedPlan.start);
+            form.dataset.initialEnd = String(savedPlan.end);
+            form.dataset.initialKeepRanges = JSON.stringify(savedPlan.ranges);
+            form.dataset.readonly = '0';
+            form.innerHTML = `
+              <input name="title" value="">
+              <input name="start" data-edit-start-input>
+              <input name="end" data-edit-end-input>
+              <input name="keep_ranges" data-edit-keep-ranges-input>
+              <input name="selection_source" value="transcript_words">
+              <div data-clip-text-trim-editor></div>
+              <div data-edit-duration-label></div>
+              <div data-edit-duration-warning></div>
+              <div data-edit-title-time-error></div>
+              <button type="submit" data-edit-title-time-save>Save</button>`;
+            form.querySelector('[name="title"]').value = savedPlan.title;
+            form.querySelector('[data-edit-start-input]').value = String(savedPlan.start);
+            form.querySelector('[data-edit-end-input]').value = String(savedPlan.end);
+            document.body.appendChild(form);
+            initGenerateV2ClipTitleTimeEditors();
+          }
+          renderClipTextTrimEditor(form);
+          const initial = JSON.parse(form.dataset.initialKeepRanges || '[]');
+          const initialHook = initial.find(part => part?.role === 'hook');
+          const highlighted = Array.from(form.querySelectorAll('.clip-text-trim-word.is-hook'))
+            .map(word => Number(word.dataset.wordIndex));
+          const block = form.querySelector('[data-clip-trim-hook-block]');
+          const transition = form.querySelector('[data-edit-hook-transition]');
+          const remove = form.querySelector('[data-edit-remove-hook]');
+          return {
+            planIndex: form.dataset.planIndex,
+            initialHook,
+            highlighted,
+            blockText: block?.textContent || '',
+            transition: transition?.value || '',
+            hasRemove: !!remove,
+          };
+        }""",
+        saved_plan,
+    )
+    assert not result.get("error"), result
+    hook = result["initialHook"]
+    expected_highlighted = list(range(hook["start_word_index"], hook["end_word_index"] + 1))
+    assert result["highlighted"] == expected_highlighted, result
+    assert "⚡ Hook" in result["blockText"], result
+    assert result["transition"] == hook.get("transition", "flash"), result
+    assert result["hasRemove"], result
+
+    page.evaluate(
+        """planIndex => {
+          const form = document.querySelector(`[data-edit-title-time-form][data-plan-index='${planIndex}']`);
+          const originalFetch = window.fetch.bind(window);
+          window.__hookTrimSaveSmoke = null;
+          window.fetch = async (input, options = {}) => {
+            if (String(input) === String(form.dataset.editUrl)) {
+              const body = new URLSearchParams(String(options.body || ''));
+              window.__hookTrimSaveSmoke = JSON.parse(body.get('keep_ranges') || '[]');
+              return new Response(JSON.stringify({success: true, message: 'Clip updated.'}), {
+                status: 200, headers: {'Content-Type': 'application/json'},
+              });
+            }
+            return originalFetch(input, options);
+          };
+          form.requestSubmit(form.querySelector('[data-edit-title-time-save]'));
+        }""",
+        result["planIndex"],
+    )
+    page.wait_for_function("() => Array.isArray(window.__hookTrimSaveSmoke)", timeout=5_000)
+    saved = page.evaluate("() => window.__hookTrimSaveSmoke")
+    assert saved and saved[0].get("role") == "hook", saved
+    assert saved[0].get("start_word_index") == hook["start_word_index"], saved
+    assert saved[0].get("end_word_index") == hook["end_word_index"], saved
+    assert saved[0].get("transition", "flash") == hook.get("transition", "flash"), saved
+    _print_pass(variant, "saved hook trim shows hook and unchanged save preserves it first")
 
 
 def _assert_trim_selection_keeps_exact_first_word(page: Page, variant: str) -> None:
@@ -1063,6 +1186,7 @@ def _run_variant(browser: Browser, *, base_url: str, cookie_name: str,
 def run(video_id: int | None, headed: bool, *, hook_only: bool = False) -> None:
     app = create_app()
     selected_video, user_id, brand_id = _admin_video_context(video_id)
+    saved_hook_plan = _latest_saved_hook_plan(selected_video) if hook_only else None
     client = app.test_client()
     with client.session_transaction(base_url="http://127.0.0.1") as session:
         session["vs_user_id"] = user_id
@@ -1084,6 +1208,7 @@ def run(video_id: int | None, headed: bool, *, hook_only: bool = False) -> None:
                     page.wait_for_selector("#clip-workbench-shell[data-generate-v2='1']", timeout=15_000)
                     _ensure_smoke_active_clip(page)
                     _assert_make_clip_hook_is_first(page, "hook-only")
+                    _assert_saved_hook_trim_preserves_hook(page, "hook-only", saved_hook_plan)
                 finally:
                     context.close()
                 print(f"HOOK_SMOKE_OK video={selected_video} user={user_id} brand={brand_id}")

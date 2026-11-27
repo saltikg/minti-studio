@@ -30199,8 +30199,11 @@ def edit_clip_title_time(video_pk: int, plan_index: int):
     validation_end = request.form.get("end")
     validation_max_duration = CLIP_MAX_DURATION_SECONDS
     if requested_keep_ranges:
-        validation_start = requested_keep_ranges[0]["start"]
-        validation_end = requested_keep_ranges[-1]["end"]
+        normal_requested_ranges = [
+            item for item in requested_keep_ranges if item.get("role") != "hook"
+        ] or requested_keep_ranges
+        validation_start = normal_requested_ranges[0]["start"]
+        validation_end = normal_requested_ranges[-1]["end"]
         validation_max_duration = max(
             CLIP_MAX_DURATION_SECONDS,
             float(validation_end) - float(validation_start),
@@ -30250,8 +30253,11 @@ def edit_clip_title_time(video_pk: int, plan_index: int):
     if requested_keep_ranges:
         plan_entry["edit_keep_ranges"] = requested_keep_ranges
         plan_entry["edit_cut_count"] = max(0, len(requested_keep_ranges) - 1)
-        cleaned["start"] = requested_keep_ranges[0]["start"]
-        cleaned["end"] = requested_keep_ranges[-1]["end"]
+        normal_requested_ranges = [
+            item for item in requested_keep_ranges if item.get("role") != "hook"
+        ] or requested_keep_ranges
+        cleaned["start"] = normal_requested_ranges[0]["start"]
+        cleaned["end"] = normal_requested_ranges[-1]["end"]
         cleaned["duration"] = _edit_keep_ranges_duration(requested_keep_ranges) or cleaned["duration"]
         plan_entry["start"] = cleaned["start"]
         plan_entry["end"] = cleaned["end"]
@@ -36584,8 +36590,11 @@ def autoclip_video(video_pk):
                 src_path = normalized_source_path
                 edit_keep_ranges = resolved_keep_ranges
                 compose_keep_ranges = [dict(item) for item in resolved_keep_ranges]
+                # Remap from the full transcript so indexed ranges retain their
+                # original word identities. Re-flattening selected segments
+                # renumbers their words from zero, making original indexes miss.
                 segments = _remap_transcript_segments_to_keep_ranges(
-                    selected_source_segments or [], resolved_keep_ranges
+                    segments or [], resolved_keep_ranges
                 )
                 start = 0.0
                 end = float(multi_range_duration)
