@@ -8,7 +8,7 @@ from app.video_shorts import video_shorts_bp
 from app.video_shorts.routes.auth import require_admin
 from app.video_shorts.services.db import get_db, get_db_readonly, table_columns
 from app.video_shorts.services.niche_outliers import load_latest_niche_outliers
-from app.video_shorts.services.niche_rising_topics import load_admin_rising_topics
+from app.video_shorts.services.niche_weekly_ideas import load_admin_weekly_ideas
 from app.video_shorts.services.niche_definitions import (
     parse_focus_options,
     parse_optional_focus_options,
@@ -82,7 +82,7 @@ def admin_niches():
 
     tab = str(request.args.get("tab") or "pool").strip().lower()
     channel_type_enabled = bool(selected and selected.get("channel_type_options") is not None)
-    if tab not in {"pool", "top_shorts", "rising_topics", "excluded", "near_misses", "faceless_story"}:
+    if tab not in {"pool", "top_shorts", "weekly_ideas", "excluded", "near_misses", "faceless_story"}:
         tab = "pool"
     if tab == "faceless_story" and not channel_type_enabled:
         tab = "pool"
@@ -99,7 +99,7 @@ def admin_niches():
         conn,
         selected["id"] if selected else None,
     )
-    rising_as_of, rising_topics = load_admin_rising_topics(
+    ideas_as_of, weekly_ideas = load_admin_weekly_ideas(
         conn, selected["id"] if selected else None
     )
     shorts_show_all = str(request.args.get("shorts_all") or "") == "1"
@@ -164,7 +164,7 @@ def admin_niches():
     for rank, outlier in enumerate(outlier_rows, start=1):
         outlier["rank"] = rank
 
-    if tab in {"top_shorts", "rising_topics"}:
+    if tab in {"top_shorts", "weekly_ideas"}:
         tab_rows = []
     elif tab == "faceless_story":
         tab_rows = [row for row in rows if row.get("channel_type") == "faceless_story"]
@@ -223,8 +223,8 @@ def admin_niches():
         short_sort=short_sort,
         short_dir=short_dir,
         shorts_show_all=shorts_show_all,
-        rising_as_of=rising_as_of,
-        rising_topics=rising_topics,
+        ideas_as_of=ideas_as_of,
+        weekly_ideas=weekly_ideas,
     )
 
 

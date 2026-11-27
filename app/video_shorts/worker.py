@@ -77,6 +77,7 @@ from app.video_shorts.services.quick_short_flow import (
 from app.video_shorts.services.render_jobs import (
     JOB_TYPE_AUTO_SUGGEST_RENDER,
     JOB_TYPE_ADMIN_PROXY_TRANSCRIPT,
+    JOB_TYPE_NICHE_CAPTION_ARCHIVE,
     JOB_TYPE_ENRICH_AUTOPILOT_DISCOVERY_EMAILS,
     JOB_TYPE_ENRICH_DISCOVERY_EMAILS,
     JOB_TYPE_GENERATE_COVER,
@@ -1416,6 +1417,26 @@ def _execute_admin_proxy_transcript_job(app, job: Dict[str, Any]) -> Dict[str, A
             shutil.rmtree(audio_path.parent, ignore_errors=True)
 
 
+def _execute_niche_caption_archive_job(app, job: Dict[str, Any]) -> Dict[str, Any]:
+    from app.video_shorts.services.niche_caption_archive import backfill_brand_caption_archive
+    from app.video_shorts.services.niche_weekly_ideas import compute_brand_weekly_ideas
+
+    payload = job.get("payload") or {}
+    brand_id = str(payload.get("brand_id") or "").strip()
+    if not brand_id:
+        raise PermanentRenderJobError("Niche caption archive job is missing brand_id")
+    max_videos = payload.get("max_videos")
+    archive = backfill_brand_caption_archive(
+        brand_id,
+        max_videos=int(max_videos) if max_videos not in (None, "") else None,
+        whisper_budget_usd=float(payload.get("whisper_budget_usd") or 10.0),
+    )
+    if archive.get("stopped"):
+        return {"archive": archive, "ideas": None}
+    ideas = compute_brand_weekly_ideas(brand_id)
+    return {"archive": archive, "ideas": ideas}
+
+
 def _suggest_clip(segments: list[dict], duration_seconds: Any) -> Tuple[float, float, str, str]:
     if segments:
         first = segments[0] or {}
@@ -2347,6 +2368,8 @@ def _process_next_job(
             result = generation.execute_auto_suggest_render_job(job.get("payload") or {})
         elif job.get("type") == JOB_TYPE_ADMIN_PROXY_TRANSCRIPT:
             result = _execute_admin_proxy_transcript_job(app, job)
+        elif job.get("type") == JOB_TYPE_NICHE_CAPTION_ARCHIVE:
+            result = _execute_niche_caption_archive_job(app, job)
         elif job.get("type") == JOB_TYPE_NORMALIZE_UPLOAD:
             result = _execute_normalize_upload_job(app, job)
         elif job.get("type") == JOB_TYPE_PREVIEW_FRAME:

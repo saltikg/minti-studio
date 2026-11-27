@@ -126,13 +126,13 @@
   <div class="niche-tabs">
     <a class="niche-tab {% if tab == 'pool' %}is-active{% endif %}" href="{{ url_for('video_shorts_bp.admin_niches', niche=selected.slug, snapshot=selected.snapshot_date, tab='pool') }}">Pool ({{ pool_size }})</a>
     <a class="niche-tab {% if tab == 'top_shorts' %}is-active{% endif %}" href="{{ url_for('video_shorts_bp.admin_niches', niche=selected.slug, snapshot=selected.snapshot_date, tab='top_shorts') }}">Top Shorts (last 30 days)</a>
-    <a class="niche-tab {% if tab == 'rising_topics' %}is-active{% endif %}" href="{{ url_for('video_shorts_bp.admin_niches', niche=selected.slug, snapshot=selected.snapshot_date, tab='rising_topics') }}">Rising topics</a>
+    <a class="niche-tab {% if tab == 'weekly_ideas' %}is-active{% endif %}" href="{{ url_for('video_shorts_bp.admin_niches', niche=selected.slug, snapshot=selected.snapshot_date, tab='weekly_ideas') }}">Weekly ideas</a>
     <a class="niche-tab {% if tab == 'near_misses' %}is-active{% endif %}" href="{{ url_for('video_shorts_bp.admin_niches', niche=selected.slug, snapshot=selected.snapshot_date, tab='near_misses') }}">Near misses ({{ near_miss_count }})</a>
     {% if channel_type_enabled %}<a class="niche-tab {% if tab == 'faceless_story' %}is-active{% endif %}" href="{{ url_for('video_shorts_bp.admin_niches', niche=selected.slug, snapshot=selected.snapshot_date, tab='faceless_story') }}">Faceless story ({{ faceless_story_count }})</a>{% endif %}
     <a class="niche-tab {% if tab == 'excluded' %}is-active{% endif %}" href="{{ url_for('video_shorts_bp.admin_niches', niche=selected.slug, snapshot=selected.snapshot_date, tab='excluded') }}">Excluded ({{ excluded_count }})</a>
   </div>
 
-  {% if tab not in ['top_shorts', 'rising_topics'] %}
+  {% if tab not in ['top_shorts', 'weekly_ideas'] %}
   <form class="niche-filters" method="get">
     <input type="hidden" name="niche" value="{{ selected.slug }}"><input type="hidden" name="snapshot" value="{{ selected.snapshot_date }}">
     <input type="hidden" name="tab" value="{{ tab }}">
@@ -177,20 +177,20 @@
   </tr>{% endfor %}
   </tbody></table></div>{% else %}<div class="niche-empty">No outlier Shorts have been computed for this niche yet.</div>{% endif %}
   </section>
-  {% elif tab == 'rising_topics' %}
+  {% elif tab == 'weekly_ideas' %}
   <section class="niche-panel"><div class="niche-panel-head">
-    <div><h2>{{ selected.name }} · Rising topics</h2><div class="niche-muted" style="margin-top:4px">Updated: {{ rising_as_of or 'Not yet computed' }}</div></div>
+    <div><h2>{{ selected.name }} · Weekly ideas</h2><div class="niche-muted" style="margin-top:4px">Updated: {{ ideas_as_of or 'Not yet computed' }}</div></div>
   </div>
-  {% if rising_topics %}<div class="niche-table-wrap"><table class="niche-table is-shorts"><thead><tr>
-    <th class="is-left">Topic</th><th>Creators</th><th>Outlier views</th><th class="is-left">Examples</th><th class="is-left">Brand matches &amp; evidence</th>
+  {% if weekly_ideas %}<div class="niche-table-wrap"><table class="niche-table is-shorts"><thead><tr>
+    <th class="is-left">Brand</th><th>Selected</th><th class="is-left">Idea / source</th><th class="is-left">Skip or status</th><th class="is-left">Archive windows &amp; verdicts</th>
   </tr></thead><tbody>
-  {% for topic in rising_topics %}<tr>
-    <td class="is-left"><strong>{{ topic.label }}</strong></td>
-    <td>{{ 'Breakout' if topic.is_breakout else topic.channel_count }}</td><td>{{ '{:,}'.format(topic.total_views | int) }}</td>
-    <td class="is-left">{% for example in topic.examples %}<div><a class="niche-channel" href="{{ example.url }}" target="_blank" rel="noopener">{{ example.title }}</a><div class="niche-subtext">{{ example.channel }} · {{ '{:,}'.format(example.views | int) }} views</div></div>{% endfor %}</td>
-    <td class="is-left">{% for match in topic.matches %}<div style="margin-bottom:8px"><strong>{{ match.brand_name }}</strong> · <span class="niche-badge customer">{{ match.status_label }}</span>{% if match.evidence %}<div class="niche-subtext">{% if match.archive_timestamp %}{{ match.archive_timestamp }} · {% endif %}{{ match.evidence }}</div>{% endif %}</div>{% else %}—{% endfor %}</td>
+  {% for idea in weekly_ideas %}<tr>
+    <td class="is-left"><strong>{{ idea.brand_name }}</strong></td><td>{{ idea.selected_rank or '—' }}</td>
+    <td class="is-left"><strong>{{ idea.angle_label }}</strong><div class="niche-subtext">{{ idea.theme_label }} · <a href="{{ idea.source_url }}" target="_blank" rel="noopener">{{ idea.source_title }}</a> · {{ '%.1f'|format(idea.source_ratio) }}×</div></td>
+    <td class="is-left"><span class="niche-badge customer">{{ idea.status | replace('_',' ') }}</span>{% if idea.skip_evidence %}<div class="niche-subtext">{{ idea.skip_evidence }}</div>{% elif idea.archive_snippet %}<div class="niche-subtext">{{ idea.archive_timestamp }} · {{ idea.archive_snippet }}</div>{% endif %}</td>
+    <td class="is-left">{% for window in (idea.audit.archive.candidates or []) %}<div class="niche-subtext">{{ window.title }} · {{ '%0.2f'|format(window.similarity) }} · {{ window.start_seconds }}s</div>{% else %}—{% endfor %}{% if idea.audit.archive.verdict %}<details><summary>LLM verdicts</summary><pre style="white-space:pre-wrap">{{ idea.audit.archive.verdict | tojson(indent=2) }}</pre></details>{% endif %}</td>
   </tr>{% endfor %}
-  </tbody></table></div>{% else %}<div class="niche-empty">No rising topics have been computed for this niche yet.</div>{% endif %}
+  </tbody></table></div>{% else %}<div class="niche-empty">No weekly ideas have been computed for this niche yet.</div>{% endif %}
   </section>
   {% else %}
   <section class="niche-panel"><div class="niche-panel-head">

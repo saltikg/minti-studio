@@ -1041,6 +1041,27 @@ def run_weekly_refresh_if_due(now: datetime | None = None) -> dict[str, Any] | N
                 compute_and_persist_rising_topics,
             )
             result["rising_topics"] = compute_and_persist_rising_topics(niche_slug)
+            from app.video_shorts.services.niche_caption_archive import (
+                enqueue_brand_caption_archive,
+            )
+            conn = get_db_readonly()
+            try:
+                brand_ids = [
+                    str(row[0]) for row in conn.execute(
+                        """
+                        SELECT CAST(b.id AS VARCHAR) FROM shorts_brands b
+                        JOIN niches n ON n.id=b.niche_id
+                        WHERE n.slug=? AND b.niche_id IS NOT NULL
+                        ORDER BY CAST(b.id AS VARCHAR)
+                        """, [niche_slug],
+                    ).fetchall()
+                ]
+            finally:
+                conn.close()
+            result["weekly_idea_jobs"] = [
+                enqueue_brand_caption_archive(brand_id, run_key=as_of.isoformat())
+                for brand_id in brand_ids
+            ]
             results[niche_slug] = result
         except Exception as exc:
             logger.exception("Weekly niche outlier refresh failed niche=%s: %s", niche_slug, exc)

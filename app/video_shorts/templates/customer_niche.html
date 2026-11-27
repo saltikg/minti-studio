@@ -88,23 +88,32 @@
 
   <section class="card shadow-sm vs-card mb-4">
     <div class="card-body p-4">
-      <h2 class="customer-niche-section-title mb-1">Rising topics in your niche</h2>
-      <p class="customer-niche-muted mb-4">Specific ideas gaining traction across multiple creators.</p>
-      {% if niche_page.rising_topics %}
+      <h2 class="customer-niche-section-title mb-1">This week's 3 Short ideas</h2>
+      <p class="customer-niche-muted mb-4">Concrete ideas from Shorts outperforming each creator's usual views.</p>
+      {% if niche_page.weekly_ideas %}
         <div class="d-grid gap-3">
-          {% for topic in niche_page.rising_topics %}
+          {% for idea in niche_page.weekly_ideas %}
             <div class="border-bottom border-secondary-subtle pb-3">
               <div class="d-flex flex-wrap justify-content-between gap-2 align-items-start">
-                <div><div class="customer-niche-short-title">{{ topic.label }}</div><div class="customer-niche-muted small">{% if topic.is_breakout %}Breakout{% else %}{{ topic.channel_count }} creators{% endif %} · {{ '{:,}'.format(topic.total_views | int) }} views</div></div>
-                {% if topic.status == 'archive' and topic.archive_url %}<a class="badge text-bg-info text-decoration-none" href="{{ topic.archive_url }}">{{ topic.status_label }}</a>{% else %}<span class="badge text-bg-info">{{ topic.status_label }}</span>{% endif %}
+                <div>
+                  <div class="customer-niche-short-title">{{ idea.angle_label }}</div>
+                  <div class="customer-niche-muted small"><a href="{{ idea.source_url }}" target="_blank" rel="noopener noreferrer">{{ idea.source_channel_title }}</a> · {{ '%.1f'|format(idea.source_ratio) }}× usual · {{ '{:,}'.format(idea.source_views | int) }} views</div>
+                </div>
+                {% if idea.worked_badge %}<span class="badge text-bg-success">{{ idea.worked_badge }}</span>{% endif %}
               </div>
-              {% if topic.examples %}<div class="mt-2">{% for example in topic.examples[:2] %}<a class="customer-niche-muted small d-block" href="{{ example.url }}" target="_blank" rel="noopener noreferrer">Example angle: {{ example.title }}</a>{% endfor %}</div>{% endif %}
-              {% if topic.status == 'archive' and topic.evidence %}<div class="customer-niche-muted small mt-2">{% if topic.archive_timestamp %}{{ topic.archive_timestamp }} · {% endif %}“{{ topic.evidence }}”</div>{% endif %}
+              {% if idea.status == 'archive' %}
+                <div class="customer-niche-muted small mt-2"><strong>Ready in your archive</strong> · {{ idea.archive_title }}{% if idea.archive_published_at %} · {{ idea.archive_published_at.strftime('%b %-d, %Y') }}{% endif %}</div>
+                <div class="customer-niche-muted small mt-1">{{ idea.archive_timestamp }} · “{{ idea.archive_snippet }}”</div>
+                <a class="btn btn-sm btn-info mt-2" href="{{ idea.archive_url }}">Make this Short</a>
+              {% else %}
+                <div class="customer-niche-muted small mt-2"><strong>New video idea:</strong> {{ idea.suggested_title }}</div>
+                <div class="customer-niche-muted small mt-1"><strong>First 3 seconds:</strong> “{{ idea.suggested_hook }}”</div>
+              {% endif %}
             </div>
           {% endfor %}
         </div>
       {% else %}
-        <p class="customer-niche-muted mb-0">No rising topics are available this week.</p>
+        <p class="customer-niche-muted mb-0">Your ideas are being prepared.</p>
       {% endif %}
     </div>
   </section>

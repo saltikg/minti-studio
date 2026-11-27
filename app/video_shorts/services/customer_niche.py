@@ -11,7 +11,7 @@ from app.video_shorts.services.niche_outliers import (
     customer_visible_outlier_rows,
     load_latest_niche_outliers,
 )
-from app.video_shorts.services.niche_rising_topics import load_rising_topics
+from app.video_shorts.services.niche_weekly_ideas import load_brand_weekly_ideas
 from app.video_shorts.services.niches import final_niche_pool, load_niche_snapshot
 
 
@@ -171,9 +171,7 @@ def load_customer_niche_page(
             [niche["id"], as_of],
         ).fetchone()
         pattern = str((row[0] if row else "") or "").strip()
-    rising_as_of, rising_topics = load_rising_topics(
-        conn, niche["id"], brand_id=brand_id
-    )
+    ideas_as_of, weekly_ideas = load_brand_weekly_ideas(conn, niche["id"], brand_id)
     return {
         "brand_id": str(brand[0]),
         "brand_name": str(brand[1] or "Customer"),
@@ -191,6 +189,6 @@ def load_customer_niche_page(
         "place": place,
         "cards": cards,
         "pattern": pattern,
-        "rising_as_of": rising_as_of,
-        "rising_topics": rising_topics[:5],
+        "ideas_as_of": ideas_as_of,
+        "weekly_ideas": weekly_ideas[:3],
     }
