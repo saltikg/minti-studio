@@ -6714,13 +6714,17 @@ def _compose_trimmed_with_background(
                 hook_cut = max(0.0, float(hook_range["end"]) - float(hook_range["start"]))
                 whoosh_delay_ms = max(0, int(round((hook_cut - 0.15) * 1000)))
                 filter_parts.append(
+                    f"{edge_audio_source}asetpts=N/SR/TB,afifo[hook_audio_base]"
+                )
+                filter_parts.append(
                     "anoisesrc=color=pink:amplitude=0.12:duration=0.300:sample_rate=48000,"
                     "highpass=f=350,lowpass=f=6500,afade=t=in:st=0:d=0.060,"
                     f"afade=t=out:st=0.180:d=0.120,adelay={whoosh_delay_ms}|{whoosh_delay_ms}[hook_whoosh]"
                 )
                 filter_parts.append(
-                    f"{edge_audio_source}[hook_whoosh]amix=inputs=2:duration=first:"
-                    "dropout_transition=0:normalize=0[hook_audio_mix]"
+                    "[hook_audio_base][hook_whoosh]amix=inputs=2:duration=longest:"
+                    f"dropout_transition=0:normalize=0,apad=whole_dur={duration:.6f},"
+                    f"atrim=duration={duration:.6f},asetpts=PTS-STARTPTS[hook_audio_mix]"
                 )
                 edge_audio_source = "[hook_audio_mix]"
             edge_fade_in = direct_source_ranges[0].get("audio_fade_in_seconds") if direct_source_ranges else None
@@ -7084,13 +7088,17 @@ def _cut_clip(
                 hook_cut = max(0.0, float(hook_range["end"]) - float(hook_range["start"]))
                 whoosh_delay_ms = max(0, int(round((hook_cut - 0.15) * 1000)))
                 filter_parts.append(
+                    f"{cut_audio_source}asetpts=N/SR/TB,afifo[cut_hook_audio_base]"
+                )
+                filter_parts.append(
                     "anoisesrc=color=pink:amplitude=0.12:duration=0.300:sample_rate=48000,"
                     "highpass=f=350,lowpass=f=6500,afade=t=in:st=0:d=0.060,"
                     f"afade=t=out:st=0.180:d=0.120,adelay={whoosh_delay_ms}|{whoosh_delay_ms}[cut_hook_whoosh]"
                 )
                 filter_parts.append(
-                    f"{cut_audio_source}[cut_hook_whoosh]amix=inputs=2:duration=first:"
-                    "dropout_transition=0:normalize=0[cut_hook_audio]"
+                    "[cut_hook_audio_base][cut_hook_whoosh]amix=inputs=2:duration=longest:"
+                    f"dropout_transition=0:normalize=0,apad=whole_dur={duration:.6f},"
+                    f"atrim=duration={duration:.6f},asetpts=PTS-STARTPTS[cut_hook_audio]"
                 )
                 cut_audio_source = "[cut_hook_audio]"
             filter_parts.append(
