@@ -483,6 +483,13 @@ def _evidence_matches_theme(topic_label: Any, evidence: Any) -> bool:
     return bool(topic_terms & evidence_terms)
 
 
+def _evidence_matches_archive_theme(topic_label: Any, evidence: Any) -> bool:
+    topic_terms = _match_terms(topic_label)
+    evidence_terms = _match_terms(evidence)
+    required = min(2, len(topic_terms))
+    return required > 0 and len(topic_terms & evidence_terms) >= required
+
+
 def _matching_archive_segment(
     archive_video: dict[str, Any], start_seconds: Any, evidence: Any,
 ) -> tuple[dict[str, Any] | None, str]:
@@ -589,7 +596,7 @@ def _match_brand(
             archive_id in archive_by_id
             and archive_segment
             and transcript_evidence
-            and _evidence_matches_theme(topic_label, transcript_evidence)
+            and _evidence_matches_archive_theme(topic_label, transcript_evidence)
         ):
             status = STATUS_ARCHIVE
             evidence = transcript_evidence

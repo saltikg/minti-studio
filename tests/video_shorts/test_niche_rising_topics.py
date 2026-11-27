@@ -219,6 +219,18 @@ def test_theme_evidence_does_not_count_connecting_words_as_overlap():
     )
 
 
+def test_archive_theme_requires_two_distinctive_terms_when_available():
+    assert not niche_rising_topics._evidence_matches_archive_theme(
+        "Kıyamet ve ahiret", "Biz hepimiz ahirete inanan insanlarız.",
+    )
+    assert niche_rising_topics._evidence_matches_archive_theme(
+        "Kıyamet ve ahiret", "Kıyamet ve ahiret hakkında uzun bir açıklama.",
+    )
+    assert niche_rising_topics._evidence_matches_archive_theme(
+        "Nervous system regulation", "Intentional nervous support during midlife.",
+    )
+
+
 def test_segment_windows_builds_timestamped_thirty_second_chunks():
     segments = [
         {"start": index * 10, "end": (index + 1) * 10, "text": f"part {index}"}
