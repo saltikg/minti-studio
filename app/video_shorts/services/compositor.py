@@ -3968,7 +3968,7 @@ def _compact_caption_overlay_filter(
     """Return the O(1) final filter for one pre-positioned caption video."""
     return (
         f"{base_label}{source_label}overlay={int(origin[0])}:{int(origin[1])}:"
-        f"format=yuv420:shortest=1{output_label}"
+        f"format=yuv420:shortest=0:eof_action=pass{output_label}"
     )
 
 
@@ -4668,7 +4668,7 @@ def _compose_trimmed_with_background(
         elif effective_subtitle_overlay_path:
             filter_parts.append(f"[{next_video_input_index}:v]format=yuva420p[pod_caption_src]")
             filter_parts.append(
-                f"{final_label}[pod_caption_src]overlay={subtitle_overlay_origin[0]}:{subtitle_overlay_origin[1]}:format=yuv420:shortest=1[pod_caption_out]"
+                f"{final_label}[pod_caption_src]overlay={subtitle_overlay_origin[0]}:{subtitle_overlay_origin[1]}:format=yuv420:shortest=0:eof_action=pass[pod_caption_out]"
             )
             final_label = "[pod_caption_out]"
             next_video_input_index += 1
@@ -6449,7 +6449,7 @@ def _compose_trimmed_with_background(
                 )
             else:
                 filter_parts.append(
-                    f"{final_label}[caption_src]overlay={caption_x}:{caption_position_y}:format=yuv420:shortest=1"
+                    f"{final_label}[caption_src]overlay={caption_x}:{caption_position_y}:format=yuv420:shortest=0:eof_action=pass"
                     f"{caption_enable_filter}[caption_out]"
                 )
             final_label = "[caption_out]"

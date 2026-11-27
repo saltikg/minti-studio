@@ -346,6 +346,7 @@ def test_positioned_caption_render_stays_one_input_and_constant_filter(
         assert len(final_filter) < 100
         assert final_filter.count("overlay=") == 1
         assert "caption_out_" not in final_filter
+        assert "shortest=0:eof_action=pass" in final_filter
     finally:
         shutil.rmtree(temp_dir, ignore_errors=True)
 

@@ -36658,7 +36658,7 @@ def autoclip_video(video_pk):
                             force_uppercase=video_subtitle_uppercase,
                             target_width=render_target_width,
                             target_height=render_target_height,
-                            defer_overlay_video=False,
+                            defer_overlay_video=True,
                         )
                         subtitle_overlay_meta = overlay_meta or {}
                         subtitle_overlay_specs = list((overlay_meta or {}).get("specs") or [])
@@ -36760,7 +36760,7 @@ def autoclip_video(video_pk):
                         force_uppercase=video_subtitle_uppercase,
                         target_width=render_target_width,
                         target_height=render_target_height,
-                        defer_overlay_video=False,
+                        defer_overlay_video=True,
                     )
                     subtitle_overlay_meta = overlay_meta or {}
                     subtitle_overlay_specs = list((overlay_meta or {}).get("specs") or [])
