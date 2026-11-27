@@ -138,6 +138,24 @@ def _label_rows(
     return labels, input_tokens, output_tokens
 
 
+def _merge_group_is_specific(
+    merged_label: str, video_ids: list[str], source_labels: dict[str, str],
+) -> bool:
+    if len(video_ids) <= 1:
+        return True
+    term_sets = [_match_terms(source_labels[video_id]) for video_id in video_ids]
+    merged_terms = _match_terms(merged_label)
+    if any(len(terms) < 2 for terms in term_sets) or len(merged_terms) < 2:
+        return False
+    for index, left in enumerate(term_sets):
+        if len(left & merged_terms) / len(left | merged_terms) < 0.5:
+            return False
+        for right in term_sets[index + 1:]:
+            if len(left & right) < 2 or len(left & right) / len(left | right) < 0.5:
+                return False
+    return True
+
+
 def _merge_labels(
     labels: dict[str, str], language: str, client: Any,
 ) -> tuple[list[dict[str, Any]], int, int]:
@@ -173,6 +191,8 @@ def _merge_labels(
             str(value) for value in item.get("video_ids") or []
             if str(value) in valid_ids and str(value) not in used
         ]
+        if label and video_ids and not _merge_group_is_specific(label, video_ids, labels):
+            continue
         if label and video_ids:
             used.update(video_ids)
             topics.append({"label": label, "video_ids": video_ids})
@@ -353,7 +373,13 @@ def _match_brand(
             _verified_transcript_evidence(item.get("evidence"), archive_by_id[archive_id]["transcript"])
             if archive_id in archive_by_id else ""
         )
-        if short_id in shorts_by_id:
+        if (
+            short_id in shorts_by_id
+            and _evidence_matches_specific_topic(
+                next(topic["label"] for topic in topics if topic["topic_key"] == topic_key),
+                shorts_by_id[short_id]["title"],
+            )
+        ):
             status, archive_id = STATUS_COVERED, None
             evidence = _truncate_evidence(shorts_by_id[short_id]["title"])
         elif (

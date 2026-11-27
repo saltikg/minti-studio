@@ -75,6 +75,39 @@ def test_brand_match_prefers_published_short_over_archive():
     assert (input_tokens, output_tokens) == (10, 5)
 
 
+def test_brand_match_rejects_short_with_only_broad_subject_overlap():
+    payload = (
+        '{"matches":[{"topic_key":"prophets-grave","short_id":1,'
+        '"archive_video_id":null,"evidence":"A sacred place"}]}'
+    )
+
+    matches, _, _ = niche_rising_topics._match_brand(
+        [{"topic_key": "prophets-grave", "label": "Prophet Muhammad's grave location"}],
+        [{"id": 1, "title": "What Makes a Place Sacred?"}],
+        [],
+        _Client(payload),
+    )
+
+    assert matches[0]["status"] == niche_rising_topics.STATUS_IDEA
+
+
+def test_merge_rejects_broad_parent_group_and_keeps_specific_labels_separate():
+    payload = (
+        '{"topics":[{"label":"Hormone therapy issues and safety","video_ids":["a","b"]}]}'
+    )
+    labels = {
+        "a": "HRT after sixty fracture prevention",
+        "b": "Premarin discontinued in Canada",
+    }
+
+    topics, _, _ = niche_rising_topics._merge_labels(labels, "en", _Client(payload))
+
+    assert topics == [
+        {"label": labels["a"], "video_ids": ["a"]},
+        {"label": labels["b"], "video_ids": ["b"]},
+    ]
+
+
 def test_archive_match_requires_verbatim_transcript_evidence():
     topics = [{"topic_key": "age-60", "label": "HRT after age 60"}]
     archive = [{
