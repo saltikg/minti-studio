@@ -86,7 +86,7 @@ def test_customer_page_requests_latest_snapshot(monkeypatch):
         return ({"id": 7, "slug": slug, "name": "Niche"}, [])
 
     monkeypatch.setattr(customer_niche, "load_niche_snapshot", fake_load_snapshot)
-    monkeypatch.setattr(customer_niche, "brand_youtube_channel_ids", lambda *_args: set())
+    monkeypatch.setattr(customer_niche, "brand_publishing_channel_id", lambda *_args: "")
     monkeypatch.setattr(customer_niche, "load_latest_niche_outliers", lambda *_args: ("", []))
 
     page = customer_niche.load_customer_niche_page(

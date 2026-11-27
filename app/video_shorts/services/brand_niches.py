@@ -52,52 +52,57 @@ def build_niche_suggestion_index(
     return suggestions
 
 
-def brand_youtube_channel_ids(conn, owner_user_id: str, brand_id: str) -> set[str]:
-    channel_ids: set[str] = set()
+def brand_publishing_channel_id(conn, owner_user_id: str, brand_id: str) -> str:
+    """Return the brand's upload destination, never one of its content sources."""
     token_columns = table_columns(conn, "youtube_oauth_tokens_v2")
     if {"user_id", "youtube_channel_id"}.issubset(token_columns):
-        rows = conn.execute(
-            """
+        token_order = "updated_at DESC" if "updated_at" in token_columns else "user_id"
+        row = conn.execute(
+            f"""
             SELECT youtube_channel_id
             FROM youtube_oauth_tokens_v2
             WHERE user_id = ?
+              AND youtube_channel_id LIKE 'UC%'
+            ORDER BY {token_order}
+            LIMIT 1
             """,
             [f"{owner_user_id}::{brand_id}"],
-        ).fetchall()
-        channel_ids.update(_clean(row[0]) for row in rows if _clean(row[0]).startswith("UC"))
-
-    channel_columns = table_columns(conn, "youtube_channels")
-    if {"owner_user_id", "brand_id"}.issubset(channel_columns):
-        youtube_id_sql = "youtube_channel_id" if "youtube_channel_id" in channel_columns else "NULL"
-        channel_id_sql = "channel_id" if "channel_id" in channel_columns else "NULL"
-        rows = conn.execute(
-            f"""
-            SELECT {youtube_id_sql}, {channel_id_sql}
-            FROM youtube_channels
-            WHERE CAST(owner_user_id AS VARCHAR) = CAST(? AS VARCHAR)
-              AND CAST(brand_id AS VARCHAR) = CAST(? AS VARCHAR)
-            """,
-            [owner_user_id, brand_id],
-        ).fetchall()
-        for row in rows:
-            for value in row:
-                channel_id = _clean(value)
-                if channel_id.startswith("UC"):
-                    channel_ids.add(channel_id)
+        ).fetchone()
+        channel_id = _clean(row[0] if row else "")
+        if channel_id.startswith("UC"):
+            return channel_id
 
     lead_columns = table_columns(conn, "autopilot_leads")
-    if {"user_id", "brand_id", "youtube_channel_id"}.issubset(lead_columns):
-        rows = conn.execute(
-            """
+    explicit_columns = {
+        "user_id", "brand_id", "youtube_channel_id", "youtube_channel_connected_at",
+    }
+    if explicit_columns.issubset(lead_columns):
+        lead_order = "youtube_channel_connected_at DESC"
+        if "converted_at" in lead_columns:
+            lead_order += ", converted_at DESC NULLS LAST"
+        row = conn.execute(
+            f"""
             SELECT youtube_channel_id
             FROM autopilot_leads
             WHERE CAST(user_id AS VARCHAR) = CAST(? AS VARCHAR)
               AND CAST(brand_id AS VARCHAR) = CAST(? AS VARCHAR)
+              AND youtube_channel_connected_at IS NOT NULL
+              AND youtube_channel_id LIKE 'UC%'
+            ORDER BY {lead_order}
+            LIMIT 1
             """,
             [owner_user_id, brand_id],
-        ).fetchall()
-        channel_ids.update(_clean(row[0]) for row in rows if _clean(row[0]).startswith("UC"))
-    return channel_ids
+        ).fetchone()
+        channel_id = _clean(row[0] if row else "")
+        if channel_id.startswith("UC"):
+            return channel_id
+    return ""
+
+
+def brand_youtube_channel_ids(conn, owner_user_id: str, brand_id: str) -> set[str]:
+    """Compatibility wrapper for code that expects a collection."""
+    channel_id = brand_publishing_channel_id(conn, owner_user_id, brand_id)
+    return {channel_id} if channel_id else set()
 
 
 def load_admin_brand_niche_settings(conn, owner_user_id: str) -> dict[str, Any]:
@@ -126,11 +131,8 @@ def load_admin_brand_niche_settings(conn, owner_user_id: str) -> dict[str, Any]:
     brands = []
     for row in brand_rows:
         brand_id = _clean(row[0])
-        channel_ids = brand_youtube_channel_ids(conn, owner_user_id, brand_id)
-        suggestion = next(
-            (suggestion_index[channel_id] for channel_id in channel_ids if channel_id in suggestion_index),
-            None,
-        )
+        channel_id = brand_publishing_channel_id(conn, owner_user_id, brand_id)
+        suggestion = suggestion_index.get(channel_id)
         brands.append(
             {
                 "id": brand_id,

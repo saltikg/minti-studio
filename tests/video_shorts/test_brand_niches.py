@@ -2,6 +2,36 @@ from app.video_shorts.services import brand_niches
 from app.video_shorts.services.niches import is_final_niche_pool_row
 
 
+class _PublishingChannelConnection:
+    def execute(self, sql, params=None):
+        normalized = " ".join(sql.split()).lower()
+        if "from youtube_oauth_tokens_v2" in normalized:
+            return _Result([("UC-A",)])
+        if "from youtube_channels" in normalized:
+            raise AssertionError("content sources must never be publishing-channel candidates")
+        if "from autopilot_leads" in normalized:
+            return _Result([("UC-FALLBACK",)])
+        raise AssertionError(normalized)
+
+
+def test_publishing_channel_uses_oauth_and_ignores_source_channels(monkeypatch):
+    def columns(_conn, table):
+        return {
+            "youtube_oauth_tokens_v2": {"user_id", "youtube_channel_id", "updated_at"},
+            "youtube_channels": {"owner_user_id", "brand_id", "youtube_channel_id"},
+            "autopilot_leads": {
+                "user_id", "brand_id", "youtube_channel_id",
+                "youtube_channel_connected_at", "converted_at",
+            },
+        }.get(table, set())
+
+    monkeypatch.setattr(brand_niches, "table_columns", columns)
+
+    assert brand_niches.brand_publishing_channel_id(
+        _PublishingChannelConnection(), "owner-1", "brand-1"
+    ) == "UC-A"
+
+
 def _row(channel_id, title, subscribers, **overrides):
     row = {
         "youtube_channel_id": channel_id,

@@ -57,6 +57,8 @@
             <tbody>{% for row in niche_page.place.neighbors %}<tr class="{% if row.is_you %}is-you{% endif %}"><td>#{{ row.rank }}</td><td>{{ row.channel_name }}{% if row.is_you %} <span class="badge text-bg-info ms-1">You</span>{% endif %}</td><td class="text-end">{{ row.subscribers_display }}</td><td class="text-end">{{ row.views_90d_display }}</td></tr>{% endfor %}</tbody>
           </table>
         </div>
+      {% elif not niche_page.publishing_channel_id %}
+        <p class="customer-niche-muted mb-0">Connect your YouTube channel to see your rank.</p>
       {% else %}
         <p class="customer-niche-muted mb-0">Your channel isn't ranked in this niche yet.</p>
       {% endif %}

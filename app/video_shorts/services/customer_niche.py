@@ -4,7 +4,7 @@ import math
 from datetime import date
 from typing import Any
 
-from app.video_shorts.services.brand_niches import brand_youtube_channel_ids
+from app.video_shorts.services.brand_niches import brand_publishing_channel_id
 from app.video_shorts.services.db import table_columns
 from app.video_shorts.services.niche_outliers import (
     customer_visible_outlier_rows,
@@ -104,7 +104,8 @@ def load_customer_niche_page(
     if not niche:
         return None
     ranked_pool = _ranked_pool(snapshot_rows, niche)
-    own_channel_ids = brand_youtube_channel_ids(conn, owner_user_id, brand_id)
+    publishing_channel_id = brand_publishing_channel_id(conn, owner_user_id, brand_id)
+    own_channel_ids = {publishing_channel_id} if publishing_channel_id else set()
     pool_by_channel = {
         str(row.get("youtube_channel_id") or ""): row for row in ranked_pool
     }
@@ -151,6 +152,7 @@ def load_customer_niche_page(
     return {
         "brand_id": str(brand[0]),
         "brand_name": str(brand[1] or "Customer"),
+        "publishing_channel_id": publishing_channel_id,
         "niche_id": niche["id"],
         "niche_slug": niche["slug"],
         "niche_name": niche["name"],

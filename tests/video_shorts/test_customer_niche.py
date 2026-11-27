@@ -1,6 +1,43 @@
 from app.video_shorts.services import customer_niche
 
 
+class _Result:
+    def __init__(self, rows):
+        self.rows = rows
+
+    def fetchone(self):
+        return self.rows[0] if self.rows else None
+
+
+class _CustomerConnection:
+    def execute(self, sql, params=None):
+        if "FROM shorts_brands" in sql:
+            return _Result([("brand-1", "Brand", 7, "niche-slug", "Niche")])
+        raise AssertionError("unexpected query")
+
+
+def test_connected_channel_is_you_when_source_channels_share_niche(monkeypatch):
+    rows = [
+        {"youtube_channel_id": "UC-B", "title": "Source B", "subscriber_count": 300},
+        {"youtube_channel_id": "UC-A", "title": "Publishing A", "subscriber_count": 200},
+        {"youtube_channel_id": "UC-C", "title": "Source C", "subscriber_count": 100},
+    ]
+    monkeypatch.setattr(
+        customer_niche, "load_niche_snapshot",
+        lambda *_args, **_kwargs: ({"id": 7, "slug": "niche-slug", "name": "Niche"}, rows),
+    )
+    monkeypatch.setattr(customer_niche, "_ranked_pool", lambda *_args: rows)
+    monkeypatch.setattr(customer_niche, "brand_publishing_channel_id", lambda *_args: "UC-A")
+    monkeypatch.setattr(customer_niche, "load_latest_niche_outliers", lambda *_args: ("", []))
+
+    page = customer_niche.load_customer_niche_page(
+        _CustomerConnection(), owner_user_id="owner-1", brand_id="brand-1"
+    )
+
+    assert page["place"]["rank"] == 2
+    assert [row["youtube_channel_id"] for row in page["place"]["neighbors"] if row["is_you"]] == ["UC-A"]
+
+
 def test_compact_number():
     assert customer_niche.compact_number(28_800) == "28.8K"
     assert customer_niche.compact_number(1_200_000) == "1.2M"
