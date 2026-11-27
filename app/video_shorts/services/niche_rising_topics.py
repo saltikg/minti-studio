@@ -47,6 +47,7 @@ MATCH_STOPWORDS = {
     "about", "after", "before", "from", "into", "with", "without", "your", "yourself",
     "this", "that", "what", "when", "where", "which", "whose", "women", "midlife",
     "icin", "için", "ile", "ve", "veya", "bir", "bu", "su", "şu", "olan", "olarak",
+    "olma", "olmasi", "olması",
 }
 
 
@@ -193,6 +194,7 @@ def _merge_labels(
         ],
     )
     parsed = _json_response(response)
+    initial_topics = parsed.get("topics") or []
     first_input, first_output = _usage(response)
     revision = client.chat.completions.create(
         model=MODEL, temperature=0, max_tokens=max(300, len(labels) * 32),
@@ -220,7 +222,14 @@ def _merge_labels(
     valid_ids = set(labels)
     used: set[str] = set()
     topics = []
-    for item in parsed.get("topics") or []:
+    candidate_topics = [
+        item for item in [*initial_topics, *(parsed.get("topics") or [])]
+        if isinstance(item, dict)
+    ]
+    candidate_topics.sort(
+        key=lambda item: -len({str(value) for value in item.get("video_ids") or []} & valid_ids)
+    )
+    for item in candidate_topics:
         if not isinstance(item, dict):
             continue
         label = _clean_theme(item.get("label"))

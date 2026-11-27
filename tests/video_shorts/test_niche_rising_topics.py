@@ -15,6 +15,18 @@ class _Client:
         )()
 
 
+class _SequenceClient:
+    def __init__(self, payloads):
+        responses = iter(payloads)
+        self.chat = type(
+            "Chat", (),
+            {"completions": type(
+                "Completions", (),
+                {"create": lambda _self, **_kwargs: _Response(next(responses))},
+            )()},
+        )()
+
+
 def test_eligible_rows_excludes_off_topic_and_possibly_promoted():
     rows = [
         {"video_id": "keep", "in_category": True, "engagement": 0.02, "baseline_engagement": 0.02},
@@ -121,6 +133,20 @@ def test_merge_rejects_broad_category_theme_and_falls_back_to_angles():
         {"label": "HRT after breast cancer safety", "video_ids": ["a"]},
         {"label": "HRT after sixty fracture prevention", "video_ids": ["b"]},
     ]
+
+
+def test_merge_keeps_valid_initial_cluster_when_critic_over_splits_it():
+    client = _SequenceClient([
+        '{"topics":[{"label":"Duanın kabul olması","video_ids":["a","b"]}]}',
+        '{"topics":[{"label":"Kabul olmayan dua","video_ids":["a"]},'
+        '{"label":"Kapıları açan dua","video_ids":["b"]}]}',
+    ])
+
+    topics, _, _ = niche_rising_topics._merge_labels(
+        {"a": "Kabul olmayan dua sanmak", "b": "Duanın kapıları açması"}, "tr", client,
+    )
+
+    assert topics == [{"label": "Duanın kabul olması", "video_ids": ["a", "b"]}]
 
 
 def test_archive_match_requires_verbatim_transcript_evidence():
