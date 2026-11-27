@@ -6827,6 +6827,11 @@ def _compose_trimmed_with_background(
             "-preset", "ultrafast", "-crf", "19", "-maxrate", maxrate,
             "-bufsize", bufsize, "-c:v", "libx264",
         ]
+    output_duration_args = (
+        ["-t", f"{duration:.6f}"]
+        if direct_source_timeline and len(direct_source_ranges) > 1
+        else ["-shortest"]
+    )
     cmd.extend(
         [
             "-filter_complex",
@@ -6837,7 +6842,7 @@ def _compose_trimmed_with_background(
             audio_map,
             "-c:a",
             "aac",
-            "-shortest",
+            *output_duration_args,
             "-r",
             f"{output_fps:.6f}",
             "-vsync",
@@ -6905,6 +6910,11 @@ def _compose_trimmed_with_background(
             cmd.extend(["-i", str(effective_subtitle_overlay_path)])
         if overlay_enabled:
             cmd.extend(["-stream_loop", "-1", "-i", str(overlay_asset_path)])
+        output_duration_args = (
+            ["-t", f"{duration:.6f}"]
+            if direct_source_timeline and len(direct_source_ranges) > 1
+            else ["-shortest"]
+        )
         cmd.extend(
             [
                 "-filter_complex",
@@ -6915,7 +6925,7 @@ def _compose_trimmed_with_background(
                 audio_map_music_only,
                 "-c:a",
                 "aac",
-                "-shortest",
+                *output_duration_args,
                 "-r",
                 f"{output_fps:.6f}",
                 "-vsync",
