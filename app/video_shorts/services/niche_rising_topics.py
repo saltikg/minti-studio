@@ -100,7 +100,16 @@ def _clean_label(value: Any) -> str:
 
 def _clean_theme(value: Any) -> str:
     label = " ".join(str(value or "").strip().split()).strip(" .,:;!?-–—")
-    if not 2 <= len(label.split()) <= 5 or _key(label) in {_key(item) for item in GENERIC_THEMES}:
+    label_key = _key(label)
+    broad_prefixes = (
+        "dini-", "islam-kulturu", "midlife-health", "midlife-women-s-health",
+        "women-s-health", "menopause-symptom", "mental-health-", "aile-ve-toplum",
+    )
+    if (
+        not 2 <= len(label.split()) <= 5
+        or label_key in {_key(item) for item in GENERIC_THEMES}
+        or any(label_key.startswith(prefix) for prefix in broad_prefixes)
+    ):
         return ""
     return label
 

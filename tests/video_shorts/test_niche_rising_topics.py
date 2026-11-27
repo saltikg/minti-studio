@@ -206,6 +206,9 @@ def test_clean_theme_requires_middle_level_label():
     assert niche_rising_topics._clean_theme("Dua") == ""
     assert niche_rising_topics._clean_theme("Menopause symptoms and effects") == ""
     assert niche_rising_topics._clean_theme("Dinî uyarılar ve ahlak") == ""
+    assert niche_rising_topics._clean_theme("Dinî uyarılar ve öğütler") == ""
+    assert niche_rising_topics._clean_theme("Midlife Women's Health") == ""
+    assert niche_rising_topics._clean_theme("Aile ve toplum ilişkileri") == ""
     assert niche_rising_topics._clean_theme("Duanın kabul olması") == "Duanın kabul olması"
 
 
