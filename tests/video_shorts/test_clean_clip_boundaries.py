@@ -315,3 +315,28 @@ def test_audio_snap_does_not_constrain_out_of_order_hook_to_normal_part(monkeypa
     assert snapped[0]["role"] == "hook"
     assert snapped[0]["end"] > snapped[0]["start"] > snapped[1]["start"]
     assert snapped[1]["end"] > snapped[1]["start"]
+
+
+def test_multi_range_cut_disables_async_resampling_per_part(monkeypatch, tmp_path):
+    captured = {}
+    monkeypatch.setattr(compositor, "_resolve_ffmpeg", lambda: "ffmpeg")
+    monkeypatch.setattr(compositor, "_has_audio_stream", lambda _path: True)
+
+    def capture(command, **_kwargs):
+        captured["command"] = command
+
+    monkeypatch.setattr(compositor, "run_media_subprocess", capture)
+    compositor._cut_clip(
+        tmp_path / "source.mp4",
+        0.0,
+        9.1,
+        tmp_path / "output.mp4",
+        source_keep_ranges=[
+            {"start": 14.44, "end": 15.53, "role": "hook", "transition": "flash"},
+            {"start": 0.0, "end": 9.1},
+        ],
+    )
+
+    filter_graph = captured["command"][captured["command"].index("-filter_complex") + 1]
+    assert filter_graph.count("aresample=async=0:first_pts=0") == 2
+    assert "aresample=async=1:first_pts=0" not in filter_graph

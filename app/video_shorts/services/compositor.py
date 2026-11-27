@@ -1292,7 +1292,7 @@ def _trim_source_to_keep_ranges(
             range_duration = max(0.001, end - start)
             filter_parts.append(
                 f"[trim_a_src_{index}]atrim=start={start:.6f}:end={end:.6f},"
-                f"asetpts=PTS-STARTPTS,aresample=async=1:first_pts=0,"
+                f"asetpts=PTS-STARTPTS,aresample=async=0:first_pts=0,"
                 f"{_audio_edge_fade_filter(range_duration)}[trim_a_{index}]"
             )
             concat_inputs.append(f"[trim_a_{index}]")
@@ -5567,7 +5567,7 @@ def _compose_trimmed_with_background(
                         join_fades += f",afade=t=out:st={max(0.0, range_duration - fade_out):.6f}:d={fade_out:.6f}"
                     filter_parts.append(
                         f"[clip_range_a_src_{index}]atrim=start={item['start']:.6f}:end={item['end']:.6f},"
-                        f"asetpts=PTS-STARTPTS,aresample=async=1:first_pts=0{join_fades}[clip_range_a_{index}]"
+                        f"asetpts=PTS-STARTPTS,aresample=async=0:first_pts=0{join_fades}[clip_range_a_{index}]"
                     )
                     audio_concat_inputs.append(f"[clip_range_a_{index}]")
             if not direct_visual_override and timeline_source_has_audio:
@@ -7060,7 +7060,7 @@ def _cut_clip(
             if has_audio:
                 filter_parts.append(
                     f"[cut_range_a_src_{index}]atrim=start={item['start']:.6f}:end={item['end']:.6f},"
-                    f"asetpts=PTS-STARTPTS,aresample=async=1:first_pts=0[cut_range_a_{index}]"
+                    f"asetpts=PTS-STARTPTS,aresample=async=0:first_pts=0[cut_range_a_{index}]"
                 )
                 concat_inputs.append(f"[cut_range_a_{index}]")
         if has_audio:
