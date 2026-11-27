@@ -188,7 +188,7 @@
     <td class="is-left"><strong>{{ idea.brand_name }}</strong></td><td>{{ idea.selected_rank or '—' }}</td>
     <td class="is-left"><strong>{{ idea.angle_label }}</strong><div class="niche-subtext">{{ idea.theme_label }} · <a href="{{ idea.source_url }}" target="_blank" rel="noopener">{{ idea.source_title }}</a> · {{ '%.1f'|format(idea.source_ratio) }}×</div></td>
     <td class="is-left"><span class="niche-badge customer">{{ idea.status | replace('_',' ') }}</span>{% if idea.skip_evidence %}<div class="niche-subtext">{{ idea.skip_evidence }}</div>{% elif idea.archive_snippet %}<div class="niche-subtext">{{ idea.archive_timestamp }} · {{ idea.archive_snippet }}</div>{% endif %}</td>
-    <td class="is-left">{% for window in (idea.audit.archive.candidates or []) %}<div class="niche-subtext">{{ window.title }} · {{ '%0.2f'|format(window.similarity) }} · {{ window.start_seconds }}s</div>{% else %}—{% endfor %}{% if idea.audit.archive.verdict %}<details><summary>LLM verdicts</summary><pre style="white-space:pre-wrap">{{ idea.audit.archive.verdict | tojson(indent=2) }}</pre></details>{% endif %}</td>
+    <td class="is-left">{% for window in (idea.audit.archive.candidates or []) %}<div class="niche-subtext">#{{ window.candidate_index }} · {{ window.title }} · {{ '%0.2f'|format(window.similarity) }} · {{ window.start_seconds }}s</div>{% else %}—{% endfor %}{% if idea.audit.archive.verdict %}<details><summary>LLM verdicts</summary><pre style="white-space:pre-wrap">{{ idea.audit.archive.verdict | tojson(indent=2) }}</pre></details>{% endif %}</td>
   </tr>{% endfor %}
   </tbody></table></div>{% else %}<div class="niche-empty">No weekly ideas have been computed for this niche yet.</div>{% endif %}
   </section>

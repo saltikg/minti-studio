@@ -98,11 +98,12 @@
                 <div>
                   <div class="customer-niche-short-title">{{ idea.angle_label }}</div>
                   <div class="customer-niche-muted small"><a href="{{ idea.source_url }}" target="_blank" rel="noopener noreferrer">{{ idea.source_channel_title }}</a> · {{ '%.1f'|format(idea.source_ratio) }}× usual · {{ '{:,}'.format(idea.source_views | int) }} views</div>
+                  {% if idea.idea_note %}<div class="customer-niche-muted small mt-1">{{ idea.idea_note }}</div>{% endif %}
                 </div>
                 {% if idea.worked_badge %}<span class="badge text-bg-success">{{ idea.worked_badge }}</span>{% endif %}
               </div>
               {% if idea.status == 'archive' %}
-                <div class="customer-niche-muted small mt-2"><strong>Ready in your archive</strong> · {{ idea.archive_title }}{% if idea.archive_published_at %} · {{ idea.archive_published_at.strftime('%b %-d, %Y') }}{% endif %}</div>
+                <div class="customer-niche-muted small mt-2"><strong>Ready in your sources</strong> · {{ idea.archive_source_channel_title }} · {{ idea.archive_title }}{% if idea.archive_published_at %} · {{ idea.archive_published_at.strftime('%b %-d, %Y') }}{% endif %}</div>
                 <div class="customer-niche-muted small mt-1">{{ idea.archive_timestamp }} · “{{ idea.archive_snippet }}”</div>
                 <a class="btn btn-sm btn-info mt-2" href="{{ idea.archive_url }}">Make this Short</a>
               {% else %}

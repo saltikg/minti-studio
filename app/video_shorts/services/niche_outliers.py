@@ -1044,6 +1044,9 @@ def run_weekly_refresh_if_due(now: datetime | None = None) -> dict[str, Any] | N
             from app.video_shorts.services.niche_caption_archive import (
                 enqueue_brand_caption_archive,
             )
+            from app.video_shorts.services.niche_weekly_ideas import (
+                weekly_ideas_brand_enabled,
+            )
             conn = get_db_readonly()
             try:
                 brand_ids = [
@@ -1060,7 +1063,10 @@ def run_weekly_refresh_if_due(now: datetime | None = None) -> dict[str, Any] | N
                 conn.close()
             result["weekly_idea_jobs"] = [
                 enqueue_brand_caption_archive(brand_id, run_key=as_of.isoformat())
-                for brand_id in brand_ids
+                for brand_id in brand_ids if weekly_ideas_brand_enabled(brand_id)
+            ]
+            result["weekly_idea_skipped_brands"] = [
+                brand_id for brand_id in brand_ids if not weekly_ideas_brand_enabled(brand_id)
             ]
             results[niche_slug] = result
         except Exception as exc:
