@@ -33,6 +33,15 @@ GENERIC_THEMES = {
     "dua", "din", "islam", "islâm", "sohbet", "menopause", "hormones", "health",
     "women's health", "women health", "menopause symptoms", "hormone issues",
     "aile ve ilişkiler", "genel sağlık", "general health",
+    "hormone replacement therapy", "menopause symptoms and management",
+    "body changes and physical appearance", "health advocacy and awareness",
+    "midlife mental health and behavior", "midlife nutrition and supplements",
+    "weight and metabolic health", "dini ve ahlaki uyarılar",
+    "peygamber ve sahabe hikayeleri", "aile ve sosyal ilişkiler",
+    "dini bilgi ve öğütler", "dini ritüeller ve gelenekler",
+    "dini hikayeler ve örnekler", "dini uygulamalar ve ibadetler",
+    "dini sorumluluklar ve ibadet", "dini kavramlar ve inançlar",
+    "dini vaaz ve sohbet",
 }
 MATCH_STOPWORDS = {
     "about", "after", "before", "from", "into", "with", "without", "your", "yourself",
@@ -184,6 +193,30 @@ def _merge_labels(
         ],
     )
     parsed = _json_response(response)
+    first_input, first_output = _usage(response)
+    revision = client.chat.completions.create(
+        model=MODEL, temperature=0, max_tokens=max(300, len(labels) * 32),
+        response_format={"type": "json_object"},
+        messages=[
+            {"role": "system", "content": (
+                "Audit and revise proposed rising themes. Return JSON only in the same topics schema. A valid "
+                "theme is a focused question/claim cluster a creator could cover in ONE video or a short series, "
+                "2–5 words, broader than one angle but not a content category. Split any group held together only "
+                "by HRT, symptoms, body changes, health, nutrition, religion, morality, family, worship, stories, "
+                "or advice. BAD themes that must be split: 'Hormone Replacement Therapy', 'Menopause Symptoms "
+                "and Management', 'Body Changes and Physical Appearance', 'Health Advocacy and Awareness', "
+                "'Dinî ve ahlaki uyarılar', 'Peygamber ve sahabe hikayeleri', 'Aile ve sosyal ilişkiler'. "
+                "GOOD middle-level themes: 'Duanın kabul olması', 'Hızır ve gizli yardım', 'HRT after breast "
+                "cancer', 'Vaginal estrogen for dryness', 'Feeling lost at midlife'. Preserve every video_id once."
+            )},
+            {"role": "user", "content": json.dumps({
+                "language": language,
+                "angles": [{"video_id": video_id, "label": label} for video_id, label in labels.items()],
+                "proposed_themes": parsed.get("topics") or [],
+            }, ensure_ascii=False)},
+        ],
+    )
+    parsed = _json_response(revision)
     valid_ids = set(labels)
     used: set[str] = set()
     topics = []
@@ -202,8 +235,8 @@ def _merge_labels(
         fallback = _clean_theme(" ".join(labels[video_id].split()[:5]))
         if fallback:
             topics.append({"label": fallback, "video_ids": [video_id]})
-    input_tokens, output_tokens = _usage(response)
-    return topics, input_tokens, output_tokens
+    revision_input, revision_output = _usage(revision)
+    return topics, first_input + revision_input, first_output + revision_output
 
 
 def _aggregate_topics(
@@ -443,6 +476,29 @@ def _matching_archive_segment(
     return None, ""
 
 
+def _archive_candidates_for_topics(
+    topics: list[dict[str, Any]], archive: list[dict[str, Any]], *, limit_per_theme: int = 16,
+) -> dict[str, list[dict[str, Any]]]:
+    output: dict[str, list[dict[str, Any]]] = {}
+    for topic in topics:
+        topic_terms = _match_terms(topic["label"])
+        candidates = []
+        for video in archive:
+            for segment in video.get("segments") or []:
+                overlap = len(topic_terms & _match_terms(segment.get("text")))
+                if overlap < 1:
+                    continue
+                candidates.append({
+                    "video_id": video["id"], "video_title": video["title"],
+                    "start_seconds": segment["start_seconds"],
+                    "end_seconds": segment["end_seconds"],
+                    "text": segment["text"], "term_overlap": overlap,
+                })
+        candidates.sort(key=lambda item: (-item["term_overlap"], item["video_id"], item["start_seconds"]))
+        output[topic["topic_key"]] = candidates[:limit_per_theme]
+    return output
+
+
 def _match_brand(
     topics: list[dict[str, Any]], shorts: list[dict[str, Any]], archive: list[dict[str, Any]], client: Any,
 ) -> tuple[list[dict[str, Any]], int, int]:
@@ -469,7 +525,7 @@ def _match_brand(
             {"role": "user", "content": json.dumps({
                 "topics": [{"topic_key": item["topic_key"], "label": item["label"]} for item in topics],
                 "published_shorts": shorts,
-                "archive_videos": archive,
+                "archive_candidates_by_theme": _archive_candidates_for_topics(topics, archive),
             }, ensure_ascii=False)},
         ],
     )

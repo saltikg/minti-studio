@@ -106,6 +106,23 @@ def test_merge_groups_specific_angles_into_middle_level_theme():
     assert topics == [{"label": "Duanın kabul olması", "video_ids": ["a", "b"]}]
 
 
+def test_merge_rejects_broad_category_theme_and_falls_back_to_angles():
+    payload = (
+        '{"topics":[{"label":"Hormone Replacement Therapy","video_ids":["a","b"]}]}'
+    )
+    labels = {
+        "a": "HRT after breast cancer safety",
+        "b": "HRT after sixty fracture prevention",
+    }
+
+    topics, _, _ = niche_rising_topics._merge_labels(labels, "en", _Client(payload))
+
+    assert topics == [
+        {"label": "HRT after breast cancer safety", "video_ids": ["a"]},
+        {"label": "HRT after sixty fracture prevention", "video_ids": ["b"]},
+    ]
+
+
 def test_archive_match_requires_verbatim_transcript_evidence():
     topics = [{"topic_key": "age-60", "label": "HRT after age 60"}]
     archive = [{
@@ -174,6 +191,21 @@ def test_segment_windows_builds_timestamped_thirty_second_chunks():
 
     assert [(item["start_seconds"], item["end_seconds"]) for item in windows] == [(0.0, 30.0), (30.0, 60.0)]
     assert windows[0]["text"] == "part 0 part 1 part 2"
+
+
+def test_archive_candidates_are_shortlisted_per_theme_by_term_overlap():
+    topics = [{"topic_key": "accepted-prayer", "label": "Duanın kabul olması"}]
+    archive = [{
+        "id": 7, "title": "Prayer talk", "segments": [
+            {"start_seconds": 0, "end_seconds": 35, "text": "Namaz ve secde hakkında konuşma"},
+            {"start_seconds": 35, "end_seconds": 70, "text": "Duanın kabul olması için sabır gerekir"},
+        ],
+    }]
+
+    candidates = niche_rising_topics._archive_candidates_for_topics(topics, archive)
+
+    assert len(candidates["accepted-prayer"]) == 1
+    assert candidates["accepted-prayer"][0]["start_seconds"] == 35
 
 
 def test_format_seconds_for_archive_evidence():
