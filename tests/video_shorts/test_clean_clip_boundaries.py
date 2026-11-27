@@ -340,3 +340,19 @@ def test_multi_range_cut_disables_async_resampling_per_part(monkeypatch, tmp_pat
     filter_graph = captured["command"][captured["command"].index("-filter_complex") + 1]
     assert filter_graph.count("aresample=async=0:first_pts=0") == 2
     assert "aresample=async=1:first_pts=0" not in filter_graph
+
+
+def test_only_later_source_hook_needs_isolated_decoder():
+    assert compositor._out_of_order_leading_hook_index([
+        {"start": 20.0, "end": 24.0, "role": "hook"},
+        {"start": 2.0, "end": 10.0},
+        {"start": 20.0, "end": 25.0},
+    ]) == 0
+    assert compositor._out_of_order_leading_hook_index([
+        {"start": 2.0, "end": 4.0, "role": "hook"},
+        {"start": 5.0, "end": 10.0},
+    ]) is None
+    assert compositor._out_of_order_leading_hook_index([
+        {"start": 2.0, "end": 4.0},
+        {"start": 5.0, "end": 10.0},
+    ]) is None

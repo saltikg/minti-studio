@@ -12,7 +12,7 @@ import subprocess
 import tempfile
 import time
 from pathlib import Path
-from typing import Any, Dict, List, Optional, Tuple
+from typing import Any, Dict, List, Optional, Sequence, Tuple
 
 import numpy as np
 from PIL import Image, ImageDraw, ImageFilter, ImageFont, ImageSequence, features
@@ -4376,6 +4376,17 @@ def _compose_with_background(
 
 
 
+def _out_of_order_leading_hook_index(ranges: Sequence[Dict[str, Any]]) -> Optional[int]:
+    if len(ranges) <= 1:
+        return None
+    first = ranges[0]
+    if str(first.get("role") or "").strip().lower() != "hook":
+        return None
+    if float(first["start"]) <= min(float(item["start"]) for item in ranges[1:]) + 0.001:
+        return None
+    return 0
+
+
 def _compose_trimmed_with_background(
     bg_path: Path,
     src_path: Path,
@@ -5523,6 +5534,13 @@ def _compose_trimmed_with_background(
             }
             for item in direct_source_ranges
         ]
+        isolated_hook_index = _out_of_order_leading_hook_index(relative_ranges)
+        if isolated_hook_index is not None:
+            # A later source moment copied to output position zero makes ffmpeg's
+            # split+concat graph retain the earlier normal frames until the hook
+            # branch is consumed. Decode that out-of-order hook independently so
+            # the chronological normal branches remain streaming and bounded.
+            isolated_hook_index = 0
         if len(relative_ranges) == 1:
             item = relative_ranges[0]
             if not direct_visual_override and not isolated_face_segments:
@@ -5537,27 +5555,60 @@ def _compose_trimmed_with_background(
                 )
                 direct_timeline_audio_label = "[clip_source_a]"
         else:
+            shared_range_indexes = [
+                index for index in range(len(relative_ranges))
+                if index != isolated_hook_index
+            ]
             if not direct_visual_override:
-                video_split_labels = "".join(
-                    f"[clip_range_v_src_{index}]" for index in range(len(relative_ranges))
-                )
-                filter_parts.append(f"[1:v]split={len(relative_ranges)}{video_split_labels}")
+                if len(shared_range_indexes) > 1:
+                    video_split_labels = "".join(
+                        f"[clip_range_v_src_{index}]" for index in shared_range_indexes
+                    )
+                    filter_parts.append(f"[1:v]split={len(shared_range_indexes)}{video_split_labels}")
             if timeline_source_has_audio:
-                audio_split_labels = "".join(
-                    f"[clip_range_a_src_{index}]" for index in range(len(relative_ranges))
-                )
-                filter_parts.append(f"[1:a]asplit={len(relative_ranges)}{audio_split_labels}")
+                if len(shared_range_indexes) > 1:
+                    audio_split_labels = "".join(
+                        f"[clip_range_a_src_{index}]" for index in shared_range_indexes
+                    )
+                    filter_parts.append(f"[1:a]asplit={len(shared_range_indexes)}{audio_split_labels}")
             video_concat_inputs: list[str] = []
             audio_concat_inputs: list[str] = []
             for index, item in enumerate(relative_ranges):
+                isolated_hook = index == isolated_hook_index
                 if not direct_visual_override:
+                    video_source_label = (
+                        "[isolated_hook_source:v]"
+                        if isolated_hook
+                        else (
+                            f"[clip_range_v_src_{index}]"
+                            if len(shared_range_indexes) > 1
+                            else "[1:v]"
+                        )
+                    )
+                    video_trim_start = 0.0 if isolated_hook else float(item["start"])
+                    video_trim_end = (
+                        max(0.001, float(item["end"]) - float(item["start"]))
+                        if isolated_hook
+                        else float(item["end"])
+                    )
                     filter_parts.append(
-                        f"[clip_range_v_src_{index}]trim=start={item['start']:.6f}:end={item['end']:.6f},"
+                        f"{video_source_label}trim=start={video_trim_start:.6f}:end={video_trim_end:.6f},"
                         f"setpts=PTS-STARTPTS,settb=AVTB[clip_range_v_{index}]"
                     )
                     video_concat_inputs.append(f"[clip_range_v_{index}]")
                 if timeline_source_has_audio:
                     range_duration = max(0.001, float(item["end"]) - float(item["start"]))
+                    audio_source_label = (
+                        "[isolated_hook_source:a]"
+                        if isolated_hook
+                        else (
+                            f"[clip_range_a_src_{index}]"
+                            if len(shared_range_indexes) > 1
+                            else "[1:a]"
+                        )
+                    )
+                    audio_trim_start = 0.0 if isolated_hook else float(item["start"])
+                    audio_trim_end = range_duration if isolated_hook else float(item["end"])
                     join_fades = ""
                     if index > 0 and item.get("audio_fade_in_seconds") is not None:
                         fade_in = min(float(item["audio_fade_in_seconds"]), range_duration / 2.0)
@@ -5566,7 +5617,7 @@ def _compose_trimmed_with_background(
                         fade_out = min(float(item["audio_fade_out_seconds"]), range_duration / 2.0)
                         join_fades += f",afade=t=out:st={max(0.0, range_duration - fade_out):.6f}:d={fade_out:.6f}"
                     filter_parts.append(
-                        f"[clip_range_a_src_{index}]atrim=start={item['start']:.6f}:end={item['end']:.6f},"
+                        f"{audio_source_label}atrim=start={audio_trim_start:.6f}:end={audio_trim_end:.6f},"
                         f"asetpts=PTS-STARTPTS,aresample=async=0:first_pts=0{join_fades}[clip_range_a_{index}]"
                     )
                     audio_concat_inputs.append(f"[clip_range_a_{index}]")
@@ -6822,6 +6873,30 @@ def _compose_trimmed_with_background(
             )
         current_app.logger.info(
             "Face-aware segments use isolated source inputs count=%s", len(layout_segments),
+        )
+    if direct_source_timeline and isolated_hook_index is not None:
+        hook_source_range = direct_source_ranges[isolated_hook_index]
+        hook_source_duration = max(
+            0.001,
+            float(hook_source_range["end"]) - float(hook_source_range["start"]),
+        )
+        hook_input_index = sum(argument == "-i" for argument in cmd)
+        cmd.extend([
+            "-threads", "1",
+            "-ss", f"{float(hook_source_range['start']):.6f}",
+            "-t", f"{hook_source_duration + 0.100:.6f}",
+            "-i", str(clip_video_source),
+        ])
+        filter_complex = filter_complex.replace(
+            "[isolated_hook_source:v]", f"[{hook_input_index}:v]",
+        ).replace(
+            "[isolated_hook_source:a]", f"[{hook_input_index}:a]",
+        )
+        current_app.logger.info(
+            "Out-of-order hook uses isolated source input index=%s start=%.3f duration=%.3f",
+            hook_input_index,
+            float(hook_source_range["start"]),
+            hook_source_duration,
         )
     video_encode_args = ["-preset", "ultrafast", "-crf", "23", "-c:v", "libx264"]
     if high_quality_encode:
