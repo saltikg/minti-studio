@@ -235,11 +235,15 @@ def _assert_make_clip_add_keeps_exact_word_indexes(page: Page, variant: str) -> 
 def _assert_make_clip_hook_is_first(page: Page, variant: str) -> None:
     page.evaluate("() => window.setGenerateV2ActiveTab('transcript', {persist: false})")
     page.wait_for_selector("[data-generate-v2-text-document] .generate-v2-text-word")
+    page.evaluate("() => document.querySelector('[data-generate-v2-text-clear-parts]')?.click()")
     result = page.evaluate(
         """() => {
           const editor = document.querySelector('[data-generate-v2-text-document]');
           const initialWords = Array.from(editor?.querySelectorAll('.generate-v2-text-word') || []);
-          if (initialWords.length < 8) return {error: 'not enough transcript words for hook smoke'};
+          if (initialWords.length < 12) return {error: 'not enough transcript words for hook smoke'};
+          const expected = initialWords.length >= 344
+            ? {normalFirst: 305, hookFirst: 320, hookLast: 331, normalLast: 343}
+            : {normalFirst: 0, hookFirst: 4, hookLast: 7, normalLast: 11};
           const selectAndClick = (first, last, selector) => {
             const words = Array.from(editor.querySelectorAll('.generate-v2-text-word'));
             const selection = window.getSelection();
@@ -253,23 +257,60 @@ def _assert_make_clip_hook_is_first(page: Page, variant: str) -> None:
             if (!button || button.disabled) throw new Error(`${selector} unavailable`);
             button.click();
           };
-          selectAndClick(5, 7, '[data-generate-v2-text-hook]');
-          selectAndClick(0, 3, '[data-generate-v2-text-add]');
+          selectAndClick(expected.normalFirst, expected.hookFirst - 1, '[data-generate-v2-text-add]');
+          selectAndClick(expected.hookLast + 1, expected.normalLast, '[data-generate-v2-text-add]');
+          selectAndClick(expected.hookFirst, expected.hookLast, '[data-generate-v2-text-hook]');
           const parts = window.__generateV2TextParts || [];
           const liveWords = Array.from(editor.querySelectorAll('.generate-v2-text-word'));
           return {
             parts,
-            hookHighlighted: liveWords.slice(5, 8).every(word => word.classList.contains('is-hook')),
+            hookHighlighted: liveWords.slice(expected.hookFirst, expected.hookLast + 1).every(word =>
+              word.classList.contains('is-hook') && word.classList.contains('is-added')),
             summary: document.querySelector('[data-generate-v2-text-parts-summary]')?.textContent || '',
+            note: document.querySelector('.generate-v2-text-hook-copy-note')?.textContent || '',
+            expected,
           };
         }"""
     )
     assert not result.get("error"), result
-    assert result["parts"] and result["parts"][0].get("role") == "hook", result
+    assert len(result["parts"]) == 2 and result["parts"][0].get("role") == "hook", result
     assert result["parts"][0].get("transition") == "flash", result
+    assert result["parts"][0].get("start_word_index") == result["expected"]["hookFirst"], result
+    assert result["parts"][0].get("end_word_index") == result["expected"]["hookLast"], result
+    assert result["parts"][1].get("start_word_index") == result["expected"]["normalFirst"], result
+    assert result["parts"][1].get("end_word_index") == result["expected"]["normalLast"], result
     assert result["hookHighlighted"], result
     assert result["summary"].startswith("Hook "), result
-    _print_pass(variant, "Make a Clip hook part is first in preview order")
+    assert result["note"] == "Also plays in its place", result
+
+    page.evaluate(
+        """() => {
+          const originalFetch = window.fetch.bind(window);
+          window.__hookSmokePreview = null;
+          window.fetch = async (...args) => {
+            const [input, options] = args;
+            const response = await originalFetch(...args);
+            if (String(input).includes('preview-keep-ranges')) {
+              window.__hookSmokePreview = {
+                request: JSON.parse(String(options?.body || '{}')),
+                response: await response.clone().json(),
+              };
+            }
+            return response;
+          };
+          document.querySelector('[data-generate-v2-text-preview-all]')?.click();
+        }"""
+    )
+    page.wait_for_function("() => !!window.__hookSmokePreview", timeout=10_000)
+    preview = page.evaluate("() => window.__hookSmokePreview")
+    request_ranges = preview["request"]["ranges"]
+    resolved_ranges = preview["response"]["ranges"]
+    assert len(request_ranges) == 2 and request_ranges[0].get("role") == "hook", preview
+    assert request_ranges[1].get("start_word_index") == result["expected"]["normalFirst"], preview
+    assert request_ranges[1].get("end_word_index") == result["expected"]["normalLast"], preview
+    assert len(resolved_ranges) == 2 and resolved_ranges[0].get("role") == "hook", preview
+    assert resolved_ranges[0]["start"] > resolved_ranges[1]["start"], preview
+    _print_pass(variant, "Make a Clip hook copies into normal flow and previews hook then 305-343")
 
 
 def _assert_trim_selection_keeps_exact_first_word(page: Page, variant: str) -> None:

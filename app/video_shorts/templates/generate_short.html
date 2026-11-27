@@ -3325,6 +3325,12 @@
     font-size: 0.76rem;
     font-weight: 800;
   }
+  .generate-v2-text-hook-copy-note {
+    color: rgba(253, 230, 138, 0.78);
+    font-size: 0.7rem;
+    font-weight: 700;
+    white-space: nowrap;
+  }
   .generate-v2-text-hook-hint {
     color: #fbbf24;
     font-size: 0.72rem;
@@ -7214,6 +7220,7 @@
                   </div>
                   <span class="generate-v2-text-parts-summary" data-generate-v2-text-parts-summary></span>
                   <span class="generate-v2-text-hook-controls d-none" data-generate-v2-text-hook-controls>
+                    <span class="generate-v2-text-hook-copy-note">Also plays in its place</span>
                     <label>Hook transition
                       <select class="form-select form-select-sm d-inline-block w-auto" data-generate-v2-hook-transition>
                         <option value="flash">Flash</option>
@@ -15136,6 +15143,11 @@ window.initGenerateV2TextTranscript = () => {
     if (!range) return;
     stopPreview();
     const normalParts = state.parts.filter((part) => part.role !== "hook");
+    const normalIndexes = rangesToWordIndexSet(words, normalParts);
+    for (let index = range.start_word_index; index <= range.end_word_index; index += 1) {
+      normalIndexes.add(index);
+    }
+    const normalPartsWithHook = rangesFromWordIndexes(words, normalIndexes);
     state.parts = normalizeTranscriptParts([{
       start: range.start,
       end: range.end,
@@ -15143,7 +15155,7 @@ window.initGenerateV2TextTranscript = () => {
       end_word_index: range.end_word_index,
       role: "hook",
       transition: "flash",
-    }, ...normalParts]);
+    }, ...normalPartsWithHook]);
     window.getSelection?.()?.removeAllRanges?.();
     hideToolbar();
     render();
