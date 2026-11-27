@@ -204,7 +204,16 @@ def test_clean_label_rejects_broad_and_requires_three_to_seven_words():
 
 def test_clean_theme_requires_middle_level_label():
     assert niche_rising_topics._clean_theme("Dua") == ""
+    assert niche_rising_topics._clean_theme("Menopause symptoms and effects") == ""
+    assert niche_rising_topics._clean_theme("Dinî uyarılar ve ahlak") == ""
     assert niche_rising_topics._clean_theme("Duanın kabul olması") == "Duanın kabul olması"
+
+
+def test_theme_evidence_does_not_count_connecting_words_as_overlap():
+    assert not niche_rising_topics._evidence_matches_theme(
+        "Mental health and nervous system",
+        "Hormone conversion, sleep depth and quality, inflammation, gut health, and multiple systems destabilize.",
+    )
 
 
 def test_segment_windows_builds_timestamped_thirty_second_chunks():

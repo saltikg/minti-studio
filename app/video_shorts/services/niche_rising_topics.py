@@ -42,10 +42,15 @@ GENERIC_THEMES = {
     "dini hikayeler ve örnekler", "dini uygulamalar ve ibadetler",
     "dini sorumluluklar ve ibadet", "dini kavramlar ve inançlar",
     "dini vaaz ve sohbet",
+    "menopause symptoms and effects", "midlife health and wellness",
+    "menopause hormone therapy", "dini vecizeler ve hadisler",
+    "dini uyarılar ve ahlak", "dini uygulamalar ve ritüeller",
+    "aile ve toplum", "dini hikayeler ve kıssalar", "manevi sohbet ve vaaz",
 }
 MATCH_STOPWORDS = {
     "about", "after", "before", "from", "into", "with", "without", "your", "yourself",
     "this", "that", "what", "when", "where", "which", "whose", "women", "midlife",
+    "and", "or", "the", "for", "are", "was", "were", "has", "have", "health",
     "icin", "için", "ile", "ve", "veya", "bir", "bu", "su", "şu", "olan", "olarak",
     "olma", "olmasi", "olması",
 }
