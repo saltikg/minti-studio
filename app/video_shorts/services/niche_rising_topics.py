@@ -50,7 +50,8 @@ GENERIC_THEMES = {
 MATCH_STOPWORDS = {
     "about", "after", "before", "from", "into", "with", "without", "your", "yourself",
     "this", "that", "what", "when", "where", "which", "whose", "women", "midlife",
-    "and", "or", "the", "for", "are", "was", "were", "has", "have", "health",
+    "and", "or", "the", "for", "are", "was", "were", "has", "have", "health", "system",
+    "regulation",
     "icin", "için", "ile", "ve", "veya", "bir", "bu", "su", "şu", "olan", "olarak",
     "olma", "olmasi", "olması",
 }
@@ -479,8 +480,7 @@ def _match_terms(value: Any) -> set[str]:
 def _evidence_matches_theme(topic_label: Any, evidence: Any) -> bool:
     topic_terms = _match_terms(topic_label)
     evidence_terms = _match_terms(evidence)
-    required = min(2, len(topic_terms))
-    return required > 0 and len(topic_terms & evidence_terms) >= required
+    return bool(topic_terms & evidence_terms)
 
 
 def _matching_archive_segment(
