@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import math
 import re
-from collections import Counter, defaultdict
+from collections import defaultdict
 from datetime import date, timedelta
 from typing import Any
 
@@ -127,13 +127,11 @@ def _top_outlier_cards(
 def _pattern_line(cards: list[dict[str, Any]]) -> str:
     if not cards:
         return ""
-    themes = Counter(card["theme_label"] for card in cards if card.get("theme_label"))
-    theme, count = themes.most_common(1)[0] if themes else ("the same topic", 0)
     stories = sum(card.get("format_label") == "story" for card in cards)
     durations = [int(card["duration_s"]) for card in cards]
     return (
-        f"Last week's pattern: {count} of {len(cards)} winners were about {theme}; "
-        f"{stories} were stories. Most ran {_whole_percentile(durations, .25)}–"
+        f"Last week's pattern: {stories} {'was' if stories == 1 else 'were'} stories. "
+        f"Most ran {_whole_percentile(durations, .25)}–"
         f"{_whole_percentile(durations, .75)}s."
     )
 
@@ -212,7 +210,15 @@ def load_customer_niche_page(
         pool_by_channel=pool_by_channel,
         own_channel_ids=own_channel_ids,
     )
-    pattern = _pattern_line(cards)
+    pattern = ""
+    if as_of and table_columns(conn, "niche_outlier_patterns"):
+        pattern_row = conn.execute(
+            """SELECT pattern_sentence FROM niche_outlier_patterns
+               WHERE niche_id=? AND as_of=? LIMIT 1""", [niche["id"], as_of],
+        ).fetchone()
+        pattern = str((pattern_row[0] if pattern_row else "") or "").strip()
+    if not pattern:
+        pattern = _pattern_line(cards)
     early_as_of, early_rows = load_latest_niche_outliers(conn, niche["id"], signal_type="early")
     early_cards = _top_outlier_cards(
         early_rows, pool_by_channel=pool_by_channel, own_channel_ids=own_channel_ids, early=True,

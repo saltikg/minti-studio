@@ -662,7 +662,7 @@ def _whole_percentile(values: list[int], percentile: float) -> int:
     return int(round(interpolated))
 
 
-def _pattern_topics(value: Any, titles: list[str]) -> list[str]:
+def _pattern_themes(value: Any, valid_ids: set[str]) -> dict[str, str]:
     text = str(value or "").strip()
     if text.startswith("```"):
         text = re.sub(r"^```(?:json)?\s*|\s*```$", "", text, flags=re.IGNORECASE)
@@ -670,13 +670,20 @@ def _pattern_topics(value: Any, titles: list[str]) -> list[str]:
         parsed = json.loads(text)
     except (TypeError, ValueError, json.JSONDecodeError) as exc:
         raise NicheOutlierError("pattern generator returned invalid JSON") from exc
-    topics = parsed.get("topics") if isinstance(parsed, dict) else None
-    if not isinstance(topics, list) or not 2 <= len(topics) <= 3:
-        raise NicheOutlierError("pattern generator must return 2–3 topic labels")
-    cleaned = [" ".join(str(topic).strip().split()) for topic in topics]
-    if any(topic != topic.casefold() or not 2 <= len(topic.split()) <= 4 for topic in cleaned):
-        raise NicheOutlierError("pattern topic labels must be lowercase and 2–4 words")
-    return cleaned
+    items = parsed.get("items") if isinstance(parsed, dict) else None
+    if not isinstance(items, list):
+        raise NicheOutlierError("pattern generator must return theme items")
+    themes: dict[str, str] = {}
+    for item in items:
+        if not isinstance(item, dict):
+            continue
+        video_id = str(item.get("video_id") or "")
+        theme = " ".join(str(item.get("theme") or "").strip().split())
+        if video_id in valid_ids and 1 <= len(theme.split()) <= 3:
+            themes[video_id] = theme
+    if set(themes) != valid_ids:
+        raise NicheOutlierError("pattern generator must label every supplied video_id")
+    return themes
 
 
 def generate_niche_outlier_pattern(
@@ -693,29 +700,43 @@ def generate_niche_outlier_pattern(
     selected_client = client or _openai_client
     if selected_client is None:
         raise NicheOutlierError("OpenAI client is not configured")
-    titles = [str(row.get("title") or "").strip() for row in source_rows]
-    title_lines = "\n".join(f"- {title}" for title in titles)
+    titles = [
+        {"video_id": str(row.get("video_id") or ""), "title": str(row.get("title") or "").strip()}
+        for row in source_rows
+    ]
     durations = [int(row.get("duration_s") or 0) for row in source_rows]
     p25 = _whole_percentile(durations, 0.25)
     p75 = _whole_percentile(durations, 0.75)
+    language = str(result.get("language") or "").strip()
+    if not language:
+        conn = get_db_readonly()
+        try:
+            definition = load_niche_definition(conn, niche_id=result.get("niche_id"))
+            language = str((definition or {}).get("language") or "en")
+        finally:
+            conn.close()
     response = selected_client.chat.completions.create(
         model=OPENAI_MODEL,
         temperature=0,
-        max_tokens=60,
+        max_tokens=max(120, len(source_rows) * 35),
         response_format={"type": "json_object"},
         messages=[
             {
                 "role": "system",
                 "content": (
-                    "Return JSON only with exactly this shape: {\"topics\":[\"label one\","
-                    "\"label two\"]}. Return 2–3 topic labels, each lowercase and 2–4 words, "
-                    "taken from the supplied titles. Do not return sentences or medical advice."
+                    "Label every supplied Short with one broad theme of 1–3 words in the requested "
+                    "niche language. Reuse exactly the same theme text for related titles. Themes must "
+                    "be broader than a title but concrete, e.g. dua, ölüm ve ahiret, HRT safety. "
+                    "Return JSON only: {\"items\":[{\"video_id\":\"...\",\"theme\":\"...\"}]}."
                 ),
             },
             {
                 "role": "user",
                 "content": (
-                    f"Customer-page outlier Short titles:\n{title_lines}"
+                    json.dumps({
+                        "language": language,
+                        "titles": titles,
+                    }, ensure_ascii=False)
                 ),
             },
         ],
@@ -728,13 +749,20 @@ def generate_niche_outlier_pattern(
     output_tokens = int(
         getattr(usage, "completion_tokens", 0) or getattr(usage, "output_tokens", 0) or 0
     )
-    topics = _pattern_topics(content, titles)
+    themes = _pattern_themes(content, {item["video_id"] for item in titles})
+    counts = defaultdict(int)
+    for theme in themes.values():
+        counts[theme] += 1
+    repeated = sorted(counts.items(), key=lambda item: (-item[1], item[0].casefold()))
+    repeated = [item for item in repeated if item[1] >= 2]
+    stories = sum(str(row.get("format_label") or "") == "story" for row in source_rows)
+    story_text = f"{stories} {'was' if stories == 1 else 'were'} stories"
+    theme_text = f"{repeated[0][1]} of {len(source_rows)} winners were about {repeated[0][0]}; " if repeated else ""
     return {
         "niche_id": result["niche_id"],
         "as_of": result["as_of"],
         "pattern_sentence": (
-            f"Most-watched this week: {', '.join(topics)}. "
-            f"Most winners ran {p25}–{p75}s."
+            f"Last week's pattern: {theme_text}{story_text}. Most ran {p25}–{p75}s."
         ),
         "model": OPENAI_MODEL,
         "input_tokens": input_tokens,

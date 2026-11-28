@@ -119,7 +119,10 @@ def test_pattern_generation_uses_customer_top_six_and_builds_sentence(monkeypatc
             message = type(
                 "Message",
                 (),
-                {"content": json.dumps({"topics": ["estrogen cream", "bladder symptoms", "hrt patches"]})},
+                {"content": json.dumps({"items": [
+                    {"video_id": str(index), "theme": "HRT safety" if index in {5, 6, 7} else f"theme {index}"}
+                    for index in range(2, 8)
+                ]})},
             )()
             choice = type("Choice", (), {"message": message})()
             usage = type("Usage", (), {"prompt_tokens": 100, "completion_tokens": 20})()
@@ -129,6 +132,7 @@ def test_pattern_generation_uses_customer_top_six_and_builds_sentence(monkeypatc
     result = {
         "niche_id": 1,
         "as_of": "2026-11-25",
+        "language": "en",
         "rows": [
             {
                 "youtube_channel_id": f"channel-{index}",
@@ -139,6 +143,7 @@ def test_pattern_generation_uses_customer_top_six_and_builds_sentence(monkeypatc
                 "engagement": 0.02,
                 "baseline_engagement": 0.02,
                 "in_category": True,
+                "format_label": "story" if index in {6, 7} else "explanation",
             }
             for index in range(8)
         ],
@@ -148,11 +153,11 @@ def test_pattern_generation_uses_customer_top_six_and_builds_sentence(monkeypatc
 
     assert len(calls) == 1
     assert calls[0]["model"] == "gpt-4.1-mini"
-    assert calls[0]["messages"][1]["content"].count("\n-") == 6
+    assert len(json.loads(calls[0]["messages"][1]["content"])["titles"]) == 6
     assert pattern["source_count"] == 6
     assert pattern["pattern_sentence"] == (
-        "Most-watched this week: estrogen cream, bladder symptoms, hrt patches. "
-        "Most winners ran 23–26s."
+        "Last week's pattern: 3 of 6 winners were about HRT safety; "
+        "2 were stories. Most ran 23–26s."
     )
     assert pattern["estimated_cost_usd"] == 0.000072
 
