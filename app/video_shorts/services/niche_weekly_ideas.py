@@ -84,7 +84,10 @@ def _candidate_rows(
     start = end - timedelta(days=days)
     output = []
     channel_counts: dict[str, int] = {}
-    for row in sorted(rows, key=lambda item: -float(item.get("outlier_ratio") or 0)):
+    for row in sorted(rows, key=lambda item: (
+        1 if item.get("signal_type") == "early" else 0,
+        -float((item.get("speed_ratio") or 0) if item.get("signal_type") == "early" else (item.get("outlier_ratio") or 0)),
+    )):
         published = _parse_time(row.get("published_at"))
         channel_id = str(row.get("youtube_channel_id") or "")
         engagement = float(row.get("engagement") or 0)
@@ -550,9 +553,11 @@ def compute_brand_weekly_ideas(brand_id: str, *, client: Any = None) -> dict[str
             raise WeeklyIdeasError("brand has no niche")
         owner_user_id, brand_name, niche_id, niche_slug, language = str(brand[0]), str(brand[1]), int(brand[2]), str(brand[3]), str(brand[4] or "en")
         definition = load_niche_definition(conn, slug=niche_slug)
-        as_of, outliers = load_latest_niche_outliers(conn, niche_id)
+        as_of, outliers = load_latest_niche_outliers(conn, niche_id, signal_type="weekly")
         if not as_of:
             raise WeeklyIdeasError("niche has no outlier snapshot")
+        _early_as_of, early_outliers = load_latest_niche_outliers(conn, niche_id, signal_type="early")
+        outliers = [*outliers, *early_outliers]
         pool_channel_ids = _pool_channel_ids(conn, niche_slug)
         candidates, _maximum_days = _candidate_rows(
             outliers, as_of, days=30, allowed_channel_ids=pool_channel_ids,
@@ -566,14 +571,15 @@ def compute_brand_weekly_ideas(brand_id: str, *, client: Any = None) -> dict[str
         done, used_in, used_out, done_audit = _already_done(candidates, shorts, language, selected_client)
         chat_in += used_in
         chat_out += used_out
-        candidate_days = _choose_candidate_window(candidates, as_of, done, topic_gate)
-        candidates = [item for item in candidates if _within_candidate_days(item, as_of, candidate_days)]
+        candidate_days = 30
         available = [
             item for item in candidates
             if not bool((done.get(str(item.get("video_id"))) or {}).get("already_done"))
             and bool((topic_gate.get(str(item.get("video_id"))) or {}).get("is_topic", True))
         ]
-        selected_candidates = available[:3]
+        weekly_available = [item for item in available if item.get("signal_type") != "early"]
+        early_available = [item for item in available if item.get("signal_type") == "early"]
+        selected_candidates = [*weekly_available[:3], *early_available[:max(0, 3 - len(weekly_available))]]
         source_archive_count = 0
         if brand_id == HOCA_BRAND_ID:
             source_archive_count = _sync_hoca_source_archive(conn, brand_id, language)
@@ -629,6 +635,7 @@ def compute_brand_weekly_ideas(brand_id: str, *, client: Any = None) -> dict[str
                     )
             audit = {
                 "candidate_window_days": candidate_days,
+                "source_signal": str(item.get("signal_type") or "weekly"),
                 "topic_gate": topic_item,
                 "short_match": done_item,
                 "short_population_count": len(shorts),
@@ -718,6 +725,9 @@ def load_brand_weekly_ideas(conn: Any, niche_id: Any, brand_id: str) -> tuple[st
         item["worked_badge"] = (
             f"Worked for {int(item['worked_creator_count'])} creators"
             if int(item.get("worked_creator_count") or 0) >= 2 else ""
+        )
+        item["early_signal_badge"] = (
+            "Early signal" if (_decode_json(item.get("audit_json"), {}).get("source_signal") == "early") else ""
         )
     return as_of, rows
 

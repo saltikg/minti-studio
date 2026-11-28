@@ -22,12 +22,21 @@
   .customer-niche-page .customer-niche-table tr.is-you td { background: rgba(45,212,191,.13) !important; color: #E8EDF2; font-weight: 700; }
   .customer-niche-page .customer-niche-best-ratio { color: #5EEAD4 !important; font-weight: 800; }
   .customer-niche-page .customer-niche-cards { display: grid; gap: 16px; grid-template-columns: repeat(3, minmax(0, 1fr)); }
-  .customer-niche-page .customer-niche-short { border: 1px solid rgba(255,255,255,.14); border-radius: 18px; color: #E8EDF2; display: flex; flex-direction: column; min-height: 210px; padding: 20px; text-decoration: none; transition: transform .15s ease, border-color .15s ease; }
+  .customer-niche-page .customer-niche-short { background:rgba(255,255,255,.025); border: 1px solid rgba(255,255,255,.14); border-radius: 18px; color: #E8EDF2; display: flex; flex-direction: column; overflow:hidden; text-decoration: none; transition: transform .15s ease, border-color .15s ease; }
   .customer-niche-page .customer-niche-short:hover { border-color: rgba(125,211,252,.7); color: #E8EDF2; transform: translateY(-2px); }
   .customer-niche-page .customer-niche-short-ratio { color: #5EEAD4; font-size: 1.5rem; font-weight: 850; }
   .customer-niche-page .customer-niche-short-title { color: #E8EDF2; font-size: 1rem; font-weight: 750; line-height: 1.35; }
   .customer-niche-page .customer-niche-pattern { border-left: 3px solid #2dd4bf; color: #A9B4C0; padding-left: 14px; }
   .customer-niche-page .customer-niche-pattern strong { color: #E8EDF2; }
+  .customer-niche-page .customer-niche-thumb { aspect-ratio:9/12; background:#111827; overflow:hidden; position:relative; }
+  .customer-niche-page .customer-niche-thumb img { height:100%; object-fit:cover; width:100%; }
+  .customer-niche-page .customer-niche-duration { background:rgba(0,0,0,.82); border-radius:6px; bottom:10px; color:#fff; font-size:.75rem; padding:3px 7px; position:absolute; right:10px; }
+  .customer-niche-page .customer-niche-short-body { display:flex; flex:1; flex-direction:column; padding:16px; }
+  .customer-niche-page .customer-niche-badge { background:rgba(45,212,191,.13); border:1px solid rgba(45,212,191,.3); border-radius:999px; color:#99f6e4; font-size:.7rem; padding:4px 8px; }
+  .customer-niche-page .customer-niche-tabs { border-bottom:1px solid rgba(255,255,255,.12); display:flex; gap:8px; }
+  .customer-niche-page .customer-niche-tab { background:none; border:0; border-bottom:2px solid transparent; color:#A9B4C0; font-weight:700; padding:10px 12px; }
+  .customer-niche-page .customer-niche-tab.is-active { border-bottom-color:#2dd4bf; color:#E8EDF2; }
+  .customer-niche-page .customer-niche-panel[hidden] { display:none; }
   @media (max-width: 991px) { .customer-niche-page .customer-niche-cards { grid-template-columns: repeat(2, minmax(0, 1fr)); } }
   @media (max-width: 575px) { .customer-niche-page .customer-niche-cards { grid-template-columns: 1fr; } }
 </style>
@@ -67,22 +76,34 @@
 
   <section class="card shadow-sm vs-card mb-4">
     <div class="card-body p-4">
-      <h2 class="customer-niche-section-title mb-1">What's working in your niche right now</h2>
-      <p class="customer-niche-muted mb-4">Standout Shorts from creators in your niche.</p>
+      <h2 class="customer-niche-section-title mb-1">What's working in your niche</h2>
+      <div class="customer-niche-tabs mb-4" role="tablist">
+        <button class="customer-niche-tab is-active" type="button" data-niche-tab="weekly">Last week · {{ niche_page.cohort_start_display }}–{{ niche_page.cohort_end_display }}</button>
+        <button class="customer-niche-tab" type="button" data-niche-tab="early">This week · early signal</button>
+      </div>
+      <div class="customer-niche-panel" data-niche-panel="weekly">
+      {% if niche_page.cohorts | length > 1 %}<form class="mb-3" method="get"><label class="customer-niche-muted small me-2" for="niche-week">Week</label><select id="niche-week" name="week" class="form-select form-select-sm d-inline-block w-auto" onchange="this.form.submit()">{% for week in niche_page.cohorts %}<option value="{{ week }}" {% if week == niche_page.selected_cohort %}selected{% endif %}>{{ week }}</option>{% endfor %}</select></form>{% endif %}
       {% if niche_page.cards %}
         <div class="customer-niche-cards">
           {% for card in niche_page.cards %}
             <a class="customer-niche-short" href="{{ card.url }}" target="_blank" rel="noopener noreferrer">
-              <div class="d-flex justify-content-between align-items-start gap-2 mb-3"><span class="customer-niche-short-ratio">{{ '%.1f'|format(card.ratio) }}×</span><span class="customer-niche-muted small">{{ card.views_display }} views · {{ card.duration_s }}s</span></div>
-              <div class="customer-niche-short-title mb-3">{{ card.title }}</div>
-              <div class="customer-niche-muted small mt-auto">{{ card.channel_name }}</div>
+              <div class="customer-niche-thumb"><img src="{{ card.thumbnail_url }}" alt="" loading="lazy"><span class="customer-niche-duration">{{ card.duration_s }}s</span></div>
+              <div class="customer-niche-short-body"><div class="customer-niche-short-ratio mb-1">{{ '%.1f'|format(card.ratio) }}× usual</div><div class="customer-niche-muted small mb-2">{{ card.views_display }} views</div>
+              {% if card.badges %}<div class="d-flex flex-wrap gap-1 mb-2">{% for badge in card.badges %}<span class="customer-niche-badge">{{ badge }}</span>{% endfor %}</div>{% endif %}
+              <div class="customer-niche-short-title mb-3">{{ card.title }}</div><div class="customer-niche-muted small mt-auto">{{ card.channel_name }} · Watch ↗</div></div>
             </a>
           {% endfor %}
         </div>
       {% else %}
         <p class="customer-niche-muted">No standout Shorts are available this week.</p>
       {% endif %}
-      {% if niche_page.pattern %}<p class="customer-niche-pattern mt-4 mb-0"><strong>Pattern this week:</strong> {{ niche_page.pattern }}</p>{% endif %}
+      {% if niche_page.pattern %}<p class="customer-niche-pattern mt-4 mb-3">{{ niche_page.pattern }}</p>{% endif %}
+      {% if niche_page.selected_cohort %}<p class="customer-niche-muted small mb-0">Shorts posted {{ niche_page.cohort_start_display }}–{{ niche_page.cohort_end_display }}, measured after 7+ days · compared to each creator's own usual · next update {{ niche_page.next_update_display }}</p>{% endif %}
+      </div>
+      <div class="customer-niche-panel" data-niche-panel="early" hidden>
+        <p class="customer-niche-muted mb-3">Early — may still change.</p>
+        {% if niche_page.early_cards %}<div class="customer-niche-cards">{% for card in niche_page.early_cards %}<a class="customer-niche-short" href="{{ card.url }}" target="_blank" rel="noopener noreferrer"><div class="customer-niche-thumb"><img src="{{ card.thumbnail_url }}" alt="" loading="lazy"><span class="customer-niche-duration">{{ card.duration_s }}s</span></div><div class="customer-niche-short-body"><div class="customer-niche-short-ratio mb-1">{{ '%.1f'|format(card.speed_ratio) }}× usual speed</div><div class="customer-niche-muted small mb-2">{{ card.views_display }} views · {{ '%.1f'|format(card.age_days) }} days old · ↗ still rising</div><div class="customer-niche-short-title mb-3">{{ card.title }}</div><div class="customer-niche-muted small mt-auto">{{ card.channel_name }} · Watch ↗</div></div></a>{% endfor %}</div>{% else %}<p class="customer-niche-muted mb-0">No early signals qualify yet.</p>{% endif %}
+      </div>
     </div>
   </section>
 
@@ -100,7 +121,7 @@
                   <div class="customer-niche-muted small"><a href="{{ idea.source_url }}" target="_blank" rel="noopener noreferrer">{{ idea.source_channel_title }}</a> · {{ '%.1f'|format(idea.source_ratio) }}× usual · {{ '{:,}'.format(idea.source_views | int) }} views</div>
                   {% if idea.idea_note %}<div class="customer-niche-muted small mt-1">{{ idea.idea_note }}</div>{% endif %}
                 </div>
-                {% if idea.worked_badge %}<span class="badge text-bg-success">{{ idea.worked_badge }}</span>{% endif %}
+                <div>{% if idea.early_signal_badge %}<span class="badge text-bg-warning">{{ idea.early_signal_badge }}</span>{% endif %}{% if idea.worked_badge %}<span class="badge text-bg-success">{{ idea.worked_badge }}</span>{% endif %}</div>
               </div>
               {% if idea.status == 'archive' %}
                 <div class="customer-niche-muted small mt-2"><strong>Ready in your sources</strong> · {{ idea.archive_source_channel_title }} · {{ idea.archive_title }}{% if idea.archive_published_at %} · {{ idea.archive_published_at.strftime('%b %-d, %Y') }}{% endif %}</div>
@@ -119,4 +140,7 @@
     </div>
   </section>
 </div>
+<script>
+document.querySelectorAll('[data-niche-tab]').forEach(function(button){button.addEventListener('click',function(){document.querySelectorAll('[data-niche-tab]').forEach(function(item){item.classList.toggle('is-active',item===button)});document.querySelectorAll('[data-niche-panel]').forEach(function(panel){panel.hidden=panel.dataset.nichePanel!==button.dataset.nicheTab})})});
+</script>
 {% endblock %}

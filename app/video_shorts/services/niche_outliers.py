@@ -33,6 +33,7 @@ QUOTA_FEATURE = "niche_outlier_research_project"
 DEFAULT_MAX_UNITS = 500
 DEFAULT_NICHE_SLUG = "menopause_hormones"
 SCHEDULER_STATE_NAME = "niche_outliers:menopause_hormones"
+DAILY_STATE_NAME = "niche_outliers:daily_early_signal"
 EXCLUDED_TITLE_TERMS = ("#duet", "duet with", "#stitch", "stitch with", "repost")
 MIN_SHORT_DURATION_SECONDS = 15
 ON_TOPIC_DEFINITION = (
@@ -204,7 +205,9 @@ def refresh_niche_outlier_cache(
     as_of_date = _as_of_date(as_of)
     root = _cache_root(cache_root)
     niche_row, pool = _current_pool(str(niche))
-    start_pt = datetime.combine(as_of_date - timedelta(days=30), time.min, tzinfo=PACIFIC)
+    # Sixty days are needed for the creator-specific matured baseline.  Keep a
+    # small extra day because playlist timestamps are UTC while cohorts are PT.
+    start_pt = datetime.combine(as_of_date - timedelta(days=61), time.min, tzinfo=PACIFIC)
     quota = RunQuota(max_units)
     owns_session = session is None
     session = session or requests.Session()
@@ -346,8 +349,14 @@ def compute_niche_outlier_shorts(
         if include_non_pool
         else {str(row.get("youtube_channel_id") or "") for row in pool}
     )
-    window_start = datetime.combine(as_of_date - timedelta(days=30), time.min, tzinfo=PACIFIC)
-    settled_through = datetime.combine(as_of_date - timedelta(days=3), time.min, tzinfo=PACIFIC)
+    run_start = datetime.combine(as_of_date, time.min, tzinfo=PACIFIC)
+    this_monday = run_start - timedelta(days=run_start.weekday())
+    cohort_start = this_monday - timedelta(days=14)
+    cohort_end = cohort_start + timedelta(days=7)
+    baseline_start = run_start - timedelta(days=60)
+    baseline_end = run_start - timedelta(days=7)
+    early_start = run_start - timedelta(days=7)
+    early_end = run_start - timedelta(days=2)
     videos = manifest.get("videos") or {}
     eligible_channels = 0
     output: list[dict[str, Any]] = []
@@ -364,30 +373,45 @@ def compute_niche_outlier_shorts(
                 continue
             published_pt = published_at.astimezone(PACIFIC)
             if (
-                window_start <= published_pt <= settled_through
+                baseline_start <= published_pt < run_start
                 and int(duration) <= 180
                 and not _is_excluded_short(upload.get("title"), duration)
             ):
                 shorts.append({**upload, **details, "published_at_value": published_at})
-        if len(shorts) < 3:
+        baseline_shorts = [
+            item for item in shorts
+            if baseline_start <= item["published_at_value"].astimezone(PACIFIC) < baseline_end
+        ]
+        if len(baseline_shorts) < 3:
             continue
         eligible_channels += 1
-        baseline = float(median(int(item["views"]) for item in shorts))
+        baseline = float(median(int(item["views"]) for item in baseline_shorts))
         if baseline <= 0:
             continue
         engagement_values = [
             (int(item.get("likes") or 0) + int(item.get("comments") or 0))
             / int(item["views"])
-            for item in shorts
+            for item in baseline_shorts
             if int(item["views"]) > 0
         ]
         baseline_engagement = (
             float(median(engagement_values)) if engagement_values else 0.0
         )
         for item in shorts:
+            published_pt = item["published_at_value"].astimezone(PACIFIC)
+            signal_type = (
+                "weekly" if cohort_start <= published_pt < cohort_end else
+                "early" if early_start <= published_pt < early_end else ""
+            )
+            if not signal_type:
+                continue
             views = int(item["views"])
             ratio = views / baseline
-            if views < 1000 or ratio < 3:
+            age_days = max(0.01, (run_start - published_pt).total_seconds() / 86400)
+            speed_ratio = (views / age_days) / (baseline / 7)
+            score = ratio if signal_type == "weekly" else speed_ratio
+            views_floor = int(niche_row.get("shorts_views_floor") or 10_000)
+            if views < views_floor or score < 3:
                 continue
             likes = int(item.get("likes") or 0)
             comments = int(item.get("comments") or 0)
@@ -405,17 +429,27 @@ def compute_niche_outlier_shorts(
                     "outlier_ratio": ratio,
                     "engagement": (likes + comments) / views,
                     "baseline_engagement": baseline_engagement,
+                    "signal_type": signal_type,
+                    "cohort_start": cohort_start.date().isoformat(),
+                    "age_days": age_days,
+                    "speed_ratio": speed_ratio,
                     "video_description": str(item.get("description") or "")[:500],
                     "hashtags": list(item.get("tags") or []),
                 }
             )
-    output.sort(key=lambda row: float(row["outlier_ratio"]), reverse=True)
+    output.sort(
+        key=lambda row: float(
+            row["speed_ratio"] if row["signal_type"] == "early" else row["outlier_ratio"]
+        ), reverse=True,
+    )
     return {
         "niche": str(niche),
         "niche_id": niche_row["id"],
         "as_of": as_of_date.isoformat(),
         "channels_with_3_shorts": eligible_channels,
         "outlier_count": len(output),
+        "cohort_start": cohort_start.date().isoformat(),
+        "cohort_end": (cohort_end.date() - timedelta(days=1)).isoformat(),
         "rows": output,
     }
 
@@ -435,8 +469,9 @@ def persist_niche_outlier_shorts(result: dict[str, Any]) -> None:
                 INSERT INTO niche_outlier_shorts (
                     niche_id, as_of, youtube_channel_id, video_id, title,
                     published_at, duration_s, views, baseline, outlier_ratio,
-                    engagement, baseline_engagement, computed_at
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)
+                    engagement, baseline_engagement, signal_type, cohort_start,
+                    age_days, speed_ratio, theme_label, format_label, computed_at
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)
                 """,
                 [
                     row["niche_id"], row["as_of"], row["youtube_channel_id"],
@@ -444,6 +479,9 @@ def persist_niche_outlier_shorts(result: dict[str, Any]) -> None:
                     row["duration_s"], row["views"], row["baseline"],
                     row["outlier_ratio"], row["engagement"],
                     row["baseline_engagement"],
+                    row.get("signal_type", "weekly"), row.get("cohort_start"),
+                    row.get("age_days"), row.get("speed_ratio"),
+                    row.get("theme_label"), row.get("format_label"),
                 ],
             )
         conn.commit()
@@ -472,13 +510,35 @@ def refresh_compute_and_persist(
     return {**refresh, **computed, "rows": computed["rows"]}
 
 
-def load_latest_niche_outliers(conn, niche_id: Any) -> tuple[str, list[dict[str, Any]]]:
+def list_niche_cohorts(conn, niche_id: Any) -> list[str]:
+    columns = table_columns(conn, "niche_outlier_shorts")
+    if "cohort_start" not in columns:
+        return []
+    rows = conn.execute(
+        """SELECT DISTINCT cohort_start FROM niche_outlier_shorts
+           WHERE niche_id=? AND signal_type='weekly' AND cohort_start IS NOT NULL
+           ORDER BY cohort_start DESC""", [niche_id],
+    ).fetchall()
+    return [str(row[0]) for row in rows]
+
+
+def load_latest_niche_outliers(
+    conn, niche_id: Any, *, cohort_start: str = "", signal_type: str = "weekly"
+) -> tuple[str, list[dict[str, Any]]]:
     outlier_columns = table_columns(conn, "niche_outlier_shorts")
     if not outlier_columns:
         return "", []
+    has_signals = "signal_type" in outlier_columns
+    where_signal = " AND signal_type = ?" if has_signals else ""
+    where_cohort = " AND cohort_start = ?" if cohort_start and "cohort_start" in outlier_columns else ""
+    latest_params: list[Any] = [niche_id]
+    if has_signals:
+        latest_params.append(signal_type)
+    if where_cohort:
+        latest_params.append(cohort_start)
     latest = conn.execute(
-        "SELECT MAX(as_of) FROM niche_outlier_shorts WHERE niche_id = ?",
-        [niche_id],
+        "SELECT MAX(as_of) FROM niche_outlier_shorts WHERE niche_id = ?" + where_signal + where_cohort,
+        latest_params,
     ).fetchone()
     as_of = str(latest[0]) if latest and latest[0] else ""
     if not as_of:
@@ -508,18 +568,31 @@ def load_latest_niche_outliers(conn, niche_id: Any) -> tuple[str, list[dict[str,
         "topic_override.topic_status AS topic_override"
         if has_overrides else "NULL AS topic_override"
     )
+    extra_columns = ", ".join(
+        f"outlier.{name}" for name in (
+            "signal_type", "cohort_start", "theme_label", "format_label", "age_days", "speed_ratio"
+        ) if name in outlier_columns
+    )
+    cohort_clause = " AND outlier.cohort_start = ?" if cohort_start and "cohort_start" in outlier_columns else ""
+    signal_clause = " AND outlier.signal_type = ?" if has_signals else ""
+    params: list[Any] = [niche_id, as_of]
+    if has_signals:
+        params.append(signal_type)
+    if cohort_clause:
+        params.append(cohort_start)
     result = conn.execute(
         f"""
         SELECT outlier.youtube_channel_id, outlier.video_id, outlier.title,
                outlier.published_at, outlier.duration_s,
                views, baseline, outlier_ratio, engagement, baseline_engagement,
-               computed_at, {llm_topic_column}, {override_column}
+               computed_at{', ' + extra_columns if extra_columns else ''}, {llm_topic_column}, {override_column}
         FROM niche_outlier_shorts outlier
         {override_join}
-        WHERE outlier.niche_id = ? AND outlier.as_of = ?
-        ORDER BY outlier_ratio DESC, views DESC, outlier.video_id ASC
+        WHERE outlier.niche_id = ? AND outlier.as_of = ?{signal_clause}{cohort_clause}
+        ORDER BY {'COALESCE(speed_ratio, 0)' if signal_type == 'early' else 'outlier_ratio'} DESC,
+                 views DESC, outlier.video_id ASC
         """,
-        [niche_id, as_of],
+        params,
     )
     columns = [str(item[0]) for item in (result.description or [])]
     rows = [dict(zip(columns, row)) for row in result.fetchall()]
@@ -544,7 +617,9 @@ def _pattern_cost_usd(model: str, input_tokens: int, output_tokens: int) -> floa
     return (input_tokens * input_price + output_tokens * output_price) / 1_000_000
 
 
-def customer_visible_outlier_rows(rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
+def customer_visible_outlier_rows(
+    rows: list[dict[str, Any]], *, score_key: str = "outlier_ratio"
+) -> list[dict[str, Any]]:
     eligible = []
     for row in rows:
         if row.get("in_category", row.get("on_topic")) is False or int(row.get("views") or 0) < 5_000:
@@ -555,7 +630,11 @@ def customer_visible_outlier_rows(rows: list[dict[str, Any]]) -> list[dict[str, 
             continue
         eligible.append(row)
     eligible.sort(
-        key=lambda row: (-int(row.get("views") or 0), str(row.get("video_id") or ""))
+        key=lambda row: (
+            -float(row.get(score_key) or 0),
+            -int(row.get("views") or 0),
+            str(row.get("video_id") or ""),
+        )
     )
     channel_counts: dict[str, int] = {}
     output = []
@@ -869,6 +948,83 @@ def persist_niche_outlier_topics(result: dict[str, Any]) -> None:
         conn.close()
 
 
+def classify_cohort_metadata(
+    result: dict[str, Any], *, client=None
+) -> dict[str, Any]:
+    """Label one weekly cohort in one titles-only model call."""
+    rows = [row for row in result.get("rows") or [] if row.get("signal_type") == "weekly"]
+    if not rows:
+        return {"input_tokens": 0, "output_tokens": 0, "estimated_cost_usd": 0.0}
+    selected_client = client or _openai_client
+    if selected_client is None:
+        raise NicheOutlierError("OpenAI client is not configured")
+    conn = get_db_readonly()
+    try:
+        definition = load_niche_definition(conn, niche_id=result["niche_id"])
+    finally:
+        conn.close()
+    language = str((definition or {}).get("language") or "en")
+    response = selected_client.chat.completions.create(
+        model="gpt-4.1-mini",
+        temperature=0,
+        max_tokens=max(180, len(rows) * 45),
+        response_format={"type": "json_object"},
+        messages=[
+            {"role": "system", "content": (
+                "Label every supplied title. Return JSON only as {\"items\":["
+                "{\"video_id\":\"...\",\"theme\":\"...\",\"format\":\"story|tip|explanation|motivation\"}]}. "
+                "Theme must be a concrete 2–5 word topic in the requested language. Use only the titles."
+            )},
+            {"role": "user", "content": json.dumps({
+                "language": language,
+                "titles": [{"video_id": row["video_id"], "title": row["title"]} for row in rows],
+            }, ensure_ascii=False)},
+        ],
+    )
+    content = response.choices[0].message.content if response.choices else ""
+    try:
+        parsed = json.loads(str(content or ""))
+    except (TypeError, ValueError, json.JSONDecodeError) as exc:
+        raise NicheOutlierError("cohort metadata classifier returned invalid JSON") from exc
+    allowed_formats = {"story", "tip", "explanation", "motivation"}
+    labels = {
+        str(item.get("video_id") or ""): item
+        for item in (parsed.get("items") or []) if isinstance(item, dict)
+    }
+    for row in rows:
+        item = labels.get(str(row["video_id"])) or {}
+        row["theme_label"] = " ".join(str(item.get("theme") or "").split())[:100]
+        value = str(item.get("format") or "").strip().lower()
+        row["format_label"] = value if value in allowed_formats else "explanation"
+    usage = getattr(response, "usage", None)
+    input_tokens = int(getattr(usage, "prompt_tokens", 0) or getattr(usage, "input_tokens", 0) or 0)
+    output_tokens = int(getattr(usage, "completion_tokens", 0) or getattr(usage, "output_tokens", 0) or 0)
+    return {
+        "input_tokens": input_tokens,
+        "output_tokens": output_tokens,
+        "estimated_cost_usd": _pattern_cost_usd("gpt-4.1-mini", input_tokens, output_tokens),
+    }
+
+
+def persist_cohort_metadata(result: dict[str, Any]) -> None:
+    conn = get_db()
+    try:
+        for row in result.get("rows") or []:
+            if row.get("signal_type") != "weekly":
+                continue
+            conn.execute(
+                """UPDATE niche_outlier_shorts SET theme_label=?, format_label=?
+                   WHERE niche_id=? AND as_of=? AND video_id=?""",
+                [row.get("theme_label"), row.get("format_label"), result["niche_id"], result["as_of"], row["video_id"]],
+            )
+        conn.commit()
+    except Exception:
+        conn.rollback()
+        raise
+    finally:
+        conn.close()
+
+
 def classify_and_persist_latest_topics(
     niche: str = DEFAULT_NICHE_SLUG,
     *,
@@ -982,6 +1138,59 @@ def weekly_refresh_due(now: datetime | None = None, last_completed_at: Any = Non
     return completed is None or completed.astimezone(PACIFIC).date() != now_pt.date()
 
 
+def daily_early_refresh_due(now: datetime | None = None, last_completed_at: Any = None) -> bool:
+    instant = now or datetime.now(timezone.utc)
+    if instant.tzinfo is None:
+        instant = instant.replace(tzinfo=timezone.utc)
+    now_pt = instant.astimezone(PACIFIC)
+    if now_pt.hour < 4:
+        return False
+    completed = _parse_timestamp(last_completed_at)
+    return completed is None or completed.astimezone(PACIFIC).date() != now_pt.date()
+
+
+def _run_daily_early_refresh(instant: datetime) -> dict[str, Any] | None:
+    conn = get_db_readonly()
+    try:
+        state = conn.execute(
+            "SELECT last_tick_at FROM shorts_scheduler_state WHERE name=? LIMIT 1", [DAILY_STATE_NAME]
+        ).fetchone()
+        slugs = [str(row[0]) for row in conn.execute(
+            """SELECT n.slug FROM niches n WHERE COALESCE(n.status,'active')='active'
+               AND EXISTS (SELECT 1 FROM niche_channels nc WHERE nc.niche_id=n.id)
+               ORDER BY n.id"""
+        ).fetchall()]
+    finally:
+        conn.close()
+    if not daily_early_refresh_due(instant, state[0] if state else None):
+        return None
+    results: dict[str, Any] = {}
+    as_of = instant.astimezone(PACIFIC).date()
+    for slug in slugs:
+        try:
+            result = refresh_compute_and_persist(slug, as_of)
+            early_rows = [row for row in result["rows"] if row.get("signal_type") == "early"]
+            early_result = {**result, "rows": early_rows}
+            usage = classify_niche_outlier_topics(early_result)
+            persist_niche_outlier_topics(early_result)
+            results[slug] = {**result, "rows": early_rows, "topic_classification": usage}
+        except Exception as exc:
+            logger.exception("Daily niche early-signal refresh failed niche=%s: %s", slug, exc)
+            results[slug] = {"error": str(exc)}
+    conn = get_db()
+    try:
+        conn.execute(
+            """INSERT INTO shorts_scheduler_state(name,last_tick_at,last_worker_id,updated_at)
+               VALUES(?,CURRENT_TIMESTAMP,'niche_early_daily_complete',CURRENT_TIMESTAMP)
+               ON CONFLICT(name) DO UPDATE SET last_tick_at=EXCLUDED.last_tick_at,
+               last_worker_id=EXCLUDED.last_worker_id,updated_at=CURRENT_TIMESTAMP""", [DAILY_STATE_NAME]
+        )
+        conn.commit()
+    finally:
+        conn.close()
+    return {"as_of": as_of.isoformat(), "daily_early": True, "niches": results}
+
+
 def run_weekly_refresh_if_due(now: datetime | None = None) -> dict[str, Any] | None:
     instant = now or datetime.now(timezone.utc)
     conn = get_db_readonly()
@@ -993,7 +1202,7 @@ def run_weekly_refresh_if_due(now: datetime | None = None) -> dict[str, Any] | N
     finally:
         conn.close()
     if not weekly_refresh_due(instant, state[0] if state else None):
-        return None
+        return _run_daily_early_refresh(instant)
     as_of = instant.astimezone(PACIFIC).date()
     # Claim the weekly attempt before making API calls. A failed run must not
     # retry every scheduler minute and consume another 500-unit allowance.
@@ -1010,6 +1219,13 @@ def run_weekly_refresh_if_due(now: datetime | None = None) -> dict[str, Any] | N
             """,
             [SCHEDULER_STATE_NAME],
         )
+        conn.execute(
+            """INSERT INTO shorts_scheduler_state(name,last_tick_at,last_worker_id,updated_at)
+               VALUES(?,CURRENT_TIMESTAMP,'niche_early_daily_complete',CURRENT_TIMESTAMP)
+               ON CONFLICT(name) DO UPDATE SET last_tick_at=EXCLUDED.last_tick_at,
+               last_worker_id=EXCLUDED.last_worker_id,updated_at=CURRENT_TIMESTAMP""",
+            [DAILY_STATE_NAME],
+        )
         conn.commit()
     finally:
         conn.close()
@@ -1019,7 +1235,8 @@ def run_weekly_refresh_if_due(now: datetime | None = None) -> dict[str, Any] | N
             str(row[0]) for row in conn.execute(
                 """
                 SELECT n.slug FROM niches n
-                WHERE EXISTS (SELECT 1 FROM niche_channels nc WHERE nc.niche_id = n.id)
+                WHERE COALESCE(n.status, 'active') = 'active'
+                  AND EXISTS (SELECT 1 FROM niche_channels nc WHERE nc.niche_id = n.id)
                 ORDER BY n.id
                 """
             ).fetchall()
@@ -1033,6 +1250,9 @@ def run_weekly_refresh_if_due(now: datetime | None = None) -> dict[str, Any] | N
             topic_usage = classify_niche_outlier_topics(result)
             persist_niche_outlier_topics(result)
             result["topic_classification"] = topic_usage
+            metadata_usage = classify_cohort_metadata(result)
+            persist_cohort_metadata(result)
+            result["cohort_metadata"] = metadata_usage
             pattern = generate_niche_outlier_pattern(result)
             if pattern:
                 persist_niche_outlier_pattern(pattern)

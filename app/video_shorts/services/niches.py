@@ -78,7 +78,7 @@ def load_niche_snapshot(conn, niche_slug: str, snapshot_date: str = "") -> tuple
             "description", "core_topics", "adjacent_topics", "excluded_topics",
             "definition_version", "language", "target_focus", "focus_options", "status",
             "search_queries",
-            "channel_type_options", "allowed_channel_types",
+            "channel_type_options", "allowed_channel_types", "shorts_views_floor",
         ) if name in niche_columns
     ]
     result = conn.execute(
@@ -104,6 +104,7 @@ def load_niche_snapshot(conn, niche_slug: str, snapshot_date: str = "") -> tuple
         "channel_type_options": niche.get("channel_type_options"),
         "allowed_channel_types": niche.get("allowed_channel_types"),
         "status": _clean(niche.get("status")) or "active",
+        "shorts_views_floor": int(niche.get("shorts_views_floor") or 10000),
         "snapshot_date": "",
     }
     requested_date = _clean(snapshot_date)

@@ -7,7 +7,7 @@ from flask import abort, flash, redirect, render_template, request, url_for
 from app.video_shorts import video_shorts_bp
 from app.video_shorts.routes.auth import require_admin
 from app.video_shorts.services.db import get_db, get_db_readonly, table_columns
-from app.video_shorts.services.niche_outliers import load_latest_niche_outliers
+from app.video_shorts.services.niche_outliers import list_niche_cohorts, load_latest_niche_outliers
 from app.video_shorts.services.niche_weekly_ideas import load_admin_weekly_ideas
 from app.video_shorts.services.niche_definitions import (
     parse_focus_options,
@@ -95,9 +95,15 @@ def admin_niches():
         str(row.get("youtube_channel_id") or ""): row
         for row in rows
     }
+    cohort_options = list_niche_cohorts(conn, selected["id"]) if selected else []
+    selected_cohort = str(request.args.get("cohort") or (cohort_options[0] if cohort_options else ""))
+    short_view = str(request.args.get("short_view") or "weekly").strip()
+    if short_view not in {"weekly", "early"}:
+        short_view = "weekly"
     outlier_as_of, outlier_rows = load_latest_niche_outliers(
-        conn,
-        selected["id"] if selected else None,
+        conn, selected["id"] if selected else None,
+        cohort_start=selected_cohort if short_view == "weekly" else "",
+        signal_type=short_view,
     )
     ideas_as_of, weekly_ideas = load_admin_weekly_ideas(
         conn, selected["id"] if selected else None
@@ -136,6 +142,8 @@ def admin_niches():
         "engagement": "engagement",
         "duration": "duration_s",
     }
+    if short_view == "early":
+        sort_fields["ratio"] = "speed_ratio"
     if short_sort not in sort_fields:
         short_sort = "views"
     short_dir = str(request.args.get("short_dir") or "desc").strip().lower()
@@ -223,6 +231,9 @@ def admin_niches():
         short_sort=short_sort,
         short_dir=short_dir,
         shorts_show_all=shorts_show_all,
+        cohort_options=cohort_options,
+        selected_cohort=selected_cohort,
+        short_view=short_view,
         ideas_as_of=ideas_as_of,
         weekly_ideas=weekly_ideas,
     )

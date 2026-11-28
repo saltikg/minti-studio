@@ -80,6 +80,7 @@ def customer_niche_page():
             conn,
             owner_user_id=owner_user_id,
             brand_id=brand_id,
+            cohort_start=str(request.args.get("week") or "").strip(),
         )
     finally:
         conn.close()

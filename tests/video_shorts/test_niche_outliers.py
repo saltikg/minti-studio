@@ -39,7 +39,7 @@ def test_compute_niche_outliers_uses_settled_window_median(monkeypatch, tmp_path
             "a1": {"duration_s": 60, "views": 100, "likes": 1, "comments": 0},
             "a2": {"duration_s": 70, "views": 100, "likes": 1, "comments": 0},
             "a3": {"duration_s": 80, "views": 100, "likes": 1, "comments": 0},
-            "hit": {"duration_s": 90, "views": 1000, "likes": 40, "comments": 10},
+            "hit": {"duration_s": 90, "views": 10000, "likes": 400, "comments": 100},
             "duet": {"duration_s": 60, "views": 100000, "likes": 100, "comments": 10},
             "tiny": {"duration_s": 6, "views": 100000, "likes": 100, "comments": 10},
             "young": {"duration_s": 30, "views": 50000, "likes": 500, "comments": 50},
@@ -61,9 +61,12 @@ def test_compute_niche_outliers_uses_settled_window_median(monkeypatch, tmp_path
     assert result["outlier_count"] == 1
     assert result["rows"][0]["video_id"] == "hit"
     assert result["rows"][0]["baseline"] == 100
-    assert result["rows"][0]["outlier_ratio"] == 10
+    assert result["rows"][0]["outlier_ratio"] == 100
     assert result["rows"][0]["engagement"] == 0.05
     assert result["rows"][0]["baseline_engagement"] == 0.01
+    assert result["cohort_start"] == "2026-11-09"
+    assert result["cohort_end"] == "2026-11-15"
+    assert result["rows"][0]["signal_type"] == "weekly"
 
 
 @pytest.mark.parametrize(
@@ -95,6 +98,15 @@ def test_weekly_refresh_due_monday_after_four_pacific():
     assert not niche_outliers.weekly_refresh_due(before)
     assert niche_outliers.weekly_refresh_due(due)
     assert not niche_outliers.weekly_refresh_due(due, "2026-11-30T12:01:00Z")
+
+
+def test_daily_early_refresh_runs_once_after_four_pacific():
+    before = datetime(2026, 11, 28, 11, 59, tzinfo=timezone.utc)
+    due = datetime(2026, 11, 28, 12, 0, tzinfo=timezone.utc)
+
+    assert not niche_outliers.daily_early_refresh_due(before)
+    assert niche_outliers.daily_early_refresh_due(due)
+    assert not niche_outliers.daily_early_refresh_due(due, "2026-11-28T12:01:00Z")
 
 
 def test_pattern_generation_uses_customer_top_six_and_builds_sentence(monkeypatch):

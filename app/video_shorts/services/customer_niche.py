@@ -2,16 +2,20 @@ from __future__ import annotations
 
 import math
 import re
-from datetime import date
+from collections import Counter, defaultdict
+from datetime import date, timedelta
 from typing import Any
 
 from app.video_shorts.services.brand_niches import brand_publishing_channel_id
 from app.video_shorts.services.db import table_columns
 from app.video_shorts.services.niche_outliers import (
     customer_visible_outlier_rows,
+    list_niche_cohorts,
     load_latest_niche_outliers,
+    _whole_percentile,
 )
 from app.video_shorts.services.niche_weekly_ideas import load_brand_weekly_ideas
+from app.video_shorts.services.niche_rising_topics import load_rising_topics  # legacy test/extension hook
 from app.video_shorts.services.niches import final_niche_pool, load_niche_snapshot
 
 
@@ -65,13 +69,19 @@ def _top_outlier_cards(
     *,
     pool_by_channel: dict[str, dict[str, Any]],
     own_channel_ids: set[str],
+    early: bool = False,
 ) -> list[dict[str, Any]]:
     eligible = customer_visible_outlier_rows(
         [
             row for row in rows
             if str(row.get("youtube_channel_id") or "") in pool_by_channel
-        ]
+        ], score_key="speed_ratio" if early else "outlier_ratio"
     )
+    creators_by_theme: dict[str, set[str]] = defaultdict(set)
+    for row in eligible:
+        theme = str(row.get("theme_label") or "").strip()
+        if theme:
+            creators_by_theme[theme].add(str(row.get("youtube_channel_id") or ""))
     cards = []
     for row in eligible:
         channel_id = str(row.get("youtube_channel_id") or "")
@@ -88,10 +98,41 @@ def _top_outlier_cards(
                 "views": int(row.get("views") or 0),
                 "views_display": compact_number(row.get("views")),
                 "ratio": float(row.get("outlier_ratio") or 0),
+                "speed_ratio": float(row.get("speed_ratio") or 0),
+                "age_days": float(row.get("age_days") or 0),
                 "duration_s": int(row.get("duration_s") or 0),
+                "thumbnail_url": f"https://i.ytimg.com/vi/{row.get('video_id')}/hqdefault.jpg",
+                "theme_label": str(row.get("theme_label") or ""),
+                "format_label": str(row.get("format_label") or ""),
+                "badges": [badge for badge in (
+                    (
+                        f"Worked for {len(creators_by_theme[str(row.get('theme_label') or '')])} creators"
+                        if len(creators_by_theme[str(row.get("theme_label") or "")]) >= 2 else ""
+                    ),
+                    (
+                        "High engagement" if float(row.get("baseline_engagement") or 0) > 0
+                        and float(row.get("engagement") or 0) >= 2 * float(row.get("baseline_engagement") or 0)
+                        else ""
+                    ),
+                    "Story" if row.get("format_label") == "story" else "",
+                ) if badge],
             }
         )
     return cards
+
+
+def _pattern_line(cards: list[dict[str, Any]]) -> str:
+    if not cards:
+        return ""
+    themes = Counter(card["theme_label"] for card in cards if card.get("theme_label"))
+    theme, count = themes.most_common(1)[0] if themes else ("the same topic", 0)
+    stories = sum(card.get("format_label") == "story" for card in cards)
+    durations = [int(card["duration_s"]) for card in cards]
+    return (
+        f"Last week's pattern: {count} of {len(cards)} winners were about {theme}; "
+        f"{stories} were stories. Most ran {_whole_percentile(durations, .25)}–"
+        f"{_whole_percentile(durations, .75)}s."
+    )
 
 
 def load_customer_niche_page(
@@ -99,6 +140,7 @@ def load_customer_niche_page(
     *,
     owner_user_id: str,
     brand_id: str,
+    cohort_start: str = "",
 ) -> dict[str, Any] | None:
     brand = conn.execute(
         """
@@ -153,24 +195,25 @@ def load_customer_niche_page(
             "neighbors": neighbors,
         }
 
-    as_of, outlier_rows = load_latest_niche_outliers(conn, niche["id"])
+    as_of, outlier_rows = load_latest_niche_outliers(
+        conn, niche["id"], cohort_start=cohort_start, signal_type="weekly"
+    )
+    cohorts = list_niche_cohorts(conn, niche["id"]) if as_of else []
+    selected_cohort = cohort_start if cohort_start in cohorts else (cohorts[0] if cohorts else "")
+    if selected_cohort and selected_cohort != cohort_start:
+        as_of, outlier_rows = load_latest_niche_outliers(
+            conn, niche["id"], cohort_start=selected_cohort, signal_type="weekly"
+        )
     cards = _top_outlier_cards(
         outlier_rows,
         pool_by_channel=pool_by_channel,
         own_channel_ids=own_channel_ids,
     )
-    pattern = ""
-    if as_of and table_columns(conn, "niche_outlier_patterns"):
-        row = conn.execute(
-            """
-            SELECT pattern_sentence
-            FROM niche_outlier_patterns
-            WHERE niche_id = ? AND as_of = ?
-            LIMIT 1
-            """,
-            [niche["id"], as_of],
-        ).fetchone()
-        pattern = str((row[0] if row else "") or "").strip()
+    pattern = _pattern_line(cards)
+    early_as_of, early_rows = load_latest_niche_outliers(conn, niche["id"], signal_type="early")
+    early_cards = _top_outlier_cards(
+        early_rows, pool_by_channel=pool_by_channel, own_channel_ids=own_channel_ids, early=True,
+    )
     ideas_as_of, weekly_ideas = load_brand_weekly_ideas(conn, niche["id"], brand_id)
     return {
         "brand_id": str(brand[0]),
@@ -188,6 +231,15 @@ def load_customer_niche_page(
         ),
         "place": place,
         "cards": cards,
+        "early_cards": early_cards,
+        "early_as_of": early_as_of,
+        "cohorts": cohorts,
+        "selected_cohort": selected_cohort,
+        "cohort_start_display": date.fromisoformat(selected_cohort).strftime("%b %-d") if selected_cohort else "",
+        "cohort_end_display": (date.fromisoformat(selected_cohort) + timedelta(days=6)).strftime("%b %-d") if selected_cohort else "",
+        "next_update_display": (
+            date.fromisoformat(as_of) + timedelta(days=7 - date.fromisoformat(as_of).weekday())
+        ).strftime("%b %-d") if selected_cohort else "",
         "pattern": pattern,
         "ideas_as_of": ideas_as_of,
         "weekly_ideas": weekly_ideas[:3],
