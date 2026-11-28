@@ -156,23 +156,18 @@ def _label_candidates(
     rows: list[dict[str, Any]], definition: dict[str, Any], client: Any,
 ) -> tuple[list[dict[str, Any]], int, int]:
     labels, input_tokens, output_tokens = rising._label_rows(rows, definition, client)
-    merged, used_in, used_out = rising._merge_labels(labels, definition.get("language") or "en", client)
-    input_tokens += used_in
-    output_tokens += used_out
-    theme_by_video = {}
     creators_by_theme: dict[str, set[str]] = {}
-    for theme in merged:
-        for video_id in theme["video_ids"]:
-            theme_by_video[video_id] = theme["label"]
-        creators_by_theme.setdefault(theme["label"], set()).update(
-            str(row.get("youtube_channel_id") or "") for row in rows
-            if str(row.get("video_id") or "") in set(theme["video_ids"])
-        )
+    for row in rows:
+        theme = str(row.get("theme_label") or "").strip()
+        if theme:
+            creators_by_theme.setdefault(theme, set()).add(
+                str(row.get("youtube_channel_id") or "")
+            )
     output = []
     for row in rows:
         video_id = str(row.get("video_id") or "")
         angle = labels.get(video_id) or rising._display_title(row.get("title"))
-        theme = theme_by_video.get(video_id) or " ".join(angle.split()[:5])
+        theme = str(row.get("theme_label") or "").strip() or " ".join(angle.split()[:5])
         output.append({
             **row, "angle_label": angle, "theme_label": theme,
             "worked_creator_count": len({item for item in creators_by_theme.get(theme, set()) if item}),
