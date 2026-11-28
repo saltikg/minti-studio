@@ -157,6 +157,27 @@ def test_caption_position_enable_timeline_hides_overlay_without_a_position():
     assert _overlay_position_enable_expr([], duration=2.0) == "0"
 
 
+def test_caption_placement_uses_fixed_chunk_geometry_not_active_paint_bbox():
+    first = compositor._face_aware_event_caption_block(
+        {
+            "layout": {"visual_top": 1180, "visual_height": 180},
+            "block_bbox": [100, 1190, 900, 1280],
+        },
+        fallback_top=0,
+        fallback_height=100,
+    )
+    second = compositor._face_aware_event_caption_block(
+        {
+            "layout": {"visual_top": 1180, "visual_height": 180},
+            "block_bbox": [100, 1250, 900, 1350],
+        },
+        fallback_top=0,
+        fallback_height=100,
+    )
+
+    assert first == second == {"top": 1180.0, "height": 180.0, "center_y": 1270.0}
+
+
 def test_preview_chunk_geometry_is_stable_across_highlight_states():
     font_path = Path("app/video_shorts/static/fonts/Montserrat-BlackItalic.ttf")
     base = {

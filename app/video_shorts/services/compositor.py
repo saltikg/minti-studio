@@ -2739,6 +2739,18 @@ def _face_aware_split_caption_top(
 
 def _face_aware_event_caption_block(metrics: Optional[Dict[str, Any]], *, fallback_top: float, fallback_height: float) -> Dict[str, float]:
     metrics = metrics if isinstance(metrics, dict) else {}
+    layout = metrics.get("layout") if isinstance(metrics.get("layout"), dict) else {}
+    try:
+        # The painted alpha bbox changes as the active word changes (different
+        # glyph ascenders, pill bounds, and outline pixels).  Placement must use
+        # the chunk's precomputed visual box so every highlight state remains
+        # on the exact same baseline and cannot resemble an entry animation.
+        top = float(layout.get("visual_top"))
+        height = float(layout.get("visual_height"))
+        if height > 0.0:
+            return {"top": top, "height": height, "center_y": top + (height / 2.0)}
+    except (TypeError, ValueError):
+        pass
     bbox = metrics.get("block_bbox")
     try:
         if isinstance(bbox, (list, tuple)) and len(bbox) >= 4:
