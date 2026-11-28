@@ -178,6 +178,80 @@ def test_caption_placement_uses_fixed_chunk_geometry_not_active_paint_bbox():
     assert first == second == {"top": 1180.0, "height": 180.0, "center_y": 1270.0}
 
 
+def test_alternating_caption_chunks_share_one_raster_and_position_frame_timeline():
+    def spec(chunk, start, end, lines, top, height):
+        return {
+            "path": f"chunk-{chunk}-{start}.png",
+            "start": start,
+            "end": end,
+            "chunk_index": chunk,
+            "chunk_key": f"chunk-{chunk}",
+            "metrics": {
+                "layout": {
+                    "visual_top": top,
+                    "visual_height": height,
+                    "lines": [{} for _ in range(lines)],
+                },
+                "block_bbox": [0, top, 500, top + height],
+            },
+        }
+
+    specs = [
+        spec(0, 0.0, 0.4, 2, 100, 160),
+        spec(0, 0.4, 1.0, 2, 100, 160),
+        spec(1, 1.0, 1.4, 1, 160, 80),
+        spec(1, 1.4, 2.0, 1, 160, 80),
+        spec(2, 2.0, 2.5, 2, 100, 160),
+        spec(2, 2.5, 3.0, 2, 100, 160),
+        spec(3, 3.0, 3.4, 1, 160, 80),
+        spec(3, 3.4, 4.0, 1, 160, 80),
+    ]
+    positioned = compositor._face_aware_subtitle_overlay_specs(
+        specs,
+        overlay_events=specs,
+        layout_segments=[{"start": 0.0, "end": 4.0, "mode": "fill", "caption_top": 1200}],
+        target_width=1080,
+        target_height=1920,
+        subtitle_font_size=60,
+        subtitle_margin=450,
+        subtitle_margin_custom=True,
+        caption_anchor="bottom",
+    )
+    timeline = compositor._caption_frame_timeline(positioned, output_fps=25, duration=4.0)
+
+    assert timeline
+    assert all(item["raster_chunk_index"] == item["position_chunk_index"] for item in timeline)
+    for chunk in range(4):
+        assert len({item["position_y"] for item in timeline if item["raster_chunk_index"] == chunk}) == 1
+    assert any(
+        item["legacy_position_chunk_index"] != item["raster_chunk_index"]
+        for item in timeline
+    )
+    assert all(
+        left["end_frame"] == right["start_frame"]
+        for left, right in zip(timeline, timeline[1:])
+    )
+
+
+def test_caption_spec_normalization_preserves_raster_chunk_identity(tmp_path):
+    frame = tmp_path / "caption.png"
+    frame.touch()
+    metrics = {"layout": {"visual_top": 100, "visual_height": 80, "lines": [{}]}}
+
+    normalized = compositor._normalize_subtitle_overlay_specs([{
+        "path": frame,
+        "start": 1.0,
+        "end": 2.0,
+        "metrics": metrics,
+        "chunk_index": 7,
+        "chunk_key": "seven",
+    }])
+
+    assert normalized[0]["metrics"] is metrics
+    assert normalized[0]["chunk_index"] == 7
+    assert normalized[0]["chunk_key"] == "seven"
+
+
 def test_preview_chunk_geometry_is_stable_across_highlight_states():
     font_path = Path("app/video_shorts/static/fonts/Montserrat-BlackItalic.ttf")
     base = {

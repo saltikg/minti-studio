@@ -2423,6 +2423,7 @@ def _build_word_highlight_overlay_video(
     clip_duration: float,
     canvas_width: int = _PILLOW_CAPTION_WIDTH,
     canvas_height: int = _PILLOW_CAPTION_HEIGHT,
+    output_fps: float = _WORD_HIGHLIGHT_OVERLAY_FPS,
 ) -> tuple[Path, tuple[int, int]]:
     if not overlay_specs:
         raise ValueError("overlay_specs required")
@@ -2496,7 +2497,7 @@ def _build_word_highlight_overlay_video(
         "-i",
         str(concat_file),
         "-vf",
-        f"fps={_WORD_HIGHLIGHT_OVERLAY_FPS},format=rgba",
+        f"fps={max(1.0, float(output_fps or _WORD_HIGHLIGHT_OVERLAY_FPS)):.6f},format=rgba",
         "-an",
         "-c:v",
         "qtrle",

@@ -3444,7 +3444,17 @@ def _normalize_subtitle_overlay_specs(
             end = max(start + 0.01, float(spec.get("end") or 0.0))
         except Exception:
             continue
-        normalized.append({"path": path, "start": start, "end": end})
+        normalized.append({
+            "path": path,
+            "start": start,
+            "end": end,
+            # These fields identify the exact raster state and its fixed chunk
+            # geometry.  Dropping them here forces placement to reconstruct a
+            # chunk from time and can select the previous chunk at a boundary.
+            "metrics": spec.get("metrics") or {},
+            "chunk_index": spec.get("chunk_index"),
+            "chunk_key": spec.get("chunk_key"),
+        })
     return normalized
 
 
@@ -3747,7 +3757,7 @@ def _face_aware_subtitle_overlay_specs(
     for spec in overlay_specs:
         start = float(spec.get("start") or 0.0)
         end = float(spec.get("end") or start)
-        event = next(
+        legacy_event = next(
             (
                 item for item in overlay_events
                 if float(item.get("start") or 0.0) <= start + 1e-3
@@ -3755,8 +3765,20 @@ def _face_aware_subtitle_overlay_specs(
             ),
             None,
         )
+        # The raster spec is the timeline authority.  Looking up a separate
+        # event by an inclusive timestamp can select the previous event at a
+        # bridged boundary, making a new chunk use the previous chunk's Y until
+        # its second word.  Specs already carry the matching geometry.
+        event = spec
+        chunk_index = spec.get("chunk_index")
+        chunk_key = spec.get("chunk_key")
         block = _face_aware_event_caption_block(
-            (event or {}).get("metrics") or {},
+            spec.get("metrics") or {},
+            fallback_top=float(_face_aware_segment_for_time(layout_segments, start).get("caption_top") or 0.0),
+            fallback_height=fallback_height,
+        )
+        legacy_block = _face_aware_event_caption_block(
+            (legacy_event or {}).get("metrics") or {},
             fallback_top=float(_face_aware_segment_for_time(layout_segments, start).get("caption_top") or 0.0),
             fallback_height=fallback_height,
         )
@@ -3779,6 +3801,11 @@ def _face_aware_subtitle_overlay_specs(
                     "start": slice_start,
                     "end": slice_end,
                     "y_offset": 0.0,
+                    "raster_chunk_index": chunk_index,
+                    "position_chunk_index": chunk_index,
+                    "position_chunk_key": chunk_key,
+                    "legacy_position_chunk_index": (legacy_event or {}).get("chunk_index"),
+                    "legacy_position_y": 0,
                 })
                 continue
             desired_top = _face_aware_caption_top_for_block(
@@ -3790,13 +3817,57 @@ def _face_aware_subtitle_overlay_specs(
                 subtitle_margin_custom=subtitle_margin_custom,
                 caption_anchor=caption_anchor,
             )
+            legacy_desired_top = _face_aware_caption_top_for_block(
+                segment,
+                block_height=legacy_block["height"],
+                target_width=target_width,
+                target_height=target_height,
+                subtitle_margin=subtitle_margin,
+                subtitle_margin_custom=subtitle_margin_custom,
+                caption_anchor=caption_anchor,
+            )
             adjusted.append({
                 **spec,
                 "start": slice_start,
                 "end": slice_end,
                 "y_offset": desired_top - block["top"],
+                "raster_chunk_index": chunk_index,
+                "position_chunk_index": chunk_index,
+                "position_chunk_key": chunk_key,
+                "legacy_position_chunk_index": (legacy_event or {}).get("chunk_index"),
+                "legacy_position_y": int(round(legacy_desired_top - legacy_block["top"])),
             })
     return adjusted
+
+
+def _caption_frame_timeline(
+    specs: list[Dict[str, Any]],
+    *,
+    output_fps: float,
+    duration: float,
+) -> list[Dict[str, Any]]:
+    """Quantize raster and placement together into one frame timeline."""
+    fps = max(1.0, float(output_fps or 1.0))
+    final_frame = max(1, int(math.ceil(max(0.0, float(duration or 0.0)) * fps - 1e-9)))
+    timeline: list[Dict[str, Any]] = []
+    for spec in specs:
+        start_frame = max(0, min(final_frame, int(math.ceil(float(spec["start"]) * fps - 1e-9))))
+        end_frame = max(start_frame, min(final_frame, int(math.ceil(float(spec["end"]) * fps - 1e-9))))
+        if end_frame <= start_frame:
+            continue
+        chunk_index = spec.get("chunk_index")
+        position_chunk_index = spec.get("position_chunk_index", chunk_index)
+        timeline.append({
+            **spec,
+            "start_frame": start_frame,
+            "end_frame": end_frame,
+            "start": start_frame / fps,
+            "end": end_frame / fps,
+            "raster_chunk_index": spec.get("raster_chunk_index", chunk_index),
+            "position_chunk_index": position_chunk_index,
+            "position_y": int(round(float(spec.get("y_offset") or 0.0))),
+        })
+    return timeline
 
 
 def _split_caption_overlay_frame(
@@ -3867,6 +3938,7 @@ def _build_compact_positioned_caption_overlay(
     subtitle_margin: int,
     subtitle_margin_custom: bool,
     caption_anchor: str,
+    output_fps: float = 30.0,
 ) -> tuple[Path, tuple[int, int], Path, int]:
     """Bake all layout placement into frames, then encode one overlay video."""
     positioned_specs = _face_aware_subtitle_overlay_specs(
@@ -3882,6 +3954,41 @@ def _build_compact_positioned_caption_overlay(
     )
     if not positioned_specs:
         raise ValueError("positioned caption overlay specs required")
+    positioned_specs = _caption_frame_timeline(
+        positioned_specs,
+        output_fps=output_fps,
+        duration=duration,
+    )
+    if not positioned_specs:
+        raise ValueError("positioned caption frame timeline required")
+    fixed_mismatches = [
+        item for item in positioned_specs
+        if item.get("raster_chunk_index") != item.get("position_chunk_index")
+    ]
+    if fixed_mismatches:
+        raise ValueError(f"caption raster/position frame mismatch: {fixed_mismatches[:3]}")
+    legacy_mismatch_frames = [
+        {
+            "frame": frame,
+            "time": round(frame / max(1.0, float(output_fps)), 6),
+            "raster_chunk": item.get("raster_chunk_index"),
+            "position_chunk": item.get("legacy_position_chunk_index"),
+            "y": item.get("legacy_position_y"),
+            "fixed_position_chunk": item.get("position_chunk_index"),
+            "fixed_y": item.get("position_y"),
+            "line_count": len(
+                (((item.get("metrics") or {}).get("layout") or {}).get("lines") or [])
+            ),
+        }
+        for item in positioned_specs
+        if item.get("legacy_position_chunk_index") != item.get("raster_chunk_index")
+        for frame in range(int(item["start_frame"]), int(item["end_frame"]))
+    ]
+    if legacy_mismatch_frames:
+        current_app.logger.info(
+            "Caption legacy raster/position mismatch frames=%s",
+            json.dumps(legacy_mismatch_frames, separators=(",", ":")),
+        )
     temp_dir = Path(tempfile.mkdtemp(prefix="positioned_caption_overlay_"))
     baked_specs: list[Dict[str, Any]] = []
     try:
@@ -3937,6 +4044,7 @@ def _build_compact_positioned_caption_overlay(
             clip_duration=duration,
             canvas_width=band_width,
             canvas_height=band_height,
+            output_fps=output_fps,
         )
         origin = (band_left + compact_origin[0], band_top + compact_origin[1])
         return overlay_path, origin, temp_dir, len(baked_specs)
@@ -6383,6 +6491,7 @@ def _compose_trimmed_with_background(
                 subtitle_margin=subtitle_margin,
                 subtitle_margin_custom=subtitle_margin_custom,
                 caption_anchor=caption_anchor,
+                output_fps=output_fps,
             )
         )
         caption_overlay_temp_dirs.append(compact_temp_dir)
