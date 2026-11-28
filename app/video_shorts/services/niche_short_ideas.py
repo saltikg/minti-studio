@@ -376,6 +376,10 @@ def _generate_idea(
         total_input += used_input
         total_output += used_output
         parsed = _json_response(response)
+        version = parsed.get("your_version") if isinstance(parsed.get("your_version"), dict) else None
+        if version is not None and len(re.findall(r"\d+", str(version.get("ideal_length") or ""))) < 2:
+            duration = max(20, min(170, int(source.get("duration_s") or 45)))
+            version["ideal_length"] = f"{max(10, duration - 10)}–{min(180, duration + 10)} seconds"
         topic_check = parsed.get("topic_check") if isinstance(parsed.get("topic_check"), dict) else {}
         same_topic = topic_check.get("same_topic") is True
         fits_niche = topic_check.get("fits_niche") is True

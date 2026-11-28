@@ -44,7 +44,7 @@ def test_generate_idea_uses_one_gpt_41_call_and_niche_language():
                     "title": "Sabırla gelen beklenmedik cevap",
                     "first_line": "Cevabın geciktiğini düşündüğünüz oldu mu?",
                     "beats": ["Bekleyişi anlatan sohbet kesiti", "Yanlış beklentiyi açıklayan kayıt bölümü", "Dersi bağlayan konuşma kesiti"],
-                    "ideal_length": "45–60 saniye",
+                    "ideal_length": "roughly a minute",
                 },
             }, ensure_ascii=False)
             message = type("Message", (), {"content": content})()
@@ -67,7 +67,7 @@ def test_generate_idea_uses_one_gpt_41_call_and_niche_language():
     assert request["niche"]["language"] == "tr"
     assert request["brand"]["channel_name"] == "Hoca"
     assert result["format_tag"] == "Story"
-    assert result["ideal_length"] == "45–60 seconds"
+    assert result["ideal_length"] == "48–68 seconds"
     assert result["llm_cost_usd"] == pytest.approx(0.0012)
 
 
