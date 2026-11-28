@@ -450,6 +450,7 @@ def compute_niche_outlier_shorts(
         "outlier_count": len(output),
         "cohort_start": cohort_start.date().isoformat(),
         "cohort_end": (cohort_end.date() - timedelta(days=1)).isoformat(),
+        "views_floor": int(niche_row.get("shorts_views_floor") or 10_000),
         "rows": output,
     }
 
@@ -618,11 +619,14 @@ def _pattern_cost_usd(model: str, input_tokens: int, output_tokens: int) -> floa
 
 
 def customer_visible_outlier_rows(
-    rows: list[dict[str, Any]], *, score_key: str = "outlier_ratio"
+    rows: list[dict[str, Any]], *, score_key: str = "outlier_ratio", views_floor: int = 5_000
 ) -> list[dict[str, Any]]:
     eligible = []
     for row in rows:
-        if row.get("in_category", row.get("on_topic")) is False or int(row.get("views") or 0) < 5_000:
+        if (
+            row.get("in_category", row.get("on_topic")) is False
+            or int(row.get("views") or 0) < views_floor
+        ):
             continue
         engagement = float(row.get("engagement") or 0)
         baseline_engagement = float(row.get("baseline_engagement") or 0)
@@ -694,7 +698,9 @@ def generate_niche_outlier_pattern(
     source_input = (
         result.get("pattern_rows") if "pattern_rows" in result else result.get("rows")
     )
-    source_rows = customer_visible_outlier_rows(source_input or [])
+    source_rows = customer_visible_outlier_rows(
+        source_input or [], views_floor=int(result.get("views_floor") or 5_000)
+    )
     if not source_rows:
         return None
     selected_client = client or _openai_client
@@ -1074,7 +1080,8 @@ def classify_and_persist_latest_topics(
     result = {"niche": niche, "niche_id": niche_row[0], "as_of": as_of, "rows": rows}
     usage = classify_niche_outlier_topics(result, cache_root=cache_root, client=client)
     persist_niche_outlier_topics(result)
-    _niche_row, pool = _current_pool(niche)
+    current_niche, pool = _current_pool(niche)
+    result["views_floor"] = int(current_niche.get("shorts_views_floor") or 10_000)
     pool_ids = {str(row.get("youtube_channel_id") or "") for row in pool}
     result["pattern_rows"] = [
         row for row in rows
@@ -1134,13 +1141,14 @@ def generate_and_persist_latest_pattern(
         conn.close()
     if not as_of:
         return None
-    _niche_row, pool = _current_pool(niche)
+    current_niche, pool = _current_pool(niche)
     pool_ids = {str(row.get("youtube_channel_id") or "") for row in pool}
     pattern = generate_niche_outlier_pattern(
         {
             "niche_id": niche_row[0],
             "as_of": as_of,
             "rows": rows,
+            "views_floor": int(current_niche.get("shorts_views_floor") or 10_000),
             "pattern_rows": [
                 row for row in rows
                 if str(row.get("youtube_channel_id") or "") in pool_ids

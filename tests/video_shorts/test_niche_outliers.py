@@ -162,6 +162,20 @@ def test_pattern_generation_uses_customer_top_six_and_builds_sentence(monkeypatc
     assert pattern["estimated_cost_usd"] == 0.000072
 
 
+def test_customer_visible_rows_preserve_niche_floor_screened_results():
+    rows = [{
+        "youtube_channel_id": "channel-1",
+        "video_id": "low-floor-winner",
+        "views": 3_500,
+        "outlier_ratio": 4.2,
+        "in_category": True,
+        "engagement": 0.03,
+        "baseline_engagement": 0.03,
+    }]
+
+    assert niche_outliers.customer_visible_outlier_rows(rows, views_floor=3_000) == rows
+
+
 def test_topic_classification_uses_one_call_per_short(monkeypatch, tmp_path):
     monkeypatch.setattr(niche_outliers, "OPENAI_MODEL", "gpt-4.1-mini")
     channel_path = tmp_path / "channels" / "UC1.json"

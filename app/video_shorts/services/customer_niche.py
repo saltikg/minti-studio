@@ -73,12 +73,15 @@ def _top_outlier_cards(
     pool_by_channel: dict[str, dict[str, Any]],
     own_channel_ids: set[str],
     early: bool = False,
+    views_floor: int = 5_000,
 ) -> list[dict[str, Any]]:
     eligible = customer_visible_outlier_rows(
         [
             row for row in rows
             if str(row.get("youtube_channel_id") or "") in pool_by_channel
-        ], score_key="speed_ratio" if early else "outlier_ratio"
+        ],
+        score_key="speed_ratio" if early else "outlier_ratio",
+        views_floor=views_floor,
     )
     creators_by_theme: dict[str, set[str]] = defaultdict(set)
     for row in eligible:
@@ -209,6 +212,7 @@ def load_customer_niche_page(
         outlier_rows,
         pool_by_channel=pool_by_channel,
         own_channel_ids=own_channel_ids,
+        views_floor=int(niche.get("shorts_views_floor") or 10_000),
     )
     pattern = ""
     if as_of and table_columns(conn, "niche_outlier_patterns"):
@@ -222,6 +226,7 @@ def load_customer_niche_page(
     early_as_of, early_rows = load_latest_niche_outliers(conn, niche["id"], signal_type="early")
     early_cards = _top_outlier_cards(
         early_rows, pool_by_channel=pool_by_channel, own_channel_ids=own_channel_ids, early=True,
+        views_floor=int(niche.get("shorts_views_floor") or 10_000),
     )
     ideas_as_of, weekly_ideas = load_brand_weekly_ideas(conn, niche["id"], brand_id)
     return {
