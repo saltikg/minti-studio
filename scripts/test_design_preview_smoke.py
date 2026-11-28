@@ -341,6 +341,7 @@ def _assert_make_clip_hook_is_first(page: Page, variant: str) -> None:
     assert len(resolved_ranges) == 2 and resolved_ranges[0].get("role") == "hook", preview
     assert resolved_ranges[0]["start"] > resolved_ranges[1]["start"], preview
     _print_pass(variant, "Make a Clip hook copies into normal flow and previews hook then 305-343")
+    page.evaluate("() => document.querySelector('[data-generate-v2-text-clear-parts]')?.click()")
 
 
 def _assert_saved_hook_trim_preserves_hook(page: Page, variant: str, saved_plan: dict) -> None:
@@ -795,21 +796,37 @@ def _assert_auto_layout_caption_drag_persists(
             caption_block_height: coordinateHeight * 0.08, subscribe_top: null,
             coordinate_height: coordinateHeight,
           }]);
-          const auto = document.querySelector('[data-layout-mode="auto"]');
+          const auto = document.querySelector(
+            '#crop-aspect-selector .aspect-card[data-layout-mode="auto"][data-crop-aspect="portrait"]'
+          );
           auto?.click();
           return {planIndex: card.dataset.planIndex, hasAutoControl: !!auto};
         }""",
         coordinate_height,
     )
     assert not prepared.get("error"), prepared
+    assert prepared["hasAutoControl"], prepared
     page.wait_for_timeout(300)
-    caption = page.locator("#shorts-preview-subtitle-band:visible, #orig-preview-caption:visible").first
+    caption = page.locator(
+        "#generate-v2-preview-slot [data-preview-element='subtitle']:visible"
+    ).first
+    caption.scroll_into_view_if_needed()
     box = caption.bounding_box()
     assert box, {"variant": variant, "export": export_label, "error": "caption not visible"}
-    page.mouse.move(box["x"] + box["width"] / 2, box["y"] + box["height"] / 2)
+    before_top = box["y"]
+    caption.hover(position={"x": box["width"] / 2, "y": box["height"] / 2})
     page.mouse.down()
     page.mouse.move(box["x"] + box["width"] / 2, box["y"] + box["height"] / 2 - 36, steps=6)
     page.mouse.up()
+    page.wait_for_function("() => window.isCropEditorDesignDirty?.() === true", timeout=5_000)
+    committed = page.evaluate(
+        """() => ({
+          dirty: window.isCropEditorDesignDirty?.() === true,
+          margin: document.querySelector('[name="sub_margin"]')?.value || '',
+          dragging: document.querySelector('[data-preview-element="subtitle"].is-dragging') !== null,
+        })"""
+    )
+    assert committed["dirty"] and committed["margin"] and not committed["dragging"], committed
 
     samples = []
     for _ in range(30):
@@ -819,6 +836,10 @@ def _assert_auto_layout_caption_drag_persists(
         "variant": variant, "export": export_label, "caption_top_samples": samples
     }
     dropped_top = samples[-1]
+    assert dropped_top <= before_top - 20, {
+        "variant": variant, "export": export_label,
+        "before_top": before_top, "dropped_top": dropped_top,
+    }
     _print_pass(variant, f"auto-layout {export_label} caption drag stays dropped for 3s")
 
     settings = page.locator(".short-video-body").first
@@ -846,11 +867,36 @@ def _assert_auto_layout_caption_drag_persists(
 
     page.route(f"**{save_url}", fulfill_save)
     try:
-        page.evaluate("() => window.cropEditorSave()")
-        page.wait_for_function(
-            "() => document.getElementById('crop-save-status')?.textContent === 'Saved'",
-            timeout=10_000,
+        save_debug = page.evaluate(
+            """() => ({
+              dirty: !!window.isCropEditorDesignDirty?.(),
+              status: document.getElementById('crop-save-status')?.textContent || '',
+              layoutMode: document.querySelector('[name="layout_mode"]:checked')?.value || '',
+              splitEnabled: document.querySelector('[name="split_enabled"]')?.checked || false,
+              serialized: window.serializeCropEditorDesignState?.() || '',
+            })"""
         )
+        page.evaluate("() => window.cropEditorSave()")
+        try:
+            page.wait_for_function(
+                "() => document.getElementById('crop-save-status')?.textContent === 'Saved'",
+                timeout=10_000,
+            )
+        except Exception as exc:
+            after = page.evaluate(
+                """() => ({
+                  dirty: !!window.isCropEditorDesignDirty?.(),
+                  status: document.getElementById('crop-save-status')?.textContent || '',
+                  buttonText: document.getElementById('crop-save-btn')?.textContent || '',
+                })"""
+            )
+            raise AssertionError({
+                "variant": variant,
+                "export": export_label,
+                "before": save_debug,
+                "after": after,
+                "captured": captured,
+            }) from exc
     finally:
         page.unroute(f"**{save_url}", fulfill_save)
     assert captured.get("subtitle_margin_custom") == "1", captured
@@ -1001,7 +1047,7 @@ def _assert_split_caption_straddles_divider(page: Page, variant: str) -> None:
 
 def _run_variant(browser: Browser, *, base_url: str, cookie_name: str,
                  cookie_value: str, selected_video: int, width: int,
-                 height: int, dpr: int) -> None:
+                 height: int, dpr: int, caption_save_only: bool = False) -> None:
     variant = f"{width}x{height} DPR{dpr}"
     context = browser.new_context(viewport={"width": width, "height": height},
                                   device_scale_factor=dpr)
@@ -1057,6 +1103,10 @@ def _run_variant(browser: Browser, *, base_url: str, cookie_name: str,
               .some(id => document.getElementById(id)?.dataset.captionDomOwner === 'measured-svg')""",
             timeout=10_000,
         )
+        if caption_save_only:
+            _assert_auto_layout_caption_drag_persists(page, variant, 1280)
+            print(f"CAPTION_SAVE_OK {variant}")
+            return
         layer_order = page.evaluate(
             """() => {
               const visible = ids => ids.map(id => document.getElementById(id)).find(
@@ -1076,6 +1126,7 @@ def _run_variant(browser: Browser, *, base_url: str, cookie_name: str,
         reported_dpr = page.evaluate("() => window.devicePixelRatio")
         assert reported_dpr == dpr, (variant, reported_dpr)
         _print_pass(variant, "browser DPR")
+        _assert_make_clip_hook_is_first(page, variant)
         _assert_make_clip_add_keeps_exact_word_indexes(page, variant)
         _assert_trim_selection_keeps_exact_first_word(page, variant)
         _assert_trim_restore_keeps_only_selected_words(page, variant)
@@ -1177,13 +1228,18 @@ def _run_variant(browser: Browser, *, base_url: str, cookie_name: str,
             _assert_auto_layout_caption_drag_persists(page, variant, 1280)
         if width == 1920 and height == 1080 and dpr == 1:
             _assert_auto_layout_caption_drag_persists(page, variant, 1920)
-        _assert_make_clip_hook_is_first(page, variant)
         print(f"VARIANT_OK {variant}")
     finally:
         context.close()
 
 
-def run(video_id: int | None, headed: bool, *, hook_only: bool = False) -> None:
+def run(
+    video_id: int | None,
+    headed: bool,
+    *,
+    hook_only: bool = False,
+    caption_save_only: bool = False,
+) -> None:
     app = create_app()
     selected_video, user_id, brand_id = _admin_video_context(video_id)
     saved_hook_plan = _latest_saved_hook_plan(selected_video) if hook_only else None
@@ -1217,7 +1273,10 @@ def run(video_id: int | None, headed: bool, *, hook_only: bool = False) -> None:
                 for dpr in DPRS:
                     _run_variant(browser, base_url=base_url, cookie_name=cookie.key,
                                  cookie_value=cookie.value, selected_video=selected_video,
-                                 width=width, height=height, dpr=dpr)
+                                 width=width, height=height, dpr=dpr,
+                                 caption_save_only=caption_save_only)
+                    if caption_save_only:
+                        return
         finally:
             browser.close()
     print(f"SMOKE_OK video={selected_video} user={user_id} brand={brand_id} variants={len(VIEWPORTS) * len(DPRS)}")
@@ -1228,8 +1287,11 @@ def main() -> None:
     parser.add_argument("--video-id", type=int, help="Transcript-ready video owned by an admin user")
     parser.add_argument("--headed", action="store_true")
     parser.add_argument("--hook-only", action="store_true", help="Run the Make a Clip hook ordering smoke only")
+    parser.add_argument("--caption-save-only", action="store_true",
+                        help="Run only the auto-layout caption drag/save regression")
     args = parser.parse_args()
-    run(args.video_id, args.headed, hook_only=args.hook_only)
+    run(args.video_id, args.headed, hook_only=args.hook_only,
+        caption_save_only=args.caption_save_only)
 
 
 if __name__ == "__main__":
