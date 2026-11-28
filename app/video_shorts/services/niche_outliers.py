@@ -756,7 +756,7 @@ def generate_niche_outlier_pattern(
     repeated = sorted(counts.items(), key=lambda item: (-item[1], item[0].casefold()))
     repeated = [item for item in repeated if item[1] >= 2]
     stories = sum(str(row.get("format_label") or "") == "story" for row in source_rows)
-    story_text = f"{stories} {'was' if stories == 1 else 'were'} stories"
+    story_text = "1 was a story" if stories == 1 else f"{stories} were stories"
     theme_text = f"{repeated[0][1]} of {len(source_rows)} winners were about {repeated[0][0]}; " if repeated else ""
     return {
         "niche_id": result["niche_id"],
