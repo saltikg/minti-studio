@@ -145,7 +145,7 @@ def _label_rows(
         for row in rows
     ]
     response = client.chat.completions.create(
-        model=MODEL, temperature=0, max_tokens=max(300, len(rows) * 24),
+        model=MODEL, temperature=0, max_tokens=max(400, len(rows) * 60),
         response_format={"type": "json_object"},
         messages=[
             {"role": "system", "content": (

@@ -9,7 +9,9 @@ from typing import Any
 from app.video_shorts.config import _openai_client
 from app.video_shorts.services.db import get_db, get_db_readonly, table_columns
 from app.video_shorts.services.niche_definitions import load_niche_definition
-from app.video_shorts.services.niche_outliers import PACIFIC, load_latest_niche_outliers
+from app.video_shorts.services.niche_outliers import (
+    PACIFIC, customer_visible_outlier_rows, load_latest_niche_outliers,
+)
 from app.video_shorts.services.niches import final_niche_pool, load_niche_snapshot
 from app.video_shorts.services import niche_rising_topics as rising
 from app.video_shorts.services.niche_caption_archive import ARCHIVE_TABLE, UPLOADS_TABLE, _caption_windows
@@ -557,7 +559,12 @@ def compute_brand_weekly_ideas(brand_id: str, *, client: Any = None) -> dict[str
         if not as_of:
             raise WeeklyIdeasError("niche has no outlier snapshot")
         _early_as_of, early_outliers = load_latest_niche_outliers(conn, niche_id, signal_type="early")
-        outliers = [*outliers, *early_outliers]
+        # Weekly ideas consume the exact customer card cohorts.  Early cards
+        # are only a fallback pool when fewer than three weekly ideas survive.
+        outliers = [
+            *customer_visible_outlier_rows(outliers),
+            *customer_visible_outlier_rows(early_outliers, score_key="speed_ratio"),
+        ]
         pool_channel_ids = _pool_channel_ids(conn, niche_slug)
         candidates, _maximum_days = _candidate_rows(
             outliers, as_of, days=30, allowed_channel_ids=pool_channel_ids,
