@@ -78,6 +78,7 @@ from app.video_shorts.services.render_jobs import (
     JOB_TYPE_AUTO_SUGGEST_RENDER,
     JOB_TYPE_ADMIN_PROXY_TRANSCRIPT,
     JOB_TYPE_NICHE_CAPTION_ARCHIVE,
+    JOB_TYPE_NICHE_SHORT_IDEAS,
     JOB_TYPE_ENRICH_AUTOPILOT_DISCOVERY_EMAILS,
     JOB_TYPE_ENRICH_DISCOVERY_EMAILS,
     JOB_TYPE_GENERATE_COVER,
@@ -1445,6 +1446,15 @@ def _execute_niche_caption_archive_job(app, job: Dict[str, Any]) -> Dict[str, An
     return {"archive": archive, "ideas": ideas}
 
 
+def _execute_niche_short_ideas_job(app, job: Dict[str, Any]) -> Dict[str, Any]:
+    from app.video_shorts.services.niche_short_ideas import compute_niche_short_ideas
+
+    niche_slug = str((job.get("payload") or {}).get("niche_slug") or "").strip()
+    if not niche_slug:
+        raise PermanentRenderJobError("Niche short ideas job is missing niche_slug")
+    return compute_niche_short_ideas(niche_slug)
+
+
 def _suggest_clip(segments: list[dict], duration_seconds: Any) -> Tuple[float, float, str, str]:
     if segments:
         first = segments[0] or {}
@@ -2378,6 +2388,8 @@ def _process_next_job(
             result = _execute_admin_proxy_transcript_job(app, job)
         elif job.get("type") == JOB_TYPE_NICHE_CAPTION_ARCHIVE:
             result = _execute_niche_caption_archive_job(app, job)
+        elif job.get("type") == JOB_TYPE_NICHE_SHORT_IDEAS:
+            result = _execute_niche_short_ideas_job(app, job)
         elif job.get("type") == JOB_TYPE_NORMALIZE_UPLOAD:
             result = _execute_normalize_upload_job(app, job)
         elif job.get("type") == JOB_TYPE_PREVIEW_FRAME:

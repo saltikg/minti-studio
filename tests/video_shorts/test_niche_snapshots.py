@@ -88,6 +88,8 @@ def test_customer_page_requests_latest_snapshot(monkeypatch):
     monkeypatch.setattr(customer_niche, "load_niche_snapshot", fake_load_snapshot)
     monkeypatch.setattr(customer_niche, "brand_publishing_channel_id", lambda *_args: "")
     monkeypatch.setattr(customer_niche, "load_latest_niche_outliers", lambda *_args, **_kwargs: ("", []))
+    monkeypatch.setattr(customer_niche, "load_niche_short_ideas", lambda *_args, **_kwargs: ("", []))
+    monkeypatch.setattr(customer_niche, "archive_match_customer_enabled", lambda: False)
     monkeypatch.setattr(customer_niche, "load_rising_topics", lambda *_args, **_kwargs: ("", []))
 
     page = customer_niche.load_customer_niche_page(

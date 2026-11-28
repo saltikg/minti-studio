@@ -14,7 +14,11 @@ from app.video_shorts.services.niche_outliers import (
     load_latest_niche_outliers,
     _whole_percentile,
 )
-from app.video_shorts.services.niche_weekly_ideas import load_brand_weekly_ideas
+from app.video_shorts.services.niche_short_ideas import load_niche_short_ideas
+from app.video_shorts.services.niche_weekly_ideas import (
+    archive_match_customer_enabled,
+    load_brand_weekly_ideas,
+)
 from app.video_shorts.services.niche_rising_topics import load_rising_topics  # legacy test/extension hook
 from app.video_shorts.services.niches import final_niche_pool, load_niche_snapshot
 
@@ -228,7 +232,12 @@ def load_customer_niche_page(
         early_rows, pool_by_channel=pool_by_channel, own_channel_ids=own_channel_ids, early=True,
         views_floor=int(niche.get("shorts_views_floor") or 10_000),
     )
-    ideas_as_of, weekly_ideas = load_brand_weekly_ideas(conn, niche["id"], brand_id)
+    ideas_as_of, short_ideas = load_niche_short_ideas(conn, niche["id"])
+    archive_ideas_enabled = archive_match_customer_enabled()
+    _archive_as_of, archive_weekly_ideas = (
+        load_brand_weekly_ideas(conn, niche["id"], brand_id)
+        if archive_ideas_enabled else ("", [])
+    )
     return {
         "brand_id": str(brand[0]),
         "brand_name": str(brand[1] or "Customer"),
@@ -256,5 +265,7 @@ def load_customer_niche_page(
         ).strftime("%b %-d") if selected_cohort else "",
         "pattern": pattern,
         "ideas_as_of": ideas_as_of,
-        "weekly_ideas": weekly_ideas[:3],
+        "short_ideas": short_ideas[:2],
+        "archive_match_ideas_enabled": archive_ideas_enabled,
+        "weekly_ideas": archive_weekly_ideas[:3],
     }

@@ -55,10 +55,15 @@ def test_candidate_window_expands_until_three_usable_ideas():
     assert niche_weekly_ideas._choose_candidate_window(rows, "2026-11-26", done, gate) == 30
 
 
-def test_shelley_weekly_run_is_disabled_by_default(monkeypatch):
+def test_all_niche_brands_are_enabled_by_default(monkeypatch):
     monkeypatch.delenv("NICHE_WEEKLY_IDEAS_DISABLED_BRAND_IDS", raising=False)
-    assert niche_weekly_ideas.weekly_ideas_brand_enabled(niche_weekly_ideas.SHELLEY_BRAND_ID) is False
+    assert niche_weekly_ideas.weekly_ideas_brand_enabled(niche_weekly_ideas.SHELLEY_BRAND_ID) is True
     assert niche_weekly_ideas.weekly_ideas_brand_enabled(niche_weekly_ideas.HOCA_BRAND_ID) is True
+
+
+def test_archive_match_customer_ui_is_off_by_default(monkeypatch):
+    monkeypatch.delenv("NICHE_ARCHIVE_MATCH_IDEAS_CUSTOMER_ENABLED", raising=False)
+    assert niche_weekly_ideas.archive_match_customer_enabled() is False
 
 
 def test_archive_similarity_threshold_is_explicit():

@@ -29,7 +29,9 @@ def test_connected_channel_is_you_when_source_channels_share_niche(monkeypatch):
     monkeypatch.setattr(customer_niche, "_ranked_pool", lambda *_args: rows)
     monkeypatch.setattr(customer_niche, "brand_publishing_channel_id", lambda *_args: "UC-A")
     monkeypatch.setattr(customer_niche, "load_latest_niche_outliers", lambda *_args, **_kwargs: ("", []))
+    monkeypatch.setattr(customer_niche, "load_niche_short_ideas", lambda *_args, **_kwargs: ("", []))
     monkeypatch.setattr(customer_niche, "load_brand_weekly_ideas", lambda *_args, **_kwargs: ("", []))
+    monkeypatch.setattr(customer_niche, "archive_match_customer_enabled", lambda: False)
 
     page = customer_niche.load_customer_niche_page(
         _CustomerConnection(), owner_user_id="owner-1", brand_id="brand-1"

@@ -43,9 +43,15 @@ class WeeklyIdeasError(RuntimeError):
 
 def weekly_ideas_brand_enabled(brand_id: str) -> bool:
     configured = os.getenv("NICHE_WEEKLY_IDEAS_DISABLED_BRAND_IDS")
-    raw = SHELLEY_BRAND_ID if configured is None else configured
+    raw = "" if configured is None else configured
     disabled = {item.strip() for item in raw.split(",") if item.strip()}
     return str(brand_id) not in disabled
+
+
+def archive_match_customer_enabled() -> bool:
+    return str(os.getenv("NICHE_ARCHIVE_MATCH_IDEAS_CUSTOMER_ENABLED") or "").strip().lower() in {
+        "1", "true", "yes", "on",
+    }
 
 
 def _usage(response: Any) -> tuple[int, int]:

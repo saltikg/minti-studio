@@ -39,7 +39,16 @@
   .customer-niche-page .customer-niche-tab { background:none; border:0; border-bottom:2px solid transparent; color:#A9B4C0; font-weight:700; padding:10px 12px; }
   .customer-niche-page .customer-niche-tab.is-active { border-bottom-color:#2dd4bf; color:#E8EDF2; }
   .customer-niche-page .customer-niche-panel[hidden] { display:none; }
+  .customer-niche-page .customer-niche-idea-grid { display:grid; gap:16px; grid-template-columns:repeat(2,minmax(0,1fr)); }
+  .customer-niche-page .customer-niche-idea { background:rgba(255,255,255,.025); border:1px solid rgba(255,255,255,.14); border-radius:16px; padding:20px; }
+  .customer-niche-page .customer-niche-idea-title { color:#E8EDF2; font-size:1.08rem; font-weight:800; line-height:1.3; }
+  .customer-niche-page .customer-niche-idea-ratio { color:#5EEAD4; font-size:1.05rem; font-weight:850; white-space:nowrap; }
+  .customer-niche-page .customer-niche-format { background:rgba(56,189,248,.13); border:1px solid rgba(56,189,248,.3); border-radius:999px; color:#BAE6FD; font-size:.7rem; font-weight:750; padding:4px 8px; }
+  .customer-niche-page .customer-niche-version { background:rgba(34,197,94,.09); border:1px solid rgba(74,222,128,.25); border-radius:12px; padding:14px; }
+  .customer-niche-page .customer-niche-version-label { color:#86EFAC; font-size:.7rem; font-weight:850; letter-spacing:.08em; }
+  .customer-niche-page .customer-niche-version ol { color:#D1FAE5; margin-bottom:0; padding-left:1.25rem; }
   @media (max-width: 991px) { .customer-niche-page .customer-niche-cards { grid-template-columns: repeat(3, minmax(0, 1fr)); } }
+  @media (max-width: 767px) { .customer-niche-page .customer-niche-idea-grid { grid-template-columns:1fr; } }
   @media (max-width: 575px) { .customer-niche-page .customer-niche-cards { grid-template-columns: 1fr; } }
 </style>
 {% endblock %}
@@ -112,36 +121,47 @@
 
   <section class="card shadow-sm vs-card mb-4">
     <div class="card-body p-4">
-      <h2 class="customer-niche-section-title mb-1">This week's 3 Short ideas</h2>
-      <p class="customer-niche-muted mb-4">Concrete ideas from Shorts outperforming each creator's usual views.</p>
-      {% if niche_page.weekly_ideas %}
-        <div class="d-grid gap-3">
-          {% for idea in niche_page.weekly_ideas %}
-            <div class="border-bottom border-secondary-subtle pb-3">
-              <div class="d-flex flex-wrap justify-content-between gap-2 align-items-start">
-                <div>
-                  <div class="customer-niche-short-title">{{ idea.angle_label }}</div>
-                  <div class="customer-niche-muted small"><a href="{{ idea.source_url }}" target="_blank" rel="noopener noreferrer">{{ idea.source_channel_title }}</a> · {{ '%.1f'|format(idea.source_ratio) }}× usual · {{ '{:,}'.format(idea.source_views | int) }} views</div>
-                  {% if idea.idea_note %}<div class="customer-niche-muted small mt-1">{{ idea.idea_note }}</div>{% endif %}
-                </div>
-                <div>{% if idea.early_signal_badge %}<span class="badge text-bg-warning">{{ idea.early_signal_badge }}</span>{% endif %}{% if idea.worked_badge %}<span class="badge text-bg-success">{{ idea.worked_badge }}</span>{% endif %}</div>
+      <h2 class="customer-niche-section-title mb-2">Short ideas for you</h2>
+      <p class="customer-niche-muted mb-4">We studied last week's 2 biggest winners in your niche — what they say and how they're built. Here's why they worked and how you could make your own version.</p>
+      {% if niche_page.short_ideas %}
+        <div class="customer-niche-idea-grid">
+          {% for idea in niche_page.short_ideas %}
+            <article class="customer-niche-idea">
+              <div class="d-flex justify-content-between align-items-start gap-3 mb-2">
+                <div class="customer-niche-idea-title">{{ idea.idea_title }}</div>
+                <div class="customer-niche-idea-ratio">{{ '%.1f'|format(idea.source_ratio) }}× usual</div>
               </div>
-              {% if idea.status == 'archive' %}
-                <div class="customer-niche-muted small mt-2"><strong>Ready in your sources</strong> · {{ idea.archive_source_channel_title }} · {{ idea.archive_title }}{% if idea.archive_published_at %} · {{ idea.archive_published_at.strftime('%b %-d, %Y') }}{% endif %}</div>
-                <div class="customer-niche-muted small mt-1">{{ idea.archive_timestamp }} · “{{ idea.archive_snippet }}”</div>
-                <a class="btn btn-sm btn-info mt-2" href="{{ idea.archive_url }}">Make this Short</a>
-              {% else %}
-                <div class="customer-niche-muted small mt-2"><strong>New video idea:</strong> {{ idea.suggested_title }}</div>
-                <div class="customer-niche-muted small mt-1"><strong>First 3 seconds:</strong> “{{ idea.suggested_hook }}”</div>
-              {% endif %}
-            </div>
+              <div class="d-flex flex-wrap align-items-center gap-2 customer-niche-muted small mb-3"><span class="customer-niche-format">{{ idea.format_tag }}</span><span>{{ idea.source_channel_title }} · {{ idea.source_duration_s }}s · <a href="{{ idea.source_url }}" target="_blank" rel="noopener noreferrer">Watch ↗</a></span></div>
+              <div class="small fw-bold mb-1">Why it worked</div>
+              <p class="customer-niche-muted small mb-3">{{ idea.why_it_worked }}</p>
+              <div class="customer-niche-version">
+                <div class="customer-niche-version-label mb-2">YOUR VERSION</div>
+                <div class="fw-bold mb-2">{{ idea.idea_title }}</div>
+                <div class="small mb-2"><strong>First line:</strong> “{{ idea.first_line }}”</div>
+                <ol class="small">{% for beat in idea.beats %}<li>{{ beat }}</li>{% endfor %}</ol>
+                <div class="customer-niche-muted small mt-2"><strong>Ideal length:</strong> {{ idea.ideal_length }}</div>
+              </div>
+            </article>
           {% endfor %}
         </div>
       {% else %}
         <p class="customer-niche-muted mb-0">Your ideas are being prepared.</p>
       {% endif %}
+      <div class="d-flex flex-wrap justify-content-between align-items-center gap-3 border-top border-secondary-subtle mt-4 pt-3">
+        <p class="customer-niche-muted small mb-0">No video on these yet? Use them as a guide for your next recording. The more videos you add to Minti, the smarter these ideas get.</p>
+        <a class="btn btn-sm btn-info" href="{{ url_for('video_shorts_bp.my_videos_page') }}#mv-coachmark-upload-anchor">Add videos</a>
+      </div>
     </div>
   </section>
+
+  {% if niche_page.archive_match_ideas_enabled %}
+  <section class="card shadow-sm vs-card mb-4">
+    <div class="card-body p-4">
+      <h2 class="customer-niche-section-title mb-1">Archive-match ideas</h2>
+      {% if niche_page.weekly_ideas %}<div class="d-grid gap-2">{% for idea in niche_page.weekly_ideas %}<div class="customer-niche-muted small">{{ idea.angle_label }} · {{ idea.status }}</div>{% endfor %}</div>{% else %}<p class="customer-niche-muted mb-0">No archive matches.</p>{% endif %}
+    </div>
+  </section>
+  {% endif %}
 </div>
 <script>
 document.querySelectorAll('[data-niche-tab]').forEach(function(button){button.addEventListener('click',function(){document.querySelectorAll('[data-niche-tab]').forEach(function(item){item.classList.toggle('is-active',item===button)});document.querySelectorAll('[data-niche-panel]').forEach(function(panel){panel.hidden=panel.dataset.nichePanel!==button.dataset.nicheTab})})});
