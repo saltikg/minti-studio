@@ -14747,7 +14747,15 @@ const findGenerateV2ActiveWordIndex = (seconds) => {
   if (candidate === null) return null;
   const word = words[candidate];
   const end = Number(word?.end || word?.start || 0);
-  return time <= end + 0.12 ? Number(word.index ?? candidate) : null;
+  const next = words[candidate + 1];
+  if (!next) return Number(word.index ?? candidate);
+  const nextStart = Number(next?.start || end);
+  const captionWords = Math.max(1, Number(DESIGN_GEOMETRY.caption_words || 4));
+  const sameChunk = Math.floor(candidate / captionWords) === Math.floor((candidate + 1) / captionWords);
+  const visibleUntil = sameChunk || nextStart - end <= 1.5
+    ? nextStart
+    : Math.min(nextStart, end + 0.2);
+  return time <= visibleUntil ? Number(word.index ?? candidate) : null;
 };
 
 const clearGenerateV2KaraokeDom = () => {

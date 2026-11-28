@@ -2523,9 +2523,17 @@ def _normalize_word_highlight_overlay_specs(
     overlay_specs: List[Dict[str, Any]],
     *,
     clip_duration: float,
-    bridge_gap_seconds: float = 0.3,
+    bridge_chunk_gap_seconds: float = 1.5,
+    long_chunk_gap_hold_seconds: float = 0.2,
 ) -> List[Dict[str, Any]]:
-    """Build one ordered, gap-safe caption timeline for the overlay renderer."""
+    """Build the continuous, chunk-aware caption timeline used by the renderer.
+
+    A chunk stays painted from its first word through its last word, including
+    any pauses between those words.  At a chunk boundary, short silences keep
+    the previous chunk visible; long silences get only a brief readability
+    hold before the transparent frame resumes.  The final chunk is held to the
+    end of the output clip.
+    """
     duration = max(0.0, float(clip_duration or 0.0))
     ordered: List[Dict[str, Any]] = []
     for raw in overlay_specs:
@@ -2548,9 +2556,19 @@ def _normalize_word_highlight_overlay_specs(
                 break
             normalized.pop()
         if normalized:
-            gap = start - float(normalized[-1]["end"])
-            if 0.0 < gap < float(bridge_gap_seconds):
-                normalized[-1]["end"] = start
+            previous = normalized[-1]
+            previous_chunk = previous.get("chunk_index")
+            current_chunk = current.get("chunk_index")
+            same_chunk = previous_chunk is not None and previous_chunk == current_chunk
+            gap = start - float(previous["end"])
+            if gap > 0.0:
+                if same_chunk or gap <= float(bridge_chunk_gap_seconds):
+                    previous["end"] = start
+                else:
+                    previous["end"] = min(
+                        start,
+                        float(previous["end"]) + float(long_chunk_gap_hold_seconds),
+                    )
         normalized.append(current)
 
     if normalized:
@@ -2660,6 +2678,7 @@ def _build_word_highlight_caption_overlay(
     render_margin_l = max(0, int(round(float(_ASS_MARGIN_L) * render_scale)))
     render_margin_r = max(0, int(round(float(_ASS_MARGIN_R) * render_scale)))
     safe_caption_width = max(80, safe_target_width - render_margin_l - render_margin_r)
+    caption_chunk_index = 0
 
     for seg in segments:
         try:
@@ -2745,6 +2764,8 @@ def _build_word_highlight_caption_overlay(
             word_tokens = [str(item["word"]).strip() for item in chunk_words if str(item.get("word") or "").strip()]
             if not word_tokens:
                 continue
+            current_chunk_index = caption_chunk_index
+            caption_chunk_index += 1
             chunk_key = tuple(word_tokens)
             precomputed_layout = None
             display_word_tokens = _caption_display_words(
@@ -2926,7 +2947,7 @@ def _build_word_highlight_caption_overlay(
                         "start": item_start,
                         "end": item_end,
                         "metrics": metrics,
-                        "chunk_index": len(layout_cache) - 1,
+                        "chunk_index": current_chunk_index,
                         "chunk_key": "\u241f".join(chunk_key),
                     }
                 )

@@ -90,7 +90,7 @@ def test_preview_and_render_visual_boxes_match_for_every_caption_anchor(
     assert render_caption["line_glyph_boxes"] == preview["caption"]["line_glyph_boxes"]
 
 
-def test_caption_overlay_timeline_bridges_small_gaps_and_holds_last_event():
+def test_caption_overlay_timeline_holds_short_chunk_gaps_and_last_event():
     specs = [
         {"path": "first.png", "start": 1.0, "end": 1.2},
         {"path": "second.png", "start": 1.45, "end": 1.7},
@@ -101,9 +101,25 @@ def test_caption_overlay_timeline_bridges_small_gaps_and_holds_last_event():
 
     assert [(item["start"], item["end"]) for item in normalized] == [
         (1.0, 1.45),
-        (1.45, 1.7),
+        (1.45, 2.0),
         (2.0, 2.89),
     ]
+
+
+def test_caption_overlay_timeline_holds_every_pause_inside_a_chunk():
+    specs = [
+        {"path": "first.png", "start": 0.0, "end": 0.2, "chunk_index": 0},
+        {"path": "second.png", "start": 2.8, "end": 3.1, "chunk_index": 0},
+        {"path": "next.png", "start": 5.0, "end": 5.3, "chunk_index": 1},
+    ]
+
+    normalized = _normalize_word_highlight_overlay_specs(specs, clip_duration=6.0)
+
+    assert [value for item in normalized for value in (item["start"], item["end"])] == pytest.approx([
+        0.0, 2.8,
+        2.8, 3.3,
+        5.0, 6.0,
+    ])
 
 
 def test_caption_overlay_timeline_orders_events_and_removes_overlaps():
@@ -184,7 +200,7 @@ def test_preview_chunk_geometry_is_stable_across_highlight_states():
     ]
 
 
-def test_caption_builder_leaves_a_long_word_gap_blank(monkeypatch):
+def test_caption_builder_keeps_one_chunk_visible_across_a_long_word_gap(monkeypatch):
     monkeypatch.setattr(
         transcript_service,
         "_render_word_highlight_caption_frame",
@@ -219,7 +235,7 @@ def test_caption_builder_leaves_a_long_word_gap_blank(monkeypatch):
     )
     try:
         assert [(event["start"], event["end"]) for event in meta["timing_events"]] == [
-            (0.0, 0.2),
+            (0.0, 0.88),
             (0.88, 1.2),
         ]
     finally:
