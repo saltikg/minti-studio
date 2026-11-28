@@ -25,7 +25,10 @@ def compact_number(value: Any) -> str:
         if abs(number) >= divisor:
             compact = number / divisor
             precision = 0 if compact >= 100 else 1
-            return f"{compact:.{precision}f}".rstrip("0").rstrip(".") + suffix
+            rendered = f"{compact:.{precision}f}"
+            if precision:
+                rendered = rendered.rstrip("0").rstrip(".")
+            return rendered + suffix
     return f"{number:,}"
 
 

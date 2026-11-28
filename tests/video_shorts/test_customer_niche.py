@@ -42,6 +42,7 @@ def test_connected_channel_is_you_when_source_channels_share_niche(monkeypatch):
 def test_compact_number():
     assert customer_niche.compact_number(28_800) == "28.8K"
     assert customer_niche.compact_number(1_200_000) == "1.2M"
+    assert customer_niche.compact_number(720_473) == "720K"
     assert customer_niche.compact_number(999) == "999"
 
 
