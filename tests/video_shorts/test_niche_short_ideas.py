@@ -21,6 +21,7 @@ def test_validate_generated_idea_enforces_shape_and_original_wording():
     )
     assert result["format_tag"] == "Tip"
     assert len(result["beats"]) == 3
+    assert result["ideal_length"] == "35–45 seconds"
 
     payload["your_version"]["first_line"] = "one two three four five six seven"
     with pytest.raises(niche_short_ideas.NicheShortIdeasError, match="copied"):
@@ -62,7 +63,24 @@ def test_generate_idea_uses_one_gpt_41_call_and_niche_language():
     assert calls[0]["model"] == "gpt-4.1"
     assert json.loads(calls[0]["messages"][1]["content"])["niche_language"] == "tr"
     assert result["format_tag"] == "Story"
+    assert result["ideal_length"] == "45–60 seconds"
     assert result["llm_cost_usd"] == pytest.approx(0.0012)
+
+
+def test_non_english_niche_still_requires_english_analysis():
+    payload = {
+        "why_it_worked": "Güçlü bir açılış ile izleyicinin ilgisini hemen çekti.",
+        "format": "Tip",
+        "your_version": {
+            "title": "Yeni bir başlık", "first_line": "İlk cümle burada",
+            "beats": ["Birinci adım", "İkinci adım", "Son adım"],
+            "ideal_length": "40",
+        },
+    }
+    with pytest.raises(niche_short_ideas.NicheShortIdeasError, match="must be English"):
+        niche_short_ideas._validate_generated_idea(
+            payload, "Tamamen farklı kaynak metni", niche_language="tr"
+        )
 
 
 def test_customer_loader_never_selects_transcript(monkeypatch):

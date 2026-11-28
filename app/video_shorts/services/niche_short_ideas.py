@@ -82,16 +82,37 @@ def _has_verbatim_phrase(value: Any, transcript: str, length: int = 7) -> bool:
     )
 
 
-def _validate_generated_idea(payload: dict[str, Any], transcript: str) -> dict[str, Any]:
+def _normalize_length_range(value: Any) -> str:
+    text = " ".join(str(value or "").split())
+    numbers = [int(item) for item in re.findall(r"\d+", text)]
+    if len(numbers) >= 2:
+        return f"{numbers[0]}–{numbers[1]} seconds"
+    if len(numbers) == 1:
+        center = numbers[0]
+        return f"{max(10, center - 5)}–{min(180, center + 5)} seconds"
+    raise NicheShortIdeasError("ideal_length must contain a numeric range")
+
+
+def _looks_english(value: str) -> bool:
+    words = set(_words(value))
+    turkish_markers = {"bir", "ile", "ve", "için", "izleyici", "güçlü", "kısa", "ardından", "kurdu"}
+    return not any(character in value.casefold() for character in "çğıöşü") and len(words & turkish_markers) < 2
+
+
+def _validate_generated_idea(
+    payload: dict[str, Any], transcript: str, *, niche_language: str = "en"
+) -> dict[str, Any]:
     why = " ".join(str(payload.get("why_it_worked") or "").split())
     version = payload.get("your_version") if isinstance(payload.get("your_version"), dict) else {}
     title = " ".join(str(version.get("title") or "").split())
     first_line = " ".join(str(version.get("first_line") or "").split())
     beats = [" ".join(str(item or "").split()) for item in (version.get("beats") or [])]
-    ideal_length = " ".join(str(version.get("ideal_length") or "").split())
+    ideal_length = _normalize_length_range(version.get("ideal_length"))
     format_tag = " ".join(str(payload.get("format") or "").split())
     if not why or len(_words(why)) > 35:
         raise NicheShortIdeasError("why_it_worked must contain 1–35 words")
+    if niche_language != "en" and not _looks_english(why):
+        raise NicheShortIdeasError("why_it_worked must be English")
     if not title or not first_line or len(beats) != 3 or not all(beats) or not ideal_length:
         raise NicheShortIdeasError("your_version is incomplete")
     if format_tag not in FORMAT_TAGS:
@@ -232,11 +253,13 @@ def _generate_idea(source: dict[str, Any], transcript: dict[str, Any], language:
                 "not its wording. Return JSON only with: why_it_worked (English, 1–2 sentences, at most 35 "
                 "words, focused on hook/structure/format), format (exactly Story, Q&A, Tip, or Motivation), and "
                 "your_version containing title, first_line, beats (exactly three short phrases), ideal_length. "
-                "Write title, first_line, and beats in the requested niche language. Never copy a phrase of "
+                "why_it_worked MUST ALWAYS be English, regardless of the niche language. Write title, first_line, "
+                "and beats in the requested niche language. ideal_length MUST be a lower–upper seconds range. Never copy a phrase of "
                 "seven or more consecutive words from the transcript. Make the premise and wording original."
             )},
             {"role": "user", "content": json.dumps({
                 "niche_language": language,
+                "why_it_worked_language": "English",
                 "source_title": str(source.get("title") or ""),
                 "duration_seconds": int(source.get("duration_s") or 0),
                 "ratio_to_creator_usual": round(float(source.get("outlier_ratio") or 0), 2),
@@ -244,7 +267,9 @@ def _generate_idea(source: dict[str, Any], transcript: dict[str, Any], language:
             }, ensure_ascii=False)},
         ],
     )
-    generated = _validate_generated_idea(_json_response(response), transcript["transcript"])
+    generated = _validate_generated_idea(
+        _json_response(response), transcript["transcript"], niche_language=language
+    )
     input_tokens, output_tokens = _usage(response)
     return {
         **generated,
@@ -355,6 +380,7 @@ def load_niche_short_ideas(conn: Any, niche_id: Any) -> tuple[str, list[dict[str
     rows = [dict(zip(columns, row)) for row in result.fetchall()]
     for row in rows:
         row["beats"] = _decode_json(row.pop("beats_json", []), [])
+        row["ideal_length"] = _normalize_length_range(row.get("ideal_length"))
     return as_of, rows
 
 
