@@ -64,6 +64,43 @@ def _display_rank_row(row: dict[str, Any], rank: int, own_channel_ids: set[str])
     }
 
 
+def _condensed_ladder(ranked_rows: list[dict[str, Any]], own_index: int) -> list[dict[str, Any]]:
+    own_rank = own_index + 1
+    total = len(ranked_rows)
+    milestone_rank = own_rank - 10 if own_rank - 10 >= 1 else None
+    named_ranks = {1, own_rank + 10, *(range(own_rank - 2, own_rank + 3))}
+    if milestone_rank:
+        named_ranks.add(milestone_rank)
+    named_ranks = sorted(rank for rank in named_ranks if 1 <= rank <= total)[:8]
+    own_subscribers = int(ranked_rows[own_index].get("subscribers") or 0)
+    named = []
+    for rank in named_ranks:
+        row = dict(ranked_rows[rank - 1])
+        labels = []
+        if rank == 1:
+            labels.append("Top of niche")
+        if rank == milestone_rank:
+            labels.append("Next milestone")
+            gap = max(0, int(row.get("subscribers") or 0) - own_subscribers)
+            row["subscriber_gap"] = f"+{gap:,} subscribers"
+        row["ladder_label"] = " · ".join(labels)
+        named.append(row)
+    ratios = [row["views_per_subscriber"] for row in named if row["views_per_subscriber"] is not None]
+    if ratios:
+        best_ratio = max(ratios)
+        for row in named:
+            row["best_views_per_subscriber"] = row["views_per_subscriber"] == best_ratio
+    ladder = []
+    previous_rank = None
+    for row in named:
+        rank = int(row["rank"])
+        if previous_rank is not None and rank - previous_rank > 1:
+            ladder.append({"is_divider": True, "hidden_channels": rank - previous_rank - 1})
+        ladder.append(row)
+        previous_rank = rank
+    return ladder
+
+
 def display_short_title(value: Any) -> str:
     original = " ".join(str(value or "").split())
     cleaned = re.sub(r"#[\w-]+", " ", original, flags=re.UNICODE)
@@ -184,15 +221,7 @@ def load_customer_niche_page(
     if own_index is not None:
         rank = own_index + 1
         total = len(ranked_rows)
-        neighbors = ranked_rows[max(0, own_index - 2) : own_index + 3]
-        ratios = [
-            row["views_per_subscriber"] for row in neighbors
-            if row["views_per_subscriber"] is not None
-        ]
-        if ratios:
-            best_ratio = max(ratios)
-            for row in neighbors:
-                row["best_views_per_subscriber"] = row["views_per_subscriber"] == best_ratio
+        neighbors = _condensed_ladder(ranked_rows, own_index)
         place = {
             "rank": rank,
             "total": total,
@@ -232,7 +261,7 @@ def load_customer_niche_page(
         early_rows, pool_by_channel=pool_by_channel, own_channel_ids=own_channel_ids, early=True,
         views_floor=int(niche.get("shorts_views_floor") or 10_000),
     )
-    ideas_as_of, short_ideas = load_niche_short_ideas(conn, niche["id"])
+    ideas_as_of, short_ideas = load_niche_short_ideas(conn, niche["id"], brand_id)
     archive_ideas_enabled = archive_match_customer_enabled()
     _archive_as_of, archive_weekly_ideas = (
         load_brand_weekly_ideas(conn, niche["id"], brand_id)

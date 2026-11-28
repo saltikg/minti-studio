@@ -106,3 +106,25 @@ def test_top_outlier_cards_filters_promoted_and_caps_channels():
 
     assert [card["video_id"] for card in cards] == ["one", "two"]
     assert all(card["channel_name"] == "You" for card in cards)
+
+
+def test_condensed_ladder_includes_milestone_neighbors_and_gaps():
+    rows = [{
+        "rank": rank,
+        "channel_name": f"Channel {rank}",
+        "subscribers": (31 - rank) * 1_000,
+        "views_per_subscriber": float(rank),
+        "best_views_per_subscriber": False,
+        "is_you": rank == 15,
+    } for rank in range(1, 31)]
+
+    ladder = customer_niche._condensed_ladder(rows, 14)
+    named = [row for row in ladder if not row.get("is_divider")]
+    dividers = [row["hidden_channels"] for row in ladder if row.get("is_divider")]
+
+    assert [row["rank"] for row in named] == [1, 5, 13, 14, 15, 16, 17, 25]
+    assert named[0]["ladder_label"] == "Top of niche"
+    assert named[1]["ladder_label"] == "Next milestone"
+    assert named[1]["subscriber_gap"] == "+10,000 subscribers"
+    assert dividers == [3, 7, 7]
+    assert len(named) == 8

@@ -7,6 +7,7 @@ import shutil
 from typing import Any
 
 from app.video_shorts.config import _openai_client
+from app.video_shorts.services.brand_niches import brand_publishing_channel_id
 from app.video_shorts.services.db import get_db, get_db_readonly, table_columns
 from app.video_shorts.services.niche_outliers import (
     _current_pool,
@@ -15,7 +16,7 @@ from app.video_shorts.services.niche_outliers import (
 )
 
 
-IDEAS_TABLE = "niche_short_ideas"
+IDEAS_TABLE = "niche_brand_short_ideas"
 TRANSCRIPTS_TABLE = "niche_short_transcripts"
 CHAT_MODEL = "gpt-4.1"
 WHISPER_USD_PER_MINUTE = 0.006
@@ -130,6 +131,66 @@ def _validate_generated_idea(
     }
 
 
+def _brand_profiles(niche_id: Any) -> list[dict[str, Any]]:
+    conn = get_db_readonly()
+    try:
+        brands = conn.execute(
+            """SELECT CAST(id AS VARCHAR),CAST(owner_user_id AS VARCHAR),name
+               FROM shorts_brands WHERE niche_id=? ORDER BY lower(name),CAST(id AS VARCHAR)""",
+            [niche_id],
+        ).fetchall()
+        profiles = []
+        for brand_id, owner_user_id, brand_name in brands:
+            brand_id, owner_user_id = str(brand_id), str(owner_user_id)
+            publishing_channel_id = brand_publishing_channel_id(conn, owner_user_id, brand_id)
+            channel = conn.execute(
+                """SELECT channel_name,channel_description FROM youtube_channels
+                   WHERE CAST(brand_id AS VARCHAR)=CAST(? AS VARCHAR)
+                   ORDER BY CASE WHEN youtube_channel_id=? THEN 0 ELSE 1 END,
+                            COALESCE(is_active,false) DESC,added_at DESC LIMIT 1""",
+                [brand_id, publishing_channel_id],
+            ).fetchone()
+            channel_name = str((channel[0] if channel else "") or brand_name or "Untitled brand")
+            description = str((channel[1] if channel else "") or "").strip()
+            titles = []
+            if table_columns(conn, "niche_brand_channel_uploads"):
+                titles.extend(str(row[0] or "").strip() for row in conn.execute(
+                    """SELECT title FROM niche_brand_channel_uploads
+                       WHERE CAST(brand_id AS VARCHAR)=CAST(? AS VARCHAR)
+                         AND TRIM(COALESCE(title,''))<>''
+                       ORDER BY published_at DESC NULLS LAST,refreshed_at DESC LIMIT 15""",
+                    [brand_id],
+                ).fetchall())
+            if len(titles) < 15:
+                titles.extend(str(row[0] or "").strip() for row in conn.execute(
+                    """SELECT generated_title FROM shorts_generated_videos
+                       WHERE CAST(brand_id AS VARCHAR)=CAST(? AS VARCHAR)
+                         AND TRIM(COALESCE(generated_title,''))<>''
+                       ORDER BY COALESCE(youtube_published_at,instagram_published_at,published_at,
+                                         planned_publish_at,created_at) DESC LIMIT 15""",
+                    [brand_id],
+                ).fetchall())
+            deduped = []
+            seen = set()
+            for title in titles:
+                key = " ".join(title.casefold().split())
+                if key and key not in seen:
+                    seen.add(key)
+                    deduped.append(title)
+                if len(deduped) == 15:
+                    break
+            profiles.append({
+                "brand_id": brand_id,
+                "brand_name": str(brand_name or channel_name),
+                "channel_name": channel_name,
+                "channel_description": description,
+                "recent_short_titles": deduped,
+            })
+        return profiles
+    finally:
+        conn.close()
+
+
 def _source_rows(niche_slug: str) -> tuple[dict[str, Any], str, list[dict[str, Any]]]:
     niche, pool = _current_pool(niche_slug)
     pool_by_channel = {
@@ -241,42 +302,80 @@ def _persist_transcript(video_id: str, item: dict[str, Any]) -> None:
         conn.close()
 
 
-def _generate_idea(source: dict[str, Any], transcript: dict[str, Any], language: str, client: Any) -> dict[str, Any]:
-    response = client.chat.completions.create(
-        model=CHAT_MODEL,
-        temperature=0.2,
-        max_tokens=700,
-        response_format={"type": "json_object"},
-        messages=[
-            {"role": "system", "content": (
-                "Analyze one successful YouTube Short and create an original idea inspired by its structure, "
-                "not its wording. Return JSON only with: why_it_worked (English, 1–2 sentences, at most 35 "
-                "words, focused on hook/structure/format), format (exactly Story, Q&A, Tip, or Motivation), and "
-                "your_version containing title, first_line, beats (exactly three short phrases), ideal_length. "
-                "why_it_worked MUST ALWAYS be English, regardless of the niche language. Write title, first_line, "
-                "and beats in the requested niche language. ideal_length MUST be a lower–upper seconds range. Never copy a phrase of "
-                "seven or more consecutive words from the transcript. Make the premise and wording original."
-            )},
-            {"role": "user", "content": json.dumps({
-                "niche_language": language,
-                "why_it_worked_language": "English",
-                "source_title": str(source.get("title") or ""),
-                "duration_seconds": int(source.get("duration_s") or 0),
-                "ratio_to_creator_usual": round(float(source.get("outlier_ratio") or 0), 2),
-                "transcript": transcript["transcript"],
-            }, ensure_ascii=False)},
-        ],
+def _generate_idea(
+    source: dict[str, Any], transcript: dict[str, Any], niche: dict[str, Any],
+    brand: dict[str, Any], client: Any,
+) -> dict[str, Any]:
+    language = str(niche.get("language") or "en")
+    system = (
+        "Analyze one successful YouTube Short and create a brand-specific version. KEEP THE SAME specific "
+        "topic, core message, claim or teaching, and the same content structure as the source. Change only "
+        "the wording and presentation voice. Do not replace the premise with an analogous story, generic "
+        "habit, or adjacent topic. For example, a specific dua/zikir and its benefit must remain a dua/zikir "
+        "with that benefit and hook→practice→call structure. The version must fit the supplied niche definition. "
+        "For a clip channel, each beat must describe a concrete source segment to find (for example, 'a sohbet "
+        "segment where …'), not invent a plot. Otherwise, beats are three concrete content points, never plot "
+        "devices. Match the brand's subject and voice using its channel profile and recent titles. "
+        "Return JSON only with why_it_worked (English, unchanged analysis rules: 1–2 sentences, <=35 words, "
+        "about hook/structure/format), format (Story, Q&A, Tip, or Motivation), topic_check containing "
+        "same_topic and fits_niche booleans plus reason, and your_version containing title, first_line, exactly "
+        "three beats, and ideal_length as a lower–upper seconds range. title/first_line/beats use the niche "
+        "language. Never copy seven consecutive transcript words."
     )
-    generated = _validate_generated_idea(
-        _json_response(response), transcript["transcript"], niche_language=language
-    )
-    input_tokens, output_tokens = _usage(response)
-    return {
-        **generated,
-        "llm_input_tokens": input_tokens,
-        "llm_output_tokens": output_tokens,
-        "llm_cost_usd": _chat_cost(input_tokens, output_tokens),
+    request_data = {
+        "niche": {
+            "language": language,
+            "description": str(niche.get("description") or ""),
+            "core_topics": niche.get("core_topics") or [],
+        },
+        "brand": brand,
+        "source": {
+            "title": str(source.get("title") or ""),
+            "duration_seconds": int(source.get("duration_s") or 0),
+            "ratio_to_creator_usual": round(float(source.get("outlier_ratio") or 0), 2),
+            "transcript": transcript["transcript"],
+        },
     }
+    total_input = total_output = 0
+    last_reason = ""
+    for attempt in range(2):
+        payload = dict(request_data)
+        if attempt:
+            payload["correction"] = (
+                "The previous draft was rejected because it changed topic or left the niche. Regenerate once, "
+                "keeping the source's exact subject, message, and structure. " + last_reason
+            )
+        response = client.chat.completions.create(
+            model=CHAT_MODEL, temperature=0.2, max_tokens=800,
+            response_format={"type": "json_object"},
+            messages=[
+                {"role": "system", "content": system},
+                {"role": "user", "content": json.dumps(payload, ensure_ascii=False)},
+            ],
+        )
+        used_input, used_output = _usage(response)
+        total_input += used_input
+        total_output += used_output
+        parsed = _json_response(response)
+        topic_check = parsed.get("topic_check") if isinstance(parsed.get("topic_check"), dict) else {}
+        same_topic = topic_check.get("same_topic") is True
+        fits_niche = topic_check.get("fits_niche") is True
+        last_reason = " ".join(str(topic_check.get("reason") or "").split())
+        if not same_topic or not fits_niche:
+            if attempt == 0:
+                continue
+            raise NicheShortIdeasError("brand idea failed topic/niche validation after regeneration")
+        generated = _validate_generated_idea(
+            parsed, transcript["transcript"], niche_language=language
+        )
+        return {
+            **generated,
+            "regeneration_count": attempt,
+            "llm_input_tokens": total_input,
+            "llm_output_tokens": total_output,
+            "llm_cost_usd": _chat_cost(total_input, total_output),
+        }
+    raise NicheShortIdeasError("brand idea generation failed")
 
 
 def compute_niche_short_ideas(niche_slug: str, *, client: Any = None) -> dict[str, Any]:
@@ -286,6 +385,9 @@ def compute_niche_short_ideas(niche_slug: str, *, client: Any = None) -> dict[st
     niche, as_of, sources = _source_rows(niche_slug)
     if not as_of or not sources:
         raise NicheShortIdeasError("niche has no qualifying weekly winners")
+    brands = _brand_profiles(niche["id"])
+    if not brands:
+        raise NicheShortIdeasError("niche has no brands")
     conn = get_db_readonly()
     try:
         if not table_columns(conn, IDEAS_TABLE) or not table_columns(conn, TRANSCRIPTS_TABLE):
@@ -297,7 +399,8 @@ def compute_niche_short_ideas(niche_slug: str, *, client: Any = None) -> dict[st
     whisper_cost = llm_cost = 0.0
     whisper_minutes = 0.0
     cache_hits = 0
-    for rank, source in enumerate(sources, start=1):
+    source_transcripts = {}
+    for source in sources:
         video_id = str(source.get("video_id") or "")
         transcript = _cached_transcript(video_id)
         if transcript:
@@ -307,28 +410,35 @@ def compute_niche_short_ideas(niche_slug: str, *, client: Any = None) -> dict[st
             _persist_transcript(video_id, transcript)
             whisper_minutes += transcript["whisper_minutes"]
             whisper_cost += transcript["whisper_cost_usd"]
-        idea = _generate_idea(source, transcript, language, selected_client)
-        llm_cost += idea["llm_cost_usd"]
-        generated_rows.append({**source, **idea, "selected_rank": rank})
+        source_transcripts[video_id] = transcript
+    for brand in brands:
+        for rank, source in enumerate(sources, start=1):
+            video_id = str(source.get("video_id") or "")
+            idea = _generate_idea(source, source_transcripts[video_id], niche, brand, selected_client)
+            llm_cost += idea["llm_cost_usd"]
+            generated_rows.append({
+                **source, **idea, "selected_rank": rank, "brand_id": brand["brand_id"],
+                "brand_name": brand["brand_name"],
+            })
     conn = get_db()
     try:
         conn.execute(f"DELETE FROM {IDEAS_TABLE} WHERE niche_id=? AND as_of=?", [niche["id"], as_of])
         for item in generated_rows:
             conn.execute(
                 f"""INSERT INTO {IDEAS_TABLE}
-                    (niche_id,as_of,source_video_id,source_channel_id,source_channel_title,
+                    (niche_id,as_of,brand_id,source_video_id,source_channel_id,source_channel_title,
                      source_title,source_views,source_ratio,source_url,source_duration_s,selected_rank,
                      why_it_worked,idea_title,first_line,beats_json,ideal_length,format_tag,
-                     llm_input_tokens,llm_output_tokens,llm_cost_usd,computed_at)
-                    VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?::jsonb,?,?,?,?,?,CURRENT_TIMESTAMP)""",
-                [niche["id"], as_of, str(item.get("video_id") or ""),
+                     regeneration_count,llm_input_tokens,llm_output_tokens,llm_cost_usd,computed_at)
+                    VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?::jsonb,?,?,?,?,?,?,CURRENT_TIMESTAMP)""",
+                [niche["id"], as_of, item["brand_id"], str(item.get("video_id") or ""),
                  str(item.get("youtube_channel_id") or ""), item["source_channel_title"],
                  str(item.get("title") or ""), int(item.get("views") or 0),
                  float(item.get("outlier_ratio") or 0),
                  f"https://youtube.com/shorts/{item.get('video_id')}",
                  int(item.get("duration_s") or 0), item["selected_rank"], item["why_it_worked"],
                  item["idea_title"], item["first_line"], json.dumps(item["beats"], ensure_ascii=False),
-                 item["ideal_length"], item["format_tag"], item["llm_input_tokens"],
+                 item["ideal_length"], item["format_tag"], item["regeneration_count"], item["llm_input_tokens"],
                  item["llm_output_tokens"], item["llm_cost_usd"]],
             )
         conn.commit()
@@ -340,6 +450,7 @@ def compute_niche_short_ideas(niche_slug: str, *, client: Any = None) -> dict[st
     return {
         "niche": niche_slug,
         "as_of": as_of,
+        "brand_count": len(brands),
         "idea_count": len(generated_rows),
         "cache_hits": cache_hits,
         "whisper_minutes": whisper_minutes,
@@ -348,6 +459,8 @@ def compute_niche_short_ideas(niche_slug: str, *, client: Any = None) -> dict[st
         "total_cost_usd": whisper_cost + llm_cost,
         "ideas": [{
             "source_video_id": str(item.get("video_id") or ""),
+            "brand_id": item["brand_id"],
+            "brand_name": item["brand_name"],
             "source_title": str(item.get("title") or ""),
             "source_ratio": float(item.get("outlier_ratio") or 0),
             "why_it_worked": item["why_it_worked"],
@@ -360,11 +473,14 @@ def compute_niche_short_ideas(niche_slug: str, *, client: Any = None) -> dict[st
     }
 
 
-def load_niche_short_ideas(conn: Any, niche_id: Any) -> tuple[str, list[dict[str, Any]]]:
+def load_niche_short_ideas(
+    conn: Any, niche_id: Any, brand_id: str
+) -> tuple[str, list[dict[str, Any]]]:
     if not table_columns(conn, IDEAS_TABLE):
         return "", []
     latest = conn.execute(
-        f"SELECT MAX(as_of) FROM {IDEAS_TABLE} WHERE niche_id=?", [niche_id]
+        f"SELECT MAX(as_of) FROM {IDEAS_TABLE} WHERE niche_id=? AND CAST(brand_id AS VARCHAR)=CAST(? AS VARCHAR)",
+        [niche_id, brand_id],
     ).fetchone()
     as_of = str(latest[0]) if latest and latest[0] else ""
     if not as_of:
@@ -373,8 +489,9 @@ def load_niche_short_ideas(conn: Any, niche_id: Any) -> tuple[str, list[dict[str
         f"""SELECT source_video_id,source_channel_title,source_title,source_views,source_ratio,
                    source_url,source_duration_s,selected_rank,why_it_worked,idea_title,first_line,
                    beats_json,ideal_length,format_tag
-            FROM {IDEAS_TABLE} WHERE niche_id=? AND as_of=? ORDER BY selected_rank""",
-        [niche_id, as_of],
+            FROM {IDEAS_TABLE} WHERE niche_id=? AND as_of=?
+              AND CAST(brand_id AS VARCHAR)=CAST(? AS VARCHAR) ORDER BY selected_rank""",
+        [niche_id, as_of, brand_id],
     )
     columns = [str(item[0]) for item in result.description or []]
     rows = [dict(zip(columns, row)) for row in result.fetchall()]

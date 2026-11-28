@@ -39,6 +39,7 @@ def test_generate_idea_uses_one_gpt_41_call_and_niche_language():
             content = json.dumps({
                 "why_it_worked": "The direct hook creates curiosity, then a compact progression delivers a useful payoff without detours.",
                 "format": "Story",
+                "topic_check": {"same_topic": True, "fits_niche": True, "reason": "Same dua teaching"},
                 "your_version": {
                     "title": "Sabırla gelen beklenmedik cevap",
                     "first_line": "Cevabın geciktiğini düşündüğünüz oldu mu?",
@@ -55,15 +56,60 @@ def test_generate_idea_uses_one_gpt_41_call_and_niche_language():
     result = niche_short_ideas._generate_idea(
         {"title": "Source", "duration_s": 58, "outlier_ratio": 12.4},
         {"transcript": "Kaynak metin burada tamamen farklı ifadelerle devam ediyor."},
-        "tr",
+        {"language": "tr", "description": "Religious talks", "core_topics": ["dua"]},
+        {"channel_name": "Hoca", "channel_description": "Sohbet clips", "recent_short_titles": ["Dua"]},
         client,
     )
 
     assert len(calls) == 1
     assert calls[0]["model"] == "gpt-4.1"
-    assert json.loads(calls[0]["messages"][1]["content"])["niche_language"] == "tr"
+    request = json.loads(calls[0]["messages"][1]["content"])
+    assert request["niche"]["language"] == "tr"
+    assert request["brand"]["channel_name"] == "Hoca"
     assert result["format_tag"] == "Story"
     assert result["ideal_length"] == "45–60 seconds"
+    assert result["llm_cost_usd"] == pytest.approx(0.0012)
+
+
+def test_generate_idea_regenerates_once_when_topic_check_fails():
+    calls = []
+
+    class Completions:
+        def create(self, **kwargs):
+            calls.append(kwargs)
+            same_topic = len(calls) == 2
+            content = json.dumps({
+                "why_it_worked": "The specific promise creates curiosity and the short progression turns it into an immediately usable practice.",
+                "format": "Tip",
+                "topic_check": {
+                    "same_topic": same_topic,
+                    "fits_niche": same_topic,
+                    "reason": "Same dua practice" if same_topic else "Drifted to a generic habit",
+                },
+                "your_version": {
+                    "title": "Kaderi güzelleştiren dua",
+                    "first_line": "Her gün okuyabileceğiniz bu duayı biliyor musunuz?",
+                    "beats": ["Duanın faydasını açıkla", "Nasıl okunacağını söyle", "Düzenli okumaya davet et"],
+                    "ideal_length": "35–50 saniye",
+                },
+            }, ensure_ascii=False)
+            message = type("Message", (), {"content": content})()
+            choice = type("Choice", (), {"message": message})()
+            usage = type("Usage", (), {"prompt_tokens": 100, "completion_tokens": 50})()
+            return type("Response", (), {"choices": [choice], "usage": usage})()
+
+    client = type("Client", (), {"chat": type("Chat", (), {"completions": Completions()})()})()
+    result = niche_short_ideas._generate_idea(
+        {"title": "Kaderi güzelleştiren dua", "duration_s": 42, "outlier_ratio": 8.1},
+        {"transcript": "Kaynak dua metni burada farklı kelimelerle uzun biçimde anlatılıyor."},
+        {"language": "tr", "description": "Dini sohbetler", "core_topics": ["dua", "zikir"]},
+        {"channel_name": "Hoca", "channel_description": "Sohbet kesitleri", "recent_short_titles": ["Duanın gücü"]},
+        client,
+    )
+
+    assert len(calls) == 2
+    assert "Regenerate once" in calls[1]["messages"][-1]["content"]
+    assert result["regeneration_count"] == 1
     assert result["llm_cost_usd"] == pytest.approx(0.0012)
 
 
@@ -111,7 +157,7 @@ def test_customer_loader_never_selects_transcript(monkeypatch):
                             "Why", "Idea", "Hook", '["a","b","c"]', "35–45 seconds", "Tip")])
 
     monkeypatch.setattr(niche_short_ideas, "table_columns", lambda *_args: {"source_video_id"})
-    _as_of, rows = niche_short_ideas.load_niche_short_ideas(Connection(), 1)
+    _as_of, rows = niche_short_ideas.load_niche_short_ideas(Connection(), 1, "brand-1")
 
     assert rows[0]["beats"] == ["a", "b", "c"]
     assert all("transcript" not in query.casefold() for query in queries)

@@ -21,6 +21,9 @@
   .customer-niche-page .customer-niche-table td, .customer-niche-page .customer-niche-table th { border-color: rgba(255,255,255,.1); padding: .8rem .75rem; vertical-align: middle; }
   .customer-niche-page .customer-niche-table tr.is-you td { background: rgba(45,212,191,.13) !important; color: #E8EDF2; font-weight: 700; }
   .customer-niche-page .customer-niche-best-ratio { color: #5EEAD4 !important; font-weight: 800; }
+  .customer-niche-page .customer-niche-ladder-label { color:#A9B4C0; font-size:.72rem; font-weight:650; }
+  .customer-niche-page .customer-niche-subscriber-gap { color:#5EEAD4; font-size:.72rem; font-weight:800; }
+  .customer-niche-page .customer-niche-divider td { border-bottom:0; border-top:0; color:#64748B !important; font-size:.72rem; padding:.2rem .75rem; text-align:center; }
   .customer-niche-page .customer-niche-cards { display: grid; gap: 16px; grid-template-columns: repeat(3, minmax(0, 1fr)); }
   .customer-niche-page .customer-niche-short { align-items:stretch; background:rgba(255,255,255,.025); border:1px solid rgba(255,255,255,.14); border-radius:14px; color:#E8EDF2; display:flex; flex-direction:row; gap:12px; height:130px; overflow:hidden; padding:14px; text-decoration:none; transition:transform .15s ease, border-color .15s ease; }
   .customer-niche-page .customer-niche-short:hover { border-color: rgba(125,211,252,.7); color: #E8EDF2; transform: translateY(-2px); }
@@ -74,7 +77,7 @@
         <div class="table-responsive mb-3">
           <table class="table customer-niche-table">
             <thead><tr><th>Rank</th><th>Channel</th><th class="text-end">Subscribers</th><th class="text-end">Views on videos posted in the last 90 days</th><th class="text-end" title="Views on videos posted in the last 90 days, divided by subscribers">Views / subscriber</th></tr></thead>
-            <tbody>{% for row in niche_page.place.neighbors %}<tr class="{% if row.is_you %}is-you{% endif %}"><td>#{{ row.rank }}</td><td>{{ row.channel_name }}{% if row.is_you %} <span class="badge text-bg-info ms-1">You</span>{% endif %}</td><td class="text-end">{{ row.subscribers_display }}</td><td class="text-end">{{ row.views_90d_display }}</td><td class="text-end {% if row.best_views_per_subscriber %}customer-niche-best-ratio{% endif %}">{{ '%.1f'|format(row.views_per_subscriber) if row.views_per_subscriber is not none else '—' }}</td></tr>{% endfor %}</tbody>
+            <tbody>{% for row in niche_page.place.neighbors %}{% if row.is_divider %}<tr class="customer-niche-divider"><td colspan="5">⋯ {{ row.hidden_channels }} channels</td></tr>{% else %}<tr class="{% if row.is_you %}is-you{% endif %}"><td>#{{ row.rank }}</td><td>{{ row.channel_name }}{% if row.is_you %} <span class="badge text-bg-info ms-1">You</span>{% endif %}{% if row.ladder_label %} <span class="customer-niche-ladder-label ms-1">{{ row.ladder_label }}</span>{% endif %}{% if row.subscriber_gap %}<div class="customer-niche-subscriber-gap">{{ row.subscriber_gap }}</div>{% endif %}</td><td class="text-end">{{ row.subscribers_display }}</td><td class="text-end">{{ row.views_90d_display }}</td><td class="text-end {% if row.best_views_per_subscriber %}customer-niche-best-ratio{% endif %}">{{ '%.1f'|format(row.views_per_subscriber) if row.views_per_subscriber is not none else '—' }}</td></tr>{% endif %}{% endfor %}</tbody>
           </table>
         </div>
       {% elif not niche_page.publishing_channel_id %}
