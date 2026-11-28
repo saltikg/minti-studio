@@ -131,6 +131,11 @@ def _validate_generated_idea(
     }
 
 
+def _clip_beats_are_source_segments(beats: list[str]) -> bool:
+    markers = ("sohbet", "kesit", "kayıt", "kayit", "konuş", "konus", "bölüm", "bolum", "segment")
+    return all(any(marker in beat.casefold() for marker in markers) for beat in beats)
+
+
 def _brand_profiles(niche_id: Any) -> list[dict[str, Any]]:
     conn = get_db_readonly()
     try:
@@ -179,12 +184,23 @@ def _brand_profiles(niche_id: Any) -> list[dict[str, Any]]:
                     deduped.append(title)
                 if len(deduped) == 15:
                     break
+            identity_text = f"{brand_name or ''} {channel_name}".casefold()
+            is_hocaefendi_clips = "hocaefendi" in identity_text
+            is_clip_channel = is_hocaefendi_clips or any(
+                marker in f"{identity_text} {description.casefold()}"
+                for marker in ("clip channel", "clips channel", "sohbet kesit", "video kesit")
+            )
             profiles.append({
                 "brand_id": brand_id,
                 "brand_name": str(brand_name or channel_name),
                 "channel_name": channel_name,
                 "channel_description": description,
                 "recent_short_titles": deduped,
+                "is_clip_channel": is_clip_channel,
+                "content_identity": (
+                    "M. Fethullah Gülen sohbet clips"
+                    if is_hocaefendi_clips else ""
+                ),
             })
         return profiles
     finally:
@@ -313,8 +329,10 @@ def _generate_idea(
         "the wording and presentation voice. Do not replace the premise with an analogous story, generic "
         "habit, or adjacent topic. For example, a specific dua/zikir and its benefit must remain a dua/zikir "
         "with that benefit and hook→practice→call structure. The version must fit the supplied niche definition. "
-        "For a clip channel, each beat must describe a concrete source segment to find (for example, 'a sohbet "
-        "segment where …'), not invent a plot. Otherwise, beats are three concrete content points, never plot "
+        "When brand.is_clip_channel is true, EVERY beat must describe a concrete source segment to locate "
+        "in that speaker's existing recordings (for example, 'a sohbet segment where …'), not a script, "
+        "new teaching, or invented claim. Respect brand.content_identity exactly. Otherwise, beats are three "
+        "concrete content points, never plot "
         "devices. Match the brand's subject and voice using its channel profile and recent titles. "
         "Return JSON only with why_it_worked (English, unchanged analysis rules: 1–2 sentences, <=35 words, "
         "about hook/structure/format), format (Story, Q&A, Tip, or Motivation), topic_check containing "
@@ -375,6 +393,11 @@ def _generate_idea(
                 last_reason = str(exc)
                 continue
             raise
+        if brand.get("is_clip_channel") and not _clip_beats_are_source_segments(generated["beats"]):
+            last_reason = "Every beat for this clip channel must identify a concrete source recording segment."
+            if attempt == 0:
+                continue
+            raise NicheShortIdeasError(last_reason)
         return {
             **generated,
             "regeneration_count": attempt,

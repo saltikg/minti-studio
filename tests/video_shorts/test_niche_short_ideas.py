@@ -43,7 +43,7 @@ def test_generate_idea_uses_one_gpt_41_call_and_niche_language():
                 "your_version": {
                     "title": "Sabırla gelen beklenmedik cevap",
                     "first_line": "Cevabın geciktiğini düşündüğünüz oldu mu?",
-                    "beats": ["Bekleyişi kur", "Yanlış beklentiyi göster", "Dersi kısa bağla"],
+                    "beats": ["Bekleyişi anlatan sohbet kesiti", "Yanlış beklentiyi açıklayan kayıt bölümü", "Dersi bağlayan konuşma kesiti"],
                     "ideal_length": "45–60 saniye",
                 },
             }, ensure_ascii=False)
@@ -57,7 +57,7 @@ def test_generate_idea_uses_one_gpt_41_call_and_niche_language():
         {"title": "Source", "duration_s": 58, "outlier_ratio": 12.4},
         {"transcript": "Kaynak metin burada tamamen farklı ifadelerle devam ediyor."},
         {"language": "tr", "description": "Religious talks", "core_topics": ["dua"]},
-        {"channel_name": "Hoca", "channel_description": "Sohbet clips", "recent_short_titles": ["Dua"]},
+        {"channel_name": "Hoca", "channel_description": "Sohbet clips", "recent_short_titles": ["Dua"], "is_clip_channel": True},
         client,
     )
 
