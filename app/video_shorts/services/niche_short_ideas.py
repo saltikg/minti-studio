@@ -342,8 +342,9 @@ def _generate_idea(
         payload = dict(request_data)
         if attempt:
             payload["correction"] = (
-                "The previous draft was rejected because it changed topic or left the niche. Regenerate once, "
-                "keeping the source's exact subject, message, and structure. " + last_reason
+                "The previous draft failed validation. Regenerate once, keeping the source's exact subject, "
+                "message, and structure, and follow every language, length, format, and originality rule. "
+                "why_it_worked must be English. " + last_reason
             )
         response = client.chat.completions.create(
             model=CHAT_MODEL, temperature=0.2, max_tokens=800,
@@ -365,9 +366,15 @@ def _generate_idea(
             if attempt == 0:
                 continue
             raise NicheShortIdeasError("brand idea failed topic/niche validation after regeneration")
-        generated = _validate_generated_idea(
-            parsed, transcript["transcript"], niche_language=language
-        )
+        try:
+            generated = _validate_generated_idea(
+                parsed, transcript["transcript"], niche_language=language
+            )
+        except NicheShortIdeasError as exc:
+            if attempt == 0:
+                last_reason = str(exc)
+                continue
+            raise
         return {
             **generated,
             "regeneration_count": attempt,

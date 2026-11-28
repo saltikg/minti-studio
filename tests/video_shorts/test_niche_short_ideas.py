@@ -113,6 +113,46 @@ def test_generate_idea_regenerates_once_when_topic_check_fails():
     assert result["llm_cost_usd"] == pytest.approx(0.0012)
 
 
+def test_generate_idea_regenerates_once_when_output_validation_fails():
+    calls = []
+
+    class Completions:
+        def create(self, **kwargs):
+            calls.append(kwargs)
+            content = json.dumps({
+                "why_it_worked": (
+                    "Güçlü bir açılış izleyicinin dikkatini hemen çekiyor."
+                    if len(calls) == 1 else
+                    "A specific promise creates curiosity, followed by a practical sequence and a concise call to action."
+                ),
+                "format": "Tip",
+                "topic_check": {"same_topic": True, "fits_niche": True, "reason": "Same teaching"},
+                "your_version": {
+                    "title": "Duanın günlük hayattaki yeri",
+                    "first_line": "Bu duayı hangi niyetle okuyorsunuz?",
+                    "beats": ["Faydasını açıkla", "Uygulamayı anlat", "Okumaya davet et"],
+                    "ideal_length": "35–50 saniye",
+                },
+            }, ensure_ascii=False)
+            message = type("Message", (), {"content": content})()
+            choice = type("Choice", (), {"message": message})()
+            usage = type("Usage", (), {"prompt_tokens": 100, "completion_tokens": 50})()
+            return type("Response", (), {"choices": [choice], "usage": usage})()
+
+    client = type("Client", (), {"chat": type("Chat", (), {"completions": Completions()})()})()
+    result = niche_short_ideas._generate_idea(
+        {"title": "Duanın faydası", "duration_s": 42, "outlier_ratio": 8.1},
+        {"transcript": "Kaynak dua metni burada farklı kelimelerle uzun biçimde anlatılıyor."},
+        {"language": "tr", "description": "Dini sohbetler", "core_topics": ["dua"]},
+        {"channel_name": "Hoca", "channel_description": "Sohbet kesitleri", "recent_short_titles": []},
+        client,
+    )
+
+    assert len(calls) == 2
+    assert "why_it_worked must be English" in calls[1]["messages"][-1]["content"]
+    assert result["regeneration_count"] == 1
+
+
 def test_non_english_niche_still_requires_english_analysis():
     payload = {
         "why_it_worked": "Güçlü bir açılış ile izleyicinin ilgisini hemen çekti.",
