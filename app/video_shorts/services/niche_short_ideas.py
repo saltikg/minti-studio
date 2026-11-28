@@ -163,10 +163,20 @@ def _transcribe_source(video_id: str, duration_s: int, language: str) -> dict[st
     from app.video_shorts.worker import _download_youtube_audio_with_proxy
 
     audio_path = None
+    download_error: Exception | None = None
+    for _attempt in range(3):
+        try:
+            audio_path, _proxy_used, _cookies = _download_youtube_audio_with_proxy(
+                f"https://www.youtube.com/watch?v={video_id}", video_id,
+            )
+            break
+        except Exception as exc:
+            download_error = exc
+    if audio_path is None:
+        if download_error:
+            raise download_error
+        raise NicheShortIdeasError(f"audio download failed for {video_id}")
     try:
-        audio_path, _proxy_used, _cookies = _download_youtube_audio_with_proxy(
-            f"https://www.youtube.com/watch?v={video_id}", video_id,
-        )
         full_text, segments = _transcribe_with_whisper(
             audio_path,
             spoken_language=language if language in {"en", "tr"} else "auto",

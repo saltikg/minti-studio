@@ -97,3 +97,27 @@ def test_customer_loader_never_selects_transcript(monkeypatch):
 
     assert rows[0]["beats"] == ["a", "b", "c"]
     assert all("transcript" not in query.casefold() for query in queries)
+
+
+def test_transcription_rotates_proxy_session_before_whisper(monkeypatch, tmp_path):
+    audio = tmp_path / "source.m4a"
+    audio.write_bytes(b"audio")
+    attempts = []
+
+    def download(_url, _video_id):
+        attempts.append(1)
+        if len(attempts) < 3:
+            raise RuntimeError("temporary bot check")
+        return audio, True, False
+
+    monkeypatch.setattr("app.video_shorts.worker._download_youtube_audio_with_proxy", download)
+    monkeypatch.setattr(
+        "app.video_shorts.services.transcript_service._transcribe_with_whisper",
+        lambda *_args, **_kwargs: ("Original transcript", [{"lang": "en"}]),
+    )
+
+    result = niche_short_ideas._transcribe_source("video-1", 60, "en")
+
+    assert len(attempts) == 3
+    assert result["transcript"] == "Original transcript"
+    assert result["whisper_cost_usd"] == pytest.approx(0.006)
